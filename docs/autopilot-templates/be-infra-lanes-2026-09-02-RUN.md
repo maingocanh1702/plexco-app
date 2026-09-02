@@ -498,3 +498,397 @@ trong vòng, không phải một lane tiếp theo.
 > không lane nào trong số đó làm thanh **~33%** nhúc nhích, vì luật 5 đo trục yếu nhất và trục đó là **0 màn
 > FE**. Ưu tiên BE/infra trước là đúng khi FE còn PENDING; chỉ cần đừng nhầm việc rút ngắn hàng đợi BE với
 > việc tiến gần launch. Hai thứ đó đã tách nhau từ 26/08, ngày route nghiệp vụ đầu tiên land.
+
+---
+---
+
+# Đợt 2 — L7…L11 (thêm 02/09, sau khi `b18efde` đã push)
+
+`origin/main` = `b18efde`. Năm lane dưới đây phủ nốt phần BE/infra mà L0–L6 chưa chạm. Cùng khuôn: dán
+**Bối cảnh chung** ở đầu file trước, rồi dán khối lane.
+
+**Hai lane trong đợt này cố ý KHÔNG phải lane code** (L9, L10). Lý do ghi tại chỗ — đọc trước khi đổi ý.
+
+---
+
+## L7 · BE/test-infra · `acquireChatDefinerLock` rò client khi lỗi
+
+**Đã đo lại tại `b18efde`, defect còn nguyên** — `packages/db/src/test-harness.ts:293-313`:
+
+```
+const lockClient = new pg.Client({ connectionString: base });
+guardClientErrors(lockClient, () => tearingDown);
+await lockClient.connect();                                    // <- có thể reject
+await lockClient.query("SELECT pg_advisory_lock($1)", [...]);   // <- có thể reject
+```
+
+Chỉ `release()` mới gọi `lockClient.end()`. **Không có `try/catch` nào bọc connect→return**, nên nếu
+`connect()` hoặc câu `pg_advisory_lock` reject (cancellation, DB bận, connection cạn), client không bao giờ
+được đóng và caller không bao giờ nhận được `release` để đóng nó. Rò một connection **mỗi lần lỗi**, trong
+đúng cái path mà nhiều test file chạy song song cùng gọi.
+
+**Tier C:** 0 · **Rủi ro:** P2 · **Chạy song song được với:** mọi lane (một file, không ai khác chạm)
+
+```text
+TASK: test-harness-chat-definer-lock-client-leak
+RISK: P2
+OUTCOME
+  acquireChatDefinerLock never leaks a pg.Client when it fails before returning.
+
+THE DEFECT, verified at b18efde — confirm it yourself, then fix
+  packages/db/src/test-harness.ts, acquireChatDefinerLock at line ~293.
+  new pg.Client -> connect() -> query('SELECT pg_advisory_lock($1)') runs with no
+  try/catch spanning connect through return. Only the returned release() calls
+  lockClient.end(). A rejection from connect() or from the advisory-lock query
+  therefore leaves a connected client with no owner and no way for the caller to
+  close it, because the caller never received release().
+
+FIX SHAPE
+  Wrap connect-through-lock so that any rejection ends the client before the error
+  propagates, then rethrow the ORIGINAL error unchanged. Two details that decide
+  whether this fix is correct or merely plausible:
+    - If connect() itself rejected, end() may reject too. Swallow the cleanup
+      failure, never the original error. The existing release() already models this
+      with .catch(() => {}) on the unlock — follow that precedent rather than
+      inventing a second cleanup style.
+    - tearingDown gates guardClientErrors. Set it before cleanup on the failure path
+      too, or the guard will surface the teardown as an unhandled client error and
+      turn a clean failure into a noisy one.
+
+SCOPE
+  packages/db/src/test-harness.ts and its test file.
+NEGATIVE SCOPE
+  No change to the lock key, to who calls this helper, to guardClientErrors' own
+  contract, or to any other helper in this file. Do not "while I am here" the
+  neighbouring job_definer helpers — they are a different hazard class with their
+  own documented reasoning right below this function.
+
+ACCEPTANCE
+  - A test where connect() rejects proves no client remains open and the original
+    error reaches the caller unwrapped.
+  - A test where the advisory-lock query rejects proves the same.
+  - The happy path is unchanged: release() still unlocks then ends, and a second
+    release() is still a no-op.
+  - Full db suite green under fileParallelism, which is the condition that made this
+    leak matter in the first place.
+```
+
+---
+
+## L8 · infra/dev · Suite đổi mật khẩu `app_worker` và không trả lại
+
+**Đo tại `b18efde` — ba call site, đều trong `apps/bot`:**
+
+```
+apps/bot/src/schedule.test.ts:72     ALTER ROLE app_worker WITH LOGIN PASSWORD '...'
+apps/bot/src/dispatcher.test.ts:63   ALTER ROLE app_worker WITH LOGIN PASSWORD '...'
+apps/bot/src/preflight.test.ts:80    ALTER ROLE app_worker WITH LOGIN PASSWORD '...'
+```
+
+`app_worker` là role **cluster-global**. Ba file này đổi mật khẩu của nó khi chạy và **không file nào khôi
+phục**. Trước khi có `worker.ts` chạy preflight fail-closed thì không ai để ý, vì không có gì local dùng
+`app_worker`; từ `fca314e` thì có. Đây là **defect môi trường dev có sẵn trước slice 2b** — slice 2b chỉ làm
+nó lộ ra.
+
+**Tier C:** 0 · **Rủi ro:** P3 · **Ghép tự nhiên với L5** (cùng lớp ma sát local-dev), nhưng **khác cây file** nên chạy riêng được
+
+```text
+TASK: dev-app-worker-password-not-restored
+RISK: P3
+OUTCOME
+  Running the test suite leaves the cluster's app_worker credential exactly as it
+  found it, so a later local run of worker.ts does not fail preflight for a reason
+  the developer did not cause.
+
+MEASURED STARTING POINT — verify, do not re-derive
+  grep -rn "ALTER ROLE app_worker" apps packages --include=*.ts
+  Expect three hits: apps/bot/src/{schedule,dispatcher,preflight}.test.ts.
+  app_worker is cluster-global: it is not namespaced per test database, so this is
+  shared mutable state across every parallel test file and every other project on
+  the same cluster.
+
+DESIGN CONSTRAINTS, in priority order
+  1. Restoration must survive a failing test. An afterAll that only runs on success
+     restores nothing on exactly the runs that matter most. Use the framework's
+     guaranteed-teardown path and prove it with a deliberately failing case.
+  2. Restoration must survive parallel files. Three files mutating one cluster role
+     concurrently is the actual hazard; a per-file save/restore can restore a value
+     another file has since changed. Decide explicitly between serialising these
+     files against each other and giving each a distinct role, and record the choice
+     with its trade-off in the ledger. Do not pick silently.
+  3. Do not weaken what the tests prove. These files exist to exercise preflight's
+     fail-closed credential assertions; a fix that stops them exercising a real
+     credential has removed the coverage rather than the leak.
+
+SCOPE
+  apps/bot/src/schedule.test.ts, apps/bot/src/dispatcher.test.ts,
+  apps/bot/src/preflight.test.ts, plus any shared test helper the fix introduces,
+  plus a note in docs/standards/environments-setup.md if a developer needs to know
+  how to recover a cluster already left in the mutated state.
+NEGATIVE SCOPE
+  No change to preflight.ts itself, to worker.ts, to grants, or to any migration.
+  Do not change what app_worker is allowed to do — that is a different lane (L10)
+  and it is deliberately not a code lane.
+
+ACCEPTANCE
+  - A test that fails mid-way still leaves the password restored, proven.
+  - The full apps/bot suite green with the files running in their normal parallel
+    configuration, not serialised specially for the proof.
+  - The chosen approach to point 2 is in the ledger with the alternative named.
+```
+
+---
+
+## L9 · BE/infra · Job runtime — lane AUTHORING cho **cả bốn** hàng backlog cùng lúc
+
+**Vì sao gộp bốn hàng và vì sao không code ngay.** Bốn hàng backlog dưới đây được mở ở bốn thời điểm khác
+nhau nhưng là **một đồ thị phụ thuộc**, và hàng thứ hai tự nó đã ghi *"chưa scope; nhiều slice nhỏ chứ không
+phải một"*:
+
+| Hàng | Điều đã đo được |
+|---|---|
+| `job-scheduler-cron-registration` | **Không có cron ở bất kỳ đâu**: không `boss.schedule()`, không `pg_cron` (`0000` chỉ có `pgcrypto`), không `setInterval` — chỉ 2 comment aspirational (`worker.ts:6`, `infra/entrypoint.sh:23`) |
+| `job-consumers-per-feature` | Nhiều job đang chờ đúng khối hạ tầng trên: session draft auto-expiry · billing Daily Lifecycle Job · `ExpireJoinRequests` hourly · … |
+| `db-projector-dlq-no-replay-path` | `0022:264` khai `dlq` là **terminal**; grep toàn repo **không ra** function/route/script nào đưa hàng từ `dlq` trở lại. Và nó **chết cả hai đầu**: `ack_outbox_event` gọi sau bước prepare, **độc lập với kết quả delivery** |
+| `job-outbox-dispatch-sync-lag-slo` | `TDD.md:82` NFR-1c đòi sync-lag **p95 ≤ 3s, p99 ≤ 10s**; cron của pg-boss có **sàn một phút** ⇒ p95 rơi thẳng qua ngưỡng |
+
+Hàng cuối là chỗ phải dừng lại mà nghĩ: **một cơ chế có sàn 60s không thể đáp ứng một NFR đòi p95 3s.** Đó
+không phải bug cần sửa trong lane — đó là hai contract mâu thuẫn, và chọn bên nào là **Tier C**.
+
+**Tier C:** ≥1 đã biết trước (NFR vs cơ chế) — đó là lý do lane này authoring · **Rủi ro:** P2 authoring
+
+```text
+TASK: job-runtime-authoring
+RISK: P2 (authoring; the lanes it produces will be P1)
+MODE: authoring. Produce a dependency graph, packets, and a Tier C count. Write no
+      runtime code and no migration.
+
+OUTCOME
+  One dependency graph covering job-scheduler-cron-registration,
+  job-consumers-per-feature, db-projector-dlq-no-replay-path and
+  job-outbox-dispatch-sync-lag-slo, plus a code-ready packet for whichever root in
+  that graph has zero Tier C items. If no root is Tier-C-free, say so plainly and
+  produce the AWAIT list instead of a packet.
+
+READ AND RECORD WHAT EACH SETTLES
+  packages/db/migrations/0022_*.sql and 0023_*.sql, in full. 0022:264 defines the
+  status enum with dlq terminal; 0023:176-208 is the ordering discussion.
+  apps/bot/src/{worker,dispatcher,queue,queues,preflight,provision-queue}.ts
+  docs/product/TDD.md around line 82 (NFR-1c) and line 494
+  docs/features/BE/feature_sync_engine* around line 129
+  decisions.md bodies for DD-89 and DD-90 (worker access, per-event job audit)
+  The four backlog rows named above, for their measured claims — then verify each
+  claim at HEAD before building on it. At least one of them was written weeks ago.
+
+THE FOUR QUESTIONS THE GRAPH MUST ANSWER
+  1. Ordering. The outbox does NOT guarantee per-aggregate ordering (0023:176-208).
+     Every consumer must therefore be order-independent with a monotonic guard.
+     State how each pending consumer satisfies that, or that it cannot.
+  2. dlq is terminal and nothing replays it, AND ack_outbox_event runs after prepare
+     independent of delivery outcome. Establish whether these are one defect or two,
+     because the fix shape differs: a replay path is additive, while re-sequencing
+     ack against delivery changes an existing durability contract and is Tier C
+     item 4 if it needs a migration.
+  3. NFR-1c demands sync-lag p95 <= 3s while pg-boss cron floors at 60s. These
+     cannot both hold. Name the options — a different trigger mechanism, a revised
+     NFR, or a scoped exemption for this path — recommend one, and mark it Tier C.
+     Do NOT quietly pick one and build on it. Do NOT restate the conflict as a
+     "performance concern": it is a contract conflict and it has an owner.
+  4. Scheduler registration must carry the privileged-call audit envelope
+     (job_id, tenant_id, actor=system, reason) that TDD:494 and deployment-infra:186
+     require. Confirm whether any existing code already emits that envelope.
+
+HARD BOUNDARY
+  Turning the schedule on is NOT in scope for this lane or any lane it produces.
+  OUTBOX_DISPATCH_SCHEDULE_ENABLED stays false. It is owner decision O3, and the
+  announce route depends on the same gate: enabling the schedule is what converts
+  {announced:true} into a promise to real users.
+
+OUTPUT
+  docs/autopilot-manifests/ packet(s) for any Tier-C-free root, plus a short graph
+  document under docs/plexco-run/ naming every edge and every Tier C item with its
+  reason. The Tier C COUNT is the headline output; report it even if nothing else
+  reaches packet stage.
+NEGATIVE SCOPE
+  No runtime code. No migration. No enablement. No projector work — the public read
+  model is an epic with four named prerequisites and is out of this program.
+```
+
+---
+
+## L10 · infra/security · `app_worker` least-privilege — **ratify threat model, KHÔNG hardening thêm**
+
+**Đọc kỹ đoạn này trước khi mở lane.** Hàng `db-app-worker-least-privilege-attestation` được mở bởi một
+**`MAX_ROUNDS` HALT** (slice 2b, 27/07): vòng 1–6 mọc dần một allowlist ACL trong `preflight.ts` để chứng
+minh `app_worker` có **đúng** tập quyền dự định — role attributes, CREATE grant, membership `job_definer`,
+`session_user`, ownership, denylist TRUNCATE/REFERENCES/TRIGGER, `rolreplication`, ownership của
+sequence/function — và **codex tìm được một cạnh mới ở mỗi vòng**.
+
+Đó chính xác là hình dạng mà luật vận hành số 6 của repo mô tả: **security finding trở thành edge-family
+không giới hạn ⇒ owner phê chuẩn threat model để bound cái class, KHÔNG thêm vòng hardening.** Mở lane này
+như một lane code là lặp lại đúng vòng lặp đã HALT một lần rồi.
+
+**Vì vậy đây là lane sinh packet cho owner.** Output là một threat model có biên, không phải thêm assertion.
+
+**Tier C:** cả lane là input cho một quyết định Tier C · **Rủi ro:** P2 authoring
+
+```text
+TASK: app-worker-threat-model-ratification
+RISK: P2
+MODE: authoring. Produce an owner decision packet. Add no assertion to preflight.ts.
+
+WHY THIS IS NOT A HARDENING LANE
+  This task was opened BY a MAX_ROUNDS HALT. Rounds 1-6 grew an ACL allowlist in
+  preflight.ts and the reviewer found a new edge every round: attributes, CREATE
+  grant, job_definer membership, session_user, ownership, a TRUNCATE/REFERENCES/
+  TRIGGER denylist, rolreplication, sequence and function ownership. The failure was
+  not insufficient effort. It was an unbounded edge family with no stated boundary,
+  so no round could ever be the last one.
+  The repository's own operating rule for this shape: when a security finding becomes
+  an unbounded edge family, the owner ratifies a threat model that BOUNDS the class.
+  Adding a seventh assertion is the known-wrong move.
+
+OUTCOME
+  A short owner-decision packet that answers: what is app_worker trusted NOT to do,
+  and what is the closed list of properties preflight asserts to prove it?
+  Once the owner ratifies that list, any property outside it is out of scope by
+  decision, and preflight becomes finishable.
+
+METHOD
+  1. Inventory what preflight.ts asserts TODAY, exactly, one line per assertion,
+     each with the round or commit that added it and the finding it answered.
+  2. Inventory what app_worker actually HOLDS today, measured from pg_catalog on a
+     migrated database, not from schema.ts and not from prose. If you cannot reach a
+     database, say so and mark the inventory unmeasured rather than inferring it.
+  3. State the threat: which actor, with which access, is this attestation defending
+     against? An attestation with no named adversary cannot be bounded, which is the
+     root cause of the six rounds.
+  4. Propose the CLOSED property list, with each property justified by the threat in
+     step 3, and each currently-asserted property either kept with a reason or
+     dropped with a reason. A property nobody can tie to the threat is a candidate
+     for dropping — say so; the packet is allowed to make preflight smaller.
+  5. State the self-invalidation trigger: what future change reopens this decision.
+
+OUTPUT
+  docs/decisions/ or docs/probes/ packet, owner-facing, Vietnamese prose (this one is
+  read by the owner to decide, not by an agent to execute), with the closed list as
+  a table.
+SCOPE
+  The new packet document only. Optionally one backlog-row correction.
+NEGATIVE SCOPE
+  Zero change to preflight.ts, to grants, to roles, to migrations. If while reading
+  you find a REAL privilege escalation — not a missing attestation, an actual
+  reachable escalation — that is a separate P0 finding: report it immediately and do
+  not fold it into this packet.
+```
+
+---
+
+## L11 · infra/kit · Đồng bộ mirror canonical — **chạy ở repo khác**
+
+⚠️ **Lane này KHÔNG chạy trong repo Plexco.** Nó chạy ở canonical `~/Projects/Claude template/`. Repo Plexco
+là **consumer**; sửa kit từ trong consumer là đúng cái ca "hai writer chung một mirror" mà chương trình cấm.
+
+**Hai món nợ mirror, khác nhau, đừng gộp:**
+
+1. **`DYNAMIC_SEGMENT` + `e2e.sh`** (W0-3 của completion program). Fix validator cho Next.js dynamic segment
+   `[id]` hiện **chỉ sống trong consumer** (`scripts/autopilot-review-readiness.mjs` của repo này). File đó
+   nằm trong `pack_pairs` của `autopilot-update.sh`, và dòng copy là `cp "$KIT/$src" "$dst"` — **ghi đè
+   thẳng, không merge**. Nghĩa là lần sync kit thành công kế tiếp **xoá fix**. Nó sống được tới giờ **chỉ vì
+   đường sync đang hỏng** (`assert_canonical_suite_green` HALT `KIT_SUITE_RED` trước `copy_pack`). Sửa
+   `e2e.sh` **khởi động lại đồng hồ**; mirror riêng hunk thì vô dụng vì không ai tiêu thụ được. **Hai thứ
+   land cùng nhau hoặc không land.**
+2. **`infra-autopilot-templates-mirror-v061`** — mirror trong repo kẹt ở v0.6.0 trong khi canonical đã
+   v0.6.1, và v0.6.1 **đã xoá hẳn** pin model (`-c model="gpt-5.6-terra"`). Đây là mirror **docs**, khác
+   đường với (1).
+
+```text
+TASK: kit-canonical-sync-dynamic-segment
+RISK: P2
+REPOSITORY: the canonical kit repo (~/Projects/Claude template), NOT the Plexco repo.
+            Never patch the kit from inside a consumer: that is the two-writers-one-
+            mirror case. Kit changes happen in canonical; each consumer pulls
+            independently, whenever.
+
+VERIFY THE PREMISE FIRST — it is weeks old and may have moved
+  In canonical:  grep -rn DYNAMIC_SEGMENT .          # expected: zero hits
+  In canonical:  sed -n '80,105p' test/e2e.sh        # the git-add list
+  In canonical:  grep -n pack_pairs -A20 autopilot/parallel/autopilot-update.sh
+  In Plexco:     grep -rln DYNAMIC_SEGMENT scripts/  # expected: the fix lives here
+  If any expectation fails, STOP and report what is actually true. The whole plan
+  below rests on these four measurements.
+
+THE TWO HALVES, and why neither ships alone
+  a) e2e.sh git-adds 13 files and omits autopilot-readiness-evidence-keys.mjs and
+     autopilot-ephemeral-review-worktree.mjs, both of which are in pack_pairs and
+     both imported at the top of the validator. The fixture therefore installs a
+     validator that cannot load, and the assertions fail on a Node import error
+     rather than a gate result. assert_canonical_suite_green runs before copy_pack,
+     so no consumer has been able to sync since.
+  b) The DYNAMIC_SEGMENT fix exists only in the Plexco consumer. pack_pairs copies
+     with cp, which overwrites rather than merges.
+  Fixing (a) alone RESTARTS the sync clock and the first successful sync DELETES the
+  fix in (b). Mirroring (b) alone is inert because nothing can consume it.
+  They land together or not at all.
+
+STEPS
+  1. Fix e2e.sh so the fixture installs a loadable validator: add the two omitted
+     files to its git-add list. Prove the 24 previously-failing assertions now
+     evaluate the gate rather than an import error.
+  2. Port the DYNAMIC_SEGMENT hunk from the Plexco consumer into canonical, with its
+     test cases. The consumer version came with 23 test cases and a mutation test —
+     bring those, not just the hunk.
+  3. Run the canonical suite: test/unit.sh and test/e2e.sh both green.
+  4. Do NOT run autopilot-update.sh in any consumer as part of this lane. Consumer
+     synchronisation is a separate, owner-performed step, and it is the step that
+     would overwrite the consumer copy.
+
+ACCEPTANCE
+  - Both canonical suites green, output pasted.
+  - A test proving a Next.js dynamic segment path like app/api/sessions/[id]/route.ts
+    passes the validator in the CANONICAL tree.
+  - The commit body states plainly that consumers remain unsynced and that syncing
+    is the owner's next action.
+```
+
+---
+
+## Bảng gộp — thứ tự chạy cả 11 lane
+
+| Ưu tiên | Lane | Loại | Tier C | Chặn ai |
+|---|---|---|---|---|
+| 1 | **L0** re-pin runner | infra | 0 | Gỡ `STALE` cho mọi verdict số |
+| 1 | **L2** zalo credential trace | infra | 0 | Feed quyết định **O4** |
+| 1 | **L7** test-harness client leak | BE | 0 | — |
+| 2 | **L1** route close/cancel | BE | 0 | L3 |
+| 2 | **L8** app_worker password | infra | 0 | — |
+| 2 | **L4** gates diagnosability | infra | 0 | — |
+| 3 | **L3** DD-118 coverage | BE | 0 | *(đợi L1)* |
+| 3 | **L5** local-dev paths | infra | 0 | — |
+| 4 | **L9** job runtime authoring | BE/infra | ≥1 đã biết | Nhắc nợ (nhóm 6) + route announce |
+| 4 | **L6** zalo routing authoring | BE | chưa đếm | Khối 2 của launch |
+| 5 | **L10** app_worker threat model | security | packet cho owner | Đóng được `preflight.ts` |
+| — | **L11** kit sync | infra | 0 | **Repo khác.** Chạy khi tiện; nợ này đang bị "đóng băng nhờ hỏng" |
+
+**Sáu lane Tier C = 0** ở ưu tiên 1–3 chạy được liên tục, không cần bạn trả lời gì.
+
+---
+
+## Ba thứ cố ý KHÔNG có prompt, và lý do
+
+1. **`core-matcher-ambiguous-consumer-wiring` (DD-87).** `splitNameAmount` trả tagged union, nhánh
+   `ambiguous` không có top-level name/amount — fence compile-time đã land trước caller đầu tiên, và **đó là
+   thứ tự đúng**. Nhưng caller đầu tiên chính là đường đối soát thanh toán, tức **vế tiền**. Viết prompt cho
+   nó bây giờ đảm bảo AWAIT ngay câu đầu. Nó đi cùng epic tiền, không đứng riêng được.
+2. **Billing P5 / enforce `payment_reconcile_auto`.** Lý do đã ghi ở đợt 1: DD-114 D2 clause 5.
+3. **`tenant-capability-authority-core`.** Hàng backlog tự khai là *"evidence registry anchor only; this
+   block does not issue a readiness verdict or authorize a worktree"* — nó là **neo bằng chứng**, không phải
+   task. Packet thật của nó phải biến slice này thành **chủ sở hữu duy nhất** của closed action registry
+   xuyên feature; viết prompt trước khi có packet đó là đặt cày trước trâu. Nó nên đi sau L9 (job runtime)
+   và sau khi L6 đếm xong Tier C của routing, vì cả hai đều sẽ nói cho ta biết registry cần chứa gì.
+
+> **Một quan sát nhỏ đáng ghi, không đáng thành lane:** `.autopilot/state/` có **25 thư mục** trong khi
+> `.autopilot/worktrees/` **rỗng** và INFLIGHT không còn entry sống — dư lượng bình thường của các lane đã
+> xong. Nhưng có một thư mục tên đúng bằng **`Plexco app`** (chứa mỗi `notify-sentinel.txt`), tức ở đâu đó
+> một script đang lấy slug từ tên thư mục làm việc thay vì từ feature slug, và tên đó có dấu cách. Vô hại,
+> gitignored, local-only — nhưng nếu lane nào đó tình cờ chạm script notify thì đây là dấu vết cần theo.
