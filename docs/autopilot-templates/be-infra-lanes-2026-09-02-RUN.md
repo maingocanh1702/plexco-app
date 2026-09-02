@@ -327,17 +327,27 @@ ACCEPTANCE
 
 ---
 
-## L4 · infra · Hai gate chặn đúng nhưng không nói được vì sao
+## L4a · infra · Gate chặn đúng nhưng không nói được vì sao — **chỉ phần `migrate.ts`**
 
 Backlog `gates-that-fire-correctly-and-cannot-say-why`, status `planned`, scope đã rõ. **Cả hai gate hành xử
 đúng** — chi phí nằm ở chỗ chúng không nói được lý do, khiến người đọc phải suy lại từ đầu cả nguyên nhân lẫn
 cách chữa. Đây là loại việc infra rẻ mà trả lãi mỗi lần có người mới chạm repo.
 
+> ⚠️ **Đã tách ở đợt 3 (§0).** Chỉ chạy phần `packages/db/src/migrate.ts`. Phần `scripts/autopilot-scope-gate`
+> **hoãn tới sau L12** — file đó mang `KIT_VERSION: 33`, sửa ở consumer thì lần sync kế ghi đè.
+
 **Tier C:** 0 · **Rủi ro:** P2 · **Chạy song song được với:** L1, L3 (khác cây file)
 
 ```text
-TASK: gates-that-fire-correctly-and-cannot-say-why
+TASK: gates-that-fire-correctly-and-cannot-say-why  --  SPLIT, see section 0
 RISK: P2
+SPLIT NOTICE (added 2026-09-02, batch 3)
+  Run TARGET 1 (packages/db/src/migrate.ts) ONLY. This is lane L4a.
+  TARGET 2 (scripts/autopilot-scope-gate) is SUSPENDED pending lane L12: that file
+  carries KIT_VERSION: 33 and is probably a kit-pack file, so editing it in this
+  consumer would be overwritten by the next successful kit sync. L12 establishes
+  pack membership from canonical's pack_pairs; only then does target 2 get a repo.
+  Do not "just do both while I am here". That is the exact mistake this notice fixes.
 OUTCOME
   Both gates keep their exact current behaviour and gain a diagnosable failure.
   This lane must not change WHEN either gate fires — only what it says when it does.
@@ -357,15 +367,16 @@ METHOD
   behaviour held constant while diagnosability improved. A behaviour change here is
   out of scope and is the one thing that would make this lane dangerous.
 
-SCOPE
-  packages/db/src/migrate.ts, scripts/autopilot-scope-gate, and their tests.
+SCOPE (L4a as split above)
+  packages/db/src/migrate.ts and its tests.
 NEGATIVE SCOPE
-  No change to when a gate fires, to migration content, or to the scope-gate
-  contract. No kit sync — the mirror question is a separate lane.
-ACCEPTANCE
-  - A test per gate asserting the firing condition is unchanged.
-  - A test per gate asserting the new message/cause is present and names the
-    offending artifact.
+  scripts/autopilot-scope-gate is OUT OF SCOPE until L12 lands — see the split
+  notice. No change to when a gate fires, to migration content, or to the
+  scope-gate contract. No kit sync — the mirror question is a separate lane.
+ACCEPTANCE (L4a)
+  - A test asserting migrate.ts's P17 firing condition is unchanged.
+  - A test asserting the new message/cause is present and names the offending
+    migration file.
 ```
 
 ---
