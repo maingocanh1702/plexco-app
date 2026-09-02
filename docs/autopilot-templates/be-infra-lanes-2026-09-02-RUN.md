@@ -892,3 +892,368 @@ ACCEPTANCE
 > xong. Nhưng có một thư mục tên đúng bằng **`Plexco app`** (chứa mỗi `notify-sentinel.txt`), tức ở đâu đó
 > một script đang lấy slug từ tên thư mục làm việc thay vì từ feature slug, và tên đó có dấu cách. Vô hại,
 > gitignored, local-only — nhưng nếu lane nào đó tình cờ chạm script notify thì đây là dấu vết cần theo.
+
+---
+---
+
+# Đợt 3 — L12…L16, và một đính chính cho L4
+
+**Đo thêm 02/09 tại `186a965`.** Đợt này mở đầu bằng một phát hiện làm đổi thứ tự, nên đọc §0 trước.
+
+---
+
+## §0 · ĐÍNH CHÍNH L4 — và lý do nó không phải lỗi đánh máy
+
+**L4 (đợt 1) khai scope gồm `scripts/autopilot-scope-gate`. Đó là sai, hoặc ít nhất là chưa chứng minh
+được là đúng.** File đó mang header `# KIT_VERSION: 33` ⇒ nó gần chắc là **kit-pack file**, tức lần
+`autopilot-update.sh` thành công kế tiếp sẽ **`cp` đè lên nó**, xoá mọi sửa đổi làm trong consumer. Đó
+chính xác là món nợ mà L11 tồn tại để trả cho `DYNAMIC_SEGMENT`.
+
+**Nhưng chỗ tệ hơn nằm ở đây, và nó là phát hiện thật của đợt này:**
+
+```
+scripts/autopilot-review-readiness.mjs   -> KHÔNG có header KIT_VERSION,  NHƯNG Ở TRONG pack_pairs
+scripts/autopilot-scope-gate             -> CÓ header KIT_VERSION: 33
+scripts/ap-finish.sh                     -> KHÔNG có header
+scripts/codex-review-pin.sh              -> CÓ header KIT_VERSION: 3
+scripts/autopilot-backlog-reconcile      -> CÓ header KIT_VERSION: 8
+```
+
+Hàng đầu tiên phá vỡ quy tắc. **Sự có mặt của header `KIT_VERSION` không phải điều kiện cần, và cũng
+không phải điều kiện đủ, để biết một file có bị sync ghi đè hay không.** Authority duy nhất là danh sách
+`pack_pairs` trong `autopilot/parallel/autopilot-update.sh` của **canonical** — một file **không tồn tại
+trong repo này**.
+
+Nói thẳng hệ quả: **đứng trong repo Plexco, không ai xác định được một sửa đổi vào `scripts/` sẽ sống hay
+chết.** Mọi lane chạm `scripts/` đang là một lần tung đồng xu. `0af75a2` đã tung một lần và thua — fix
+sống sót tới hôm nay **chỉ vì đường sync đang hỏng**, không phải vì ai đã tính đúng.
+
+Vì vậy **L12 đứng trước mọi lane kit khác**, và **L4 tạm hoãn phần `autopilot-scope-gate`** cho tới khi
+L12 trả lời xong. Phần `packages/db/src/migrate.ts` của L4 không bị ảnh hưởng — chạy được ngay, tách ra.
+
+---
+
+## L12 · infra · Làm cho "file này có bị kit ghi đè không" trả lời được từ trong repo
+
+**Tier C:** 0 · **Rủi ro:** P2 · **Chạy trước:** L4 (phần scope-gate), L11, và mọi lane chạm `scripts/`
+
+```text
+TASK: kit-pack-membership-manifest
+RISK: P2
+OUTCOME
+  A checked-in, verifiable answer to one question a contributor cannot answer today:
+  "if I edit this file under scripts/, will the next kit sync overwrite my edit?"
+
+THE MEASURED PROBLEM — verify, then build for it
+  In the Plexco consumer:
+    head -6 scripts/autopilot-review-readiness.mjs | grep KIT_VERSION   # no hit
+    head -6 scripts/autopilot-scope-gate           | grep KIT_VERSION   # KIT_VERSION: 33
+  The first file has no version header and IS a pack member — that is the file whose
+  DYNAMIC_SEGMENT fix is at risk of being overwritten. So header presence is neither
+  necessary nor sufficient evidence of pack membership.
+  The only authority is pack_pairs in canonical's
+  autopilot/parallel/autopilot-update.sh, and that file does not exist in this repo.
+  Therefore, from inside this repo, pack membership is currently unknowable, and
+  every edit under scripts/ is a coin flip on survival. 0af75a2 already lost that
+  flip: its fix survives only because the sync path is broken.
+
+WHAT TO BUILD
+  1. Read canonical's autopilot-update.sh (~/Projects/Claude template) and extract
+     the exact pack_pairs list, verbatim, with the canonical commit SHA you read it
+     at. Do not summarise it and do not reorder it.
+  2. Write docs/standards/kit-pack-membership.md in the CONSUMER: one row per file
+     under scripts/, each marked kit-owned or repo-owned, each carrying the evidence
+     (present in pack_pairs at SHA x / absent from it). Files absent from pack_pairs
+     are repo-owned and safe to edit here. Include the KIT_VERSION-header column too,
+     and state explicitly that the header does NOT determine membership, with
+     autopilot-review-readiness.mjs named as the counter-example. A future reader
+     will otherwise re-derive the wrong rule from the headers, exactly as this lane's
+     first draft did.
+  3. Add a check that fails when a commit modifies a kit-owned file. It must be
+     overridable by an explicit marker in the commit body (a deliberate consumer-side
+     kit patch is sometimes the right call — 0af75a2 was defensible as an emergency,
+     it just was never recorded as a debt). The check exists to make the debt LOUD,
+     not to forbid it. A check that cannot be overridden will be bypassed instead of
+     obeyed, and then it teaches nothing.
+  4. Record the currently-outstanding consumer-side kit patches as rows in that file,
+     starting with the DYNAMIC_SEGMENT hunk in autopilot-review-readiness.mjs, so
+     L11 has a written list to reconcile against rather than one person's memory.
+
+SCOPE
+  docs/standards/kit-pack-membership.md (new)
+  one check script under scripts/ (this one is repo-owned by construction — it does
+  not exist in canonical) and its test
+  a wiring line wherever the repo already runs its cheap checks
+NEGATIVE SCOPE
+  Do NOT edit any kit-owned file in this lane. Do NOT run autopilot-update.sh. Do
+  NOT fix DYNAMIC_SEGMENT here — that is L11 and it belongs in canonical. This lane
+  only makes ownership visible.
+ACCEPTANCE
+  - Every file under scripts/ appears exactly once with an evidence-backed verdict.
+  - The canonical SHA the pack list was read at is recorded, so the file can be
+    re-verified later rather than trusted.
+  - A test proves the check fires on a kit-owned file and passes on a repo-owned one.
+  - A test proves the override marker works.
+```
+
+---
+
+## L13 · infra · `ap-finish` báo bẩn cho worktree không hề bẩn — thuế đánh vào **mọi** closeout
+
+**Đây là lane có đòn bẩy cao nhất trong cả ba đợt, và nó nhỏ.** `scripts/ap-finish.sh:83` kiểm worktree
+sạch bằng `git status --porcelain`, mà lệnh đó **đếm cả file untracked**. Repo này **luôn** có `design.pen`
++ `fe.pen` untracked **có chủ ý** (DD-81, FE PENDING — `git add` chúng là đi ngược lệnh owner). Nên gate
+báo *dirty* cho một worktree hoàn toàn sạch, **ở mỗi lần closeout**.
+
+Bạn sắp chạy 11 lane. Không sửa cái này thì nó bắn 11 lần.
+
+**Tier C:** 0 · **Rủi ro:** P2 · **Điều kiện:** L12 xác nhận `ap-finish.sh` là repo-owned (nó không có header, nhưng header không quyết định — chờ L12)
+
+```text
+TASK: ap-finish-untracked-counts-as-dirty
+RISK: P2
+DEPENDS_ON: kit-pack-membership-manifest — confirm ap-finish.sh is repo-owned before
+            editing it. If L12 finds it is kit-owned, this lane moves to canonical
+            unchanged; the fix is identical, only the repository differs.
+
+OUTCOME
+  ap-finish stops reporting a clean worktree as dirty, without becoming blind to the
+  dirt it exists to catch.
+
+THE DEFECT
+  scripts/ap-finish.sh:83 checks cleanliness with
+    git -C "$WT" --no-optional-locks status --porcelain
+  That output includes untracked files. This repository permanently and deliberately
+  carries design.pen and fe.pen untracked under DD-81 / FE PENDING, so the check
+  reports dirty on every closeout in a tree where nothing is actually wrong.
+
+THE TRAP IN THE OBVIOUS FIX
+  Passing --untracked-files=no makes the symptom vanish and creates a worse bug: a
+  lane that CREATED a new file and forgot to add it would then close out silently,
+  and the missing file would be discovered after the merge. The gate exists to catch
+  exactly that.
+  So the fix must distinguish "untracked and expected" from "untracked and
+  surprising". Choose deliberately between:
+    (a) an explicit expected-untracked allowlist, sourced from something that already
+        declares intent rather than a second hand-maintained list; and
+    (b) comparing the untracked set against the lane's declared scope, so an
+        untracked file inside the lane's own scope is dirt while one outside it,
+        pre-existing at base, is not.
+  Record the choice, the rejected alternative, and the reversibility in the ledger.
+  Option (b) is stronger but larger; if you take (a), say why (b) was not worth it
+  rather than not mentioning it.
+
+SCOPE
+  scripts/ap-finish.sh and its test.
+NEGATIVE SCOPE
+  No change to what ap-finish does after the cleanliness check, to ap-merge.sh, or
+  to the scope gate. Do not touch design.pen or fe.pen in any way.
+ACCEPTANCE
+  - A test with design.pen and fe.pen untracked and nothing else changed: passes.
+  - A test with a NEW untracked file inside the lane's scope: still fails, with a
+    message naming the file.
+  - A test with a genuinely dirty tracked file: still fails.
+```
+
+---
+
+## L14 · infra · Scope-gate cắm tín hiệu terminal lên một register **thử lại được**
+
+**Ba ca đo được trong MỘT ngày (14/08), mỗi ca chặn một lane hợp lệ và mỗi ca cần owner can thiệp:**
+`HALT-SCOPE_COLLISION.txt` (v2) · `HALT-BASE_MISMATCH.txt` (v2) · `HALT-BASE_MISMATCH.txt` (v3).
+
+**Cơ chế:** `scripts/autopilot-scope-gate` dùng chung `halt_gate()` để ghi file `HALT-<REASON>.txt` vào
+state dir cho **mọi** lý do — kể cả những lý do **thử lại được** (base lệch thì re-pin rồi register lại là
+xong). Nhưng file `HALT-*.txt` là tín hiệu **terminal** với mọi thứ đọc nó. Một điều kiện tạm thời để lại
+một dấu vết vĩnh viễn.
+
+**⚠️ File này mang `KIT_VERSION: 33` ⇒ nhiều khả năng kit-owned ⇒ lane chạy ở canonical, không ở đây.** Chờ
+L12 xác nhận.
+
+**Tier C:** 0 · **Rủi ro:** P2 · **Repo:** quyết định bởi L12
+
+```text
+TASK: scope-gate-terminal-signal-on-retryable-register
+RISK: P2
+DEPENDS_ON: kit-pack-membership-manifest — this file carries KIT_VERSION: 33 and is
+            probably kit-owned, in which case the lane runs in canonical.
+            Do not edit it in the consumer on a guess.
+
+OUTCOME
+  A retryable register failure stops leaving a terminal artifact behind.
+
+THE DEFECT, and the distinction that fixes it
+  autopilot-scope-gate routes every failure through one halt_gate() helper that
+  writes HALT-<REASON>.txt into the state dir. Readers treat HALT-*.txt as terminal.
+  But the reasons are not all terminal:
+    BASE_MISMATCH   -> retryable: re-pin the base and register again
+    SCOPE_COLLISION -> retryable once the colliding lane lands or releases
+    CONTRACT_INVALID -> terminal: the manifest is the wrong artifact entirely
+  Three legitimate lanes were blocked in one day by the first two being recorded as
+  though they were the third.
+
+FIX SHAPE
+  Split the failure vocabulary before touching the writer. Classify every existing
+  halt reason as terminal or retryable, in a table, and get that table right first —
+  a retryable reason misfiled as terminal is the bug being fixed, and a terminal one
+  misfiled as retryable is a worse bug in the other direction, because it invites a
+  lane to retry into a wall.
+  Then give retryable failures a distinct, non-terminal artifact name and make the
+  readers understand it. Enumerate the readers; a new artifact nothing reads is not
+  a fix.
+
+SCOPE
+  scripts/autopilot-scope-gate (or its canonical original) and its tests, plus every
+  reader of HALT-*.txt that the enumeration finds.
+NEGATIVE SCOPE
+  Do not change WHEN the gate refuses. Every condition that halts today still halts;
+  this lane changes only what it records and how a retry is expressed. Widening or
+  narrowing the gate's refusal set is a different lane and a Tier C question.
+ACCEPTANCE
+  - The terminal/retryable classification table is in the diff, complete.
+  - A test per class proving the artifact written matches the classification.
+  - The readers are enumerated in the commit body, each one either updated or
+    explicitly noted as unaffected.
+```
+
+---
+
+## L15 · BE/docs · DD-104 `DeleteSession` — packet phê chuẩn, không phải slice code
+
+DD-104 đang giữ **🟡 đề xuất** trong `decisions.md`, D0–D4 ở mức decision, slice **DEFERRED**. Hàng backlog
+ghi rõ blocker: `DeleteSession` là **destructive admin mutation**, authorize chỉ bằng `session.manage`,
+và nó **không có trong session specs**.
+
+Họ session command đã đủ sáu lệnh và ba route; `DeleteSession` là chỗ trống duy nhất còn lại có tên trong
+một DD. Nhưng destructive + admin + chưa có trong spec ⇒ **Tier C item 3 và có thể cả item 1** nếu nó chạm
+nghĩa vụ tiền của kèo đã có charge. Viết prompt code cho nó là mời một AWAIT.
+
+**Tier C:** cả lane là input cho quyết định Tier C · **Rủi ro:** P2 authoring
+
+```text
+TASK: dd104-delete-session-ratification
+RISK: P2
+MODE: authoring. Produce an owner decision packet. Write no command and no migration.
+
+OUTCOME
+  DD-104 moves from proposal to a ratified decision with a named scope, or is closed
+  as not-in-phase-1 with that stated. Either outcome unblocks the session family from
+  carrying an open question indefinitely.
+
+QUESTIONS THE PACKET MUST SETTLE, each with evidence
+  1. What does delete MEAN here — hard delete, soft delete, or archive? The three
+     have different consequences for the outbox, for processed_commands, and for any
+     row that references the session. Read what already references sessions before
+     proposing a semantics.
+  2. What happens to a session that has charges or a roster? If deletion can strand
+     an obligation, this is a money contract and therefore Tier C item 1, decided by
+     the owner and not by the lane. Establish which side of that line it falls on;
+     do not assume the safe-looking answer without checking.
+  3. Which action class authorizes it? DD-110 pinned four narrow action-class
+     literals for the session family. Does delete need a fifth, and does adding one
+     touch the Suspended Action Matrix in the billing spec — a Reviewed contract, so
+     Tier C item 3 unless a DD names the edit.
+  4. Is it in phase-1 at all? DD-114's seven groups do not name it. The cheapest
+     correct outcome may be an explicit "not in phase-1, revisit at <trigger>", and
+     the packet should say so if the evidence points there rather than designing a
+     feature nobody has asked for.
+
+OUTPUT
+  A decision packet in Vietnamese (owner-facing), with a recommendation, the
+  alternatives, and a self-invalidation trigger. Update the DD-104 block in
+  decisions.md only to point at the packet; do not flip its status — that is the
+  owner's action.
+SCOPE
+  docs/decisions/ packet (new), decisions.md pointer line, backlog row status.
+NEGATIVE SCOPE
+  No deleteSession implementation. No migration. No change to the four existing
+  action-class literals. No edit to the Reviewed session or billing specs beyond a
+  pointer.
+```
+
+---
+
+## L16 · infra/docs · Ô version trong index không ai kiểm
+
+Phát hiện lặp lại: `docs-billing-authz-signature-reconcile` bị codex flag ô version stale trong README
+index ở **round-06, 07, 08 liên tiếp**, và **chưa từng đóng được** vì README không nằm trong scope của
+slice đó. Audit 13/08 đo được **46/51 ô version sai** trong một index.
+
+Đây là dạng lỗi mà con người không bắt nổi vì nó rẻ để bỏ qua từng lần một, và đắt khi cộng dồn.
+
+**Tier C:** 0 · **Rủi ro:** P3
+
+```text
+TASK: docs-feature-index-version-freshness-check
+RISK: P3
+OUTCOME
+  An index cell that disagrees with the document it points at fails a check instead
+  of being flagged as advisory in someone's review round and then forgotten.
+
+STARTING EVIDENCE
+  The 2026-08-13 audit measured 46 of 51 version cells wrong in one index. The same
+  finding was raised in three consecutive review rounds of a different slice and
+  closed none of them, because the index was out of that slice's scope — which is
+  precisely why a per-slice reviewer cannot be the mechanism here.
+
+BUILD
+  A check that, for each index row naming a document and a version, reads that
+  document's own declared version and compares. Report every mismatch at once with
+  file:line on both sides. Ambiguity is expected: some documents declare a version in
+  a header line, some in frontmatter, and at least one has a header that disagrees
+  with its own changelog — ROADMAP carried exactly that defect and it was corrected
+  in v3.9. Decide how the check reads a version, write the rule down in the check
+  itself, and make an unparseable version an explicit reported state rather than a
+  silent pass. A check that silently passes what it cannot read is worse than no
+  check, because it will be trusted.
+
+SCOPE
+  One check script under scripts/ (repo-owned by construction) and its test, plus
+  the wiring line, plus the index corrections the first run produces.
+NEGATIVE SCOPE
+  Do not change any document's actual version number to make the check pass. If the
+  index is wrong, fix the index; if a document's header contradicts its own
+  changelog, that is a finding to report, not a number to overwrite.
+ACCEPTANCE
+  - The check finds the known-stale cells; the count is stated in the commit body.
+  - A test with a deliberately mismatched pair fails, and a matched pair passes.
+  - An unparseable version is reported as unparseable, proven by a test.
+```
+
+---
+
+## Bảng gộp — 16 lane, và chỗ nên dừng viết prompt
+
+| Ưu tiên | Lane | Loại | Tier C | Ghi chú |
+|---|---|---|---|---|
+| **0** | **L12** kit-pack membership | infra | 0 | **Chạy trước mọi lane chạm `scripts/`** — nếu không, mỗi sửa đổi là tung đồng xu |
+| 1 | **L13** ap-finish untracked | infra | 0 | Đòn bẩy cao nhất: hiện bắn ở **mọi** closeout |
+| 1 | **L0** re-pin runner | infra | 0 | Cần Postgres máy owner |
+| 1 | **L7** test-harness leak | BE | 0 | Một file, không đụng ai |
+| 1 | **L2** zalo credential trace | infra | 0 | Read-only, feed **O4** |
+| 2 | **L1** route close/cancel | BE | 0 | Chặn L3 |
+| 2 | **L8** app_worker password | infra | 0 | — |
+| 2 | **L4a** migrate.ts diagnosability | infra | 0 | **Tách khỏi L4** — phần scope-gate chờ L12 |
+| 3 | **L3** DD-118 coverage | BE | 0 | Đợi L1 |
+| 3 | **L5** local-dev paths | infra | 0 | — |
+| 3 | **L16** index freshness | infra | 0 | — |
+| 4 | **L14** scope-gate signals | infra | 0 | Repo do L12 quyết |
+| 4 | **L11** kit sync | infra | 0 | Canonical repo |
+| 5 | **L9** job runtime | authoring | ≥1 | Contract conflict NFR vs cron |
+| 5 | **L6** zalo routing | authoring | chưa đếm | Khối 2 của launch |
+| 6 | **L10** app_worker threat model | authoring | packet | Đóng được `preflight.ts` |
+| 6 | **L15** DD-104 delete | authoring | packet | Chỗ trống cuối của họ session |
+
+**11 lane Tier C = 0.** Bốn lane authoring còn lại sinh ra quyết định chứ không sinh code.
+
+> **Và đây là chỗ nên dừng viết prompt.** Phần backlog còn lại — `classifier-blocks-kit-mandated-readiness-json`,
+> `codex-review-verdict-nondeterminism`, `ap-merge-test-and-clean-tree-scope`,
+> `ap-finish-squash-verify-defeated-by-closeout-order`, `launcher-register-path-authored-to-runtime`,
+> `codex-review-pin-worktree-isolation-defect`, `backlog-status-taxonomy-inflight-manual-close-gap`,
+> `pnpm-workspace-postcss-override-inert` — đều là defect thật, nhưng **cả tám đều là kit/process, và cả tám
+> đều nằm sau L12** theo đúng lý do §0. Viết prompt cho chúng bây giờ là viết tám prompt mà mỗi cái mở đầu
+> bằng "chờ L12 trả lời đã". Chạy L12 xong thì tám cái đó gom được thành một hoặc hai lane có thật, xếp theo
+> repo sở hữu — và lúc đó chúng mới đáng viết.
+>
+> Ba mục cố ý không có prompt (`core-matcher-ambiguous-consumer-wiring` · billing P5 ·
+> `tenant-capability-authority-core`) giữ nguyên lý do đã ghi ở đợt 2.
