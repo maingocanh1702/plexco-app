@@ -415,12 +415,24 @@ export function assertContainerMatchesCompose(labelsJson, expectedHash) {
         `${safeEcho(String(project ?? ""))}, not "${COMPOSE_PROJECT}".`,
     );
   }
-  // EXACT entry comparison, never substring: "<expected>.backup" contains the expected path.
-  if (!files.split(",").some((f) => f.trim() === COMPOSE_FILE)) {
+  // EXACT SET, not membership. Substring matching was fixed first ("<expected>.backup" contains the
+  // expected path); membership is the same error one level up. A container started with an
+  // override -- `compose -f canonical.yml -f override.yml up` -- labels config_files with BOTH, so
+  // a "contains the canonical file" test passes while the override may remap the pgdata volume
+  // entirely. Measured: an override remapping the volume produced the SAME postgres service hash,
+  // so the hash check does not catch it either, and the reset would land in another volume.
+  // The only configuration this tool can reason about is the one it pins, alone.
+  const entries = files
+    .split(",")
+    .map((f) => f.trim())
+    .filter((f) => f !== "");
+  if (entries.length !== 1 || entries[0] !== COMPOSE_FILE) {
     throw new Error(
-      "db:reset:test refuses to run: the resolved container was created from a different compose " +
-        `file than the one this command pins (${COMPOSE_FILE}). A stale container under matching ` +
-        "labels is exactly the accident this check exists for; recreate it with " +
+      "db:reset:test refuses to run: the resolved container was not created from exactly this one " +
+        `compose file (${COMPOSE_FILE}) -- it was built from ${entries.length} configuration ` +
+        "file(s). An override can remap the data volume while leaving the service hash unchanged, " +
+        "so a container built with extra files is one this command cannot reason about. Recreate " +
+        "it with " +
         `\`docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}\`.`,
     );
   }

@@ -292,10 +292,11 @@ closing your terminal:
   cid="$(docker -H "$endpoint" compose -p plexco -f "$compose" ps -q postgres)"
   [ -n "$cid" ] || { echo "no running postgres container in project plexco; refusing" >&2; exit 1; }
 
-  # EXACT entry match, not substring: "$compose.backup" contains "$compose".
+  # EXACT SET, not membership. A container started with an override (`-f canonical -f override`)
+  # labels config_files with BOTH; an override can remap the pgdata volume while leaving the
+  # service hash unchanged, so "contains the canonical file" is not enough.
   files="$(docker -H "$endpoint" inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$cid")"
-  ok=0; IFS=,; for f in $files; do [ "$f" = "$compose" ] && ok=1; done; unset IFS
-  [ "$ok" = 1 ] || { echo "container came from a different compose file; refusing" >&2; exit 1; }
+  [ "$files" = "$compose" ] || { echo "container was not built from exactly $compose; refusing" >&2; exit 1; }
 
   # Same path is not the same configuration: an older container from a previous version of this
   # file passes every check above. The config hash is what compose itself uses to detect staleness.

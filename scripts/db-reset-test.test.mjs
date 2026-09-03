@@ -330,7 +330,7 @@ test("a stale container under matching labels is refused", () => {
   // have received the forced DROP DATABASE.
   assert.throws(
     () => assertContainerMatchesCompose(LABELS("plexco", "/elsewhere/docker-compose.yml"), "HASH_CURRENT"),
-    /different compose file/,
+    /exactly this one compose file/,
   );
   assert.throws(
     () => assertContainerMatchesCompose(LABELS("other_project", "/anything.yml"), "HASH_CURRENT"),
@@ -362,7 +362,7 @@ test("resolution refuses when no container is running, and when it is the wrong 
       ? { status: 0, stdout: "staleid123\n" }
       : { status: 0, stdout: LABELS("plexco", "/other/docker-compose.yml") };
   };
-  assert.throws(() => resolveVerifiedContainerId("unix:///tmp/d.sock", stale), /different compose file/);
+  assert.throws(() => resolveVerifiedContainerId("unix:///tmp/d.sock", stale), /exactly this one compose file/);
   assert.ok(calls[0].includes("ps"), "resolution asks compose for the id first");
 });
 
@@ -412,5 +412,22 @@ test("resolution refuses a same-path container whose configuration has moved on"
   assert.throws(
     () => resolveVerifiedContainerId("unix:///tmp/d.sock", runner),
     /older version of this compose configuration/,
+  );
+});
+
+test("a container built with an override file is refused, even at the same service hash", () => {
+  // Measured: an override remapping the pgdata volume produced the SAME postgres service hash, so
+  // the hash check does not catch it. Membership ("contains the canonical file") is the same error
+  // as substring matching, one level up -- the reset could land in another volume entirely.
+  const argv = buildContainerIdArgv("unix:///tmp/d.sock");
+  const canonical = argv[argv.indexOf("-f") + 1];
+  assert.equal(assertContainerMatchesCompose(LABELS("plexco", canonical), "HASH_CURRENT"), true);
+  assert.throws(
+    () => assertContainerMatchesCompose(LABELS("plexco", `${canonical},/tmp/override.yml`), "HASH_CURRENT"),
+    /exactly this one compose file/,
+  );
+  assert.throws(
+    () => assertContainerMatchesCompose(LABELS("plexco", `/tmp/override.yml,${canonical}`), "HASH_CURRENT"),
+    /exactly this one compose file/,
   );
 });
