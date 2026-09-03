@@ -47,21 +47,49 @@ một checker mà **không gì chạy nó lên repo** — đúng cách một tà
 lớp tưởng-là-có-cưỡng-chế. **Sửa rẻ: một dòng.** `kit:check` phải nằm trong chuỗi mà `pnpm -w test` gọi,
 hoặc thành một step riêng trong `ci.yml`. **Đưa vào scope S1, không phải backlog row.**
 
-**(1b) Hook `autopilot-sync.cjs` — phạm vi HẸP, đã đo lại 03/09.** Một lane từng báo rằng có đường ghi
-đè tự động không qua tay người, và dùng nó để nâng mức khẩn cho `level3-workflow.md`. Đo lại:
-- **Nửa ĐÚNG:** hook có thật và có tài liệu trong chính repo này —
-  `docs/autopilot/contracts/autopilot-reconcile-close-by-hand-declaration.md:63` ghi
-  `~/.claude/hooks/autopilot-sync.cjs` là **SessionStart hook**, **auto-overwrite version-aware**
-  `scripts/autopilot-scope-gate`, và cảnh báo drift cho `docs/autopilot-parallel-scope-gate.md` +
-  `_TEMPLATE.json`. ⇒ **Sửa `autopilot-scope-gate` trong consumer mất ở session sau, không phải ở lần
-  `autopilot-update.sh` sau.** Đây là căn cứ mạnh hơn cho việc L14 phải chạy ở canonical.
-- **Nửa SAI:** hook **không** đụng `level3-workflow.md`. Grep toàn bộ hook (dòng `:233`) chỉ ra đúng ba
-  artifact trên. Nguy cơ với §6.1 đến từ đường **thủ công** (`pack_pairs` + `cp` trong
-  `autopilot-update.sh`), không phải đường tự động. Đừng dùng "có thể biến mất bất kỳ lúc nào" làm lý do.
-- ⚠️ **Bằng chứng mới nhất là grep ngày 30/07 và không ai xác minh lại được**: `~/.claude` nằm ngoài
-  folder mount và không cấp quyền cho session Cowork được (thử 03/09, bị từ chối), đồng thời không xuất
-  hiện trong `homeDirectories`. Ai chạy trực tiếp trên máy owner thì kiểm bằng:
-  `ls ~/.claude/hooks/ && grep -n "scope-gate\|level3-workflow\|pack" ~/.claude/hooks/autopilot-sync.cjs`
+**(1b) Hook `autopilot-sync.cjs` — TỒN TẠI NHƯNG KHÔNG CHẠY. Đo 03/09, và phép đo này bác hai bản
+trước của chính mục này.**
+
+Chuỗi ba lần khai về cái hook, mỗi lần đều sai theo cùng một kiểu:
+- Một lane khai nó "ghi đè tự động, không qua tay người" ⇒ dùng để nâng mức khẩn cho `level3-workflow.md`.
+- Anh đọc `docs/autopilot/contracts/autopilot-reconcile-close-by-hand-declaration.md:63,233`, thấy phạm vi
+  hẹp hơn, và khai lại là "auto-overwrite `scripts/autopilot-scope-gate` ở **mỗi SessionStart**" ⇒ dùng để
+  củng cố việc L14 phải chạy ở canonical.
+- **Đo thật:** file hook có tồn tại (`mtime` 23/06) và nội dung khớp đúng mô tả 30/07 — `copyFileSync` đúng
+  một file `autopilot-scope-gate`, `docPairs` 2 file flag-only, không đụng `level3-workflow.md`. **Nhưng
+  `~/.claude/settings.json` chỉ đăng ký `Notification` + `PostToolUse`. KHÔNG có SessionStart hook nào.**
+  `grep -rn autopilot-sync ~/.claude/settings*.json` → rỗng. Trong canonical → rỗng. **Không gì gọi nó.**
+
+⇒ **`scripts/autopilot-scope-gate` KHÔNG bị auto-overwrite.** Sửa nó sống tới khi ai đó chạy
+`autopilot-update.sh` — **cùng độ trễ với mọi pack file khác**. Không có "latency class" thứ hai đang hoạt
+động. L14 vẫn phải chạy ở canonical, nhưng vì `pack_pairs`, **không** vì tính cấp bách theo phiên.
+
+📌 **LUẬT RÚT RA — đây là lớp lỗi lặp lại nhiều nhất của repo này, và nó có tên rồi ở tầng khác.**
+
+> **Một tuyên bố về NĂNG LỰC được kế thừa qua tài liệu mà không ai đo phần đấu dây.**
+
+Ba người kế thừa từ ba nguồn khác nhau và không ai kiểm cùng một thứ: lane đọc code, doc repo mô tả *nội
+dung* hook mà chưa từng đo nó *có chạy không*, và `~/.claude/rules/autopilot-template.md:17` — **rules file
+nạp vào MỌI session** — vẫn khẳng định "chạy mỗi khi mở session (đăng ký trong `~/.claude/settings.json`)".
+Đó là vector lây: một khẳng định sai trong rules file được tiêm vào context của mọi phiên sau.
+
+Repo này **đã có kỷ luật cho đúng lớp lỗi đó** và áp rất nghiêm — nhưng chỉ cho code sản phẩm: "code dark",
+`resolveCapability()` 0 caller, `authorizeTenantAction` 8 ngày 0 caller, `chat_*` 0 production reader, luật
+`Doc status ≠ Implementation status` của BUILD-STATUS. **Chưa bao giờ áp cho tooling của chính nó.** Cùng
+lớp lỗi: `kit:check` định nghĩa mà không ai gọi · `autonomous_to_ready` 205 dòng §6.1 mà validator chưa từng
+chấp nhận · hook này. Ba cái, cùng một tuần.
+
+**Áp cho mọi lane từ đây:** một cơ chế chỉ được khai là *đang hoạt động* khi đo được **điểm đấu dây** —
+ai gọi nó, ở đâu, và đã quan sát được nó chạy/fail. Đọc code của nó không đủ. Tài liệu mô tả nó không đủ.
+
+⚠️ **Giá trị hôm nay:** `overwrite_path` = `kit-sync` cho **cả 13 target**; `session-hook` là **dormant**
+(có code, không đăng ký), không phải một latency class đang chạy. Ghi kèm ngày đo và provenance, đánh dấu
+stale-by-construction — nếu không ta đóng băng một tiền đề sai vào JSON, đúng thứ bảng này sinh ra để chặn.
+
+**Chưa quyết:** hook bị bỏ đăng ký là **regression thầm lặng** (nếu owner muốn nó chạy thì `autopilot-scope-gate`
+đã lệch canonical âm thầm bao lâu nay) hay **gỡ có chủ ý mà rules file chưa cập nhật**. Phép thử phân biệt:
+so `scripts/autopilot-scope-gate` của Plexco với bản canonical. Giống nhau ⇒ chưa gây hại. Lệch ⇒ việc hook
+không chạy đã có hậu quả thật. **Việc của owner**, không lane nào tự sửa file cấu hình cá nhân.
 
 **(2) Cấm parse Markdown làm authority.** S1 HALT REGION_THRASH sau ba vòng đóng lần lượt các biên
 Markdown mịn dần (không ranh giới → có ranh giới nhưng không biết fence → luật đóng fence sai ở info
