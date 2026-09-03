@@ -156,6 +156,10 @@ describe("acquireChatDefinerLock", () => {
     await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
   });
 
+  // Complementary property, NOT a leak detector: measured against the pre-fix shape this test still
+  // passes, because a mocked-away lock query never took a lock in the first place. It is here to pin
+  // that the failure path strands nothing cluster-global, which is the consequence that would
+  // outlive the process. CDL-1 and CDL-2 are the two that actually fail without the fix.
   it("CDL-3: a lock-query rejection holds no advisory lock afterwards", async () => {
     const before = await advisoryLockHolders();
     const { url } = taggedUrl();
@@ -181,9 +185,9 @@ describe("acquireChatDefinerLock", () => {
     const boom = new Error("lock query exploded");
     const spy = rejectLockQueryWith(boom);
     try {
-      await expect(leaked.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY])).rejects.toBe(
-        boom,
-      );
+      await expect(
+        leaked.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]),
+      ).rejects.toBe(boom);
     } finally {
       spy.mockRestore();
     }
@@ -199,7 +203,6 @@ describe("acquireChatDefinerLock", () => {
     const { url, appName } = taggedUrl();
     const { release } = await acquireChatDefinerLock(url);
 
-    let releasedInFinally = false;
     try {
       expect(await countBackends(appName)).toBe(1);
 
@@ -218,9 +221,7 @@ describe("acquireChatDefinerLock", () => {
       expect(tried.rows[0]!.got).toBe(false);
     } finally {
       await release();
-      releasedInFinally = true;
     }
-    expect(releasedInFinally).toBe(true);
 
     await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
   });
