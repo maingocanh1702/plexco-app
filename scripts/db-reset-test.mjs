@@ -51,6 +51,23 @@
  *                                                                and the clause that excludes it,
  *                                                                and do not harden.
  *
+ * HOW TO PIN, WITHOUT ENUMERATING -- the operational half of the model above.
+ *
+ * The model alone does not settle every case. A leftover PGSERVICE or PGDATABASE in a dev shell is
+ * an ACCIDENT, so it sits inside the model, and there are unboundedly many such variables: that is
+ * the enumeration trap again in different clothes, and it is what cost this file three review rounds.
+ *
+ * The tie-breaker: PREFER OVERRIDING AT THE CALL YOU ALREADY CONSTRUCT OVER ENUMERATING THE
+ * ENVIRONMENT. An argument you already pass costs nothing and needs no list of variables to stay
+ * correct. A channel earns its own decision only when it CANNOT be overridden by an argument you
+ * already pass.
+ *
+ * That is the whole reason -X, -h and -p are here while a PG* strip is not: libpq ranks explicit
+ * connection parameters above environment variables, so -h and -p already beat PGHOST and PGPORT,
+ * and stripping them would be a pin that changes nothing. Same reasoning retired DOCKER_CONFIG.
+ * The variables that ARE stripped (REDIRECTING_ENV) are exactly the ones docker and compose read
+ * with no argument available to outrank them.
+ *
  * REVISION TRIGGER -- this model is NOT permanent. It holds BECAUSE the tool only ever targets a
  * local compose project and refuses any endpoint that is not a unix socket. If anyone lets this
  * script target a remote or CI database, the model is VOID and must be rewritten BEFORE that change
