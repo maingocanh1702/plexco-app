@@ -219,12 +219,30 @@ every run, so they cannot accumulate a stale `schema_migrations` row, and their 
 `db:bootstrap` shells out to `psql` twice. **`psql` is a real development dependency that this repository does not
 declare**, and it is absent on a machine that only has Docker. `infra/docker-compose.yml` records that this script
 "is the path every environment (CI, existing local, production) actually depends on", so its behaviour is not
-changed here. On a host without `psql`, use the container's own copy and feed the file over stdin:
+changed here. On a host without `psql`, use the container's own copy and feed each file over stdin.
+
+**Both invocations are required.** `db:bootstrap` applies `01-job-definer.sql` *and* `02-chat-definer.sql`, each
+preceded by the GUC that file reads. Running only the first leaves `chat_definer` absent, and
+`02-chat-definer.sql` records why that breaks later: a migration transfers ownership with
+`ALTER FUNCTION ... OWNER TO chat_definer`, "which mechanically requires the role to EXIST". The compose init
+mount does not cover you either — on a pre-existing `pgdata` volume the init directory never re-runs, so a
+mount-only bootstrap "silently no-ops on every developer's already-started stack".
 
 ```bash
+mr="${MIGRATION_ROLE:-}"   # optional; empty is the normal local value
+
 docker compose -f infra/docker-compose.yml exec -T postgres \
-  psql -U plexco -d plexco -v ON_ERROR_STOP=1 -f - < infra/postgres-init/01-job-definer.sql
+  psql -U plexco -d plexco -v ON_ERROR_STOP=1 \
+  -c "SET job_definer_bootstrap.migration_role = '$mr'" \
+  -f - < infra/postgres-init/01-job-definer.sql
+
+docker compose -f infra/docker-compose.yml exec -T postgres \
+  psql -U plexco -d plexco -v ON_ERROR_STOP=1 \
+  -c "SET chat_definer_bootstrap.migration_role = '$mr'" \
+  -f - < infra/postgres-init/02-chat-definer.sql
 ```
+
+Both files are idempotent, so re-running them on an already-bootstrapped cluster is safe.
 
 ---
 

@@ -33,8 +33,17 @@ const COMPOSE_SERVICE = "postgres";
 /** Dropping a database requires being connected to a different one. */
 const MAINTENANCE_DB = "postgres";
 
-/** A plain SQL identifier — what may be interpolated into DDL without quoting games. */
+/** A plain SQL identifier. No quote character can appear, which is what makes quoting below safe. */
 const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * PostgreSQL truncates identifiers to NAMEDATALEN-1 = 63 bytes, and it does so whether or not they
+ * are quoted. That makes the length a correctness rule for THIS tool rather than a limit worth
+ * inheriting silently: a 68-byte name ending in `_test` truncates to 63 bytes that do NOT end in
+ * `_test`, so the server would drop a database the suffix rule was written to forbid. Verified by
+ * probe before this guard existed — the old code accepted exactly that name.
+ */
+const MAX_IDENTIFIER_BYTES = 63;
 
 /**
  * fileURLToPath, never `new URL(url).pathname` on a file URL: the latter stays percent-encoded and
@@ -68,6 +77,14 @@ export function assertResettableTestDatabase(name) {
         "end in _test. This name is not, so it never reaches SQL.",
     );
   }
+  if (Buffer.byteLength(name, "utf8") > MAX_IDENTIFIER_BYTES) {
+    throw new Error(
+      `db:reset:test refuses to destroy "${name}": it is ` +
+        `${Buffer.byteLength(name, "utf8")} bytes, and PostgreSQL truncates identifiers to ` +
+        `${MAX_IDENTIFIER_BYTES}. The server would act on the truncated name, which is not the ` +
+        "name checked here — and may not end in _test at all.",
+    );
+  }
   if (!name.endsWith("_test")) {
     throw new Error(
       `db:reset:test refuses to destroy "${name}": it only ever drops a database whose name ends ` +
@@ -97,10 +114,18 @@ export function buildResetArgv(dbName, user) {
     "ON_ERROR_STOP=1",
     // Two separate -c flags, not one string with two statements: psql wraps a single multi-statement
     // -c in one implicit transaction, and DROP DATABASE cannot run inside a transaction block.
+    //
+    // The identifier is QUOTED, and that is a correctness fix rather than style. libpq passes the
+    // connection URL's dbname to the server verbatim, with no case folding, so `.../PLEXCO_test`
+    // names a database literally called `PLEXCO_test`. An UNQUOTED `DROP DATABASE PLEXCO_test`
+    // would fold to `plexco_test` and destroy a DIFFERENT database from the one this script
+    // validated and printed. Quoting makes the DDL agree with the connection, which is the whole
+    // contract. Lowercasing the name instead would have kept that disagreement and merely hidden
+    // it. Embedding the name is injection-safe because PLAIN_IDENTIFIER admits no quote character.
     "-c",
-    `DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`,
+    `DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`,
     "-c",
-    `CREATE DATABASE ${dbName}`,
+    `CREATE DATABASE "${dbName}"`,
   ];
 }
 

@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { assertResettableTestDatabase, databaseNameFromUrl } from "./db-reset-test.mjs";
+import {
+  assertResettableTestDatabase,
+  buildResetArgv,
+  databaseNameFromUrl,
+} from "./db-reset-test.mjs";
 
 // The whole point of this script is that it runs DROP DATABASE. The guard is the only thing
 // standing between a mistyped environment variable and a destroyed development database, so it
@@ -40,6 +44,32 @@ test("refuses names that are not plain identifiers", () => {
 
 test("accepts the canonical test database", () => {
   assert.equal(assertResettableTestDatabase("plexco_test"), "plexco_test");
+});
+
+// Both cases below defeated the guard before code-review round 1. Neither is hypothetical: the
+// probe that produced them ran against the shipped function and it accepted both.
+
+test("refuses a name longer than PostgreSQL's 63-byte identifier limit", () => {
+  // 68 bytes. The server truncates to 63, and those 63 bytes do NOT end in _test — so the guard
+  // would have approved one name while the server destroyed a different, unqualified one.
+  const overlong = "a".repeat(63) + "_test";
+  assert.equal(overlong.slice(0, 63).endsWith("_test"), false, "premise: truncation drops _test");
+  assert.throws(() => assertResettableTestDatabase(overlong), /63|truncat/i);
+});
+
+test("a mixed-case name is emitted quoted, so the server cannot fold it to another database", () => {
+  // libpq sends the URL's dbname verbatim, so `PLEXCO_test` is a real, distinct database name.
+  // Unquoted DDL would fold it to `plexco_test` and destroy the wrong one.
+  assert.equal(assertResettableTestDatabase("PLEXCO_test"), "PLEXCO_test");
+  const argv = buildResetArgv("PLEXCO_test", "plexco");
+  assert.ok(
+    argv.includes('DROP DATABASE IF EXISTS "PLEXCO_test" WITH (FORCE)'),
+    "DROP must quote the identifier exactly",
+  );
+  assert.ok(argv.includes('CREATE DATABASE "PLEXCO_test"'), "CREATE must quote the identifier");
+  for (const arg of argv) {
+    assert.ok(!/DATABASE (IF EXISTS )?PLEXCO_test/.test(arg), "no unquoted identifier may survive");
+  }
 });
 
 test("reads the database name out of both pinned urls", () => {
