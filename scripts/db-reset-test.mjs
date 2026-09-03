@@ -136,8 +136,41 @@ import { fileURLToPath } from "node:url";
  * file from a directory where one happens to exist. Deciding the path here removes cwd from the
  * set of inputs, which is the same rule every other input in this file follows.
  */
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const COMPOSE_FILE = path.join(REPO_ROOT, "infra", "docker-compose.yml");
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Resolved from the MAIN worktree, not from this script's own checkout.
+ *
+ * Making the path absolute fixed cwd ambiguity and introduced a worse bug: this repository's
+ * workflow puts every writing slice in a linked worktree, so a script running there resolved its
+ * OWN copy of the compose file. The two files are byte-identical, but the compose service hash
+ * includes the bind-mount source, which carries the checkout path -- so the hashes differ, and the
+ * tool rejected the shared container created from the main checkout. That is the tool failing in
+ * its primary use case: an unshipped migration being iterated on in a feature worktree is exactly
+ * when the P17 guard sends someone here. Worse, the refusal advised recreating the SHARED container
+ * from a temporary worktree, which would have broken it for the main checkout too.
+ *
+ * `--git-common-dir` names the main repository's .git from anywhere, including a linked worktree,
+ * so its parent is a stable compose authority. Every other protection is unchanged: the path is
+ * still absolute and still compared exactly, the hash and the mount are still checked against it.
+ */
+export function resolveComposeFile(runner = spawnSync, scriptDir = SCRIPT_DIR) {
+  // --path-format=absolute (git >= 2.31) so the answer cannot be relative to anything. Reasoning
+  // about what a relative --git-common-dir is relative to is exactly the class of assumption this
+  // file keeps being wrong about; asking for an absolute path removes the question.
+  const probe = runner("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
+    cwd: scriptDir,
+    encoding: "utf8",
+  });
+  const common = String(probe?.stdout ?? "").trim();
+  if (!probe?.error && probe?.status === 0 && path.isAbsolute(common)) {
+    return path.join(path.dirname(common), "infra", "docker-compose.yml");
+  }
+  // Not a git checkout: fall back to this script's own tree rather than guessing.
+  return path.resolve(scriptDir, "..", "infra", "docker-compose.yml");
+}
+
+const COMPOSE_FILE = resolveComposeFile();
 const COMPOSE_SERVICE = "postgres";
 
 /** Pinned to the `name:` in COMPOSE_FILE. Passed with -p so COMPOSE_PROJECT_NAME cannot redirect it. */
@@ -295,7 +328,13 @@ export function crossCheckDatabaseUrl(url, targetDb) {
   if (!url) return { checked: false };
   let name;
   try {
-    name = decodeURIComponent(new URL(String(url)).pathname).replace(/^\//, "");
+    // Only a HIERARCHICAL postgres URL has a pathname that means "database". Node accepts opaque
+    // forms -- `postgres:SENTINEL_PASSWORD` parses, with pathname "SENTINEL_PASSWORD" -- and that
+    // string satisfies PLAIN_IDENTIFIER, so the safe-echo rule would have printed a secret.
+    // Identifier syntax proves the value is safe for a TERMINAL, not that it is not a credential.
+    name = /^postgres(ql)?:\/\//i.test(String(url))
+      ? decodeURIComponent(new URL(String(url)).pathname).replace(/^\//, "")
+      : null;
   } catch {
     name = null;
   }

@@ -12,6 +12,7 @@ import {
   buildContainerIdArgv,
   buildResetArgv,
   parseConfigHash,
+  resolveComposeFile,
   resolveVerifiedContainerId,
   childEnv,
   crossCheckDatabaseUrl,
@@ -485,4 +486,61 @@ test("the compose config is resolved through the same pinned endpoint, project a
   assert.equal(argv[argv.indexOf("-p") + 1], "plexco");
   assert.ok(argv[argv.indexOf("-f") + 1].endsWith("/infra/docker-compose.yml"));
   assert.ok(argv.includes("--format") && argv.includes("json"));
+});
+
+// ---------------------------------------------------------------- worktree portability
+
+test("the compose authority is the main worktree, not the running checkout", () => {
+  // Every writing slice in this repository runs in a linked worktree, and the primary use case for
+  // this command -- an unshipped migration being iterated on -- happens there. Resolving the
+  // compose file from the running checkout rejected the shared container, because the service hash
+  // includes the bind-mount source and that carries the checkout path.
+  const linked = (_cmd, args) =>
+    args.includes("--git-common-dir")
+      ? { status: 0, stdout: "/repo/.git\n" }
+      : { status: 1, stdout: "" };
+  assert.equal(
+    resolveComposeFile(linked, "/repo/.autopilot/worktrees/slice--v9/scripts"),
+    "/repo/infra/docker-compose.yml",
+    "a linked worktree must resolve the MAIN checkout's compose file",
+  );
+
+  // From the main checkout the answer is the same file. --path-format=absolute is requested so a
+  // relative answer is never interpreted; anything non-absolute falls back rather than guessing.
+  const main = (_cmd, args) =>
+    args.includes("--git-common-dir") ? { status: 0, stdout: "/repo/.git\n" } : { status: 1, stdout: "" };
+  assert.equal(resolveComposeFile(main, "/repo/scripts"), "/repo/infra/docker-compose.yml");
+
+  const relative = () => ({ status: 0, stdout: ".git\n" });
+  assert.equal(
+    resolveComposeFile(relative, "/repo/scripts"),
+    "/repo/infra/docker-compose.yml",
+    "a non-absolute answer must fall back, not be resolved against a guess",
+  );
+
+  // Not a git checkout: fall back to this script's own tree rather than guessing.
+  const nogit = () => ({ status: 128, stdout: "", error: new Error("not a repo") });
+  assert.equal(resolveComposeFile(nogit, "/somewhere/scripts"), "/somewhere/infra/docker-compose.yml");
+});
+
+test("an opaque postgres URL is never echoed, even though its pathname looks like an identifier", () => {
+  // `postgres:SENTINEL_PASSWORD` parses, and its pathname satisfies PLAIN_IDENTIFIER -- so the
+  // safe-echo rule printed a secret. Identifier syntax proves TERMINAL safety, not that a value is
+  // not a credential. Only a hierarchical postgres URL has a pathname that means "database".
+  const pw = "SENTINEL_PASSWORD";
+  for (const url of [`postgres:${pw}`, `postgresql:${pw}`, `postgres:${pw}@h/db`]) {
+    assert.throws(
+      () => crossCheckDatabaseUrl(url, "plexco_test"),
+      (e) => {
+        assert.ok(!e.message.includes(pw), `leaked for ${url.slice(0, 24)}`);
+        assert.match(e.message, /value is not shown/);
+        return true;
+      },
+    );
+  }
+  // A hierarchical URL still names the database, which is the useful half of the rule.
+  assert.throws(
+    () => crossCheckDatabaseUrl("postgres://host/other_test", "plexco_test"),
+    /names database "other_test"/,
+  );
 });

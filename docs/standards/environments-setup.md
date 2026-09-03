@@ -289,7 +289,11 @@ closing your terminal:
   # with -H for a privileged bootstrap. Checking locality is not the same as choosing the daemon.
   unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_DIRECTORY
 
-  root="$(git rev-parse --show-toplevel)"
+  # --git-common-dir, NOT --show-toplevel: in a linked worktree the latter returns THAT worktree,
+  # whose compose file is byte-identical but produces a different service hash (the bind-mount
+  # source carries the checkout path). The shared container would be rejected, and recreating it
+  # from a temporary worktree would break the main checkout too.
+  root="$(cd "$(dirname "$(git rev-parse --git-common-dir)")" && pwd -P)"
   compose="$root/infra/docker-compose.yml"
 
   endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"
