@@ -20,6 +20,7 @@ import {
   crossCheckDatabaseUrl,
   assertPlainIdentifier,
   parseArgs,
+  safeArgEcho,
   safeEcho,
 } from "./db-reset-test.mjs";
 
@@ -108,7 +109,7 @@ test("the compose project is pinned, and the identifier is quoted", () => {
   const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock", "c0ffee123456");
   // Measured: COMPOSE_PROJECT_NAME=unrelated_target_probe moved the resolved project off `plexco`.
   assert.ok(argv.includes('DROP DATABASE IF EXISTS "plexco_test" WITH (FORCE)'));
-  assert.ok(argv.includes('CREATE DATABASE "plexco_test"'));
+  assert.ok(argv.includes('CREATE DATABASE "plexco_test" TEMPLATE template0'));
   for (const arg of argv) {
     assert.ok(!/DATABASE (IF EXISTS )?plexco_test\b/.test(arg), "no unquoted identifier may survive");
   }
@@ -193,10 +194,10 @@ test("arguments default to the canonical local target", () => {
 test("arguments are explicit, and unknown ones are refused", () => {
   assert.deepEqual(parseArgs(["--db", "other_test"]), { db: "other_test", user: "plexco" });
   assert.deepEqual(parseArgs(["--db=other_test"]), { db: "other_test", user: "plexco" });
-  assert.deepEqual(parseArgs(["--user", "someone"]), { db: "plexco_test", user: "someone" });
+  assert.throws(() => parseArgs(["--user", "someone"]), /unknown argument "--user"/);
   assert.throws(() => parseArgs(["--force"]), /unknown argument/);
   assert.throws(() => parseArgs(["--db"]), /needs a value/);
-  assert.throws(() => parseArgs(["--user", "not an identifier"]), /plain identifier/);
+  assert.throws(() => parseArgs(["--user", "root"]), /unknown argument "--user"/);
 });
 
 test("an explicit --db still passes the suffix guard", () => {
@@ -299,7 +300,6 @@ test("every identifier is validated by the same rule, database and role alike", 
   // Measured on the previous revision: a 70-byte --user was accepted, and the server would have
   // executed as the truncated 63-byte role -- a different one from the value validated and printed.
   const overlong = "r".repeat(70);
-  assert.throws(() => parseArgs(["--user", overlong]), /63|truncat/i);
   assert.throws(() => assertResettableTestDatabase("d".repeat(70) + "_test"), /63|truncat/i);
 
   // One function, so a future identifier cannot pick up the rule in one place and miss it in another.
@@ -311,7 +311,6 @@ test("every identifier is validated by the same rule, database and role alike", 
   // Boundary: exactly 63 bytes is the largest PostgreSQL keeps intact, so it must be accepted.
   const exact = "r".repeat(63);
   assert.equal(assertPlainIdentifier(exact, "role name"), exact);
-  assert.equal(parseArgs(["--user", exact]).user, exact);
 });
 
 test("safeEcho shows a plain identifier in full and withholds anything else", () => {
@@ -583,4 +582,40 @@ test("git's redirecting variables are neutralised like docker's", () => {
     assert.equal(env[k], undefined, `${k} must not reach the child`);
   }
   assert.equal(env.PATH, "/usr/bin");
+});
+
+// ---------------------------------------------------------------- last-round guards
+
+test("there is no role override: DROP needs ownership, CREATE needs CREATEDB", () => {
+  // PostgreSQL lets a database OWNER drop it, but CREATE DATABASE requires SUPERUSER or CREATEDB.
+  // A NOCREATEDB owner passed every other guard, dropped the database, and could not recreate it --
+  // destroying data with no way to restore it. The override bought nothing, so it is gone rather
+  // than guarded by a capability probe that would be one more thing to keep correct.
+  assert.deepEqual(parseArgs([]), { db: "plexco_test", user: "plexco" });
+  assert.throws(() => parseArgs(["--user", "anyone"]), /unknown argument "--user"/);
+  assert.throws(() => parseArgs(["--user=anyone"]), /unknown argument "--user"/);
+  // The pinned role is still the compose service's POSTGRES_USER and still reaches psql as -U.
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock", "cid");
+  assert.equal(argv[argv.indexOf("-U") + 1], "plexco");
+});
+
+test("the recreated database is created from template0, not template1", () => {
+  // A bare CREATE DATABASE clones template1, which on a long-lived developer cluster can carry
+  // site-local objects -- including a stale schema_migrations. That would defeat the whole command:
+  // the next run finds rows it did not write and the P17 guard fires again.
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock", "cid");
+  assert.ok(
+    argv.includes('CREATE DATABASE "plexco_test" TEMPLATE template0'),
+    "CREATE must name template0 explicitly",
+  );
+  for (const arg of argv) {
+    assert.ok(!/CREATE DATABASE "[^"]+"$/.test(String(arg)), "no bare CREATE may survive");
+  }
+});
+
+test("a flag name is echoed, a value is not", () => {
+  assert.equal(safeArgEcho("--user"), '"--user"');
+  assert.equal(safeArgEcho("--db"), '"--db"');
+  assert.match(safeArgEcho("postgres://u:pw@h/d"), /not shown/);
+  assert.match(safeArgEcho("-rf"), /not shown/);
 });

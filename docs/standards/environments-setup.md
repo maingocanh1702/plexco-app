@@ -210,7 +210,7 @@ The second is the one that actually costs time, and until this script existed it
 never built. Meanwhile the forbidden shortcut — `DELETE FROM schema_migrations WHERE name = ...` — was always one
 line and always worked. **The rule was not widened; the sanctioned path was made cheap.**
 
-`pnpm db:reset:test [--db <name>_test] [--user <role>]`
+`pnpm db:reset:test [--db <name>_test]`
 
 **The tool owns every input it acts on, and `DATABASE_URL_TEST` is not one of them.** That is a
 deliberate reversal. An earlier design derived the target from the URL, and four review rounds each found
@@ -226,8 +226,8 @@ selectable: a relative path is resolved against the working directory, so cwd wo
 | compose project | pinned with `-p plexco`; `COMPOSE_PROJECT_NAME` is stripped from the child environment |
 | compose file | an absolute path resolved from the **main worktree** (`git rev-parse --path-format=absolute --git-common-dir`, run with `GIT_*` neutralised), carried in `-f`. Not the running checkout: every writing slice runs in a linked worktree, and the service hash includes the bind-mount source, so a worktree-local path rejects the shared container. Falls back to the script's own tree only if git cannot answer |
 | container | the container **ID**, resolved from that project and file, then verified three ways before anything destructive: its `com.docker.compose.project.config_files` label is exactly this one file, its `com.docker.compose.config-hash` matches the current service definition, and it actually mounts the volume this configuration resolves to. The first three are descriptions of the container; the mount is the resource the drop would affect |
-| executing role | passed explicitly as `psql -U`; nothing below supplies a competing default |
-| database | `--db`, defaulting to `plexco_test` |
+| executing role | the compose service's `POSTGRES_USER`, passed as `psql -U`; **not overridable**. A caller-supplied role could own the database (so `DROP` succeeds) without `CREATEDB` (so `CREATE` fails), destroying it with no way to restore |
+| database | `--db`, defaulting to `plexco_test`; recreated with `TEMPLATE template0`, because a bare `CREATE DATABASE` clones `template1`, which on a long-lived local cluster may carry site-local objects including a stale `schema_migrations` |
 
 Stripping the environment is **not** sufficient by itself and the tool does not rely on it: the active docker
 context lives in `~/.docker/config.json`, not in a variable. Measured on a developer machine with both

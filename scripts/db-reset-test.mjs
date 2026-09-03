@@ -247,6 +247,16 @@ const MAINTENANCE_DB = "postgres";
  * this is a fail-closed rule rather than a guess. It exists because `--db "$DATABASE_URL_TEST"` and
  * a positional URL both printed the password verbatim; measured with a sentinel on both paths.
  */
+/**
+ * A FLAG name is safe to show; a VALUE may be a credential. The leak this rule exists for was
+ * `--db "$DATABASE_URL_TEST"` and a bare positional URL, both of which are values. Withholding
+ * flag names too made "unknown argument --user" read as "unknown argument (not shown)", which
+ * tells the reader nothing about what they typed wrong.
+ */
+export function safeArgEcho(arg) {
+  return typeof arg === "string" && /^--[a-z][a-z0-9-]*$/.test(arg) ? `"${arg}"` : safeEcho(arg);
+}
+
 export function safeEcho(value) {
   return typeof value === "string" && PLAIN_IDENTIFIER.test(value)
     ? `"${value}"`
@@ -376,15 +386,24 @@ export function crossCheckDatabaseUrl(url, targetDb) {
   );
 }
 
+/**
+ * There is no --user. The role is the pinned POSTGRES_USER of the compose service, and letting a
+ * caller override it was a way to destroy data with no way to restore it: PostgreSQL lets a
+ * database OWNER run DROP DATABASE, but CREATE DATABASE requires SUPERUSER or CREATEDB. A
+ * NOCREATEDB owner therefore passed every guard, dropped the database, and failed on recreation --
+ * leaving it gone. The override bought nothing this tool needs, so it is removed rather than
+ * guarded: a capability check before the DROP would be one more thing to keep correct, and the
+ * pinned superuser is already the right answer.
+ */
 export function parseArgs(argv) {
   const out = { db: DEFAULT_TEST_DB, user: DEFAULT_ROLE };
   for (let i = 0; i < argv.length; i += 1) {
     const eq = argv[i].indexOf("=");
     const flag = eq === -1 ? argv[i] : argv[i].slice(0, eq);
-    if (flag !== "--db" && flag !== "--user") {
+    if (flag !== "--db") {
       throw new Error(
-        `db:reset:test refuses to run: unknown argument ${safeEcho(argv[i])}. ` +
-          "Usage: db:reset:test [--db <name>_test] [--user <role>]",
+        `db:reset:test refuses to run: unknown argument ${safeArgEcho(flag)}. ` +
+          "Usage: db:reset:test [--db <name>_test]",
       );
     }
     let value;
@@ -397,10 +416,10 @@ export function parseArgs(argv) {
     if (value === undefined) {
       throw new Error(`db:reset:test refuses to run: ${flag} needs a value.`);
     }
-    if (flag === "--db") out.db = value;
-    else out.user = value;
+    out.db = value;
   }
-  // Same validator as the database name: role identifiers truncate at 63 bytes too.
+  // Still validated, though it is now a constant: the rule lives in one place for every identifier
+  // that reaches PostgreSQL, so a future caller cannot reintroduce an unchecked one.
   assertPlainIdentifier(out.user, "role name");
   return out;
 }
@@ -701,8 +720,13 @@ export function buildResetArgv(dbName, user, endpoint, containerId) {
     // this script validated and printed. Injection-safe because PLAIN_IDENTIFIER admits no quote.
     "-c",
     `DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`,
+    // TEMPLATE template0, never the implicit template1. A bare CREATE DATABASE clones template1,
+    // which on a long-lived developer cluster can carry site-local objects -- including a stale
+    // schema_migrations table. That would defeat the entire point of this command: the next run
+    // would find rows it did not write, and the P17 guard that sent the developer here would fire
+    // again. template0 is the pristine source PostgreSQL documents for exactly this.
     "-c",
-    `CREATE DATABASE "${dbName}"`,
+    `CREATE DATABASE "${dbName}" TEMPLATE template0`,
   ];
 }
 
