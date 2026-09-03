@@ -152,7 +152,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/check-kit-pack-membership.test.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-review-readiness.mjs`** — No canonical copy.
 - **`scripts/check-review-readiness.test.mjs`** — No canonical copy.
-- **`scripts/db-reset-test.mjs`** — No canonical copy. Repo-owned dev tooling: drops and recreates the DATABASE_URL_TEST database, refusing any name not ending in _test. Edit it here.
+- **`scripts/db-reset-test.mjs`** — No canonical copy. Repo-owned dev tooling: drops and recreates a LOCAL Compose test database, pinning the docker endpoint, project, container, role and name itself. DATABASE_URL_TEST is only a name cross-check, not the target -- an earlier note said it reset 'the DATABASE_URL_TEST database', which stopped being true when the tool took ownership of its own target. Edit it here.
 - **`scripts/db-reset-test.test.mjs`** — No canonical copy. Guards the guard: the refusal is the tested behaviour, because a destructive check nobody has observed refusing is only a claim.
 - **`scripts/smoke-predeploy.mjs`** — No canonical copy.
 

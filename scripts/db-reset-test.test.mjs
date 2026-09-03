@@ -8,6 +8,7 @@ import {
   childEnv,
   crossCheckDatabaseUrl,
   parseArgs,
+  safeEcho,
 } from "./db-reset-test.mjs";
 
 // This script runs DROP DATABASE, so the guards are the primary behaviour, not edge cases. Every
@@ -235,4 +236,45 @@ test("a parsed name is echoed only when it is provably an identifier", () => {
     () => crossCheckDatabaseUrl("postgres://u:p@localhost:5432/", "plexco_test"),
     /value is not shown/,
   );
+});
+
+// ---------------------------------------------------------------- threat model boundary
+
+test("the psql layer is specified by explicit flags, so no ambient value can supply one", () => {
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock");
+  const i = argv.indexOf("psql");
+  assert.ok(i !== -1);
+  // -X: an image or home dir that happens to ship a psqlrc could \connect elsewhere AFTER the
+  // docker target was verified. That is an accident, so it is inside the declared model.
+  assert.ok(argv.includes("-X"), "psqlrc must not be read");
+  assert.equal(argv[argv.indexOf("-h") + 1], "/var/run/postgresql");
+  assert.equal(argv[argv.indexOf("-p", i) + 1], "5432");
+  // Command-line connection parameters outrank PGHOST/PGPORT/PGDATABASE/PGUSER, so pinning these
+  // is what makes stripping them unnecessary. This is where pinning stops, by declared model.
+  assert.ok(argv.includes("-U") && argv.includes("-d"), "role and database stay explicit too");
+});
+
+test("no rejected value is echoed unless it is provably an identifier", () => {
+  // Measured on the previous revision: `--db "$DATABASE_URL_TEST"` and a positional URL both
+  // printed the password verbatim, through two different echo sites.
+  const pw = "SENTINEL_PASSWORD";
+  const url = `postgres://u:${pw}@localhost:5432/plexco_test`;
+  assert.throws(
+    () => parseArgs([url]),
+    (e) => {
+      assert.ok(!e.message.includes(pw), "unknown-argument path leaked");
+      return true;
+    },
+  );
+  assert.throws(
+    () => assertResettableTestDatabase(url),
+    (e) => {
+      assert.ok(!e.message.includes(pw), "name-rejection path leaked");
+      return true;
+    },
+  );
+  // The rule is fail-closed, not blanket suppression: a plain identifier is still shown, because a
+  // credential pair cannot be one.
+  assert.equal(safeEcho("plexco_test"), '"plexco_test"');
+  assert.match(safeEcho(url), /not shown/);
 });

@@ -115,7 +115,7 @@
     {
       "path": "scripts/db-reset-test.mjs",
       "overwrite_path": "none",
-      "note": "No canonical copy. Repo-owned dev tooling: drops and recreates the DATABASE_URL_TEST database, refusing any name not ending in _test. Edit it here."
+      "note": "No canonical copy. Repo-owned dev tooling: drops and recreates a LOCAL Compose test database, pinning the docker endpoint, project, container, role and name itself. DATABASE_URL_TEST is only a name cross-check, not the target -- an earlier note said it reset 'the DATABASE_URL_TEST database', which stopped being true when the tool took ownership of its own target. Edit it here."
     },
     {
       "path": "scripts/db-reset-test.test.mjs",

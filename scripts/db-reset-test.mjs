@@ -30,6 +30,33 @@
  * DATABASE_URL_TEST is demoted to a cross-check: if set, its database NAME must match the target.
  * That is a claim this tool can keep. The previous one was not.
  *
+ * THREAT MODEL -- read this before adding another guard.
+ *
+ * This tool defends against MISDIRECTION BY UNINTENDED LOCAL CONFIGURATION. Concretely: a stale or
+ * switched docker context, a COMPOSE_PROJECT_NAME left over in a shell, the wrong working directory
+ * against a relative compose path, a DATABASE_URL_TEST aimed somewhere unexpected, a mistyped --db.
+ * Those are what actually destroy a developer's database, and each has a pin above.
+ *
+ * It does NOT defend against an adversary who already controls the host, the container images, or
+ * ~/.docker. That adversary does not need this script; they have a shell. Hardening against them
+ * here buys nothing and has no natural stopping point -- the command traverses docker CLI, compose,
+ * container, psql and libpq, every layer is configurable, so an unbounded adversary yields a finding
+ * per layer forever. Three consecutive review rounds did exactly that before this paragraph existed.
+ *
+ * HOW TO USE THIS WHEN A NEW FINDING ARRIVES:
+ *   inside the model  (unintended local configuration)        -> a real defect, fix it
+ *   outside the model (needs host/image/~/.docker compromise) -> not a defect; it is a
+ *                                                                threat-model disagreement. Cite
+ *                                                                this paragraph, record the finding
+ *                                                                and the clause that excludes it,
+ *                                                                and do not harden.
+ *
+ * REVISION TRIGGER -- this model is NOT permanent. It holds BECAUSE the tool only ever targets a
+ * local compose project and refuses any endpoint that is not a unix socket. If anyone lets this
+ * script target a remote or CI database, the model is VOID and must be rewritten BEFORE that change
+ * lands: a remote target reintroduces a network adversary that none of these pins address. Do not
+ * inherit this paragraph across that change without redoing it.
+ *
  * There is exactly ONE addressing system left. `pg` is not used anywhere in this path — this script
  * imports no database driver and never has; it shells to the psql inside the pinned container, so
  * no host psql is required either.
@@ -58,6 +85,9 @@ const DEFAULT_ROLE = "plexco";
 
 /** The canonical local test database (.env.example, .github/workflows/ci.yml). */
 const DEFAULT_TEST_DB = "plexco_test";
+
+/** The unix socket directory inside the postgres image; pinned so PGHOST cannot supply one. */
+const CONTAINER_SOCKET_DIR = "/var/run/postgresql";
 
 /** Dropping a database requires being connected to a different one. */
 const MAINTENANCE_DB = "postgres";
@@ -92,6 +122,18 @@ const REDIRECTING_ENV = [
  * being resolved twice.
  */
 
+/**
+ * Echo a rejected value ONLY when it is provably a plain identifier. Anything else is summarised.
+ * A connection string cannot be an identifier -- ":" and "@" are not identifier characters -- so
+ * this is a fail-closed rule rather than a guess. It exists because `--db "$DATABASE_URL_TEST"` and
+ * a positional URL both printed the password verbatim; measured with a sentinel on both paths.
+ */
+export function safeEcho(value) {
+  return typeof value === "string" && PLAIN_IDENTIFIER.test(value)
+    ? `"${value}"`
+    : "the supplied value (not shown -- it may contain a password)";
+}
+
 /** A plain SQL identifier. No quote character can appear, which is what makes quoting below safe. */
 const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -119,7 +161,7 @@ export function assertResettableTestDatabase(name) {
   }
   if (!PLAIN_IDENTIFIER.test(name)) {
     throw new Error(
-      `db:reset:test refuses to destroy ${JSON.stringify(name)}: a database it will DROP must be ` +
+      `db:reset:test refuses to destroy ${safeEcho(name)}: a database it will DROP must be ` +
         "a plain identifier (letters, digits, underscore; not starting with a digit) and must end " +
         "in _test. This name is not, so it never reaches SQL.",
     );
@@ -207,7 +249,7 @@ export function parseArgs(argv) {
     const flag = eq === -1 ? argv[i] : argv[i].slice(0, eq);
     if (flag !== "--db" && flag !== "--user") {
       throw new Error(
-        `db:reset:test refuses to run: unknown argument ${JSON.stringify(argv[i])}. ` +
+        `db:reset:test refuses to run: unknown argument ${safeEcho(argv[i])}. ` +
           "Usage: db:reset:test [--db <name>_test] [--user <role>]",
       );
     }
@@ -261,6 +303,18 @@ export function buildResetArgv(dbName, user, endpoint) {
     "-T",
     COMPOSE_SERVICE,
     "psql",
+    // -X: do not read psqlrc. An image or home directory that happens to ship one could \\connect
+    // elsewhere after the docker target was verified -- an accident, so inside the model.
+    "-X",
+    // The psql/libpq layer is now specified entirely by explicit flags. Command-line connection
+    // parameters take precedence over PGHOST/PGPORT/PGDATABASE/PGUSER, so those cannot override
+    // these; stripping them as well would be a redundant pin of the kind this file already declines
+    // to add (see the DOCKER_CONFIG note). This is where the pinning STOPS, and the reason is the
+    // declared threat model above, not exhaustion: anything deeper needs a compromised image.
+    "-h",
+    CONTAINER_SOCKET_DIR,
+    "-p",
+    "5432",
     "-U",
     user,
     "-d",
