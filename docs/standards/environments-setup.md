@@ -278,7 +278,12 @@ closing your terminal:
   # Same protections the reset command applies to itself: confirm the docker endpoint is local, and
   # pin the project. Without -p, compose names the project after the current directory, so these
   # privileged bootstraps would run against a different stack than the one you think.
-  case "$(docker context inspect --format '{{.Endpoints.docker.Host}}')" in
+  # CAPTURE the endpoint, do not merely check it. Checking and then letting docker resolve the
+  # active context again leaves a window: a context switch between the two validates one daemon and
+  # runs the privileged bootstrap on another. Every command below is bound to the captured value
+  # with docker's global -H, which must precede the subcommand.
+  endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"
+  case "$endpoint" in
     unix://*) ;;
     *) echo "docker endpoint is not a local unix socket; refusing" >&2; exit 1 ;;
   esac
@@ -292,12 +297,12 @@ closing your terminal:
       ;;
   esac
 
-  docker compose -p plexco -f infra/docker-compose.yml exec -T postgres \
+  docker -H "$endpoint" compose -p plexco -f infra/docker-compose.yml exec -T postgres \
     psql -X -U plexco -d plexco -v ON_ERROR_STOP=1 \
     -c "SET job_definer_bootstrap.migration_role = '$mr'" \
     -f - < infra/postgres-init/01-job-definer.sql
 
-  docker compose -p plexco -f infra/docker-compose.yml exec -T postgres \
+  docker -H "$endpoint" compose -p plexco -f infra/docker-compose.yml exec -T postgres \
     psql -X -U plexco -d plexco -v ON_ERROR_STOP=1 \
     -c "SET chat_definer_bootstrap.migration_role = '$mr'" \
     -f - < infra/postgres-init/02-chat-definer.sql

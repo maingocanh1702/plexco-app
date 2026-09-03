@@ -172,24 +172,38 @@ export function childEnv(env = process.env) {
  * `_test` suffix is not invented here — .env.example and .github/workflows/ci.yml already name this
  * database plexco_test, so the guard describes a convention rather than imposing one.
  */
+/**
+ * ONE validator for EVERY identifier that reaches PostgreSQL — database and role alike.
+ *
+ * It exists as a shared function rather than a repeated check because the previous revision applied
+ * the 63-byte rule to the database name and not to --user, and a 70-byte role was accepted: the
+ * server truncates it and executes as a DIFFERENT role from the one validated and printed. That is
+ * the same aliasing class, and the reason it was missed is that the rule lived in one call site
+ * instead of one function. Anything that becomes an identifier goes through here.
+ */
+export function assertPlainIdentifier(value, what) {
+  if (typeof value !== "string" || value === "") {
+    throw new Error(`db:reset:test refuses to run: no ${what} was given.`);
+  }
+  if (!PLAIN_IDENTIFIER.test(value)) {
+    throw new Error(
+      `db:reset:test refuses to use ${safeEcho(value)} as a ${what}: it must be a plain identifier ` +
+        "(letters, digits, underscore; not starting with a digit), so it never reaches SQL.",
+    );
+  }
+  if (Buffer.byteLength(value, "utf8") > MAX_IDENTIFIER_BYTES) {
+    throw new Error(
+      `db:reset:test refuses to use ${safeEcho(value)} as a ${what}: it is ` +
+        `${Buffer.byteLength(value, "utf8")} bytes, and PostgreSQL truncates identifiers to ` +
+        `${MAX_IDENTIFIER_BYTES}. The server would act on the truncated value, which is not the one ` +
+        "checked here.",
+    );
+  }
+  return value;
+}
+
 export function assertResettableTestDatabase(name) {
-  if (typeof name !== "string" || name === "") {
-    throw new Error("db:reset:test refuses to run: no database name was given.");
-  }
-  if (!PLAIN_IDENTIFIER.test(name)) {
-    throw new Error(
-      `db:reset:test refuses to destroy ${safeEcho(name)}: a database it will DROP must be ` +
-        "a plain identifier (letters, digits, underscore; not starting with a digit) and must end " +
-        "in _test. This name is not, so it never reaches SQL.",
-    );
-  }
-  if (Buffer.byteLength(name, "utf8") > MAX_IDENTIFIER_BYTES) {
-    throw new Error(
-      `db:reset:test refuses to destroy "${name}": it is ${Buffer.byteLength(name, "utf8")} bytes, ` +
-        `and PostgreSQL truncates identifiers to ${MAX_IDENTIFIER_BYTES}. The server would act on ` +
-        "the truncated name, which is not the name checked here — and may not end in _test at all.",
-    );
-  }
+  assertPlainIdentifier(name, "database name");
   if (!name.endsWith("_test")) {
     throw new Error(
       `db:reset:test refuses to destroy "${name}": it only ever drops a database whose name ends ` +
@@ -283,9 +297,8 @@ export function parseArgs(argv) {
     if (flag === "--db") out.db = value;
     else out.user = value;
   }
-  if (!PLAIN_IDENTIFIER.test(String(out.user ?? ""))) {
-    throw new Error("db:reset:test refuses to run: --user must be a plain identifier.");
-  }
+  // Same validator as the database name: role identifiers truncate at 63 bytes too.
+  assertPlainIdentifier(out.user, "role name");
   return out;
 }
 

@@ -7,6 +7,7 @@ import {
   buildResetArgv,
   childEnv,
   crossCheckDatabaseUrl,
+  assertPlainIdentifier,
   parseArgs,
   safeEcho,
 } from "./db-reset-test.mjs";
@@ -277,4 +278,31 @@ test("no rejected value is echoed unless it is provably an identifier", () => {
   // credential pair cannot be one.
   assert.equal(safeEcho("plexco_test"), '"plexco_test"');
   assert.match(safeEcho(url), /not shown/);
+});
+
+test("every identifier is validated by the same rule, database and role alike", () => {
+  // The 63-byte truncation class applies to ROLE names exactly as it does to database names.
+  // Measured on the previous revision: a 70-byte --user was accepted, and the server would have
+  // executed as the truncated 63-byte role -- a different one from the value validated and printed.
+  const overlong = "r".repeat(70);
+  assert.throws(() => parseArgs(["--user", overlong]), /63|truncat/i);
+  assert.throws(() => assertResettableTestDatabase("d".repeat(70) + "_test"), /63|truncat/i);
+
+  // One function, so a future identifier cannot pick up the rule in one place and miss it in another.
+  assert.throws(() => assertPlainIdentifier(overlong, "role name"), /role name/);
+  assert.throws(() => assertPlainIdentifier("has space", "role name"), /plain identifier/);
+  assert.throws(() => assertPlainIdentifier("", "role name"), /no role name/);
+  assert.equal(assertPlainIdentifier("plexco", "role name"), "plexco");
+
+  // Boundary: exactly 63 bytes is the largest PostgreSQL keeps intact, so it must be accepted.
+  const exact = "r".repeat(63);
+  assert.equal(assertPlainIdentifier(exact, "role name"), exact);
+  assert.equal(parseArgs(["--user", exact]).user, exact);
+});
+
+test("an overlong identifier is not echoed back in full", () => {
+  // safeEcho still applies: a 70-byte value is a plain identifier, so showing it is safe, but the
+  // rule must come from one place rather than each call site deciding.
+  assert.match(safeEcho("r".repeat(70)), /^"r+"$/);
+  assert.match(safeEcho("postgres://u:pw@h/db"), /not shown/);
 });
