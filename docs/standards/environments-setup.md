@@ -210,33 +210,40 @@ The second is the one that actually costs time, and until this script existed it
 never built. Meanwhile the forbidden shortcut — `DELETE FROM schema_migrations WHERE name = ...` — was always one
 line and always worked. **The rule was not widened; the sanctioned path was made cheap.**
 
-The script fails closed:
+`pnpm db:reset:test [--db <name>_test] [--user <role>]`
+
+**The tool owns every input it acts on, and `DATABASE_URL_TEST` is not one of them.** That is a
+deliberate reversal. An earlier design derived the target from the URL, and four review rounds each found
+a different input that outranked it. Five things decide which database actually gets dropped — the docker
+daemon, the compose project, the container, the executing role, and the database name — and a URL supplies
+exactly one. Hardening the URL could not converge, because the other four are not in the URL at all.
+
+| input | how it is decided now |
+|---|---|
+| docker daemon | the resolved endpoint is read and **must be a local unix socket**, or the tool refuses |
+| compose project | pinned with `-p plexco`; `COMPOSE_PROJECT_NAME` is stripped from the child environment |
+| container | the `postgres` service of `infra/docker-compose.yml` |
+| executing role | passed explicitly as `psql -U`; nothing below supplies a competing default |
+| database | `--db`, defaulting to `plexco_test` |
+
+Stripping the environment is **not** sufficient by itself and the tool does not rely on it: the active docker
+context lives in `~/.docker/config.json`, not in a variable. Measured on a developer machine with both
+`DOCKER_HOST` and `DOCKER_CONTEXT` unset, the effective context was still `desktop-linux`. Pinning
+`--context default` would be equally wrong — on Docker Desktop `default` names `/var/run/docker.sock` while
+the daemon listens elsewhere. So the endpoint is **verified, never forced**.
+
+`DATABASE_URL_TEST`, if set, is a **cross-check on the database NAME only**: a different name refuses. A
+matching name does *not* mean the URL was validated — its host, port, role and scheme are never inspected,
+and the command acts on the local pinned project regardless of what the URL says.
+
+The remaining name guards are unchanged and still apply to `--db`:
 
 - it **names the database it is about to destroy**, before destroying it;
-- it **refuses any name not ending in `_test`** — so a `DATABASE_URL_TEST` pointing at the development database
-  `plexco` is refused, not dropped;
+- it **refuses any name not ending in `_test`** — `plexco`, the development database, is refused;
 - it refuses any name that is not a plain identifier, and any name longer than PostgreSQL's 63-byte
   identifier limit — beyond that the server truncates, and a truncated name may no longer end in `_test`;
 - it **quotes** the identifier, so a mixed-case name cannot be folded into a different database than the one
   it validated and printed;
-- it accepts **exactly one URL shape** and refuses everything else:
-
-  ```text
-  postgres://[user[:password]@](localhost|127.0.0.1)[:5432]/<name>_test
-  ```
-
-  This is membership in a closed grammar, not a parse-then-check. The distinction is the point: a guard that
-  *extracts* a host and compares it has to agree with whatever parser the connection layer uses, and those two
-  were measured disagreeing — `postgres://%2Fvar%2Frun%2Fpostgresql/...` reads as an unknown remote host to
-  the WHATWG URL parser and as a local unix socket to `pg-connection-string`, with no query string involved.
-  A string matching the grammar above contains no percent-encoding, no query and no fragment, so every parser
-  reads it identically. That property — not the list of hosts — is why the guard is sound.
-
-  Options PostgreSQL itself accepts (`sslmode=`, `application_name=`, `connect_timeout=`, `::1`, a unix-socket
-  host) are refused too. **That is deliberate, not an oversight to fix by widening the pattern.** Over-refusal
-  costs a developer nothing here; the tool runs `DROP DATABASE`. If you need those options, use `psql`.
-  It will not drop a same-named *local* database
-  as a stand-in for a remote one;
 - it runs `psql` **inside the compose `postgres` container**, so no host `psql` is needed.
 
 > ⚠ **Do not run it while a test suite is running.** It uses `DROP DATABASE ... WITH (FORCE)`, and
