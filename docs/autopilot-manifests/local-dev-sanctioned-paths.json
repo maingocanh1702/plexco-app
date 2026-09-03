@@ -67,7 +67,7 @@
     ],
     "e2e": []
   },
-  "_verification_note": "Verification is scaled to a diff that contains zero TypeScript and zero product code. `pnpm -r run test` (the third leg of `pnpm test`) exercises packages this diff does not touch, needs a live Postgres, and is a measured flake source on a shared cluster. kit:check and test:review-readiness are both legs of `pnpm test` and both DO cover this diff: the first proves the two new scripts/ files are classified, the second proves the new test file is actually registered and runs (85 tests before, 91 after). Full-suite verification belongs to merge time.",
+  "_verification_note": "Verification is scaled to a diff that contains zero TypeScript and zero product code. `pnpm -r run test` (the third leg of `pnpm test`) exercises packages this diff does not touch, needs a live Postgres, and is a measured flake source on a shared cluster. kit:check and test:review-readiness are both legs of `pnpm test` and both DO cover this diff: the first proves the two new scripts/ files are classified, the second proves the new test file is actually registered and RUNS rather than merely existing -- verify that property by checking the runner's total falls when scripts/db-reset-test.test.mjs is removed from the `test:review-readiness` list, not by comparing against a number written here. An earlier revision pinned 'from 85 to 91' and this lane's own next commit made it 93; the count is deliberately de-pinned rather than corrected, because correcting it only buys time until the next test is added. Full-suite verification belongs to merge time.",
   "code_review": {
     "required": true,
     "tool": "scripts/codex-review-pin.sh",
@@ -75,7 +75,7 @@
   },
   "security_review": {
     "required": true,
-    "reason": "the new script constructs a shell command and a DROP DATABASE statement from an environment variable, then destroys a database; env-var-to-shell plus a destructive DDL is a trust boundary regardless of the change being dev-only tooling",
+    "reason": "the new script builds a DROP DATABASE statement from an environment variable and executes it against a live cluster; a destructive DDL whose target comes from outside the process is a trust boundary regardless of the change being dev-only tooling. Note what this is NOT: the process is spawned via spawnSync with an argv array and no shell, so there is no shell-injection surface -- an earlier wording here said 'env-var-to-shell', which overstated the risk and would have sent a reviewer looking for the wrong defect. The real surface is SQL identifier handling, which is why the guard bounds identifier length and quotes the name. The hash-locked runtime manifest still carries the older wording and cannot be edited in place; this authored contract is the corrected copy, and the readiness gate compares the two with security_review.reason excluded for exactly this reason.",
     "tool": "scripts/codex-review-pin.sh"
   },
   "budgets": {

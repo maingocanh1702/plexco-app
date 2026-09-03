@@ -228,18 +228,33 @@ preceded by the GUC that file reads. Running only the first leaves `chat_definer
 mount does not cover you either — on a pre-existing `pgdata` volume the init directory never re-runs, so a
 mount-only bootstrap "silently no-ops on every developer's already-started stack".
 
+`MIGRATION_ROLE` is interpolated into a privileged `SET`, so it carries the **same identifier guard the
+canonical `db:bootstrap` applies** — letters, digits and underscore only. Without it a stray quote runs
+arbitrary SQL as the local superuser. The whole recipe runs in a subshell so the guard can `exit` without
+closing your terminal:
+
 ```bash
-mr="${MIGRATION_ROLE:-}"   # optional; empty is the normal local value
+(
+  set -e
+  mr="${MIGRATION_ROLE:-}"
+  case "$mr" in
+    "") ;;
+    *[!a-zA-Z0-9_]*)
+      echo "MIGRATION_ROLE must be a plain identifier: letters, digits, underscore only" >&2
+      exit 1
+      ;;
+  esac
 
-docker compose -f infra/docker-compose.yml exec -T postgres \
-  psql -U plexco -d plexco -v ON_ERROR_STOP=1 \
-  -c "SET job_definer_bootstrap.migration_role = '$mr'" \
-  -f - < infra/postgres-init/01-job-definer.sql
+  docker compose -f infra/docker-compose.yml exec -T postgres \
+    psql -U plexco -d plexco -v ON_ERROR_STOP=1 \
+    -c "SET job_definer_bootstrap.migration_role = '$mr'" \
+    -f - < infra/postgres-init/01-job-definer.sql
 
-docker compose -f infra/docker-compose.yml exec -T postgres \
-  psql -U plexco -d plexco -v ON_ERROR_STOP=1 \
-  -c "SET chat_definer_bootstrap.migration_role = '$mr'" \
-  -f - < infra/postgres-init/02-chat-definer.sql
+  docker compose -f infra/docker-compose.yml exec -T postgres \
+    psql -U plexco -d plexco -v ON_ERROR_STOP=1 \
+    -c "SET chat_definer_bootstrap.migration_role = '$mr'" \
+    -f - < infra/postgres-init/02-chat-definer.sql
+)
 ```
 
 Both files are idempotent, so re-running them on an already-bootstrapped cluster is safe.
