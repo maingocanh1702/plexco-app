@@ -5,7 +5,10 @@ import {
   assertLocalDockerEndpoint,
   assertResettableTestDatabase,
   assertContainerMatchesCompose,
+  assertContainerMountsExpectedVolume,
+  buildComposeConfigArgv,
   buildConfigHashArgv,
+  expectedDataVolume,
   buildContainerIdArgv,
   buildResetArgv,
   parseConfigHash,
@@ -430,4 +433,56 @@ test("a container built with an override file is refused, even at the same servi
     () => assertContainerMatchesCompose(LABELS("plexco", `/tmp/override.yml,${canonical}`), "HASH_CURRENT"),
     /exactly this one compose file/,
   );
+});
+
+// ---------------------------------------------------------------- the mount, which is the resource
+
+const CONFIG = (volumeName) =>
+  JSON.stringify({
+    services: { postgres: { volumes: [{ source: "pgdata", target: "/var/lib/postgresql/data" }] } },
+    volumes: { pgdata: { name: volumeName } },
+  });
+const MOUNTS = (volumeName) =>
+  JSON.stringify([
+    { Destination: "/docker-entrypoint-initdb.d", Name: "" },
+    { Destination: "/var/lib/postgresql/data", Name: volumeName },
+  ]);
+
+test("a container on a different physical volume is refused, at an identical service hash", () => {
+  // Measured on Compose v2.39: renaming volumes.pgdata.name changes the resolved physical volume
+  // and leaves the postgres service hash byte-identical. Labels, hash and file set all still match,
+  // so this is the check that catches it -- and it is the last one, because the volume is not a
+  // description of the blast radius, it IS the blast radius.
+  assert.equal(expectedDataVolume(CONFIG("plexco_pgdata")), "plexco_pgdata");
+  assert.equal(assertContainerMountsExpectedVolume(MOUNTS("plexco_pgdata"), "plexco_pgdata"), true);
+  assert.throws(
+    () => assertContainerMountsExpectedVolume(MOUNTS("alternate_pgdata"), "plexco_pgdata"),
+    /stores its data on volume/,
+  );
+});
+
+test("a missing or unreadable mount refuses rather than passing", () => {
+  assert.throws(
+    () => assertContainerMountsExpectedVolume(JSON.stringify([{ Destination: "/elsewhere" }]), "v"),
+    /no mount at/,
+  );
+  assert.throws(() => assertContainerMountsExpectedVolume("not json", "v"), /could not read/);
+  assert.throws(() => expectedDataVolume("not json"), /resolved compose config/);
+  assert.throws(
+    () => expectedDataVolume(JSON.stringify({ services: { postgres: { volumes: [] } } })),
+    /declares no volume at/,
+  );
+  assert.throws(
+    () => expectedDataVolume(CONFIG(undefined)),
+    /does not resolve a physical name/,
+  );
+});
+
+test("the compose config is resolved through the same pinned endpoint, project and file", () => {
+  const argv = buildComposeConfigArgv("unix:///tmp/d.sock");
+  assert.equal(argv[0], "-H");
+  assert.ok(argv.indexOf("-H") < argv.indexOf("compose"));
+  assert.equal(argv[argv.indexOf("-p") + 1], "plexco");
+  assert.ok(argv[argv.indexOf("-f") + 1].endsWith("/infra/docker-compose.yml"));
+  assert.ok(argv.includes("--format") && argv.includes("json"));
 });

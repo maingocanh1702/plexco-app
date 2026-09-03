@@ -224,7 +224,8 @@ selectable: a relative path is resolved against the working directory, so cwd wo
 |---|---|
 | docker daemon | the resolved endpoint is read and **must be a local unix socket**, or the tool refuses |
 | compose project | pinned with `-p plexco`; `COMPOSE_PROJECT_NAME` is stripped from the child environment |
-| container | the `postgres` service of `infra/docker-compose.yml` |
+| compose file | an absolute path derived from the script's own location, carried in `-f`; a relative path would let the working directory choose which file is read |
+| container | the container **ID**, resolved from that project and file, then verified three ways before anything destructive: its `com.docker.compose.project.config_files` label is exactly this one file, its `com.docker.compose.config-hash` matches the current service definition, and it actually mounts the volume this configuration resolves to. The first three are descriptions of the container; the mount is the resource the drop would affect |
 | executing role | passed explicitly as `psql -U`; nothing below supplies a competing default |
 | database | `--db`, defaulting to `plexco_test` |
 
@@ -311,6 +312,13 @@ closing your terminal:
   want="$(docker -H "$endpoint" compose -p plexco -f "$compose" config --hash=postgres | awk '{print $NF}')"
   got="$(docker -H "$endpoint" inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")"
   [ -n "$want" ] && [ "$want" = "$got" ] || { echo "container is from an older configuration; recreate it; refusing" >&2; exit 1; }
+
+  # The hash does not bind the VOLUME: renaming volumes.pgdata.name changes the physical volume and
+  # leaves the service hash identical. Compare the resolved volume with the container's real mount.
+  wantvol="$(docker -H "$endpoint" compose -p plexco -f "$compose" config --format json \
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const m=(j.services.postgres.volumes||[]).find(v=>v.target==="/var/lib/postgresql/data");process.stdout.write(String(j.volumes?.[m?.source]?.name??""))})')"
+  gotvol="$(docker -H "$endpoint" inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "$cid")"
+  [ -n "$wantvol" ] && [ "$wantvol" = "$gotvol" ] || { echo "container stores data on volume '$gotvol', config resolves to '$wantvol'; refusing" >&2; exit 1; }
 
   mr="${MIGRATION_ROLE:-}"
   case "$mr" in

@@ -32,8 +32,9 @@
  *   daemon      the endpoint resolved once, checked to be a local unix socket, carried in -H
  *   project     the literal `plexco`, carried in -p, never inherited from the environment
  *   compose file an absolute path derived from this file's location, carried in -f
- *   container   the container ID resolved from that project+file and verified to belong to THIS
- *               compose configuration before exec -- labels alone are not identity
+ *   container   the container ID resolved from that project+file, verified to belong to THIS
+ *               compose configuration AND to mount the volume this configuration resolves to --
+ *               labels, config hash and file set are all descriptions; the mount is the resource
  *   role        the value in -U; libpq ranks explicit parameters above PGUSER, so nothing else wins
  *   database    the value in -d and in the quoted DDL, from --db, validated as an identifier
  *
@@ -389,6 +390,89 @@ export function parseConfigHash(stdout) {
   return hash;
 }
 
+/** The path the postgres image stores its data at; the mount we care about. */
+const DATA_MOUNT = "/var/lib/postgresql/data";
+
+/** argv that asks compose to resolve the full configuration, including top-level volume names. */
+export function buildComposeConfigArgv(endpoint) {
+  return [
+    "-H",
+    endpoint,
+    "compose",
+    "-p",
+    COMPOSE_PROJECT,
+    "-f",
+    COMPOSE_FILE,
+    "config",
+    "--format",
+    "json",
+  ];
+}
+
+/**
+ * The physical volume the CURRENT configuration says holds the data. This is the end of the proxy
+ * chain: labels say which container compose would pick, the config hash says the service definition
+ * matches, the file set says no override widened it -- and none of them binds the VOLUME. Measured
+ * on Compose v2.39: renaming `volumes.pgdata.name` changes the resolved physical volume and leaves
+ * the postgres service hash byte-identical, so a container on the old volume passes every earlier
+ * check. The volume is not a proxy for the blast radius; it IS the blast radius.
+ */
+export function expectedDataVolume(configJson) {
+  let cfg;
+  try {
+    cfg = JSON.parse(configJson);
+  } catch {
+    throw new Error("db:reset:test refuses to run: could not read the resolved compose config.");
+  }
+  const mounts = cfg?.services?.[COMPOSE_SERVICE]?.volumes ?? [];
+  const dataMount = mounts.find((m) => m?.target === DATA_MOUNT);
+  if (!dataMount?.source) {
+    throw new Error(
+      `db:reset:test refuses to run: the compose config declares no volume at ${DATA_MOUNT} for ` +
+        `service "${COMPOSE_SERVICE}".`,
+    );
+  }
+  const resolved = cfg?.volumes?.[dataMount.source]?.name;
+  if (!resolved) {
+    throw new Error(
+      "db:reset:test refuses to run: the compose config does not resolve a physical name for " +
+        `volume ${safeEcho(String(dataMount.source))}.`,
+    );
+  }
+  return resolved;
+}
+
+/** argv that reads a container's actual mounts. */
+export function buildInspectMountsArgv(endpoint, containerId) {
+  return ["-H", endpoint, "inspect", "--format", "{{json .Mounts}}", containerId];
+}
+
+/** The container must actually mount the volume the current configuration resolves to. */
+export function assertContainerMountsExpectedVolume(mountsJson, expectedVolume) {
+  let mounts;
+  try {
+    mounts = JSON.parse(mountsJson);
+  } catch {
+    throw new Error("db:reset:test refuses to run: could not read the container's mounts.");
+  }
+  const dataMount = (Array.isArray(mounts) ? mounts : []).find((m) => m?.Destination === DATA_MOUNT);
+  if (!dataMount) {
+    throw new Error(
+      `db:reset:test refuses to run: the resolved container has no mount at ${DATA_MOUNT}.`,
+    );
+  }
+  if (dataMount.Name !== expectedVolume) {
+    throw new Error(
+      `db:reset:test refuses to run: the resolved container stores its data on volume ` +
+        `${safeEcho(String(dataMount.Name ?? ""))}, but this compose configuration resolves to ` +
+        `"${expectedVolume}". Dropping a database in the wrong volume is the whole failure this ` +
+        `command exists to avoid. Recreate the container with\n` +
+        `  docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}`,
+    );
+  }
+  return true;
+}
+
 /** argv that reads a container's compose labels, so identity can be checked rather than assumed. */
 export function buildInspectLabelsArgv(endpoint, containerId) {
   return ["-H", endpoint, "inspect", "--format", "{{json .Config.Labels}}", containerId];
@@ -482,6 +566,24 @@ export function resolveVerifiedContainerId(endpoint, runner = spawnSync) {
     throw new Error("db:reset:test refuses to run: could not inspect the resolved container.");
   }
   assertContainerMatchesCompose(String(inspected.stdout ?? ""), expectedHash);
+
+  // Terminal check: the actual mount, not another description of it.
+  const configured = runner("docker", buildComposeConfigArgv(endpoint), {
+    env: childEnv(),
+    encoding: "utf8",
+  });
+  if (configured?.error || configured?.status !== 0) {
+    throw new Error("db:reset:test refuses to run: could not resolve the compose configuration.");
+  }
+  const expectedVolume = expectedDataVolume(String(configured.stdout ?? ""));
+  const mounted = runner("docker", buildInspectMountsArgv(endpoint, containerId), {
+    env: childEnv(),
+    encoding: "utf8",
+  });
+  if (mounted?.error || mounted?.status !== 0) {
+    throw new Error("db:reset:test refuses to run: could not read the container's mounts.");
+  }
+  assertContainerMountsExpectedVolume(String(mounted.stdout ?? ""), expectedVolume);
   return containerId;
 }
 
