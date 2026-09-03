@@ -1316,6 +1316,25 @@ DEPENDS_ON: kit-pack-membership-manifest — this file carries KIT_VERSION: 33 a
 OUTCOME
   A retryable register failure stops leaving a terminal artifact behind.
 
+A MEASURED CASE, captured 2026-09-03 -- use it as the acceptance fixture
+  .autopilot/worktrees/test-harness-chat-definer-lock-client-leak/.autopilot/state/
+  test-harness-chat-definer-lock-client-leak/HALT-SCOPE_COLLISION.txt contains:
+
+    HALT SCOPE_COLLISION: 'test-harness-chat-definer-lock-client-leak' intersects
+    active scope/invariants; files= invariants=test-chain
+    created_at_utc: 2026-09-03T05:24:38Z
+    resolution: close this terminal lifecycle and create a fresh successor task
+                after fixing the cause
+
+  Read the two facts in that file together. `files=` is EMPTY: there was no file
+  overlap at all, only the invariant token test-chain, held by a sibling lane that
+  merged roughly forty minutes later and released it. And the resolution line
+  prescribes a TERMINAL disposition -- close the lifecycle, build a successor -- for
+  a condition that cleared itself with no intervention. The lane paid that full cost:
+  a --v2 branch, a second state directory, a second registration.
+  There was no cause to fix. The word "cause" in that line presumes a defect that a
+  transient collision does not have.
+
 THE DEFECT, and the distinction that fixes it
   autopilot-scope-gate routes every failure through one halt_gate() helper that
   writes HALT-<REASON>.txt into the state dir. Readers treat HALT-*.txt as terminal.
