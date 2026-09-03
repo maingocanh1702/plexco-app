@@ -182,20 +182,28 @@ describe("acquireChatDefinerLock", () => {
     const leaked = new pg.Client({ connectionString: url });
     leaked.on("error", () => {});
     await leaked.connect();
-    const boom = new Error("lock query exploded");
-    const spy = rejectLockQueryWith(boom);
+    // end() is unconditional from the moment the connection exists (codex round-01 [P2]). Without
+    // this finally, a throw from the rejection assertion or the count below would strand a
+    // connected client for the rest of the run -- this file demonstrating, live, the exact defect
+    // it was written to prove. The reproduction must be the only thing here that leaks, and only
+    // while it is being measured.
     try {
-      await expect(
-        leaked.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]),
-      ).rejects.toBe(boom);
+      const boom = new Error("lock query exploded");
+      const spy = rejectLockQueryWith(boom);
+      try {
+        await expect(
+          leaked.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]),
+        ).rejects.toBe(boom);
+      } finally {
+        spy.mockRestore();
+      }
+
+      // The backend is STILL there — this is the defect, reproduced.
+      expect(await countBackends(appName)).toBe(1);
     } finally {
-      spy.mockRestore();
+      await leaked.end();
     }
 
-    // The backend is STILL there — this is the defect, reproduced.
-    expect(await countBackends(appName)).toBe(1);
-
-    await leaked.end();
     await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
   });
 
