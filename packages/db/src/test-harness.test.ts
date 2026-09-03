@@ -63,13 +63,37 @@ async function countBackends(appName: string): Promise<number> {
   return r.rows[0]!.n;
 }
 
-async function advisoryLockHolders(): Promise<number> {
+/**
+ * Advisory locks on the chat_definer key held BY ONE tagged connection.
+ *
+ * Deliberately not a cluster-wide count (codex round-02 [P1]). The key is cluster-global and
+ * legitimately contended: migrate.test.ts and rls-invariants.test.ts take it at 39 sites between
+ * them, and migrate.test.ts:366 holds it across a whole bootstrap+migrate+restore. With
+ * fileParallelism:true a peer acquiring or releasing between two cluster-wide samples moves the
+ * number for reasons that have nothing to do with this slice, so a before/after comparison would
+ * fail on correct cleanup -- a flake that reads as a real leak. Joining pg_locks to
+ * pg_stat_activity on pid and filtering by the per-acquisition application_name makes the
+ * measurement immune to every other holder.
+ */
+async function advisoryLocksHeldBy(appName: string): Promise<number> {
   const r = await observer.query<{ n: number }>(
-    "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = $1 AND granted",
-    [CHAT_DEFINER_LOCK_KEY],
+    `SELECT count(*)::int AS n
+       FROM pg_locks l
+       JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE l.locktype = 'advisory' AND l.objid = $1 AND l.granted AND a.application_name = $2`,
+    [CHAT_DEFINER_LOCK_KEY, appName],
   );
   return r.rows[0]!.n;
 }
+
+/**
+ * CDL-5 and CDL-6 take the REAL cluster-global lock, so they queue behind any peer file already
+ * holding it -- by design, that is what the lock is for. The 30s default testTimeout
+ * (vitest.config.ts) measures only this test's own work and does not budget for that wait, so a
+ * peer mid-migration could time them out despite everything being correct. This is the wait, not
+ * the work; hookTimeout's own 120s is the repo's existing sense of "long cluster-global operation".
+ */
+const REAL_LOCK_TIMEOUT_MS = 120_000;
 
 /**
  * Mirrors migrate.test.ts's mockQuerySiteFailure: intercept ONE statement on the shared prototype
@@ -160,9 +184,8 @@ describe("acquireChatDefinerLock", () => {
   // passes, because a mocked-away lock query never took a lock in the first place. It is here to pin
   // that the failure path strands nothing cluster-global, which is the consequence that would
   // outlive the process. CDL-1 and CDL-2 are the two that actually fail without the fix.
-  it("CDL-3: a lock-query rejection holds no advisory lock afterwards", async () => {
-    const before = await advisoryLockHolders();
-    const { url } = taggedUrl();
+  it("CDL-3: a lock-query rejection strands no advisory lock on its own connection", async () => {
+    const { url, appName } = taggedUrl();
     const spy = rejectLockQueryWith(new Error("lock query exploded"));
 
     try {
@@ -171,7 +194,10 @@ describe("acquireChatDefinerLock", () => {
       spy.mockRestore();
     }
 
-    await expect.poll(() => advisoryLockHolders(), { timeout: 5_000 }).toBe(before);
+    // Absolute zero for THIS connection, not a delta against a cluster-wide sample -- see
+    // advisoryLocksHeldBy. Concurrent peers may hold the same key throughout; that is correct and
+    // must not register here.
+    await expect.poll(() => advisoryLocksHeldBy(appName), { timeout: 5_000 }).toBe(0);
   });
 
   it("CDL-4: the fix is not vacuous — without it the failed acquisition WOULD leak a backend", async () => {
@@ -207,44 +233,61 @@ describe("acquireChatDefinerLock", () => {
     await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
   });
 
-  it("CDL-5: the happy path still acquires a real lock, and release() frees it", async () => {
-    const { url, appName } = taggedUrl();
-    const { release } = await acquireChatDefinerLock(url);
+  it(
+    "CDL-5: the happy path still acquires a real lock, and release() frees it",
+    async () => {
+      const { url, appName } = taggedUrl();
+      // May block here behind a peer file holding the same cluster-global key -- see
+      // REAL_LOCK_TIMEOUT_MS.
+      const { release } = await acquireChatDefinerLock(url);
 
-    try {
-      expect(await countBackends(appName)).toBe(1);
+      try {
+        expect(await countBackends(appName)).toBe(1);
 
-      // The lock is genuinely held: a non-blocking attempt from another session must fail.
-      // pg_try_advisory_lock rather than pg_advisory_lock — the blocking form from a second
-      // connection is the deadlock this file's own comments warn about.
-      const tried = await observer.query<{ got: boolean }>(
-        "SELECT pg_try_advisory_lock($1) AS got",
-        [CHAT_DEFINER_LOCK_KEY],
-      );
-      if (tried.rows[0]!.got) {
-        // Defensive: if it unexpectedly succeeded, give it back before failing, or this session
-        // holds the cluster-global lock for the rest of the run.
-        await observer.query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY]);
+        // The lock is genuinely held BY THIS connection. Asserted per-connection rather than by a
+        // cluster-wide probe, for the same reason as CDL-3: a peer holding the same key is normal.
+        expect(await advisoryLocksHeldBy(appName)).toBe(1);
+
+        // And it genuinely excludes others: a non-blocking attempt from another session must fail.
+        // pg_try_advisory_lock rather than pg_advisory_lock — the blocking form from a second
+        // connection is the deadlock this file's own comments warn about.
+        const tried = await observer.query<{ got: boolean }>(
+          "SELECT pg_try_advisory_lock($1) AS got",
+          [CHAT_DEFINER_LOCK_KEY],
+        );
+        if (tried.rows[0]!.got) {
+          // Defensive: if it unexpectedly succeeded, give it back before failing, or this session
+          // holds the cluster-global lock for the rest of the run.
+          await observer.query("SELECT pg_advisory_unlock($1)", [CHAT_DEFINER_LOCK_KEY]);
+        }
+        expect(tried.rows[0]!.got).toBe(false);
+      } finally {
+        await release();
       }
-      expect(tried.rows[0]!.got).toBe(false);
-    } finally {
+
+      await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
+      expect(await advisoryLocksHeldBy(appName)).toBe(0);
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
+
+  it(
+    "CDL-6: a second release() is still a no-op",
+    async () => {
+      const { url, appName } = taggedUrl();
+      // May block here behind a peer, exactly as CDL-5 may.
+      const { release } = await acquireChatDefinerLock(url);
+
+      const { ended } = spyOnEndedClients();
       await release();
-    }
+      await expect(release()).resolves.toBeUndefined();
+      await expect(release()).resolves.toBeUndefined();
 
-    await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
-  });
-
-  it("CDL-6: a second release() is still a no-op", async () => {
-    const { url, appName } = taggedUrl();
-    const { release } = await acquireChatDefinerLock(url);
-
-    const { ended } = spyOnEndedClients();
-    await release();
-    await expect(release()).resolves.toBeUndefined();
-    await expect(release()).resolves.toBeUndefined();
-
-    // Idempotent by the `released` flag, so end() runs once no matter how often release() is called.
-    expect(ended.size).toBe(1);
-    await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
-  });
+      // Idempotent by the `released` flag, so end() runs once however often release() is called.
+      expect(ended.size).toBe(1);
+      await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
+      expect(await advisoryLocksHeldBy(appName)).toBe(0);
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
 });
