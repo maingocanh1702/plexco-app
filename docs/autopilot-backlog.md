@@ -1320,6 +1320,20 @@ notes: |
   `--audit` cũng không bắt: nó chỉ kêu khi một task khai `close_by: hand` mà `scope` **có** file mã nguồn.
   Cả ba đều docs-only, nên audit sạch. Hai lớp kiểm, không lớp nào nhìn vào thứ thực sự sai.
 
+  **Bổ sung 2026-09-03 — mặt thứ hai của cùng vấn đề: cảnh báo bắn mãi thì thành hình nền.**
+  Reconcile in **bốn** dòng `× close_by REFUSED` ở *mọi* lần chạy. `git log -S` truy ra `3b92d42`,
+  **06/08** — chúng đã in suốt một tháng và không dòng nào được xử lý. Một refusal bắn mỗi lần rồi bị
+  cuộn qua đã thôi là cảnh báo; nó thành nhiễu nền, và người đọc học cách bỏ qua đúng cái kênh mà row
+  này tồn tại để bảo vệ. Nên deliverable ở đây không chỉ là "làm entry khai tay già đi", mà còn là
+  **làm cho một refusal chưa xử lý không thể im lặng lặp lại vô hạn** — đếm tuổi, leo thang, hoặc fail.
+
+  Bốn dòng đó chia làm hai loại, và chỉ một loại là lỗi của người khai:
+  - `gates-that-fire-correctly-and-cannot-say-why` — **lạm dụng thật, tự khai**: `close_by` ghi rõ mục
+    đích là để reconcile *không báo WEAK*. Đúng thứ refusal sinh ra để bắt; công cụ bắt đúng. Cần
+    `merged_probe` thật hoặc gỡ `close_by` — thuộc **L4a**, lane sở hữu chính row đó.
+  - ba row còn lại — thông báo không khớp dữ liệu, xem
+    `reconcile-refusal-reason-does-not-match-row-data`.
+
   **Đề xuất (chưa chốt):** không cần probe — chỉ cần **tuổi**. Ghi ngày một entry vào `ready`; nếu một
   entry `close_by: hand` ở `ready` quá N ngày, in `⚠ hand-closed, unclosed for N days` và tính là finding.
   Chuyển "không kiểm được bằng máy" thành "không kiểm bằng máy được, nên phải nhắc", thay vì thành "miễn
@@ -4102,7 +4116,8 @@ notes: |
 
 ## task: kit-pack-membership-generated
 title: Kit pack membership — JSON authority, generated Markdown, wired audit
-status: ready
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-09-03). Was: ready
 risk: P2
 change_class: infra-tooling
 depends_on: []
@@ -4259,3 +4274,60 @@ notes: |
   do so once produced a BETTER design — the regenerate-and-compare moved from a shell pipeline
   spelled out in the manifest into the checker itself (`--audit`), where a self-contained audit
   belongs. Fix the guard, but do not assume every workaround it forces is a loss.
+
+---
+
+## task: kit-pack-membership-unsynced-candidates-third-state
+title: `unsynced_candidates` là trạng thái thứ ba, hiện chỉ biểu diễn được bằng prose
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: [kit-pack-membership-generated]
+invariants: [kit-integrity]
+scope: [docs/standards/kit-pack-membership.json, scripts/check-kit-pack-membership.mjs, scripts/check-kit-pack-membership.test.mjs]
+manifest: docs/autopilot-manifests/kit-pack-membership-unsynced-candidates-third-state.json
+merged_probe: scripts/check-kit-pack-membership.mjs :: unsynced_candidate
+notes: |
+  `unsynced_candidates` là **trạng thái thứ ba** và hiện chỉ biểu diễn được bằng prose.
+  `ap-merge.sh` mang `overwrite_path: "none"` + note — ai lọc `overwrite_path === "none"` sẽ đọc nhầm
+  thành repo-owned thuần, mất sắc thái *"sync in `UNSYNCED_DRIFT`, không halt/sync/repair"*. Mở field
+  mới là **quyết định schema có chủ ý** theo `_derivation_rule`; lane sau quyết, không phải lane này.
+
+  Ghi lại lúc `kit-pack-membership-generated` đã READY, nên **cố ý không đưa vào lane đó**: bài học của
+  cả họ kit-pack là đừng giao thêm một mặt cho lane đang xong.
+
+---
+
+## task: reconcile-refusal-reason-does-not-match-row-data
+title: `× close_by REFUSED` nêu lý do không khớp dữ liệu row — scope rỗng bị báo là chứa file source
+status: idea
+risk: P2
+change_class: tooling
+depends_on: []
+invariants: []
+scope: [scripts/autopilot-backlog-reconcile]
+manifest: docs/autopilot-manifests/reconcile-refusal-reason-does-not-match-row-data.json
+merged_probe: (chưa author — lane sẽ pin symbol khi đo xong nguyên nhân)
+notes: |
+  **Quan sát đo được, nguyên nhân CHƯA đo. Không đoán trong row này.**
+
+  Ba row bị `× close_by REFUSED` với lý do *"scope contains a file that can carry a symbol"*, nhưng cả
+  ba có `scope: []` **rỗng** (đo 2026-09-03 trên `main@50b206b`):
+
+  | task | scope | close_by |
+  |---|---|---|
+  | `email-password-bundle-order-4` | `[]` | `hand · NOT_CODE_READY packet … @ 519fb9f` |
+  | `session-publish-public-projector` | `[]` | cùng dòng packet |
+  | `session-commands-update-close-cancel` | `[]` | cùng dòng packet |
+
+  Ngược lại, row **được chấp nhận** `docs-impact-policy-contract` lại có scope là một file `.json` thật.
+  Và `reconcile-hand-closed-entries-never-age-out` ghi rằng `--audit` *chỉ* kêu khi scope **có** file mã
+  nguồn — nên hành vi quan sát được đi ngược đúng mô tả đã ghi của chính công cụ.
+
+  **Chưa kết luận nguyên nhân.** Có vài giả thuyết hợp lý (resolve scope từ packet/contract thay vì từ
+  row; xử lý sai `[]`), nhưng **giải thích một sai lệch không phải là đo nó** — luật vừa rút ra 03/09
+  sau khi một phép suy diễn hợp lý về `prunable` hoá ra sai. Lane nào chạm
+  `scripts/autopilot-backlog-reconcile` thì **đo**, rồi mới sửa.
+
+  Liên quan: bốn dòng REFUSED này in ra ở mọi lần reconcile kể từ `3b92d42` (06/08) — xem mặt
+  "cảnh báo thành hình nền" trong `reconcile-hand-closed-entries-never-age-out`.
