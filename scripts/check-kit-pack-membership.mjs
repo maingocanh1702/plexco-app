@@ -32,6 +32,21 @@ export const SCRIPTS_DIR = "scripts";
 
 class CheckError extends Error {}
 
+/**
+ * Measured, not asserted: does the file carry a `# KIT_VERSION:` header in its opening lines?
+ * A missing file yields false rather than throwing — coverage reports absent files separately, and
+ * one defect should produce one message.
+ */
+export function hasKitVersionHeader(repoRoot, relPath) {
+  const abs = path.join(repoRoot, relPath);
+  if (!existsSync(abs)) return false;
+  try {
+    return /^#\s*KIT_VERSION:/m.test(readFileSync(abs, "utf8").split("\n", 6).join("\n"));
+  } catch {
+    return false;
+  }
+}
+
 export function loadAuthority(repoRoot) {
   const abs = path.join(repoRoot, JSON_PATH);
   if (!existsSync(abs)) throw new CheckError(`${JSON_PATH} not found; it is the authority.`);
@@ -63,34 +78,61 @@ export function loadAuthority(repoRoot) {
     }),
   );
 
+  // CLOSED SCHEMA. A record may store only what cannot be derived or measured: its path, its
+  // overwrite_path (kept because the hash-locked manifest asserts the key exists, and validated
+  // below rather than believed), and free prose. Everything else is computed here.
+  //
+  // Two review rounds landed on this same region, each finding one more stored field that could hold
+  // a falsehood — `owner`, then `kit_version_header` and `overwrite_latency`. Patching them one at a
+  // time invites a third round, so the set is closed instead: unknown keys are REJECTED, which means
+  // a future field cannot be added and trusted without a deliberate schema decision. Unlike a
+  // Markdown-parsing surface, a record's fields are a finite, enumerable set, so closing it is
+  // actually possible.
+  const ALLOWED_KEYS = new Set(["path", "overwrite_path", "note"]);
+  const DERIVED_KEYS = ["owner", "evidence", "kit_version_header", "overwrite_latency"];
+
   const seen = new Set();
   for (const f of files) {
     if (!f || typeof f.path !== "string" || !f.path) throw new CheckError(`a record has no path`);
     if (seen.has(f.path)) throw new CheckError(`${f.path} appears twice; one file, one record`);
     seen.add(f.path);
-    if (typeof f.kit_version_header !== "boolean") {
-      throw new CheckError(`${f.path}: kit_version_header must be a boolean (presence, never a value)`);
+
+    for (const key of Object.keys(f)) {
+      if (ALLOWED_KEYS.has(key)) continue;
+      const why = DERIVED_KEYS.includes(key)
+        ? "it is DERIVED or MEASURED; storing it lets the authority contradict the repository"
+        : "unknown key; add it to ALLOWED_KEYS deliberately, with a rule for validating it";
+      throw new CheckError(`${f.path}: "${key}" must not be stored — ${why}.`);
     }
-    if ("owner" in f || "evidence" in f) {
+
+    const isPackTarget = destinations.has(f.path);
+    const inScripts = f.path.startsWith(`${SCRIPTS_DIR}/`);
+    if (!inScripts && !isPackTarget) {
       throw new CheckError(
-        `${f.path}: owner/evidence are DERIVED from pack_pairs_verbatim and must not be stored. ` +
-          "Storing them lets the authority contradict itself.",
+        `${f.path}: a record outside ${SCRIPTS_DIR}/ must be a pack destination. This one is not, and ` +
+          "would render under the pack-targets table as if a sync overwrote it.",
       );
     }
 
-    f.owner = destinations.has(f.path) ? "kit-owned" : "repo-owned";
-    f.evidence = destinations.has(f.path) ? "present in `pack_pairs`" : "absent from `pack_pairs`";
+    f.owner = isPackTarget ? "kit-owned" : "repo-owned";
+    f.evidence = isPackTarget ? "present in `pack_pairs`" : "absent from `pack_pairs`";
 
-    // overwrite_path/latency stay stored so the record is readable on its own, but they are checked
-    // against what ownership implies rather than believed.
-    const expected = f.owner === "kit-owned" ? "kit-sync" : "none";
+    const expected = isPackTarget ? "kit-sync" : "none";
     if (f.overwrite_path !== expected) {
       throw new CheckError(
         `${f.path}: overwrite_path is ${JSON.stringify(f.overwrite_path)} but membership implies ` +
           `${JSON.stringify(expected)}. Fix the record, or fix pack_pairs_verbatim if canonical changed.`,
       );
     }
-    if (!f.overwrite_latency) throw new CheckError(`${f.path}: overwrite_latency is required`);
+
+    // Latency comes from the mechanism table, so the two cannot disagree.
+    const mech = data.overwrite_mechanisms?.[f.overwrite_path];
+    f.overwrite_latency = isPackTarget ? (mech?.latency ?? "unknown") : "not overwritten";
+
+    // Header presence is MEASURED against the live file, never asserted. The point of this document
+    // is that the header does not determine membership; a hand-written flag claiming otherwise would
+    // undercut the very example it is there to illustrate.
+    f.kit_version_header = hasKitVersionHeader(repoRoot, f.path);
   }
 
   // Every synchronised destination must have a record, or the page silently omits a file a sync

@@ -35,153 +35,107 @@
   "files": [
     {
       "path": "scripts/ap-finish.sh",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "scripts/ap-housekeep.sh",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "scripts/ap-merge.sh",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69."
     },
     {
       "path": "scripts/autopilot-backlog-reconcile",
-      "kit_version_header": true,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "scripts/autopilot-ephemeral-review-worktree.mjs",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "scripts/autopilot-ephemeral-review-worktree.test.mjs",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy."
     },
     {
       "path": "scripts/autopilot-onboard-fixtures.sh",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy."
     },
     {
       "path": "scripts/autopilot-onboard.sh",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy."
     },
     {
       "path": "scripts/autopilot-readiness-evidence-keys.mjs",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "scripts/autopilot-review-readiness.mjs",
-      "kit_version_header": false,
       "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run",
       "note": "THE HEADER COUNTER-EXAMPLE. No KIT_VERSION header, and it IS a pack member. Also the most-patched kit file in this repo's history. Trusting the header would mark it safe to edit and a sync would erase the edit."
     },
     {
       "path": "scripts/autopilot-root-lock",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy."
     },
     {
       "path": "scripts/autopilot-scope-gate",
-      "kit_version_header": true,
       "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run",
       "note": "The ONLY file the dormant session-hook would copy if it were ever wired. Measured 2026-09-03: identical to canonical, same KIT_VERSION on both sides. Read that as the result of the MANUAL sync 8e737fe (2026-08-27, 'sync the mechanism pack to KIT_VERSION 33') — NOT as evidence that no drift pressure exists. There is no safety net here today, only the discipline of whoever runs the sync."
     },
     {
       "path": "scripts/check-kit-pack-membership.mjs",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy (added by this lane)."
     },
     {
       "path": "scripts/check-kit-pack-membership.test.mjs",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy (added by this lane)."
     },
     {
       "path": "scripts/check-review-readiness.mjs",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy."
     },
     {
       "path": "scripts/check-review-readiness.test.mjs",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy."
     },
     {
       "path": "scripts/codex-review-pin.sh",
-      "kit_version_header": true,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "scripts/smoke-predeploy.mjs",
-      "kit_version_header": false,
       "overwrite_path": "none",
-      "overwrite_latency": "not overwritten",
       "note": "No canonical copy."
     },
     {
       "path": "docs/autopilot-parallel-scope-gate.md",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "docs/autopilot-manifests/_TEMPLATE.json",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "docs/autopilot-templates/autopilot-prompt-GENERIC.md",
-      "kit_version_header": false,
-      "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run"
+      "overwrite_path": "kit-sync"
     },
     {
       "path": "docs/autopilot-templates/level3-workflow.md",
-      "kit_version_header": false,
       "overwrite_path": "kit-sync",
-      "overwrite_latency": "next successful autopilot-update.sh run",
       "note": "The ONE target measured as diverged: 205 consumer-only lines, 2 canonical-only. It carries section 6.1 autonomous_to_ready, which canonical does not define. That is a decision->code gap inside the consumer (DD-107 ratified the mode; no code implements it), NOT consumer drift — framing it as drift aims the fix at the wrong target."
     }
   ],
@@ -200,5 +154,5 @@
     "../autopilot-prompt-GENERIC.md:docs/autopilot-templates/autopilot-prompt-GENERIC.md:100644",
     "../level3-workflow.md:docs/autopilot-templates/level3-workflow.md:100644"
   ],
-  "_derivation_rule": "`owner` and `evidence` are DERIVED from pack_pairs_verbatim at load time and MUST NOT appear in a record. Two representations of one fact drift silently: an earlier revision stored `owner`, a probe flipped scripts/autopilot-scope-gate to repo-owned while it remained in pack_pairs, and the audit passed while the generated page said the file was safe to edit. overwrite_path is stored for readability but is validated against what membership implies."
+  "_derivation_rule": "A record stores ONLY: path, overwrite_path (kept because the hash-locked manifest asserts the key exists; it is validated against membership, never believed) and note. owner, evidence, kit_version_header and overwrite_latency are DERIVED or MEASURED at load time, and storing any of them is rejected. Unknown keys are rejected too, so a future field cannot be added and trusted without a deliberate schema decision. Two review rounds each found one more stored field able to hold a falsehood; closing the set beats patching it field by field."
 }

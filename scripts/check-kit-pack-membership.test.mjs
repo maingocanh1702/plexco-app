@@ -18,16 +18,10 @@ import {
 const CHECKER = fileURLToPath(new URL("./check-kit-pack-membership.mjs", import.meta.url));
 const REPO_ROOT = path.resolve(path.dirname(CHECKER), "..");
 
-// owner/evidence are DERIVED from pack_pairs_verbatim and must never be stored.
-const rec = (over = {}) => ({
-  path: "scripts/a.sh",
-  kit_version_header: false,
-  overwrite_path: "kit-sync",
-  overwrite_latency: "next successful autopilot-update.sh run",
-  ...over,
-});
-const repoRec = (over = {}) =>
-  rec({ overwrite_path: "none", overwrite_latency: "not overwritten", ...over });
+// CLOSED SCHEMA: a record stores only path, overwrite_path and note. owner, evidence,
+// kit_version_header and overwrite_latency are derived or measured; storing them is rejected.
+const rec = (over = {}) => ({ path: "scripts/a.sh", overwrite_path: "kit-sync", ...over });
+const repoRec = (over = {}) => rec({ overwrite_path: "none", ...over });
 
 /** Run an in-memory authority object through the real loader, so tests exercise validation. */
 function loadFromObject(obj) {
@@ -73,14 +67,19 @@ test("invalid records are rejected: bad owner, missing overwrite_path, duplicate
   mkdirSync(path.join(dir, "docs/standards"), { recursive: true });
   const write = (files) => writeFileSync(path.join(dir, JSON_PATH), JSON.stringify(authority(files)));
 
-  write([rec({ owner: "kit-owned" })]);
-  assert.throws(() => loadAuthority(dir), /must not be stored/);
+  for (const derived of ["owner", "evidence", "kit_version_header", "overwrite_latency"]) {
+    write([rec({ [derived]: "anything" })]);
+    assert.throws(() => loadAuthority(dir), /must not be stored/, `storing ${derived}`);
+  }
+
+  write([rec({ surprise_field: 1 })]);
+  assert.throws(() => loadAuthority(dir), /unknown key/);
 
   write([rec({ overwrite_path: "none" })]);
   assert.throws(() => loadAuthority(dir), /membership implies/);
 
-  write([rec({ kit_version_header: "yes" })]);
-  assert.throws(() => loadAuthority(dir), /must be a boolean/);
+  write([rec(), repoRec({ path: "docs/somewhere/else.md" })]);
+  assert.throws(() => loadAuthority(dir), /must be a pack destination/);
 
   write([rec(), rec()]);
   assert.throws(() => loadAuthority(dir), /appears twice/);
@@ -143,11 +142,21 @@ test("a missing pack_pairs_verbatim fails closed", () => {
 
 test("the generator emits header PRESENCE and never a version number", () => {
   // The trap a predecessor shipped: hand-copied 8/33/3 rotted while CI stayed green. A generator
-  // that snapshots values just buries them in output instead.
-  const out = generate(loadFromObject(authority([rec({ kit_version_header: true })])));
+  // that snapshots values just buries them in output instead. The file below really does carry
+  // `# KIT_VERSION: 7`, so the number is available to leak — and must not.
+  const dir = mkdtempSync(path.join(tmpdir(), "kpm-gen-"));
+  mkdirSync(path.join(dir, "docs/standards"), { recursive: true });
+  mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  writeFileSync(path.join(dir, "scripts/a.sh"), "#!/bin/sh\n# KIT_VERSION: 7\n");
+  writeFileSync(path.join(dir, JSON_PATH), JSON.stringify(authority([rec()])));
+  const data = loadAuthority(dir);
+  assert.equal(data.files[0].kit_version_header, true, "measured from the file");
+
+  const out = generate(data);
   assert.match(out, /present — read it, do not copy it/);
-  assert.doesNotMatch(out, /KIT_VERSION:\s*\d+/, "no pinned version may appear in generated output");
+  assert.doesNotMatch(out, /KIT_VERSION:\s*7/, "the value must never reach generated output");
   assert.match(out, /awk '\/\^# KIT_VERSION:\/\{print \$3; exit\}'/, "it must print the measurement command");
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("a pipe in a field cannot break out of the table", () => {
@@ -168,12 +177,37 @@ test("every file under scripts/ is classified exactly once", () => {
   assert.deepEqual(auditCoverage(data.files, listScriptFiles(REPO_ROOT)), { missing: [], stale: [] });
 });
 
-test("the header counter-example is recorded as kit-owned with no header", () => {
+test("the header counter-example proves itself from the live files", () => {
+  // Both halves MEASURED, not asserted: the page's central claim is that the header does not
+  // determine membership, so a hand-written flag would undercut the example it illustrates.
   const byPath = new Map(loadAuthority(REPO_ROOT).files.map((f) => [f.path, f]));
   const ctr = byPath.get("scripts/autopilot-review-readiness.mjs");
-  assert.equal(ctr.owner, "kit-owned");
+  assert.equal(ctr.owner, "kit-owned", "in pack_pairs");
   assert.equal(ctr.kit_version_header, false, "no header, yet a pack member — that is the whole point");
+  const gate = byPath.get("scripts/autopilot-scope-gate");
+  assert.equal(gate.kit_version_header, true, "has one, also a member — presence proves nothing either way");
   assert.equal(byPath.get("scripts/check-kit-pack-membership.mjs").owner, "repo-owned");
+});
+
+test("a header flag cannot be faked: it is read from the file", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "kpm-hdr-"));
+  mkdirSync(path.join(dir, "docs/standards"), { recursive: true });
+  mkdirSync(path.join(dir, "scripts"), { recursive: true });
+  writeFileSync(path.join(dir, "scripts/a.sh"), "#!/bin/sh\n# KIT_VERSION: 7\n");
+  writeFileSync(path.join(dir, JSON_PATH), JSON.stringify(authority([rec()])));
+  assert.equal(loadAuthority(dir).files[0].kit_version_header, true);
+
+  writeFileSync(path.join(dir, "scripts/a.sh"), "#!/bin/sh\n");
+  assert.equal(loadAuthority(dir).files[0].kit_version_header, false, "re-measured, not remembered");
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("latency is derived from the mechanism table, so the two cannot disagree", () => {
+  const a = authority([rec(), repoRec({ path: "scripts/b.sh" })]);
+  a.overwrite_mechanisms["kit-sync"].latency = "whenever someone runs it";
+  const d = loadFromObject(a);
+  assert.equal(d.files[0].overwrite_latency, "whenever someone runs it");
+  assert.equal(d.files[1].overwrite_latency, "not overwritten");
 });
 
 test("every record carries an overwrite path and latency", () => {
