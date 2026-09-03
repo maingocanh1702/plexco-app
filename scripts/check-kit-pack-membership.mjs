@@ -45,15 +45,61 @@ export function loadAuthority(repoRoot) {
   if (!Array.isArray(files) || files.length === 0) {
     throw new CheckError(`${JSON_PATH} has no "files" array; refusing to treat that as an empty kit.`);
   }
+  if (!Array.isArray(data.pack_pairs_verbatim) || data.pack_pairs_verbatim.length === 0) {
+    throw new CheckError(`${JSON_PATH} has no "pack_pairs_verbatim"; that list IS the membership authority.`);
+  }
+
+  // OWNERSHIP IS DERIVED, NEVER STORED. `pack_pairs_verbatim` is the transcription of canonical, so
+  // it is the single fact; `owner` and `evidence` are functions of it. An earlier revision stored
+  // `owner` alongside it and nothing cross-checked the two — a probe flipped scripts/autopilot-scope-gate
+  // to repo-owned while it stayed in pack_pairs, and the audit passed while the generated page told
+  // contributors a synchronised file was safe to edit. Two representations of one fact drift; the
+  // fix is to have one. (Same move as generating the Markdown instead of comparing it.)
+  const destinations = new Set(
+    data.pack_pairs_verbatim.map((line) => {
+      const parts = String(line).split(":");
+      if (parts.length < 2 || !parts[1]) throw new CheckError(`malformed pack_pairs entry: ${line}`);
+      return parts[1];
+    }),
+  );
+
   const seen = new Set();
   for (const f of files) {
     if (!f || typeof f.path !== "string" || !f.path) throw new CheckError(`a record has no path`);
-    if (!["kit-owned", "repo-owned"].includes(f.owner)) {
-      throw new CheckError(`${f.path}: owner must be kit-owned or repo-owned, got ${JSON.stringify(f.owner)}`);
-    }
-    if (!f.overwrite_path) throw new CheckError(`${f.path}: overwrite_path is required`);
     if (seen.has(f.path)) throw new CheckError(`${f.path} appears twice; one file, one record`);
     seen.add(f.path);
+    if (typeof f.kit_version_header !== "boolean") {
+      throw new CheckError(`${f.path}: kit_version_header must be a boolean (presence, never a value)`);
+    }
+    if ("owner" in f || "evidence" in f) {
+      throw new CheckError(
+        `${f.path}: owner/evidence are DERIVED from pack_pairs_verbatim and must not be stored. ` +
+          "Storing them lets the authority contradict itself.",
+      );
+    }
+
+    f.owner = destinations.has(f.path) ? "kit-owned" : "repo-owned";
+    f.evidence = destinations.has(f.path) ? "present in `pack_pairs`" : "absent from `pack_pairs`";
+
+    // overwrite_path/latency stay stored so the record is readable on its own, but they are checked
+    // against what ownership implies rather than believed.
+    const expected = f.owner === "kit-owned" ? "kit-sync" : "none";
+    if (f.overwrite_path !== expected) {
+      throw new CheckError(
+        `${f.path}: overwrite_path is ${JSON.stringify(f.overwrite_path)} but membership implies ` +
+          `${JSON.stringify(expected)}. Fix the record, or fix pack_pairs_verbatim if canonical changed.`,
+      );
+    }
+    if (!f.overwrite_latency) throw new CheckError(`${f.path}: overwrite_latency is required`);
+  }
+
+  // Every synchronised destination must have a record, or the page silently omits a file a sync
+  // overwrites — the exact question this document exists to answer.
+  const missingRecords = [...destinations].filter((d) => !seen.has(d)).sort();
+  if (missingRecords.length) {
+    throw new CheckError(
+      `pack_pairs_verbatim names destinations with no record: ${missingRecords.join(", ")}`,
+    );
   }
   return data;
 }

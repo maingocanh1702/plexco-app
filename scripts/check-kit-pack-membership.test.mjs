@@ -18,15 +18,28 @@ import {
 const CHECKER = fileURLToPath(new URL("./check-kit-pack-membership.mjs", import.meta.url));
 const REPO_ROOT = path.resolve(path.dirname(CHECKER), "..");
 
+// owner/evidence are DERIVED from pack_pairs_verbatim and must never be stored.
 const rec = (over = {}) => ({
   path: "scripts/a.sh",
-  owner: "kit-owned",
-  evidence: "present in pack_pairs",
   kit_version_header: false,
   overwrite_path: "kit-sync",
   overwrite_latency: "next successful autopilot-update.sh run",
   ...over,
 });
+const repoRec = (over = {}) =>
+  rec({ overwrite_path: "none", overwrite_latency: "not overwritten", ...over });
+
+/** Run an in-memory authority object through the real loader, so tests exercise validation. */
+function loadFromObject(obj) {
+  const dir = mkdtempSync(path.join(tmpdir(), "kpm-obj-"));
+  mkdirSync(path.join(dir, "docs/standards"), { recursive: true });
+  writeFileSync(path.join(dir, JSON_PATH), JSON.stringify(obj));
+  try {
+    return loadAuthority(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 const authority = (files) => ({
   provenance: {
@@ -50,7 +63,7 @@ const authority = (files) => ({
 test("a missing files array is an error, never an empty kit", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "kpm-"));
   mkdirSync(path.join(dir, "docs/standards"), { recursive: true });
-  writeFileSync(path.join(dir, JSON_PATH), JSON.stringify({ files: [] }));
+  writeFileSync(path.join(dir, JSON_PATH), JSON.stringify(authority([])));
   assert.throws(() => loadAuthority(dir), /no "files" array/);
   rmSync(dir, { recursive: true, force: true });
 });
@@ -58,13 +71,16 @@ test("a missing files array is an error, never an empty kit", () => {
 test("invalid records are rejected: bad owner, missing overwrite_path, duplicate path", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "kpm-"));
   mkdirSync(path.join(dir, "docs/standards"), { recursive: true });
-  const write = (files) => writeFileSync(path.join(dir, JSON_PATH), JSON.stringify({ files }));
+  const write = (files) => writeFileSync(path.join(dir, JSON_PATH), JSON.stringify(authority(files)));
 
-  write([rec({ owner: "maybe" })]);
-  assert.throws(() => loadAuthority(dir), /owner must be/);
+  write([rec({ owner: "kit-owned" })]);
+  assert.throws(() => loadAuthority(dir), /must not be stored/);
 
-  write([rec({ overwrite_path: undefined })]);
-  assert.throws(() => loadAuthority(dir), /overwrite_path is required/);
+  write([rec({ overwrite_path: "none" })]);
+  assert.throws(() => loadAuthority(dir), /membership implies/);
+
+  write([rec({ kit_version_header: "yes" })]);
+  assert.throws(() => loadAuthority(dir), /must be a boolean/);
 
   write([rec(), rec()]);
   assert.throws(() => loadAuthority(dir), /appears twice/);
@@ -85,7 +101,7 @@ test("malformed JSON fails closed with the parser's reason", () => {
 // --- coverage ----------------------------------------------------------------------------------
 
 test("coverage reports an unclassified script and a record whose file is gone", () => {
-  const files = [rec(), rec({ path: "scripts/b.sh", owner: "repo-owned", overwrite_path: "none" })];
+  const files = [rec(), repoRec({ path: "scripts/b.sh" })];
   assert.deepEqual(auditCoverage(files, ["scripts/a.sh", "scripts/new.sh"]), {
     missing: ["scripts/new.sh"],
     stale: ["scripts/b.sh"],
@@ -93,29 +109,51 @@ test("coverage reports an unclassified script and a record whose file is gone", 
 });
 
 test("records outside scripts/ are documentation, not audited", () => {
-  const files = [rec(), rec({ path: "docs/autopilot-templates/level3-workflow.md" })];
+  const files = [rec(), repoRec({ path: "docs/autopilot-templates/level3-workflow.md" })];
   assert.deepEqual(auditCoverage(files, ["scripts/a.sh"]), { missing: [], stale: [] });
 });
 
 // --- generation --------------------------------------------------------------------------------
 
 test("generation is deterministic", () => {
-  const a = authority([rec()]);
+  const a = loadFromObject(authority([rec()]));
   assert.equal(generate(a), generate(a));
+});
+
+test("owner and evidence are derived from pack_pairs_verbatim, not stored", () => {
+  // Regression for the round-1 [P1]: two representations of one fact drift. A probe flipped
+  // scripts/autopilot-scope-gate to repo-owned while it stayed in pack_pairs and the audit passed.
+  const d = loadFromObject(authority([rec(), repoRec({ path: "scripts/not-in-pack.sh" })]));
+  assert.equal(d.files[0].owner, "kit-owned", "listed in pack_pairs_verbatim");
+  assert.equal(d.files[1].owner, "repo-owned", "not listed");
+  assert.match(d.files[0].evidence, /present in/);
+});
+
+test("a pack destination with no record fails closed", () => {
+  const a = authority([repoRec({ path: "scripts/other.sh" })]);
+  a.pack_pairs_verbatim = ["x:scripts/a.sh:100755"];
+  assert.throws(() => loadFromObject(a), /no record/);
+});
+
+test("a missing pack_pairs_verbatim fails closed", () => {
+  const a = authority([rec()]);
+  delete a.pack_pairs_verbatim;
+  assert.throws(() => loadFromObject(a), /pack_pairs_verbatim/);
 });
 
 test("the generator emits header PRESENCE and never a version number", () => {
   // The trap a predecessor shipped: hand-copied 8/33/3 rotted while CI stayed green. A generator
   // that snapshots values just buries them in output instead.
-  const out = generate(authority([rec({ kit_version_header: true, path: "scripts/gate" })]));
+  const out = generate(loadFromObject(authority([rec({ kit_version_header: true })])));
   assert.match(out, /present — read it, do not copy it/);
   assert.doesNotMatch(out, /KIT_VERSION:\s*\d+/, "no pinned version may appear in generated output");
   assert.match(out, /awk '\/\^# KIT_VERSION:\/\{print \$3; exit\}'/, "it must print the measurement command");
 });
 
 test("a pipe in a field cannot break out of the table", () => {
-  const out = generate(authority([rec({ evidence: "a | b" })]));
-  assert.match(out, /a \\\| b/);
+  // rec() covers the pack destination; the piped path is an extra repo-owned record.
+  const out = generate(loadFromObject(authority([rec(), repoRec({ path: "scripts/a|b.sh" })])));
+  assert.match(out, /a\\\|b/);
 });
 
 // --- the shipped artifacts ---------------------------------------------------------------------
@@ -186,12 +224,9 @@ function scratchRepo() {
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
   mkdirSync(path.join(dir, "docs/standards"), { recursive: true });
   mkdirSync(path.join(dir, "scripts"), { recursive: true });
-  const data = authority([
-    rec({ path: "scripts/a.sh" }),
-    rec({ path: "scripts/b.mjs", owner: "repo-owned", overwrite_path: "none", overwrite_latency: "not overwritten" }),
-  ]);
+  const data = authority([rec({ path: "scripts/a.sh" }), repoRec({ path: "scripts/b.mjs" })]);
   writeFileSync(path.join(dir, JSON_PATH), JSON.stringify(data, null, 2));
-  writeFileSync(path.join(dir, DOC_PATH), generate(data));
+  writeFileSync(path.join(dir, DOC_PATH), generate(loadFromObject(data)));
   writeFileSync(path.join(dir, "scripts/a.sh"), "kit\n");
   writeFileSync(path.join(dir, "scripts/b.mjs"), "repo\n");
   return { dir, data };

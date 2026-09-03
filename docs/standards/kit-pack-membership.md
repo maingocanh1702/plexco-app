@@ -120,28 +120,37 @@ an observed run or failure. Reading its code is not enough; a document describin
 
 | File | Owner | Evidence | Overwritten by | Latency | `KIT_VERSION` header |
 |---|---|---|---|---|---|
-| `scripts/ap-finish.sh` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `scripts/ap-housekeep.sh` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `scripts/ap-merge.sh` | **repo-owned** | absent from pack_pairs; listed in unsynced_candidates() at autopilot-update.sh:69 | none | not overwritten | none |
-| `scripts/autopilot-backlog-reconcile` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | present — read it, do not copy it |
-| `scripts/autopilot-ephemeral-review-worktree.mjs` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `scripts/autopilot-ephemeral-review-worktree.test.mjs` | **repo-owned** | absent from pack_pairs; no canonical copy | none | not overwritten | none |
-| `scripts/autopilot-onboard-fixtures.sh` | **repo-owned** | absent from pack_pairs; no canonical copy | none | not overwritten | none |
-| `scripts/autopilot-onboard.sh` | **repo-owned** | absent from pack_pairs; no canonical copy | none | not overwritten | none |
-| `scripts/autopilot-readiness-evidence-keys.mjs` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `scripts/autopilot-review-readiness.mjs` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `scripts/autopilot-root-lock` | **repo-owned** | absent from pack_pairs; no canonical copy | none | not overwritten | none |
-| `scripts/autopilot-scope-gate` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | present — read it, do not copy it |
-| `scripts/check-kit-pack-membership.mjs` | **repo-owned** | absent from pack_pairs; no canonical copy (added by this lane) | none | not overwritten | none |
-| `scripts/check-kit-pack-membership.test.mjs` | **repo-owned** | absent from pack_pairs; no canonical copy (added by this lane) | none | not overwritten | none |
-| `scripts/check-review-readiness.mjs` | **repo-owned** | absent from pack_pairs; no canonical copy | none | not overwritten | none |
-| `scripts/check-review-readiness.test.mjs` | **repo-owned** | absent from pack_pairs; no canonical copy | none | not overwritten | none |
-| `scripts/codex-review-pin.sh` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | present — read it, do not copy it |
-| `scripts/smoke-predeploy.mjs` | **repo-owned** | absent from pack_pairs; no canonical copy | none | not overwritten | none |
+| `scripts/ap-finish.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `scripts/ap-housekeep.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `scripts/ap-merge.sh` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/autopilot-backlog-reconcile` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | present — read it, do not copy it |
+| `scripts/autopilot-ephemeral-review-worktree.mjs` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `scripts/autopilot-ephemeral-review-worktree.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/autopilot-onboard-fixtures.sh` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/autopilot-onboard.sh` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/autopilot-readiness-evidence-keys.mjs` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `scripts/autopilot-review-readiness.mjs` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `scripts/autopilot-root-lock` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/autopilot-scope-gate` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | present — read it, do not copy it |
+| `scripts/check-kit-pack-membership.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/check-kit-pack-membership.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/check-review-readiness.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/check-review-readiness.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/codex-review-pin.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | present — read it, do not copy it |
+| `scripts/smoke-predeploy.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 
-- **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs.
+- **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69.
+- **`scripts/autopilot-ephemeral-review-worktree.test.mjs`** — No canonical copy.
+- **`scripts/autopilot-onboard-fixtures.sh`** — No canonical copy.
+- **`scripts/autopilot-onboard.sh`** — No canonical copy.
 - **`scripts/autopilot-review-readiness.mjs`** — THE HEADER COUNTER-EXAMPLE. No KIT_VERSION header, and it IS a pack member. Also the most-patched kit file in this repo's history. Trusting the header would mark it safe to edit and a sync would erase the edit.
+- **`scripts/autopilot-root-lock`** — No canonical copy.
 - **`scripts/autopilot-scope-gate`** — The ONLY file the dormant session-hook would copy if it were ever wired. Measured 2026-09-03: identical to canonical, same KIT_VERSION on both sides. Read that as the result of the MANUAL sync 8e737fe (2026-08-27, 'sync the mechanism pack to KIT_VERSION 33') — NOT as evidence that no drift pressure exists. There is no safety net here today, only the discipline of whoever runs the sync.
+- **`scripts/check-kit-pack-membership.mjs`** — No canonical copy (added by this lane).
+- **`scripts/check-kit-pack-membership.test.mjs`** — No canonical copy (added by this lane).
+- **`scripts/check-review-readiness.mjs`** — No canonical copy.
+- **`scripts/check-review-readiness.test.mjs`** — No canonical copy.
+- **`scripts/smoke-predeploy.mjs`** — No canonical copy.
 
 ---
 
@@ -152,11 +161,11 @@ file happens to sit in.
 
 | File | Owner | Evidence | Overwritten by | Latency | `KIT_VERSION` header |
 |---|---|---|---|---|---|
-| `docs/autopilot-parallel-scope-gate.md` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `docs/autopilot-manifests/_TEMPLATE.json` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `docs/autopilot-templates/autopilot-prompt-GENERIC.md` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
-| `docs/autopilot-templates/level3-workflow.md` | **kit-owned** | present in pack_pairs | kit-sync | next successful autopilot-update.sh run | none |
+| `docs/autopilot-parallel-scope-gate.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `docs/autopilot-manifests/_TEMPLATE.json` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `docs/autopilot-templates/autopilot-prompt-GENERIC.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `docs/autopilot-templates/level3-workflow.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
 - **`docs/autopilot-templates/level3-workflow.md`** — The ONE target measured as diverged: 205 consumer-only lines, 2 canonical-only. It carries section 6.1 autonomous_to_ready, which canonical does not define. That is a decision->code gap inside the consumer (DD-107 ratified the mode; no code implements it), NOT consumer drift — framing it as drift aims the fix at the wrong target.
 
