@@ -5,8 +5,10 @@ import {
   assertLocalDockerEndpoint,
   assertResettableTestDatabase,
   assertContainerMatchesCompose,
+  buildConfigHashArgv,
   buildContainerIdArgv,
   buildResetArgv,
+  parseConfigHash,
   resolveVerifiedContainerId,
   childEnv,
   crossCheckDatabaseUrl,
@@ -315,10 +317,11 @@ test("safeEcho shows a plain identifier in full and withholds anything else", ()
 
 // ---------------------------------------------------------------- the container selector
 
-const LABELS = (project, files) =>
+const LABELS = (project, files, hash = "HASH_CURRENT") =>
   JSON.stringify({
     "com.docker.compose.project": project,
     "com.docker.compose.project.config_files": files,
+    "com.docker.compose.config-hash": hash,
   });
 
 test("a stale container under matching labels is refused", () => {
@@ -326,14 +329,14 @@ test("a stale container under matching labels is refused", () => {
   // another checkout or an older configuration carries the same project+service labels and would
   // have received the forced DROP DATABASE.
   assert.throws(
-    () => assertContainerMatchesCompose(LABELS("plexco", "/somewhere/else/docker-compose.yml")),
+    () => assertContainerMatchesCompose(LABELS("plexco", "/elsewhere/docker-compose.yml"), "HASH_CURRENT"),
     /different compose file/,
   );
   assert.throws(
-    () => assertContainerMatchesCompose(LABELS("other_project", "/anything.yml")),
+    () => assertContainerMatchesCompose(LABELS("other_project", "/anything.yml"), "HASH_CURRENT"),
     /compose project/,
   );
-  assert.throws(() => assertContainerMatchesCompose("not json"), /compose labels/);
+  assert.throws(() => assertContainerMatchesCompose("not json", "HASH_CURRENT"), /compose labels/);
 });
 
 test("the destructive call names the verified container, not a label selector", () => {
@@ -361,4 +364,53 @@ test("resolution refuses when no container is running, and when it is the wrong 
   };
   assert.throws(() => resolveVerifiedContainerId("unix:///tmp/d.sock", stale), /different compose file/);
   assert.ok(calls[0].includes("ps"), "resolution asks compose for the id first");
+});
+
+test("a SAME-PATH container from an older configuration is refused", () => {
+  // Path and project are not identity. A container created earlier from the SAME file, under a
+  // previous version of it -- another volume, another image -- carries identical project and
+  // config_files labels and passed every check before the config hash was bound.
+  const composeFile = buildContainerIdArgv("unix:///tmp/d.sock")[
+    buildContainerIdArgv("unix:///tmp/d.sock").indexOf("-f") + 1
+  ];
+  assert.throws(
+    () => assertContainerMatchesCompose(LABELS("plexco", composeFile, "HASH_OLD"), "HASH_CURRENT"),
+    /older version of this compose configuration/,
+  );
+  // Same path, same project, CURRENT hash -> accepted.
+  assert.equal(
+    assertContainerMatchesCompose(LABELS("plexco", composeFile, "HASH_CURRENT"), "HASH_CURRENT"),
+    true,
+  );
+  // A missing expected hash must not silently pass.
+  assert.throws(
+    () => assertContainerMatchesCompose(LABELS("plexco", composeFile, "HASH_CURRENT"), ""),
+    /older version of this compose configuration/,
+  );
+});
+
+test("the config hash is read from compose, and a service-only line is rejected", () => {
+  const argv = buildConfigHashArgv("unix:///tmp/d.sock");
+  assert.ok(argv.includes("--hash=postgres"));
+  assert.ok(argv.indexOf("-H") < argv.indexOf("compose"));
+  assert.equal(parseConfigHash("postgres  abc123def\n"), "abc123def");
+  assert.throws(() => parseConfigHash("postgres\n"), /configuration hash/);
+  assert.throws(() => parseConfigHash(""), /configuration hash/);
+});
+
+test("resolution refuses a same-path container whose configuration has moved on", () => {
+  const composeFile = buildContainerIdArgv("unix:///tmp/d.sock")[
+    buildContainerIdArgv("unix:///tmp/d.sock").indexOf("-f") + 1
+  ];
+  const runner = (_cmd, args) => {
+    if (args.includes("ps")) return { status: 0, stdout: "staleid\n" };
+    if (args.some((a) => String(a).startsWith("--hash="))) {
+      return { status: 0, stdout: "postgres  HASH_CURRENT\n" };
+    }
+    return { status: 0, stdout: LABELS("plexco", composeFile, "HASH_OLD") };
+  };
+  assert.throws(
+    () => resolveVerifiedContainerId("unix:///tmp/d.sock", runner),
+    /older version of this compose configuration/,
+  );
 });

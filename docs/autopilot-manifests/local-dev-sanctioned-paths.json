@@ -1,8 +1,8 @@
 {
   "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest -- carries NO manifest_schema_version (that field belongs only to the runtime .autopilot/state/<feature>/manifest.json; putting it here makes scope-gate register HALT CONTRACT_INVALID).",
-  "task_id": "plexco:local-dev-sanctioned-paths--v3",
-  "feature": "local-dev-sanctioned-paths--v3",
-  "branch": "feat/local-dev-sanctioned-paths--v3",
+  "task_id": "plexco:local-dev-sanctioned-paths--v4",
+  "feature": "local-dev-sanctioned-paths--v4",
+  "branch": "feat/local-dev-sanctioned-paths--v4",
   "base_ref": "origin/main",
   "base_sha": "a5f887fd16b9b4056164c510242c5ea4a0084fb7",
   "risk": "P1",
@@ -11,7 +11,7 @@
   "writer_processes_max": 1,
   "depends_on": [],
   "dep_checks": [],
-  "_predecessor_note": "Third registration. v1 (base 491a334) was closed after docs/autopilot-backlog.md -- then inside its hash-locked scope -- moved on origin/main, which BASE_STALE correctly halts and a hash-locked base cannot absorb. v2 (base a5f887f, tip d1f472c, disposition mode close) was closed because risk and code_review.clean_rounds are hash-locked at register, so the P1 reclassification was unreachable in place. Neither closure contested a finding: all findings from all four rounds were accepted and fixed, and v2's six commits are carried here by fast-forward from refs/archive/local-dev-sanctioned-paths--v2, identical objects, no cherry-pick. fix-round-count restarts at 0 because this is a new registration, not because a budget was exhausted -- v2 stopped at 4 of 5 with every finding resolved.",
+  "_predecessor_note": "Fourth registration. v1 closed after docs/autopilot-backlog.md moved on origin/main while inside its hash-locked scope. v2 closed because the P1 reclassification could not reach a hash-locked risk field. v3 closed at fix-round 4/5 by owner decision rather than by breaker: the container selector was a specifiable gap, and fixing it there would have left zero margin for the two required clean rounds after five consecutive rounds of findings. No finding was ever contested; every one across all lanes was accepted and fixed. v3's commits are carried here by fast-forward from refs/archive/local-dev-sanctioned-paths--v3, identical objects.",
   "_scope_note": "docs/standards/kit-pack-membership.{json,md} are in scope because they are mechanically forced by the act of adding a file under scripts/, not because this lane wants to touch kit governance. check-kit-pack-membership.mjs enumerates scripts/ recursively (listScriptFiles) and auditCoverage reports any unclassified file as `missing`; `pnpm kit:check` is the FIRST command in `pnpm test`, so an unregistered new script turns the whole suite red. The .md is GENERATED -- `pnpm kit:generate` writes it and kit:check byte-compares it -- and is never hand-edited. Both new files are repo-owned by construction (absent from pack_pairs_verbatim), so each record carries overwrite_path `none`.",
   "invariants": [
     "build-config",
@@ -28,27 +28,24 @@
     "docs/autopilot-manifests/local-dev-sanctioned-paths.json"
   ],
   "negative_scope": [
-    "NO edit to docs/autopilot-backlog.md. That file is the most-written file in this repository, so declaring it inside a hash-locked scope makes the lane hostage to every unrelated backlog commit; the v1 registration died to exactly that. Rows this lane owes the backlog are emitted verbatim in the READY report and committed owner-side.",
-    "NO new dependency and NO edit to pnpm-lock.yaml. Delegating URL parsing to pg-connection-string was considered and rejected by owner decision: it would WIDEN the accepted set of a destructive tool (it accepts loc%61lhost, which the grammar refuses), put a shared choke point into a P1 diff, and take ownership of a package currently obtained transitively.",
-    "NO migration content -- packages/db/migrations/** is untouched",
-    "NO test harness -- packages/db/src/test-harness.ts and test-harness.test.ts belong to a lane that landed at 491a334",
-    "NO CI -- .github/** is untouched",
-    "NO edit to the egress evidence table in environments-setup.md section 1.1; its HALT-EVIDENCE_INCOMPLETE marker is correct fail-closed state awaiting owner-only evidence, not an unfinished section to complete",
-    "NO behavioural change to db:bootstrap -- infra/docker-compose.yml records that it is the path CI, existing local and production all depend on. This lane DOCUMENTS its host-psql requirement and the container-based equivalent; rewriting it is a separate decision with a blast radius this lane has not measured",
-    "NO edit to packages/db/src/migrate.ts -- the P17 message shipped at 2648965 and its three-channel log-provenance design is owned by AP-42. The wording gap found there is emitted to the owner as a backlog row, not fixed here",
-    "NO widening of the reset tool to the per-suite plexco_* databases -- they do not end in _test, the harness already drops and recreates them per run, and a destructive tool earns trust by staying narrow",
-    "NO new invariant token, and no edit to docs/autopilot-invariant-catalog.md -- a scope collision is answered by queueing, never by removing the token that reported it"
+    "NO edit to docs/autopilot-backlog.md. It is the most-written file in this repository, so holding it in a hash-locked scope makes the lane hostage to unrelated backlog traffic; the v1 registration died to exactly that. Rows this lane owes are emitted verbatim in the READY report and committed owner-side.",
+    "NO new dependency and NO edit to pnpm-lock.yaml. Parsing with pg-connection-string was considered and rejected by owner decision: it would WIDEN the accepted set of a destructive tool, put a shared choke point in a P1 diff, and take ownership of a package obtained transitively. Connecting with pg was measured unreachable from a root script (MODULE_NOT_FOUND; absent from root node_modules).",
+    "NO hardening beyond the six call-path selectors. With daemon, project, compose file, container, role and database pinned, the accident model is declared covered. An in-model finding that is NOT one of those selectors goes to the backlog as a row, not a fix round: cite the stopping rule, record it, continue.",
+    "NO migration content, NO test harness, NO CI",
+    "NO edit to the egress evidence table in environments-setup.md section 1.1; its HALT-EVIDENCE_INCOMPLETE marker is correct fail-closed state awaiting owner-only evidence",
+    "NO behavioural change to db:bootstrap itself -- this lane documents its requirements and pins the documented recipe, it does not rewrite the command CI and production depend on",
+    "NO edit to packages/db/src/migrate.ts -- the P17 message and its log-provenance design are owned by AP-42; the wording gap found there is emitted as a backlog row",
+    "NO widening of the reset tool to the per-suite plexco_* databases",
+    "NO new invariant token and no edit to docs/autopilot-invariant-catalog.md"
   ],
   "context_sources": [
-    "docs/autopilot-backlog.md -- task: local-dev-sanctioned-paths-are-harder-than-the-forbidden-one (READ ONLY; this lane does not write it)",
-    "docs/autopilot-templates/level3-workflow.md:168 -- the risk table that classifies destructive work as P1",
-    "packages/db/src/migrate.ts -- the P17 guard message merged at 2648965, and formatMigrationFailureForLog which decides what the CLI actually prints",
-    "packages/db/src/test-harness.ts -- the DATABASE_URL_TEST contract, per-suite database naming, and the in-process pg.Client definer bootstrap that makes recovery need no host psql",
-    "infra/docker-compose.yml -- the container-psql route, and the persistent pgdata volume shared by the dev and test databases",
-    "docs/standards/kit-pack-membership.json -- scripts/ ownership authority",
+    "refs/archive/local-dev-sanctioned-paths--v3 @ 62a80d5 -- the carried-forward implementation and five rounds of accepted findings",
+    "docs/autopilot-templates/level3-workflow.md:168 -- the risk table classifying destructive work as P1",
+    "packages/db/src/migrate.ts -- the P17 guard message merged at 2648965",
+    "packages/db/src/test-harness.ts -- the DATABASE_URL_TEST contract and the in-process pg.Client definer bootstrap",
+    "infra/docker-compose.yml -- the postgres service, its labels, and the persistent pgdata volume shared by dev and test",
     ".env.example:56 and .github/workflows/ci.yml:34 -- both pin the test database name to plexco_test",
-    "eslint.config.mjs:64-79 -- scripts/**/*.mjs IS linted, with an explicit Node globals block",
-    ".prettierignore -- scripts/ and docs/ are prettier-ignored; package.json is not"
+    "eslint.config.mjs:64-79 and .prettierignore -- scripts/**/*.mjs is linted; scripts/ and docs/ are prettier-ignored"
   ],
   "applicable_skills": [],
   "model_policy": {
@@ -82,7 +79,7 @@
   },
   "security_review": {
     "required": true,
-    "reason": "THREAT MODEL (mirror -- the primary copy is the header of scripts/db-reset-test.mjs, because the gate's security prompt is a fixed string that never transmits this field, so the reviewer only ever sees live source). The script executes DROP DATABASE, so the trust boundary is everything deciding WHICH database dies. It defends against MISDIRECTION BY UNINTENDED LOCAL CONFIGURATION: a stale or switched docker context, a leftover COMPOSE_PROJECT_NAME, the wrong cwd against a relative compose path, a misaimed DATABASE_URL_TEST, a mistyped --db. Each has an explicit pin -- endpoint verified as a unix socket and carried with -H, project pinned with -p, compose file absolute, role and database explicit, psql given -X -h -p so no ambient value supplies a connection parameter. It does NOT defend against an adversary who already controls the host, the images or ~/.docker; that adversary has a shell and does not need this script, and hardening against them has no stopping point because the command traverses five configurable layers. Three review rounds produced one finding per layer before this model was written down. A finding requiring host/image/~/.docker compromise is a threat-model disagreement, not a defect. REVISION TRIGGER: this holds BECAUSE the tool only targets a local compose project and refuses non-unix endpoints; if it is ever allowed to target a remote or CI database the model is VOID and must be rewritten before that change lands. Two things this is NOT: there is no shell-injection surface (spawnSync, argv array, no shell), and connection-string parsing is no longer an authority.",
+    "reason": "MIRROR ONLY -- the primary copy of the threat model is the header of scripts/db-reset-test.mjs, because the gate builds its security prompt as a fixed string (autopilot-review-readiness.mjs:948-957) and never transmits this field, so the reviewer sees only live source. Read the header. In brief: the script runs DROP DATABASE, so the trust boundary is everything that selects WHICH database dies. It defends against MISDIRECTION BY UNINTENDED LOCAL CONFIGURATION and not against an adversary already holding the host, the images or ~/.docker. The completeness criterion is stated against the CALL PATH -- daemon, project, compose file, container, role, database; six selectors, six pins, each resolved once and carried into the argv -- because enumerating configuration is unbounded while the call path is bounded by the code itself. There is no shell-injection surface (spawnSync, argv array, no shell), and connection-string parsing is not an authority.",
     "tool": "scripts/codex-review-pin.sh"
   },
   "budgets": {
@@ -98,6 +95,6 @@
     "MATERIAL_CONTEXT_OR_DECISION_MISSING",
     "REQUIRED_TOOL_UNAVAILABLE"
   ],
-  "_manifest_sync_precondition": "MANDATORY before the first `scope-gate ready` and again after any edit to this file: diff this authored contract against the runtime manifest at .autopilot/state/local-dev-sanctioned-paths--v3/manifest.json and PRINT the result -- a printed diff, not an assurance they match. Compare by exclusion: `jq 'walk(if type == \"object\" then with_entries(select(.key | test(\"^_\") or . == \"manifest_schema_version\" or . == \"review_gate_version\" | not)) else . end) | .security_review.reason = null'` on both, then compare the two outputs.",
-  "readiness_evidence_path": ".autopilot/state/local-dev-sanctioned-paths--v3/readiness.json"
+  "_manifest_sync_precondition": "MANDATORY before the first `scope-gate ready` and again after any edit to this file: diff this authored contract against the runtime manifest at .autopilot/state/local-dev-sanctioned-paths--v4/manifest.json and PRINT the result -- a printed diff, not an assurance they match. Compare by exclusion: `jq 'walk(if type == \"object\" then with_entries(select(.key | test(\"^_\") or . == \"manifest_schema_version\" or . == \"review_gate_version\" | not)) else . end) | .security_review.reason = null'` on both, then compare the two outputs.",
+  "readiness_evidence_path": ".autopilot/state/local-dev-sanctioned-paths--v4/readiness.json"
 }

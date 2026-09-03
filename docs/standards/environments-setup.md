@@ -275,28 +275,33 @@ closing your terminal:
 ```bash
 (
   set -e
-  # Same protections the reset command applies to itself: confirm the docker endpoint is local, and
-  # pin the project. Without -p, compose names the project after the current directory, so these
-  # privileged bootstraps would run against a different stack than the one you think.
-  # CAPTURE the endpoint, do not merely check it. Checking and then letting docker resolve the
-  # active context again leaves a window: a context switch between the two validates one daemon and
-  # runs the privileged bootstrap on another. Every command below is bound to the captured value
-  # with docker's global -H, which must precede the subcommand.
+  # Resolve a canonical repo root -- NOT $PWD, which lets the wrong working directory select a
+  # different compose file. Then apply the same protections the reset command applies to itself:
+  # a local endpoint, captured and bound; the project pinned; and the container verified to have
+  # been created from THIS compose file AND its current configuration, not merely to carry
+  # matching labels.
+  root="$(git rev-parse --show-toplevel)"
+  compose="$root/infra/docker-compose.yml"
+
   endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')"
   case "$endpoint" in
     unix://*) ;;
     *) echo "docker endpoint is not a local unix socket; refusing" >&2; exit 1 ;;
   esac
 
-  # Resolve the container ID and prove it came from THIS compose file before running anything
-  # privileged. compose selects by project+service LABEL, and a stale container from another
-  # configuration carries the same labels -- the same check the reset command performs.
-  cid="$(docker -H "$endpoint" compose -p plexco -f "$PWD/infra/docker-compose.yml" ps -q postgres)"
+  cid="$(docker -H "$endpoint" compose -p plexco -f "$compose" ps -q postgres)"
   [ -n "$cid" ] || { echo "no running postgres container in project plexco; refusing" >&2; exit 1; }
-  case "$(docker -H "$endpoint" inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$cid")" in
-    *"$PWD/infra/docker-compose.yml"*) ;;
-    *) echo "resolved container was created from a different compose file; refusing" >&2; exit 1 ;;
-  esac
+
+  # EXACT entry match, not substring: "$compose.backup" contains "$compose".
+  files="$(docker -H "$endpoint" inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$cid")"
+  ok=0; IFS=,; for f in $files; do [ "$f" = "$compose" ] && ok=1; done; unset IFS
+  [ "$ok" = 1 ] || { echo "container came from a different compose file; refusing" >&2; exit 1; }
+
+  # Same path is not the same configuration: an older container from a previous version of this
+  # file passes every check above. The config hash is what compose itself uses to detect staleness.
+  want="$(docker -H "$endpoint" compose -p plexco -f "$compose" config --hash=postgres | awk '{print $NF}')"
+  got="$(docker -H "$endpoint" inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$cid")"
+  [ -n "$want" ] && [ "$want" = "$got" ] || { echo "container is from an older configuration; recreate it; refusing" >&2; exit 1; }
 
   mr="${MIGRATION_ROLE:-}"
   case "$mr" in
@@ -310,12 +315,12 @@ closing your terminal:
   docker -H "$endpoint" exec -i "$cid" \
     psql -X -h /var/run/postgresql -p 5432 -U plexco -d plexco -v ON_ERROR_STOP=1 \
     -c "SET job_definer_bootstrap.migration_role = '$mr'" \
-    -f - < infra/postgres-init/01-job-definer.sql
+    -f - < "$root/infra/postgres-init/01-job-definer.sql"
 
   docker -H "$endpoint" exec -i "$cid" \
     psql -X -h /var/run/postgresql -p 5432 -U plexco -d plexco -v ON_ERROR_STOP=1 \
     -c "SET chat_definer_bootstrap.migration_role = '$mr'" \
-    -f - < infra/postgres-init/02-chat-definer.sql
+    -f - < "$root/infra/postgres-init/02-chat-definer.sql"
 )
 ```
 

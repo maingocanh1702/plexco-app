@@ -342,6 +342,31 @@ export function buildContainerIdArgv(endpoint) {
   ];
 }
 
+/** argv that asks compose for the CURRENT config hash of the pinned service. */
+export function buildConfigHashArgv(endpoint) {
+  return [
+    "-H",
+    endpoint,
+    "compose",
+    "-p",
+    COMPOSE_PROJECT,
+    "-f",
+    COMPOSE_FILE,
+    "config",
+    `--hash=${COMPOSE_SERVICE}`,
+  ];
+}
+
+/** `compose config --hash=svc` prints "<service>  <hash>"; take the hash. */
+export function parseConfigHash(stdout) {
+  const line = String(stdout ?? "").trim().split("\n")[0] ?? "";
+  const hash = line.trim().split(/\s+/).pop() ?? "";
+  if (!hash || hash === COMPOSE_SERVICE) {
+    throw new Error("db:reset:test refuses to run: could not read the service configuration hash.");
+  }
+  return hash;
+}
+
 /** argv that reads a container's compose labels, so identity can be checked rather than assumed. */
 export function buildInspectLabelsArgv(endpoint, containerId) {
   return ["-H", endpoint, "inspect", "--format", "{{json .Config.Labels}}", containerId];
@@ -353,7 +378,7 @@ export function buildInspectLabelsArgv(endpoint, containerId) {
  * volume -- carries the same project and service labels and would receive the forced DROP DATABASE.
  * So the resolved container is checked against the compose file THIS script pinned.
  */
-export function assertContainerMatchesCompose(labelsJson) {
+export function assertContainerMatchesCompose(labelsJson, expectedHash) {
   let labels;
   try {
     labels = JSON.parse(labelsJson);
@@ -368,12 +393,26 @@ export function assertContainerMatchesCompose(labelsJson) {
         `${safeEcho(String(project ?? ""))}, not "${COMPOSE_PROJECT}".`,
     );
   }
+  // EXACT entry comparison, never substring: "<expected>.backup" contains the expected path.
   if (!files.split(",").some((f) => f.trim() === COMPOSE_FILE)) {
     throw new Error(
       "db:reset:test refuses to run: the resolved container was created from a different compose " +
         `file than the one this command pins (${COMPOSE_FILE}). A stale container under matching ` +
         "labels is exactly the accident this check exists for; recreate it with " +
         `\`docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}\`.`,
+    );
+  }
+  // Path and project are not enough. A container created EARLIER FROM THE SAME PATH, under a
+  // previous version of that file -- a different volume, a different image, a different socket dir
+  // -- carries the same project and config_files labels and passes both checks above. The config
+  // hash is what distinguishes "same file" from "same CONFIGURATION", and it is the label compose
+  // itself uses to decide a container is out of date.
+  const actualHash = labels?.["com.docker.compose.config-hash"];
+  if (!expectedHash || actualHash !== expectedHash) {
+    throw new Error(
+      "db:reset:test refuses to run: the resolved container was created from an older version of " +
+        `this compose configuration. Recreate it with\n` +
+        `  docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}`,
     );
   }
   return true;
@@ -393,6 +432,14 @@ export function resolveVerifiedContainerId(endpoint, runner = spawnSync) {
         `  docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}`,
     );
   }
+  const hashed = runner("docker", buildConfigHashArgv(endpoint), {
+    env: childEnv(),
+    encoding: "utf8",
+  });
+  if (hashed?.error || hashed?.status !== 0) {
+    throw new Error("db:reset:test refuses to run: could not read the service configuration hash.");
+  }
+  const expectedHash = parseConfigHash(hashed.stdout);
   const inspected = runner("docker", buildInspectLabelsArgv(endpoint, containerId), {
     env: childEnv(),
     encoding: "utf8",
@@ -400,7 +447,7 @@ export function resolveVerifiedContainerId(endpoint, runner = spawnSync) {
   if (inspected?.error || inspected?.status !== 0) {
     throw new Error("db:reset:test refuses to run: could not inspect the resolved container.");
   }
-  assertContainerMatchesCompose(String(inspected.stdout ?? ""));
+  assertContainerMatchesCompose(String(inspected.stdout ?? ""), expectedHash);
   return containerId;
 }
 
@@ -497,7 +544,7 @@ function main(argv = process.argv.slice(2)) {
     return 1;
   }
   if (result.status !== 0) {
-    console.error(`db:reset:test failed: docker compose exec exited ${result.status}`);
+    console.error(`db:reset:test failed: docker exec exited ${result.status}`);
     return result.status ?? 1;
   }
 
