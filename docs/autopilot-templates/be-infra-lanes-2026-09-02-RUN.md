@@ -114,6 +114,25 @@ stale-by-construction — nếu không ta đóng băng một tiền đề sai v�
 so `scripts/autopilot-scope-gate` của Plexco với bản canonical. Giống nhau ⇒ chưa gây hại. Lệch ⇒ việc hook
 không chạy đã có hậu quả thật. **Việc của owner**, không lane nào tự sửa file cấu hình cá nhân.
 
+**(1c) ĐỊNH TUYẾN REPO — L12 đã land, câu hỏi "sửa ở đâu" nay TRA ĐƯỢC, không còn phải đoán.**
+
+`docs/standards/kit-pack-membership.json` trên `main` (merged `50b206b`) là authority. Tra bằng
+`node -e` hoặc `pnpm kit:check`. Kết quả cho các file mà hàng đợi này chạm:
+
+| File | `overwrite_path` | ⇒ Lane chạm nó chạy ở |
+|---|---|---|
+| `scripts/ap-finish.sh` | **kit-sync** | **canonical** — L13 |
+| `scripts/autopilot-scope-gate` | **kit-sync** | **canonical** — L14 |
+| `scripts/autopilot-review-readiness.mjs` | **kit-sync** | **canonical** — L11-v2 + `require-string-rejects-angle-brackets` |
+| `scripts/autopilot-backlog-reconcile` | **kit-sync** | **canonical** — `reconcile-refusal-reason-does-not-match-row-data` |
+| `scripts/ap-merge.sh` | `none` | consumer *(⚠️ trạng thái thứ ba: sync in `UNSYNCED_DRIFT`, không halt/sync/repair)* |
+| `scripts/check-kit-pack-membership.mjs` | `none` | consumer |
+| `packages/db/src/migrate.ts` | *(ngoài phạm vi bảng)* | consumer — L4a |
+
+⚠️ **Hệ quả xếp lại hàng đợi: phần lớn lane infra còn lại là lane CANONICAL, không phải lane Plexco.**
+Chạy chúng **liên tiếp trong repo canonical** — nhưng **vẫn là các lane RỜI NHAU**. Gộp chúng thành một
+lane "dọn kit" vì tiện là đúng khuôn đã giết ba lane: giao thừa một mặt cho một lane.
+
 **(2) Cấm parse Markdown làm authority.** S1 HALT REGION_THRASH sau ba vòng đóng lần lượt các biên
 Markdown mịn dần (không ranh giới → có ranh giới nhưng không biết fence → luật đóng fence sai ở info
 string). Tập biên còn lại bị chặn bởi **độ phức tạp của CommonMark**, không bởi độ cẩn thận của bản vá
@@ -1208,9 +1227,12 @@ Bạn sắp chạy 11 lane. Không sửa cái này thì nó bắn 11 lần.
 ```text
 TASK: ap-finish-untracked-counts-as-dirty
 RISK: P2
-DEPENDS_ON: kit-pack-membership-manifest — confirm ap-finish.sh is repo-owned before
-            editing it. If L12 finds it is kit-owned, this lane moves to canonical
-            unchanged; the fix is identical, only the repository differs.
+REPOSITORY: the canonical kit repo (~/Projects/Claude template), NOT Plexco.
+            RESOLVED by L12, which landed on main at 50b206b: docs/standards/kit-pack-membership.json
+            records scripts/ap-finish.sh with overwrite_path "kit-sync", so it is kit-owned
+            and a consumer-side edit is overwritten by the next autopilot-update.sh run.
+            Re-verify before starting -- `pnpm kit:check` in Plexco, then read the record --
+            because that table is itself a measurement with a date, not a permanent fact.
 
 OUTCOME
   ap-finish stops reporting a clean worktree as dirty, without becoming blind to the
