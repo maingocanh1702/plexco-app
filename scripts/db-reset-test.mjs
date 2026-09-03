@@ -21,11 +21,34 @@
  *
  * So the URL is no longer an authority. This script now OWNS every input it acts on:
  *
- *   daemon    resolved endpoint must be a local unix socket, verified before acting
- *   project   pinned with `-p`, never inherited from COMPOSE_PROJECT_NAME
- *   container the service named in this repository's compose file
- *   role      passed explicitly with -U; nothing below supplies a competing default
- *   database  an explicit argument, defaulting to the canonical local test database
+ * THE SIX SELECTORS -- the completeness criterion, stated against the CALL PATH.
+ *
+ * Each line says what actually gets SELECTED, not what gets passed. That distinction is not
+ * pedantry: the previous revision's header read "container: the service named in this repository's
+ * compose file", which is true of the argument and false of the selection -- compose resolves a
+ * container by LABEL at exec time -- and that wording let "naming is not pinning" survive four
+ * rounds of re-reading. Describe the selection or the bug hides in the description.
+ *
+ *   daemon      the endpoint resolved once, checked to be a local unix socket, carried in -H
+ *   project     the literal `plexco`, carried in -p, never inherited from the environment
+ *   compose file an absolute path derived from this file's location, carried in -f
+ *   container   the container ID resolved from that project+file and verified to belong to THIS
+ *               compose configuration before exec -- labels alone are not identity
+ *   role        the value in -U; libpq ranks explicit parameters above PGUSER, so nothing else wins
+ *   database    the value in -d and in the quoted DDL, from --db, validated as an identifier
+ *
+ * WHY SIX AND WHY THAT IS ANSWERABLE. Four earlier revisions each claimed a closed set and each was
+ * refuted, because they enumerated CONFIGURATION -- environment variables, URL constructs, parser
+ * behaviours -- and configuration is unbounded. This list enumerates the CALL PATH instead, which
+ * the code itself bounds: every selector is something buildResetArgv must decide in order to
+ * construct a command at all. "Is the set closed?" is then answered by reading the function, not by
+ * predicting what configuration exists on some machine.
+ *
+ * THE STOPPING RULE. With those six pinned, the accident model is DECLARED COVERED. A later finding
+ * that is inside the threat model but is NOT one of these six selectors goes to the backlog as a
+ * row -- record it, cite this clause, continue. It does not get a fix round. Without this rule the
+ * lane inherits a fresh budget and the same appetite that spent five rounds; with it, "when do we
+ * stop" has an answer written down before the work rather than discovered at the breaker.
  *
  * DATABASE_URL_TEST is demoted to a cross-check: if set, its database NAME must match the target.
  * That is a claim this tool can keep. The previous one was not.
