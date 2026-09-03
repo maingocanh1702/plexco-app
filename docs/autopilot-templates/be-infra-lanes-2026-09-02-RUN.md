@@ -30,22 +30,45 @@ trước khi lane viết được dòng nào.** Đo tại `scripts/autopilot-rev
 ⚠️ `autopilot-review-readiness.mjs` **là pack file** (chính là file mang hunk `DYNAMIC_SEGMENT`). Sửa nó
 trong consumer là tạo divergence mới — xem L11-v2.
 
-### §00b · Hai đính chính đo được 03/09, sau ba lần HALT của họ kit-pack
+### §00b · Ba đính chính đo được 03/09, sau ba lần HALT của họ kit-pack
 
-**(1) `--audit` KHÔNG chạy trong CI. Tiền đề của phán quyết "Option A" trước đó SAI.** Đo trên nhánh
-`feat/kit-pack-membership-doc`:
+> ⚠️ **Đọc mục (1) và (1b) như bản ĐÃ SỬA.** Cả hai từng được commit ở dạng sai (`e377170`, `71656fe`) và
+> bị bác bằng phép đo trong vòng vài giờ. Chúng ở đây vì §00b là **chỉ thị thường trực mọi lane đều đọc** —
+> một khẳng định sai để nguyên ở đây lây sang mọi phiên sau, cùng hình dạng với vector `rules file` mô tả ở
+> (1b). Bản ghi giữ cả cái sai lẫn cái đúng: xoá dấu vết làm mất chính bài học.
+
+**(1) Cưỡng chế bảng ownership CÓ TỒN TẠI, nhưng NGẪU NHIÊN — không phải "không có". Bản trước của mục
+này khai sai và đã bị một phép đo bác.**
+
+Bản đầu của mục này viết *"CI kiểm logic của checker; CI không audit repo"* và suy ra rằng chưa có cưỡng
+chế nào. Lane `kit-pack-membership-doc` áp đúng tiêu chuẩn mà chính mục này đặt ra ("một check chưa từng
+thấy fail trong CI là lời khai, không phải điểm cưỡng chế") lên chính nó, bằng cách thả một file chưa
+phân loại vào repo:
 
 ```
-package.json  "kit:check": "node scripts/check-kit-pack-membership.mjs --audit"   <- không ai gọi
-package.json  "test:review-readiness": node --test … check-kit-pack-membership.test.mjs  <- chạy TEST FILE
-ci.yml:88     run: pnpm -w test   ->  test:review-readiness  ->  test file, KHÔNG phải --audit
+scripts/zz-drift-probe.sh  (chưa phân loại)
+pnpm run test:review-readiness                          -> EXIT 1
+    not ok 57 - the shipped table classifies every file under scripts/ exactly once
+    not ok 62 - the exact command the document tells you to run works
+node scripts/check-kit-pack-membership.mjs --audit      -> EXIT 1, AUDIT_FAILED, nêu đúng tên file
 ```
 
-CI **kiểm logic của checker**; CI **không audit repo**. Hai thứ khác nhau, và câu "enforcement of record
-là `--audit` trong CI" mà anh viết đã gộp nhầm chúng. Hệ quả: nếu ship nguyên trạng, ta có một doc cộng
-một checker mà **không gì chạy nó lên repo** — đúng cách một tài liệu tra cứu chết dần, cộng thêm một
-lớp tưởng-là-có-cưỡng-chế. **Sửa rẻ: một dòng.** `kit:check` phải nằm trong chuỗi mà `pnpm -w test` gọi,
-hoặc thành một step riêng trong `ci.yml`. **Đưa vào scope S1, không phải backlog row.**
+Hai test đó chạy trên **REPO_ROOT thật** — một gọi `auditCoverage(loadOwnership(REPO_ROOT),
+listScriptFiles(REPO_ROOT))`, một spawn chính CLI `--audit` lên repo thật. ⇒ **Repo drift làm CI đỏ ngay
+hôm nay.**
+
+**Defect thật, nhỏ hơn và đúng hơn:** cưỡng chế đó **ngẫu nhiên**, không được khai. Nó sống bên trong một
+test file, nên đổi tên / di chuyển / thu hẹp file đó là cưỡng chế biến mất **im lặng**. Một điểm cưỡng chế
+không ai khai là cách một lần refactor khỏi chỗ không còn tồn tại. Kèm theo: `kit:check` được định nghĩa
+trong `package.json` mà **không ai gọi** — một dây chết, tức một lời khai về độ phủ mà không gì chống lưng.
+
+**Việc phải làm (trong scope, không phải backlog row):** (a) làm cưỡng chế **tường minh** — step riêng
+trong `ci.yml`, hoặc `kit:check` nằm trong chuỗi `pnpm -w test` gọi — để người đọc tìm thấy nó ở chỗ họ
+tìm, không phải bằng cách đọc thân test; (b) xử lý dây chết `kit:check`: nối (ưu tiên, nó thành đường
+tường minh của (a)) hoặc xoá; (c) **giữ một drift fixture trong suite** để failure mode được *quan sát*
+chứ không được *tin*.
+
+⚠️ **KHÔNG phải việc phải làm: "nối một audit chưa từng chạy".** Đó là cách phát biểu sai của bản trước.
 
 **(1b) Hook `autopilot-sync.cjs` — TỒN TẠI NHƯNG KHÔNG CHẠY. Đo 03/09, và phép đo này bác hai bản
 trước của chính mục này.**
