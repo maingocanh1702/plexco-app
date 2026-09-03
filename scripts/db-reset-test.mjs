@@ -46,6 +46,17 @@ const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_IDENTIFIER_BYTES = 63;
 
 /**
+ * This script always executes inside the Compose `postgres` service, so DATABASE_URL_TEST must
+ * actually NAME that service's endpoint. Validating only the database name while executing against
+ * a fixed endpoint is how a URL pointing at a remote host got a same-named LOCAL database dropped
+ * instead — the tool would report success having neither done what was asked nor left the machine
+ * alone. Same defect shape as the unquoted-identifier bug: check one thing, act on another.
+ */
+const SUPPORTED_PROTOCOLS = new Set(["postgres:", "postgresql:"]);
+const COMPOSE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const COMPOSE_PORT = "5432";
+
+/**
  * fileURLToPath, never `new URL(url).pathname` on a file URL: the latter stays percent-encoded and
  * a repo path containing a space ("Plexco app") then fails to match. For the DATABASE_URL_TEST
  * database name the decode is the point — a name that decodes to something which is not a plain
@@ -96,6 +107,49 @@ export function assertResettableTestDatabase(name) {
   return name;
 }
 
+/**
+ * Resolve DATABASE_URL_TEST into the exact thing the executor will act on, refusing anything it
+ * cannot honour. Everything downstream reads THIS result and nothing re-derives from the raw url,
+ * so "what was validated" and "what gets dropped" cannot drift apart — which is the only reason
+ * the two previous defects in this file were possible.
+ */
+export function resolveResetTarget(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`db:reset:test refuses to run: DATABASE_URL_TEST is not a valid URL: ${url}`);
+  }
+  if (!SUPPORTED_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(
+      `db:reset:test refuses to run: DATABASE_URL_TEST uses "${parsed.protocol}//", but this ` +
+        "script only resets a PostgreSQL database (postgres:// or postgresql://).",
+    );
+  }
+  // The endpoint checks are what bind the guard to the action. This tool executes with
+  // `docker compose exec`, so it can only ever reach the local Compose cluster; a url naming any
+  // other host is refused rather than silently redirected to that cluster.
+  if (!COMPOSE_HOSTS.has(parsed.hostname)) {
+    throw new Error(
+      `db:reset:test refuses to run: DATABASE_URL_TEST points at host "${parsed.hostname}", but ` +
+        `this script executes inside the "${COMPOSE_SERVICE}" service of ${COMPOSE_FILE} and can ` +
+        "only reach the local cluster. It will NOT drop a same-named database locally to stand in " +
+        "for a remote one. Reset that database with the tools of the environment that owns it.",
+    );
+  }
+  if (parsed.port !== "" && parsed.port !== COMPOSE_PORT) {
+    throw new Error(
+      `db:reset:test refuses to run: DATABASE_URL_TEST uses port ${parsed.port}, but the Compose ` +
+        `cluster this script executes in publishes ${COMPOSE_PORT} (${COMPOSE_FILE}). A different ` +
+        "port means a different cluster, and this script cannot reach it.",
+    );
+  }
+  return {
+    dbName: assertResettableTestDatabase(databaseNameFromUrl(url)),
+    user: parsed.username || "plexco",
+  };
+}
+
 /** argv for the compose exec, as an array: no shell, so nothing here can be word-split. */
 export function buildResetArgv(dbName, user) {
   return [
@@ -142,8 +196,7 @@ function main() {
   let dbName;
   let user;
   try {
-    dbName = assertResettableTestDatabase(databaseNameFromUrl(url));
-    user = new URL(url).username || "plexco";
+    ({ dbName, user } = resolveResetTarget(url));
   } catch (error) {
     console.error(error.message);
     return 1;

@@ -5,6 +5,7 @@ import {
   assertResettableTestDatabase,
   buildResetArgv,
   databaseNameFromUrl,
+  resolveResetTarget,
 } from "./db-reset-test.mjs";
 
 // The whole point of this script is that it runs DROP DATABASE. The guard is the only thing
@@ -70,6 +71,49 @@ test("a mixed-case name is emitted quoted, so the server cannot fold it to anoth
   for (const arg of argv) {
     assert.ok(!/DATABASE (IF EXISTS )?PLEXCO_test/.test(arg), "no unquoted identifier may survive");
   }
+});
+
+// The script always executes inside the local Compose service. If it validated only the database
+// NAME, a url naming another host would pass and then get a same-named LOCAL database dropped in
+// its place -- neither doing what was asked nor leaving the machine alone. Probed against the
+// shipped code before this guard existed; all three below were accepted.
+
+test("refuses a url pointing at another host instead of substituting the local cluster", () => {
+  assert.throws(
+    () => resolveResetTarget("postgres://plexco:pw@prod-db.example.com:5432/customers_test"),
+    (error) => {
+      assert.match(error.message, /prod-db\.example\.com/);
+      assert.match(error.message, /will NOT drop a same-named database locally/);
+      return true;
+    },
+  );
+});
+
+test("refuses a non-postgres protocol", () => {
+  assert.throws(() => resolveResetTarget("https://example.invalid/plexco_test"), /postgres/);
+});
+
+test("refuses a port other than the one Compose publishes", () => {
+  assert.throws(() => resolveResetTarget("postgres://plexco@localhost:6543/plexco_test"), /6543/);
+});
+
+test("resolves the canonical local url, and the executor consumes only that result", () => {
+  const target = resolveResetTarget("postgres://plexco:plexco_dev@localhost:5432/plexco_test");
+  assert.deepEqual(target, { dbName: "plexco_test", user: "plexco" });
+  // An implicit port is the libpq default, which is the port Compose publishes.
+  assert.deepEqual(resolveResetTarget("postgres://plexco@127.0.0.1/plexco_test"), {
+    dbName: "plexco_test",
+    user: "plexco",
+  });
+  const argv = buildResetArgv(target.dbName, target.user);
+  assert.ok(argv.includes('DROP DATABASE IF EXISTS "plexco_test" WITH (FORCE)'));
+});
+
+test("the suffix rule still applies through the resolver, not only to a bare name", () => {
+  assert.throws(
+    () => resolveResetTarget("postgres://plexco@localhost:5432/plexco"),
+    /only ever drops a database whose name ends/,
+  );
 });
 
 test("reads the database name out of both pinned urls", () => {

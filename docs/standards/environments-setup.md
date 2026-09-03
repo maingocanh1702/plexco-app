@@ -204,7 +204,13 @@ The script fails closed:
 - it **names the database it is about to destroy**, before destroying it;
 - it **refuses any name not ending in `_test`** — so a `DATABASE_URL_TEST` pointing at the development database
   `plexco` is refused, not dropped;
-- it refuses any name that is not a plain identifier, so nothing unexpected reaches SQL;
+- it refuses any name that is not a plain identifier, and any name longer than PostgreSQL's 63-byte
+  identifier limit — beyond that the server truncates, and a truncated name may no longer end in `_test`;
+- it **quotes** the identifier, so a mixed-case name cannot be folded into a different database than the one
+  it validated and printed;
+- it **refuses a `DATABASE_URL_TEST` that does not name the local compose cluster** — another host, another
+  port, or a non-`postgres://` scheme is rejected outright. It will not drop a same-named *local* database
+  as a stand-in for a remote one;
 - it runs `psql` **inside the compose `postgres` container**, so no host `psql` is needed.
 
 > ⚠️ **Do not run it while a test suite is running.** It uses `DROP DATABASE ... WITH (FORCE)`, and
