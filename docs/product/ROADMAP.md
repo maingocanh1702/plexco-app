@@ -1,15 +1,61 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.13
+**Phiên bản:** v3.14
 > ⚠️ *Đính chính version: header đứng ở v3.7 trong khi changelog đã tới v3.8 (mirror DD-116, 24/08) — dòng header không được bump lần đó. v3.9 gánh cả phần lệch này.*
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 02/09/2026
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 03/09/2026
 **Căn cứ:** `BRD.md` v3.9q · `PRD.md` v2.8p · `TDD.md` v3.1j · `../standards/decisions.md` (current — đọc bảng tổng hợp + changelog của chính file đó; **không pin version decisions ở đây** vì số chép tay đã stale một lần: header này từng ghi v2.11 trong khi live là v2.19) · `../features/FE/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
 
-> **📌 Repo truth snapshot — `main@620b2bd1bd13b6cf990cb3d839991ebd518fbf31` (30/08/2026; `main` **ahead 1** so với `origin/main` — `620b2bd` chưa push).** Re-pin 02/09/2026 từ `1fdba1d` (+93 commit). Mọi số đếm **cấu trúc** trong file này (migration · test file · route · spec · static) đo tại commit trên bằng đúng §Cách đọc tiến độ → "Lệnh tái tạo số đếm". **Ngoại lệ có tên: trục Tests là `STALE`** — canonical runner **không chạy được ở pass này** (môi trường đo không có `pnpm`/Postgres), và số cũ **không được mang sang** vì `git diff --name-only 80a3464..620b2bd -- packages apps` trả **34 file**, phá đúng điều kiện code-identical mà mốc `813` dựa vào. Authority trục Tests vẫn là **854 workspace + 30 validator @ `93f1e93` (15/08)** cho tới khi runner re-pin trên máy owner. Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
+> **📌 Repo truth snapshot — HAI pin, tách cố ý vì chúng đo ở hai thời điểm khác nhau:**
+> **(a) Số đếm cấu trúc** (migration · test file · route · spec · static) — `main@620b2bd1bd13b6cf990cb3d839991ebd518fbf31` (30/08/2026), re-pin 02/09 từ `1fdba1d` (+93 commit).
+> **(b) Trục Tests** — `18c75d825c0d1f702e453b8b4bee014c9cb12849` (03/09/2026), **mang sang `main`** hợp lệ theo điều kiện code-identical ghi trong khối 🟩 03/09.
+> Mọi số đo bằng đúng §Cách đọc tiến độ → "Lệnh tái tạo số đếm". **Nhãn `STALE` của trục Tests đã GỠ 03/09** — authority nay là **1234 workspace + 85 readiness/kit @ `18c75d8`**, không còn là `854 + 30 @ 93f1e93`. Nếu số không tái tạo được ⇒ coi như **stale**, không dùng để ra verdict.
 >
-> 🔷 **RE-PIN ĐO LƯỜNG 02/09/2026 tại `main@620b2bd` — pass đo mà khối 🟠 30/08 hẹn nợ. Đọc khối này TRƯỚC mọi khối khác; nó pin số, không đổi quyết định nào.**
+> 🟩 **PIN TRỤC TESTS 03/09/2026 — nửa lời hứa còn lại của khối 🔷 02/09 đã đóng. Với MỌI phát biểu về số test, đọc khối này TRƯỚC mọi khối khác.**
+> Khối 🔷 02/09 pin được static + cấu trúc nhưng **không chạy được runner**, nên trục Tests mang nhãn `STALE` và authority kẹt ở `854 + 30 @ 93f1e93` (15/08). Pass này **không chạy lại suite** — phép đo đã tồn tại sẵn kèm provenance, sinh ra từ chính gate của lane `gates-that-fire--migrate-p17-cause`. Chạy lại sẽ tạo một phép đo *khác*, không phải xác nhận phép đo này.
+>
+> **Nguồn của MỌI số dưới đây — một file, trích dẫn được:**
+> `.autopilot/state-archive/gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause-20260903T060118Z/state/gate-attempt-01-verify-canonical-04.txt`
+> — `command:` (dòng 3) = `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test` · `head_sha:` (dòng 5) = `18c75d82…` · `exit_status: 0` (dòng 6).
+>
+> **⚠️ HAI THANG ĐO. KHÔNG ĐƯỢC CỘNG IM LẶNG.** `pnpm test` chạy nối tiếp hai runner khác nhau trên hai tập file rời nhau:
+>
+> | Lớp | Runner | Phạm vi file | Số | Trong artifact |
+> |---|---|---|---|---|
+> | **Workspace** | `vitest`, 4 tiến trình độc lập | 46 file `*.test.ts(x)` dưới `packages/`+`apps/` | **1234** — core **153** (11 file) · db **710** (12) · web **331** (19) · bot **40** (4) | dòng 560–561 · 638–639 · 669–670 · 716–717 |
+> | **Readiness/kit** | `node --test` (node:test TAP), 1 tiến trình | đúng 3 file `scripts/*.test.mjs` | **85** (`# pass 85` · `# fail 0` · `# suites 0`) | dòng 536–543 |
+>
+> Hai lớp **rời nhau về tập file**: static grep của luật 4 quét `packages apps` nên **theo cấu tạo** không nhìn thấy 3 file `scripts/`. Vì vậy chuỗi historical bên dưới là **workspace-only**, và `1234` không bao giờ được cộng với `85` để khai một số "tổng" — đây đúng là cái bẫy mà v3.5 đã sập một lần theo chiều ngược lại (trừ nhầm lớp validator khỏi một số vốn workspace-only).
+>
+> **Điều kiện mang sang (carry) — cùng một luật, hai kết cục trái ngược, đặt cạnh nhau để thấy luật đang chạy chứ không phải số được khai:**
+>
+> ```bash
+> # ✅ 03/09 — mốc 1234 ĐƯỢC mang từ 18c75d8 sang main: cả hai lệnh trả RỖNG
+> git diff --name-only 18c75d8..main -- packages apps   # → (rỗng, 0 file) ⇒ workspace 1234 carry
+> git diff --name-only 18c75d8..main -- scripts         # → (rỗng, 0 file) ⇒ readiness  85 carry
+> # toàn bộ diff 18c75d8..main chỉ là 1 file docs: docs/autopilot-templates/be-infra-lanes-2026-09-02-RUN.md
+>
+> # ❌ 02/09 — mốc 813 KHÔNG được mang từ 80a3464 sang 620b2bd: cùng lệnh, trả 34 file
+> git diff --name-only 80a3464..620b2bd -- packages apps  # → 34 file ⇒ điều kiện vỡ ⇒ khai STALE
+> ```
+>
+> Lệnh là thứ phải chạy lại, **không phải SHA chép tay** — `main` di chuyển (một commit docs đã land ngay trong pass này). Pin bất biến là `18c75d8`; quyền carry do output rỗng cấp, không do một SHA nào trong câu này.
+>
+> ✅ **LUẬT 4 ĐÓNG KHÍT, cả hai lớp** — `static + generated = runner`, kiểm kê theo **độ sâu ngoặc** (không phải cửa sổ dòng, theo đúng kết luận v3.5):
+>
+> | Lớp | Static | Generated | = Runner |
+> |---|---|---|---|
+> | core | 147 | +6 | **153** |
+> | db | 680 | +30 | **710** |
+> | web | 230 | +101 | **331** |
+> | bot | 40 | +0 | **40** |
+> | **Σ workspace** | **1097** | **+137** | **1234** |
+> | *readiness/kit (thang riêng)* | *65* | *+20* | ***85*** |
+>
+> **`137` KHÔNG phải hiệu `1234 − 1097`** — đó là phần dư, và viết một phép trừ vào chỗ authority đúng là kiểu đóng băng tiền đề chưa đo mà luật 4 sinh ra để chặn. `137` là **tổng của bảng kiểm kê hai lớp** ở §Cách đọc tiến độ → luật 4, và nó đóng **độc lập trên từng package** (4 checksum rời nhau, không phải 1).
+>
+> 🔷 **RE-PIN ĐO LƯỜNG 02/09/2026 tại `main@620b2bd` — pass đo mà khối 🟠 30/08 hẹn nợ. Đọc khối này TRƯỚC mọi khối khác; nó pin số, không đổi quyết định nào.** *(⚠️ Riêng trục Tests: khối 🟩 03/09 ở trên thay thế — mục "Việc mở" và câu "mọi verdict phải đọc `854 + 30`" của khối này đã hết hiệu lực.)*
 > Khối 🟠 30/08 ghi rõ "**bản cập nhật này KHÔNG re-pin số đếm** … để một pass đo riêng pin lại cùng lúc cả runner lẫn static". Pass đó là đây, và nó **chỉ đóng được một nửa lời hứa**: static + cấu trúc đã pin, **runner thì không** — xem ngoại lệ có tên ở dòng snapshot trên. Khai nửa vời một cách tường minh tốt hơn là để cả bảng đứng ở `1fdba1d` thêm một tuần.
 >
 > **Số đo được, tại `620b2bd`:**
@@ -26,7 +72,7 @@
 > | **Màn FE nối API thật** | **0** | **0** | FE PENDING (DD-116) — trục yếu nhất, không đổi |
 >
 > ⚠️ **Static 1095 là TÍN HIỆU DRIFT, không phải số test** — và ở snapshot này nó under-count **nặng hơn trước**: generator lớp 2 (`it.each`/`test.each`) đi từ **2 hit lên 17 hit** (`chat-dm-safety-invariants` ×2 · 4 file route/lib session ×15). Công thức đối chiếu `static + generated = runner` của luật 4 **không đóng được** ở đây vì vế phải chưa đo. Đừng suy runner từ 1095.
-> **Việc mở ra từ pass này (bước 1 của phiên P4, treo từ 24/08):** chạy `DATABASE_URL_TEST=… pnpm test` trên máy owner, rồi pin cùng lúc runner + validator + đối chiếu generator hai lớp. Cho tới lúc đó **mọi verdict dựa trên số test phải đọc `854 + 30 @ 93f1e93`**, không đọc bảng này.
+> ~~**Việc mở ra từ pass này (bước 1 của phiên P4, treo từ 24/08):** chạy `DATABASE_URL_TEST=… pnpm test` trên máy owner, rồi pin cùng lúc runner + validator + đối chiếu generator hai lớp. Cho tới lúc đó **mọi verdict dựa trên số test phải đọc `854 + 30 @ 93f1e93`**, không đọc bảng này.~~ ✅ **ĐÓNG 03/09** — runner + readiness + đối chiếu generator hai lớp đã pin cùng lúc; đọc khối 🟩 03/09. Chỉ thị "phải đọc `854 + 30`" **hết hiệu lực**, giữ lại nguyên văn để thấy nó được đóng bằng gì.
 >
 > **BE nghiệp vụ — trạng thái cấu trúc đã đổi hẳn, và đây là delta lớn nhất của tháng.** `packages/db/src/session-service.ts` (2232 dòng) nay export **đủ sáu command**: `createSession` · `publishSession` · `announceSession` · `updateSession` · `closeSession` · `cancelSession`. Ba trong sáu đã có mặt API (`770ff4b`). **Ba chưa có route: `close` · `cancel` · `announce`** — announce còn buộc thêm DD-56 clause 1 (bật schedule biến `{announced:true}` thành lời hứa với người dùng thật), nên **thiếu route announce không phải là bỏ sót, là gate**.
 > **Code-dark còn lại, đo chứ không suy:** `resolveCapability()` (`packages/db/src/capability.ts`) vẫn **0 caller production** ⇒ hard-dep (a) của DD-114 (billing P5 vào phase-1) vẫn ở nửa đường — registry hết dark từ `f2af39d`, nhưng **chưa nhánh tiền nào bị gate thật**. Wiring thuộc slice auto-reconcile (DD-114 D2.3), chưa author. `chat_*` vẫn 0 service. DD-118 `runWithLang` mới phủ đường session-command.
@@ -327,7 +373,38 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
 3. **`.pen` screens ≠ FE.** Design xong không kéo FE lên %.
 4. **Đếm được thì phải tái tạo được.** Mọi số trong file này đi kèm lệnh tái tạo bên dưới. Với test case: **canonical runner (`pnpm test`) là authority duy nhất**; *static grep* là cross-check chạy được không cần DB, dùng để **phát hiện drift**, không dùng để khai số.
    **Công thức đối chiếu:** `static + Σ(test sinh trong loop) = runner`. Test sinh trong loop = table-driven test viết bằng `for…of`/`forEach` bọc ngoài `it()` — grep chỉ đếm 1 lần dù runner sinh N.
-   **Generator hiện hành tại `1fdba1d` (kiểm kê 13/08) — 4 loop-site + 2 `it.each`, tổng `+41`:**
+   **Generator HIỆN HÀNH tại `18c75d8` (kiểm kê 03/09) — 9 loop-site + 17 `it.each`, tổng `+137`.** Kiểm kê bằng **độ sâu ngoặc**, đúng kết luận v3.5; cửa sổ `grep -A` không dùng để ra số.
+
+   **Lớp 2 — `it.each` (static thấy `0`, runner sinh N):** 17 site, `+100`.
+
+   | Vị trí | Bảng | Static | Runner | Δ |
+   |---|---|---|---|---|
+   | `packages/db/src/chat-dm-safety-invariants.test.ts:563` · `:808` | biến `flags`, 4 hàng ×2 site | 0 | 4 ×2 | `+8` |
+   | `apps/web/app/api/sessions/route.test.ts:187` · `:243` | inline 6 · 4 | 0 | 10 | `+10` |
+   | `apps/web/app/api/sessions/[id]/route.test.ts:173` · `:198` | inline 4 · 8 | 0 | 12 | `+12` |
+   | `apps/web/app/api/sessions/[id]/publish/route.test.ts:160` | inline 5 | 0 | 5 | `+5` |
+   | `apps/web/lib/session-command-route.test.ts` — 10 site (`:335` `:453` `:477` `:631` `:659` `:757` `:771` `:818` `:881` `:978`) | inline 4·5·3·11·7·5·9·9·3·9 | 0 | 65 | `+65` |
+   | **Σ lớp 2** | **17 site** | **0** | **100** | **`+100`** |
+
+   **Lớp 1 — loop bọc ngoài `it()` (static thấy `1`, runner sinh N):** 9 site, `+37`.
+
+   | Vị trí | Hình dạng | Static | Runner | Δ |
+   |---|---|---|---|---|
+   | `packages/core/src/app-error.test.ts:23` | `cases` 7 hàng | 1 | 7 | `+6` |
+   | `packages/db/src/chat-dm-safety-invariants.test.ts:478` · `:484` | lồng `ROLES(3) × TABLES(3)`, 2 `it()` **trong** vòng trong | 2 | 18 | `+16` |
+   | `packages/db/src/chat-dm-safety-invariants.test.ts:491` | 1 `it()` trong `ROLES(3)` nhưng **ngoài** `TABLES` | 1 | 3 | `+2` |
+   | `packages/db/src/authorization.test.ts:757` `:768` `:779` `:790` | `["close_session","cancel_session"]`, 4 `it()` × 2 | 4 | 8 | `+4` |
+   | `apps/web/lib/google-oidc.test.ts:134` | `rows` 10 hàng | 1 | 10 | `+9` |
+   | **Σ lớp 1** | **9 site** | **9** | **46** | **`+37`** |
+
+   > **Năm loop cố ý đếm `0` — chúng nằm TRONG thân `it()`, không bọc ngoài nó:** trong `chat-dm-safety-invariants.test.ts`, `it()` catalog ở `:526` chứa **3** vòng lồng (`ROLES × TABLES × TABLE_PRIVILEGES`, dòng `:527`–`:529`) và `it()` ở `:544` chứa **2** (`ROLES × FUNCTIONS`, `:545`–`:546`). Đó là vòng lặp **assertion**: mỗi `it()` vẫn là **1 test** dù chạy 63 và 9 lần `expect`. Cùng tiền lệ với `oauth-transaction.test.ts:71,96` ghi ở khối lịch sử 22/07. **Đây là chỗ dễ đếm dôi nhất** — nếu đếm nhầm 5 loop này thành generator, `db` sẽ dôi và luật 4 vỡ ngay ở checksum per-package. Phân biệt được bằng độ sâu ngoặc, không bằng mắt.
+
+   ✅ **`1097 + 137 = 1234` — và đóng ĐỘC LẬP trên từng package** (core `147+6=153` · db `680+30=710` · web `230+101=331` · bot `40+0=40`). Bốn checksum rời nhau, không phải một: một hàng sai trong bảng trên sẽ làm lệch tổng của package đó chứ không tự bù.
+
+   ➕ **Lớp readiness/kit cũng đóng theo cùng công thức, trên thang riêng:** `65 + 20 = 85`. Hai generator, cả hai trong `scripts/autopilot-ephemeral-review-worktree.test.mjs`: `:490` (`for…of` bảng 10 scope-path ACCEPTS, `+9`) và `:524` (bảng 12 REJECTS, `+11`). Lệnh static ở dưới quét `packages apps` nên **không** chạm 3 file `scripts/*.test.mjs`; muốn tái tạo `65` phải grep riêng đúng 3 file đó.
+
+   <details>
+   <summary>Bảng generator historical tại <code>1fdba1d</code> (13/08) — <code>+41</code>, đã bị bảng 03/09 ở trên thay thế</summary>
 
    | Vị trí | Hình dạng | Static | Runner | Δ |
    |---|---|---|---|---|
@@ -338,9 +415,14 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
    | `packages/db/src/chat-dm-safety-invariants.test.ts:563` | **`it.each(flags)`**, `flags.length = 4` | **0** | 4 | `+4` |
    | `packages/db/src/chat-dm-safety-invariants.test.ts:808` | **`it.each(flags)`**, `flags.length = 4` | **0** | 4 | `+4` |
 
+   </details>
+
    ⚠️ **Hai lớp mù, cả hai đều mới, và cả hai đều do một file gây ra.** (a) **`it.each` vô hình:** pattern `^[[:space:]]*(it|test)\(` đòi `(` ngay sau `it`, nên `it.each(flags)(` cho **0 hit** — không phải đếm thiếu, là không thấy. v3.4b từng loại trừ `test.each` bằng "0 hit toàn repo"; đúng **lúc đó**, hết đúng từ `d5b31f9` (10/08). (b) **Loop lồng không đều:** hàng `:476` (một mình) là `it()` nằm ở thân vòng **ngoài**, sau khi vòng trong đã đóng — cửa sổ `grep -A3` của bản cũ không thấy, và ngay cả `-A12` cũng chỉ thấy do may. **Kết luận cho lần sau: grep theo cửa sổ dòng không đủ để kiểm kê generator; muốn chắc phải đếm theo độ sâu ngoặc.** Bảng này đã được dựng bằng cách đó.
 
-   ✅ **ĐỐI CHIẾU KHỚP CHÍNH XÁC tại `80a3464` — công thức đóng.** Static = **772** (đo bằng `git show`; bằng đúng static tại `1fdba1d` vì 24 commit ở giữa không chạm `packages/`|`apps/`). `772 + 41 = ` **813** ` = ` đúng số runner khai. Kiểm theo từng package:
+   <details>
+   <summary>✅ Đối chiếu historical tại <code>80a3464</code> — <code>772 + 41 = 813</code>, công thức từng đóng ở đó (tiền lệ, không phải số hiện hành)</summary>
+
+   Static = **772** (đo bằng `git show`; bằng đúng static tại `1fdba1d` vì 24 commit ở giữa không chạm `packages/`|`apps/`). `772 + 41 = ` **813** ` = ` đúng số runner khai. Kiểm theo từng package:
 
    | Package | Static | Generated | = Runner |
    |---|---|---|---|
@@ -350,9 +432,12 @@ Plexco xây **repo riêng**; lift logic thuần (matching, payments-logic, dates
    | bot | 40 | +0 | **40** |
    | **Σ workspace** | **772** | **+41** | **813** |
 
+   </details>
+
    > **Bẫy đã sập một lần trong chính bản v3.5 này, giữ lại làm tiền lệ:** bản nháp đầu trừ 13 validator khỏi 813 rồi khai "lệch 11", dựng nguyên một khối 🔴 drift + binary resolution + next-review-trigger cho một sai lệch **không tồn tại**. **`813` là số workspace (vitest), KHÔNG bao gồm lớp validator** — `pnpm test` chạy `test:review-readiness` (`node --test`, in `# pass` riêng) rồi mới tới `pnpm -r run test`; số lấy từ đuôi vitest là workspace-only theo cấu tạo. Chứng cứ độc lập: v3.4o đã ghi per-package runner **core 152 · web 146**, khớp đúng `static + generator` ở bảng trên. Hai sai số bù nhau lệch đi 11 (`13 − 2`), và nếu chỉ sửa một cái thì con số còn tệ hơn. **Luật rút ra: trước khi khai một mismatch, phải nói rõ số runner đang so là workspace hay full.**
 
    ➕ **Lớp validator: 13 → 17 sau phép đo, qua HAI commit chứ không một.** `b53bc75` tạo `scripts/autopilot-ephemeral-review-worktree.test.mjs` với **2** test và wire vào `test:review-readiness` (13→15); `2d5834b` thêm **2** test nữa vào chính file đó, **không chạm `package.json`** (15→17). Nói "`package.json` là thứ đổi lớp validator" chỉ đúng một nửa — nửa còn lại đến từ sửa file test. Full `pnpm test` tại `80a3464` = `813 + 13 = 826`; tại `1fdba1d` = `813 + 17 = **830**` — **dự đoán để đối chiếu, không phải số khai**.
+   **Chuỗi lớp này (readiness/kit, thang riêng — KHÔNG cộng vào workspace):** 13 → 17 (`1fdba1d`) → 30 (`93f1e93`) → **85 (`18c75d8`, đo 03/09)**. Bước 30 → 85 là `+55`, phần lớn từ `check-kit-pack-membership.test.mjs` (28 test, file mới) và `autopilot-ephemeral-review-worktree.test.mjs` (20 static + 20 sinh trong 2 loop).
    **Lưu ý 06/08 (giữ làm tiền lệ):** phép đối chiếu chỉ hợp lệ khi static và runner cùng đo trên một commit; không được cộng chéo commit rồi khai thành số test.
    Nếu công thức không khớp ⇒ hoặc có generator mới chưa kiểm kê (thêm vào danh sách trên), hoặc doc đã drift. **Không được chọn số lớn hơn để cho khớp.**
 5. **Trục yếu nhất là trạng thái thật.** Một group có Spec ✅ / BE ✅ / FE ⬜ thì là **⬜ chưa dùng được**, không phải "gần xong".
@@ -368,9 +453,16 @@ find packages apps -type f \( -name "*.test.ts" -o -name "*.test.tsx" \) \
   -not -path "*/node_modules/*" -not -path "*/.autopilot/worktrees/*" | wc -l
 # test cases — canonical runner (AUTHORITY cho số test và trục Tests)
 DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test
-# static cross-check (không cần DB) — dùng để phát hiện drift, KHÔNG dùng để khai số
+# static cross-check LỚP WORKSPACE (không cần DB) — phát hiện drift, KHÔNG dùng để khai số
+#   phạm vi là `packages apps` ⇒ theo cấu tạo KHÔNG nhìn thấy lớp readiness/kit dưới scripts/
 grep -rhoE "^[[:space:]]*(it|test)\(" packages apps \
   --include="*.test.ts" --include="*.test.tsx" | wc -l
+# static cross-check LỚP READINESS/KIT — thang đo RIÊNG, không được cộng vào số trên.
+#   đúng 3 file mà `test:review-readiness` chạy; runner của lớp này là `node --test`, không phải vitest
+grep -chE "^[[:space:]]*test\(" \
+  scripts/check-review-readiness.test.mjs \
+  scripts/autopilot-ephemeral-review-worktree.test.mjs \
+  scripts/check-kit-pack-membership.test.mjs | paste -sd+ - | bc
 # kiểm kê generator, LỚP 1: loop bọc ngoài it()
 #   -A12 (không phải -A3): loop lồng ROLES × TABLES của chat-dm-safety đặt it() cách 2 dòng,
 #   cửa sổ -A3 của bản cũ nhìn không thấy nó.
@@ -395,14 +487,14 @@ find docs/channels/web/FE -maxdepth 1 -type f -name "feature_*_fe.md" | wc -l
 ## 📊 Dev Progress Overview
 
 **Số đếm kiểm chứng được — `main@620b2bd1bd13b6cf990cb3d839991ebd518fbf31` (30/08/2026), re-pin 02/09.**
-> ⚠️ **Trục Tests trong bảng này mang nhãn `STALE` có chủ ý** — runner chưa chạy được ở pass 02/09 (không có `pnpm`/Postgres trong môi trường đo) và mốc `813 @ 80a3464` **không được mang sang** vì 34 file dưới `packages`/`apps` đã đổi từ đó. Số authority vẫn là **854 workspace + 30 validator @ `93f1e93` (15/08)**.
+> ✅ **Trục Tests HẾT `STALE` từ 03/09** — đo tại `18c75d8` và mang sang `main` hợp lệ (`git diff --name-only 18c75d8..main -- packages apps` và `… -- scripts` đều **rỗng**). Authority nay là **1234 workspace + 85 readiness/kit**, hai thang đo riêng — xem khối 🟩 03/09. Số **cấu trúc** trong bảng vẫn pin ở `620b2bd` (02/09); riêng hàng static đã đo lại tại `18c75d8` để đóng luật 4.
 
 | Hạng mục | Số thực | Ghi chú |
 |---|---|---|
 | Migrations trên `main` | **37** (`0000`–`0036`) | ✅ re-verify tại `620b2bd` (30/08). **Mới từ 13/08:** `0033` `public_projection_fences` (DD-12 8a — guarded view + CAS-clear + REVOKE base SELECT khỏi `readonly`+`app`) · `0034` identity-account-link resolver (DD-32 tiền đề #1) · `0035` `tenant_locale_reader` (DD-118) · `0036` REVOKE nốt `app` INSERT/UPDATE/DELETE trên `public_sessions` — đóng half-revoke mà `0033` để lại; sau `0036` `app` **không còn quyền nào** trên bảng gốc. **Lịch sử tới `0032`:** `0015`–`0018` auth lane · `0019`–`0021` tenant-integrity composite FK DD-68 · `0022` job lease/reclaim · `0023` outbox ack marker · `0024` `sessions_public_capacity_chk` · `0025`/`0026` rename CHECK · `0027` `resolve_tenant_status_locked` · `0028`/`0029` DD-29 capability registry expand→contract · **`0030` DM-safety authority DD-55 (3 bảng global-protected + `assert_dm_allowed`)** · **`0031` chat schema core DD-38/86 (`chat_channels`/`chat_members`/`chat_messages`)** · **`0032` DD-102 single-read** |
 | Test file | **46** *(37 → 46)* | re-verify tại `620b2bd`. +9 từ `1fdba1d`, phần lớn là test của session command family + 3 route nghiệp vụ + `public-session-fence` + `identity-account-link` + `capability` |
-| Test case — **canonical runner** | 🔴 **`STALE` — không có số đo cho `620b2bd`.** Authority vẫn là **854 workspace + 30 validator @ `93f1e93` (15/08)** | ⛔ **Mốc `813 @ 80a3464` KHÔNG được mang sang `620b2bd`.** Điều kiện cho phép mang sang là "commit ở giữa không chạm `packages/` hay `apps/`"; kiểm lại: `git diff --name-only 80a3464..620b2bd -- packages apps` trả **34 file** ⇒ điều kiện vỡ. Pass 02/09 không chạy được runner (môi trường đo không có `pnpm`/Postgres) nên **không khai số mới thay vì khai số suy ra** — đây đúng là ca mà luật 4 tồn tại để chặn. Sau merge `9da3021` từng có phép đo **informal 919 workspace + 30 validator** (máy owner, gate `ap-merge`) — informal, **không phải authority**, và đã stale thêm 4 merge nữa. **Việc phải làm:** `DATABASE_URL_TEST=… pnpm test` trên máy owner, pin đồng thời runner + validator + đối chiếu generator hai lớp. **Chuỗi historical (workspace-only, mốc trên `main`):** 460 → 482 → 493 → 519 → 526 → 537 → 561 (`3d75c90`) → 670 (`528540e`) → 813 (`80a3464`) → **854 (`93f1e93`, authority hiện hành)** → *[chưa đo]* |
-| Test case — **static cross-check** | **1095** *(772 → 1095)* | core **147** · db **678** · web **230** · bot 40 — đo tại `620b2bd`, tổng khớp per-package. ⚠️ **Under-count nặng hơn trước:** generator lớp 2 (`it.each`/`test.each`) đi từ **2 hit lên 17** (2 ở `chat-dm-safety-invariants`, 15 ở `apps/web` — `api/sessions/route.test.ts` ×2, `api/sessions/[id]/route.test.ts` ×2, `api/sessions/[id]/publish/route.test.ts`, `lib/session-command-route.test.ts` ×3, …), mà static grep cho **0 hit** với lớp này. Static là **tín hiệu drift**, không phải số test; ở snapshot này công thức `static + generated = runner` **không đóng được** vì vế phải chưa đo |
+| Test case — **canonical runner** | ✅ **1234 workspace** (core **153** · db **710** · web **331** · bot **40**) **+ 85 readiness/kit** — đo tại `18c75d8`, `exit_status: 0` | **Provenance:** `.autopilot/state-archive/gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause-20260903T060118Z/state/gate-attempt-01-verify-canonical-04.txt` — workspace ở dòng 560–561 · 638–639 · 669–670 · 716–717; readiness ở dòng 536–543 (`# pass 85`). **Mang sang `main` hợp lệ:** `git diff --name-only 18c75d8..main -- packages apps` → **rỗng** (và `… -- scripts` → **rỗng** cho lớp 85) ⇒ đúng điều kiện code-identical mà mốc `813` đã **vỡ** hồi 02/09 (`80a3464..620b2bd` trả **34 file**). Cùng một luật, hai kết cục — đó là chỗ phải đọc, không phải con số. ⚠️ **1234 và 85 là HAI THANG ĐO**, cấm cộng im lặng: vitest trên `packages`+`apps` vs `node --test` trên 3 file `scripts/`. Phép đo **informal 919** sau `9da3021` chưa bao giờ là authority và nay đã bị thay. **Chuỗi historical (workspace-only, mốc trên `main`):** 460 → 482 → 493 → 519 → 526 → 537 → 561 (`3d75c90`) → 670 (`528540e`) → 813 (`80a3464`) → 854 (`93f1e93`) → **1234 (`18c75d8`, authority hiện hành)** |
+| Test case — **static cross-check** | **1097** *(1095 @`620b2bd` → 1097 @`18c75d8`)* | core **147** · db **680** · web **230** · bot 40 — đo lại tại `18c75d8` để cùng commit với runner (luật: static và runner phải cùng một commit mới đối chiếu được). `+2` ở `db` là test của chính lane P17. ✅ **Luật 4 ĐÓNG:** `1097 + 137 generated = 1234`, và đóng **độc lập từng package** (core `147+6` · db `680+30` · web `230+101` · bot `40+0`). Kiểm kê `+137` = **17 site `it.each` (`+100`) + 9 loop-site (`+37`)**, đếm theo độ sâu ngoặc — bảng đầy đủ ở §Cách đọc tiến độ → luật 4. ⚠️ `137` **không phải** hiệu `1234−1097`; nó là tổng bảng kiểm kê, và phần dư chỉ dùng để **kiểm** chứ không để khai |
 | Bằng chứng test per-slice (real-PG) | db **167** → **173** → **179** → **201** → **212** → **219** → **243** | `0019` → `0020` → `0021` → `0022` → `0023` → `0024` → `0025`. Là authority của **chính slice đó**, không phải aggregate toàn repo; per-slice của `0026`–`0032` nằm trong verdict/packet tương ứng (`0030`–`0032` ở `docs/autopilot/contracts/`, không ở `slice-readiness-verdicts.md`) |
 | Invariant test | **5 file** *(3 → 5)* | `rls-invariants` · `waitlist-invariants` · `migrate` (race-safety `0000`) · **`chat-dm-safety-invariants`** · **`chat-schema-invariants`** — xem danh sách invariant-class ở §Cách đọc tiến độ. Invariant ✅ **không** kéo BE lên |
 | API route đang có | **13** *(10 → 13)* | ✅ re-verify tại `620b2bd`. 8 auth (kể cả 2 route Telegram-era) + 2 onboarding + **3 route nghiệp vụ đầu tiên của project** (`770ff4b`, 26/08): `POST /api/sessions` · `/api/sessions/[id]` · `/api/sessions/[id]/publish`, kèm DD-56 lint guard. **Câu "0 route nghiệp vụ" HẾT ĐÚNG.** ⚠️ Còn thiếu route cho 3/6 command: `close` · `cancel` · `announce` — announce bị gate bởi DD-56 clause 1, không phải bỏ sót |
@@ -417,18 +509,18 @@ find docs/channels/web/FE -maxdepth 1 -type f -name "feature_*_fe.md" | wc -l
 
 | Delivery group | Spec | Migration | BE | FE/UI | Tests | Invariant | Trạng thái thật (trục yếu nhất) |
 |---|---|---|---|---|---|---|---|
-| **P0–P1 Foundation** | ✅ | ✅ `0000`–`0014` | ✅ core+db | ⬜ | 🟡 authority **854 @`93f1e93`** (15/08) · re-pin nợ | ✅ RLS + waitlist + migrate-race | 🟡 **nền xong, chưa có surface** |
-| **P0–P1 · 3b Auth (Google lane)** | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 callback/landing | 🟡 trong runner (authority 854) | ✅ auth/RLS trong db suite | 🟢 **merged · measurement closed · ⛔ chưa bật** (owner go-live/env decision) |
+| **P0–P1 Foundation** | ✅ | ✅ `0000`–`0014` | ✅ core+db | ⬜ | 🟡 authority **1234 @`18c75d8`** (03/09) · nợ re-pin đã trả | ✅ RLS + waitlist + migrate-race | 🟡 **nền xong, chưa có surface** |
+| **P0–P1 · 3b Auth (Google lane)** | ✅ | ✅ `0015`–`0018` | ✅ 8 route | 🟡 callback/landing | 🟡 trong runner (authority 1234) | ✅ auth/RLS trong db suite | 🟢 **merged · measurement closed · ⛔ chưa bật** (owner go-live/env decision) |
 | **Tenant-integrity FK (DD-68, ngoài P-number)** | ✅ (DD-68 chốt) | ✅ `0019`–`0021` | — *(code dark, không service/route)* | — | ✅ real-PG per-slice: db 167 → 173 → 179 | ✅ cross-tenant reject theo từng FK dưới app role | ✅ **merged** — integrity đóng, **không mở hành vi nào** |
 | **Shared job runtime (cross-cutting)** | ✅ DD-89/DD-90 | ✅ `0022`–`0023` | 🟡 claim/ack + dispatcher + queue/preflight + scheduler | — | ✅ db 201→212 + bot 3→40 | ✅ narrow EXECUTE-only/audit/fan-out completeness | 🟡 **infra merged, schedule OFF, no producer/projector** |
 | **Naming-identity CHECK (ngoài P-number)** | — *(không phải feature)* | ✅ `0025`–`0026` | — | — | ✅ real-PG db 219→243 (`0025`) | — | ✅ **merged** — RENAME-only, zero predicate change, không mở hành vi nào |
-| **Tenant authz + capability registry (DD-29, ngoài P-number)** | ✅ DD-29 · billing BE §2/§4b Reviewed | ✅ `0027` definer read · `0028`/`0029` expand→contract | 🟡 `authorizeTenantAction` **hết code-dark** (session command gọi thật từ `1ccbe5d`); `resolveCapability()` (`f2af39d`, `capability.ts`) là reader đầu tiên của registry nhưng **vẫn 0 caller production** | — | 🟡 per-slice trong Verdict 28/31 + DD-29 slice · aggregate chưa re-pin | 🟡 fail-closed 2-bước + refuse-to-proceed guard ở `0029` | 🟡 **merged · nửa dark** — registry đọc được, **chưa nhánh tiền nào bị gate thật**; wiring = slice auto-reconcile (DD-114 D2.3), chưa author ⇒ **hard-dep (a) của phase-1 vẫn mở** |
+| **Tenant authz + capability registry (DD-29, ngoài P-number)** | ✅ DD-29 · billing BE §2/§4b Reviewed | ✅ `0027` definer read · `0028`/`0029` expand→contract | 🟡 `authorizeTenantAction` **hết code-dark** (session command gọi thật từ `1ccbe5d`); `resolveCapability()` (`f2af39d`, `capability.ts`) là reader đầu tiên của registry nhưng **vẫn 0 caller production** | — | 🟡 per-slice trong Verdict 28/31 + DD-29 slice · aggregate đã re-pin (**1234 @`18c75d8`**) | 🟡 fail-closed 2-bước + refuse-to-proceed guard ở `0029` | 🟡 **merged · nửa dark** — registry đọc được, **chưa nhánh tiền nào bị gate thật**; wiring = slice auto-reconcile (DD-114 D2.3), chưa author ⇒ **hard-dep (a) của phase-1 vẫn mở** |
 | **Chat DB root (DD-38/DD-55/DD-86, ngoài P-number)** | ✅ Reviewed pair + primary plan `PLAN_READY` | ✅ **`0030` DM-safety · `0031` chat schema · `0032` single-read** | ⬜ **0 service** — không TS production nào đọc `chat_*` | ⬜ | ✅ per-slice trong packet `docs/autopilot/contracts/` | ✅ 2 file mới: global-protected zero-grant (catalog-level) + chat tenant/membership boundary | 🟢 **merged · code dark** — schema thật, **0 API · 0 UI**; slice 7 mới authored, slice 8 chưa; nợ P1 `chat-identity-merge-reparent-enablement` (DD-103) `NOT_CODE_READY` |
-| **Session command family (P4 substrate, ngoài P-number)** | ✅ Reviewed pair + DD-110/111/112/117 | — *(dùng schema sẵn có)* | ✅ **đủ 6 command** `packages/db/src/session-service.ts` (2232 dòng): create · publish · announce · update · close · cancel | ⬜ | 🟡 per-slice trong packet từng lane · aggregate chưa re-pin | ✅ dedup `(tenant_id, command_id)` (DD-117 D5) · optimistic version · fail-closed refuse nhánh paid | 🟢 **merged · buildable** — BE nghiệp vụ đã đủ họ lệnh, nhưng 3/6 chưa có mặt API và **0 màn FE** gọi |
+| **Session command family (P4 substrate, ngoài P-number)** | ✅ Reviewed pair + DD-110/111/112/117 | — *(dùng schema sẵn có)* | ✅ **đủ 6 command** `packages/db/src/session-service.ts` (2232 dòng): create · publish · announce · update · close · cancel | ⬜ | 🟡 per-slice trong packet từng lane · aggregate đã re-pin (**1234 @`18c75d8`**) | ✅ dedup `(tenant_id, command_id)` (DD-117 D5) · optimistic version · fail-closed refuse nhánh paid | 🟢 **merged · buildable** — BE nghiệp vụ đã đủ họ lệnh, nhưng 3/6 chưa có mặt API và **0 màn FE** gọi |
 | **Session API surface (route nghiệp vụ đầu tiên)** | ✅ | — | ✅ 3 route `770ff4b` + DD-56 lint guard | ⬜ | 🟡 3 file route test + `session-command-route.test.ts` | ✅ DD-56 guard | 🟡 **merged · 3/6 command có route** — thiếu `close` · `cancel` · `announce`; announce **bị gate** DD-56 clause 1 (schedule OFF), không phải bỏ sót |
 | **Public read model fence (DD-12 8a, ngoài P-number)** | ✅ DD-12 · DD-114 D3 (b) | ✅ `0033` + `0036` | ✅ `public-session-fence.ts`, caller đầu tiên là `updateSession` | — | 🟡 `public-session-fence.test.ts` | ✅ guarded view `security_barrier` + CAS-clear exact-token + zero grant cho `app`/`readonly` trên bảng gốc | ✅ **ĐÓNG** — immediate-deny structural, không phụ thuộc projector async. ⚠️ Projector tương lai phải đi qua definer fn / writer role riêng — **cấm re-grant `app` base SELECT** |
 | **Identity account link (DD-32 tiền đề #1)** | ✅ DD-32/DD-50 | ✅ `0034` | 🟡 `identity-account-link.ts` internal-only, chain-wide fail-closed | ⬜ | 🟡 `identity-account-link.test.ts` | ✅ SECURITY DEFINER function-only (amendment DD-50, 25/08) | 🟢 **merged · code dark** — chưa port Messenger/Zalo nào gọi |
-| **Tenant locale (DD-118)** | ✅ DD-118 | ✅ `0035` `tenant_locale_reader` | 🟡 `runWithLang` **mới phủ đường session-command** | ⬜ | 🟡 chưa re-pin | ✅ SECURITY DEFINER, fail-closed `'vi'` | 🟡 **merged · phủ chưa đủ, và không được khai là xong** — response phát trước khi tenant được xác thực giữ tiếng Việt là **hành vi đã phê chuẩn**, không phải lỗ hổng |
+| **Tenant locale (DD-118)** | ✅ DD-118 | ✅ `0035` `tenant_locale_reader` | 🟡 `runWithLang` **mới phủ đường session-command** | ⬜ | 🟡 trong aggregate **1234 @`18c75d8`** | ✅ SECURITY DEFINER, fail-closed `'vi'` | 🟡 **merged · phủ chưa đủ, và không được khai là xong** — response phát trước khi tenant được xác thực giữ tiếng Việt là **hành vi đã phê chuẩn**, không phải lỗ hổng |
 | **P2–P3 Tenant Engine** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
 | **P2.5 Messenger** | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started · 🔗 chặn App Review |
 | **P3.5 Identity** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ Not Started |
@@ -955,6 +1047,7 @@ Chuỗi kế tiếp (theo `../autopilot-templates/next-lanes-2026-08-13-RUN.md`)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 03/09/2026 | **v3.14** | **Trục Tests hết `STALE` — pin runner + readiness + đóng luật 4, KHÔNG chạy lại suite.** (1) **Nhãn `STALE` gỡ.** Authority trục Tests chuyển `854 workspace + 30 validator @ 93f1e93` (15/08) → **`1234 workspace + 85 readiness/kit @ 18c75d8`**. Khối 🟩 03/09 mới trên đầu file; khối 🔷 02/09 bị thay **riêng ở trục Tests**, mục "Việc mở" của nó đánh dấu ✅ đóng và giữ nguyên văn. (2) **Phép đo không phải mới sinh ra** — nó có sẵn từ gate của lane `gates-that-fire--migrate-p17-cause`, trích từ `.autopilot/state-archive/…-20260903T060118Z/state/gate-attempt-01-verify-canonical-04.txt` (`exit_status: 0`), mỗi số kèm số dòng trong artifact. Chạy lại sẽ tạo phép đo *khác*, không phải xác nhận phép đo này. (3) ⚠️ **HAI THANG ĐO, cấm cộng im lặng:** `1234` = vitest, 46 file dưới `packages`+`apps` (core **153**/11 file · db **710**/12 · web **331**/19 · bot **40**/4); `85` = `node --test`, đúng 3 file `scripts/*.test.mjs` (`# pass 85 · # fail 0 · # suites 0`). Hai tập file **rời nhau**, nên chuỗi historical giữ **workspace-only**: … → 670 → 813 → 854 → **1234**. Chuỗi lớp readiness đi riêng: 13 → 17 → 30 → **85**. (4) **Điều kiện carry ghi bằng LỆNH, không bằng SHA:** `git diff --name-only 18c75d8..main -- packages apps` và `… -- scripts` đều **rỗng** ⇒ mốc được mang sang; đặt cạnh ca **hỏng** hồi 02/09 (`80a3464..620b2bd` trả **34 file** ⇒ khai `STALE`) để thấy cùng một luật ra hai kết cục. (5) ✅ **LUẬT 4 ĐÓNG:** static đo lại tại `18c75d8` = **1097** (core 147 · db **680** · web 230 · bot 40; `+2` so với 1095 @`620b2bd` là test của chính lane P17) và `1097 + 137 = 1234`, **đóng độc lập trên từng package** — 4 checksum rời nhau. `137` **không phải** hiệu `1234−1097` mà là **tổng bảng kiểm kê hai lớp**: 17 site `it.each` (`+100`, static thấy 0) + 9 loop-site (`+37`), đếm theo **độ sâu ngoặc**. Bảng generator §luật 4 thay bằng bản 03/09; hai bảng cũ (`1fdba1d` `+41`, đối chiếu `80a3464`) hạ xuống `<details>` historical. Ghi rõ **3 loop cố ý đếm 0** vì nằm *trong* thân `it()` (`chat-dm-safety-invariants:527`/`:545`) — chỗ dễ đếm dôi nhất. Lớp readiness đóng cùng công thức trên thang riêng: `65 + 20 = 85`. (6) **Lệnh tái tạo** thêm dòng static cho lớp readiness/kit + ghi rõ lệnh workspace quét `packages apps` nên **theo cấu tạo** không thấy `scripts/`. ⚠️ **KHÔNG đổi:** canonical P-number · dependency order · **thanh ~33%** · FE PENDING (DD-116) · số **cấu trúc** vẫn pin `620b2bd` · không DD nào đổi trạng thái. Đây là pass **đo**, không phải pass quyết định. |
 | 30/08/2026 | **v3.12** | **Đóng half-revoke `public_sessions` — migration `0036`.** Khối 🔵 30/08 (muộn) mới trên đầu file. `app` mất nốt `INSERT/UPDATE/DELETE` (sót từ `0009`, `0033` mới revoke `SELECT`); sau `0036` `app` không còn quyền gì trên bảng gốc, giống `readonly`. Squash `f408693`, đóng backlog `4024127` (`ap-finish --squash-verified`; đóng trigger đã khai xác nhận bằng `information_schema.role_table_grants` rỗng). Thuần security-hardening — không tạo writer mới, không chạm DD-114 D3 / epic projector bốn tiền đề, không authorize gì thêm. KHÔNG re-pin số đếm (vẫn snapshot `1fdba1d`). ⚠️ Không đổi: P-number, dependency order, thanh ~33%, FE PENDING. |
 | 30/08/2026 | **v3.11** | **Mirror ba quyết định 26–27/08 + đính chính bốn phát biểu đã hết đúng. KHÔNG re-pin số đếm.** Khối 🟠 30/08 mới trên đầu file. (1) **DD-114 D3 ✅ phương án (b)** (owner 26/08, `3045c7f`) — phase-1 CÓ toggle + fence, **KHÔNG chiếu `public_sessions`** (bảng không có writer trong phase-1); projector = **epic bốn tiền đề** (DD-73 · DD-41 · occupancy helper duy nhất · alias moderated substrate), không phải một slice ⇒ thay dòng "OQ public (DD-114 D3, vẫn ⬜)" ở khối 🟢 25/08. (2) **DD-112 ✅** (owner 27/08, `3fed215`) — capacity **không phải nhánh tiền**, không đòi `impact_policy`; edge #4 tách 4a/4b (`b030ecd`); chốt có **điều kiện tự huỷ** ⇒ thay dòng "DD-112 vẫn ⬜". (3) **DD-118 ✅** (owner 26/08, `cec62c6`) — lần đầu vào file này: ngôn ngữ surface đã đăng nhập = `tenants.locale` qua `SECURITY DEFINER` `tenant_locale()`, fail-closed `'vi'`; response trước khi tenant known-and-authorized giữ tiếng Việt là **hành vi phê chuẩn**, không phải lỗ hổng phủ; độ phủ chưa đủ, không khai xong. (4) **"0 route nghiệp vụ" ở khối 🟢 14/08 hết đúng** — `770ff4b` land bộ API route nghiệp vụ đầu tiên (session create/publish/update), kèm `bbd9f1b`/`a3654fc`/`8e668a1` cho Update/Close/Cancel. (5) **Migration tail `0033`→`0035`** (`0034` person-account convergence · `0035` tenant_locale_reader). ⚠️ **Số đếm cố ý KHÔNG re-pin:** snapshot vẫn `1fdba1d` (13/08) và bảng số hiện hành **đã stale theo luật 4 của chính file** — delta đã đo nhưng để một pass đo riêng pin lại cùng lúc runner + static, vì lệch static-vs-runner cần kiểm kê generator trước khi khai (tiền lệ v3.5: khai mismatch trước khi kiểm kê là sai). ⚠️ **Không đổi:** canonical P-number, dependency order, thanh **~33%**, FE PENDING (DD-116) — theo luật 5, route nghiệp vụ đã có nhưng 0 màn FE, schedule OFF, chưa projector thật. 🔶 **Đề xuất chờ owner:** xem lại thanh ~33% **tại thời điểm FE thoát PENDING**; bản này không tự đổi số. |
 | 02/09/2026 | **v3.13** | **Re-pin đo lường tại `main@620b2bd` (30/08, +93 commit từ `1fdba1d`) — pass mà v3.12 hẹn nợ, đóng được một nửa.** (1) **Repo truth snapshot chuyển `1fdba1d` → `620b2bd`**; khối 🔷 02/09 mới trên đầu file. (2) **Số cấu trúc đã pin:** migration 33→**37** (`0033` fences · `0034` identity-account-link · `0035` `tenant_locale_reader` · `0036` revoke `app` DML `public_sessions`) · test file 37→**46** · API route 10→**13** (**3 route nghiệp vụ đầu tiên**, `770ff4b`) · static 772→**1095** (core 147 · db 678 · web 230 · bot 40) · Product spec 26→**27**, BE 25→**27**, FE design **17** không đổi · **màn FE vẫn 0**. (3) 🔴 **Trục Tests khai `STALE` có tên, không khai số suy ra** — mốc `813 @ 80a3464` **không được mang sang** vì `git diff --name-only 80a3464..620b2bd -- packages apps` trả **34 file**, phá đúng điều kiện code-identical mà nó dựa vào; pass này không chạy được runner (môi trường đo không có `pnpm`/Postgres). Authority giữ **854 + 30 @ `93f1e93`**; phép đo informal 919 sau `9da3021` **không phải authority** và cũng đã stale thêm 4 merge. (4) **Static under-count nặng hơn trước:** generator lớp 2 `it.each`/`test.each` **2 → 17 hit** (15 hit mới ở `apps/web` route/lib session) ⇒ công thức `static + generated = runner` của luật 4 **không đóng được** ở snapshot này. (5) **Ma trận thêm 5 hàng landed:** Session command family (**đủ 6 command**, `session-service.ts` 2232 dòng) · Session API surface (3/6 có route; `close`/`cancel` thiếu, `announce` **bị gate** DD-56 clause 1) · Public read model fence (**đóng**, `0033`+`0036`) · Identity account link (`0034`, code dark) · Tenant locale (`0035`, phủ chưa đủ). Hàng DD-29 sửa từ "code dark" → **"nửa dark"**: `authorizeTenantAction` hết dark, `resolveCapability()` **vẫn 0 caller** ⇒ hard-dep (a) của DD-114 còn mở. (6) §Next Actions #6 thay khối "việc kỹ thuật 13/08" bằng **hàng đợi BE (8 mục) + infra (7 mục) xếp theo dependency**, khối cũ giữ làm lịch sử. ⚠️ **KHÔNG đổi:** canonical P-number · dependency order · **thanh ~33%** · FE PENDING (DD-116) · epic projector bốn tiền đề · không DD nào đổi trạng thái. Đề xuất xem lại thanh % (v3.12) **vẫn chờ owner** — pass này không tự đổi con số. |
