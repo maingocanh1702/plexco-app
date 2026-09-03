@@ -296,8 +296,35 @@ export async function acquireChatDefinerLock(
   const lockClient = new pg.Client({ connectionString: base });
   let tearingDown = false;
   guardClientErrors(lockClient, () => tearingDown);
-  await lockClient.connect();
-  await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
+  // Everything before `release` reaches the caller runs under this try. connect() and the lock
+  // query are the two rejections possible in that window, and until this existed either one left a
+  // client nobody could ever close: end() is reachable ONLY through release(), and a caller that
+  // throws here never receives release(). setupNonSuperuserOwnerContext is where that costs
+  // something concrete -- it assigns chatDefinerLockRelease from THIS return value, so a throw
+  // leaves it null and leaves its own teardown() with nothing to release.
+  try {
+    await lockClient.connect();
+    await lockClient.query("SELECT pg_advisory_lock($1)", [CHAT_DEFINER_LOCK_KEY]);
+  } catch (error) {
+    // tearingDown BEFORE the cleanup, for the same reason teardown() sets it: on the lock-query
+    // branch the client IS connected, so end() can race a server-side termination and
+    // guardClientErrors would re-throw the expected 57P01 as an unhandled client error -- turning a
+    // clean failure into a noisy one.
+    tearingDown = true;
+    // Cleanup is swallowed; the original error is not. Measured on pg 8.22, end() after a failed
+    // connect() RESOLVES (bad database, ECONNREFUSED, bad password and ENOTFOUND all checked) and
+    // emits no 'error' event, so on THAT branch neither guard is load-bearing today. Both are kept
+    // anyway: the contract that must hold is "cleanup never replaces the diagnosis", and that must
+    // not depend on a driver's current behaviour. Same shape as release()'s .catch(() => {}) on the
+    // unlock, deliberately rather than a second cleanup idiom.
+    await lockClient.end().catch(() => {});
+    // Rethrown unchanged -- identity preserved, not wrapped. The caller's failure is a failure to
+    // acquire the lock, and a wrapper here would bury the pg error code that says why.
+    throw error;
+  }
+  // No unlock on the failure path above: if the lock query rejected, the lock was never taken, and
+  // a session-level advisory lock dies with its session regardless (verified: 0 rows left in
+  // pg_locks for this key after end()). end() alone is therefore sufficient AND complete.
   let released = false;
   return {
     release: async () => {
