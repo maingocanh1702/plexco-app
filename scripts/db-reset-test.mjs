@@ -325,8 +325,87 @@ export function parseArgs(argv) {
   return out;
 }
 
+
+/** argv that asks compose for the container ID of the pinned service. */
+export function buildContainerIdArgv(endpoint) {
+  return [
+    "-H",
+    endpoint,
+    "compose",
+    "-p",
+    COMPOSE_PROJECT,
+    "-f",
+    COMPOSE_FILE,
+    "ps",
+    "-q",
+    COMPOSE_SERVICE,
+  ];
+}
+
+/** argv that reads a container's compose labels, so identity can be checked rather than assumed. */
+export function buildInspectLabelsArgv(endpoint, containerId) {
+  return ["-H", endpoint, "inspect", "--format", "{{json .Config.Labels}}", containerId];
+}
+
 /**
- * argv for the compose exec, as an array: no shell, so nothing here can be word-split.
+ * Labels are how compose FINDS a container; they are not proof it is the right one. A container
+ * left over from a different compose file -- another checkout, an older configuration, a different
+ * volume -- carries the same project and service labels and would receive the forced DROP DATABASE.
+ * So the resolved container is checked against the compose file THIS script pinned.
+ */
+export function assertContainerMatchesCompose(labelsJson) {
+  let labels;
+  try {
+    labels = JSON.parse(labelsJson);
+  } catch {
+    throw new Error("db:reset:test refuses to run: could not read the container's compose labels.");
+  }
+  const project = labels?.["com.docker.compose.project"];
+  const files = String(labels?.["com.docker.compose.project.config_files"] ?? "");
+  if (project !== COMPOSE_PROJECT) {
+    throw new Error(
+      `db:reset:test refuses to run: the resolved container belongs to compose project ` +
+        `${safeEcho(String(project ?? ""))}, not "${COMPOSE_PROJECT}".`,
+    );
+  }
+  if (!files.split(",").some((f) => f.trim() === COMPOSE_FILE)) {
+    throw new Error(
+      "db:reset:test refuses to run: the resolved container was created from a different compose " +
+        `file than the one this command pins (${COMPOSE_FILE}). A stale container under matching ` +
+        "labels is exactly the accident this check exists for; recreate it with " +
+        `\`docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}\`.`,
+    );
+  }
+  return true;
+}
+
+/** Resolves the container ID and proves it belongs to this configuration before anything destructive. */
+export function resolveVerifiedContainerId(endpoint, runner = spawnSync) {
+  const found = runner("docker", buildContainerIdArgv(endpoint), {
+    env: childEnv(),
+    encoding: "utf8",
+  });
+  const containerId = String(found?.stdout ?? "").trim().split("\n")[0];
+  if (found?.error || found?.status !== 0 || !containerId) {
+    throw new Error(
+      `db:reset:test refuses to run: no running "${COMPOSE_SERVICE}" container in project ` +
+        `"${COMPOSE_PROJECT}". Start it with\n` +
+        `  docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}`,
+    );
+  }
+  const inspected = runner("docker", buildInspectLabelsArgv(endpoint, containerId), {
+    env: childEnv(),
+    encoding: "utf8",
+  });
+  if (inspected?.error || inspected?.status !== 0) {
+    throw new Error("db:reset:test refuses to run: could not inspect the resolved container.");
+  }
+  assertContainerMatchesCompose(String(inspected.stdout ?? ""));
+  return containerId;
+}
+
+/**
+ * argv for the exec, as an array: no shell, so nothing here can be word-split.
  *
  * `endpoint` is the value assertLocalDockerEndpoint already verified, and it is passed with -H so
  * the daemon that was CHECKED is the daemon that ACTS. Verifying and then letting docker re-resolve
@@ -338,23 +417,23 @@ export function parseArgs(argv) {
  * -H ...` fails with "unknown shorthand flag: 'H' in -H". The regression test asserts the POSITION,
  * not merely the presence, because presence in the wrong place is a runtime failure, not a guard.
  */
-export function buildResetArgv(dbName, user, endpoint) {
+export function buildResetArgv(dbName, user, endpoint, containerId) {
   if (typeof endpoint !== "string" || !endpoint.startsWith("unix://")) {
     throw new Error("db:reset:test refuses to run: no verified local docker endpoint to bind to.");
+  }
+  if (typeof containerId !== "string" || containerId === "") {
+    throw new Error("db:reset:test refuses to run: no verified container id to execute against.");
   }
   return [
     "-H",
     endpoint,
-    "compose",
-    // -p pins the project. Without it COMPOSE_PROJECT_NAME retargets the whole command: measured,
-    // `COMPOSE_PROJECT_NAME=unrelated_target_probe` moved the resolved project off `plexco`.
-    "-p",
-    COMPOSE_PROJECT,
-    "-f",
-    COMPOSE_FILE,
+    // `docker exec <id>`, NOT `compose exec <service>`. Compose selects by project+service LABEL,
+    // and a stale container from another configuration carries the same labels. The project and
+    // compose file are still pinned -- they are what resolveVerifiedContainerId used to FIND and
+    // CHECK this id -- but the destructive call now names the container it verified.
     "exec",
-    "-T",
-    COMPOSE_SERVICE,
+    "-i",
+    containerId,
     "psql",
     // -X: do not read psqlrc. An image or home directory that happens to ship one could \\connect
     // elsewhere after the docker target was verified -- an accident, so inside the model.
@@ -391,11 +470,13 @@ function main(argv = process.argv.slice(2)) {
   let dbName;
   let user;
   let endpoint;
+  let containerId;
   try {
     const args = parseArgs(argv);
     dbName = assertResettableTestDatabase(args.db);
     user = args.user;
     endpoint = assertLocalDockerEndpoint();
+    containerId = resolveVerifiedContainerId(endpoint);
     crossCheckDatabaseUrl(process.env.DATABASE_URL_TEST, dbName);
   } catch (error) {
     console.error(error.message);
@@ -405,9 +486,9 @@ function main(argv = process.argv.slice(2)) {
   // Name it before destroying it. A destructive tool that does not say what it is about to destroy
   // is one typo away from being the incident it was written to prevent.
   console.log(`db:reset:test — dropping and recreating database "${dbName}" as role "${user}"`);
-  console.log(`  project "${COMPOSE_PROJECT}", service "${COMPOSE_SERVICE}" (${COMPOSE_FILE})`);
+  console.log(`  container ${containerId.slice(0, 12)} of project "${COMPOSE_PROJECT}" (${COMPOSE_FILE})`);
 
-  const result = spawnSync("docker", buildResetArgv(dbName, user, endpoint), {
+  const result = spawnSync("docker", buildResetArgv(dbName, user, endpoint, containerId), {
     stdio: "inherit",
     env: childEnv(),
   });

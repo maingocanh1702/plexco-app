@@ -288,6 +288,16 @@ closing your terminal:
     *) echo "docker endpoint is not a local unix socket; refusing" >&2; exit 1 ;;
   esac
 
+  # Resolve the container ID and prove it came from THIS compose file before running anything
+  # privileged. compose selects by project+service LABEL, and a stale container from another
+  # configuration carries the same labels -- the same check the reset command performs.
+  cid="$(docker -H "$endpoint" compose -p plexco -f "$PWD/infra/docker-compose.yml" ps -q postgres)"
+  [ -n "$cid" ] || { echo "no running postgres container in project plexco; refusing" >&2; exit 1; }
+  case "$(docker -H "$endpoint" inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$cid")" in
+    *"$PWD/infra/docker-compose.yml"*) ;;
+    *) echo "resolved container was created from a different compose file; refusing" >&2; exit 1 ;;
+  esac
+
   mr="${MIGRATION_ROLE:-}"
   case "$mr" in
     "") ;;
@@ -297,13 +307,13 @@ closing your terminal:
       ;;
   esac
 
-  docker -H "$endpoint" compose -p plexco -f infra/docker-compose.yml exec -T postgres \
-    psql -X -U plexco -d plexco -v ON_ERROR_STOP=1 \
+  docker -H "$endpoint" exec -i "$cid" \
+    psql -X -h /var/run/postgresql -p 5432 -U plexco -d plexco -v ON_ERROR_STOP=1 \
     -c "SET job_definer_bootstrap.migration_role = '$mr'" \
     -f - < infra/postgres-init/01-job-definer.sql
 
-  docker -H "$endpoint" compose -p plexco -f infra/docker-compose.yml exec -T postgres \
-    psql -X -U plexco -d plexco -v ON_ERROR_STOP=1 \
+  docker -H "$endpoint" exec -i "$cid" \
+    psql -X -h /var/run/postgresql -p 5432 -U plexco -d plexco -v ON_ERROR_STOP=1 \
     -c "SET chat_definer_bootstrap.migration_role = '$mr'" \
     -f - < infra/postgres-init/02-chat-definer.sql
 )

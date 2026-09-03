@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import {
   assertLocalDockerEndpoint,
   assertResettableTestDatabase,
+  assertContainerMatchesCompose,
+  buildContainerIdArgv,
   buildResetArgv,
+  resolveVerifiedContainerId,
   childEnv,
   crossCheckDatabaseUrl,
   assertPlainIdentifier,
@@ -58,14 +61,14 @@ test("accepts the canonical test database", () => {
 
 test("the verified endpoint is carried into the argv, before the subcommand", () => {
   const endpoint = "unix:///Users/x/.docker/run/docker.sock";
-  const argv = buildResetArgv("plexco_test", "plexco", endpoint);
+  const argv = buildResetArgv("plexco_test", "plexco", endpoint, "c0ffee123456");
 
   // POSITION, not presence: -H is a docker GLOBAL flag. Measured -- `docker compose -H ...` fails
   // with "unknown shorthand flag: 'H' in -H", so a correctly-present flag in the wrong place is a
   // runtime failure rather than a guard.
   assert.equal(argv[0], "-H", "-H must be the first argument");
   assert.equal(argv[1], endpoint, "the VERIFIED endpoint must be the one passed");
-  assert.ok(argv.indexOf("-H") < argv.indexOf("compose"), "-H must precede the subcommand");
+  assert.ok(argv.indexOf("-H") < argv.indexOf("exec"), "-H must precede the subcommand");
 
   // Without this the daemon is resolved twice -- once to verify, once at exec -- so a context
   // switch between them validates daemon A and drops a database on daemon B.
@@ -73,25 +76,28 @@ test("the verified endpoint is carried into the argv, before the subcommand", ()
 });
 
 test("an unverified or non-local endpoint cannot be bound", () => {
-  assert.throws(() => buildResetArgv("plexco_test", "plexco", undefined), /verified local docker/);
+  assert.throws(() => buildResetArgv("plexco_test", "plexco", undefined, "c0ffee123456"), /verified local docker/);
   assert.throws(
-    () => buildResetArgv("plexco_test", "plexco", "tcp://remote.example:2375"),
+    () => buildResetArgv("plexco_test", "plexco", "tcp://remote.example:2375", "c0ffee123456"),
     /verified local docker/,
   );
 });
 
 test("the compose file is absolute, so cwd cannot choose which file is read", () => {
-  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock");
+  // The compose file and project select the CONTAINER, so they live on the resolution call now.
+  const argv = buildContainerIdArgv("unix:///tmp/d.sock");
   const f = argv[argv.indexOf("-f") + 1];
   assert.ok(f.startsWith("/"), "-f must be an absolute path");
   assert.ok(f.endsWith("/infra/docker-compose.yml"));
 });
 
 test("the compose project is pinned, and the identifier is quoted", () => {
-  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock");
-  const p = argv.indexOf("-p");
+  // Project pin is on the resolution call, which is what finds the container to verify.
+  const resolve = buildContainerIdArgv("unix:///tmp/d.sock");
+  const p = resolve.indexOf("-p");
   assert.ok(p !== -1, "project must be pinned with -p");
-  assert.equal(argv[p + 1], "plexco");
+  assert.equal(resolve[p + 1], "plexco");
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock", "c0ffee123456");
   // Measured: COMPOSE_PROJECT_NAME=unrelated_target_probe moved the resolved project off `plexco`.
   assert.ok(argv.includes('DROP DATABASE IF EXISTS "plexco_test" WITH (FORCE)'));
   assert.ok(argv.includes('CREATE DATABASE "plexco_test"'));
@@ -242,7 +248,7 @@ test("a parsed name is echoed only when it is provably an identifier", () => {
 // ---------------------------------------------------------------- threat model boundary
 
 test("the psql layer is specified by explicit flags, so no ambient value can supply one", () => {
-  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock");
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock", "c0ffee123456");
   const i = argv.indexOf("psql");
   assert.ok(i !== -1);
   // -X: an image or home dir that happens to ship a psqlrc could \connect elsewhere AFTER the
@@ -300,9 +306,59 @@ test("every identifier is validated by the same rule, database and role alike", 
   assert.equal(parseArgs(["--user", exact]).user, exact);
 });
 
-test("an overlong identifier is not echoed back in full", () => {
+test("safeEcho shows a plain identifier in full and withholds anything else", () => {
   // safeEcho still applies: a 70-byte value is a plain identifier, so showing it is safe, but the
   // rule must come from one place rather than each call site deciding.
   assert.match(safeEcho("r".repeat(70)), /^"r+"$/);
   assert.match(safeEcho("postgres://u:pw@h/db"), /not shown/);
+});
+
+// ---------------------------------------------------------------- the container selector
+
+const LABELS = (project, files) =>
+  JSON.stringify({
+    "com.docker.compose.project": project,
+    "com.docker.compose.project.config_files": files,
+  });
+
+test("a stale container under matching labels is refused", () => {
+  // Labels are how compose FINDS a container, not proof it is the right one. A container left from
+  // another checkout or an older configuration carries the same project+service labels and would
+  // have received the forced DROP DATABASE.
+  assert.throws(
+    () => assertContainerMatchesCompose(LABELS("plexco", "/somewhere/else/docker-compose.yml")),
+    /different compose file/,
+  );
+  assert.throws(
+    () => assertContainerMatchesCompose(LABELS("other_project", "/anything.yml")),
+    /compose project/,
+  );
+  assert.throws(() => assertContainerMatchesCompose("not json"), /compose labels/);
+});
+
+test("the destructive call names the verified container, not a label selector", () => {
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock", "abc123def456");
+  assert.equal(argv[0], "-H");
+  assert.equal(argv[2], "exec", "must be `docker exec <id>`, not `compose exec <service>`");
+  assert.ok(argv.includes("abc123def456"), "the verified container id must reach the argv");
+  assert.ok(!argv.includes("compose"), "label-based selection must not remain on the destructive call");
+  assert.throws(
+    () => buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock", ""),
+    /verified container id/,
+  );
+});
+
+test("resolution refuses when no container is running, and when it is the wrong one", () => {
+  const none = () => ({ status: 0, stdout: "" });
+  assert.throws(() => resolveVerifiedContainerId("unix:///tmp/d.sock", none), /no running/);
+
+  const calls = [];
+  const stale = (_cmd, args) => {
+    calls.push(args);
+    return args.includes("ps")
+      ? { status: 0, stdout: "staleid123\n" }
+      : { status: 0, stdout: LABELS("plexco", "/other/docker-compose.yml") };
+  };
+  assert.throws(() => resolveVerifiedContainerId("unix:///tmp/d.sock", stale), /different compose file/);
+  assert.ok(calls[0].includes("ps"), "resolution asks compose for the id first");
 });
