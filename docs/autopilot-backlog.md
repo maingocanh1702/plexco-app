@@ -1390,38 +1390,83 @@ notes: |
   `psql` là phụ thuộc dev trong `environments-setup.md` hoặc bỏ hẳn nhu cầu đó khỏi `db:bootstrap`.
   Không nới rule — làm đường đúng rẻ đi.
 
+## task: gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause
+title: L4a — guard bất biến P17 (migrate.ts) học cách nói vì sao nó ném
+status: merged
+merged: 2026-09-03 · main@2648965 (merge feat/gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause; fix tại 18c75d8) · hand-flip, KHÔNG qua `autopilot-backlog-reconcile --fix` (xem note_merged)
+risk: P2
+change_class: tooling
+depends_on: []
+invariants: []
+scope: [packages/db/src/migrate.ts]
+manifest: (chưa author — lane chạy trực tiếp qua RUN doc, xem docs/autopilot-templates/be-infra-lanes-2026-09-02-RUN.md §L4a)
+merged_probe: null
+note_merged: |
+  Hand-flip 2026-09-03, KHÔNG auto-reconciled. `autopilot-backlog-reconcile --fix` không chạm row
+  gốc: nó mang `merged_probe: null` + `close_by: hand`, và chính reconcile REFUSE exemption đó
+  ("scope contains a file that can carry a symbol… write a real merged_probe") vì `migrate.ts` là
+  source thật — xem `reconcile-hand-closed-entries-never-age-out` (đã nêu đích danh row gốc là
+  "lạm dụng thật, tự khai… thuộc L4a"). Không có identifier mới nào đủ slice-unique làm merged_probe
+  hợp lệ: `18c75d8` chỉ thêm tham số cho `throwMigrateError` đã tồn tại (`const cause = new Error(...)`
+  là local, không export, không unique trên origin/main) — không export symbol mới nào. Flip tay,
+  dẫn chứng trực tiếp bằng SHA thay vì bằng probe.
+notes: |
+  **Nửa `migrate.ts` của task gốc `gates-that-fire-correctly-and-cannot-say-why`** — xem entry đó
+  cho nửa `scripts/autopilot-scope-gate` còn mở. Tách theo SPLIT NOTICE trong RUN doc (batch 3,
+  commit `8088eeb`, 2026-09-02): "Run TARGET 1 (migrate.ts) ONLY… TARGET 2 (scope-gate) is
+  SUSPENDED pending lane L12."
+
+  Guard bất biến P17 (sửa nội dung migration đã ghi `schema_migrations`) ném ĐÚNG như thiết kế
+  nhưng qua path không set `.cause`; triệu chứng cũ là `expected undefined to be an instance of
+  Error` — không nhắc sha, không nhắc migration, không nhắc bất biến. Fix tại `18c75d8`
+  (`packages/db/src/migrate.ts:266-284`): ba chuỗi riêng cho ba người đọc — `.cause` (measurement
+  thất bại, mang cả hai hash), `.message` (rule + cả hai remedy, được phép nhắc `prior`),
+  `safeLogSummary` (dòng CLI, loại `prior` vì đó là schema_migrations ROW VALUE, cấm theo allowlist
+  provenance của AP-42). Điều kiện ném (`prior !== sha`) giữ nguyên byte-for-byte — hai test pin cả
+  hai cạnh, viết TRƯỚC khi sửa, chạy trên runner chưa sửa.
+
+  ⚠️ **Fix này không tự kiểm chứng đủ.** Assertion sẵn có duy nhất chạm throw site này (TI-7,
+  `rls-invariants.test.ts:1774`) không được cập nhật theo — xem
+  `rls-invariants-throw-site-assertion-lost-discrimination`.
+
 ## task: gates-that-fire-correctly-and-cannot-say-why
-title: Hai gate chặn đúng nhưng không tự xưng được tên — cùng một slice, cùng một ngày
+title: Gate chặn đúng nhưng không tự xưng được tên — nửa scope-gate còn mở (nửa migrate.ts đã tách + merged, xem `gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause`)
 status: planned
 risk: P3
 change_class: tooling
 depends_on: []
 invariants: []
-scope: [packages/db/src/migrate.ts, scripts/autopilot-scope-gate]
+scope: [scripts/autopilot-scope-gate]
 manifest: (chưa author)
 merged_probe: null
 close_by: hand · đề xuất chưa chốt, chưa có symbol nào để probe; khai tay để reconcile không báo weak.
   Nếu vẫn `ready` quá ngưỡng thì `autopilot-backlog-reconcile` v8 sẽ kêu AGED — đó là ý đồ.
 notes: |
-  Cả hai gate dưới đây **hành xử đúng**. Chi phí không nằm ở việc chúng chặn, mà ở việc chúng không
-  nói được vì sao, khiến người đọc phải suy lại từ đầu cả nguyên nhân lẫn cách chữa.
+  **Tách 2026-09-02 (batch 3, RUN doc commit `8088eeb`).** Nửa `packages/db/src/migrate.ts` chạy
+  riêng làm L4a, đã merge — xem `gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause`.
+  Entry này giờ chỉ còn nửa `scripts/autopilot-scope-gate`, SUSPENDED tới sau L12 theo SPLIT NOTICE
+  gốc ("file đó mang KIT_VERSION: 33 và có thể là kit-pack file; sửa ở consumer thì lần sync kế ghi
+  đè").
 
-  1. **`migrate.ts` — guard bất biến P17.** Sửa nội dung một migration đã được ghi vào
-     `schema_migrations` thì guard ném đúng như thiết kế, nhưng qua một code path **không set
-     `.cause`**. Triệu chứng nổi lên là `expected undefined to be an instance of Error` — không nhắc
-     sha, không nhắc migration, không nhắc bất biến. Bằng chứng: hash ghi `4606baf8…`, hash trên đĩa
-     `482e9a74…`, và không hash nào xuất hiện trong thứ người dùng nhìn thấy. Giá: hai chẩn đoán sai
-     và ~40 phút của một phiên đang làm rất kỷ luật.
-  2. **`autopilot-scope-gate register` — `BASE_MISMATCH`.** In ra hai SHA rồi dừng. Không nói rằng
-     ràng buộc là `HEAD === base_sha`, cũng không nói cách chữa là **register trước, merge sau**.
-     Một nhánh đã mang commit thì không đăng ký được — đã ghi ở `kit-design-debt §1 instance 4` và ở
-     phần re-registration mechanics của `autopilot-prompt-GENERIC.md`, nhưng thông điệp lỗi không dẫn
-     tới chỗ nào trong hai chỗ đó. Giá: một vòng dựng lại worktree.
+  **L12 đã land** (`docs/standards/kit-pack-membership.json` tồn tại, có nội dung thật). Entry của
+  chính `scripts/autopilot-scope-gate` trong file đó ghi `"overwrite_path": "kit-sync"` — xác nhận
+  nó LÀ kit-pack member (đồng bộ thủ công gần nhất: `8e737fe`, 2026-08-27, KIT_VERSION 33). Hệ quả
+  trực tiếp: nửa này KHÔNG sửa ở Plexco. Chữa đúng nằm ở repo canonical (`Claude template`), sync về
+  sau — RUN doc track dưới tên lane L14.
 
-  Ghi chung một entry vì đây là **một lớp**, không phải hai sự cố: fail-closed đúng, self-describing
-  kém. Với `migrate.ts` lưu ý AP-42 đã sở hữu vùng xử lý lỗi của file này (allowlist theo provenance,
-  chống rò PII ra log) — nó lo *log không được nói quá nhiều*; chỗ này là *lỗi phải nói đủ*. Hai mục
-  tiêu ngược chiều nhau, nên bản sửa phải qua cùng kỷ luật đó, không phải thêm `console.error`.
+  **`autopilot-scope-gate register` — `BASE_MISMATCH`.** In ra hai SHA rồi dừng. Không nói rằng
+  ràng buộc là `HEAD === base_sha`, cũng không nói cách chữa là **register trước, merge sau**.
+  Một nhánh đã mang commit thì không đăng ký được — đã ghi ở `kit-design-debt §1 instance 4` và ở
+  phần re-registration mechanics của `autopilot-prompt-GENERIC.md`, nhưng thông điệp lỗi không dẫn
+  tới chỗ nào trong hai chỗ đó. Giá: một vòng dựng lại worktree.
+
+  ⚠️ **`close_by: hand` ở trên là lạm dụng ĐÃ BỊ NHẬN DIỆN — KHÔNG dọn, giữ làm bằng chứng.**
+  `reconcile-hand-closed-entries-never-age-out` (bổ sung 2026-09-03) nêu đích danh row này trong
+  bảng bốn dòng REFUSED: "đúng thứ refusal sinh ra để bắt; công cụ bắt đúng. Cần merged_probe thật
+  hoặc gỡ close_by — thuộc L4a, lane sở hữu chính row đó." Xử lý phần L4a: đã đóng bằng hand-flip có
+  dẫn chứng SHA (xem entry `--migrate-p17-cause`) — không cần merged_probe vì đã `merged`, ra khỏi
+  phạm vi quét của bot. Nửa scope-gate còn lại (L14) vẫn treo đúng như refusal mô tả; L14 tự quyết
+  định viết merged_probe thật hay tiếp tục hand khi tới lượt.
 
 ## task: db-outbox-ack-marker
 title: Job-infra slice 2a — completion/ack cho outbox_events, đóng starvation loop mà 0022 tự flag
