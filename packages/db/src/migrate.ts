@@ -236,10 +236,52 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
       const prior = seen.get(file);
       if (prior !== undefined) {
         if (prior !== sha) {
+          // The condition above is correct and stays exactly as it is. What follows is only about
+          // the guard being able to say WHY it fired — three readers with three different needs,
+          // deliberately not one string reused three times:
+          //
+          //   .cause          the measurement that failed. Present mostly so this failure can name
+          //                   itself: with no cause it surfaced through whichever unrelated
+          //                   assertion walked a cause chain first, as "expected undefined to be
+          //                   an instance of Error" — a sentence naming no migration, no digest
+          //                   and no invariant.
+          //   .message        the rule and both remedies. Free to interpolate `prior` because the
+          //                   CLI never reads .message: formatMigrationFailureForLog builds its
+          //                   line from safeLogSummary and nothing else.
+          //   safeLogSummary  the CLI line. Under the log-provenance allowlist it may carry `file`
+          //                   (a repo-known identifier) but NOT `prior`, which is a
+          //                   schema_migrations ROW VALUE. `sha` is locally computed and would
+          //                   pass, but one digest with nothing to compare it against tells an
+          //                   operator nothing — so the log carries NEITHER and points at the
+          //                   error. Symmetric, and no per-value provenance judgement gets
+          //                   smuggled into the safe channel.
+          //
+          // Both remedies, because the guard fires in two situations whose fixes are opposite and
+          // the older text named only the first: a migration that has SHIPPED is corrected by a
+          // new forward migration, while an UNSHIPPED one being iterated on locally is fixed by
+          // resetting the test database (core-db-architecture-principles.md P17 records both).
+          // The local case is the one that actually costs time, and "add a NEW migration instead"
+          // is the wrong advice for it. The forbidden shortcut is named explicitly because this
+          // error is precisely where someone reaches for it.
+          const cause = new Error(
+            `sha256 mismatch for ${file}: schema_migrations recorded ${prior}, ` +
+              `the file on disk hashes to ${sha}`,
+          );
           const message =
             `migrate: ${file} changed after being applied (sha mismatch) — ` +
-            `applied migrations are immutable; add a NEW migration instead`;
-          throwMigrateError(message, message);
+            `schema_migrations recorded ${prior}, the file on disk hashes to ${sha}. ` +
+            `Applied migrations are immutable (P17, forward-only): if this migration has already ` +
+            `shipped, add a NEW forward migration; if it is still unshipped and you are iterating ` +
+            `locally, reset the test database. Never edit or delete schema_migrations rows to ` +
+            `force a pass.`;
+          throwMigrateError(
+            message,
+            `migrate: ${file} changed after being applied — applied migrations are immutable ` +
+              `(P17, forward-only): add a NEW forward migration, or reset the database if the ` +
+              `file is still unshipped. Never edit or delete schema_migrations rows to force a ` +
+              `pass. The error's cause carries both digests.`,
+            { cause },
+          );
         }
         skipped.push(file);
         continue;
