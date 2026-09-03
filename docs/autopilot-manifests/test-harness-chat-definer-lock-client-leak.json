@@ -1,0 +1,90 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Carries NO manifest_schema_version by design.",
+  "task_id": "plexco:test-harness-chat-definer-lock-client-leak--v2",
+  "feature": "test-harness-chat-definer-lock-client-leak--v2",
+  "branch": "feat/test-harness-chat-definer-lock-client-leak--v2",
+  "base_ref": "main",
+  "risk": "P2",
+  "_risk_note": "P2. Test substrate only, no product code and no migration. acquireChatDefinerLock (packages/db/src/test-harness.ts) runs `new pg.Client` then connect() then `SELECT pg_advisory_lock($1)` with no try spanning them, and end() is reachable ONLY through the returned release(). A rejection from connect() or from the lock query therefore leaves a client the caller cannot close, because the caller never received the handle that closes it. The cost is concrete rather than theoretical: setupNonSuperuserOwnerContext assigns chatDefinerLockRelease from THIS return value, so a throw here leaves it null and leaves its own teardown() with nothing to release.",
+  "_base_note": "Re-pinned to 2648965 after a registration-time SCOPE_COLLISION. The first attempt pinned 0c602e9 and was refused: the sibling lane gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause held the shared `test-chain` invariant. Our FILE scopes were disjoint, but that lane owns packages/db/src/migrate.test.ts, which is the heaviest consumer of the very function this slice changes (one direct acquireChatDefinerLock call plus ~25 withChatDefinerLock sites), and both lanes verify against ONE cluster-global Postgres. The gate was right to serialize. Rather than resume on the stale pin once that lane merged, the base was advanced to its merge commit so this slice's full-suite verification runs against the landed migrate.test.ts instead of a tree that predates it — which removes the coupling rather than merely waiting it out. main == origin/main == 2648965 at pin time; `git diff --name-only 0c602e9..2648965 -- packages/db/src/test-harness.ts packages/db/src/test-harness.test.ts` is empty, so nothing in this slice's own scope moved underneath it.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": [
+    "test-chain"
+  ],
+  "_invariant_note": "test-chain only. The change is confined to the shared test substrate and its own new suite; no product code, no schema, no migration, no grant and no user-facing string moves. Deliberately NOT declaring schema: the suite connects to Postgres and reads pg_stat_activity, but it neither defines nor alters any object.",
+  "scope": [
+    "packages/db/src/test-harness.ts",
+    "packages/db/src/test-harness.test.ts",
+    "docs/autopilot-manifests/test-harness-chat-definer-lock-client-leak.json"
+  ],
+  "_scope_note": "test-harness.ts carries the fix; test-harness.test.ts is new and is the first suite to cover the harness itself rather than use it. Measured at base 2648965: the defect is acquireChatDefinerLock at test-harness.ts:293-300. Line numbers carry over from the earlier 0c602e9 reading because the sibling merge touched only migrate.ts and migrate.test.ts, leaving test-harness.ts byte-identical.",
+  "negative_scope": [
+    "NO change to CHAT_DEFINER_LOCK_KEY or to the lock protocol it encodes",
+    "NO change to any caller: withChatDefinerLock, setupNonSuperuserOwnerContext, migrate.test.ts, rls-invariants.test.ts",
+    "NO change to guardClientErrors' contract — it keeps swallowing ONLY a connection-termination code and ONLY while the owning context declares itself tearing down",
+    "NO change to withJobDefinerLock, bootstrapJobDefiner or any other job_definer helper. It is a DIFFERENT hazard class with its own documented reasoning directly below the target function; the owner has drawn this boundary explicitly. Any leak observed there is emitted to the backlog, never fixed here",
+    "NO new shared cleanup helper or abstraction over the two lock helpers — that would silently merge the two hazard classes the negative scope above keeps apart",
+    "NO change to the returned release() semantics: still idempotent, still the only unlock path"
+  ],
+  "context_sources": [
+    "packages/db/src/test-harness.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/vitest.config.ts",
+    "docs/00-start-here/HANDOFF.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "primary-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "localhost postgres only",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "_note": "Two runtime constraints are encoded here deliberately, both learned the expensive way by earlier lanes. (1) The gate's subprocess inherits NOTHING from an interactive shell, so DATABASE_URL and DATABASE_URL_TEST are inline rather than assumed exported. (2) No entry may contain an angle bracket: autopilot-review-readiness.mjs treats one as an unresolved placeholder and halts CONTRACT_INVALID, which rejects even an ordinary 2-to-1 redirect. Entry 2 is a scope-containment PROPERTY measured against the pinned base, not a pinned count of anything that moves. The db suite runs under the repo's own vitest.config.ts, whose fileParallelism is true — that is the condition under which a leaked lock client actually costs something, so it is the condition the fix is verified under.",
+    "focused": [
+      "DATABASE_URL=postgres://plexco:plexco_dev@localhost:5432/plexco DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm --filter @plexco/db exec vitest run src/test-harness.test.ts",
+      "test \"$(git diff --name-only 2648965530ee13577b8f80275049b1945cf86af0 -- packages apps | grep -cv '^packages/db/src/test-harness')\" = 0",
+      "DATABASE_URL=postgres://plexco:plexco_dev@localhost:5432/plexco DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test:db"
+    ],
+    "canonical": [
+      "pnpm run lint",
+      "pnpm -r run typecheck",
+      "DATABASE_URL=postgres://plexco:plexco_dev@localhost:5432/plexco DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": false,
+    "reason": "No auth, secret, permission, money or external-input surface. The diff adds a try/catch around two calls in a test-only helper and a suite that reads pg_stat_activity. The connection strings are the local dev credentials already tracked in .env.example and infra/docker-compose.yml, not new material. VOID if the slice ends up touching a grant, a role, a migration, or any product code path.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 120,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/test-harness-chat-definer-lock-client-leak--v2/readiness.json",
+  "_supersedes_note": "Successor to the v1 registration attempt, which the gate REFUSED with HALT SCOPE_COLLISION on the shared test-chain invariant at 12:24 (holder: gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause, since merged as 2648965 and closed). v1 was never admitted: no reservation, no counters, no hash-lock. Its forensics stay under .autopilot/state/test-harness-chat-definer-lock-client-leak/ with both terminal signals under their terminal names. A successor was opened rather than retiring those signals in place, because retiring them is an action that could only ever help this lane past its own blocker."
+}
