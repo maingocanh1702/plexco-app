@@ -46,25 +46,37 @@ const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_IDENTIFIER_BYTES = 63;
 
 /**
- * This script always executes inside the Compose `postgres` service, so DATABASE_URL_TEST must
- * actually NAME that service's endpoint. Validating only the database name while executing against
- * a fixed endpoint is how a URL pointing at a remote host got a same-named LOCAL database dropped
- * instead — the tool would report success having neither done what was asked nor left the machine
- * alone. Same defect shape as the unquoted-identifier bug: check one thing, act on another.
+ * THE ONE SHAPE THIS TOOL ACCEPTS. Membership in this grammar is the entire endpoint check.
+ *
+ * WHY A GRAMMAR AND NOT A PARSER. An earlier revision ran the WHATWG URL parser to EXTRACT a host
+ * and compared that to a list of literals. That extraction was a second parser, and it disagreed
+ * with the one `pg` uses: `postgres:` is not a WHATWG "special scheme", so its host is opaque —
+ * not percent-decoded — while pg-connection-string does decode it. Measured, with no query string
+ * involved:
+ *
+ *     postgres://%2Fvar%2Frun%2Fpostgresql/plexco_test
+ *       WHATWG .hostname -> "%2Fvar%2Frun%2Fpostgresql"   (looks like an unknown remote host)
+ *       pg-connection-string -> "/var/run/postgresql"     (a unix socket, i.e. local)
+ *
+ * That revision happened to refuse this, but only because the encoded form failed to match the
+ * literals — safe by accident, and an accident that survives only until the literals change.
+ *
+ * THE PROPERTY THIS GRAMMAR ENFORCES, which is the reason the guard is sound: a string matching it
+ * contains NO percent-encoding, NO query and NO fragment anywhere. Those are the only constructs
+ * through which two connection-string parsers were observed to disagree, so every parser reads an
+ * accepted string the same way. Soundness is a property of the accepted SET, not of any parser.
+ *
+ * Nothing here is extracted and then re-interpreted: `resolveResetTarget` returns this pattern's own
+ * captures, and no other code path derives the database name or user. Over-refusal is deliberate and
+ * costs nothing — a developer types `localhost` plainly. `::1` is not accepted because the bracketed
+ * and bare spellings are written differently by different parsers, and supporting it buys nothing.
+ *
+ * Explicit character classes only, no `.`, and no `\s` shorthand in the anchored positions: `$` in
+ * JavaScript must not be trusted from memory to reject a trailing newline. Both the trailing-newline
+ * and embedded-newline cases are pinned by tests rather than argued about here.
  */
-const SUPPORTED_PROTOCOLS = new Set(["postgres:", "postgresql:"]);
-const COMPOSE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-const COMPOSE_PORT = "5432";
-
-/**
- * fileURLToPath, never `new URL(url).pathname` on a file URL: the latter stays percent-encoded and
- * a repo path containing a space ("Plexco app") then fails to match. For the DATABASE_URL_TEST
- * database name the decode is the point — a name that decodes to something which is not a plain
- * identifier must reach the guard and be refused, not be silently normalised.
- */
-export function databaseNameFromUrl(url) {
-  return decodeURIComponent(new URL(url).pathname).replace(/^\//, "");
-}
+const CANONICAL_URL =
+  /^postgres(?:ql)?:\/\/(?:([A-Za-z0-9_]+)(?::([^%@/?#\r\n\t ]*))?@)?(?:localhost|127\.0\.0\.1)(?::5432)?\/([A-Za-z_][A-Za-z0-9_]*)$/;
 
 /**
  * The only thing standing between a mistyped environment variable and a destroyed development
@@ -114,67 +126,34 @@ export function assertResettableTestDatabase(name) {
  * the two previous defects in this file were possible.
  */
 export function resolveResetTarget(url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    // The value is NOT echoed. DATABASE_URL_TEST carries a password, and an error path is exactly
-    // where it would end up in a terminal, a CI log or a pasted bug report.
+  const match = typeof url === "string" ? CANONICAL_URL.exec(url) : null;
+  if (!match) {
+    // Names the RULE, not just the rejection. A message that only says "rejected" invites the next
+    // reader to widen the pattern until their URL passes; this one states what the tool accepts and
+    // why the refusals that look excessive are deliberate. The value is never echoed -- it carries a
+    // password, and an error is exactly where that reaches a terminal, a CI log or a bug report.
     throw new Error(
-      "db:reset:test refuses to run: DATABASE_URL_TEST is not a valid URL. Expected " +
-        "postgres://USER:PASSWORD@localhost:5432/<something>_test (value not shown).",
+      "db:reset:test refuses to run: DATABASE_URL_TEST does not match the one shape this tool " +
+        "accepts (value not shown).\n" +
+        "  RULE: postgres://[user[:password]@](localhost|127.0.0.1)[:5432]/<name>_test\n" +
+        "  Anything else is refused, INCLUDING options PostgreSQL itself accepts -- sslmode=, " +
+        "application_name=, connect_timeout=, a unix-socket host, ::1, percent-encoding, or any " +
+        "query string or fragment.\n" +
+        "  That is deliberate. This command runs DROP DATABASE, and the guard will not reimplement " +
+        "libpq precedence rules to decide which extras are harmless: query parameters were measured " +
+        "overriding the host, and a percent-encoded host was measured decoding to a unix socket. " +
+        "The accepted set has no percent-encoding, no query and no fragment, which is exactly why " +
+        "every parser reads it identically.\n" +
+        "  If your URL names another machine: this tool will NOT drop a same-named database locally " +
+        "to stand in for a remote one. Reset that database with the tools of the environment that " +
+        "owns it.\n" +
+        "  Need one of those options? Use psql directly. Do NOT widen this pattern.",
     );
   }
-  // Reject EVERY query parameter and any fragment, rather than blocking the connection-altering
-  // ones by name. This script validates with the WHATWG URL parser while `pg` parses the same
-  // string with pg-connection-string, which applies `?host=`, `?port=` and `?user=` ON TOP OF the
-  // authority. Measured on the locked 2.14.0:
-  //
-  //   postgres://plexco:pw@localhost:5432/plexco_test?host=prod-db.example.com&port=6543
-  //     pg-connection-string -> host prod-db.example.com, port 6543
-  //     WHATWG authority     -> host localhost,           port 5432
-  //
-  // so the guard read "local" while the connection meant "remote", and the reset would have
-  // destroyed the same-named LOCAL database. On the subset with no query string the two parsers
-  // were measured to agree on host, port and database for every accepted shape — which is what
-  // makes this a closed rule rather than one more special case. A named blocklist would have to
-  // track every parameter libpq ever adds; "none" cannot go out of date.
-  if (parsed.search !== "" || parsed.hash !== "") {
-    throw new Error(
-      "db:reset:test refuses to run: DATABASE_URL_TEST carries a query string or fragment. " +
-        "Parameters such as ?host=, ?port= and ?user= override the authority when the connection " +
-        "string is parsed, so this script cannot prove the URL names the local cluster. Use a " +
-        "plain postgres://user:password@localhost:5432/<name>_test (value not shown).",
-    );
-  }
-  if (!SUPPORTED_PROTOCOLS.has(parsed.protocol)) {
-    throw new Error(
-      `db:reset:test refuses to run: DATABASE_URL_TEST uses "${parsed.protocol}//", but this ` +
-        "script only resets a PostgreSQL database (postgres:// or postgresql://).",
-    );
-  }
-  // The endpoint checks are what bind the guard to the action. This tool executes with
-  // `docker compose exec`, so it can only ever reach the local Compose cluster; a url naming any
-  // other host is refused rather than silently redirected to that cluster.
-  if (!COMPOSE_HOSTS.has(parsed.hostname)) {
-    throw new Error(
-      `db:reset:test refuses to run: DATABASE_URL_TEST points at host "${parsed.hostname}", but ` +
-        `this script executes inside the "${COMPOSE_SERVICE}" service of ${COMPOSE_FILE} and can ` +
-        "only reach the local cluster. It will NOT drop a same-named database locally to stand in " +
-        "for a remote one. Reset that database with the tools of the environment that owns it.",
-    );
-  }
-  if (parsed.port !== "" && parsed.port !== COMPOSE_PORT) {
-    throw new Error(
-      `db:reset:test refuses to run: DATABASE_URL_TEST uses port ${parsed.port}, but the Compose ` +
-        `cluster this script executes in publishes ${COMPOSE_PORT} (${COMPOSE_FILE}). A different ` +
-        "port means a different cluster, and this script cannot reach it.",
-    );
-  }
-  return {
-    dbName: assertResettableTestDatabase(databaseNameFromUrl(url)),
-    user: parsed.username || "plexco",
-  };
+  // The pattern's own captures ARE the target. Nothing re-derives the name or the user from the raw
+  // string, so there is no second reading that could disagree with this one.
+  const [, user, , dbName] = match;
+  return { dbName: assertResettableTestDatabase(dbName), user: user || "plexco" };
 }
 
 /** argv for the compose exec, as an array: no shell, so nothing here can be word-split. */

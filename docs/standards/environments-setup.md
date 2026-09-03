@@ -219,8 +219,23 @@ The script fails closed:
   identifier limit — beyond that the server truncates, and a truncated name may no longer end in `_test`;
 - it **quotes** the identifier, so a mixed-case name cannot be folded into a different database than the one
   it validated and printed;
-- it **refuses a `DATABASE_URL_TEST` that does not name the local compose cluster** — another host, another
-  port, or a non-`postgres://` scheme is rejected outright. It will not drop a same-named *local* database
+- it accepts **exactly one URL shape** and refuses everything else:
+
+  ```text
+  postgres://[user[:password]@](localhost|127.0.0.1)[:5432]/<name>_test
+  ```
+
+  This is membership in a closed grammar, not a parse-then-check. The distinction is the point: a guard that
+  *extracts* a host and compares it has to agree with whatever parser the connection layer uses, and those two
+  were measured disagreeing — `postgres://%2Fvar%2Frun%2Fpostgresql/...` reads as an unknown remote host to
+  the WHATWG URL parser and as a local unix socket to `pg-connection-string`, with no query string involved.
+  A string matching the grammar above contains no percent-encoding, no query and no fragment, so every parser
+  reads it identically. That property — not the list of hosts — is why the guard is sound.
+
+  Options PostgreSQL itself accepts (`sslmode=`, `application_name=`, `connect_timeout=`, `::1`, a unix-socket
+  host) are refused too. **That is deliberate, not an oversight to fix by widening the pattern.** Over-refusal
+  costs a developer nothing here; the tool runs `DROP DATABASE`. If you need those options, use `psql`.
+  It will not drop a same-named *local* database
   as a stand-in for a remote one;
 - it runs `psql` **inside the compose `postgres` container**, so no host `psql` is needed.
 

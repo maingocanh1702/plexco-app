@@ -1,12 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  assertResettableTestDatabase,
-  buildResetArgv,
-  databaseNameFromUrl,
-  resolveResetTarget,
-} from "./db-reset-test.mjs";
+import { assertResettableTestDatabase, buildResetArgv, resolveResetTarget } from "./db-reset-test.mjs";
 
 // The whole point of this script is that it runs DROP DATABASE. The guard is the only thing
 // standing between a mistyped environment variable and a destroyed development database, so it
@@ -82,8 +77,10 @@ test("refuses a url pointing at another host instead of substituting the local c
   assert.throws(
     () => resolveResetTarget("postgres://plexco:pw@prod-db.example.com:5432/customers_test"),
     (error) => {
-      assert.match(error.message, /prod-db\.example\.com/);
+      // The host is NOT echoed back — the value carries a password. The message still has to say
+      // what the tool will not do, or a reader concludes the guard is merely fussy about spelling.
       assert.match(error.message, /will NOT drop a same-named database locally/);
+      assert.ok(!error.message.includes("prod-db.example.com"), "must not echo the supplied value");
       return true;
     },
   );
@@ -137,7 +134,7 @@ test("no error path echoes the connection string", () => {
 });
 
 test("refuses a port other than the one Compose publishes", () => {
-  assert.throws(() => resolveResetTarget("postgres://plexco@localhost:6543/plexco_test"), /6543/);
+  assert.throws(() => resolveResetTarget("postgres://plexco@localhost:6543/plexco_test"), /RULE/);
 });
 
 test("resolves the canonical local url, and the executor consumes only that result", () => {
@@ -159,15 +156,54 @@ test("the suffix rule still applies through the resolver, not only to a bare nam
   );
 });
 
-test("reads the database name out of both pinned urls", () => {
-  // .env.example:56 and .github/workflows/ci.yml:34 — both end in _test, which is what makes
-  // the suffix rule a description of the existing convention rather than a new constraint.
-  assert.equal(
-    databaseNameFromUrl("postgres://plexco:plexco_dev@localhost:5432/plexco_test"),
-    "plexco_test",
+test("resolves both pinned urls to the same target", () => {
+  // .env.example:56 and .github/workflows/ci.yml:34 — both end in _test, which is what makes the
+  // suffix rule a description of the existing convention rather than a new constraint.
+  for (const url of [
+    "postgres://plexco:plexco_dev@localhost:5432/plexco_test",
+    "postgres://plexco:plexco_test@localhost:5432/plexco_test",
+  ]) {
+    assert.deepEqual(resolveResetTarget(url), { dbName: "plexco_test", user: "plexco" });
+  }
+});
+
+// The grammar is the entire endpoint check, so its ANCHORS are load-bearing. JavaScript's `$` is
+// not trusted from memory here: both newline cases are measured. A pattern that let a trailing
+// newline through would accept a database name the executor then quotes into DDL.
+test("the grammar is anchored against trailing and embedded newlines", () => {
+  assert.throws(() => resolveResetTarget("postgres://localhost:5432/plexco_test\n"), /RULE/);
+  assert.throws(() => resolveResetTarget("postgres://localhost:5432/plexco\n_test"), /RULE/);
+  assert.throws(() => resolveResetTarget("\npostgres://localhost:5432/plexco_test"), /RULE/);
+  assert.throws(
+    () => resolveResetTarget("postgres://localhost:5432/plexco_test\npostgres://x/y_test"),
+    /RULE/,
   );
-  assert.equal(
-    databaseNameFromUrl("postgres://plexco:plexco_test@localhost:5432/plexco_test"),
-    "plexco_test",
-  );
+});
+
+// Percent-encoding is refused everywhere, which is the property that makes every parser read an
+// accepted string identically. The socket case is the one that was MEASURED diverging: WHATWG
+// reports the literal "%2Fvar%2Frun%2Fpostgresql" while pg-connection-string decodes it to the
+// local unix socket "/var/run/postgresql".
+test("refuses percent-encoded hosts, including the unix-socket form", () => {
+  assert.throws(() => resolveResetTarget("postgres://%2Fvar%2Frun%2Fpostgresql/plexco_test"), /RULE/);
+  assert.throws(() => resolveResetTarget("postgres://loc%61lhost/plexco_test"), /RULE/);
+  assert.throws(() => resolveResetTarget("postgres://localhost%2Fx/plexco_test"), /RULE/);
+});
+
+test("refuses options PostgreSQL itself accepts, and says so rather than just rejecting", () => {
+  for (const q of ["sslmode=require", "application_name=x", "connect_timeout=5"]) {
+    assert.throws(
+      () => resolveResetTarget(`postgres://plexco@localhost:5432/plexco_test?${q}`),
+      (error) => {
+        assert.match(error.message, /RULE:/, "must name the rule");
+        assert.match(error.message, /INCLUDING options PostgreSQL itself accepts/);
+        assert.match(error.message, /Do NOT widen this pattern/);
+        return true;
+      },
+    );
+  }
+});
+
+test("refuses ::1, whose bracketed and bare spellings differ between parsers", () => {
+  assert.throws(() => resolveResetTarget("postgres://[::1]:5432/plexco_test"), /RULE/);
 });
