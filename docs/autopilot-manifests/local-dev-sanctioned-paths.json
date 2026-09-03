@@ -1,0 +1,96 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest -- carries NO manifest_schema_version (that field belongs only to the runtime .autopilot/state/<feature>/manifest.json; putting it here makes scope-gate register HALT CONTRACT_INVALID).",
+  "task_id": "plexco:local-dev-sanctioned-paths--v2",
+  "feature": "local-dev-sanctioned-paths--v2",
+  "branch": "feat/local-dev-sanctioned-paths--v2",
+  "base_ref": "origin/main",
+  "base_sha": "a5f887fd16b9b4056164c510242c5ea4a0084fb7",
+  "risk": "P2",
+  "_risk_note": "P2. Dev-only tooling: a new script, a package.json script entry, and documentation. It touches no product code, no migration, no schema and no CI. The one thing that lifts it above ordinary docs work is that the script runs DROP DATABASE, which is why security_review is required rather than waived.",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_predecessor_note": "Second registration. v1 (feat/local-dev-sanctioned-paths, head a5518f7, base 491a334) was closed by the owner with ap-finish --authorized-close after it became unrunnable: docs/autopilot-backlog.md was inside its hash-locked scope, and two unrelated commits landed on that file on origin/main (ae20e80, a5f887f) while v1 was in flight. autopilot-review-readiness.mjs:536-546 then halts BASE_STALE on any declared-scope file that moved on baseRef, and base_sha cannot be edited inside a hash-locked manifest. The halt was a TRUE positive, not the v21/v25 false-positive class -- a file this lane actually declared really did change. NOT a budget reset: v1 spent fix-round-count 0 and never reached a codex round, so no finding is being re-argued with a refreshed budget. All of v1's content carries forward unchanged except the backlog hunk, which is deliberately dropped (see negative_scope).",
+  "_scope_note": "docs/standards/kit-pack-membership.{json,md} are in scope because they are mechanically forced by the act of adding a file under scripts/, not because this lane wants to touch kit governance. check-kit-pack-membership.mjs enumerates scripts/ recursively (listScriptFiles) and auditCoverage reports any unclassified file as `missing`; `pnpm kit:check` is the FIRST command in `pnpm test`, so an unregistered new script turns the whole suite red. The .md is GENERATED -- `pnpm kit:generate` writes it and kit:check byte-compares it -- and is never hand-edited. Both new files are repo-owned by construction (absent from pack_pairs_verbatim), so each record carries overwrite_path `none`.",
+  "invariants": ["build-config", "test-chain"],
+  "_invariant_note": "test-chain is declared because registering scripts/db-reset-test.test.mjs into the `test:review-readiness` file list IS test-runner registration, which is that token's definition verbatim. It was tempting to declare build-config alone and call the package.json edit a manifest change; that would have been a dodge. v1 was refused on exactly this token while test-harness-chat-definer-lock-client-leak--v2 held it, and the refusal was correct on a second, independent ground the token could not have known: this script's DROP DATABASE ... WITH (FORCE) targets the same plexco_test that setupRlsTestContext opens as its admin connection, so running it during that lane's suite would have terminated their connection mid-run.",
+  "scope": [
+    "package.json",
+    "scripts/db-reset-test.mjs",
+    "scripts/db-reset-test.test.mjs",
+    "docs/standards/kit-pack-membership.json",
+    "docs/standards/kit-pack-membership.md",
+    "docs/standards/environments-setup.md",
+    "docs/autopilot-manifests/local-dev-sanctioned-paths.json"
+  ],
+  "negative_scope": [
+    "NO edit to docs/autopilot-backlog.md. This is the one change that distinguishes v2 from v1, and the reason is not gate-avoidance: that file is the most-written file in this repository, so declaring it inside a hash-locked scope makes the lane hostage to every unrelated backlog commit. v1 died to exactly that, and another qualifying row (test-harness-job-definer-lock-client-leak) is already queued to land on it. Two deaths in one region is a signal to move the foundation, not to patch again. Findings this lane must emit are handed to the owner verbatim in the READY report and committed owner-side -- the same route the L7v2 lane used to survive this on the same day.",
+    "NO migration content -- packages/db/migrations/** is untouched",
+    "NO test harness -- packages/db/src/test-harness.ts and test-harness.test.ts belong to a lane that landed at 491a334",
+    "NO CI -- .github/** is untouched",
+    "NO edit to the egress evidence table in environments-setup.md section 1.1; its HALT-EVIDENCE_INCOMPLETE marker is correct fail-closed state awaiting owner-only evidence, not an unfinished section to complete",
+    "NO behavioural change to db:bootstrap -- infra/docker-compose.yml records that it is the path CI, existing local and production all depend on. This lane DOCUMENTS its host-psql requirement and the container-based equivalent; rewriting it is a separate decision with a blast radius this lane has not measured",
+    "NO edit to packages/db/src/migrate.ts -- the P17 message shipped at 2648965 and its three-channel log-provenance design is owned by AP-42. The wording gap found there is emitted to the owner as a backlog row, not fixed here",
+    "NO widening of the reset tool to the per-suite plexco_* databases -- they do not end in _test, the harness already drops and recreates them per run, and a destructive tool earns trust by staying narrow",
+    "NO new invariant token, and no edit to docs/autopilot-invariant-catalog.md -- a scope collision is answered by queueing, never by removing the token that reported it"
+  ],
+  "context_sources": [
+    "docs/autopilot-backlog.md -- task: local-dev-sanctioned-paths-are-harder-than-the-forbidden-one (READ ONLY; this lane does not write it)",
+    "packages/db/src/migrate.ts -- the P17 guard message merged at 2648965, and formatMigrationFailureForLog which decides what the CLI actually prints",
+    "packages/db/src/test-harness.ts -- the DATABASE_URL_TEST contract and per-suite database naming",
+    "infra/docker-compose.yml -- the container-psql route already documented on the worker service notes",
+    "docs/standards/kit-pack-membership.json -- scripts/ ownership authority",
+    ".env.example:56 and .github/workflows/ci.yml:34 -- both pin the test database name to plexco_test",
+    "eslint.config.mjs:64-79 -- scripts/**/*.mjs IS linted, with an explicit Node globals block",
+    ".prettierignore -- scripts/ and docs/ are prettier-ignored; package.json is not"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "primary-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "approval_required"
+  },
+  "verification": {
+    "focused": ["node --test scripts/db-reset-test.test.mjs"],
+    "canonical": [
+      "pnpm run kit:check",
+      "pnpm run test:review-readiness",
+      "pnpm run lint",
+      "pnpm run format:check"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Verification is scaled to a diff that contains zero TypeScript and zero product code. `pnpm -r run test` (the third leg of `pnpm test`) exercises packages this diff does not touch, needs a live Postgres, and is a measured flake source on a shared cluster. kit:check and test:review-readiness are both legs of `pnpm test` and both DO cover this diff: the first proves the two new scripts/ files are classified, the second proves the new test file is actually registered and runs (85 tests before, 91 after). Full-suite verification belongs to merge time.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 1
+  },
+  "security_review": {
+    "required": true,
+    "reason": "the new script constructs a shell command and a DROP DATABASE statement from an environment variable, then destroys a database; env-var-to-shell plus a destructive DDL is a trust boundary regardless of the change being dev-only tooling",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 120,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "_manifest_sync_precondition": "MANDATORY before the first `scope-gate ready` and again after any edit to this file: diff this authored contract against the runtime manifest at .autopilot/state/local-dev-sanctioned-paths--v2/manifest.json and PRINT the result -- a printed diff, not an assurance they match. Compare by exclusion: `jq 'walk(if type == \"object\" then with_entries(select(.key | test(\"^_\") or . == \"manifest_schema_version\" or . == \"review_gate_version\" | not)) else . end) | .security_review.reason = null'` on both, then compare the two outputs.",
+  "readiness_evidence_path": ".autopilot/state/local-dev-sanctioned-paths--v2/readiness.json"
+}

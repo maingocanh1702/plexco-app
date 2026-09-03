@@ -174,6 +174,58 @@ the other components do not change. Authenticated post-write reads remain on the
 Require TLS CA and hostname verification even on the private path. Trusted sources and least-privilege roles
 remain active; VPC routing is not a substitute for database authorization.
 
+### 4.1 Local development and test databases
+
+`DATABASE_URL_TEST` is the connection variable that is local/CI-only. It is never injected into an App Platform
+component, which is why it is absent from the table above. It names a **throwaway superuser database on a
+throwaway cluster** (`packages/db/src/test-harness.ts`), and both pinned values already end in `_test`:
+
+| Source | Value |
+|---|---|
+| `.env.example` | `postgres://plexco:plexco_dev@localhost:5432/plexco_test` |
+| `.github/workflows/ci.yml` | `postgres://plexco:plexco_test@localhost:5432/plexco_test` |
+
+#### `pnpm db:reset:test` — the sanctioned cure for a blocked migration
+
+`packages/db/src/migrate.ts` refuses to run when a migration file's sha256 no longer matches the row recorded in
+`schema_migrations` (P17, forward-only). Its message offers two cures, and they are opposite:
+
+| Situation | Cure |
+|---|---|
+| the migration has already **shipped** | add a NEW forward migration |
+| still **unshipped**, being iterated on locally | "**reset the test database**" — `pnpm db:reset:test` |
+
+The second is the one that actually costs time, and until this script existed it named a path the repository had
+never built. Meanwhile the forbidden shortcut — `DELETE FROM schema_migrations WHERE name = ...` — was always one
+line and always worked. **The rule was not widened; the sanctioned path was made cheap.**
+
+The script fails closed:
+
+- it **names the database it is about to destroy**, before destroying it;
+- it **refuses any name not ending in `_test`** — so a `DATABASE_URL_TEST` pointing at the development database
+  `plexco` is refused, not dropped;
+- it refuses any name that is not a plain identifier, so nothing unexpected reaches SQL;
+- it runs `psql` **inside the compose `postgres` container**, so no host `psql` is needed.
+
+> ⚠️ **Do not run it while a test suite is running.** It uses `DROP DATABASE ... WITH (FORCE)`, and
+> `setupRlsTestContext` opens `DATABASE_URL_TEST` as its admin connection for every suite — forcing the drop
+> terminates that connection mid-run.
+
+It deliberately does **not** touch the per-suite `plexco_*` databases. The harness drops and recreates those on
+every run, so they cannot accumulate a stale `schema_migrations` row, and their names do not end in `_test`.
+
+#### `pnpm db:bootstrap` requires `psql` — declare it, or route around it
+
+`db:bootstrap` shells out to `psql` twice. **`psql` is a real development dependency that this repository does not
+declare**, and it is absent on a machine that only has Docker. `infra/docker-compose.yml` records that this script
+"is the path every environment (CI, existing local, production) actually depends on", so its behaviour is not
+changed here. On a host without `psql`, use the container's own copy and feed the file over stdin:
+
+```bash
+docker compose -f infra/docker-compose.yml exec -T postgres \
+  psql -U plexco -d plexco -v ON_ERROR_STOP=1 -f - < infra/postgres-init/01-job-definer.sql
+```
+
 ---
 
 ## 5. Secrets and KMS
@@ -354,6 +406,8 @@ resource is provisioned.
 - Disabling VPC to obtain a fixed egress IP without activating the approved fallback/design branch.
 - Treating provider PITR as the off-provider backup.
 - Leaving ephemeral staging alive without an owner and TTL.
+- Editing or deleting `schema_migrations` rows to get past the P17 immutability guard. Use `pnpm db:reset:test`
+  (unshipped, local) or a new forward migration (shipped) — see §4.1.
 
 ---
 
@@ -361,6 +415,7 @@ resource is provisioned.
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-09-03 | v2.2 | Added §4.1 local development and test databases: `DATABASE_URL_TEST` (the one local/CI-only connection variable, previously undocumented here), the new `pnpm db:reset:test` and its fail-closed `_test` suffix guard, and the fact that `pnpm db:bootstrap` depends on an undeclared host `psql` plus the container route around it. Added the `schema_migrations` hand-editing anti-pattern. No change to the §1.1 egress evidence table. |
 | 2026-07-16 | v2.1 | Reality-check: Docker Compose definition valid but daemon availability is not guaranteed; current DB/full-suite gate remains open. Pin official non-provisioning App Spec validation/proposal commands in the infra slice. |
 | 2026-07-16 | v2.0 | Replaced the superseded Fly production body with the accepted DigitalOcean App Platform + Managed PG VPC runbook; made replica trigger-based; added component-scoped DB URLs, immutable promotion, CI secret boundary, TTL staging, DD-04 §7.6 acceptance and isolated Fly fallback. |
 

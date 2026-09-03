@@ -137,6 +137,8 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/check-review-readiness.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/check-review-readiness.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/codex-review-pin.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | present — read it, do not copy it |
+| `scripts/db-reset-test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/db-reset-test.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/smoke-predeploy.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 
 - **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69.
@@ -150,6 +152,8 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/check-kit-pack-membership.test.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-review-readiness.mjs`** — No canonical copy.
 - **`scripts/check-review-readiness.test.mjs`** — No canonical copy.
+- **`scripts/db-reset-test.mjs`** — No canonical copy. Repo-owned dev tooling: drops and recreates the DATABASE_URL_TEST database, refusing any name not ending in _test. Edit it here.
+- **`scripts/db-reset-test.test.mjs`** — No canonical copy. Guards the guard: the refusal is the tested behaviour, because a destructive check nobody has observed refusing is only a claim.
 - **`scripts/smoke-predeploy.mjs`** — No canonical copy.
 
 ---

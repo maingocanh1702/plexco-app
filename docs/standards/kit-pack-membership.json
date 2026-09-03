@@ -113,6 +113,16 @@
       "overwrite_path": "kit-sync"
     },
     {
+      "path": "scripts/db-reset-test.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy. Repo-owned dev tooling: drops and recreates the DATABASE_URL_TEST database, refusing any name not ending in _test. Edit it here."
+    },
+    {
+      "path": "scripts/db-reset-test.test.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy. Guards the guard: the refusal is the tested behaviour, because a destructive check nobody has observed refusing is only a claim."
+    },
+    {
       "path": "scripts/smoke-predeploy.mjs",
       "overwrite_path": "none",
       "note": "No canonical copy."
