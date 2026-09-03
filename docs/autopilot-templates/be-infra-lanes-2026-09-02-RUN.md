@@ -30,6 +30,31 @@ trước khi lane viết được dòng nào.** Đo tại `scripts/autopilot-rev
 ⚠️ `autopilot-review-readiness.mjs` **là pack file** (chính là file mang hunk `DYNAMIC_SEGMENT`). Sửa nó
 trong consumer là tạo divergence mới — xem L11-v2.
 
+### §00b · Hai đính chính đo được 03/09, sau ba lần HALT của họ kit-pack
+
+**(1) `--audit` KHÔNG chạy trong CI. Tiền đề của phán quyết "Option A" trước đó SAI.** Đo trên nhánh
+`feat/kit-pack-membership-doc`:
+
+```
+package.json  "kit:check": "node scripts/check-kit-pack-membership.mjs --audit"   <- không ai gọi
+package.json  "test:review-readiness": node --test … check-kit-pack-membership.test.mjs  <- chạy TEST FILE
+ci.yml:88     run: pnpm -w test   ->  test:review-readiness  ->  test file, KHÔNG phải --audit
+```
+
+CI **kiểm logic của checker**; CI **không audit repo**. Hai thứ khác nhau, và câu "enforcement of record
+là `--audit` trong CI" mà anh viết đã gộp nhầm chúng. Hệ quả: nếu ship nguyên trạng, ta có một doc cộng
+một checker mà **không gì chạy nó lên repo** — đúng cách một tài liệu tra cứu chết dần, cộng thêm một
+lớp tưởng-là-có-cưỡng-chế. **Sửa rẻ: một dòng.** `kit:check` phải nằm trong chuỗi mà `pnpm -w test` gọi,
+hoặc thành một step riêng trong `ci.yml`. **Đưa vào scope S1, không phải backlog row.**
+
+**(2) Cấm parse Markdown làm authority.** S1 HALT REGION_THRASH sau ba vòng đóng lần lượt các biên
+Markdown mịn dần (không ranh giới → có ranh giới nhưng không biết fence → luật đóng fence sai ở info
+string). Tập biên còn lại bị chặn bởi **độ phức tạp của CommonMark**, không bởi độ cẩn thận của bản vá
+kế: HTML block, link reference definition, setext heading, lazy continuation, tab-làm-indent. Không vòng
+nào chứng minh được danh sách đó rỗng. ⇒ Authority là **JSON**; Markdown là **output sinh ra**, và bước
+kiểm là **sinh lại rồi diff byte**, không phải parse rồi so tập. Bảng `.md` được **đối chiếu** thay vì
+**sinh ra** là mang nguyên lớp lỗi đó quay lại, chỉ nhỏ hơn.
+
 ---
 
 > **Cách dùng:** mỗi lane dưới đây có một khối ` ```text ` dán thẳng vào Claude Code. Prose tiếng Việt là để
@@ -58,8 +83,10 @@ REPO CONTEXT — read before acting, do not skip
 
   WORKFLOW_LEVEL: 3 · WORKFLOW_MODE: supervised_autonomy
   DEFAULT_STOP_MODE: STOP_AT_READY · AUTO_MERGE: off
-  AUTONOMY_MODE in the MANIFEST must be "supervised" (or "proactive_routine" only if
-  level3-workflow.md:172 conditions are all met). It must NOT be
+  AUTONOMY_MODE in the MANIFEST must be "supervised". Do not use "proactive_routine"
+  even though the validator still accepts it today: DD-100 D4 deletes it outright
+  (measured zero consumers -- 16/16 manifests declare supervised -- and zero writers),
+  and its removal is part of lane L11-v2. It must NOT be
   "autonomous_to_ready": scripts/autopilot-review-readiness.mjs:366 accepts only
   ["supervised","proactive_routine"], so a manifest declaring the ratified mode HALTs
   CONTRACT_INVALID at register. See section 00. The batch-the-owner INTENT of
@@ -859,7 +886,7 @@ NEGATIVE SCOPE
 > **một việc, ba edit, land cùng nhau**.
 
 ```text
-TASK: kit-teach-autonomous-to-ready
+TASK: kit-teach-autonomous-to-ready  (folds DD-100 D4 -- same accept list, same file)
 RISK: P2
 REPOSITORY: the canonical kit repo (~/Projects/Claude template), NOT the Plexco repo.
             Never patch the kit from inside a consumer: that is the two-writers-one-
@@ -888,8 +915,19 @@ THE THREE EDITS, and why they are one lane
      thing. Porting the doc without touching this ships the contradiction upstream to
      every consumer, which is worse than the divergence you are repaying.
 
+  4. Execute DD-100 D4 in the same change, because it edits the SAME accept list and
+     the SAME file. D4 (owner, measured) deletes `proactive_routine` outright: zero
+     consumers -- 16/16 manifests declare supervised -- zero writers, and its original
+     purpose (auto_merge_after_2x_codex_clean) was already rejected by Level 3. Its
+     declared deletion scope includes autopilot-review-readiness.mjs:316 and
+     level3-workflow.md:47,72,172,385 -- the very file this lane ports and the very
+     line edit 2 rewrites. Doing them in separate lanes means writing that line twice
+     and racing two edits into one region.
+     After all four edits the accept list reads ["supervised","autonomous_to_ready"].
+
   Edit 1 without 2 ships a doc nothing enforces. Edit 2 without 1 ships an accept
-  value nothing documents. They land together.
+  value nothing documents. Edit 4 apart from 2 is two writers on one line. They land
+  together.
 
 DO NOT
   Do not run autopilot-update.sh in any consumer. Consumer sync is a separate,
@@ -1059,68 +1097,33 @@ L12 trả lời xong. Phần `packages/db/src/migrate.ts` của L4 không bị �
 
 ---
 
-## L12 · infra · Làm cho "file này có bị kit ghi đè không" trả lời được từ trong repo
+## L12 · infra · ĐÃ NGHỈ HƯU — thay bằng S1 + S2
 
-**Tier C:** 0 · **Rủi ro:** P2 · **Chạy trước:** L4 (phần scope-gate), L11, và mọi lane chạm `scripts/`
-
-```text
-TASK: kit-pack-membership-manifest
-RISK: P2
-OUTCOME
-  A checked-in, verifiable answer to one question a contributor cannot answer today:
-  "if I edit this file under scripts/, will the next kit sync overwrite my edit?"
-
-THE MEASURED PROBLEM — verify, then build for it
-  In the Plexco consumer:
-    head -6 scripts/autopilot-review-readiness.mjs | grep KIT_VERSION   # no hit
-    head -6 scripts/autopilot-scope-gate           | grep KIT_VERSION   # KIT_VERSION: 33
-  The first file has no version header and IS a pack member — that is the file whose
-  DYNAMIC_SEGMENT fix is at risk of being overwritten. So header presence is neither
-  necessary nor sufficient evidence of pack membership.
-  The only authority is pack_pairs in canonical's
-  autopilot/parallel/autopilot-update.sh, and that file does not exist in this repo.
-  Therefore, from inside this repo, pack membership is currently unknowable, and
-  every edit under scripts/ is a coin flip on survival. 0af75a2 already lost that
-  flip: its fix survives only because the sync path is broken.
-
-WHAT TO BUILD
-  1. Read canonical's autopilot-update.sh (~/Projects/Claude template) and extract
-     the exact pack_pairs list, verbatim, with the canonical commit SHA you read it
-     at. Do not summarise it and do not reorder it.
-  2. Write docs/standards/kit-pack-membership.md in the CONSUMER: one row per file
-     under scripts/, each marked kit-owned or repo-owned, each carrying the evidence
-     (present in pack_pairs at SHA x / absent from it). Files absent from pack_pairs
-     are repo-owned and safe to edit here. Include the KIT_VERSION-header column too,
-     and state explicitly that the header does NOT determine membership, with
-     autopilot-review-readiness.mjs named as the counter-example. A future reader
-     will otherwise re-derive the wrong rule from the headers, exactly as this lane's
-     first draft did.
-  3. Add a check that fails when a commit modifies a kit-owned file. It must be
-     overridable by an explicit marker in the commit body (a deliberate consumer-side
-     kit patch is sometimes the right call — 0af75a2 was defensible as an emergency,
-     it just was never recorded as a debt). The check exists to make the debt LOUD,
-     not to forbid it. A check that cannot be overridden will be bypassed instead of
-     obeyed, and then it teaches nothing.
-  4. Record the currently-outstanding consumer-side kit patches as rows in that file,
-     starting with the DYNAMIC_SEGMENT hunk in autopilot-review-readiness.mjs, so
-     L11 has a written list to reconcile against rather than one person's memory.
-
-SCOPE
-  docs/standards/kit-pack-membership.md (new)
-  one check script under scripts/ (this one is repo-owned by construction — it does
-  not exist in canonical) and its test
-  a wiring line wherever the repo already runs its cheap checks
-NEGATIVE SCOPE
-  Do NOT edit any kit-owned file in this lane. Do NOT run autopilot-update.sh. Do
-  NOT fix DYNAMIC_SEGMENT here — that is L11 and it belongs in canonical. This lane
-  only makes ownership visible.
-ACCEPTANCE
-  - Every file under scripts/ appears exactly once with an evidence-backed verdict.
-  - The canonical SHA the pack list was read at is recorded, so the file can be
-    re-verified later rather than trusted.
-  - A test proves the check fires on a kit-owned file and passes on a repo-owned one.
-  - A test proves the override marker works.
-```
+> 🔴 **ĐỪNG DÁN LANE NÀY. Nó đã HALT ba lần và prompt gốc đã bị gỡ khỏi đây.**
+> `kit-pack-membership-manifest` (v1) HALT REGION_THRASH · (v2) HALT MAX_ROUNDS ·
+> `kit-pack-membership-doc` (S1) HALT REGION_THRASH. Ba nguyên nhân khác nhau — tamper surface ·
+> giao thức ghi nợ chưa đặc tả · parse Markdown làm authority — nhưng **cùng một hình dạng: lane
+> được giao thừa một mặt có biên mở, và mặt đó ăn hết budget.** Prompt gốc còn nằm đây là một cái
+> bẫy: ai dán vào sẽ khởi động lại đúng cái monolith vừa chết ba lần. Nay đã gỡ.
+>
+> **Thay bằng hai lane, và đọc điều kiện của từng cái trước khi mở:**
+>
+> | | Nội dung | Điều kiện bắt buộc trước khi register |
+> |---|---|---|
+> | **S1** `kit-pack-membership-doc` | `kit-pack-membership.json` là authority máy đọc · bảng `.md` **SINH RA TỪ** JSON · check = sinh lại rồi **diff byte** · `--audit` **nối vào CI** | **Cấm mọi thành phần parse Markdown để lấy authority.** Xem §00b |
+> | **S2** `kit-owned-commit-guard` | hook + trailer + thủ tục dựng lại nợ | Decision table `{sync,patch,both,neither}` × `{file đổi, row demote, xoá bảng}` + 1 ví dụ dựng lại end-to-end phải viết xong **trước** register |
+>
+> **Đã trả tiền rồi, mang thẳng sang, đừng đo lại:** nội dung doc (5 vòng review, **0 sự thật nào về
+> pack bị sửa**; sweep canonical độc lập round 5 khớp bản đầu — 13 target, 12 identical, chỉ
+> `level3-workflow.md` lệch 205/2) · threat model coverage-vs-evasion (đứng vững **11 vòng cộng dồn**,
+> 0 lần tái tạo lớp tamper) · MIXED_DECLARATION · ngữ nghĩa hai trailer · ca `8e737fe` · ownership đọc
+> từ git object · baseline last-known-table · fix `%B --name-only`.
+>
+> **Luật rút ra, áp cho mọi lane sau:** một region bị flag **lần thứ hai** là tín hiệu **đổi
+> substrate**, không phải tín hiệu vá tổng quát hơn.
+>
+> **Điều kiện dừng đã chốt:** nếu S1 (bản JSON) HALT, lấy phương án "chỉ ship doc thủ công" và dừng
+> hẳn hướng tự-bảo-trì. Không có successor thứ tư trong họ này.
 
 ---
 
