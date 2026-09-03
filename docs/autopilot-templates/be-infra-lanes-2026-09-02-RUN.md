@@ -133,6 +133,22 @@ không chạy đã có hậu quả thật. **Việc của owner**, không lane n
 Chạy chúng **liên tiếp trong repo canonical** — nhưng **vẫn là các lane RỜI NHAU**. Gộp chúng thành một
 lane "dọn kit" vì tiện là đúng khuôn đã giết ba lane: giao thừa một mặt cho một lane.
 
+**(1d) SONG SONG: file rời nhau KHÔNG đủ. Coupling đi qua `import`, không đi qua đường dẫn.**
+
+Đo 03/09 khi L7 va L4a: hai lane có scope file **hoàn toàn rời nhau** (`test-harness.ts` vs `migrate.ts`)
+mà vẫn đúng là phải serialize — vì `packages/db/src/migrate.test.ts:20` **import `./test-harness.js`**, và
+tham chiếu hành vi của helper đó ở dòng 235 · 265 · 273 · 566. `test-harness.ts` được **12 test file**
+import; nó là nền của cả db suite.
+
+⇒ **Luật ba vế của repo (scope ∧ invariants ∧ dependency) phải kiểm CẢ BA.** Kiểm mỗi file rồi kết luận
+"song song được" là bỏ qua đúng vế mà catalog invariant sinh ra để giữ. Ca này file rời nhau nhưng lane
+sửa helper và lane tiêu thụ helper chạy cùng lúc, với bên tiêu thụ đang có 183 dòng chưa commit.
+
+⚠️ **Và đừng "tách token cho hết va".** Thêm một token mới vào catalog để hai lane thôi serialize là **tắt
+cảnh báo**, cùng hình dạng với `close_by: hand · khai tay để reconcile không báo weak` mà reconcile vừa
+từ chối. Ở ca này nó còn tệ hơn tắt cảnh báo: hazard cluster-chung vẫn nguyên, và hai writer sẽ đồng thời
+đổi một helper và một consumer của chính helper đó.
+
 **(2) Cấm parse Markdown làm authority.** S1 HALT REGION_THRASH sau ba vòng đóng lần lượt các biên
 Markdown mịn dần (không ranh giới → có ranh giới nhưng không biết fence → luật đóng fence sai ở info
 string). Tập biên còn lại bị chặn bởi **độ phức tạp của CommonMark**, không bởi độ cẩn thận của bản vá
