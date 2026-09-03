@@ -136,6 +136,40 @@ import { fileURLToPath } from "node:url";
  * file from a directory where one happens to exist. Deciding the path here removes cwd from the
  * set of inputs, which is the same rule every other input in this file follows.
  */
+/**
+ * Environment that can silently retarget a destructive command, removed from the child's env so the
+ * invocation is decided by this file rather than by whatever the shell happens to carry.
+ *
+ * Stripping these is NOT sufficient alone, which is why assertLocalDockerEndpoint exists: the ACTIVE
+ * CONTEXT lives in ~/.docker/config.json (`currentContext`), not in the environment. Measured on the
+ * owner's machine — DOCKER_HOST and DOCKER_CONTEXT both unset, yet the effective context was
+ * `desktop-linux`, not `default`. Hard-pinning `--context default` would have been wrong for the
+ * same reason: on Docker Desktop `default` names /var/run/docker.sock while the daemon listens on
+ * ~/.docker/run/docker.sock. So the endpoint is VERIFIED, never forced.
+ */
+const REDIRECTING_ENV = [
+  "DOCKER_HOST",
+  "DOCKER_CONTEXT",
+  "COMPOSE_PROJECT_NAME",
+  "COMPOSE_FILE",
+  "COMPOSE_PROFILES",
+  "COMPOSE_PROJECT_DIRECTORY",
+  // git resolves the compose authority, so git's own redirecting variables belong here too.
+  // Measured: GIT_DIR pointing at another repository moved the generated -f to that repository's
+  // compose file, and every later check -- label, hash, mount -- then derived from the redirected
+  // file, so a compatible alternate checkout passed all of them.
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_CEILING_DIRECTORIES",
+];
+
+export function childEnv(env = process.env) {
+  const copy = { ...env };
+  for (const key of REDIRECTING_ENV) delete copy[key];
+  return copy;
+}
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /**
@@ -151,8 +185,15 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
  * from a temporary worktree, which would have broken it for the main checkout too.
  *
  * `--git-common-dir` names the main repository's .git from anywhere, including a linked worktree,
- * so its parent is a stable compose authority. Every other protection is unchanged: the path is
- * still absolute and still compared exactly, the hash and the mount are still checked against it.
+ * so its parent is a stable compose authority -- the MAIN checkout, deliberately NOT this script's
+ * own tree. Every other protection is unchanged: the path is still absolute and still compared
+ * exactly, the hash and the mount are still checked against it. If git cannot answer, or answers
+ * with a non-absolute path, this falls back to the script's own tree rather than guessing.
+ *
+ * The git probe runs under childEnv() like every other child this file spawns. It is not spawned
+ * with the ambient environment: GIT_DIR pointing at another repository was measured moving the
+ * generated -f to that repository's compose file, after which the label, hash and mount checks all
+ * derived from the redirected file and a compatible alternate checkout passed every one of them.
  */
 export function resolveComposeFile(runner = spawnSync, scriptDir = SCRIPT_DIR) {
   // --path-format=absolute (git >= 2.31) so the answer cannot be relative to anything. Reasoning
@@ -160,6 +201,7 @@ export function resolveComposeFile(runner = spawnSync, scriptDir = SCRIPT_DIR) {
   // file keeps being wrong about; asking for an absolute path removes the question.
   const probe = runner("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
     cwd: scriptDir,
+    env: childEnv(),
     encoding: "utf8",
   });
   const common = String(probe?.stdout ?? "").trim();
@@ -188,25 +230,6 @@ const CONTAINER_SOCKET_DIR = "/var/run/postgresql";
 /** Dropping a database requires being connected to a different one. */
 const MAINTENANCE_DB = "postgres";
 
-/**
- * Environment that can silently retarget a destructive command, removed from the child's env so the
- * invocation is decided by this file rather than by whatever the shell happens to carry.
- *
- * Stripping these is NOT sufficient alone, which is why assertLocalDockerEndpoint exists: the ACTIVE
- * CONTEXT lives in ~/.docker/config.json (`currentContext`), not in the environment. Measured on the
- * owner's machine — DOCKER_HOST and DOCKER_CONTEXT both unset, yet the effective context was
- * `desktop-linux`, not `default`. Hard-pinning `--context default` would have been wrong for the
- * same reason: on Docker Desktop `default` names /var/run/docker.sock while the daemon listens on
- * ~/.docker/run/docker.sock. So the endpoint is VERIFIED, never forced.
- */
-const REDIRECTING_ENV = [
-  "DOCKER_HOST",
-  "DOCKER_CONTEXT",
-  "COMPOSE_PROJECT_NAME",
-  "COMPOSE_FILE",
-  "COMPOSE_PROFILES",
-  "COMPOSE_PROJECT_DIRECTORY",
-];
 
 /**
  * DOCKER_CONFIG is deliberately NOT in that list, and the reason is the general rule rather than a
@@ -240,11 +263,6 @@ const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
  */
 const MAX_IDENTIFIER_BYTES = 63;
 
-export function childEnv(env = process.env) {
-  const copy = { ...env };
-  for (const key of REDIRECTING_ENV) delete copy[key];
-  return copy;
-}
 
 /**
  * The only thing standing between a mistyped argument and a destroyed development database. The

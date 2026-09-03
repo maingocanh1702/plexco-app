@@ -224,7 +224,7 @@ selectable: a relative path is resolved against the working directory, so cwd wo
 |---|---|
 | docker daemon | the resolved endpoint is read and **must be a local unix socket**, or the tool refuses |
 | compose project | pinned with `-p plexco`; `COMPOSE_PROJECT_NAME` is stripped from the child environment |
-| compose file | an absolute path derived from the script's own location, carried in `-f`; a relative path would let the working directory choose which file is read |
+| compose file | an absolute path resolved from the **main worktree** (`git rev-parse --path-format=absolute --git-common-dir`, run with `GIT_*` neutralised), carried in `-f`. Not the running checkout: every writing slice runs in a linked worktree, and the service hash includes the bind-mount source, so a worktree-local path rejects the shared container. Falls back to the script's own tree only if git cannot answer |
 | container | the container **ID**, resolved from that project and file, then verified three ways before anything destructive: its `com.docker.compose.project.config_files` label is exactly this one file, its `com.docker.compose.config-hash` matches the current service definition, and it actually mounts the volume this configuration resolves to. The first three are descriptions of the container; the mount is the resource the drop would affect |
 | executing role | passed explicitly as `psql -U`; nothing below supplies a competing default |
 | database | `--db`, defaulting to `plexco_test` |
@@ -288,6 +288,7 @@ closing your terminal:
   # unintended.sock is still a unix:// socket, so it passes the locality check and is then bound
   # with -H for a privileged bootstrap. Checking locality is not the same as choosing the daemon.
   unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_DIRECTORY
+  unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CEILING_DIRECTORIES  # git resolves the compose authority below
 
   # --git-common-dir, NOT --show-toplevel: in a linked worktree the latter returns THAT worktree,
   # whose compose file is byte-identical but produces a different service hash (the bind-mount

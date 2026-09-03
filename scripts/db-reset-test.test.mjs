@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import {
   assertLocalDockerEndpoint,
@@ -543,4 +545,42 @@ test("an opaque postgres URL is never echoed, even though its pathname looks lik
     () => crossCheckDatabaseUrl("postgres://host/other_test", "plexco_test"),
     /names database "other_test"/,
   );
+});
+
+// ---------------------------------------------------------------- structural, not per-site
+
+test("EVERY child process is spawned with the neutralised environment", () => {
+  // This is a source-level assertion on purpose. The rule "children must not inherit redirecting
+  // variables" was already implemented and used at 7 of 8 spawn sites; the miss was a git probe
+  // added in a later round, and GIT_DIR then redirected the compose authority that every other
+  // guard derives from. Fixing that one call site would leave the NEXT new spawn free to repeat it.
+  // Asserting the property over the whole file is what makes the rule structural instead of a
+  // habit -- the same move as putting the identifier rule in one function.
+  const src = readFileSync(fileURLToPath(new URL("./db-reset-test.mjs", import.meta.url)), "utf8");
+  const lines = src.split("\n");
+  const offenders = [];
+  lines.forEach((line, i) => {
+    if (!/\b(runner|spawnSync)\(/.test(line)) return;
+    if (/function (childEnv|spawnSync)/.test(line)) return;
+    const window = lines.slice(i, i + 8).join("\n");
+    if (!/env:\s*childEnv\(\)/.test(window)) offenders.push(`${i + 1}: ${line.trim()}`);
+  });
+  assert.deepEqual(offenders, [], `spawn sites missing env: childEnv() ->\n${offenders.join("\n")}`);
+  // Guard the guard: if the call shape changes and this finds nothing, the test is vacuous.
+  const spawnCount = lines.filter((l) => /\b(runner|spawnSync)\(/.test(l)).length;
+  assert.ok(spawnCount >= 7, `expected to find the spawn sites, found ${spawnCount}`);
+});
+
+test("git's redirecting variables are neutralised like docker's", () => {
+  const env = childEnv({
+    PATH: "/usr/bin",
+    GIT_DIR: "/tmp/other/.git",
+    GIT_WORK_TREE: "/tmp/other",
+    GIT_COMMON_DIR: "/tmp/other/.git",
+    GIT_CEILING_DIRECTORIES: "/tmp",
+  });
+  for (const k of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES"]) {
+    assert.equal(env[k], undefined, `${k} must not reach the child`);
+  }
+  assert.equal(env.PATH, "/usr/bin");
 });
