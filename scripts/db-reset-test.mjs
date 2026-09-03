@@ -44,11 +44,33 @@
  * construct a command at all. "Is the set closed?" is then answered by reading the function, not by
  * predicting what configuration exists on some machine.
  *
- * THE STOPPING RULE. With those six pinned, the accident model is DECLARED COVERED. A later finding
- * that is inside the threat model but is NOT one of these six selectors goes to the backlog as a
- * row -- record it, cite this clause, continue. It does not get a fix round. Without this rule the
- * lane inherits a fresh budget and the same appetite that spent five rounds; with it, "when do we
- * stop" has an answer written down before the work rather than discovered at the breaker.
+ * THE LIST IS A HYPOTHESIS THAT KEEPS SCORE -- it is NOT a boundary on what counts as a defect.
+ *
+ * A finding that is inside the declared threat model but is NOT one of the six call-path selectors
+ * MUST STILL BE FIXED. It is additionally recorded as evidence that the selector list was
+ * incomplete: name the finding and increment the refutation count below. The list is a falsifiable
+ * claim about the call path, not a licence to defer.
+ *
+ *   SELECTOR-LIST REFUTATIONS: 0
+ *
+ * An earlier revision of this header said the opposite -- that such a finding became a backlog row
+ * and did not get a fix round. That rule was withdrawn, and the reason is worth keeping because it
+ * is more general than this file. It was prose written to bound iteration, placed where it would
+ * have adjudicated SILENTLY inside the lane, on the lane's own taxonomy. MAX_ROUNDS already bounds
+ * unbounded hardening and bounds it VISIBLY: it halts, and the halt reaches a human who decides.
+ * Prose must not be written to replace a live breaker.
+ *
+ * It was also the strongest possible form of this file's recurring error. Four earlier revisions
+ * each claimed a closed set and each was refuted; the six selectors are the fifth such claim by the
+ * same author and method. Turning that claim into a WAIVER converts "I believe the set is closed"
+ * into "findings outside my set do not count", which is not a recovery from the error but its
+ * purest expression. Keeping score instead means the next refutation is information rather than
+ * something the rule would have hidden.
+ *
+ * The OUT-OF-MODEL exclusion above is untouched and remains correct. The distinction is exact: a
+ * finding needing an adversary the model excludes is not a defect under a declared model -- it is a
+ * disagreement about the model, answered by citation. "Inside the model but outside my list" is an
+ * entirely different thing, and it is a defect.
  *
  * DATABASE_URL_TEST is demoted to a cross-check: if set, its database NAME must match the target.
  * That is a claim this tool can keep. The previous one was not.
