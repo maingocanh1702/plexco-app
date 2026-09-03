@@ -38,7 +38,16 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const COMPOSE_FILE = "infra/docker-compose.yml";
+/**
+ * ABSOLUTE, resolved once from this file's own location. A relative `-f infra/docker-compose.yml`
+ * is resolved against the process cwd, so cwd (and COMPOSE_PROJECT_DIRECTORY) would take part in
+ * deciding WHICH compose file a destructive command reads. Measured: running with that relative
+ * path from /tmp exits non-zero, file not found — the same mechanism silently reads a DIFFERENT
+ * file from a directory where one happens to exist. Deciding the path here removes cwd from the
+ * set of inputs, which is the same rule every other input in this file follows.
+ */
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const COMPOSE_FILE = path.join(REPO_ROOT, "infra", "docker-compose.yml");
 const COMPOSE_SERVICE = "postgres";
 
 /** Pinned to the `name:` in COMPOSE_FILE. Passed with -p so COMPOSE_PROJECT_NAME cannot redirect it. */
@@ -70,7 +79,18 @@ const REDIRECTING_ENV = [
   "COMPOSE_PROJECT_NAME",
   "COMPOSE_FILE",
   "COMPOSE_PROFILES",
+  "COMPOSE_PROJECT_DIRECTORY",
 ];
+
+/**
+ * DOCKER_CONFIG is deliberately NOT in that list, and the reason is the general rule rather than a
+ * judgement about that variable: the check and the action read the SAME DOCKER_CONFIG, so it cannot
+ * make them disagree. What made them disagree was resolving the endpoint TWICE — once to verify and
+ * again at exec. Now that the verified endpoint is carried into the invocation with -H, nothing is
+ * resolved twice and DOCKER_CONFIG stops participating at all. Adding a pin for it later would be
+ * redundant; if you think it is needed, the thing to check is whether some input has gone back to
+ * being resolved twice.
+ */
 
 /** A plain SQL identifier. No quote character can appear, which is what makes quoting below safe. */
 const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -128,8 +148,10 @@ export function assertLocalDockerEndpoint(runner = spawnSync) {
   });
   if (probe.error || probe.status !== 0) {
     throw new Error(
-      "db:reset:test refuses to run: could not resolve the docker endpoint. Is the daemon up? " +
-        `docker compose -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}`,
+      "db:reset:test refuses to run: could not resolve the docker endpoint. Is the daemon up?\n" +
+        `  docker compose -p ${COMPOSE_PROJECT} -f ${COMPOSE_FILE} up -d ${COMPOSE_SERVICE}\n` +
+        "  (the -p is not decoration: without it compose names the project after the current\n" +
+        "   directory, so the container this tool then looks for would not be the one you started)",
     );
   }
   const endpoint = String(probe.stdout ?? "").trim();
@@ -152,12 +174,25 @@ export function assertLocalDockerEndpoint(runner = spawnSync) {
  */
 export function crossCheckDatabaseUrl(url, targetDb) {
   if (!url) return { checked: false };
-  const tail = String(url).split("?")[0].split("#")[0].replace(/\/+$/, "");
-  const name = tail.slice(tail.lastIndexOf("/") + 1);
+  let name;
+  try {
+    name = decodeURIComponent(new URL(String(url)).pathname).replace(/^\//, "");
+  } catch {
+    name = null;
+  }
   if (name === targetDb) return { checked: true, name };
+
+  // Echo the parsed name ONLY when it is provably a plain identifier. A credential pair cannot be
+  // one -- ":" and "@" are not identifier characters, and neither are control characters -- so this
+  // is a fail-closed echo rule rather than a hope. It exists because the previous revision sliced
+  // the URL as text: for `postgres://user:PASSWORD@host:5432/` the "last path segment" became
+  // `user:PASSWORD@host:5432`, and the refusal printed the password verbatim.
+  const safe = typeof name === "string" && PLAIN_IDENTIFIER.test(name);
+  const named = safe ? `names database "${name}"` : "does not name the target database";
   throw new Error(
-    `db:reset:test refuses to run: DATABASE_URL_TEST names database "${name}", but the target is ` +
-      `"${targetDb}".\n` +
+    `db:reset:test refuses to run: DATABASE_URL_TEST ${named}, but the target is "${targetDb}".` +
+      (safe ? "" : " (its value is not shown -- it may contain a password)") +
+      "\n" +
       "  This compared NAMES ONLY. It did not verify that URL's host, port, role or scheme, and a " +
       "match would not have meant the URL was checked: this command always acts on the local " +
       `Compose project "${COMPOSE_PROJECT}" in ${COMPOSE_FILE}.\n` +
@@ -195,9 +230,26 @@ export function parseArgs(argv) {
   return out;
 }
 
-/** argv for the compose exec, as an array: no shell, so nothing here can be word-split. */
-export function buildResetArgv(dbName, user) {
+/**
+ * argv for the compose exec, as an array: no shell, so nothing here can be word-split.
+ *
+ * `endpoint` is the value assertLocalDockerEndpoint already verified, and it is passed with -H so
+ * the daemon that was CHECKED is the daemon that ACTS. Verifying and then letting docker re-resolve
+ * the active context is a time-of-check/time-of-use gap: a context switch between the two calls
+ * validates daemon A and drops a database on daemon B. It also made the check decorative, which is
+ * precisely the failure class this tool was written to stop reproducing.
+ *
+ * -H is a docker GLOBAL flag and must precede the `compose` subcommand. Measured: `docker compose
+ * -H ...` fails with "unknown shorthand flag: 'H' in -H". The regression test asserts the POSITION,
+ * not merely the presence, because presence in the wrong place is a runtime failure, not a guard.
+ */
+export function buildResetArgv(dbName, user, endpoint) {
+  if (typeof endpoint !== "string" || !endpoint.startsWith("unix://")) {
+    throw new Error("db:reset:test refuses to run: no verified local docker endpoint to bind to.");
+  }
   return [
+    "-H",
+    endpoint,
     "compose",
     // -p pins the project. Without it COMPOSE_PROJECT_NAME retargets the whole command: measured,
     // `COMPOSE_PROJECT_NAME=unrelated_target_probe` moved the resolved project off `plexco`.
@@ -231,11 +283,12 @@ export function buildResetArgv(dbName, user) {
 function main(argv = process.argv.slice(2)) {
   let dbName;
   let user;
+  let endpoint;
   try {
     const args = parseArgs(argv);
     dbName = assertResettableTestDatabase(args.db);
     user = args.user;
-    assertLocalDockerEndpoint();
+    endpoint = assertLocalDockerEndpoint();
     crossCheckDatabaseUrl(process.env.DATABASE_URL_TEST, dbName);
   } catch (error) {
     console.error(error.message);
@@ -247,7 +300,7 @@ function main(argv = process.argv.slice(2)) {
   console.log(`db:reset:test — dropping and recreating database "${dbName}" as role "${user}"`);
   console.log(`  project "${COMPOSE_PROJECT}", service "${COMPOSE_SERVICE}" (${COMPOSE_FILE})`);
 
-  const result = spawnSync("docker", buildResetArgv(dbName, user), {
+  const result = spawnSync("docker", buildResetArgv(dbName, user, endpoint), {
     stdio: "inherit",
     env: childEnv(),
   });

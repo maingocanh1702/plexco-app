@@ -54,13 +54,43 @@ test("accepts the canonical test database", () => {
 
 // ---------------------------------------------------------------- the execution target
 
+test("the verified endpoint is carried into the argv, before the subcommand", () => {
+  const endpoint = "unix:///Users/x/.docker/run/docker.sock";
+  const argv = buildResetArgv("plexco_test", "plexco", endpoint);
+
+  // POSITION, not presence: -H is a docker GLOBAL flag. Measured -- `docker compose -H ...` fails
+  // with "unknown shorthand flag: 'H' in -H", so a correctly-present flag in the wrong place is a
+  // runtime failure rather than a guard.
+  assert.equal(argv[0], "-H", "-H must be the first argument");
+  assert.equal(argv[1], endpoint, "the VERIFIED endpoint must be the one passed");
+  assert.ok(argv.indexOf("-H") < argv.indexOf("compose"), "-H must precede the subcommand");
+
+  // Without this the daemon is resolved twice -- once to verify, once at exec -- so a context
+  // switch between them validates daemon A and drops a database on daemon B.
+  assert.ok(argv.includes(endpoint), "the checked endpoint must reach the final argv");
+});
+
+test("an unverified or non-local endpoint cannot be bound", () => {
+  assert.throws(() => buildResetArgv("plexco_test", "plexco", undefined), /verified local docker/);
+  assert.throws(
+    () => buildResetArgv("plexco_test", "plexco", "tcp://remote.example:2375"),
+    /verified local docker/,
+  );
+});
+
+test("the compose file is absolute, so cwd cannot choose which file is read", () => {
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock");
+  const f = argv[argv.indexOf("-f") + 1];
+  assert.ok(f.startsWith("/"), "-f must be an absolute path");
+  assert.ok(f.endsWith("/infra/docker-compose.yml"));
+});
+
 test("the compose project is pinned, and the identifier is quoted", () => {
-  const argv = buildResetArgv("plexco_test", "plexco");
+  const argv = buildResetArgv("plexco_test", "plexco", "unix:///tmp/d.sock");
   const p = argv.indexOf("-p");
   assert.ok(p !== -1, "project must be pinned with -p");
   assert.equal(argv[p + 1], "plexco");
   // Measured: COMPOSE_PROJECT_NAME=unrelated_target_probe moved the resolved project off `plexco`.
-  // -p is what makes that ineffective.
   assert.ok(argv.includes('DROP DATABASE IF EXISTS "plexco_test" WITH (FORCE)'));
   assert.ok(argv.includes('CREATE DATABASE "plexco_test"'));
   for (const arg of argv) {
@@ -76,6 +106,7 @@ test("environment that can retarget the command is stripped from the child", () 
     COMPOSE_PROJECT_NAME: "unrelated_target_probe",
     COMPOSE_FILE: "/tmp/other.yml",
     COMPOSE_PROFILES: "x",
+    COMPOSE_PROJECT_DIRECTORY: "/tmp/elsewhere",
   });
   for (const key of [
     "DOCKER_HOST",
@@ -83,6 +114,7 @@ test("environment that can retarget the command is stripped from the child", () 
     "COMPOSE_PROJECT_NAME",
     "COMPOSE_FILE",
     "COMPOSE_PROFILES",
+    "COMPOSE_PROJECT_DIRECTORY",
   ]) {
     assert.equal(env[key], undefined, `${key} must not reach the child`);
   }
@@ -153,4 +185,54 @@ test("arguments are explicit, and unknown ones are refused", () => {
 
 test("an explicit --db still passes the suffix guard", () => {
   assert.throws(() => assertResettableTestDatabase(parseArgs(["--db", "plexco"]).db), /_test/);
+});
+
+test("no refusal echoes a credential from DATABASE_URL_TEST", () => {
+  // Measured on the previous revision: stripping a trailing slash made the "last path segment" the
+  // userinfo, so `postgres://user:PASSWORD@host:5432/` printed the password verbatim.
+  const pw = "SENTINEL_PASSWORD";
+  const usr = "SENTINEL_USER";
+  for (const url of [
+    `postgres://${usr}:${pw}@localhost:5432/`,
+    `postgres://${usr}:${pw}@localhost:5432`,
+    `postgres://${usr}:${pw}@localhost:5432/other_test`,
+    `not a url ${usr}:${pw}`,
+    `postgres://${usr}:${pw}@localhost:5432/plexco\u0007bell`,
+  ]) {
+    assert.throws(
+      () => crossCheckDatabaseUrl(url, "plexco_test"),
+      (error) => {
+        assert.ok(!error.message.includes(pw), `password leaked for ${url.slice(0, 30)}`);
+        assert.ok(!error.message.includes(usr), `username leaked for ${url.slice(0, 30)}`);
+        // Newline is EXCLUDED deliberately: these messages are multi-line by design, so \n is the
+        // tool's own formatting rather than something the input smuggled in. The property under
+        // test is that no control character from the INPUT reaches output. Built with
+        // String.fromCodePoint so no literal control character appears in this source file.
+        const controls = Array.from({ length: 32 }, (_, i) => String.fromCodePoint(i)).filter(
+          (c) => c !== "\n",
+        );
+        for (const c of controls) {
+          assert.ok(
+            !error.message.includes(c),
+            "control characters from the input must not reach output",
+          );
+        }
+        assert.match(error.message, /NAMES ONLY/);
+        return true;
+      },
+    );
+  }
+});
+
+test("a parsed name is echoed only when it is provably an identifier", () => {
+  // Safe to show: an identifier cannot be a credential pair -- ":" and "@" are not identifier chars.
+  assert.throws(
+    () => crossCheckDatabaseUrl("postgres://localhost:5432/other_test", "plexco_test"),
+    /names database "other_test"/,
+  );
+  // Not provably safe: say so instead of guessing.
+  assert.throws(
+    () => crossCheckDatabaseUrl("postgres://u:p@localhost:5432/", "plexco_test"),
+    /value is not shown/,
+  );
 });
