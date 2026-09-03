@@ -1,6 +1,6 @@
 # Plexco — Setup dev · staging · production
 
-> **Version:** v2.1 · 2026-07-16
+> **Version:** v2.2 · 2026-09-03
 > **Authority:** DD-04 = DigitalOcean co-location: App Platform + Managed PostgreSQL HA in Singapore,
 > connected through the `sgp1` VPC. The accepted record is
 > [`../decisions/analysis/dd-04-hosting-final-decision.md`](../decisions/analysis/dd-04-hosting-final-decision.md).
@@ -177,8 +177,19 @@ remain active; VPC routing is not a substitute for database authorization.
 ### 4.1 Local development and test databases
 
 `DATABASE_URL_TEST` is the connection variable that is local/CI-only. It is never injected into an App Platform
-component, which is why it is absent from the table above. It names a **throwaway superuser database on a
-throwaway cluster** (`packages/db/src/test-harness.ts`), and both pinned values already end in `_test`:
+component, which is why it is absent from the table above. It names a **disposable superuser database** —
+disposable is a property of the *database*, not of the cluster holding it, and the difference matters locally:
+
+| | cluster | consequence |
+|---|---|---|
+| CI | ephemeral service container, new each run | nothing survives, so nothing can be lost |
+| local compose | **persistent** — `plexco` (dev) and `plexco_test` share one `pgdata` volume (`infra/docker-compose.yml`) | dropping the wrong database here destroys real development data |
+
+`packages/db/src/test-harness.ts` calls this "a SUPERUSER url on a THROWAWAY cluster", which is true of CI and
+**not** of a developer's machine. That mismatch is the reason `db:reset:test` refuses anything but a
+`_test`-suffixed name on the local endpoint: the guard exists precisely because the cluster is not disposable.
+
+Both pinned values already end in `_test`:
 
 | Source | Value |
 |---|---|
@@ -213,7 +224,7 @@ The script fails closed:
   as a stand-in for a remote one;
 - it runs `psql` **inside the compose `postgres` container**, so no host `psql` is needed.
 
-> ⚠️ **Do not run it while a test suite is running.** It uses `DROP DATABASE ... WITH (FORCE)`, and
+> ⚠ **Do not run it while a test suite is running.** It uses `DROP DATABASE ... WITH (FORCE)`, and
 > `setupRlsTestContext` opens `DATABASE_URL_TEST` as its admin connection for every suite — forcing the drop
 > terminates that connection mid-run.
 

@@ -118,7 +118,34 @@ export function resolveResetTarget(url) {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error(`db:reset:test refuses to run: DATABASE_URL_TEST is not a valid URL: ${url}`);
+    // The value is NOT echoed. DATABASE_URL_TEST carries a password, and an error path is exactly
+    // where it would end up in a terminal, a CI log or a pasted bug report.
+    throw new Error(
+      "db:reset:test refuses to run: DATABASE_URL_TEST is not a valid URL. Expected " +
+        "postgres://USER:PASSWORD@localhost:5432/<something>_test (value not shown).",
+    );
+  }
+  // Reject EVERY query parameter and any fragment, rather than blocking the connection-altering
+  // ones by name. This script validates with the WHATWG URL parser while `pg` parses the same
+  // string with pg-connection-string, which applies `?host=`, `?port=` and `?user=` ON TOP OF the
+  // authority. Measured on the locked 2.14.0:
+  //
+  //   postgres://plexco:pw@localhost:5432/plexco_test?host=prod-db.example.com&port=6543
+  //     pg-connection-string -> host prod-db.example.com, port 6543
+  //     WHATWG authority     -> host localhost,           port 5432
+  //
+  // so the guard read "local" while the connection meant "remote", and the reset would have
+  // destroyed the same-named LOCAL database. On the subset with no query string the two parsers
+  // were measured to agree on host, port and database for every accepted shape — which is what
+  // makes this a closed rule rather than one more special case. A named blocklist would have to
+  // track every parameter libpq ever adds; "none" cannot go out of date.
+  if (parsed.search !== "" || parsed.hash !== "") {
+    throw new Error(
+      "db:reset:test refuses to run: DATABASE_URL_TEST carries a query string or fragment. " +
+        "Parameters such as ?host=, ?port= and ?user= override the authority when the connection " +
+        "string is parsed, so this script cannot prove the URL names the local cluster. Use a " +
+        "plain postgres://user:password@localhost:5432/<name>_test (value not shown).",
+    );
   }
   if (!SUPPORTED_PROTOCOLS.has(parsed.protocol)) {
     throw new Error(

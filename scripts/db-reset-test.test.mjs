@@ -93,6 +93,49 @@ test("refuses a non-postgres protocol", () => {
   assert.throws(() => resolveResetTarget("https://example.invalid/plexco_test"), /postgres/);
 });
 
+test("refuses connection-string query overrides, which outrank the authority", () => {
+  // pg-connection-string applies ?host=/?port=/?user= on top of the authority, so this URL reads
+  // as LOCAL to a WHATWG parser and REMOTE to the connection layer.
+  assert.throws(
+    () =>
+      resolveResetTarget(
+        "postgres://plexco:pw@localhost:5432/plexco_test?host=prod-db.example.com&port=6543",
+      ),
+    /query string or fragment/,
+  );
+  assert.throws(
+    () => resolveResetTarget("postgres://plexco@localhost:5432/plexco_test#frag"),
+    /query string or fragment/,
+  );
+});
+
+test("no error path echoes the connection string", () => {
+  // DATABASE_URL_TEST carries a password; an error is exactly where it leaks.
+  // Assert on the VALUES this call was given, not on a generic "user:" substring: the refusal for
+  // query strings legitimately contains the placeholder `postgres://user:password@localhost...` as
+  // guidance, and a blunter assertion fails on that placeholder while telling you nothing about
+  // whether a real credential escaped.
+  const pw = "SENTINEL_PASSWORD";
+  const usr = "SENTINEL_USER";
+  const cases = [
+    `not a url ${usr}:${pw}`,
+    `https://${usr}:${pw}@example.invalid/plexco_test`,
+    `postgres://${usr}:${pw}@prod-db.example.invalid:5432/plexco_test`,
+    `postgres://${usr}:${pw}@localhost:5432/plexco_test?host=elsewhere`,
+    `postgres://${usr}:${pw}@localhost:5432/plexco`,
+  ];
+  for (const url of cases) {
+    assert.throws(
+      () => resolveResetTarget(url),
+      (error) => {
+        assert.ok(!error.message.includes(pw), `password leaked for: ${url.slice(0, 28)}`);
+        assert.ok(!error.message.includes(usr), `username leaked for: ${url.slice(0, 28)}`);
+        return true;
+      },
+    );
+  }
+});
+
 test("refuses a port other than the one Compose publishes", () => {
   assert.throws(() => resolveResetTarget("postgres://plexco@localhost:6543/plexco_test"), /6543/);
 });
