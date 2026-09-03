@@ -214,9 +214,11 @@ line and always worked. **The rule was not widened; the sanctioned path was made
 
 **The tool owns every input it acts on, and `DATABASE_URL_TEST` is not one of them.** That is a
 deliberate reversal. An earlier design derived the target from the URL, and four review rounds each found
-a different input that outranked it. Five things decide which database actually gets dropped — the docker
-daemon, the compose project, the container, the executing role, and the database name — and a URL supplies
-exactly one. Hardening the URL could not converge, because the other four are not in the URL at all.
+a different input that outranked it. **Six** things decide which database actually gets dropped — the docker
+daemon, the compose project, the **compose file**, the container, the executing role, and the database name —
+and a URL supplies exactly one. Hardening the URL could not converge, because the other five are not in the
+URL at all. The compose file is named separately rather than folded into the project because it is separately
+selectable: a relative path is resolved against the working directory, so cwd would otherwise choose it.
 
 | input | how it is decided now |
 |---|---|
@@ -280,6 +282,12 @@ closing your terminal:
   # a local endpoint, captured and bound; the project pinned; and the container verified to have
   # been created from THIS compose file AND its current configuration, not merely to carry
   # matching labels.
+  # Neutralise the same variables the implementation strips from its child environment. Without
+  # this the endpoint below is resolved under whatever the shell carries: DOCKER_HOST=unix:///tmp/
+  # unintended.sock is still a unix:// socket, so it passes the locality check and is then bound
+  # with -H for a privileged bootstrap. Checking locality is not the same as choosing the daemon.
+  unset DOCKER_HOST DOCKER_CONTEXT COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_DIRECTORY
+
   root="$(git rev-parse --show-toplevel)"
   compose="$root/infra/docker-compose.yml"
 
