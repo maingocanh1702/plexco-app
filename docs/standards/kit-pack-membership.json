@@ -1,0 +1,82 @@
+{
+  "_role": "AUTHORITY. This file is the only machine-read source for kit pack membership. docs/standards/kit-pack-membership.md is GENERATED from it and must never be hand-edited: `pnpm kit:generate` writes it, `pnpm kit:check` regenerates and byte-compares. Nothing in this repository parses that Markdown to establish a fact — a predecessor lane HALTed REGION_THRASH after three rounds closing successively finer Markdown boundaries, and the remaining edge set is bounded by the CommonMark spec, not by care.",
+
+  "_freezing_rule": "Record every value WITH its provenance and measurement date, and mark anything measured outside this repository as stale-by-construction. Otherwise we freeze an unmeasured premise into the authority file — which is precisely what this file exists to prevent.",
+
+  "_wiring_rule": "A mechanism may be described as ACTIVE only when its wiring point is measured: who invokes it, where, and an observed run or failure. Reading its code is not enough. A document describing it is not enough. This repository already runs that measurement on product code (resolveCapability with zero callers, authorizeTenantAction dark for eight days, chat_* tables with no reader) and had never run it on its own tooling.",
+
+  "provenance": {
+    "authority_file": "autopilot/parallel/autopilot-update.sh, function pack_pairs() (line 32)",
+    "canonical_repo": "~/Projects/Claude template (branch main)",
+    "canonical_commit_read_at": "a2ba3ba95ea7b5d2e3f65d2ca3868153d9b23f34",
+    "also_verified_identical_at": "c672eaf60cd77534a9c6ef3289163b032de74028",
+    "measured_on": "2026-09-02",
+    "reverify_command": "cd \"$HOME/Projects/Claude template\" && git rev-parse HEAD && sed -n '/^pack_pairs() {/,/^EOF$/p' autopilot/parallel/autopilot-update.sh",
+    "note": "Canonical moved between those two commits while this was being written and pack_pairs() was byte-identical across the move. Two independent reads agreeing is stronger than one. If git rev-parse HEAD no longer prints the pinned commit, every row below is a claim about the past."
+  },
+
+  "overwrite_mechanisms": {
+    "kit-sync": {
+      "status": "active",
+      "invoked_by": "a human running autopilot-update.sh",
+      "latency": "next successful autopilot-update.sh run",
+      "scope": "all 13 pack_pairs targets",
+      "wiring_evidence": "autopilot-update.sh:174-178 — a single cp loop over pack_pairs(); there is no second copy path in that script",
+      "measured_on": "2026-09-02"
+    },
+    "session-hook": {
+      "status": "dormant",
+      "invoked_by": "NOTHING — the file exists but is registered nowhere",
+      "latency": "n/a while dormant",
+      "scope": "would copy scripts/autopilot-scope-gate only; its docPairs list is two files and is flag-only",
+      "wiring_evidence": "~/.claude/hooks/autopilot-sync.cjs exists (mtime 2026-06-23) and its code would copy autopilot-scope-gate. But ~/.claude/settings.json registers exactly two hooks — Notification -> claude-notify-hook.sh and PostToolUse -> claude-heartbeat-hook.sh. There is NO SessionStart hook. `grep -rn autopilot-sync ~/.claude/settings*.json` returns nothing, and nothing in the canonical kit invokes it.",
+      "measured_on": "2026-09-03",
+      "stale_by_construction": true,
+      "stale_reason": "Measured outside this repository, under ~/.claude, which is personal configuration this repo cannot see or test. Re-measure the WIRING, never the code, before relying on this.",
+      "history": "Claimed three times before anyone measured the wiring: once as 'auto-overwrite with no human in the loop', once as 'auto-overwrite at every SessionStart'. Both were inferred from the hook's code or from a document describing its contents. ~/.claude/rules/autopilot-template.md:17 — a rules file loaded into every session — still asserts it runs."
+    }
+  },
+
+  "files": [
+    { "path": "scripts/ap-finish.sh", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "scripts/ap-housekeep.sh", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "scripts/ap-merge.sh", "owner": "repo-owned", "evidence": "absent from pack_pairs; listed in unsynced_candidates() at autopilot-update.sh:69", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten", "note": "Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs." },
+    { "path": "scripts/autopilot-backlog-reconcile", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": true, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "scripts/autopilot-ephemeral-review-worktree.mjs", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "scripts/autopilot-ephemeral-review-worktree.test.mjs", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/autopilot-onboard-fixtures.sh", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/autopilot-onboard.sh", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/autopilot-readiness-evidence-keys.mjs", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "scripts/autopilot-review-readiness.mjs", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run", "note": "THE HEADER COUNTER-EXAMPLE. No KIT_VERSION header, and it IS a pack member. Also the most-patched kit file in this repo's history. Trusting the header would mark it safe to edit and a sync would erase the edit." },
+    { "path": "scripts/autopilot-root-lock", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/autopilot-scope-gate", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": true, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run", "note": "The ONLY file the dormant session-hook would copy if it were ever wired. Measured 2026-09-03: identical to canonical, same KIT_VERSION on both sides. Read that as the result of the MANUAL sync 8e737fe (2026-08-27, 'sync the mechanism pack to KIT_VERSION 33') — NOT as evidence that no drift pressure exists. There is no safety net here today, only the discipline of whoever runs the sync." },
+    { "path": "scripts/check-kit-pack-membership.mjs", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy (added by this lane)", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/check-kit-pack-membership.test.mjs", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy (added by this lane)", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/check-review-readiness.mjs", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/check-review-readiness.test.mjs", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+    { "path": "scripts/codex-review-pin.sh", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": true, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "scripts/smoke-predeploy.mjs", "owner": "repo-owned", "evidence": "absent from pack_pairs; no canonical copy", "kit_version_header": false, "overwrite_path": "none", "overwrite_latency": "not overwritten" },
+
+    { "path": "docs/autopilot-parallel-scope-gate.md", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "docs/autopilot-manifests/_TEMPLATE.json", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "docs/autopilot-templates/autopilot-prompt-GENERIC.md", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run" },
+    { "path": "docs/autopilot-templates/level3-workflow.md", "owner": "kit-owned", "evidence": "present in pack_pairs", "kit_version_header": false, "overwrite_path": "kit-sync", "overwrite_latency": "next successful autopilot-update.sh run", "note": "The ONE target measured as diverged: 205 consumer-only lines, 2 canonical-only. It carries section 6.1 autonomous_to_ready, which canonical does not define. That is a decision->code gap inside the consumer (DD-107 ratified the mode; no code implements it), NOT consumer drift — framing it as drift aims the fix at the wrong target." }
+  ],
+
+  "pack_pairs_verbatim": [
+    "autopilot-scope-gate:scripts/autopilot-scope-gate:100755",
+    "autopilot-review-readiness.mjs:scripts/autopilot-review-readiness.mjs:100755",
+    "autopilot-readiness-evidence-keys.mjs:scripts/autopilot-readiness-evidence-keys.mjs:100755",
+    "autopilot-ephemeral-review-worktree.mjs:scripts/autopilot-ephemeral-review-worktree.mjs:100755",
+    "autopilot-backlog-reconcile:scripts/autopilot-backlog-reconcile:100755",
+    "codex-review-pin.sh:scripts/codex-review-pin.sh:100755",
+    "parallel-scope-gate.md:docs/autopilot-parallel-scope-gate.md:100644",
+    "manifests/_TEMPLATE.json:docs/autopilot-manifests/_TEMPLATE.json:100644",
+    "readiness-evidence.TEMPLATE.json:docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json:100644",
+    "ap-finish.sh:scripts/ap-finish.sh:100755",
+    "ap-housekeep.sh:scripts/ap-housekeep.sh:100755",
+    "../autopilot-prompt-GENERIC.md:docs/autopilot-templates/autopilot-prompt-GENERIC.md:100644",
+    "../level3-workflow.md:docs/autopilot-templates/level3-workflow.md:100644"
+  ]
+}
