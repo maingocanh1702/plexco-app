@@ -171,6 +171,151 @@ describe("BR-2 applied migrations stay immutable", () => {
   }, 60_000);
 });
 
+/**
+ * BR-2b — the P17 immutability guard must stay exactly as trigger-happy as it is today, and
+ * separately must be able to say why it fired.
+ *
+ * The two halves are deliberately separate tests because they are separate claims, and only one
+ * of them was ever in doubt. The guard's CONDITION has always been right; what cost a real
+ * session ~40 minutes and two wrong diagnoses was that the throw carried no `.cause`, so the
+ * failure surfaced through an unrelated assertion — `expected undefined to be an instance of
+ * Error` — in whichever test happened to assert a cause chain first. Nothing in that sentence
+ * mentions a migration, a digest, or an invariant.
+ */
+describe("BR-2b P17 immutability guard: condition unchanged, failure diagnosable", () => {
+  const RECORDED_SENTINEL = "4606baf8".padEnd(64, "0");
+
+  it("fires on exactly prior !== sha — not before, and not once the file matches again", async () => {
+    const db = "plexco_migrate_p17_condition";
+    await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${db}`);
+    try {
+      const first = await migrate(url(db));
+      expect(first.applied.length).toBe(MIGRATION_COUNT);
+      expect(first.skipped.length).toBe(0);
+
+      // Negative edge: every recorded sha still equals its file, so the guard must stay silent
+      // and the whole run must degrade to skips. A guard that fired here would be the real
+      // regression this test exists to catch.
+      const second = await migrate(url(db));
+      expect(second.applied.length).toBe(0);
+      expect(second.skipped.length).toBe(MIGRATION_COUNT);
+
+      const fileSql = await readFile(
+        path.join(MIGRATIONS_DIR, "0000_roles_extensions.sql"),
+        "utf8",
+      );
+      const trueSha = createHash("sha256").update(fileSql).digest("hex");
+
+      const c = await connect(url(db));
+      try {
+        // Positive edge.
+        await c.query(`UPDATE schema_migrations SET sha256 = $1 WHERE name = $2`, [
+          RECORDED_SENTINEL,
+          "0000_roles_extensions.sql",
+        ]);
+        await expect(migrate(url(db))).rejects.toThrow(/changed after being applied/);
+
+        // Back to matching: the predicate is a live comparison, not a sticky "was tampered"
+        // flag, so restoring the true digest must restore the skip path.
+        await c.query(`UPDATE schema_migrations SET sha256 = $1 WHERE name = $2`, [
+          trueSha,
+          "0000_roles_extensions.sql",
+        ]);
+      } finally {
+        await c.end();
+      }
+
+      const restored = await migrate(url(db));
+      expect(restored.applied.length).toBe(0);
+      expect(restored.skipped.length).toBe(MIGRATION_COUNT);
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    }
+  }, 180_000);
+
+  it("names the file, both digests and the cure — and still keeps the recorded digest out of the CLI log", async () => {
+    const db = "plexco_migrate_p17_diagnosable";
+    await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${db}`);
+    try {
+      await migrate(url(db));
+
+      const fileSql = await readFile(
+        path.join(MIGRATIONS_DIR, "0000_roles_extensions.sql"),
+        "utf8",
+      );
+      const trueSha = createHash("sha256").update(fileSql).digest("hex");
+
+      const c = await connect(url(db));
+      try {
+        await c.query(`UPDATE schema_migrations SET sha256 = $1 WHERE name = $2`, [
+          RECORDED_SENTINEL,
+          "0000_roles_extensions.sql",
+        ]);
+      } finally {
+        await c.end();
+      }
+
+      let caught: unknown;
+      try {
+        await migrate(url(db));
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      const err = caught as Error;
+
+      // `.message` — the rule and the remedy. Free to carry `prior`: the CLI never reads it.
+      expect(err.message).toContain("0000_roles_extensions.sql");
+      expect(err.message).toContain(RECORDED_SENTINEL);
+      expect(err.message).toContain(trueSha);
+      expect(err.message).toMatch(/immutable/i);
+      expect(err.message).toMatch(/P17/);
+      // Both cures, because the guard fires in two situations with opposite fixes: a shipped
+      // migration needs a new forward one, an unshipped one being iterated on locally needs the
+      // test database reset. The old message named only the first, which is the wrong advice for
+      // the case that actually burned the session.
+      expect(err.message).toMatch(/new forward migration/i);
+      expect(err.message).toMatch(/reset/i);
+      // Name the forbidden shortcut at the moment of temptation.
+      expect(err.message).toMatch(/never edit or delete/i);
+
+      // `.cause` — present, an Error, and carrying the measurement. This is the assertion whose
+      // absence produced "expected undefined to be an instance of Error" somewhere else entirely.
+      expect(err.cause).toBeInstanceOf(Error);
+      const cause = err.cause as Error;
+      expect(cause.message).toContain(RECORDED_SENTINEL);
+      expect(cause.message).toContain(trueSha);
+      expect(cause.message).toContain("0000_roles_extensions.sql");
+
+      // The whole chain, as a cause-chain walker (test-harness's expectErrorChainToMatch) sees it.
+      expect(`${err.message}\n${cause.message}`).toMatch(/sha256|sha mismatch/i);
+
+      // AP-42's allowlist still holds in the opposite direction: the CLI sink may name the file
+      // (a repo-known identifier) but must not print `prior`, which is a schema_migrations ROW
+      // VALUE. `trueSha` is locally computed and would be safe, but one digest without the other
+      // to compare against tells an operator nothing, so the log carries neither.
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      let printed: string;
+      try {
+        logMigrationFailure(caught);
+        expect(spy).toHaveBeenCalledTimes(1);
+        printed = format(...spy.mock.calls[0]!);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(printed).toContain("0000_roles_extensions.sql");
+      expect(printed).toMatch(/immutable/i);
+      expect(printed).not.toContain(RECORDED_SENTINEL);
+      expect(printed).not.toContain(trueSha);
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    }
+  }, 120_000);
+});
+
 describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () => {
   it("re-migrating an already-applied database needs no CREATEROLE", async () => {
     const db = "plexco_migrate_gate";
