@@ -444,17 +444,46 @@ notes: |
 
 ## task: test-harness-acquire-chat-definer-lock-leaks-client-on-error
 title: acquireChatDefinerLock leaks its pg.Client if connect()/pg_advisory_lock rejects (no try/catch connect→return)
-status: idea
+status: merged
+note_merged: reconciled BY HAND (2026-09-03), not by --check. The row sat at `idea`, and
+  autopilot-backlog-reconcile's awk emits only planned|ready|blocked — an `idea` row is never
+  examined, so "No stale entries" on 03/09 meant NOT MEASURED, not "still open". Landed as merge
+  commit `491a334` from lane slug `test-harness-chat-definer-lock-client-leak--v2`, which does NOT
+  match this row's slug; that mismatch is why nothing auto-linked the two. The probe below is
+  verifiable now, so a future --check would resolve it if this row ever returns to a parsed status.
 risk: P2
 change_class: test-infra
 depends_on: []
 invariants: [test-chain]
 scope: [packages/db/src/test-harness.ts]
-manifest: null
-merged_probe: null
+_scope_note: Historical (authored 2026-08-13). What actually merged touched three files —
+  packages/db/src/test-harness.ts, the new packages/db/src/test-harness.test.ts, and the lane
+  manifest — per the lane's own scope. Left unedited because scope on a merged row is a record of
+  what was authored, not of what landed.
+manifest: docs/autopilot-manifests/test-harness-chat-definer-lock-client-leak.json
+merged_probe: packages/db/src/test-harness.test.ts :: spyOnEndedClients
 _probe_note: When scheduled, merged_probe MUST bind a symbol the FIX introduces — the error-path guard that closes the client (the try/catch around connect()+pg_advisory_lock that calls lockClient.end() before rethrowing, or a named helper). It must NOT bind `acquireChatDefinerLock`, `guardClientErrors`, or `tearingDown` — all already exist on origin (`tearingDown` is the already-merged merged_probe of `db-test-harness-teardown-57p01`), so any of them false-flips "merged" at author time.
+  **RESOLVED 2026-09-03 — read this before trusting the paragraph above.** The fix introduced NO new
+  identifier in `test-harness.ts`: it is an inline `try/catch` around `connect()` + the lock query, and
+  the lane's negative scope explicitly forbade a named cleanup helper (that would have merged the
+  chat-definer and job-definer hazard classes the owner keeps apart). So the symbol the note demands
+  does not exist, and cannot be created without violating the lane contract. The probe therefore binds
+  `spyOnEndedClients`, a slice-unique helper in the suite the same lane introduced: measured on
+  origin/main it appears in exactly one file (3 occurrences, all `packages/db/src/test-harness.test.ts`)
+  and it is absent at the pre-merge base `ac5b179`. It is identifier-shaped, so `is_symbol_probe`
+  accepts it, and it does not touch any of the three symbols the note bans.
 notes: |
-  **Defect (open on current `main`, `packages/db/src/test-harness.ts:293-313`).** `acquireChatDefinerLock`
+  **✅ CLOSED — merged `491a334`, 2026-09-03.** Everything below is the record as authored on
+  2026-08-13 and is kept verbatim; the present-tense claims in it describe the tree at that time, not
+  `main` today. What landed: `try/catch` spanning `connect()` + `SELECT pg_advisory_lock($1)`; the catch
+  sets `tearingDown = true` BEFORE cleanup (so `guardClientErrors` cannot re-throw an expected 57P01 as
+  an unhandled client error), then `await lockClient.end().catch(() => {})`, then rethrows the original
+  error UNWRAPPED. No unlock on the failure path, with the reason written down: the lock was never taken,
+  and a session-level advisory lock dies with its session. The suite `packages/db/src/test-harness.test.ts`
+  (new, 293 lines, CDL-1..CDL-6) pins both rejection points, and CDL-4 is an explicit
+  not-vacuous test — it asserts the leak WOULD occur without the guard.
+
+  **Defect (as authored 2026-08-13 — was open at that base, `packages/db/src/test-harness.ts:293-313`).** `acquireChatDefinerLock`
   creates `new pg.Client` (`:296`), connects (`:299`), then runs `SELECT pg_advisory_lock($1)` (`:300`).
   Only the returned `release()` ever calls `lockClient.end()` (`:310`). There is NO try/catch spanning
   connect→return: if `connect()` or the `pg_advisory_lock` query rejects (cancellation, statement timeout,
@@ -491,6 +520,15 @@ notes: |
   **Scheduling (owner 2026-08-13): intentionally UNSCHEDULED — stays `idea`.** P2, test-harness only, blocks
   nothing. Pick it up when a lane NEXT touches `packages/db/src/test-harness.ts`, so the fix and its (fix-introduced)
   merged_probe land with work already reviewing that file; not worth a standalone lane.
+
+  **Outcome of that scheduling rule (2026-09-03).** It half-worked, and the half that failed is the part
+  worth keeping. It DID get picked up by a lane touching `test-harness.ts` rather than a standalone one, as
+  intended. But the lane was opened under its own slug (`test-harness-chat-definer-lock-client-leak`), the
+  row was never moved out of `idea`, and `idea` is invisible to `--check` — so between merge and this hand
+  reconcile, the ONLY mechanism that could have caught a stale row was structurally switched off for it.
+  "Stays `idea` until a lane picks it up" quietly means "no automated closure check applies to me". A row
+  parked at `idea` and then worked on needs to be moved to `planned`/`ready` under THIS slug at lane-open
+  time, or the pickup has to carry the row slug forward.
 
 ---
 
