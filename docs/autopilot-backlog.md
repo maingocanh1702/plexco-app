@@ -1433,21 +1433,30 @@ title: L4a — guard bất biến P17 (migrate.ts) học cách nói vì sao nó 
 status: merged
 merged: 2026-09-03 · main@2648965 (merge feat/gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause; fix tại 18c75d8) · hand-flip, KHÔNG qua `autopilot-backlog-reconcile --fix` (xem note_merged)
 risk: P2
+_risk_note: Lệch có chủ đích với row cha (`gates-that-fire-correctly-and-cannot-say-why`, vẫn `risk:
+  P3`, chưa sửa). `autopilot-review-readiness.mjs:363` chỉ nhận `P1`/`P2` để register ("only P1/P2
+  writing slices may register") — P3 muốn chạy thật phải lên P2, đúng lớp sửa `71910b2` áp cho năm
+  lane khác (L0/L2/L5/L8/L16) trong RUN doc cùng đợt. Lane L4a chạy dưới manifest khai `P2` vì lý do
+  đó; row cha chưa qua lần sửa này nên còn `P3`. Không tự đồng bộ hai bên — để lane sau quyết.
 change_class: tooling
 depends_on: []
 invariants: []
 scope: [packages/db/src/migrate.ts]
 manifest: (chưa author — lane chạy trực tiếp qua RUN doc, xem docs/autopilot-templates/be-infra-lanes-2026-09-02-RUN.md §L4a)
-merged_probe: null
+merged_probe: packages/db/src/migrate.test.ts :: RECORDED_SENTINEL
 note_merged: |
-  Hand-flip 2026-09-03, KHÔNG auto-reconciled. `autopilot-backlog-reconcile --fix` không chạm row
-  gốc: nó mang `merged_probe: null` + `close_by: hand`, và chính reconcile REFUSE exemption đó
-  ("scope contains a file that can carry a symbol… write a real merged_probe") vì `migrate.ts` là
-  source thật — xem `reconcile-hand-closed-entries-never-age-out` (đã nêu đích danh row gốc là
-  "lạm dụng thật, tự khai… thuộc L4a"). Không có identifier mới nào đủ slice-unique làm merged_probe
-  hợp lệ: `18c75d8` chỉ thêm tham số cho `throwMigrateError` đã tồn tại (`const cause = new Error(...)`
-  là local, không export, không unique trên origin/main) — không export symbol mới nào. Flip tay,
-  dẫn chứng trực tiếp bằng SHA thay vì bằng probe.
+  Hand-flip 2026-09-03 kèm merged_probe thật: bare identifier, 0 match @`51b5411`, 1 file/6
+  occurrence trên origin/main (`packages/db/src/migrate.test.ts:186,214,253,272,289,311`). Nếu row
+  này ở `status: planned` với probe này khai sẵn, `autopilot-backlog-reconcile --fix` tự flip được —
+  không cần hand.
+
+  **Sửa lại nội dung commit `a06a7eb`.** Bản đó dùng `merged_probe: null` kèm tuyên bố "không có
+  identifier nào đủ slice-unique" — sai. `"P17, forward-only"` (migrate.ts:273,280) THẬT slice-unique
+  (0 file @`51b5411`) nhưng chứa dấu phẩy/khoảng trắng/gạch nối nên fail `is_symbol_probe()`
+  (`autopilot-backlog-reconcile:191`, chỉ nhận bare identifier `^[A-Za-z_][A-Za-z0-9_]*$`) — dùng nó
+  chỉ đổi một hand-flip lấy một WEAK-PROBE refusal, không hơn. Lập luận "`18c75d8` không export
+  symbol mới" trong bản đó cũng sai vì quá hẹp: probe không đòi export, chỉ đòi slice-unique, và nó
+  bỏ sót file test cùng slice (`migrate.test.ts`) — nơi `RECORDED_SENTINEL` sống.
 notes: |
   **Nửa `migrate.ts` của task gốc `gates-that-fire-correctly-and-cannot-say-why`** — xem entry đó
   cho nửa `scripts/autopilot-scope-gate` còn mở. Tách theo SPLIT NOTICE trong RUN doc (batch 3,
