@@ -47,6 +47,22 @@ một checker mà **không gì chạy nó lên repo** — đúng cách một tà
 lớp tưởng-là-có-cưỡng-chế. **Sửa rẻ: một dòng.** `kit:check` phải nằm trong chuỗi mà `pnpm -w test` gọi,
 hoặc thành một step riêng trong `ci.yml`. **Đưa vào scope S1, không phải backlog row.**
 
+**(1b) Hook `autopilot-sync.cjs` — phạm vi HẸP, đã đo lại 03/09.** Một lane từng báo rằng có đường ghi
+đè tự động không qua tay người, và dùng nó để nâng mức khẩn cho `level3-workflow.md`. Đo lại:
+- **Nửa ĐÚNG:** hook có thật và có tài liệu trong chính repo này —
+  `docs/autopilot/contracts/autopilot-reconcile-close-by-hand-declaration.md:63` ghi
+  `~/.claude/hooks/autopilot-sync.cjs` là **SessionStart hook**, **auto-overwrite version-aware**
+  `scripts/autopilot-scope-gate`, và cảnh báo drift cho `docs/autopilot-parallel-scope-gate.md` +
+  `_TEMPLATE.json`. ⇒ **Sửa `autopilot-scope-gate` trong consumer mất ở session sau, không phải ở lần
+  `autopilot-update.sh` sau.** Đây là căn cứ mạnh hơn cho việc L14 phải chạy ở canonical.
+- **Nửa SAI:** hook **không** đụng `level3-workflow.md`. Grep toàn bộ hook (dòng `:233`) chỉ ra đúng ba
+  artifact trên. Nguy cơ với §6.1 đến từ đường **thủ công** (`pack_pairs` + `cp` trong
+  `autopilot-update.sh`), không phải đường tự động. Đừng dùng "có thể biến mất bất kỳ lúc nào" làm lý do.
+- ⚠️ **Bằng chứng mới nhất là grep ngày 30/07 và không ai xác minh lại được**: `~/.claude` nằm ngoài
+  folder mount và không cấp quyền cho session Cowork được (thử 03/09, bị từ chối), đồng thời không xuất
+  hiện trong `homeDirectories`. Ai chạy trực tiếp trên máy owner thì kiểm bằng:
+  `ls ~/.claude/hooks/ && grep -n "scope-gate\|level3-workflow\|pack" ~/.claude/hooks/autopilot-sync.cjs`
+
 **(2) Cấm parse Markdown làm authority.** S1 HALT REGION_THRASH sau ba vòng đóng lần lượt các biên
 Markdown mịn dần (không ranh giới → có ranh giới nhưng không biết fence → luật đóng fence sai ở info
 string). Tập biên còn lại bị chặn bởi **độ phức tạp của CommonMark**, không bởi độ cẩn thận của bản vá
