@@ -4097,3 +4097,165 @@ notes: |
 
   **Trigger đóng:** đóng khi vòng lặp tái tạo ở trên, chạy trên một registry có ít nhất một lane `ready`
   đã land, được thay bằng một lệnh có sẵn trong kit in ra cùng kết quả.
+
+---
+
+## task: kit-pack-membership-generated
+title: Kit pack membership — JSON authority, generated Markdown, wired audit
+status: ready
+risk: P2
+change_class: infra-tooling
+depends_on: []
+invariants: [kit-integrity, test-chain, build-config]
+scope: [docs/standards/kit-pack-membership.json, docs/standards/kit-pack-membership.md, scripts/check-kit-pack-membership.mjs, scripts/check-kit-pack-membership.test.mjs, docs/autopilot-backlog.md, package.json]
+manifest: .autopilot/state/kit-pack-membership-generated/manifest.json
+merged_probe: scripts/check-kit-pack-membership.mjs :: loadAuthority
+notes: |
+  Answers the question `L4a` (suspended scope-gate part), `L14` and `L11-v2` are waiting on: which
+  files under `scripts/` are kit-owned, i.e. erased by the next sync.
+
+  Fourth attempt, third substrate. Predecessors, all closed unmerged and worth reading as ONE line
+  rather than three failures — `.autopilot/state-archive/README-kit-pack-membership-series.md`:
+    v1 `REGION_THRASH` — accreted tamper-proofing nobody asked for; bought the threat model
+    v2 `MAX_ROUNDS`    — document + debt protocol in one lane; bought the S1/S2 split
+    S1 `REGION_THRASH` — parsed Markdown for authority; bought THIS substrate
+
+  `merged_probe: loadAuthority` verified ABSENT on origin/main at author time and present in the
+  shipped checker.
+
+---
+
+## task: kit-owned-commit-guard
+title: Refuse a commit that edits a kit-owned file without recording why
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: [kit-pack-membership-generated]
+invariants: [kit-integrity]
+scope: [scripts/check-kit-pack-membership.mjs, scripts/check-kit-pack-membership.test.mjs, .githooks/commit-msg, docs/standards/kit-pack-membership.json]
+manifest: docs/autopilot-manifests/kit-owned-commit-guard.json
+merged_probe: .githooks/commit-msg :: kit-pack-membership
+notes: |
+  The standard says which files a sync overwrites; **nothing stops an unrecorded edit to one**.
+
+  **`idea`, and the gate is a SPEC — not an external blocker.** Deliberately not `blocked`: that
+  state is for evidence only a human can obtain outside the repo, and the scanner skips it (see
+  *Cách bot quét*). This needs a design artifact someone here can write, so it stays schedulable —
+  it must simply not be promoted to `planned`, or registered, until that artifact exists.
+
+  **Do not register until the record format is written and reviewed AS A SPEC:**
+    - a decision table over `{sync, patch, both, neither}` x `{file changed, record demoted, authority deleted}`;
+    - one worked, runnable example reconstructing the outstanding set end to end from real commits.
+  A predecessor built it while designing that table through review and reached `MAX_ROUNDS`
+  (`.autopilot/state-archive/kit-pack-membership-manifest--v2-20260903T020648Z`).
+
+  **Already paid for — carry it in, do not rediscover it:**
+    - a canonical sync and a local patch are OPPOSITE events needing distinct records; `8e737fe`
+      changed five classified paths with no record, so a guard that refuses syncs is worse than none
+      — it pushes people to `--no-verify`, which also skips the root-commit lock;
+    - one commit may declare only one kind (`MIXED_DECLARATION`), else the first trailer swallows the
+      second and a debt disappears;
+    - a documented reconstruction command must emit the reason AND the changed paths (`%B` plus
+      `--name-only`); `%h %ad %s` cannot do the job its own documentation describes;
+    - `git log --grep` is patch HISTORY, not outstanding divergence — outstanding debt is that list
+      intersected with a live comparison against canonical.
+
+  **Scope boundary that must survive into the brief:** section 0 of the standard puts deliberate
+  bypass out of scope BY DESIGN. A finding that the guard can be circumvented by someone who already
+  knows is CONTESTED under Tier C item 8, not accepted. That paragraph has held for 11 consecutive
+  review rounds; the lane that lacked it spent three of five rounds there and died.
+
+---
+
+## task: kit-pack-membership-ci-range-check
+title: Enforce the kit-owned debt record in CI, not only in an opt-in local hook
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: [kit-owned-commit-guard]
+invariants: [kit-integrity, test-chain]
+scope: [.github/workflows/ci.yml, scripts/check-kit-pack-membership.mjs, scripts/check-kit-pack-membership.test.mjs]
+manifest: docs/autopilot-manifests/kit-pack-membership-ci-range-check.json
+merged_probe: .github/workflows/ci.yml :: kit-pack-membership
+notes: |
+  Scope narrowed 2026-09-03 after measurement. `pnpm kit:check` is now wired into `pnpm -w test`,
+  which `ci.yml:88` runs, and the drift fixture in the test suite observes the failure — so **table
+  completeness and generated-page integrity ARE enforced in CI**. That half is done.
+
+  What remains is the OTHER half: once `kit-owned-commit-guard` ships, the debt record will still be
+  enforced only by a per-clone opt-in git hook. **CI enforces that the authority is complete; nothing
+  would enforce that a kit-owned edit is recorded.** Different promises; only the first is kept.
+
+  Scope note so this is not misread as contradicting section 0 of the standard: it closes the
+  **coverage** gap — an honest contributor whose clone never installed the hook — not deliberate
+  evasion. `--no-verify` stays out of scope by design.
+
+---
+
+## task: rules-file-claims-a-hook-that-never-runs
+title: `~/.claude/rules/autopilot-template.md:17` asserts a SessionStart hook that is registered nowhere
+status: idea
+risk: P2
+change_class: docs
+depends_on: []
+invariants: [workflow-authority]
+scope: []
+manifest: docs/autopilot-manifests/rules-file-claims-a-hook-that-never-runs.json
+merged_probe: none — owner-owned file outside this repository
+notes: |
+  **OWNER-OWNED, OUTSIDE THIS REPO. No lane may edit `~/.claude/**`.** Recorded here because the
+  finding is durable and the transcript is not.
+
+  Measured 2026-09-03: `~/.claude/hooks/autopilot-sync.cjs` exists and its code would copy
+  `scripts/autopilot-scope-gate`, but `~/.claude/settings.json` registers exactly two hooks
+  (`Notification`, `PostToolUse`) — **there is no SessionStart hook**, `grep -rn autopilot-sync
+  ~/.claude/settings*.json` is empty, and nothing in the canonical kit invokes it.
+
+  `~/.claude/rules/autopilot-template.md:17` still states it "chạy mỗi khi mở session (đăng ký trong
+  `~/.claude/settings.json`)". That rules file is **loaded into every session**, so the false claim
+  is re-injected continuously — it is an infection vector, not documentation drift. Both the owner
+  and a lane inherited it independently: one from a repo doc describing the hook's *contents*, one
+  from reading the hook's *code*. Neither checked the wiring.
+
+  **Impact today is benign and that is measured, not assumed:** `scripts/autopilot-scope-gate` is
+  byte-identical to canonical with the same `KIT_VERSION` on both sides. Read that as the result of
+  the MANUAL sync `8e737fe` (2026-08-27), **not** as evidence that drift pressure is absent — there
+  is no safety net, only the discipline of whoever runs the sync.
+
+  Owner decision, not a lane's: was the hook unregistered deliberately (rules file needs correcting)
+  or is this a silent regression (it was meant to run)? Either way the rules file should stop
+  asserting an unmeasured capability.
+
+---
+
+## task: require-string-rejects-angle-brackets
+title: `requireString()` rejects any `<`/`>`, so legitimate verification commands fail as "placeholders"
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: []
+invariants: [kit-integrity, review-integrity]
+scope: []
+manifest: docs/autopilot-manifests/require-string-rejects-angle-brackets.json
+merged_probe: none — canonical-kit change, lands in ~/Projects/Claude template
+notes: |
+  `scripts/autopilot-review-readiness.mjs:224` — `requireString()` halts `CONTRACT_INVALID` on any
+  string containing `<` or `>`, as a placeholder guard. That rejects legitimate manifest content:
+  a shell redirect (`cmd > /tmp/out && diff -q ...`) and any arrow function in a `node -e` check.
+  Hit by `kit-pack-membership-generated` at register on 2026-09-03; already on the owed-canonical-fix
+  list.
+
+  **DO NOT fold this into `L11-v2`.** Same file, unrelated meaning: this is placeholder detection,
+  `L11-v2` changes the `autonomy_mode` accept-list. Applying the owner's own merge test — merge only
+  if the change DEPENDS ON or ALTERS THE MEANING of what the other lane touches — this is
+  co-location, so **serialize after L11-v2** rather than merging goals.
+
+  The stronger reason is the lesson this repo has now paid for three times: `L11-v2` already carries
+  four edits that must land together (port §6.1 · teach the validator the mode · resolve the P1
+  contradiction · DD-100 D4). Adding a fifth because it shares a file is exactly how a lane acquires
+  one surface too many, which is what ended three lanes in the kit-pack-membership series.
+
+  Workaround meanwhile, and it is cheap: keep `<`/`>` out of verification commands. Being forced to
+  do so once produced a BETTER design — the regenerate-and-compare moved from a shell pipeline
+  spelled out in the manifest into the checker itself (`--audit`), where a self-contained audit
+  belongs. Fix the guard, but do not assume every workaround it forces is a loss.
