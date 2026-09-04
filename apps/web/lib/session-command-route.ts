@@ -1,6 +1,10 @@
-import type { ApiErrorCode } from "@plexco/core";
+import { isApiErrorCode } from "@plexco/core";
 import { parseLang, resolveLang, runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
+  SessionCancelAuthorizationError,
+  SessionCancelError,
+  SessionCloseAuthorizationError,
+  SessionCloseError,
   SessionCommandError,
   SessionPublishAuthorizationError,
   SessionPublishError,
@@ -13,17 +17,47 @@ import { err } from "./api-envelope";
 import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
 
 /**
- * Shared entry gate + error mapper for the THREE session-command routes this slice ships:
- * create, publish and update. Announce is NOT among them — its only observable effect is
- * delivery and nothing can deliver yet, so it returns with the slice that provides a real
- * projector (DD-56 amendment, clause 1).
+ * Shared entry gate + error mapper for the FIVE session-command routes: create, publish, update,
+ * close and cancel. Announce is NOT among them — its only observable effect is delivery and
+ * nothing can deliver yet, so it returns with the slice that provides a real projector (DD-56
+ * amendment, clause 1).
  *
  * ONE choke-point on purpose: DD-56 bans adapters from scattering `role === ...` across routes,
  * and when the capability registry (`tenant-capability-authority-core`) lands there must be
- * exactly one call site to replace — not three copies drifting apart.
+ * exactly one call site to replace — not five copies drifting apart.
  *
  * The commands own their own `withTenant` transaction, so a route calls them directly and
  * must NOT wrap them again.
+ *
+ * ── THREAT MODEL ────────────────────────────────────────────────────────────────────────────
+ *
+ * WHAT THIS GATE DEFENDS AGAINST. An AUTHENTICATED caller acting outside their authority, and a
+ * client being told the wrong thing about a mutation. Concretely: a signed-in account driving a
+ * command against a tenant it does not belong to, or holding a role without `session.manage`
+ * (both answer with one indistinguishable 403, never a 404, so this is not a tenant-existence
+ * oracle); a cross-tenant denial of service by spending a victim tenant's rate-limit bucket
+ * before proving membership (closed by ordering the actor ceiling ahead of the per-tenant
+ * bucket); a forged cross-origin write (CSRF token); an oversized or chunked body held open to
+ * exhaust the process; and — the reason this file is P1 — an idempotency key that reaches
+ * `processed_commands` as a DIFFERENT key than it arrived as, which would hand one caller another
+ * caller's stored result. That last one is why `isUnsafeCommandKey` and the FATAL TextDecoder
+ * exist, and why both fail closed.
+ *
+ * WHAT IT EXPLICITLY DOES NOT DEFEND AGAINST. It is not an authorization ENGINE: it answers only
+ * "may this actor run a session command at all". Every domain rule — status transitions, version
+ * races, roster and money guards — belongs to the command, under its own row locks, where it can
+ * be enforced transactionally. A route-level re-check would be a second reading of the same
+ * predicate and would drift, which is DD-56's whole point. It does not defend against a
+ * compromised session cookie, nor against a malicious tenant admin acting WITHIN their own tenant
+ * (that is what the commands' fail-closed money guards and the outbox audit trail are for), nor
+ * against anything below the transport: TLS, cookie flags and origin policy are owned elsewhere.
+ *
+ * WHEN THIS MODEL MUST BE REWRITTEN. If a session command becomes reachable by any principal that
+ * is not a signed-in tenant member — a bot transport, a webhook, a public link, a service token —
+ * every sentence above is void, because all of it assumes `currentSession()` identified an account
+ * and `tenantsForPerson` bounded it. Also void if a command starts MOVING money rather than
+ * refusing when money is present: the guards behind `CANCEL_REQUIRES_REVIEW` are refusals, not
+ * settlement, and a settlement path needs its own model.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -421,8 +455,14 @@ export function readExpectedVersion(body: Record<string, unknown>): number | und
   return present(body, "expectedVersion") ? (body.expectedVersion as number) : undefined;
 }
 
-/** Status for every literal the BE tech spec §3 error catalog pins for these four commands. */
+/** Status for every literal the BE tech spec §3 error catalog pins for these commands. */
 const STATUS_BY_CODE: ReadonlyMap<string, number> = new Map([
+  // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
+  // (feature_session_management_tech.md:285), which is authority here — this route does not get
+  // to pick a status for a spec-pinned code. It is a refusal to act while money or an active
+  // roster is present (DD-117 / edge #5), and the client's remedy is a review workflow that does
+  // not exist yet, so nothing about it is retryable.
+  ["CANCEL_REQUIRES_REVIEW", 400],
   ["CAPACITY_BELOW_ROSTER", 409],
   ["COMMAND_ID_CONFLICT", 409],
   ["INVALID_TIME_RANGE", 400],
@@ -465,6 +505,17 @@ const VALIDATION_VARIANTS: ReadonlySet<string> = new Set([
  * waiting to be found — there are none. The count is true of that tree, not forever.
  */
 const MESSAGE_BY_CODE: ReadonlyMap<string, readonly [string, string]> = new Map([
+  [
+    // Says what happened and who must act, without leaking WHY. The refusal fires for a charge
+    // (including a `void` one) or, on cancel, a non-zero active roster — telling an unauthorized-
+    // but-authenticated caller which of those it was would turn an error body into a probe for a
+    // session's payment state. §3 pins the code and status, not this wording.
+    "CANCEL_REQUIRES_REVIEW",
+    [
+      "Kèo này cần được xem xét trước khi đóng hoặc huỷ.",
+      "This session needs review before it can be closed or cancelled.",
+    ],
+  ],
   [
     "CAPACITY_BELOW_ROSTER",
     ["Sức chứa nhỏ hơn số người đã tham gia.", "Capacity is below the current roster."],
@@ -520,8 +571,12 @@ export function mapSessionCommandError(error: unknown): Response | null {
     error instanceof SessionCommandError ||
     error instanceof SessionPublishError ||
     error instanceof SessionUpdateError ||
+    error instanceof SessionCloseError ||
+    error instanceof SessionCancelError ||
     error instanceof SessionPublishAuthorizationError ||
-    error instanceof SessionUpdateAuthorizationError;
+    error instanceof SessionUpdateAuthorizationError ||
+    error instanceof SessionCloseAuthorizationError ||
+    error instanceof SessionCancelAuthorizationError;
   if (!isDomain) return null;
 
   const code = (error as { code: string }).code;
@@ -533,8 +588,18 @@ export function mapSessionCommandError(error: unknown): Response | null {
   // A domain code that is in neither table is a contract gap, not a client error: fail closed
   // by rethrowing rather than guessing a status.
   if (status === undefined || message === undefined) return null;
+  // Registry membership is CHECKED here rather than asserted by a cast, and the difference is
+  // load-bearing. This line read `err(code as ApiErrorCode, ...)`: a cast the compiler cannot
+  // verify, so the ApiErrorCode type — the thing that is supposed to decide what may go on the
+  // wire — could not actually see the value being emitted. The check and the emit read the same
+  // string through DIFFERENT paths, which makes the check decorative: any string reaching the two
+  // tables above would have been published as a public API code. Narrowing through the runtime
+  // guard puts both on ONE derivation, so an unregistered code now fails closed to a generic 500
+  // (same treatment as an unmapped one) instead of inventing public surface. Behaviour for every
+  // code shipping today is unchanged: all of them are registered in API_ERROR_CODES.
+  if (!isApiErrorCode(code)) return null;
   // t() resolved HERE, inside the request, so the caller's language applies.
-  return err(code as ApiErrorCode, t(message[0], message[1]), status);
+  return err(code, t(message[0], message[1]), status);
 }
 
 /**

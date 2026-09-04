@@ -1,4 +1,8 @@
 import {
+  SessionCancelAuthorizationError,
+  SessionCancelError,
+  SessionCloseAuthorizationError,
+  SessionCloseError,
   SessionCommandError,
   SessionPublishAuthorizationError,
   SessionPublishError,
@@ -646,8 +650,28 @@ describe("mapSessionCommandError", () => {
       "PRICE_CHANGE_REQUIRES_POLICY",
       400,
     ],
+    [new SessionCloseError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
+    [new SessionCloseError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
+    [new SessionCloseError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
+    [new SessionCloseError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
+    [
+      new SessionCloseError("CANCEL_REQUIRES_REVIEW", "internal"),
+      "CANCEL_REQUIRES_REVIEW",
+      400,
+    ],
+    [new SessionCancelError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
+    [new SessionCancelError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
+    [new SessionCancelError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
+    [new SessionCancelError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
+    [
+      new SessionCancelError("CANCEL_REQUIRES_REVIEW", "internal"),
+      "CANCEL_REQUIRES_REVIEW",
+      400,
+    ],
     [new SessionPublishAuthorizationError(), "TENANT_SUSPENDED", 403],
     [new SessionUpdateAuthorizationError(), "TENANT_SUSPENDED", 403],
+    [new SessionCloseAuthorizationError(), "TENANT_SUSPENDED", 403],
+    [new SessionCancelAuthorizationError(), "TENANT_SUSPENDED", 403],
   ])("maps %s onto the pinned code+status", async (error, code, statusCode) => {
     const response = mapSessionCommandError(error);
     expect(response).not.toBeNull();
@@ -707,6 +731,35 @@ describe("mapSessionCommandError", () => {
     expect(mapSessionCommandError(new Error("connection reset"))).toBeNull();
     expect(mapSessionCommandError(undefined)).toBeNull();
   });
+
+  // Regression for a hole this suite could not previously see. The mapper ended in
+  // `err(code as ApiErrorCode, ...)` — a cast, which the compiler cannot verify — so the registry
+  // that decides what may appear on the wire had no say over the value actually emitted. Any
+  // string reaching the two lookup tables would have been published as a public API code.
+  //
+  // The fix routes both the check and the emit through ONE derivation, isApiErrorCode. This test
+  // pins the resulting property by forging a domain error carrying an unregistered code, which is
+  // the only way to reach that branch: every code the tables hold today IS registered, so the
+  // guard is invisible until something drifts. Without the fix this returns a 409 envelope
+  // carrying an unregistered code; with it, null → the caller rethrows → a generic 500.
+  it("fails closed on a domain code that is NOT in the shared registry", () => {
+    const forged = new SessionCloseError("COMMAND_ID_CONFLICT", "internal");
+    // A REAL instance, mutated after construction, because the mapper dispatches on `instanceof`
+    // and a hand-rolled stub would never reach the branch under test. The double assertion is
+    // required: `code` is declared as a readonly union of the five legal literals, so nothing
+    // narrower erases it.
+    (forged as unknown as { code: string }).code = "TOTALLY_UNREGISTERED_CODE";
+    expect(mapSessionCommandError(forged)).toBeNull();
+  });
+
+  // The positive direction — "every code the mapper CAN emit is registered" — is deliberately not
+  // asserted by a second test here. Doing so would need either a new export of STATUS_BY_CODE or a
+  // hand-copied list of its keys, and a hand-maintained copy is wrong in whichever version nobody
+  // remembered to edit. The property is already enforced by construction: the parametrized mapping
+  // table above asserts `response` is NOT null for every shipping code, and after the isApiErrorCode
+  // narrowing an unregistered code yields exactly null. Adding a row to STATUS_BY_CODE without
+  // registering the code therefore fails that table, and api-contract.test.ts pins the same
+  // membership from the registry's own side.
 
   // codex round-02 [P2]: t() reads the request language from AsyncLocalStorage, so resolving the
   // message table at module load would freeze every message to the boot fallback and make

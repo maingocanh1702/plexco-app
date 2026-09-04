@@ -1,0 +1,96 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Carries NO manifest_schema_version by design.",
+  "task_id": "plexco:session-routes-close-cancel",
+  "feature": "session-routes-close-cancel",
+  "branch": "feat/session-routes-close-cancel",
+  "base_ref": "main",
+  "risk": "P1",
+  "_risk_note": "P1, NOT the P2 the lane doc declared. Matched against level3-workflow.md:168 verbatim -- 'Money, identity, auth, permission, schema/migration, destructive or shared choke point'. Three triggers on that row fire. MONEY: both commands raise CANCEL_REQUIRES_REVIEW, the DD-117 fail-closed refusal that fires when ANY charge exists including a void one (session-service.ts:1790-1793; tests C-CHARGE, C-VOID, XC-CHARGE, XC-VOID, XC-OPEN-ROSTER), and this slice is the first network-reachable surface for it. DESTRUCTIVE: close and cancel are terminal status transitions, reachable over HTTP for the first time. SHARED CHOKE POINT: mapSessionCommandError already serves the three merged routes, so a regression there hits five. The lane doc's P2 predates the measurement that CANCEL_REQUIRES_REVIEW is both unmapped and unregistered. The owner pre-authorized the upgrade conditionally.",
+  "autonomy_mode": "supervised",
+  "_autonomy_note": "The only legal value at P1: autopilot-review-readiness.mjs:366 forces P1 => supervised, and autonomous_to_ready has zero implementation at any risk level. Not a downgrade of the owner's O2 grant -- the DD-107 intent (decide Tier A/B in flight, keep the ledger, one owner review at READY) still governs how the lane runs.",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "invariants": ["api-contract", "core-api", "session-command", "web-app", "i18n-surface"],
+  "_invariant_note": "session-command is declared even though session-service.ts is in negative scope: packages/db/src/index.ts IMPORTS from it, and RUN doc 00b(1d) is explicit that coupling travels through import rather than through path. i18n-surface because the slice adds one user-facing t(vi, en) pair. Over-declaring only costs serialization; under-declaring permits a collision.",
+  "scope": [
+    "packages/core/src/api-contract.ts",
+    "packages/core/src/api-contract.test.ts",
+    "packages/db/src/index.ts",
+    "apps/web/lib/session-command-route.ts",
+    "apps/web/lib/session-command-route.test.ts",
+    "apps/web/app/api/sessions/[id]/close/route.ts",
+    "apps/web/app/api/sessions/[id]/close/route.test.ts",
+    "apps/web/app/api/sessions/[id]/cancel/route.ts",
+    "apps/web/app/api/sessions/[id]/cancel/route.test.ts",
+    "docs/autopilot-manifests/session-routes-close-cancel.json"
+  ],
+  "_scope_note": "TWO files beyond the owner's written list: packages/core/src/api-contract.ts and its test. They are REQUIRED to satisfy the owner's own acceptance criterion 'both routes return the command's real error codes'. Measured at base 5e1b834, CANCEL_REQUIRES_REVIEW is the ONE code these commands throw that mapSessionCommandError does not already map, and it is absent from API_ERROR_CODES. Leaving it unmapped means the money refusal surfaces as a 500 (the exact fail-open this lane exists to close); collapsing it onto another registered code lies about a money-path refusal. Only registering it is correct. This adds NO capability beyond the acceptance list -- it is what that list requires. The change itself is pre-authorized BY NAME by a merged artifact: api-contract.test.ts:28 recorded that CANCEL_REQUIRES_REVIEW belongs to 'cancel, a different lane' and that such codes 'return to this registry with their routes'. Status 400 is transcribed from feature_session_management_tech.md:285, not invented. Blast radius measured: ApiErrorCode has four consumers and no exhaustive switch, so the addition is purely additive.",
+  "negative_scope": [
+    "NO change to packages/db/src/session-service.ts",
+    "NO announce route and NO announceSession added to the barrel or to the error mapper",
+    "NO new or edited file under packages/db/migrations",
+    "NO change to packages/db/src/authorization.ts or to the ActionClass enum",
+    "NO FE: no page or component under apps/web/app outside the two new api/sessions route directories, and never design.pen or fe.pen",
+    "NO change to docs/autopilot-backlog.md",
+    "NO new payments or review_policy subsystem, and no endpoint that resolves a CANCEL_REQUIRES_REVIEW refusal"
+  ],
+  "context_sources": [
+    "docs/autopilot-templates/be-infra-lanes-2026-09-02-RUN.md",
+    "docs/autopilot-templates/level3-workflow.md",
+    "docs/standards/decisions.md",
+    "docs/features/BE/feature_session_management_tech.md",
+    "packages/db/src/session-service.ts",
+    "apps/web/lib/session-command-route.ts",
+    "apps/web/app/api/sessions/[id]/publish/route.ts",
+    "packages/core/src/api-contract.ts",
+    "eslint.config.mjs"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "primary-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "localhost postgres only",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "_note": "No entry contains an angle bracket (the validator reads one as an unresolved placeholder). Env is inline because the gate subprocess inherits nothing from an interactive shell. The web filter is the bare substring 'session' rather than a path, because vitest reads its positional filter as a regex and the literal directory name [id] would parse as a character class.",
+    "focused": [
+      "pnpm --filter @plexco/core exec vitest run src/api-contract.test.ts",
+      "pnpm --filter @plexco/web exec vitest run session",
+      "test \"$(git diff --name-only 5e1b8342746e0cccdfea683437309fae7347be6d -- packages apps | grep -vc 'api-contract\\|packages/db/src/index.ts\\|session-command-route\\|api/sessions/')\" = 0"
+    ],
+    "canonical": [
+      "pnpm run lint",
+      "pnpm -r run typecheck",
+      "DATABASE_URL=postgres://plexco:plexco_dev@localhost:5432/plexco DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_e2e_note": "Empty by precedent, not omission. All three merged sibling routes verify as App Router handlers invoked directly with a real Request and a mocked @plexco/db; the repo has no HTTP-level harness for them, and building one is a larger change than these routes. VOID if this slice ends up changing behaviour only a real HTTP boundary can observe.",
+  "code_review": { "required": true, "tool": "scripts/codex-review-pin.sh", "clean_rounds": 2 },
+  "security_review": {
+    "required": true,
+    "reason": "Trust boundary: two new HTTP endpoints reaching destructive terminal state transitions behind the shared actor-authz/CSRF/rate-limit gate, plus the first public exposure of the DD-117 money fail-closed refusal code. The threat model itself is written in LIVE SOURCE at the head of apps/web/lib/session-command-route.ts, not here, because this field is validated but never transmitted to the reviewer.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 180,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/session-routes-close-cancel/readiness.json"
+}
