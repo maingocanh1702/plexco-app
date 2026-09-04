@@ -111,47 +111,80 @@ describe("resolveTenantLang — the single DD-118 derivation", () => {
  * from this map fails, so a new surface cannot be added without being classified.
  */
 const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
-  // (a) — wired. Ownership of THIS tenant is proven before the seam.
-  "api/onboarding/readiness/route.ts": "a",
+  // (a) — wired. Authorization for THIS tenant is proven before the seam.
+  "app/api/onboarding/readiness/route.ts": "a",
   // (a) — already wired upstream: all five delegate to handleSessionCommand, whose handler body
   // runs inside runWithLang. They emit only ok(...).
-  "api/sessions/route.ts": "a",
-  "api/sessions/[id]/route.ts": "a",
-  "api/sessions/[id]/publish/route.ts": "a",
-  "api/sessions/[id]/close/route.ts": "a",
-  "api/sessions/[id]/cancel/route.ts": "a",
+  "app/api/sessions/route.ts": "a",
+  "app/api/sessions/[id]/route.ts": "a",
+  "app/api/sessions/[id]/publish/route.ts": "a",
+  "app/api/sessions/[id]/close/route.ts": "a",
+  "app/api/sessions/[id]/cancel/route.ts": "a",
   // (b) — the tenant does not exist yet: this is the tenant-CREATION route, every t() is an error
   // path, and at the locale check the value is still an unvalidated request-body field. Reading it
   // would be a SECOND language source, which DD-118 forbids.
-  "api/onboarding/start/route.ts": "b",
+  "app/api/onboarding/start/route.ts": "b",
   // (b) — pre-authentication: identity is being established, no tenant is in the request.
-  "api/auth/google/state/route.ts": "b",
-  "api/auth/google/callback/route.ts": "b",
-  "api/auth/google/complete/route.ts": "b",
-  "api/auth/telegram/state/route.ts": "b",
-  "api/auth/telegram/callback/route.ts": "b",
+  "app/api/auth/google/state/route.ts": "b",
+  "app/api/auth/google/callback/route.ts": "b",
+  "app/api/auth/google/complete/route.ts": "b",
+  "app/api/auth/telegram/state/route.ts": "b",
+  "app/api/auth/telegram/callback/route.ts": "b",
   // (b) — authenticated but NO single tenant is routed. /session returns a LIST of tenants, so no
   // one tenant's locale applies; logout and logout-all are account-scoped.
-  "api/auth/session/route.ts": "b",
-  "api/auth/logout/route.ts": "b",
-  "api/auth/logout-all/route.ts": "b",
+  "app/api/auth/session/route.ts": "b",
+  "app/api/auth/logout/route.ts": "b",
+  "app/api/auth/logout-all/route.ts": "b",
   // (c) — liveness probe: {ok:true}, no DB, no auth.
-  "healthz/route.ts": "c",
+  "app/healthz/route.ts": "c",
+
+  // SHARED RESPONDERS in apps/web/lib. The task METHOD requires "each route.ts, PLUS any shared
+  // responder in apps/web/lib"; walking only `app/` let a shared responder go unclassified
+  // (codex round-02 [P2]).
+  //
+  // (a) — the shared entry gate for the five session routes. It resolves language itself and runs
+  // its handler body inside runWithLang; it is the reason those five need no wiring of their own.
+  "lib/session-command-route.ts": "a",
+  // (c) — reached only through a route, and emits NO translatable string of its own: api-envelope
+  // passes `message` through verbatim, and the rest hold zero t() calls (verify:
+  // grep -rlP '(?<![A-Za-z0-9_.$])t\(' apps/web/lib). A file with no translatable output cannot
+  // render in the wrong language, so it needs no language context.
+  "lib/api-envelope.ts": "c",
+  "lib/tenant-lang.ts": "c",
+  "lib/auth-secrets.ts": "c",
+  "lib/google-oidc.ts": "c",
+  "lib/login-state.ts": "c",
+  "lib/oauth-transaction.ts": "c",
+  "lib/session-cookies.ts": "c",
+  "lib/telegram-login.ts": "c",
 };
 
-function discoverRouteFiles(dir: string, prefix = ""): string[] {
+function discoverRouteFiles(dir: string, prefix: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const rel = `${prefix}/${entry.name}`;
     if (entry.isDirectory()) return discoverRouteFiles(path.join(dir, entry.name), rel);
     return entry.name === "route.ts" ? [rel] : [];
   });
 }
 
+// Every non-test TypeScript module in lib/ counts as a shared responder for classification
+// purposes. Deliberately NOT filtered to "files that currently emit t()": that filter would let a
+// new helper appear, start emitting a translatable string, and never enter the inventory — the
+// exact staleness this test exists to prevent.
+function discoverLibFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".ts") && !e.name.endsWith(".test.ts"))
+    .map((e) => `lib/${e.name}`);
+}
+
 describe("DD-118 — every response surface in apps/web is classified", () => {
-  // `app/` only: `.next/` is a generated build artifact (.gitignore:8) and carries a mirror of
-  // every route path, which would otherwise double the discovered set.
-  const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../app");
-  const discovered = discoverRouteFiles(appDir).sort();
+  // `app/` and `lib/` only: `.next/` is a generated build artifact (.gitignore:8) carrying a mirror
+  // of every route path, which would otherwise double the discovered set.
+  const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const discovered = [
+    ...discoverRouteFiles(path.join(webRoot, "app"), "app"),
+    ...discoverLibFiles(path.join(webRoot, "lib")),
+  ].sort();
 
   it("discovers a non-empty surface set (guards against a silently broken walker)", () => {
     expect(discovered.length).toBeGreaterThan(10);

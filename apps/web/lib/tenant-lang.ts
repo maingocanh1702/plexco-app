@@ -35,12 +35,21 @@ import { type Db, tenantLocale } from "@plexco/db";
  *   Protects against: answering an authenticated caller in a language their tenant did not
  *   configure — including the subtler direction, answering in a language a caller has NOT yet
  *   earned. Language is observable output, so WHERE it is resolved is a disclosure boundary, not
- *   formatting. A response emitted before the caller is proven to own the tenant must NOT be
- *   rendered in that tenant's language: doing so turns any error reply into an oracle that leaks
- *   (i) whether an arbitrary tenant id exists and (ii) what locale a stranger's club is set to,
- *   to an unauthenticated or merely-authenticated-but-unauthorized caller. Callers therefore
- *   invoke this function only AFTER proving the actor owns the tenant, and every response above
- *   that point stays Vietnamese — which DD-118 ratifies as correct behaviour, not as a gap.
+ *   formatting. A response emitted before the caller is proven AUTHORIZED FOR THE ROUTED TENANT
+ *   must NOT be rendered in that tenant's language: doing so turns any error reply into an oracle
+ *   that leaks (i) whether an arbitrary tenant id exists and (ii) what locale a stranger's club is
+ *   set to, to an unauthenticated or merely-authenticated-but-unauthorized caller. Callers
+ *   therefore invoke this function only AFTER that authorization succeeds, and every response
+ *   above that point stays Vietnamese — which DD-118 ratifies as correct behaviour, not a gap.
+ *
+ *   "Authorized for the routed tenant" is deliberately NOT "owns the tenant" (codex round-02 [P3]:
+ *   an earlier revision said "owns" and contradicted a live caller). The predicate is per-surface
+ *   and belongs to the caller, not here: `onboarding/readiness` requires the OWNER role because its
+ *   API contract is TenantOwner-only, while `session-command-route` admits the wider DD-56 set
+ *   (`owner`, `admin`, `co_admin`) because those endpoints are TenantAdmin. What this contract
+ *   requires is only that SOME sufficient tenant-authorization check has already passed — not which
+ *   one. Restating a specific role here would duplicate a rule this module does not own and would
+ *   drift from it, which is exactly what DD-56 bans.
  *
  *   Does NOT protect against: a caller choosing their own language (there is no per-user override
  *   in phase-1 and `Accept-Language` is deliberately not read — DD-118); a tenant whose stored
