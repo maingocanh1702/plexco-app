@@ -1,7 +1,8 @@
-import { t } from "@plexco/core/i18n";
+import { runWithLang, t } from "@plexco/core/i18n";
 import { onboardingSnapshot, tenantsForPerson } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import { appDb, currentSession } from "../../../../lib/session-cookies";
+import { resolveTenantLang } from "../../../../lib/tenant-lang";
 
 /**
  * GET /api/onboarding/readiness?tenant=<uuid> — WAO-UC-10 checklist shell.
@@ -29,20 +30,34 @@ export async function GET(request: Request): Promise<Response> {
     return err("FORBIDDEN", t("Bạn không phải chủ CLB này.", "Not the owner of this club."), 403);
   }
 
-  const snapshot = await onboardingSnapshot(appDb().db, tenantId);
-  if (!snapshot) {
-    return err("NOT_FOUND", t("Chưa có onboarding run.", "No onboarding run yet."), 404);
-  }
+  // DD-118 SEAM. Language is resolvable HERE and no earlier: the tenant is known AND has just been
+  // proven to be owned by this actor, which is exactly DD-118's condition. Every `return err(`
+  // ABOVE this line is emitted before that proof, so it stays Vietnamese — DD-118's ratified
+  // behaviour, not a gap.
+  //
+  // The ordering is a disclosure boundary, not a formatting preference. Resolving above the
+  // ownership check would answer a stranger's probe in the probed tenant's language, turning the
+  // 403 into an oracle for both tenant existence and a club's configured locale. `tenant-lang.ts`
+  // carries the full threat model; this comment exists so the next reader does not "simplify" the
+  // resolution upwards to cover the 403 too.
+  const lang = await resolveTenantLang(appDb().db, tenantId);
 
-  const stepStatus = new Map<string, string>(
-    snapshot.steps.map((s): [string, string] => [s.step, s.status]),
-  );
-  const steps = [...REQUIRED_STEPS, ...OPTIONAL_STEPS].map((step) => ({
-    step,
-    required: (REQUIRED_STEPS as readonly string[]).includes(step),
-    status: stepStatus.get(step) ?? "not_configured",
-  }));
-  const ready = steps.filter((s) => s.required).every((s) => s.status === "verified");
+  return runWithLang(lang, async () => {
+    const snapshot = await onboardingSnapshot(appDb().db, tenantId);
+    if (!snapshot) {
+      return err("NOT_FOUND", t("Chưa có onboarding run.", "No onboarding run yet."), 404);
+    }
 
-  return ok({ runStatus: snapshot.runStatus, steps, ready });
+    const stepStatus = new Map<string, string>(
+      snapshot.steps.map((s): [string, string] => [s.step, s.status]),
+    );
+    const steps = [...REQUIRED_STEPS, ...OPTIONAL_STEPS].map((step) => ({
+      step,
+      required: (REQUIRED_STEPS as readonly string[]).includes(step),
+      status: stepStatus.get(step) ?? "not_configured",
+    }));
+    const ready = steps.filter((s) => s.required).every((s) => s.status === "verified");
+
+    return ok({ runStatus: snapshot.runStatus, steps, ready });
+  });
 }

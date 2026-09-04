@@ -1,5 +1,5 @@
 import { isApiErrorCode, type ApiErrorCode } from "@plexco/core";
-import { parseLang, resolveLang, runWithLang, t, type Lang } from "@plexco/core/i18n";
+import { runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
   SessionCancelAuthorizationError,
   SessionCancelError,
@@ -10,11 +10,11 @@ import {
   SessionPublishError,
   SessionUpdateAuthorizationError,
   SessionUpdateError,
-  tenantLocale,
   tenantsForPerson,
 } from "@plexco/db";
 import { err } from "./api-envelope";
 import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
+import { resolveTenantLang } from "./tenant-lang";
 
 /**
  * Shared entry gate + error mapper for the FIVE session-command routes: create, publish, update,
@@ -254,14 +254,11 @@ export async function resolveSessionCommandContext(
   // not the one someone remembered to edit. `session-command-route.test.ts` pins the set and
   // asserts tenantLocale is un-called at each member; read it there, where it can fail.
   //
-  // DD-118 pins the SEAM, not just the source: resolveLang(memberLocale, tenantDefault) is called
-  // with memberLocale = null because no member-locale column exists yet. parseLang alone would
-  // produce identical output today and leave nowhere correct for that column to land when it
-  // arrives. tenantLocale returns null for SEVERAL reasons (see its contract — null means
-  // "undetermined", never "no such tenant"); parseLang rejects an unrecognised stored value;
-  // DD-118 says every undetermined case resolves to vi.
-  const tenantDefault: Lang = parseLang((await tenantLocale(appDb().db, tenantId)) ?? "") ?? "vi";
-  const lang: Lang = resolveLang(null, tenantDefault);
+  // DD-118's seam — why memberLocale is null, why an unrecognised stored value is rejected, and
+  // why every undetermined case resolves to vi — now lives in ONE place, `./tenant-lang`. A second
+  // surface needed the same derivation, and copying these lines would have created two that could
+  // drift apart silently. Read the contract and the threat model there.
+  const lang: Lang = await resolveTenantLang(appDb().db, tenantId);
 
   // Per-tenant limit (BE tech spec §3 "Rate Limits" scopes these per tenant), now reached only by
   // an authorized member of THAT tenant. Answered in the tenant's language, unlike v1.

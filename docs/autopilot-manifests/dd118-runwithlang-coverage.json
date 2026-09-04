@@ -1,0 +1,116 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Carries NO manifest_schema_version by design.",
+  "task_id": "plexco:dd118-runwithlang-coverage",
+  "feature": "dd118-runwithlang-coverage",
+  "branch": "feat/dd118-runwithlang-coverage",
+  "base_ref": "main",
+  "base_sha": "bff52b7becb41e01fbd87f6fc80a9f204560ea70",
+  "_base_sha_note": "Immutable for the lifetime of this registration. Verified equal to origin/main at intake. Every review round reads git diff bff52b7becb41e01fbd87f6fc80a9f204560ea70...HEAD, never HEAD^.",
+  "risk": "P1",
+  "_risk_note": "Owner ruling 2026-09-04, taking the stricter of two defensible readings. level3-workflow.md:168 lists 'shared choke point' beside auth and permission; apps/web/lib/session-command-route.ts serves five routes and this lane edits it. The lane's lead finding is a disclosure boundary whose correctness depends on ORDERING inside that choke point -- resolving language above the authorization check would answer a stranger's probe in the probed tenant's language, leaking tenant existence and configuration across all five routes. That is a security property, so it takes a security-class gate. Codex round 2 independently found the authorization predicate worded so that it contradicted a live caller, which is the failure a security round exists to catch.",
+  "autonomy_mode": "supervised",
+  "_autonomy_note": "supervised is required at P1 and is in any case the only value the readiness validator accepts alongside proactive_routine (scripts/autopilot-review-readiness.mjs:366).",
+  "writer_processes_max": 1,
+  "depends_on": [
+    "session-routes-close-cancel"
+  ],
+  "dep_checks": [
+    {
+      "feature": "session-routes-close-cancel",
+      "base_sha": "5e1b8342746e0cccdfea683437309fae7347be6d",
+      "landed_sha": "6d62cf87f3c0ab794e309642d4f49a5870052486",
+      "file": "apps/web/app/api/sessions/[id]/close/route.ts",
+      "symbol": "closeSession",
+      "_note": "Same-order landed proof. The file does not exist at the dependency base 5e1b834, is present at the landed 6d62cf8 (merged to main as 047ca63a8440cfc903cf85773730b788d406f79a) and is present on this lane's pinned base bff52b7. Symbol is closeSession rather than the rate-limit bucket session-close because the validator requires a bare identifier matching A-Za-z_ followed by at least two word characters, which a hyphenated string cannot satisfy."
+    }
+  ],
+  "invariants": [
+    "i18n-surface",
+    "web-app",
+    "test-chain"
+  ],
+  "_invariant_note": "i18n-surface is the domain this lane changes. web-app is the surface. test-chain because two new test files register with the runner. Deliberately NOT api-contract: no request or response SHAPE changes, only the language of an existing message string. Checked against the live parallel lane zalo-credential-path-trace, which holds transport-zalo and audit-integrity on two docs/ files — disjoint in both files and tokens.",
+  "scope": [
+    "apps/web/lib/tenant-lang.ts",
+    "apps/web/lib/tenant-lang.test.ts",
+    "apps/web/lib/session-command-route.ts",
+    "apps/web/app/api/onboarding/readiness/route.ts",
+    "apps/web/app/api/onboarding/readiness/route.test.ts",
+    "apps/web/app/api/onboarding/start/route.test.ts",
+    "docs/autopilot-manifests/dd118-runwithlang-coverage.json"
+  ],
+  "_scope_note": "onboarding/readiness/route.ts is the ONLY surface that gains language resolution; the bucket classification proving that is in the lane ledger DECISIONS.md D2. session-command-route.ts appears because its inlined derivation moves into the shared helper, which is what keeps the check and the action on ONE derivation. onboarding/start/route.test.ts appears for a bucket-(b) assertion only; its route.ts is deliberately NOT in scope.",
+  "negative_scope": [
+    "NO change to the DD-56 interim actor gate in apps/web/lib/session-command-route.ts: its authorized route list stays fixed at five, and this lane does not change who it admits",
+    "NO new column, and specifically NOT persons.language: the column does not exist and this lane does not create it",
+    "NO change to tenant_locale() and no new or edited file under packages/db/migrations",
+    "NO change to packages/core/src/i18n.ts: parseLang, resolveLang, runWithLang and t keep their current signatures and behaviour",
+    "NO FE: no page or component under apps/web/app outside the api routes, and never design.pen or fe.pen",
+    "NO second language-resolution source: Accept-Language is not read, and no per-user locale override is introduced"
+  ],
+  "context_sources": [
+    "docs/autopilot-templates/be-infra-lanes-2026-09-02-RUN.md",
+    "docs/autopilot-templates/level3-workflow.md",
+    "docs/standards/decisions.md",
+    "packages/core/src/i18n.ts",
+    "packages/db/src/tenant.ts",
+    "apps/web/lib/session-command-route.ts",
+    "apps/web/app/api/onboarding/readiness/route.ts",
+    "apps/web/app/api/onboarding/start/route.ts",
+    "docs/autopilot-invariant-catalog.md"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "primary-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "localhost postgres only",
+    "secrets": "none",
+    "external_side_effects": "none"
+  },
+  "verification": {
+    "_note": "No entry contains an angle bracket. MEASURED, not assumed: register first HALTed CONTRACT_INVALID on focused[3] because a PCRE negative lookbehind '(?' plus '!' opens with an angle bracket, which the validator's placeholder detector reads as an unresolved token. Fixed-string greps replace it. Env is inline because the gate subprocess inherits nothing from an interactive shell. vitest positional filters are regexes, so plain substrings are used rather than paths.",
+    "focused": [
+      "pnpm --filter @plexco/web exec vitest run onboarding",
+      "pnpm --filter @plexco/web exec vitest run tenant-lang",
+      "pnpm --filter @plexco/web exec vitest run session-command-route",
+      "grep -qF 'tenantLocale(' apps/web/lib/tenant-lang.ts",
+      "test \"$(grep -rlF 'tenantLocale(' apps/web --include='*.ts' | grep -vc '\\.test\\.ts')\" = 1",
+      "test \"$(git diff --name-only bff52b7becb41e01fbd87f6fc80a9f204560ea70 -- packages apps | grep -vc 'tenant-lang\\|api/onboarding/\\|session-command-route')\" = 0"
+    ],
+    "canonical": [
+      "pnpm run lint",
+      "pnpm -r run typecheck",
+      "DATABASE_URL=postgres://plexco:plexco_dev@localhost:5432/plexco DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_e2e_note": "Empty on purpose. This lane crosses no new real boundary: it adds no endpoint, no migration and no external call. The tenant_locale() read it depends on already runs in production through session-command-route.ts and is covered by the packages/db suite against real Postgres.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "The change decides WHICH responses of an authenticated route are rendered in a tenant's configured language, and the boundary between them is a disclosure question rather than a formatting one: rendering a response emitted BEFORE the caller is proven AUTHORIZED FOR THE ROUTED TENANT in that tenant's language would turn the reply into an oracle for tenant existence and for a stranger's configured locale. The predicate is deliberately 'authorized', not 'owns': readiness is TenantOwner-only while session-command-route admits the wider DD-56 set, and codex round 2 flagged the narrower wording as contradicting a live caller. The lane keeps every pre-authorization response Vietnamese for that reason, and a test asserts the locale is never READ before that check passes. That ordering property is what the security round should attack. The threat model itself is written in LIVE SOURCE at the head of apps/web/lib/tenant-lang.ts, not here, because this field is validated but never transmitted to the reviewer.",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 120,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE"
+  ],
+  "readiness_evidence_path": ".autopilot/state/dd118-runwithlang-coverage/readiness.json"
+}
