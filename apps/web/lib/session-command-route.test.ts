@@ -732,34 +732,31 @@ describe("mapSessionCommandError", () => {
     expect(mapSessionCommandError(undefined)).toBeNull();
   });
 
-  // Regression for a hole this suite could not previously see. The mapper ended in
-  // `err(code as ApiErrorCode, ...)` — a cast, which the compiler cannot verify — so the registry
-  // that decides what may appear on the wire had no say over the value actually emitted. Any
-  // string reaching the two lookup tables would have been published as a public API code.
-  //
-  // The fix routes both the check and the emit through ONE derivation, isApiErrorCode. This test
-  // pins the resulting property by forging a domain error carrying an unregistered code, which is
-  // the only way to reach that branch: every code the tables hold today IS registered, so the
-  // guard is invisible until something drifts. Without the fix this returns a 409 envelope
-  // carrying an unregistered code; with it, null → the caller rethrows → a generic 500.
-  it("fails closed on a domain code that is NOT in the shared registry", () => {
+  // A domain error carrying a code in NEITHER lookup table is a contract gap, not a client error.
+  // Fail closed: null, so the caller rethrows and it surfaces as a generic 500 rather than being
+  // dressed up with a guessed status.
+  it("fails closed on a domain code that is in neither lookup table", () => {
     const forged = new SessionCloseError("COMMAND_ID_CONFLICT", "internal");
-    // A REAL instance, mutated after construction, because the mapper dispatches on `instanceof`
+    // A REAL instance mutated after construction, because the mapper dispatches on `instanceof`
     // and a hand-rolled stub would never reach the branch under test. The double assertion is
-    // required: `code` is declared as a readonly union of the five legal literals, so nothing
-    // narrower erases it.
+    // required: `code` is declared as a readonly union of the five legal literals.
     (forged as unknown as { code: string }).code = "TOTALLY_UNREGISTERED_CODE";
     expect(mapSessionCommandError(forged)).toBeNull();
   });
 
-  // The positive direction — "every code the mapper CAN emit is registered" — is deliberately not
-  // asserted by a second test here. Doing so would need either a new export of STATUS_BY_CODE or a
-  // hand-copied list of its keys, and a hand-maintained copy is wrong in whichever version nobody
-  // remembered to edit. The property is already enforced by construction: the parametrized mapping
-  // table above asserts `response` is NOT null for every shipping code, and after the isApiErrorCode
-  // narrowing an unregistered code yields exactly null. Adding a row to STATUS_BY_CODE without
-  // registering the code therefore fails that table, and api-contract.test.ts pins the same
-  // membership from the registry's own side.
+  // NOT asserted here, deliberately, and the reason is worth keeping: "an unregistered code never
+  // reaches a client" cannot be proven by this suite. The mapper narrows through isApiErrorCode,
+  // but that branch is unreachable at runtime — every key in both lookup tables is a registered
+  // code, so a forged unregistered code exits one check earlier, at the table miss above. A test
+  // written against it passes identically with the guard deleted; that was measured, not assumed.
+  //
+  // The guarantee with actual teeth is COMPILE-TIME: STATUS_BY_CODE and MESSAGE_BY_CODE are keyed
+  // on ApiErrorCode, so adding a row whose code is not in API_ERROR_CODES fails `tsc`. The test
+  // for it is `pnpm -r run typecheck`, and it was verified by mutation — adding an unregistered
+  // key produces TS2322 on the table's declaration. api-contract.test.ts pins the same membership
+  // from the registry's side. Enumerating the table's keys here instead would need either a new
+  // export or a hand-copied list, and a hand-maintained copy is wrong in whichever version nobody
+  // remembered to edit.
 
   // codex round-02 [P2]: t() reads the request language from AsyncLocalStorage, so resolving the
   // message table at module load would freeze every message to the boot fallback and make

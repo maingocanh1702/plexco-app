@@ -1,4 +1,4 @@
-import { isApiErrorCode } from "@plexco/core";
+import { isApiErrorCode, type ApiErrorCode } from "@plexco/core";
 import { parseLang, resolveLang, runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
   SessionCancelAuthorizationError,
@@ -455,8 +455,16 @@ export function readExpectedVersion(body: Record<string, unknown>): number | und
   return present(body, "expectedVersion") ? (body.expectedVersion as number) : undefined;
 }
 
-/** Status for every literal the BE tech spec §3 error catalog pins for these commands. */
-const STATUS_BY_CODE: ReadonlyMap<string, number> = new Map([
+/**
+ * Status for every literal the BE tech spec §3 error catalog pins for these commands.
+ *
+ * Keyed on ApiErrorCode, not string, and that is the load-bearing part. It makes the shared
+ * registry the COMPILE-TIME gate on this table: adding a row whose code is not in
+ * API_ERROR_CODES fails `tsc`, at the moment it is written, rather than shipping a response
+ * carrying a code no client contract knows. See mapSessionCommandError for why the runtime
+ * narrowing alone was not enough.
+ */
+const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
   // (feature_session_management_tech.md:285), which is authority here — this route does not get
   // to pick a status for a spec-pinned code. It is a refusal to act while money or an active
@@ -504,7 +512,7 @@ const VALIDATION_VARIANTS: ReadonlySet<string> = new Set([
  * sites. This table is the REASON that constraint exists, not evidence that violations are
  * waiting to be found — there are none. The count is true of that tree, not forever.
  */
-const MESSAGE_BY_CODE: ReadonlyMap<string, readonly [string, string]> = new Map([
+const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = new Map([
   [
     // Says what happened and who must act, without leaking WHY. The refusal fires for a charge
     // (including a `void` one) or, on cancel, a non-zero active roster — telling an unauthorized-
@@ -583,21 +591,26 @@ export function mapSessionCommandError(error: unknown): Response | null {
   if (VALIDATION_VARIANTS.has(code)) {
     return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
   }
+  // Registry membership is CHECKED here rather than asserted by a cast. This function used to end
+  // in `err(code as ApiErrorCode, ...)` — a cast the compiler cannot verify — so ApiErrorCode, the
+  // type that is supposed to decide what may go on the wire, had no view of the value actually
+  // emitted. Narrowing instead puts the check and the emit on ONE derivation and removes the cast.
+  //
+  // Honest note on what this line can and cannot catch, because the distinction was measured
+  // rather than assumed. At runtime it is currently UNREACHABLE: every key in the two tables below
+  // is a registered code, so any code that would fail here has already returned null at the
+  // table-miss check. A test that forges an unregistered code proves nothing for that reason —
+  // it exits earlier. The guarantee that actually has teeth is therefore the COMPILE-TIME one:
+  // both tables are keyed on ApiErrorCode, so adding an unregistered code to either is a `tsc`
+  // error, which is what `pnpm -r run typecheck` enforces on every change. This narrowing is what
+  // lets that typing exist without a cast, and it fails closed to a generic 500 if the two ever
+  // diverge at runtime.
+  if (!isApiErrorCode(code)) return null;
   const status = STATUS_BY_CODE.get(code);
   const message = MESSAGE_BY_CODE.get(code);
   // A domain code that is in neither table is a contract gap, not a client error: fail closed
   // by rethrowing rather than guessing a status.
   if (status === undefined || message === undefined) return null;
-  // Registry membership is CHECKED here rather than asserted by a cast, and the difference is
-  // load-bearing. This line read `err(code as ApiErrorCode, ...)`: a cast the compiler cannot
-  // verify, so the ApiErrorCode type — the thing that is supposed to decide what may go on the
-  // wire — could not actually see the value being emitted. The check and the emit read the same
-  // string through DIFFERENT paths, which makes the check decorative: any string reaching the two
-  // tables above would have been published as a public API code. Narrowing through the runtime
-  // guard puts both on ONE derivation, so an unregistered code now fails closed to a generic 500
-  // (same treatment as an unmapped one) instead of inventing public surface. Behaviour for every
-  // code shipping today is unchanged: all of them are registered in API_ERROR_CODES.
-  if (!isApiErrorCode(code)) return null;
   // t() resolved HERE, inside the request, so the caller's language applies.
   return err(code, t(message[0], message[1]), status);
 }
