@@ -764,6 +764,33 @@
   7. **EXPIRY — không đổi:** amendment này void **cùng lúc** với amendment #1, ngay khi `tenant-capability-authority-core` land. Việc thay choke-point bằng `authorize(action, actor, target)` thuộc scope slice core theo cấu tạo và phủ **cả năm** route, không phải ba.
   8. **Doc-sync item riêng (P4), không chặn lane:** `docs/autopilot-templates/be-infra-lanes-2026-09-02-RUN.md` mục L1 hướng dẫn một shape route mà điều khoản 2 của amendment #1 **cấm**. Theo `level3-workflow.md §6.1`, `decisions.md` (#3) đứng trên RUN packet (#5) ⇒ **packet là thứ phải sửa**, không phải decision. Lane nào đọc packet đó phải theo decision này.
 
+  > **ĐÍNH CHÍNH điều khoản 4 và 6 (2026-09-04, cùng ngày, do security round của lane
+  > `session-routes-close-cancel` phát hiện).** Hai câu dưới đây trong bản amendment #2 gốc **rộng
+  > hơn code**, và cả hai đều là lỗi diễn đạt của bản amendment, **không** phải lỗi của code.
+  >
+  > **(a) "dính tiền HOẶC dính roster" — nửa sau chỉ đúng với `cancel`.** Đo:
+  > `sessionActiveRosterCount` có **0** call site trong `closeSession` và **1** trong `cancelSession`
+  > (`packages/db/src/session-service.ts:2122`). Vậy `close` **không** có hàng rào roster.
+  > **Code đúng, không sửa code:** đóng một session còn người trên roster là **kết thúc bình thường**
+  > — buổi đã diễn ra; huỷ một session còn người là **bỏ rơi họ**, nên gate #3 (owner 2026-08-26)
+  > đặt trên `cancel` mà không đặt trên `close` là có chủ ý. Hàng rào **tiền** vẫn phủ cả hai:
+  > `sessionHasCharges` được gọi trong `closeSession` ở `:1791`.
+  >
+  > **(b) "owner đảo ngược được" — SAI, không có transition mở lại.** Đo: hai chỗ duy nhất ghi
+  > `status: "open"` đều nằm trong `publishSession` (`:533`, `:640`), và guard của nó là
+  > `if (current.status !== "draft")` ⇒ fail (edge #23, comment tại chỗ: "closed/cancelled cannot
+  > publish"). Một session đã `closed`/`cancelled` **không** quay lại `open` được bằng bất kỳ đường nào.
+  >
+  > **Rủi ro còn lại, phát biểu lại ở đúng kích thước thật:** trong cửa sổ **một request**, một
+  > co_admin vừa bị thu hồi role có thể `close` một session **không charge nhưng CÒN roster active**,
+  > và **không có đường mở lại**. Không mất tiền (hàng rào charge vẫn chặn), nhưng **không hồi phục
+  > được** như câu cũ đã nói.
+  >
+  > **Chấp nhận vẫn giữ nguyên**, với lý do đứng được sau khi đo: cửa sổ rộng đúng một request, và
+  > chính actor đó một khoảnh khắc trước vẫn `close` được hợp lệ — thu hồi role không biến một hành
+  > động vốn hợp lệ thành thiệt hại mới. Điều thay đổi là **văn bản không còn tự nhận nhiều hơn code
+  > làm được**. Điều khoản 1 (SCOPE) và điều khoản 5 (expiry) **không đổi**.
+
 ---
 
 ## DD-57 — FE architecture principles · ✅ Chốt FE governance (owner 2026-07-28)
