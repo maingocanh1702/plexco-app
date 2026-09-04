@@ -1,4 +1,8 @@
+import { resolveLang } from "@plexco/core/i18n";
 import { tenantLocale } from "@plexco/db";
+import { readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveTenantLang } from "./tenant-lang";
 
@@ -6,6 +10,16 @@ vi.mock("@plexco/db", () => ({
   createDb: vi.fn(() => ({ pool: {}, db: {} })),
   tenantLocale: vi.fn(),
 }));
+
+// Partial mock: keep the REAL parseLang/resolveLang behaviour (the fail-closed cases below depend
+// on it) while making resolveLang observable. DD-118 pins the SEAM, not just the output, and the
+// seam is invisible to an output-only assertion: replacing the implementation with
+// `return tenantDefault` produces identical results today and silently deletes the place the
+// member-locale column has to land.
+vi.mock("@plexco/core/i18n", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@plexco/core/i18n")>();
+  return { ...actual, resolveLang: vi.fn(actual.resolveLang) };
+});
 
 process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 
@@ -56,5 +70,100 @@ describe("resolveTenantLang — the single DD-118 derivation", () => {
     await resolveTenantLang(db, TENANT);
     expect(tenantLocale).toHaveBeenCalledTimes(1);
     expect(tenantLocale).toHaveBeenCalledWith(db, TENANT);
+  });
+
+  // DD-118: "resolveLang(memberLocale, tenantDefault) giữ nguyên chữ ký, gọi với memberLocale =
+  // null cho tới khi có cột locale cấp member — để cái seam đã đúng sẵn khi cột đó xuất hiện."
+  // Output-only assertions cannot see this: `return tenantDefault` passes every other test in this
+  // file while deleting the seam. Assert the call itself.
+  it("routes through the DD-118 seam with memberLocale = null, not around it", async () => {
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+    vi.mocked(resolveLang).mockClear();
+
+    await resolveTenantLang(db, TENANT);
+
+    expect(resolveLang).toHaveBeenCalledTimes(1);
+    expect(resolveLang).toHaveBeenCalledWith(null, "en");
+  });
+
+  it("passes the FAIL-CLOSED default through the same seam, not past it", async () => {
+    vi.mocked(tenantLocale).mockResolvedValue("fr");
+    vi.mocked(resolveLang).mockClear();
+
+    expect(await resolveTenantLang(db, TENANT)).toBe("vi");
+    expect(resolveLang).toHaveBeenCalledWith(null, "vi");
+  });
+});
+
+/**
+ * DD-118 surface classification — committed, executable evidence.
+ *
+ * The lane's reasoning for "exactly one surface needed wiring" lived only in the lane ledger under
+ * `.autopilot/state/`, which is gitignored, so it was not reproducible from HEAD (codex round-01
+ * [P2]). It lives here instead, where it is committed AND fails when it goes stale.
+ *
+ * Buckets (DD-118):
+ *   a = tenant known AND authenticated at response time -> must runWithLang
+ *   b = pre-authentication or tenant-unknown            -> stays Vietnamese, APPROVED behaviour
+ *   c = not a user-facing response                      -> out of scope
+ *
+ * The point of the test is the LAST assertion: a route file that exists on disk but is missing
+ * from this map fails, so a new surface cannot be added without being classified.
+ */
+const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
+  // (a) — wired. Ownership of THIS tenant is proven before the seam.
+  "api/onboarding/readiness/route.ts": "a",
+  // (a) — already wired upstream: all five delegate to handleSessionCommand, whose handler body
+  // runs inside runWithLang. They emit only ok(...).
+  "api/sessions/route.ts": "a",
+  "api/sessions/[id]/route.ts": "a",
+  "api/sessions/[id]/publish/route.ts": "a",
+  "api/sessions/[id]/close/route.ts": "a",
+  "api/sessions/[id]/cancel/route.ts": "a",
+  // (b) — the tenant does not exist yet: this is the tenant-CREATION route, every t() is an error
+  // path, and at the locale check the value is still an unvalidated request-body field. Reading it
+  // would be a SECOND language source, which DD-118 forbids.
+  "api/onboarding/start/route.ts": "b",
+  // (b) — pre-authentication: identity is being established, no tenant is in the request.
+  "api/auth/google/state/route.ts": "b",
+  "api/auth/google/callback/route.ts": "b",
+  "api/auth/google/complete/route.ts": "b",
+  "api/auth/telegram/state/route.ts": "b",
+  "api/auth/telegram/callback/route.ts": "b",
+  // (b) — authenticated but NO single tenant is routed. /session returns a LIST of tenants, so no
+  // one tenant's locale applies; logout and logout-all are account-scoped.
+  "api/auth/session/route.ts": "b",
+  "api/auth/logout/route.ts": "b",
+  "api/auth/logout-all/route.ts": "b",
+  // (c) — liveness probe: {ok:true}, no DB, no auth.
+  "healthz/route.ts": "c",
+};
+
+function discoverRouteFiles(dir: string, prefix = ""): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) return discoverRouteFiles(path.join(dir, entry.name), rel);
+    return entry.name === "route.ts" ? [rel] : [];
+  });
+}
+
+describe("DD-118 — every response surface in apps/web is classified", () => {
+  // `app/` only: `.next/` is a generated build artifact (.gitignore:8) and carries a mirror of
+  // every route path, which would otherwise double the discovered set.
+  const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../app");
+  const discovered = discoverRouteFiles(appDir).sort();
+
+  it("discovers a non-empty surface set (guards against a silently broken walker)", () => {
+    expect(discovered.length).toBeGreaterThan(10);
+  });
+
+  it("classifies EVERY route file on disk — an unclassified surface fails here", () => {
+    const unclassified = discovered.filter((file) => !(file in SURFACE_BUCKETS));
+    expect(unclassified).toEqual([]);
+  });
+
+  it("carries no classification for a route that no longer exists", () => {
+    const stale = Object.keys(SURFACE_BUCKETS).filter((file) => !discovered.includes(file));
+    expect(stale).toEqual([]);
   });
 });

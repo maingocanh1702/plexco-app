@@ -16,6 +16,13 @@ vi.mock("@plexco/db", () => ({
   SlugTakenError: class SlugTakenError extends Error {},
 }));
 
+// Keep the REAL t() behaviour — the Vietnamese-message assertions below depend on it — but make the
+// call observable, so the success-path tripwire can assert that NO translatable string is emitted.
+vi.mock("@plexco/core/i18n", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@plexco/core/i18n")>();
+  return { ...actual, t: vi.fn(actual.t) };
+});
+
 // Partial mock: override the session / CSRF / rate-limit / issue helpers so the
 // happy path reaches issueSession deterministically. SessionReauthRequiredError
 // stays the real class the route's catch compares against.
@@ -146,9 +153,23 @@ describe("POST /api/onboarding/start — stays Vietnamese by DD-118 (bucket b)",
 
   // TRIPWIRE (see the block comment): the success path carries no translatable string, which is
   // WHY this route needs no language context. Adding one makes this route bucket (a).
-  it("emits no translatable string on the success path", async () => {
+  //
+  // Asserting on the response KEYS was not enough (codex round-01 [P2]): `t("active", "Active")`
+  // substituted into an existing VALUE leaves every key unchanged, so a key-shape assertion passes
+  // while an unreachable English branch is introduced — exactly the defect this claims to catch.
+  // Spying on `t` itself detects any translatable string on this path regardless of where it lands.
+  it("makes no t() call at all on the success path", async () => {
+    const { t } = await import("@plexco/core/i18n");
+    vi.mocked(t).mockClear();
+
     const res = await POST(req({ slug: "club-d", name: "Club D", locale: "en" }));
+
     expect(res.status).toBe(200);
+    expect(t).not.toHaveBeenCalled();
+  });
+
+  it("still returns the documented success shape", async () => {
+    const res = await POST(req({ slug: "club-e", name: "Club E", locale: "en" }));
     const body = (await res.json()) as { data: Record<string, unknown>; error: null };
     expect(body.error).toBeNull();
     expect(Object.keys(body.data).sort()).toEqual(["csrfToken", "plan", "status", "tenantId"]);

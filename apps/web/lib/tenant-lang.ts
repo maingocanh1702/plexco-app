@@ -9,17 +9,20 @@ import { type Db, tenantLocale } from "@plexco/db";
  * rule has exactly one implementation.
  *
  * READ THIS BEFORE REACHING FOR DD-118's SECOND-SOURCE PROHIBITION. A new file that reads a locale
- * looks, in a cold diff, exactly like the thing DD-118 forbids. It is the opposite, and the count
- * is what settles it:
+ * looks, in a cold diff, exactly like the thing DD-118 forbids. It is the opposite. The counts,
+ * measured at the pinned base rather than asserted:
  *
- *   before this change:  2 inline copies of the derivation (this file did not exist, and wiring a
- *                        second surface meant pasting the same two lines a second time)
- *   after  this change:  1 derivation, called by both consumers
- *   language sources, before and after: 1 — `tenants.locale`, via `tenant_locale()`
+ *   at base bff52b7:     1 production caller of the derivation (session-command-route.ts). Verify:
+ *                        git grep -c 'tenantLocale(' bff52b7 -- 'apps/web/**' | grep -v test
+ *   without extraction:  2 — wiring the readiness surface meant pasting the same two lines again
+ *   with extraction:     1 derivation, called by both consumers
+ *   language sources, in every one of those three states: 1 — `tenants.locale`
  *
- * DD-118 bans a second *source*. This removes a second *copy* while leaving the source count at
- * one. Two copies of a derived value drift: one could gain a member-locale argument and the other
- * not, and nothing would fail. One function, every consumer.
+ * So the second copy is a COUNTERFACTUAL this change avoids, not a mess it cleaned up. (An earlier
+ * revision of this comment claimed two copies already existed. That was wrong at the base and is
+ * corrected here; the reviewer caught it.) DD-118 bans a second *source*, and the source count is
+ * one throughout. Two copies of a derived value drift — one could gain a member-locale argument
+ * and the other not, and nothing would fail. One function, every consumer.
  *
  * WHY A FUNCTION AND NOT TWO LINES AT EACH CALL SITE. The check ("did this request resolve its
  * language through the DD-118 seam?") and the action ("render this string with `t()`") are only
