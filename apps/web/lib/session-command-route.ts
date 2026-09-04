@@ -1,6 +1,10 @@
-import type { ApiErrorCode } from "@plexco/core";
+import { isApiErrorCode, type ApiErrorCode } from "@plexco/core";
 import { parseLang, resolveLang, runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
+  SessionCancelAuthorizationError,
+  SessionCancelError,
+  SessionCloseAuthorizationError,
+  SessionCloseError,
   SessionCommandError,
   SessionPublishAuthorizationError,
   SessionPublishError,
@@ -13,17 +17,47 @@ import { err } from "./api-envelope";
 import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
 
 /**
- * Shared entry gate + error mapper for the THREE session-command routes this slice ships:
- * create, publish and update. Announce is NOT among them — its only observable effect is
- * delivery and nothing can deliver yet, so it returns with the slice that provides a real
- * projector (DD-56 amendment, clause 1).
+ * Shared entry gate + error mapper for the FIVE session-command routes: create, publish, update,
+ * close and cancel. Announce is NOT among them — its only observable effect is delivery and
+ * nothing can deliver yet, so it returns with the slice that provides a real projector (DD-56
+ * amendment, clause 1).
  *
  * ONE choke-point on purpose: DD-56 bans adapters from scattering `role === ...` across routes,
  * and when the capability registry (`tenant-capability-authority-core`) lands there must be
- * exactly one call site to replace — not three copies drifting apart.
+ * exactly one call site to replace — not five copies drifting apart.
  *
  * The commands own their own `withTenant` transaction, so a route calls them directly and
  * must NOT wrap them again.
+ *
+ * ── THREAT MODEL ────────────────────────────────────────────────────────────────────────────
+ *
+ * WHAT THIS GATE DEFENDS AGAINST. An AUTHENTICATED caller acting outside their authority, and a
+ * client being told the wrong thing about a mutation. Concretely: a signed-in account driving a
+ * command against a tenant it does not belong to, or holding a role without `session.manage`
+ * (both answer with one indistinguishable 403, never a 404, so this is not a tenant-existence
+ * oracle); a cross-tenant denial of service by spending a victim tenant's rate-limit bucket
+ * before proving membership (closed by ordering the actor ceiling ahead of the per-tenant
+ * bucket); a forged cross-origin write (CSRF token); an oversized or chunked body held open to
+ * exhaust the process; and — the reason this file is P1 — an idempotency key that reaches
+ * `processed_commands` as a DIFFERENT key than it arrived as, which would hand one caller another
+ * caller's stored result. That last one is why `isUnsafeCommandKey` and the FATAL TextDecoder
+ * exist, and why both fail closed.
+ *
+ * WHAT IT EXPLICITLY DOES NOT DEFEND AGAINST. It is not an authorization ENGINE: it answers only
+ * "may this actor run a session command at all". Every domain rule — status transitions, version
+ * races, roster and money guards — belongs to the command, under its own row locks, where it can
+ * be enforced transactionally. A route-level re-check would be a second reading of the same
+ * predicate and would drift, which is DD-56's whole point. It does not defend against a
+ * compromised session cookie, nor against a malicious tenant admin acting WITHIN their own tenant
+ * (that is what the commands' fail-closed money guards and the outbox audit trail are for), nor
+ * against anything below the transport: TLS, cookie flags and origin policy are owned elsewhere.
+ *
+ * WHEN THIS MODEL MUST BE REWRITTEN. If a session command becomes reachable by any principal that
+ * is not a signed-in tenant member — a bot transport, a webhook, a public link, a service token —
+ * every sentence above is void, because all of it assumes `currentSession()` identified an account
+ * and `tenantsForPerson` bounded it. Also void if a command starts MOVING money rather than
+ * refusing when money is present: the guards behind `CANCEL_REQUIRES_REVIEW` are refusals, not
+ * settlement, and a settlement path needs its own model.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -421,8 +455,22 @@ export function readExpectedVersion(body: Record<string, unknown>): number | und
   return present(body, "expectedVersion") ? (body.expectedVersion as number) : undefined;
 }
 
-/** Status for every literal the BE tech spec §3 error catalog pins for these four commands. */
-const STATUS_BY_CODE: ReadonlyMap<string, number> = new Map([
+/**
+ * Status for every literal the BE tech spec §3 error catalog pins for these commands.
+ *
+ * Keyed on ApiErrorCode, not string, and that is the load-bearing part. It makes the shared
+ * registry the COMPILE-TIME gate on this table: adding a row whose code is not in
+ * API_ERROR_CODES fails `tsc`, at the moment it is written, rather than shipping a response
+ * carrying a code no client contract knows. See mapSessionCommandError for why the runtime
+ * narrowing alone was not enough.
+ */
+const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
+  // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
+  // (feature_session_management_tech.md:285), which is authority here — this route does not get
+  // to pick a status for a spec-pinned code. It is a refusal to act while money or an active
+  // roster is present (DD-117 / edge #5), and the client's remedy is a review workflow that does
+  // not exist yet, so nothing about it is retryable.
+  ["CANCEL_REQUIRES_REVIEW", 400],
   ["CAPACITY_BELOW_ROSTER", 409],
   ["COMMAND_ID_CONFLICT", 409],
   ["INVALID_TIME_RANGE", 400],
@@ -464,7 +512,18 @@ const VALIDATION_VARIANTS: ReadonlySet<string> = new Set([
  * sites. This table is the REASON that constraint exists, not evidence that violations are
  * waiting to be found — there are none. The count is true of that tree, not forever.
  */
-const MESSAGE_BY_CODE: ReadonlyMap<string, readonly [string, string]> = new Map([
+const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = new Map([
+  [
+    // Says what happened and who must act, without leaking WHY. The refusal fires for a charge
+    // (including a `void` one) or, on cancel, a non-zero active roster — telling an unauthorized-
+    // but-authenticated caller which of those it was would turn an error body into a probe for a
+    // session's payment state. §3 pins the code and status, not this wording.
+    "CANCEL_REQUIRES_REVIEW",
+    [
+      "Kèo này cần được xem xét trước khi đóng hoặc huỷ.",
+      "This session needs review before it can be closed or cancelled.",
+    ],
+  ],
   [
     "CAPACITY_BELOW_ROSTER",
     ["Sức chứa nhỏ hơn số người đã tham gia.", "Capacity is below the current roster."],
@@ -520,21 +579,45 @@ export function mapSessionCommandError(error: unknown): Response | null {
     error instanceof SessionCommandError ||
     error instanceof SessionPublishError ||
     error instanceof SessionUpdateError ||
+    error instanceof SessionCloseError ||
+    error instanceof SessionCancelError ||
     error instanceof SessionPublishAuthorizationError ||
-    error instanceof SessionUpdateAuthorizationError;
+    error instanceof SessionUpdateAuthorizationError ||
+    error instanceof SessionCloseAuthorizationError ||
+    error instanceof SessionCancelAuthorizationError;
   if (!isDomain) return null;
 
   const code = (error as { code: string }).code;
   if (VALIDATION_VARIANTS.has(code)) {
     return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
   }
+  // Registry membership is CHECKED here rather than asserted by a cast. This function used to end
+  // in `err(code as ApiErrorCode, ...)` — a cast the compiler cannot verify — so ApiErrorCode, the
+  // type that is supposed to decide what may go on the wire, had no view of the value actually
+  // emitted. Narrowing instead puts the check and the emit on ONE derivation and removes the cast.
+  //
+  // ORDER MATTERS: this narrowing runs BEFORE the table lookups, so an UNREGISTERED code fails
+  // here while a REGISTERED-but-unmapped one falls through to the table-miss check below. A test
+  // must pick its forged code against that order — one aimed at the wrong branch passes while
+  // proving nothing (codex round-01 [P2]).
+  //
+  // Measured honestly: this line is runtime-REDUNDANT. Deleting it changes no observable
+  // behaviour, because an unregistered code is necessarily absent from both tables and fails
+  // closed one check later with the same null. It is kept for the compile-time reason below, not
+  // because it catches anything the table miss would not.
+  //
+  // This narrowing is also what lets the two tables be keyed on ApiErrorCode rather than string,
+  // which is the stronger, COMPILE-TIME half of the same guarantee: adding a row whose code is not
+  // in API_ERROR_CODES fails `tsc`, enforced by `pnpm -r run typecheck` on every change. This line
+  // is the runtime backstop if the two ever diverge.
+  if (!isApiErrorCode(code)) return null;
   const status = STATUS_BY_CODE.get(code);
   const message = MESSAGE_BY_CODE.get(code);
   // A domain code that is in neither table is a contract gap, not a client error: fail closed
   // by rethrowing rather than guessing a status.
   if (status === undefined || message === undefined) return null;
   // t() resolved HERE, inside the request, so the caller's language applies.
-  return err(code as ApiErrorCode, t(message[0], message[1]), status);
+  return err(code, t(message[0], message[1]), status);
 }
 
 /**

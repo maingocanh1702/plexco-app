@@ -25,12 +25,26 @@
  * INVALID_VISIBILITY, INVALID_JOIN_POLICY, INVALID_TEXT_FIELD) which the route
  * collapses onto the already-registered INVALID_BODY 400 rather than inventing
  * public surface the Reviewed spec does not describe.
+ *
+ * CANCEL_REQUIRES_REVIEW arrived with the close and cancel ROUTES, which is the
+ * rule this registry has always followed: a code is registered when something can
+ * actually emit it, not when a command first throws it. closeSession and
+ * cancelSession have raised it since 2026-08-26, but until those two routes shipped
+ * nothing could put it on the wire — api-contract.test.ts recorded exactly that,
+ * and this entry discharges it. Status 400 is transcribed verbatim from
+ * docs/features/BE/feature_session_management_tech.md §3, not chosen here.
+ *
+ * It is the money path's public face: both commands fail CLOSED with this code when
+ * a session carries ANY charge (including a `void` one) or, on cancel, a non-zero
+ * active roster — DD-117 / edge #5. Registering it is what lets the route return the
+ * real refusal instead of a generic 500.
  */
 export const API_ERROR_CODES = [
   "AUTH_INVALID",
   "AUTH_REQUIRED",
   "AUTH_STALE",
   "AUTH_UNAVAILABLE",
+  "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_ROSTER",
   "COMMAND_ID_CONFLICT",
   "CSRF_INVALID",

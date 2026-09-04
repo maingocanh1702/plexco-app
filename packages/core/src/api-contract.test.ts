@@ -22,16 +22,24 @@ describe("API_ERROR_CODES registry", () => {
     }
   });
 
-  it("registers every literal the THREE shipped session routes can emit", () => {
+  it("registers every literal the FIVE shipped session routes can emit", () => {
     // Scoped deliberately, and NOT "every literal in §3" as an earlier revision claimed
-    // (codex round-02 [P3]): §3 also pins INVALID_CHANNEL and SESSION_ALREADY_ENDED (announce,
-    // not shipped) and CANCEL_REQUIRES_REVIEW (cancel, a different lane). Those return to this
-    // registry with their routes. Claiming full §3 coverage would imply this test guards codes
-    // nothing can currently emit.
+    // (codex round-02 [P3]): §3 also pins INVALID_CHANNEL and SESSION_ALREADY_ENDED, which belong
+    // to announce — still unshipped, still gated by DD-56 clause 1. Those return to this registry
+    // with their route, exactly as CANCEL_REQUIRES_REVIEW just did. Claiming full §3 coverage
+    // would imply this test guards codes nothing can currently emit.
     //
-    // The routes cannot emit a code that is not here: err() is typed to ApiErrorCode. Losing one
-    // of these would silently downgrade a spec-pinned response to a generic error.
+    // THREE became FIVE when the close and cancel routes shipped, and that is the whole reason
+    // CANCEL_REQUIRES_REVIEW appears below: the earlier revision of this comment named it as an
+    // example of a code still awaiting its route. The commands have thrown it since 2026-08-26;
+    // until those routes existed nothing could put it on the wire.
+    //
+    // The routes cannot emit a code that is not here: err() is typed to ApiErrorCode, and
+    // mapSessionCommandError now narrows through isApiErrorCode instead of casting, so an
+    // unregistered code fails closed to a 500 rather than reaching a client. Losing one of these
+    // would silently downgrade a spec-pinned response to a generic error.
     for (const code of [
+      "CANCEL_REQUIRES_REVIEW",
       "CAPACITY_BELOW_ROSTER",
       "COMMAND_ID_CONFLICT",
       "INVALID_TIME_RANGE",
