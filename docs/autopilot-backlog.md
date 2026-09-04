@@ -4423,3 +4423,334 @@ notes: |
 
   Liên quan: bốn dòng REFUSED này in ra ở mọi lần reconcile kể từ `3b92d42` (06/08) — xem mặt
   "cảnh báo thành hình nền" trong `reconcile-hand-closed-entries-never-age-out`.
+
+---
+
+## task: hash-locked-registration-has-no-path-for-authorised-change
+title: Hash-lock has no path for an owner-authorised change — four instances burned four of five registrations on one slice
+status: planned
+risk: P1
+change_class: kit-maintenance
+design_state: awaiting_owner
+depends_on: []
+invariants: [kit-integrity, review-integrity]
+scope: [scripts/autopilot-scope-gate]
+manifest: docs/autopilot-manifests/hash-locked-registration-has-no-path-for-authorised-change.json
+merged_probe: null
+_probe_note: Not designed yet — no fix mechanism chosen (amend-in-place vs. a scoped unlock command vs.
+  something else), so no symbol to bind. When scheduled, bind the symbol the FIX introduces — do NOT
+  bind `registered-manifest.sha256` or `register` (`scripts/autopilot-scope-gate:647,712-713`), both
+  already exist on origin and would false-flip "merged" at author time.
+notes: |
+  **Four measured instances of the same mechanism, from one slice (`db:reset:test`) in a different repo
+  that consumes this same kit — recorded here because the root cause is the shared kit mechanism, not
+  that repo's code.** Five registrations were spent closing one slice; four of the five were caused by
+  this one mechanism, not by four unrelated problems:
+    - v2: `risk` needed correcting after registration.
+    - v3: `security_review.reason`.
+    - v4 round 1: `negative_scope` carrying residue left over from an earlier round.
+    - v4 round 2: `negative_scope` carrying an active decision rule (a safety waiver) that was later
+      withdrawn.
+
+  **Write it with the count — the count is the argument, not any one instance.** A single occurrence
+  reads as "one field needed a fix"; four occurrences of the identical shape — an owner-authorised,
+  gate-tightening-or-neutral correction to an ALREADY-REGISTERED manifest, with no way to apply it
+  except close-and-re-register — is a missing CAPABILITY, not four separate defects. The fix is not
+  per-field.
+
+  **Same gap already named, not a new root cause.** This is exactly
+  `docs/autopilot-templates/level3-workflow.md:465`'s §8 gap #4 ("An authorized change has no path into
+  a hash-locked registration"), tracked locally at `precondition-halt-and-hashlock-force-full-rebuild`
+  (its hash-lock half) and adjacent to `two-manifests-nothing-checks-they-agree` (the authored/runtime
+  split that makes the lock invisible until it bites) and `hash-lock-cost-evidence` (claim 1, same
+  shape measured inside this repo). This row adds a fourth, independently-measured data point from
+  OUTSIDE this repo to that same open gap.
+
+  **The only workaround available today, and what it does and does not do:** put the correction in an
+  underscore-prefixed manifest key, naming live source as the authority instead of the stale
+  hash-locked value. `two-manifests-nothing-checks-they-agree`'s own reproducer excludes every
+  `^_`-prefixed key from the authored/runtime comparison (its `excl` jq filter), so an underscore key
+  changes nothing the hash covers — verified to leave the sync diff empty and the lock intact. **It
+  documents a withdrawal; it does not perform one.** The hash-locked field itself keeps asserting the
+  stale value; a reader still has to notice the underscore note and apply it by hand.
+
+  **Confirmed present in this repo's own copy, not only reported from the other repo:**
+  `scripts/autopilot-scope-gate`'s `register` subcommand computes `registered-manifest.sha256` from the
+  full runtime manifest file at register time, with no field-level exclusion — so the identical
+  close-and-re-register cost applies here too, for any post-register correction to a hash-covered
+  field, including one that only tightens the gate.
+
+  **Trigger to close:** the canonical kit gains an amend-in-place path for a hash-locked manifest, used
+  only when the owner authorises the change and the diff does not loosen risk/round-count/security
+  posture — the same direction `precondition-halt-and-hashlock-force-full-rebuild` already proposes.
+
+---
+
+## task: negative-scope-must-not-carry-decision-rules
+title: Authoring rule — `negative_scope` may hold only immutable scope exclusions, never a decision rule
+status: planned
+risk: P2
+change_class: process-discipline
+design_state: designed
+depends_on: []
+invariants: [kit-integrity, review-integrity]
+scope: []
+manifest: docs/autopilot-manifests/negative-scope-must-not-carry-decision-rules.json
+merged_probe: none — authoring/policy rule, no code symbol
+notes: |
+  **Rule, distilled from `hash-locked-registration-has-no-path-for-authorised-change`'s v4 (same slice,
+  same field, two different rounds, two different failures).** `negative_scope` is hash-locked at
+  `register` AND compared field-by-field between the authored contract and the runtime manifest
+  (`two-manifests-nothing-checks-they-agree`'s reproducer treats it as gate-bound, not a `_`-prefixed
+  note). Both are appropriate for its actual job — pinning an EXCLUSION so a slice cannot quietly widen
+  into another file or concern mid-flight. Neither is appropriate for a DECISION RULE, because a
+  decision rule is precisely the kind of text review is expected to revise as understanding improves;
+  something reviewable-and-revisable does not belong inside a reviewable-but-frozen field.
+
+  **Concrete failure this rule would have prevented:** `negative_scope` v4 round 2 (sibling row) carried
+  an active safety waiver as scope-exclusion prose. When the waiver was withdrawn, the correction had
+  nowhere hash-locked-but-live to go — the sibling row's underscore-key workaround exists BECAUSE this
+  rule was violated first. Following this rule going in removes the need for that workaround going out.
+
+  **What `negative_scope` should hold instead:** a fixed list of files/concerns the slice will not
+  touch, stated as boundary facts ("does not touch the publish path", "no migration"), matching the
+  negative-scope style already used in this file's own `Reviewed`-spec rows (e.g.
+  `session-draft-lifecycle-commands`'s own notes: "NEGATIVE SCOPE: no public_sessions projection, no
+  migration, no new action-class literal, ..."). A decision rule — anything that could be correct today
+  and wrong tomorrow without the slice's boundary itself changing — belongs in live source (the spec,
+  the decisions log, or manifest prose OUTSIDE the hash-bound fields), not in `negative_scope`.
+
+  **Trigger to close:** ratified as an authoring rule (CLAUDE.md, a skill, or the manifest template's
+  own guidance), the same way `manifest-verification-smoke-run-before-lock`'s four proposals are
+  waiting on ratification rather than on further design.
+
+---
+
+## task: security-review-reason-validated-but-never-transmitted
+title: "`security_review.reason` is validated as required prose but never reaches the reviewer prompt"
+status: planned
+risk: P2
+change_class: kit-maintenance
+design_state: awaiting_owner
+depends_on: []
+invariants: [kit-integrity, review-integrity]
+scope: [scripts/autopilot-review-readiness.mjs]
+manifest: docs/autopilot-manifests/security-review-reason-validated-but-never-transmitted.json
+merged_probe: null
+_probe_note: Not designed yet — fix shape (interpolate manifest.scope/negative_scope/reason into the
+  security prompt, pass a structured context object, or something else) is undecided. When scheduled,
+  bind the symbol the fix introduces to the prompt construction; do NOT bind `securityPrompt`,
+  `runReview`, or `securityReview` themselves — all three already exist on origin (verified via `git
+  grep` in this repo, `scripts/autopilot-review-readiness.mjs`) and would false-flip "merged" at author
+  time.
+notes: |
+  **Confirms `docs/autopilot-templates/level3-workflow.md:465` (§8 gap #1, "the reviewer receives no
+  scope") extends past the code-review round it was written about, to the security round too — measured
+  directly in this repo's own copy of the shared script, not only reported from the other repo.**
+
+  `scripts/autopilot-review-readiness.mjs:489` — `requireString(securityReview.reason,
+  "security_review.reason")` — HALTs `CONTRACT_INVALID` unless the manifest carries a non-empty prose
+  reason for why the change needs a security round: the author's threat model, naming the trust
+  boundary, secret, permission, external input, money or deployment surface the change touches and why.
+
+  That threat model is then read exactly nowhere. `securityPrompt` (`:948-957`, verified by reading the
+  literal array in this repo's copy) is a FIXED array of five generic sentences ("Check trust
+  boundaries, auth, secrets, permissions, external input, money and deployment effects") with no
+  interpolation of `manifest.scope`, `manifest.negative_scope`, or `securityReview.reason` anywhere in
+  its construction. The reviewer that runs the actual security round sees the diff and five generic
+  sentences; the specific reason the manifest was required to state never reaches it.
+
+  **Consequence:** a manifest can pass `register` only by writing a precise, correct threat model, and
+  that precision buys nothing at the point it matters — the reviewer forms its own guess at scope from
+  the diff alone, the same failure mode §8 gap #1 already names for the code round (an out-of-scope
+  suggestion can halt like a defect; a genuinely narrow threat model gets reviewed as if unbounded).
+
+  **Trigger to close:** the security prompt construction reads `manifest.scope`,
+  `manifest.negative_scope`, and `securityReview.reason` and includes them in the prompt sent to the
+  reviewer — matching whatever resolution `level3-workflow.md` §8 gap #1 eventually picks for the code
+  round, applied to both call sites in the same fix rather than serially.
+
+---
+
+## task: ap-finish-slug-divergence-after-worktree-move
+title: "`ap-finish.sh` derives WT/BR/STATE from `$SLUG` after the fact — `git worktree move` can silently break the mapping"
+status: planned
+risk: P2
+change_class: kit-maintenance
+design_state: awaiting_owner
+depends_on: []
+invariants: [kit-integrity]
+scope: [scripts/ap-finish.sh]
+manifest: docs/autopilot-manifests/ap-finish-slug-divergence-after-worktree-move.json
+merged_probe: null
+_probe_note: Not designed yet. When scheduled, bind the symbol the fix introduces (e.g. a real
+  worktree-path lookup replacing the literal construction) — do NOT bind `WT`, `BR`, `STATE`, or
+  `SLUG`, all four already exist on origin (`scripts/ap-finish.sh:59-61`, verified via `git grep`) and
+  would false-flip "merged" at author time.
+notes: |
+  **Measured in a different repo consuming this same kit (the `db:reset:test` slice); the mechanism is
+  confirmed present in this repo's own copy of the script.**
+
+  `scripts/ap-finish.sh:59-61` (this repo, same lines in the shared kit): `WT`, `BR`, and `STATE` are
+  ALL constructed as literal paths from a single `$SLUG` argument —
+  `WT="$ROOT/.autopilot/worktrees/$SLUG"`, `BR="feat/$SLUG"`, `STATE="$WT/.autopilot/state/$SLUG"` —
+  never read back from git's own worktree registry. `git worktree move` updates the worktree's
+  registered path and the child's `.git` file, but does not rename
+  `.autopilot/worktrees/<old-slug>` to match a new slug, and nothing here re-derives `WT`/`STATE` after
+  a move.
+
+  **Narrowed trigger, from real reproduction, not speculation:** two lanes that had been moved (`L7v2`,
+  `L5v2`) diverged — `ap-finish.sh <slug>` computed a `$WT` that no longer matched where the worktree
+  actually lived. Three lanes created directly at their final names (`v3`, `v4`, `v5`) never diverged,
+  because there was no move for the literal construction to miss. **This fires only on worktree
+  move/rename after creation, not on ordinary creation-and-finish** — scope the fix verification to a
+  move-then-finish reproduction, not a general worktree-lifecycle audit.
+
+  **Trigger to close:** `ap-finish.sh` derives `WT` (and therefore `STATE`) from git's actual worktree
+  registry (e.g. `git worktree list --porcelain`) rather than from a literal `$SLUG`-based path, or
+  refuses fail-closed with a clear message when the literal path and the registry disagree, instead of
+  silently operating on the wrong directory.
+
+---
+
+## task: worktree-identity-symlink-defense
+title: Three P1s on `ap-finish.sh`'s worktree-removal path (symlink redirect ×2 shapes, TOCTOU) — designed fix, landing NOT confirmed in this repo
+status: planned
+risk: P1
+change_class: security-posture
+design_state: designed
+depends_on: []
+invariants: [kit-integrity, delegation-safety]
+scope: [scripts/ap-finish.sh]
+manifest: docs/autopilot-manifests/worktree-identity-symlink-defense.json
+merged_probe: null
+_probe_note: Instructed as LANDED. Could not confirm: `expected_worktree_path` does not appear anywhere
+  in this repo — not in the working tree (`scripts/ap-finish.sh` currently does a bare `git -C "$ROOT"
+  worktree remove "$WT"` at line 259, with no identity/symlink check of any kind), not in any of this
+  repo's 192 local branches including `archive/*` (checked with `git log --all
+  -S"expected_worktree_path"`, zero hits), and not in `.autopilot/state*`, `.autopilot/dispositions`, or
+  `.autopilot/landings`. The sibling row `ap-finish-untracked-counts-as-dirty` (the task this slice
+  presumably grew from) is still `status: idea`, never registered. Recorded here as a fully-specified,
+  ready-to-build fix per the content given — left `planned`, not `merged`, and this field left `null`
+  rather than asserting a symbol this repo cannot show. If this landed somewhere this check cannot see,
+  flip `status: merged` and this field to the real symbol + SHA; do not carry `merged` forward from this
+  row without that correction, since a `--check` reconcile pass would find nothing here to confirm it
+  by.
+notes: |
+  **Three P1 findings, each surviving the round before it, on `ap-finish.sh`'s worktree-removal path**
+  (currently just `git -C "$ROOT" worktree remove "$WT"`, line 259, no identity check at all):
+    1. a symlink AT the worktree path itself, redirecting removal to a different, real worktree;
+    2. a symlink at an ANCESTOR directory of the worktree path, achieving the same redirection while
+       the leaf itself stays an ordinary directory — passes any check that only inspects the leaf;
+    3. a TOCTOU window between verifying the path and acting on it — the verified path and the
+       acted-on path are two separate operations something else can split in between.
+
+  **Why the first three fix attempts each passed review and still didn't close it:** every prior
+  attempt verified the path by resolving it and comparing the result to ANOTHER resolved path — two
+  values derived the same way still agree even when both are downstream of the same symlink. Closed by
+  `expected_worktree_path`: it constructs the expected location independently, from the repo root's own
+  physical path, and never compares two values that both went through path resolution. TOCTOU is closed
+  the same way structurally — capture ONE verified physical path once, then use that captured value for
+  every subsequent operation, instead of re-deriving or re-resolving at each step.
+
+  **The scope-creep lesson this slice paid for, worth carrying into any future review loop:** a review
+  finding that ADDS A CAPABILITY — closing a new attack surface, defending a new class of misdirection —
+  is a SCOPE CHANGE requiring an owner decision, not something a lane absorbs on its own authority. That
+  distinction is what turned what should have been a two-line fix (gate tree-clean on tracked files
+  only, matching `ap-merge.sh`'s own already-shipped precedent — see `ap-finish-untracked-counts-as-dirty`)
+  into eleven review rounds: every finding in those rounds was real and every fix was correct, but no
+  one stopped at the first finding that widened the job itself to ask whether closing that gap was still
+  the same task. Apply this forward: when a round's finding is "and also defend against X" rather than
+  "the stated fix is wrong or incomplete," that is the moment to stop and ask, not the moment to keep
+  fixing.
+
+---
+
+## task: git-worktree-remove-refuses-stale-natively
+title: Unforced `git worktree remove` already refuses a stale/`.git`-less directory on its own — no custom pre-check needed
+status: idea
+risk: P3
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity]
+scope: []
+manifest: docs/autopilot-manifests/git-worktree-remove-refuses-stale-natively.json
+merged_probe: none — documents existing native git behavior, no code symbol to introduce
+notes: |
+  **Measured directly (isolated `/tmp` sandbox, this session — not this repo, not inferred):** with a
+  worktree registered normally and then made stale two different ways —
+    (a) the child worktree's own `.git` file removed, leaving the leaf directory behind — `git worktree
+        remove` refuses: `fatal: validation failed, cannot remove working tree: '<path>/.git' does not
+        exist`, exit 128, entry stays listed as `prunable`, directory untouched;
+    (b) the admin directory under `.git/worktrees/<name>/` removed instead, leaving the child's `.git`
+        file dangling — `git worktree remove` refuses: `fatal: '<path>' is not a working tree`, exit
+        128, nothing touched. This second form matches, word for word, what a stale
+        `.autopilot/worktrees/<slug>` directory would produce.
+  Both unforced. Neither mutates anything before refusing.
+
+  **Why this is worth recording rather than assumed:** it is tempting, while hardening
+  `ap-finish.sh`'s worktree-removal path (see `worktree-identity-symlink-defense`), to also add a
+  staleness pre-check ahead of the `git worktree remove` call. That would be redundant work defending
+  against something git already refuses safely on its own — the actual gap in that path is IDENTITY (is
+  this the RIGHT worktree), not STALENESS (is this A worktree at all). Keep the two concerns separate:
+  don't let a staleness re-check sneak into an identity-defense fix as a "might as well."
+
+  **`status: idea`, not `planned`, deliberately:** there is nothing to build here — the finding is that
+  an already-correct native behavior means LESS code is needed, not more. Marking it `planned` would
+  read as schedulable engineering work to a bot scan, and there is none.
+
+---
+
+## task: worktree-branch-identity-not-separately-verified
+title: The (designed, not-yet-confirmed-landed) worktree identity check verifies path, not branch
+status: idea
+risk: P3
+change_class: kit-maintenance
+depends_on: [worktree-identity-symlink-defense]
+invariants: [kit-integrity, delegation-safety]
+scope: []
+manifest: docs/autopilot-manifests/worktree-branch-identity-not-separately-verified.json
+merged_probe: null
+_probe_note: Contingent on `worktree-identity-symlink-defense`, which is itself not confirmed landed in
+  this repo (see that row's `_probe_note`) — nothing to bind until that mechanism exists to extend.
+notes: |
+  **Advisory, pre-existing — a residual gap in the design from `worktree-identity-symlink-defense`, not
+  a new finding.** That check (as designed; landing unconfirmed here) confirms the worktree path
+  resolves to its expected canonical location, but does not separately verify that the branch checked
+  out AT that location equals `feat/$SLUG`. A path can be identity-correct while the branch inside it is
+  not, and nothing in the described design catches that combination.
+
+  **No concrete scenario found where this matters, given the path check holds.** Recorded as a known
+  boundary of the design, not as an active exploit — if the path resolution is trustworthy (which is the
+  entire point of `expected_worktree_path`), reaching a mismatched branch requires a SEPARATE failure
+  (e.g. something checking out a different branch inside an already-correct worktree) that this finding
+  does not itself demonstrate. Keep `idea`, not `planned`, until a concrete scenario or a concrete
+  low-cost check is identified — don't build a defense for an unconfirmed threat.
+
+---
+
+## task: worktree-registry-absent-vs-hidden-ambiguity
+title: "`ap-finish.sh`'s worktree existence check can't tell absent from hidden-by-an-unsearchable-ancestor"
+status: idea
+risk: P3
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity, delegation-safety]
+scope: [scripts/ap-finish.sh]
+manifest: docs/autopilot-manifests/worktree-registry-absent-vs-hidden-ambiguity.json
+merged_probe: null
+_probe_note: Not designed yet — no fix chosen. When scheduled, bind the symbol the fix introduces — do
+  NOT bind the existing `[ -d "$WT" ]` test or `registry_status()` (`scripts/ap-finish.sh:67,82`), both
+  already exist on origin.
+notes: |
+  **Advisory, pre-existing — applies to code already shipped in this repo, independent of whether
+  `worktree-identity-symlink-defense` ever lands.** `scripts/ap-finish.sh:82`, `[ -d "$WT" ]`, is the
+  existence check gating whether the dirty-tree check runs at all; `registry_status()` (`:67-80`)
+  separately reads `.autopilot/INFLIGHT.md` by awk. Neither distinguishes a genuinely absent `$WT`
+  (nothing was ever created at that path) from one that exists but is hidden by a non-searchable
+  ancestor directory (e.g. a permission-denied parent) — both make `[ -d "$WT" ]` return false the same
+  way, and the script takes the same "absent" branch (line 89-91) either way.
+
+  **No concrete scenario found where this matters today** — `.autopilot/worktrees/` is repo-local and
+  not ordinarily permission-restricted mid-tree. Recorded as a known ambiguity in the existing check for
+  whoever next touches this function, not as an active exploit.
