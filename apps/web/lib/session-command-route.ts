@@ -596,15 +596,20 @@ export function mapSessionCommandError(error: unknown): Response | null {
   // type that is supposed to decide what may go on the wire, had no view of the value actually
   // emitted. Narrowing instead puts the check and the emit on ONE derivation and removes the cast.
   //
-  // Honest note on what this line can and cannot catch, because the distinction was measured
-  // rather than assumed. At runtime it is currently UNREACHABLE: every key in the two tables below
-  // is a registered code, so any code that would fail here has already returned null at the
-  // table-miss check. A test that forges an unregistered code proves nothing for that reason —
-  // it exits earlier. The guarantee that actually has teeth is therefore the COMPILE-TIME one:
-  // both tables are keyed on ApiErrorCode, so adding an unregistered code to either is a `tsc`
-  // error, which is what `pnpm -r run typecheck` enforces on every change. This narrowing is what
-  // lets that typing exist without a cast, and it fails closed to a generic 500 if the two ever
-  // diverge at runtime.
+  // ORDER MATTERS: this narrowing runs BEFORE the table lookups, so an UNREGISTERED code fails
+  // here while a REGISTERED-but-unmapped one falls through to the table-miss check below. A test
+  // must pick its forged code against that order — one aimed at the wrong branch passes while
+  // proving nothing (codex round-01 [P2]).
+  //
+  // Measured honestly: this line is runtime-REDUNDANT. Deleting it changes no observable
+  // behaviour, because an unregistered code is necessarily absent from both tables and fails
+  // closed one check later with the same null. It is kept for the compile-time reason below, not
+  // because it catches anything the table miss would not.
+  //
+  // This narrowing is also what lets the two tables be keyed on ApiErrorCode rather than string,
+  // which is the stronger, COMPILE-TIME half of the same guarantee: adding a row whose code is not
+  // in API_ERROR_CODES fails `tsc`, enforced by `pnpm -r run typecheck` on every change. This line
+  // is the runtime backstop if the two ever diverge.
   if (!isApiErrorCode(code)) return null;
   const status = STATUS_BY_CODE.get(code);
   const message = MESSAGE_BY_CODE.get(code);

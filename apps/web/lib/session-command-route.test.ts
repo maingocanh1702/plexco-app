@@ -654,20 +654,12 @@ describe("mapSessionCommandError", () => {
     [new SessionCloseError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
     [new SessionCloseError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
     [new SessionCloseError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
-    [
-      new SessionCloseError("CANCEL_REQUIRES_REVIEW", "internal"),
-      "CANCEL_REQUIRES_REVIEW",
-      400,
-    ],
+    [new SessionCloseError("CANCEL_REQUIRES_REVIEW", "internal"), "CANCEL_REQUIRES_REVIEW", 400],
     [new SessionCancelError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
     [new SessionCancelError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
     [new SessionCancelError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
     [new SessionCancelError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
-    [
-      new SessionCancelError("CANCEL_REQUIRES_REVIEW", "internal"),
-      "CANCEL_REQUIRES_REVIEW",
-      400,
-    ],
+    [new SessionCancelError("CANCEL_REQUIRES_REVIEW", "internal"), "CANCEL_REQUIRES_REVIEW", 400],
     [new SessionPublishAuthorizationError(), "TENANT_SUSPENDED", 403],
     [new SessionUpdateAuthorizationError(), "TENANT_SUSPENDED", 403],
     [new SessionCloseAuthorizationError(), "TENANT_SUSPENDED", 403],
@@ -732,31 +724,52 @@ describe("mapSessionCommandError", () => {
     expect(mapSessionCommandError(undefined)).toBeNull();
   });
 
-  // A domain error carrying a code in NEITHER lookup table is a contract gap, not a client error.
-  // Fail closed: null, so the caller rethrows and it surfaces as a generic 500 rather than being
-  // dressed up with a guessed status.
-  it("fails closed on a domain code that is in neither lookup table", () => {
+  // The mapper fails closed at TWO distinct points, and which one catches a given code depends on
+  // the order they run in. Both are covered below, with the code chosen to reach exactly one:
+  //
+  //   1. registry miss  — isApiErrorCode rejects it        (runs FIRST)
+  //   2. table miss     — STATUS/MESSAGE_BY_CODE lack it   (runs SECOND, registered codes only)
+  //
+  // An earlier revision of this suite had one test claiming to cover (2) while using an
+  // unregistered code, so it actually exercised (1) and left (2) untested — codex round-01 [P2].
+  // The forged value must therefore be picked against the order, not against intuition.
+  //
+  // Each case builds a REAL instance and mutates it, because the mapper dispatches on `instanceof`
+  // and a hand-rolled stub would never reach either branch. The double assertion is required:
+  // `code` is declared as a readonly union of the five legal literals.
+
+  // Pins the OUTCOME, and deliberately claims no more than that. Measured by mutation: deleting the
+  // isApiErrorCode guard leaves this test passing, because an unregistered code is necessarily
+  // absent from both tables too and so fails closed at (2) instead — same null, one branch later.
+  // The guard is therefore runtime-REDUNDANT; its real work is compile-time (see below). Keeping
+  // the case is still worth it: "an unregistered code never reaches a client" is the property, and
+  // it must hold no matter which check enforces it.
+  it("fails closed on a domain code that is NOT in the shared registry", () => {
     const forged = new SessionCloseError("COMMAND_ID_CONFLICT", "internal");
-    // A REAL instance mutated after construction, because the mapper dispatches on `instanceof`
-    // and a hand-rolled stub would never reach the branch under test. The double assertion is
-    // required: `code` is declared as a readonly union of the five legal literals.
     (forged as unknown as { code: string }).code = "TOTALLY_UNREGISTERED_CODE";
     expect(mapSessionCommandError(forged)).toBeNull();
   });
 
-  // NOT asserted here, deliberately, and the reason is worth keeping: "an unregistered code never
-  // reaches a client" cannot be proven by this suite. The mapper narrows through isApiErrorCode,
-  // but that branch is unreachable at runtime — every key in both lookup tables is a registered
-  // code, so a forged unregistered code exits one check earlier, at the table miss above. A test
-  // written against it passes identically with the guard deleted; that was measured, not assumed.
-  //
-  // The guarantee with actual teeth is COMPILE-TIME: STATUS_BY_CODE and MESSAGE_BY_CODE are keyed
-  // on ApiErrorCode, so adding a row whose code is not in API_ERROR_CODES fails `tsc`. The test
-  // for it is `pnpm -r run typecheck`, and it was verified by mutation — adding an unregistered
-  // key produces TS2322 on the table's declaration. api-contract.test.ts pins the same membership
-  // from the registry's side. Enumerating the table's keys here instead would need either a new
-  // export or a hand-copied list, and a hand-maintained copy is wrong in whichever version nobody
-  // remembered to edit.
+  // This one IS load-bearing, and only a registered code can make it so. Measured by mutation:
+  // deleting the table-miss check fails this test (and only this test) — without it the mapper
+  // reaches `message[0]` on an undefined lookup and throws a TypeError instead of failing closed.
+  it("fails closed on a REGISTERED code that neither lookup table maps", () => {
+    // AUTH_REQUIRED is in API_ERROR_CODES but is issued by the auth layer, never by a session
+    // command, so it is absent from both tables — which is precisely what reaches branch (2).
+    // A domain code in neither table is a contract gap, not a client error: null, so the caller
+    // rethrows and it surfaces as a generic 500 rather than being dressed up with a guessed status.
+    const forged = new SessionCancelError("COMMAND_ID_CONFLICT", "internal");
+    (forged as unknown as { code: string }).code = "AUTH_REQUIRED";
+    expect(mapSessionCommandError(forged)).toBeNull();
+  });
+
+  // Beyond these two runtime branches there is a COMPILE-TIME guarantee that no test here can
+  // express: STATUS_BY_CODE and MESSAGE_BY_CODE are keyed on ApiErrorCode, so adding a row whose
+  // code is not in API_ERROR_CODES fails `tsc`. Its check is `pnpm -r run typecheck`, verified by
+  // mutation — an unregistered key produces TS2322 on the table's declaration. api-contract.test.ts
+  // pins the same membership from the registry's side. Enumerating the table's keys here instead
+  // would need either a new export or a hand-copied list, and a hand-maintained copy is wrong in
+  // whichever version nobody remembered to edit.
 
   // codex round-02 [P2]: t() reads the request language from AsyncLocalStorage, so resolving the
   // message table at module load would freeze every message to the boot fallback and make
