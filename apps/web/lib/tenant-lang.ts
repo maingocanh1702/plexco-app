@@ -6,11 +6,20 @@ import { type Db, tenantLocale } from "@plexco/db";
  *
  * DD-118 pins `tenants.locale` as the ONLY language source for an authenticated surface, read
  * through `tenant_locale()` (migration 0035) and fail-closed to `vi`. This module exists so that
- * rule has exactly one implementation. It is NOT the "second language-resolution helper" DD-118
- * forbids — that clause bans a second *source*. Before this module the derivation was inlined in
- * `session-command-route.ts`, and wiring a second surface meant copying it. Two copies of a
- * derived value drift: one could gain a member-locale argument and the other not, and nothing
- * would fail. One function, every consumer.
+ * rule has exactly one implementation.
+ *
+ * READ THIS BEFORE REACHING FOR DD-118's SECOND-SOURCE PROHIBITION. A new file that reads a locale
+ * looks, in a cold diff, exactly like the thing DD-118 forbids. It is the opposite, and the count
+ * is what settles it:
+ *
+ *   before this change:  2 inline copies of the derivation (this file did not exist, and wiring a
+ *                        second surface meant pasting the same two lines a second time)
+ *   after  this change:  1 derivation, called by both consumers
+ *   language sources, before and after: 1 — `tenants.locale`, via `tenant_locale()`
+ *
+ * DD-118 bans a second *source*. This removes a second *copy* while leaving the source count at
+ * one. Two copies of a derived value drift: one could gain a member-locale argument and the other
+ * not, and nothing would fail. One function, every consumer.
  *
  * WHY A FUNCTION AND NOT TWO LINES AT EACH CALL SITE. The check ("did this request resolve its
  * language through the DD-118 seam?") and the action ("render this string with `t()`") are only
