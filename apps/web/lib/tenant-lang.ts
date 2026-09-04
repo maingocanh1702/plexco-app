@@ -1,0 +1,56 @@
+import { parseLang, resolveLang, type Lang } from "@plexco/core/i18n";
+import { type Db, tenantLocale } from "@plexco/db";
+
+/**
+ * THE single derivation of a request's language (DD-118).
+ *
+ * DD-118 pins `tenants.locale` as the ONLY language source for an authenticated surface, read
+ * through `tenant_locale()` (migration 0035) and fail-closed to `vi`. This module exists so that
+ * rule has exactly one implementation. It is NOT the "second language-resolution helper" DD-118
+ * forbids — that clause bans a second *source*. Before this module the derivation was inlined in
+ * `session-command-route.ts`, and wiring a second surface meant copying it. Two copies of a
+ * derived value drift: one could gain a member-locale argument and the other not, and nothing
+ * would fail. One function, every consumer.
+ *
+ * WHY A FUNCTION AND NOT TWO LINES AT EACH CALL SITE. The check ("did this request resolve its
+ * language through the DD-118 seam?") and the action ("render this string with `t()`") are only
+ * meaningfully coupled when both read one derivation. Two independent copies collude: each is
+ * self-consistent, so each looks correct in review while together they answer the same tenant in
+ * two languages.
+ *
+ * THREAT MODEL
+ *
+ *   Protects against: answering an authenticated caller in a language their tenant did not
+ *   configure — including the subtler direction, answering in a language a caller has NOT yet
+ *   earned. Language is observable output, so WHERE it is resolved is a disclosure boundary, not
+ *   formatting. A response emitted before the caller is proven to own the tenant must NOT be
+ *   rendered in that tenant's language: doing so turns any error reply into an oracle that leaks
+ *   (i) whether an arbitrary tenant id exists and (ii) what locale a stranger's club is set to,
+ *   to an unauthenticated or merely-authenticated-but-unauthorized caller. Callers therefore
+ *   invoke this function only AFTER proving the actor owns the tenant, and every response above
+ *   that point stays Vietnamese — which DD-118 ratifies as correct behaviour, not as a gap.
+ *
+ *   Does NOT protect against: a caller choosing their own language (there is no per-user override
+ *   in phase-1 and `Accept-Language` is deliberately not read — DD-118); a tenant whose stored
+ *   locale is itself wrong; a consumer that resolves correctly and then renders outside the
+ *   returned context. It also does not make `t()` calls safe by existing — a string emitted
+ *   outside `runWithLang` still renders Vietnamese, and only a test can catch that.
+ *
+ *   Rewrite this model when: a member-level locale column lands (DD-118 names this follow-up and
+ *   explicitly does NOT pre-authorize it — `memberLocale` stops being `null` and the "who is
+ *   proven" question gains a second subject), or a surface needs language BEFORE ownership is
+ *   proven, which would make the disclosure boundary above load-bearing in a way it is not today.
+ *
+ * FAIL-CLOSED. Every undetermined case resolves to `vi`. `tenantLocale` returns null for several
+ * distinct reasons — no such tenant, a non-UUID id, or an unexpected failure it logs — and its own
+ * contract says null means "undetermined", never "no such tenant". `parseLang` then rejects any
+ * stored value outside the vi/en vocabulary. Both funnel to the same default, which is what
+ * DD-118 requires.
+ *
+ * `resolveLang(null, …)` is called rather than using `parseLang`'s output directly. Today the two
+ * are identical; keeping the seam means the member-locale column has one correct place to land.
+ */
+export async function resolveTenantLang(db: Db, tenantId: string): Promise<Lang> {
+  const tenantDefault: Lang = parseLang((await tenantLocale(db, tenantId)) ?? "") ?? "vi";
+  return resolveLang(null, tenantDefault);
+}

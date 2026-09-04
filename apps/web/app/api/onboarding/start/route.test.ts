@@ -96,3 +96,61 @@ describe("POST /api/onboarding/start — issuance-fence mapping (G3-B3, D0-12)",
     expect(body.data).toMatchObject({ tenantId: "tenant-1", plan: "free", status: "active" });
   });
 });
+
+/**
+ * DD-118 bucket (b) — INTENDED behaviour, not a coverage gap.
+ *
+ * This route looks like bucket (a): it is authenticated and it CREATES a tenant, so a tenant id
+ * exists by the end. It is (b) anyway, because the bucket turns on what is true at the moment a
+ * translatable string is emitted. Every `t()` here is emitted with no tenant known-and-owned:
+ * the validation and rate-limit rejections all precede provisionTenant; SLUG_TAKEN means no tenant
+ * was created; and the AUTH_INVALID fence fires when a concurrent logout-all revoked the session,
+ * so the actor is no longer authenticated (answering THAT in the new tenant's language would also
+ * disclose that the tenant now exists). The success path carries no translatable string at all.
+ *
+ * TRIPWIRE. If a `t()` is ever added to the success path below provisionTenant, this route becomes
+ * bucket (a) and must resolve language. The last case fails when that happens.
+ */
+describe("POST /api/onboarding/start — stays Vietnamese by DD-118 (bucket b)", () => {
+  beforeEach(() => {
+    vi.mocked(currentSession).mockResolvedValue(liveSession);
+    vi.mocked(csrfOk).mockReturnValue(true);
+    vi.mocked(rateLimited).mockResolvedValue(false);
+    vi.mocked(provisionTenant).mockResolvedValue("tenant-1");
+    vi.mocked(issueSession).mockResolvedValue({ csrfToken: "new-csrf" });
+  });
+
+  async function messageOf(res: Response): Promise<string> {
+    const body = (await res.json()) as { error: { message: string } | null };
+    return body.error?.message ?? "";
+  }
+
+  it("rejects an unsupported locale in Vietnamese, even though the body asks for one", async () => {
+    const res = await POST(req({ slug: "club-a", name: "Club A", locale: "fr" }));
+    expect(res.status).toBe(400);
+    expect(await messageOf(res)).toBe("Ngôn ngữ không hỗ trợ.");
+  });
+
+  it("rejects an invalid slug in Vietnamese while requesting an en tenant", async () => {
+    const res = await POST(req({ slug: "-bad-", name: "Club B", locale: "en" }));
+    expect(res.status).toBe(400);
+    expect(await messageOf(res)).toBe("Tên CLB hoặc slug không hợp lệ.");
+  });
+
+  it("maps the issuance fence to Vietnamese: tenant exists, actor no longer authenticated", async () => {
+    vi.mocked(issueSession).mockRejectedValue(new SessionReauthRequiredError());
+    const res = await POST(req({ slug: "club-c", name: "Club C", locale: "en" }));
+    expect(res.status).toBe(401);
+    expect(await messageOf(res)).toBe("Xác thực không hợp lệ.");
+  });
+
+  // TRIPWIRE (see the block comment): the success path carries no translatable string, which is
+  // WHY this route needs no language context. Adding one makes this route bucket (a).
+  it("emits no translatable string on the success path", async () => {
+    const res = await POST(req({ slug: "club-d", name: "Club D", locale: "en" }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Record<string, unknown>; error: null };
+    expect(body.error).toBeNull();
+    expect(Object.keys(body.data).sort()).toEqual(["csrfToken", "plan", "status", "tenantId"]);
+  });
+});
