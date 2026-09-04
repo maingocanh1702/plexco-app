@@ -1,3 +1,11 @@
+> **ĐÃ GỘP HẾT 2026-09-04.** Rows 3–7 → `docs/autopilot-backlog.md` của repo này (xem ghi chú
+> giữa file). Rows 1, 2 và 8 → `Claude template/autopilot/autopilot-backlog.md` thành
+> **E10-review-finding-at-cap-deadlock**, **E11-reviewer-isolation-cwd-scoped-only**,
+> **E12-authority-not-where-the-checker-looks**. File này giữ lại làm nguồn văn xuôi — khuôn
+> fenced của canonical không có trường `notes`.
+
+---
+
 # Backlog rows pending — Plexco, 2026-09-04
 
 **Why this file exists instead of direct rows in `docs/autopilot-backlog.md`:** that file is inside

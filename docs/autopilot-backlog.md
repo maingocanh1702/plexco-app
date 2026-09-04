@@ -4689,7 +4689,10 @@ notes: |
 
 ## task: git-worktree-remove-refuses-stale-natively
 title: Unforced `git worktree remove` already refuses a stale/`.git`-less directory on its own — no custom pre-check needed
-status: idea
+status: superseded
+superseded_by: E6-git-worktree-remove-refuses-stale-natively trong `Claude template/autopilot/autopilot-backlog.md` (gộp 2026-09-04)
+superseded_note: Row này thuộc **kit canonical**, không thuộc consumer: `scope` của nó trỏ `ap-finish.sh`, một pack file `overwrite_path: kit-sync`, mà luật đứng cấm vá file kit từ trong repo consumer. Ở lại đây thì không lane Plexco nào action được — đúng lớp lỗi "quyền hạn có thật nhưng không nằm ở chỗ cơ chế kiểm tra đọc". **Nội dung không mất**: bản canonical giữ nguyên phép đo, dưới khuôn fenced `task_id` của repo đó. Bản này giữ lại làm dấu vết, không xoá.
+old_status: idea
 risk: P3
 change_class: kit-maintenance
 depends_on: []
@@ -4724,7 +4727,10 @@ notes: |
 
 ## task: worktree-branch-identity-not-separately-verified
 title: The (designed, not-yet-confirmed-landed) worktree identity check verifies path, not branch
-status: idea
+status: superseded
+superseded_by: E7-worktree-branch-identity-not-verified trong `Claude template/autopilot/autopilot-backlog.md` (gộp 2026-09-04)
+superseded_note: Cùng lý do với `git-worktree-remove-refuses-stale-natively`: nội dung thuộc kit canonical, `scope` trỏ pack file `ap-finish.sh`. **Nội dung không mất**: bản canonical giữ nguyên phép đo, dưới khuôn fenced `task_id` của repo đó. Bản này giữ lại làm dấu vết, không xoá.
+old_status: idea
 risk: P3
 change_class: kit-maintenance
 depends_on: [worktree-identity-symlink-defense]
@@ -4752,7 +4758,10 @@ notes: |
 
 ## task: worktree-registry-absent-vs-hidden-ambiguity
 title: "`ap-finish.sh`'s worktree existence check can't tell absent from hidden-by-an-unsearchable-ancestor"
-status: idea
+status: superseded
+superseded_by: E8-worktree-registry-absent-vs-hidden trong `Claude template/autopilot/autopilot-backlog.md` (gộp 2026-09-04)
+superseded_note: Cùng lý do: `scope: [scripts/ap-finish.sh]` là pack file kit-sync — bản Plexco còn trỏ nhầm đường dẫn consumer thay vì `autopilot/parallel/ap-finish.sh` của canonical. **Nội dung không mất**: bản canonical giữ nguyên phép đo, dưới khuôn fenced `task_id` của repo đó. Bản này giữ lại làm dấu vết, không xoá.
+old_status: idea
 risk: P3
 change_class: kit-maintenance
 depends_on: []
