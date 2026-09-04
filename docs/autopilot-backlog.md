@@ -3717,6 +3717,27 @@ notes: |
   **Vì sao chưa author:** cơ chế đúng phụ thuộc quyết định **KMS provider chưa pin** (chính A3 matrix cờ điều này — Q trong §9 cho luật sư/owner). Hai đường khả dĩ, ĐỪNG pre-pick: (a) hash-at-rest nếu secret chỉ cần verify-equality (khuôn verify-token DD-80); (b) envelope-encrypt (`secret_enc`) nếu runtime cần plaintext để ký/gọi provider — khả năng cao là (b) vì bot phải TỰ trình secret ra ngoài, kéo theo câu hỏi key management thật.
   **Ràng buộc kèm:** rotation path (Zalo OA cho đổi secret), zero-downtime dual-read window, và audit của lần đọc secret. Grep hiện trạng trước khi scope: `grep -rn 'zalo_bots' packages/ apps/` — xác nhận ai đọc cột này hôm nay (bot runtime) và qua role nào.
   **Không phải blocker phase-1 theo bất kỳ DD nào hiện có** — nhưng nằm trên đường webhook auth (`webhook-verification-matrix.md`) và sẽ thành finding security round đầu tiên chạm nó; đóng chủ động rẻ hơn.
+  **CẬP NHẬT 2026-09-04 — probe `zalo-credential-path-trace` đã chạy, ĐÓNG KHÔNG MERGE, nhưng kết
+  quả thu được và đo lại độc lập bởi coordinator. Row này KHÔNG còn chờ "KMS provider chưa pin".**
+  - **Sai tên cột.** Bảng `zalo_bots` có **BA** cột ứng viên, không phải một: `bot_token_enc`
+    (text NOT NULL, `schema.ts:1234`), `webhook_token` (text NOT NULL, unique index `:1244`,
+    `:1235`), `secret` (text **NULLABLE**, `:1236`). `secret` **có thật** — row này không trỏ cột ma,
+    nhưng có thể đang trỏ nhầm một trong ba.
+  - **Zero production reader/writer** của các cột credential. `secret` là cột trơ và spec đã án `DROP`.
+  - **Provider ĐÃ PIN**: AWS KMS, founder quyết 2026-07-06 (OQ-2) trong `docs/standards/decisions.md`,
+    dev giữ fallback `ENCRYPTION_KEY`. Có code fail-closed đỡ: `apps/web/lib/auth-secrets.ts:22`
+    (`SUPPORTED_KMS_PROVIDERS = {undefined, "local", "aws-kms"}`), ném lỗi ở `:31-33` với mọi giá trị khác.
+  - **Connector-is-KMS ĐÃ PIN trong spec `Reviewed`** — `feature_zalo_channel_tech.md:46` `bot_token_enc`
+    và `:48` `webhook_secret_enc` đều ghi rõ "KMS/envelope ciphertext"; `:47` nói `webhook_token` là
+    route lookup, **không phải** provider secret.
+  - **Lifecycle đã pin**: `feature_connector_onboarding_tech.md:165-174`.
+  ⇒ **Còn đúng HAI quyết định owner (O4), không phải một:** (D1) connector dùng chung khoá/instance KMS
+  với auth pepper hay khoá riêng, và ai được decrypt cái nào; (D2) audit mỗi lần đọc credential —
+  chưa spec nào pin, chính dòng `Ràng buộc kèm` ở trên đòi nó.
+  ⚠️ Khẳng định "KMS chưa pin" ở trên đến từ một tài liệu **DRAFT không phải authority**
+  (`a3-pii-data-class-matrix-DRAFT.md`) và đã lan tiếp vào **DD-117 D5** — hai chỗ đó cần đính chính.
+  Bằng chứng đầy đủ nằm ở branch `feat/zalo-credential-path-trace @ e2897f7` (giữ read-only, không
+  merge) và `.autopilot/state-archive/zalo-credential-path-trace-20260904T101437Z/`.
 
 ## task: capacity-floor-active-vs-paid-roster
 title: Sàn của `CAPACITY_BELOW_ROSTER` là roster **active**, không phải roster **đã trả tiền**
@@ -4754,3 +4775,90 @@ notes: |
   **No concrete scenario found where this matters today** — `.autopilot/worktrees/` is repo-local and
   not ordinarily permission-restricted mid-tree. Recorded as a known ambiguity in the existing check for
   whoever next touches this function, not as an active exploit.
+
+## task: manifest-template-omits-format-check
+title: `verification.canonical` trong `_TEMPLATE.json` thiếu `pnpm -w format:check`, mà CI thì chạy nó
+status: planned
+risk: P3
+change_class: autopilot-mechanism
+depends_on: []
+invariants: [kit-integrity]
+scope: [docs/autopilot-manifests/_TEMPLATE.json]
+manifest: null
+merged_probe: none — sửa một dòng trong template, không thêm symbol nào
+notes: |
+  **Đo 2026-09-04:** `.github/workflows/ci.yml:61` chạy `pnpm -w format:check`, nhưng danh sách
+  `verification.canonical` trong `docs/autopilot-manifests/_TEMPLATE.json` không có lệnh đó. Hệ quả:
+  một lane qua được cổng readiness rồi **vẫn đỏ CI** vì format — cổng và CI kiểm hai tập lệnh khác nhau.
+  Đây đúng lớp lỗi mà repo này đã đặt tên ở chỗ khác: một phép kiểm tự nhận là đủ trong khi tập lệnh
+  thật rộng hơn.
+  **Việc:** thêm `pnpm -w format:check` vào `verification.canonical` của template. Manifest đang
+  in-flight **không** retrofit (hash-locked; sửa sẽ tốn nguyên một chu kỳ re-registration).
+  **Phát hiện bởi:** lane `session-routes-close-cancel`, 04/09.
+
+## task: authored-contracts-carry-no-immutable-base-sha
+title: 0/22 authored contract có `base_sha` bất biến — chỉ runtime manifest (gitignored) mới pin base
+status: idea
+risk: P3
+change_class: autopilot-mechanism
+depends_on: []
+invariants: [kit-integrity]
+scope: []
+manifest: null
+merged_probe: none — cần quyết định owner trước khi có việc để author
+notes: |
+  **Đo 2026-09-04:** không authored contract nào dưới `docs/autopilot-manifests/` mang `base_sha`
+  bất biến — 0 trên 22 file kiểm tại thời điểm đo. Base chỉ được pin ở **runtime manifest**
+  (`.autopilot/state/<feature>/manifest.json`), mà `.autopilot/*` thì gitignored
+  (`.gitignore:56`). Nghĩa là artifact **tracked** không giữ được bằng chứng slice đã được author
+  trên base nào; bằng chứng đó sống trong một thư mục không vào git và bị archive khi `ap-finish` chạy.
+  **Trạng thái hiện tại là không đồng nhất, và đó mới là vấn đề:**
+  `docs/autopilot-manifests/session-routes-close-cancel.json` **đã** đặt `base_sha` như một ngoại lệ
+  có ghi chép (04/09), 21 file còn lại thì không.
+  **Quyết định owner cần:** hoặc 21 contract kia theo, hoặc rút ngoại lệ kia lại cho luật đồng nhất.
+  Cả hai đều bảo vệ được; **cái không bảo vệ được là để nguyên trạng nửa nọ nửa kia.**
+  **Phát hiện bởi:** lane `session-routes-close-cancel`, 04/09.
+
+## task: run-packet-l1-contradicts-dd56
+title: `be-infra-lanes-2026-09-02-RUN.md` §L1 hướng dẫn một shape route mà DD-56 amendment #1 cấm
+status: planned
+risk: P4
+change_class: docs
+depends_on: []
+invariants: [decision-integrity]
+scope: [docs/autopilot-templates/be-infra-lanes-2026-09-02-RUN.md]
+manifest: null
+merged_probe: none — doc-sync, không có symbol
+notes: |
+  **Mâu thuẫn có thật, đã đo 2026-09-04.** Mục L1 của RUN packet hướng dẫn lane dựng route theo một
+  shape mà **điều khoản 2 của DD-56 amendment #1 cấm** (mọi phân giải role phải đi qua đúng một
+  choke-point; cấm `role === …` ở bất kỳ chỗ nào khác).
+  **Ai thắng đã có luật:** `docs/autopilot-templates/level3-workflow.md §6.1` xếp `decisions.md` (#3)
+  **trên** RUN packet (#5) ⇒ **packet là thứ phải sửa**, không phải decision. Điều này đã được ghi
+  thành **điều khoản 8 của DD-56 amendment #2** (`decisions.md`, 04/09) nên lane nào đọc packet cũng
+  đã bị chặn đúng hướng; row này chỉ theo dõi chính cái edit vào packet.
+  **Cảnh báo cho người sửa:** packet đã đưa một lane vào vi phạm P1 một lần. Sửa xong phải grep lại
+  toàn packet cho mọi mục khác cùng shape, đừng chỉ sửa §L1 — đúng lớp lỗi "sửa một chỗ, không quét
+  hết" đã tốn nhiều vòng review ngày 04/09.
+
+## task: gates-that-fire-correctly-split-remainder-unowned
+title: Phần còn lại của split `gates-that-fire-correctly-and-cannot-say-why` chưa ai nhận
+status: idea
+risk: P3
+change_class: autopilot-mechanism
+depends_on: []
+invariants: [kit-integrity]
+scope: []
+manifest: null
+merged_probe: none — chưa xác định được phạm vi còn lại
+notes: |
+  **Đo 2026-09-04.** Có landing record `gates-that-fire-correctly-and-cannot-say-why--migrate-p17-cause.json`,
+  nhưng prompt L4a khai `TASK: gates-that-fire-correctly-and-cannot-say-why -- SPLIT, see section 0`.
+  ⇒ **một mảnh** của split đã land; **không** chứng minh được parent đã xong.
+  **Vì sao landing record không giải quyết được câu hỏi này:** nó chỉ mang metadata disposition
+  (`status`, `mode`, `base_sha`, `head_sha`, `recorded_at`, `recorded_by`) — **không có `scope`**.
+  Nên nó không nói được mảnh nào đã đóng và mảnh nào chưa.
+  **Việc:** đọc section 0 của `docs/lane-prompts-2026-09-04/5-L4a-migrate-gate.md`, liệt kê split gồm
+  mấy mảnh, rồi hoặc nhận phần còn lại hoặc đóng nó tường minh. Đừng mở lane L4a trước bước này.
+  **Ghi nhận riêng:** một phiên đã đọc nhầm landing record đó thành "lane đã xong". Landing record
+  không phải bằng chứng về phạm vi.
