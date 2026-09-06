@@ -186,3 +186,25 @@ describe("verifyGoogleIdToken — proof matrix negatives (D1-5, table-driven)", 
     expect(res).toEqual({ ok: false, reason: "AUTH_INVALID" });
   });
 });
+
+/**
+ * Audit 2026-09-06 W-13 — the verifier pins `algorithms: ["RS256"]`. A token signed with a
+ * different family (here PS256 — a real algorithm jose would otherwise accept for an RSA key,
+ * unlike the JWKS-refused HS256/none) is rejected as a generic AUTH_INVALID, and the assertion
+ * checks the FAILING token's header so the test cannot pass by accident.
+ */
+describe("verifyGoogleIdToken — algorithm pin (audit W-13)", () => {
+  it("rejects a token whose header claims an algorithm other than RS256, even when the key would verify it", async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const psKey = (await generateKeyPair("PS256")).privateKey;
+    const token = await new SignJWT(validClaims() as Record<string, unknown>)
+      .setProtectedHeader({ alg: "PS256", kid: KID })
+      .setIssuedAt(nowSec)
+      .setExpirationTime(nowSec + 3600)
+      .sign(psKey);
+    expect(JSON.parse(Buffer.from(token.split(".")[0]!, "base64url").toString()).alg).toBe("PS256");
+    const result = await verify(token);
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toBe("AUTH_INVALID");
+  });
+});

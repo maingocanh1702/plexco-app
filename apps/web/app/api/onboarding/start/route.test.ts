@@ -175,3 +175,47 @@ describe("POST /api/onboarding/start — stays Vietnamese by DD-118 (bucket b)",
     expect(Object.keys(body.data).sort()).toEqual(["csrfToken", "plan", "status", "tenantId"]);
   });
 });
+
+/**
+ * Audit 2026-09-06 W-8 — the body is bounded (4 KiB) and typed, and the club name is capped at
+ * 120 chars (mirrors tenants_name_len_chk, migration 0039) so the CHECK never surfaces as a 500.
+ */
+describe("POST /api/onboarding/start — bounded body + name length (audit W-8)", () => {
+  beforeEach(() => {
+    vi.mocked(currentSession).mockResolvedValue(liveSession);
+    vi.mocked(csrfOk).mockReturnValue(true);
+    vi.mocked(rateLimited).mockResolvedValue(false);
+    vi.mocked(provisionTenant).mockReset().mockResolvedValue("tenant-1");
+    vi.mocked(issueSession).mockResolvedValue({ csrfToken: "new-csrf" });
+  });
+
+  function rawReq(body: string, contentType: string | null = "application/json"): Request {
+    const headers: Record<string, string> = { "x-csrf-token": "secret" };
+    if (contentType !== null) headers["content-type"] = contentType;
+    return new Request("https://plexco.app/api/onboarding/start", { method: "POST", headers, body });
+  }
+
+  it("rejects a body over 4 KiB with 413 before provisioning, even with a lying Content-Length", async () => {
+    const big = JSON.stringify({ slug: "club-a", name: "A", pad: "x".repeat(5000) });
+    const res = await POST(rawReq(big));
+    expect(res.status).toBe(413);
+    expect(provisionTenant).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-JSON content type with 400", async () => {
+    for (const ct of ["text/plain", "application/x-www-form-urlencoded", null]) {
+      const res = await POST(rawReq(JSON.stringify({ slug: "club-a", name: "A" }), ct));
+      expect(res.status, String(ct)).toBe(400);
+    }
+    expect(provisionTenant).not.toHaveBeenCalled();
+  });
+
+  it("rejects a 121-char club name with 400 and accepts 120", async () => {
+    const res121 = await POST(req({ slug: "club-a", name: "x".repeat(121) }));
+    expect(res121.status).toBe(400);
+    expect(provisionTenant).not.toHaveBeenCalled();
+    const res120 = await POST(req({ slug: "club-a", name: "x".repeat(120) }));
+    expect(res120.status).toBe(200);
+    expect(provisionTenant).toHaveBeenCalledOnce();
+  });
+});

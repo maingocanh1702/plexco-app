@@ -159,7 +159,11 @@ describe("POST /api/auth/logout-all — real DB wrapper", () => {
     expect(await activeCount(accountId)).toBe(0); // all revoked in the real DB
     // account was derived server-side from the token — the bystander is untouched
     expect(await activeCount(bystander.accountId)).toBe(1);
-    expect(store.delete).toHaveBeenCalledWith(SESSION_COOKIE);
+    expect(store.set).toHaveBeenCalledWith(
+      SESSION_COOKIE,
+      "",
+      expect.objectContaining({ maxAge: 0, path: "/", httpOnly: true }),
+    ); // cleared as an expiring SET: a bare delete() omits Secure and a prefixed cookie ignores it
   });
 
   it("D0-4: replaying the revoked cookie returns 401 AUTH_INVALID with zero mutation", async () => {

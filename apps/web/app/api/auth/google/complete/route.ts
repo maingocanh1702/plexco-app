@@ -1,6 +1,7 @@
 import { t } from "@plexco/core/i18n";
 import { consumeOauthCompletionHandoff } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
+import { log } from "../../../../../lib/log";
 import {
   appDb,
   clientIp,
@@ -41,8 +42,10 @@ const MAX_COMPLETE_BODY_BYTES = 1024;
 export async function POST(request: Request): Promise<Response> {
   try {
     return await handleComplete(request);
-  } catch {
+  } catch (error) {
     // Fail closed to the home page with a generic error — never a bare Next 500.
+    // Logged by class only (audit 2026-09-06 W-11); the handoff never reaches the logger.
+    log.error("auth.google.complete.unhandled", { error });
     const base = process.env.APP_BASE_URL?.trim() ?? "";
     return redirect(`${base}/?auth_error=AUTH_UNAVAILABLE`);
   }

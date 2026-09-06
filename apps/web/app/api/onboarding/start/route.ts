@@ -15,6 +15,9 @@ import {
  * (active immediately, BL-BIL-1) + open the onboarding run. Idempotent by
  * slug for the same owner.
  */
+const MAX_START_BODY_BYTES = 4096;
+const MAX_TENANT_NAME_CHARS = 120;
+
 export async function POST(request: Request): Promise<Response> {
   const session = await currentSession();
   if (!session) return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
@@ -25,9 +28,24 @@ export async function POST(request: Request): Promise<Response> {
     return err("RATE_LIMITED", t("Quá nhiều lần thử — đợi.", "Too many attempts — wait."), 429);
   }
 
+  // Bounded, typed body (audit 2026-09-06 W-8): `request.json()` had no ceiling. The real
+  // payload is four short strings; 4 KiB is ~30× that. Declared length is checked first, then
+  // the bytes actually read — a missing or lying Content-Length must not bypass the cap.
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("application/json")) {
+    return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
+  }
+  const declared = Number(request.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_START_BODY_BYTES) {
+    return err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413);
+  }
   let body: { slug?: unknown; name?: unknown; timezone?: unknown; locale?: unknown };
   try {
-    const raw: unknown = await request.json();
+    const text = await request.text();
+    if (Buffer.byteLength(text, "utf8") > MAX_START_BODY_BYTES) {
+      return err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413);
+    }
+    const raw: unknown = JSON.parse(text);
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
     }
@@ -53,7 +71,9 @@ export async function POST(request: Request): Promise<Response> {
   if (timezone !== undefined && !isValidTimeZone(timezone)) {
     return err("INVALID_BODY", t("Múi giờ không hợp lệ.", "Invalid timezone."), 400);
   }
-  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug) || name.length === 0) {
+  // MAX_TENANT_NAME_CHARS mirrors tenants_name_len_chk (0039): reject here with a 400 rather
+  // than let the CHECK surface as a 500 from tenant_provision.
+  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug) || name.length === 0 || name.length > MAX_TENANT_NAME_CHARS) {
     return err(
       "INVALID_BODY",
       t("Tên CLB hoặc slug không hợp lệ.", "Invalid club name or slug."),

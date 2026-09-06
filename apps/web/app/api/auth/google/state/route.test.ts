@@ -167,3 +167,41 @@ describe("GET /api/auth/google/state (D1-1)", () => {
     expect(store.set).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Audit 2026-09-06 W-9 — a cross-site page cannot spend the victim's bucket or overwrite the
+ * binding cookie through `<img src>`: a non-navigation Sec-Fetch-Dest is refused BEFORE the
+ * limiter, the row, and the cookie. Absent header (old browsers) still passes — defence in depth.
+ */
+describe("GET /api/auth/google/state — fetch-metadata gate (audit W-9)", () => {
+  beforeEach(() => {
+    vi.mocked(rateLimitCheck).mockReset().mockResolvedValue(true);
+    vi.mocked(oauthTxn.issueOauthTransaction).mockReset().mockResolvedValue(undefined);
+  });
+
+  function reqWithDest(dest: string | null): Request {
+    const headers: Record<string, string> = { "do-connecting-ip": "1.2.3.4" };
+    if (dest !== null) headers["sec-fetch-dest"] = dest;
+    return new Request("https://plexco.app/api/auth/google/state", { headers });
+  }
+
+  it("refuses image/script/iframe/empty fetches with 403 and touches NOTHING (no limiter, no row, no cookie)", async () => {
+    const store = mockCookieStore();
+    for (const dest of ["image", "script", "iframe", "empty", "object"]) {
+      const res = await GET(reqWithDest(dest));
+      expect(res.status, dest).toBe(403);
+    }
+    expect(rateLimitCheck).not.toHaveBeenCalled();
+    expect(oauthTxn.issueOauthTransaction).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it("serves a top-level navigation (Sec-Fetch-Dest: document) and a header-less request", async () => {
+    mockCookieStore();
+    for (const dest of ["document", "Document", null]) {
+      const res = await GET(reqWithDest(dest));
+      expect(res.status, String(dest)).toBe(302);
+    }
+    expect(oauthTxn.issueOauthTransaction).toHaveBeenCalledTimes(3);
+  });
+});

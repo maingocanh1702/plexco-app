@@ -64,6 +64,10 @@ export async function verifyGoogleIdToken(
     // them by default), and maxTokenAge enforces iat freshness + rejects a
     // future-dated iat (codex round-01 [P2]).
     ({ payload } = await jwtVerify(input.idToken, jwks, {
+      // Google signs ID tokens with RS256 only; pinning it removes the whole "which algorithm
+      // does the header claim" surface (audit 2026-09-06 W-13). A JWKS of RSA keys already makes
+      // HS256/none unworkable in jose; the explicit list makes that a stated property.
+      algorithms: ["RS256"],
       issuer: [...GOOGLE_ISSUERS],
       audience: input.clientId,
       clockTolerance: CLOCK_TOLERANCE,

@@ -133,10 +133,14 @@ describe("GET /api/auth/google/callback", () => {
         ttlSeconds: expect.any(Number),
       }),
     );
-    // No session cookie is set at the callback (that happens same-site at /complete).
-    expect(store.set).not.toHaveBeenCalled();
-    // The binding cookie is consumed single-use on a state match.
-    expect(store.delete).toHaveBeenCalled();
+    // No SESSION cookie is set at the callback (that happens same-site at /complete); the only
+    // set() here is the binding cookie being expired, which is how a __Secure- cookie is cleared.
+    expect(store.set).toHaveBeenCalledOnce();
+    expect(store.set).toHaveBeenCalledWith(
+      expect.stringContaining("plx_oauth_google"),
+      "",
+      expect.objectContaining({ maxAge: 0 }),
+    );
     expect(res.status).toBe(200);
   });
 

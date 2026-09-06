@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { type DbHandle } from "@plexco/db";
+import { cookieSecure } from "./session-cookies";
 
 /**
  * Cross-site OAuth transaction — the app boundary to the 0017 store (B0 §4.1).
@@ -161,8 +162,15 @@ export function deriveAesKey(secret: Buffer, info: string): Buffer {
  * callback path so it is sent nowhere else. Value = `state.binding` (both
  * base64url, which never contains a '.').
  * ------------------------------------------------------------------------- */
-function oauthCookieName(provider: OauthProvider): string {
-  return `plx_oauth_${provider}`;
+/**
+ * `__Secure-` in production (audit 2026-09-06 W-6): the browser refuses the cookie unless it is
+ * Secure. NOT `__Host-` — that prefix demands Path=/ and this cookie is deliberately scoped to the
+ * exact callback path (D1), so a sibling-subdomain overwrite of the binding remains possible and is
+ * the residual the audit row names; the callback's state+binding must still match a live
+ * transaction row, so the toss can fixate a flow but not forge one.
+ */
+export function oauthCookieName(provider: OauthProvider, secure: boolean = cookieSecure()): string {
+  return `${secure ? "__Secure-" : ""}plx_oauth_${provider}`;
 }
 function oauthCallbackPath(provider: OauthProvider): string {
   return `/api/auth/${provider}/callback`;
@@ -174,7 +182,7 @@ export async function setOauthBindingCookie(
 ): Promise<void> {
   (await cookies()).set(oauthCookieName(provider), `${value.state}.${value.binding}`, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecure(),
     sameSite: "lax",
     path: oauthCallbackPath(provider),
     maxAge: OAUTH_TXN_TTL_SECONDS,
@@ -192,8 +200,19 @@ export async function readOauthBindingCookie(
   return { state: parts[0], binding: parts[1] };
 }
 
+/**
+ * Same prefix rule as clearSessionCookie: `__Secure-` is only accepted WITH Secure, so a deletion
+ * header without it is dropped and the binding cookie outlives the transaction it was bound to.
+ * Empty value + maxAge 0 + the original attributes.
+ */
 export async function clearOauthBindingCookie(provider: OauthProvider): Promise<void> {
-  (await cookies()).delete({ name: oauthCookieName(provider), path: oauthCallbackPath(provider) });
+  (await cookies()).set(oauthCookieName(provider), "", {
+    httpOnly: true,
+    secure: cookieSecure(),
+    sameSite: "lax",
+    path: oauthCallbackPath(provider),
+    maxAge: 0,
+  });
 }
 
 /* ---------------------------------------------------------------------------

@@ -152,7 +152,17 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/auth-secrets.ts": "c",
   "lib/google-oidc.ts": "c",
   "lib/oauth-transaction.ts": "c",
-  "lib/session-cookies.ts": "c",
+  // (b) — RECLASSIFIED 2026-09-06 (audit W-4): buildCompletionLanding renders a user-facing
+  // document (title, Continue button, <html lang>) on the pre-authentication hop, so this file
+  // DOES emit translatable output. It went unclassified as (c) because the old rule inferred
+  // "0 t() calls ⇒ 0 user-facing strings" — the landing was English-only OUTSIDE t(), which is
+  // exactly the HR5 miss the inference cannot see. The landing now goes through t(); pre-tenant
+  // ⇒ Vietnamese default, DD-118-approved.
+  "lib/session-cookies.ts": "b",
+  // (c) — logger: emits JSON lines to stdout/stderr, never a user-facing response.
+  "lib/log.ts": "c",
+  // (c) — pure routing/CSP policy consumed by middleware.ts; no response body of its own.
+  "lib/request-policy.ts": "c",
 };
 
 function discoverRouteFiles(dir: string, prefix: string): string[] {

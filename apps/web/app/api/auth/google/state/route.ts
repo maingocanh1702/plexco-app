@@ -16,6 +16,9 @@ import {
   sha256Hex,
 } from "../../../../../lib/oauth-transaction";
 import { appDb, clientIp, rateLimited } from "../../../../../lib/session-cookies";
+// W-9 gate. Lives in lib/, not here: an App Router route module may export only the HTTP verbs
+// and a fixed set of config fields — `next build` fails the whole build on anything else.
+import { isTopLevelNavigation } from "../../../../../lib/request-policy";
 
 /**
  * GET /api/auth/google/state — start the Google OIDC redirect flow (B0 §4.1,
@@ -30,6 +33,9 @@ import { appDb, clientIp, rateLimited } from "../../../../../lib/session-cookies
  */
 export async function GET(request: Request): Promise<Response> {
   const provider = "google" as const;
+  if (!isTopLevelNavigation(request)) {
+    return err("AUTH_INVALID", t("Yêu cầu không hợp lệ.", "Invalid request."), 403);
+  }
   const ip = clientIp(request);
   // Fail closed if the rate-limit store is unavailable: a limiter/storage outage
   // must still return the bounded 429, never a Next 500 that creates neither row
