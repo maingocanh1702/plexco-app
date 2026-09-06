@@ -163,6 +163,27 @@ function gitSucceeds(repoRoot, args) {
   }
 }
 
+// The ref that "main" means in THIS checkout. A pull_request or feat/** checkout on CI
+// (actions/checkout, fetch-depth: 0) has refs/remotes/origin/main but no local branch named
+// main, and git does not DWIM a bare "main" onto origin/main for merge-base — so every pinned
+// verdict failed AUTHORITY_NOT_MAIN off-main (audit 2026-09-06 X-1). Prefer the remote-tracking
+// ref (it is what "landed on main" actually means), fall back to a local main, and refuse to
+// guess beyond that: an unresolvable ref is a distinct, named error, never a silent pass.
+const MAIN_REF_CANDIDATES = ["refs/remotes/origin/main", "refs/heads/main"];
+const mainRefCache = new Map();
+export function resolveMainRef(repoRoot) {
+  if (mainRefCache.has(repoRoot)) return mainRefCache.get(repoRoot);
+  let resolved = null;
+  for (const candidate of MAIN_REF_CANDIDATES) {
+    if (gitSucceeds(repoRoot, ["rev-parse", "--verify", "--quiet", `${candidate}^{commit}`])) {
+      resolved = candidate;
+      break;
+    }
+  }
+  mainRefCache.set(repoRoot, resolved);
+  return resolved;
+}
+
 function validateAuthority({ errors, file, line, value, repoRoot, gitCheck }) {
   const match = value.match(/^([0-9a-f]{40})(?:\s|\(|$)/);
   if (!match) {
@@ -186,14 +207,25 @@ function validateAuthority({ errors, file, line, value, repoRoot, gitCheck }) {
       "AUTHORITY_SHA_UNKNOWN",
       `AUTHORITY_SHA ${sha} is not a commit available in this checkout.`,
     );
-  } else if (!gitSucceeds(repoRoot, ["merge-base", "--is-ancestor", sha, "main"])) {
-    addError(
-      errors,
-      file,
-      line,
-      "AUTHORITY_NOT_MAIN",
-      `AUTHORITY_SHA ${sha} is not an ancestor of main.`,
-    );
+  } else {
+    const mainRef = resolveMainRef(repoRoot);
+    if (!mainRef) {
+      addError(
+        errors,
+        file,
+        line,
+        "MAIN_REF_UNRESOLVABLE",
+        `Cannot resolve main in this checkout: tried ${MAIN_REF_CANDIDATES.join(", ")}.`,
+      );
+    } else if (!gitSucceeds(repoRoot, ["merge-base", "--is-ancestor", sha, mainRef])) {
+      addError(
+        errors,
+        file,
+        line,
+        "AUTHORITY_NOT_MAIN",
+        `AUTHORITY_SHA ${sha} is not an ancestor of main (${mainRef}).`,
+      );
+    }
   }
 }
 
