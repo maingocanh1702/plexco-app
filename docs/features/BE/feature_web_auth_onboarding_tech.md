@@ -1,7 +1,7 @@
 # Feature: Web Authentication & Tenant Onboarding — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.15 · 2026-08-10
+> **Version:** 2.16 · 2026-09-06
 > **Status:** Reviewed
 > **Implementation:** In progress — Onboarding v3 Telegram-era merged (`5b1193b`); Google auth lane DD-80 (migrations `0015`–`0018`: D0a revoke, `0016` email-token storage, `0017` Google-OIDC adapter, `0018` d1b completion-hop) đã merge và Safari macOS+iOS M3 measured PASS 2026-07-26. Engineering/measurement blocker đã đóng, nhưng Google login chưa có bằng chứng owner enable/go-live; `GOOGLE_OAUTH_*` template vẫn rỗng và các gate độc lập (A3 legal/PII/config) vẫn áp dụng. Email/password order-4 bundle (route/UI/provider send) chưa build, flag OFF · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_web_auth_onboarding.md`
@@ -38,7 +38,7 @@ Tables: auth/onboarding + tenant bank/Zalo. Messenger central/tenant registry an
 
 | Entry | Caller | Mô tả |
 |-------|--------|-------|
-| `GET /api/auth/google` | Browser | Initiate Google OAuth + PKCE |
+| `GET /api/auth/google/state` | Browser | Initiate Google OAuth + PKCE (path thật — `apps/web/app/api/auth/google/state/route.ts`; bảng §3 đã đúng, hàng này từng ghi `/api/auth/google`) |
 | `GET /api/auth/google/callback` | Google redirect | Verify OIDC → mint session (Lax cookie) |
 | `POST /api/auth/email/login` | Browser | Email + password → session (Strict cookie) |
 | `POST /api/auth/email/register` | Browser | Create account + email verify token |
@@ -211,7 +211,7 @@ The lifecycle below is normative. **Current-state (2026-07-23): the storage laye
 | 8 | Data Integrity | Chat already bound to another tenant | Conflict error — `CHAT_ALREADY_BOUND` |
 | 9 | Security | CSRF missing/invalid | Reject mutation — 403 |
 | 10 | Resilience | Integration verify async failure | Store redacted error code — retry available |
-| 11 | Security | Credential in URL/log | ❌ NEVER — KMS + redaction middleware |
+| 11 | Security | Credential in URL/log | ❌ NEVER — KMS (pepper: `auth-secrets.ts`, fail-closed) · **redaction middleware CHƯA BUILD** (audit 06/09 #16; runtime web có 1 `console.*`, callback/complete `catch {}` không log — W-11) |
 | 12 | Data Integrity | Resume incomplete onboarding | Each step independent — status persisted |
 | 13 | Security | Login-state cookie missing/mismatched/expired/already-consumed at callback | Reject — `AUTH_INVALID`, no session minted (DD-31 SI-1) |
 | 14 | Security | `account_identities.platform_user_hash` (over `google.sub`/email) written/looked-up without the KMS-sourced key | ❌ NEVER — keyed HMAC only; write and lookup must resolve the identical key (DD-31 SI-2) |
@@ -323,8 +323,8 @@ Verify/reset ordering is normative: trusted-IP limit runs before token lookup; a
 ### Session Security
 
 - Session cookie: `Secure`, `HttpOnly`, `SameSite=Strict`, host-only. Email login/registration pre-auth cookies are also path-scoped Strict. OAuth binding is a separate provider-specific `Secure; HttpOnly; SameSite=Lax` cookie scoped to the exact callback path and ≤10 minutes; it is never accepted as a session.
-- CSRF token per session — verify on all mutations.
-- CSP, X-Frame-Options, clickjacking protections.
+- CSRF token per session — verify on **mutations that carry a session and change state** (`csrfOk`: `logout-all`, session-scoped commands). **Ngoại lệ có tên:** `POST /api/auth/logout` **không** kiểm CSRF/Origin — SI-4 (`auth-security-invariant-table.md` §SI-4, LIVE) làm nó fail-closed theo cách khác: chỉ clear cookie sau khi đã revoke một session thật, nên cross-site POST không có cookie ambient không làm gì. Câu "verify on all mutations" ở đây từng mâu thuẫn với SI-4 (audit 06/09 W-7); phần còn lại của W-7 (so sánh `===` không timing-safe) là row `audit-2026-09-06-w7-csrf-compare-and-logout-origin`.
+- CSP, X-Frame-Options, clickjacking protections — **trên `main` tới 06/09 chưa có header nào ngoài landing OAuth** (audit W-2); **pending lane A6** (`fix/a6-headers-ratelimit`: HSTS · XFO DENY · nosniff · Referrer-Policy · Permissions-Policy · CSP `frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'` — cố ý **không** `default-src`/`script-src` vì App Router bootstrap inline; nonce-based `script-src` là row `web-csp-script-src-nonce`).
 - Session rotation on: login, owner assignment, tenant switch.
 - Password reset uses an account-wide revoke primitive, not the current one-token revoke helper. Credential update + revoke-all are atomic and audited.
 
@@ -582,7 +582,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 | 10 | Bank already bound | Bank → other tenant | 409 `BANK_ALREADY_BOUND` |
 | 11 | Chat already bound | Chat → other tenant | 409 `CHAT_ALREADY_BOUND` |
 | 12 | Secret not returned | GET after save | Masked value |
-| 13 | Secret in log | Request with credentials | Redacted |
+| 13 | Secret in log | Request with credentials | Redacted — **chưa có middleware redaction, chưa có test** (audit 06/09 #16) |
 | 14 | Secret rotation | New credentials | Old masked, new saved |
 | 15 | Resume step verified | Step already complete | Skip/return status |
 | 16 | Resume step error | Step with error | Error shown, retry available |
@@ -665,6 +665,7 @@ Connect → Save encrypted credentials → Async verify job (webhook test)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-06 | v2.16 | **Audit code ↔ docs 06/09 — bốn chỗ spec claim thứ chưa có (§3 #16), docs-only.** (1) Entry point `GET /api/auth/google` → path thật `/api/auth/google/state`. (2) §4 Session Security: "CSRF on all mutations" mâu thuẫn với SI-4 (logout Origin/CSRF-free, fail-closed bằng revoke-before-clear) — ghi ngoại lệ có tên; (3) CSP/XFO: chưa có trên `main`, pending lane A6 (ghi rõ CSP không `script-src`, lý do App Router). (4) Edge #11 và test #13 "redaction middleware": **chưa build** — ghi đúng. Nguồn: `../../sessions/2026-09-06-repo-audit.md`. |
 | 2026-08-10 | v2.15 | **A-grade upgrade:** thêm Entry points table (11 entries); bump version. Không đổi contract/auth model. |
 | 2026-07-28 | v2.14 | Mirror DD-32 Option D: pin non-mutating channel-link landing, authenticated explicit POST, Identity-owned binding and booking-owned resume/reconfirm boundary; add abuse/prefetch/E2E tests. No runtime. |
 | 2026-07-27 | v2.13 | **d1b evidence/enablement boundary reconcile:** Safari macOS + iOS Safari M3 measured PASS 2026-07-26, nên session-rotation engineering/measurement blocker đã đóng; §4 và D1B-2 chuyển từ “evidence còn thiếu” sang measured complete. Google credentials/owner go-live vẫn chưa được chứng minh và A3 legal/PII/config giữ nguyên như gate độc lập. Email order-4 bundle tiếp tục OFF/chưa build. Product mirror: `../FE/feature_web_auth_onboarding.md` v2.10c. |

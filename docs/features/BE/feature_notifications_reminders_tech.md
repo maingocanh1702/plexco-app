@@ -1,8 +1,8 @@
 # Feature: Notifications — Reminders · Inbox · Announcements · Web Push — Backend Tech Spec
 
 > **Canonical phase:** P3 / P4 (Inbox + Web Push mechanisms 36–47) / P4.5–P4.7 (channel delivery) / P4+ (global plane · announcements)
-> **Version:** 3.12 · 2026-08-10
-> **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final; §E offline Chat digest theo DD-94 owner-final. DD-88 chỉ còn proposal cho grouping/`message_request`/scoped-bulk rộng hơn. DDL vẫn chưa có trong `packages/db/schema.ts`; từng implementation slice vẫn cần strict `CODE_READY`.
+> **Version:** 3.13 · 2026-09-06
+> **Status:** ✅ **Reviewed contract** — §A giữ nguyên; §B/C/D theo DD-70/71/72 owner-final; §E offline Chat digest theo DD-94 owner-final. DD-88 chỉ còn proposal cho grouping/`message_request`/scoped-bulk rộng hơn. **DDL cho ba bảng §A ĐÃ có** — `notification_policies` · `notification_intents` · `notification_deliveries` trong migration `0008_notifications_onboarding.sql:10-55` + `packages/db/schema.ts` (đo 2026-09-06); §B/C/D/E chưa có DDL, và **0 reader/writer** cho ba bảng đó (reminder cron, `/remind`, confirm-paid — row `reminder-cron-and-confirm-paid`). Từng implementation slice vẫn cần strict `CODE_READY`.
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > ⚠️ Historical: hạ Reviewed → Draft ngày 2026-07-18 do **gộp tài liệu**, không phải mở lại luật tiền §A. DD-70/71/72 được owner chốt 2026-07-21 nên v3.5 promote lại Reviewed. Nhận định v3.8 rằng digest còn phải trì hoãn đã được DD-94 thay thế; session/activity, `message_request` và scoped/bulk vẫn thuộc proposal DD-88. 🟡 trong body nay chỉ target chưa implement/OQ hoặc physical contract theo slice, không phải các decision còn mở.
 > **Product spec:** `../FE/feature_notifications_reminders.md`  
@@ -2124,6 +2124,7 @@ RLS đã fence `tenant_id`; điều kiện `tenant_id` tường minh trong join 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-06 | v3.13 | **Audit code ↔ docs 06/09 — đính chính header Status:** câu "DDL vẫn chưa có trong `schema.ts`" sai từ khi `0008` merge (`notification_policies`/`_intents`/`_deliveries`, `schema.ts` có cả ba); thân spec §A đã tự nhận điều này. Ghi đúng: DDL §A có, §B–E chưa, 0 reader/writer. Nguồn: `../../sessions/2026-09-06-repo-audit.md` §3 #12. |
 | 2026-08-10 | v3.12 | **A-grade upgrade:** thêm Entry points table (10 entries across §A–§E); bump version. Không đổi contract/pipeline model. |
 | 2026-07-28 | v3.11 | Re-pin primary plan v1.8 `PLAN_READY` tại `90d292d`, closure 12/12. Giữ runtime/migration = 0, Web Push/payment/digest enablement gates và strict per-slice `CODE_READY`; không đổi contract. |
 | 2026-07-28 | v3.10 | Replace stale S9/S20 rollout bằng exact mechanism owners 36→41, Chat unread 42 và payment 43→44/45→46→47; pin thin HTTP A17–A19 và FE F11/F14/F15 after F0. Payment enablement requires real producer + exactly-once/correction E2E + authenticated-detail parity; no runtime/migration authorization. |
