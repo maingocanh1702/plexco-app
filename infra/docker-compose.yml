@@ -14,7 +14,9 @@ services:
       POSTGRES_PASSWORD: plexco_dev
       POSTGRES_DB: plexco
     ports:
-      - "5432:5432"
+      # Loopback only (audit 2026-09-06 X-2): "5432:5432" publishes the dev SUPERUSER on
+      # every interface of the host — a laptop on café wifi was a listening plexco/plexco_dev.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       # Convenience only for a genuinely FRESH volume (docker-entrypoint-initdb.d runs once,
@@ -36,16 +38,25 @@ services:
       PROCESS_ROLE: web
       NODE_ENV: development
       PORT: "3000"
-      # dev: pooled & direct trỏ cùng 1 Postgres (chưa cần PgBouncer)
-      DATABASE_URL: postgres://plexco:plexco_dev@postgres:5432/plexco
-      DATABASE_URL_DIRECT: postgres://plexco:plexco_dev@postgres:5432/plexco
+      # Role `app` (NOBYPASSRLS), KHÔNG phải superuser — audit 2026-09-06 X-4: web dev
+      # từng chạy bằng plexco (superuser) nên RLS vô hình ở dev, mọi lỗi policy chỉ lộ
+      # ở test/prod. Password dev set MỘT LẦN/cluster (xem khối "Role passwords" dưới).
+      # dev: pooled trỏ thẳng Postgres (chưa cần PgBouncer); web KHÔNG đọc
+      # DATABASE_URL_DIRECT (grep process.env apps/web 2026-09-06) nên không khai ở đây.
+      DATABASE_URL: postgres://app:plexco_dev_app@postgres:5432/plexco
+      # Audit 2026-09-06 W-10: web asserts its DB role on first use and fails closed on mismatch
+      # (apps/web/lib/session-cookies.ts appDb). Unset = no check (tests, ad-hoc tooling).
+      DB_EXPECTED_ROLE: app
+      # Discovery ingress serves only /healthz + /discover* (apps/web/middleware.ts); web serves all.
     env_file:
-      # secret dev (SEPAY_WEBHOOK_SECRET, ...) — optional để
-      # `docker compose up` chạy được trước khi copy .env.example → .env
+      # secret dev (SEPAY_WEBHOOK_SECRET, GOOGLE_OAUTH_*, ...) — optional để
+      # `docker compose up` chạy được trước khi copy .env.example → .env.
+      # `environment:` ở trên THẮNG .env (compose precedence) — DATABASE_URL trong
+      # .env trỏ localhost cho tooling trên host, không phải cho container này.
       - path: ../.env
         required: false
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,7 +70,8 @@ services:
   #      Không có `psql` host? Dùng psql của CHÍNH container postgres, feed file qua stdin:
   #      docker compose -f infra/docker-compose.yml exec -T postgres \
   #        psql -U plexco -d plexco -v ON_ERROR_STOP=1 -f - < infra/postgres-init/01-job-definer.sql
-  #   1) migrations current baseline 0000→0033 (roles + schema + RLS — runner ở slice db-RLS),
+  #   1) TẤT CẢ migrations trong packages/db/migrations (roles + schema + RLS + functions —
+  #      `pnpm --filter @plexco/db migrate`; không pin số đuôi ở đây, nó mục nhanh),
   #   2) pgboss provisioning (truyền URL migration AD-HOC, không qua .env —
   #      .env bị nạp vào runtime services):
   #      docker compose -f infra/docker-compose.yml run --rm \
@@ -74,17 +86,24 @@ services:
   #   (không chấp nhận role switch từ credential khác). KHÔNG kiểm role
   #   attributes/CREATE trên pgboss/job_definer membership — least-privilege
   #   attestation đó ngoài scope preflight này (founder decision 2026-07-27,
-  #   chi tiết ở đầu apps/bot/src/preflight.ts). Role app_worker (tạo ở
-  #   migration 0000) có LOGIN nhưng chưa có password —
-  #   set MỘT LẦN/cluster (sau bước 1 migrations, trước khi start worker):
+  #   chi tiết ở đầu apps/bot/src/preflight.ts).
+  #
+  # ⚠️ Role passwords (MỘT LẦN/cluster, sau bước 1 migrations, trước khi start service):
+  #   Ba role runtime app / app_worker / readonly (tạo ở migration 0000) có LOGIN nhưng
+  #   KHÔNG có password. Set cả ba bằng một lệnh:
   #     docker compose -f infra/docker-compose.yml exec -T postgres \
-  #       psql -U plexco -d plexco -c "ALTER ROLE app_worker WITH PASSWORD 'plexco_dev_worker'"
-  #   Giá trị 'plexco_dev_worker' khớp DATABASE_URL_DIRECT dưới đây và .env.example —
-  #   KHÔNG dùng password cố định này ở ngoài local dev.
-  #   ⚠️ Chạy test sau đó (`pnpm -w test`, hay apps/bot/packages/db riêng lẻ)?
-  #      password app_worker (cluster-global) bị đổi bởi MỌI suite chạm DB —
-  #      không suite nào khôi phục lại. Chạy lại lệnh ALTER ROLE ở trên trước
-  #      khi start worker lần nữa. Chi tiết: .env.example.
+  #       psql -U plexco -d plexco -v ON_ERROR_STOP=1 \
+  #         -c "ALTER ROLE app        WITH PASSWORD 'plexco_dev_app'" \
+  #         -c "ALTER ROLE app_worker WITH PASSWORD 'plexco_dev_worker'" \
+  #         -c "ALTER ROLE readonly   WITH PASSWORD 'plexco_dev_readonly'"
+  #   Ba giá trị khớp DATABASE_URL của web (app), DATABASE_URL_DIRECT của worker
+  #   (app_worker), DATABASE_URL của discovery (readonly) dưới đây và .env.example —
+  #   KHÔNG dùng các password cố định này ở ngoài local dev.
+  #   ⚠️ Chạy test sau đó (`pnpm -w test`, hay apps/bot/packages/db/apps/web riêng lẻ)?
+  #      password của CẢ BA role (cluster-global) bị đổi bởi các suite chạm DB
+  #      (packages/db/src/test-harness.ts đặt plexco_test_app / plexco_test_readonly,
+  #      apps/bot + packages/db đặt app_worker) — không suite nào khôi phục lại. Chạy lại
+  #      lệnh ALTER ROLE ở trên trước khi start service lần nữa. Chi tiết: .env.example.
   worker:
     build:
       context: ..
@@ -96,9 +115,15 @@ services:
       # phải là role app_worker đúng nghĩa (preflight fail-closed đòi hỏi, xem
       # comment phía trên) — không dùng credential migration/superuser ở đây.
       DATABASE_URL_DIRECT: postgres://app_worker:plexco_dev_worker@postgres:5432/plexco
-    env_file:
-      - path: ../.env
-        required: false
+      # Đây là TOÀN BỘ biến apps/bot/src đọc lúc runtime (grep process.env 2026-09-06:
+      # worker.ts → DATABASE_URL_DIRECT, OUTBOX_DISPATCH_SCHEDULE_ENABLED; heartbeat.ts →
+      # WORKER_HEARTBEAT_FILE / WORKER_ID (tuỳ chọn, mặc định /tmp/plexco-worker-heartbeat và
+      # hostname); provision-queue.ts → DATABASE_URL_MIGRATION, truyền ad-hoc bằng `run -e`,
+      # KHÔNG khai ở đây).
+      # Không còn `env_file: ../.env` (audit 2026-09-06 X-4): worker từng nhận cả file
+      # secret (SEPAY/GOOGLE/KMS...) dù không đọc biến nào trong đó.
+      # Giữ nguyên "false" — enablement blocker AP-35, xem .env.example.
+      OUTBOX_DISPATCH_SCHEDULE_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy
@@ -113,9 +138,12 @@ services:
       PROCESS_ROLE: discovery
       NODE_ENV: development
       PORT: "3000"
-      DATABASE_URL: postgres://plexco:plexco_dev@postgres:5432/plexco
+      # Role readonly theo hợp đồng entrypoint.sh (discovery = SELECT-only trên
+      # public_sessions/public views), không phải superuser. Password: khối "Role passwords".
+      DATABASE_URL: postgres://readonly:plexco_dev_readonly@postgres:5432/plexco
+      DB_EXPECTED_ROLE: readonly
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     depends_on:
       postgres:
         condition: service_healthy
