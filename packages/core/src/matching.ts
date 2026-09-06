@@ -80,11 +80,20 @@ export function hostFromPlusOneLabel(label: string): string | null {
  * first, longest-first, so MULTI-WORD hosts ("Ngoc-Anh Mai's +1") split
  * correctly instead of grabbing only the last token.
  */
+/**
+ * Audit 2026-09-06 C-3: the three suffix regexes below pair a lazy `(.+?)` with `\s+…$`, which
+ * backtracks quadratically on a crafted input that never reaches the terminal "+1". Two cheap
+ * fences bound it: an OCR label longer than this is not a name (returned untouched), and the
+ * regexes only run when the string actually ends in "+1" — the only case they can match.
+ */
+export const MAX_PLUS_ONE_INPUT_LENGTH = 200;
+
 export function parsePlusOneSuffix(
   raw: string,
   knownHosts: string[] = [],
 ): { name: string; host: string | null } {
   const s = raw.trim();
+  if (s.length > MAX_PLUS_ONE_INPUT_LENGTH || !/\+\s*1$/.test(s)) return { name: s, host: null };
   for (const h of [...new Set(knownHosts)].filter(Boolean).sort((a, b) => b.length - a.length)) {
     // `h` is escaped into literal text before interpolation; it cannot add regex structure.
     const m = s.match(

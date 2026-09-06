@@ -26,6 +26,38 @@ export function assertTenantId(tenantId: string): void {
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
+/**
+ * Thrown when a caller passes a tenantId that differs from the transaction's ALREADY-SET
+ * `app.tenant_id` GUC (audit 2026-09-06 D-15). authorizeTenantAction / resolveCapability used to
+ * `set_config` the GUC from their parameter unconditionally — a caller that resolved the wrong
+ * tenantId (or was handed one) silently RE-SCOPED the whole transaction, and every later RLS read
+ * and write in that tx ran as the other tenant. Now: a tx with no GUC gets it set (unchanged
+ * behaviour for standalone callers); a tx whose GUC disagrees fails closed here.
+ */
+export class TenantContextMismatchError extends Error {
+  constructor() {
+    super("tenant context mismatch: app.tenant_id already set to a different tenant in this transaction");
+    this.name = "TenantContextMismatchError";
+  }
+}
+
+/**
+ * Set-or-assert the tenant GUC for `tx` (LOCAL — dies with the transaction). Returns after the GUC
+ * equals `tenantId`; throws TenantContextMismatchError if it was already set to another tenant.
+ */
+export async function ensureTenantContext(tx: Tx, tenantId: string): Promise<void> {
+  assertTenantId(tenantId);
+  const result = await tx.execute(
+    sql`SELECT NULLIF(current_setting('app.tenant_id', true), '') AS current`,
+  );
+  const current = (result.rows[0] as { current: string | null } | undefined)?.current ?? null;
+  if (current === null) {
+    await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
+    return;
+  }
+  if (current.toLowerCase() !== tenantId.toLowerCase()) throw new TenantContextMismatchError();
+}
+
 export async function withTenant<T>(
   db: Db,
   tenantId: string,
@@ -38,6 +70,14 @@ export async function withTenant<T>(
   });
 }
 
+/**
+ * Audit 2026-09-06 D-15: `tenantRepo().sessions.create` writes a session row DIRECTLY — with
+ * `status: 'open'` it bypasses the whole six-command SessionService (publish gate, billing
+ * authorization, outbox event, dedup). It has 0 production callers and exists as a TEST FIXTURE
+ * seam for the RLS/constraint suites, which is the only place it may be used: a guard test in
+ * tenant.test.ts fails if `tenantRepo(` appears anywhere under apps/ or in a non-test module of
+ * packages/db. Production paths create sessions through createSession/publishSession only.
+ */
 export interface CreateSessionInput {
   sportId: string;
   startsAt: Date;
@@ -49,6 +89,7 @@ export interface CreateSessionInput {
   venueName?: string | null;
   visibility?: "private" | "public";
   joinPolicy?: "open" | "approval";
+  /** Test fixtures only — see the interface doc. */
   status?: "draft" | "open";
 }
 

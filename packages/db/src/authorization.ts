@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { assertTenantId } from "./tenant.js";
+import { assertTenantId, ensureTenantContext } from "./tenant.js";
 import type { Db } from "./client.js";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -185,8 +185,9 @@ export async function authorizeTenantAction(
   }
 
   // Tenant axis clear — step 2 needs the RLS GUC, since subscriptions is
-  // tenant-scoped (FORCE RLS, 0009) unlike tenants itself.
-  await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
+  // tenant-scoped (FORCE RLS, 0009) unlike tenants itself. Set-or-ASSERT (audit D-15): a caller
+  // already scoped to another tenant fails closed instead of being silently re-scoped.
+  await ensureTenantContext(tx, tenantId);
   // 0038: the FOR SHARE read goes through resolve_subscription_locked (SECURITY DEFINER, 0027
   // shape) because `app` no longer holds UPDATE on subscriptions — and PostgreSQL needs UPDATE for
   // any row-locking clause. The lock the function takes still belongs to THIS transaction, so the

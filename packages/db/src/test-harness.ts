@@ -358,8 +358,20 @@ export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>):
   const lockClient = new pg.Client({ connectionString: base });
   let tearingDown = false;
   guardClientErrors(lockClient, () => tearingDown);
-  await lockClient.connect();
-  await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
+  // Same defect class the chat-definer twin fixed in 491a334, left behind by that lane's negative
+  // scope (audit 2026-09-06, row test-harness-job-definer-lock-client-leak): connect() and the
+  // lock query ran OUTSIDE any try, so a rejection there (Postgres not ready, a password another
+  // suite just rotated, max_connections) leaked a client nobody could end() — vitest then hung at
+  // teardown instead of failing fast. Inline, not a shared helper: the two hazard classes are kept
+  // apart on purpose (that lane's contract), and a named helper would merge them.
+  try {
+    await lockClient.connect();
+    await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
+  } catch (error) {
+    tearingDown = true;
+    await lockClient.end().catch(() => {});
+    throw error; // identity preserved — the pg error code is the diagnosis
+  }
   try {
     return await fn();
   } finally {

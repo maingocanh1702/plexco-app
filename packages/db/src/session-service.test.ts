@@ -3413,6 +3413,45 @@ describe("cancelSession (B2 of the split)", () => {
     await expectAnomalyEvent(sessionId, tenantId, ["players", "charges"]);
   });
 
+  // Audit 2026-09-06 D-5 (INV-6): the anomaly refusal is bound to the commandId. A retry with the
+  // SAME commandId replays the refusal and appends NO second audit event; a NEW commandId is a new
+  // detection and does append one (the audit trail is per detection, not per session).
+  it("XC-DRAFT-ANOMALY-RETRY: retrying the SAME commandId replays CANCEL_REQUIRES_REVIEW with exactly ONE audit event; a new commandId appends a second", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "draft" });
+    await seedCharge(tenantId, sessionId);
+    const commandId = cmdId();
+    await expectCancelReject(
+      () => cancel(tenantId, { sessionId, expectedVersion: version }, commandId),
+      "CANCEL_REQUIRES_REVIEW",
+    );
+    await expectCancelReject(
+      () => cancel(tenantId, { sessionId, expectedVersion: version }, commandId),
+      "CANCEL_REQUIRES_REVIEW",
+    );
+    await expectCancelReject(
+      () => cancel(tenantId, { sessionId, expectedVersion: version }, commandId),
+      "CANCEL_REQUIRES_REVIEW",
+    );
+    await expectAnomalyEvent(sessionId, tenantId, ["players", "charges"]); // asserts length 1
+    expect(await sessionState(sessionId)).toMatchObject({ status: "draft", version });
+    const stored = await ctx.owner.query(
+      `SELECT result_ref FROM processed_commands WHERE tenant_id = $1 AND command_id = $2`,
+      [tenantId, commandId],
+    );
+    expect(stored.rows).toHaveLength(1);
+    expect((stored.rows[0] as { result_ref: { refusal?: string; status?: string } }).result_ref).toMatchObject({
+      refusal: "CANCEL_REQUIRES_REVIEW",
+      status: "draft",
+    });
+
+    await expectCancelReject(
+      () => cancel(tenantId, { sessionId, expectedVersion: version }, cmdId()),
+      "CANCEL_REQUIRES_REVIEW",
+    );
+    expect(await sessionEvents(sessionId)).toHaveLength(2);
+  });
+
   it("XC-DRAFT-ANOMALY-ROSTER: a DRAFT with an active roster but NO charge -> CANCEL_REQUIRES_REVIEW; event anomaly_fields=['players']", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId, version } = await seedSession(tenantId, { status: "draft" });

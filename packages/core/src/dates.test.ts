@@ -93,3 +93,30 @@ describe("parseMoney", () => {
     expect(parseMoney("abc")).toBeNull();
   });
 });
+
+/**
+ * Audit 2026-09-06 C-1 — parseMoney is bounded and reads "1.5k" the way a person types it.
+ */
+describe("parseMoney — bounds and decimal-k (audit C-1)", () => {
+  it("a decimal before k is a fraction of a thousand: 1.5k = 1 500, 1,25k = 1 250, 110.000k stays grouping", () => {
+    expect(parseMoney("1.5k")).toBe(1500);
+    expect(parseMoney("1,25k")).toBe(1250);
+    expect(parseMoney("110.000k")).toBe(110_000_000);
+    expect(parseMoney("2 110 k")).toBe(2_110_000); // whitespace is grouping (SNA-3 relies on it)
+  });
+
+  it("without k, separators are thousands groups of exactly three digits — anything else is not money", () => {
+    expect(parseMoney("1.234.567")).toBe(1_234_567);
+    expect(parseMoney("12.34")).toBeNull();
+    expect(parseMoney("1.5")).toBeNull();
+    expect(parseMoney("1.2345")).toBeNull();
+  });
+
+  it("refuses anything above the ceiling, non-safe integers and absurdly long input instead of returning Infinity", () => {
+    expect(parseMoney("1000000000000")).toBe(1_000_000_000_000); // exactly the ceiling
+    expect(parseMoney("1000000000001")).toBeNull();
+    expect(parseMoney("999999999999k")).toBeNull();
+    expect(parseMoney("9".repeat(400))).toBeNull();
+    expect(parseMoney("1e5")).toBeNull();
+  });
+});

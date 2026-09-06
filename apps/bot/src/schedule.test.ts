@@ -474,3 +474,33 @@ describe("resolveOutboxDispatchEnablement (audit 2026-09-06 X-3)", () => {
     });
   });
 });
+
+/**
+ * Audit 2026-09-06 B-4 — the direct-run guard compares module URL to the entry script URL
+ * instead of `argv[1].endsWith("worker.ts")`, which was false for any compiled path (the worker
+ * would import, do nothing, and exit 0).
+ */
+describe("isDirectRun (audit B-4)", () => {
+  it("is true only when the entry script IS this module, for .ts and compiled .js alike", async () => {
+    const { isDirectRun } = await import("./direct-run.js");
+    const { pathToFileURL } = await import("node:url");
+    const tsUrl = pathToFileURL("/app/apps/bot/src/worker.ts").href;
+    const jsUrl = pathToFileURL("/app/apps/bot/dist/worker.js").href;
+    expect(isDirectRun(tsUrl, "/app/apps/bot/src/worker.ts")).toBe(true);
+    expect(isDirectRun(jsUrl, "/app/apps/bot/dist/worker.js")).toBe(true);
+    // The old check: a compiled entry does not end in "worker.ts" — it must still count.
+    expect("/app/apps/bot/dist/worker.js".endsWith("worker.ts")).toBe(false);
+    // Imported from a test (argv[1] is the runner), or no argv at all → not a direct run.
+    expect(isDirectRun(tsUrl, "/app/node_modules/vitest/dist/cli.js")).toBe(false);
+    expect(isDirectRun(tsUrl, undefined)).toBe(false);
+    // A different module with the same basename is not this module.
+    expect(isDirectRun(tsUrl, "/elsewhere/worker.ts")).toBe(false);
+  });
+
+  it("importing worker.ts from this test did NOT run main() (the guard is what keeps this suite alive)", async () => {
+    const mod = await import("./worker.js");
+    expect(typeof mod.registerOutboxDispatchSchedule).toBe("function");
+    expect(mod.SHUTDOWN_GRACE_MS).toBeLessThan(mod.SHUTDOWN_DEADLINE_MS);
+    expect(mod.SHUTDOWN_GRACE_MS).toBeGreaterThanOrEqual(10_000);
+  });
+});

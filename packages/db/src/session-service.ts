@@ -1285,6 +1285,16 @@ export async function updateSession(
       }
     }
 
+    // LOCK ORDER (audit 2026-09-06 D-14, documented not changed): this command takes
+    // `sessions FOR UPDATE` FIRST and only then `tenants`/`subscriptions FOR SHARE` (inside
+    // authorizeTenantAction below), while publish/announce/close/cancel authorize UPFRONT
+    // (subscriptions FOR SHARE first, then sessions FOR UPDATE). Today no third party takes
+    // `subscriptions FOR UPDATE` and then `sessions`, so the inversion cannot deadlock; the
+    // future Daily Lifecycle suspend job WOULD, and the fix belongs to that lane: pre-read the
+    // status without a lock, authorize when it is `open`, then lock the session and re-check
+    // (re-authorizing only in the draft→open race). Not done here because the DD-110 D4
+    // negative test pins that the literal is never sent for a draft, and that suite could not be
+    // run in the session that wrote this note. Row: audit-2026-09-06-d14-lock-order-publish-vs-update.
     // STATUS-DEPENDENT suspension gate. An OPEN session is player-visible, so an
     // update re-checks tenant suspension UNDER LOCK via
     // authorizeTenantAction('update_open_session') (❌ when suspended, DD-110 D2) —
@@ -1889,6 +1899,15 @@ interface StoredCancelResult {
   sessionId: string;
   status: string;
   version: number;
+  /**
+   * Audit 2026-09-06 D-5: the draft-anomaly branch commits its audit event and then throws
+   * CANCEL_REQUIRES_REVIEW, but until this field existed it wrote NO processed_commands row —
+   * so a retry with the same commandId (the idempotency key the whole family dedups on, DD-117
+   * D5) ran the branch again and appended ANOTHER expiry_anomaly_detected event, every time
+   * (INV-6). The refusal is now stored under the commandId and replayed as the same typed
+   * refusal, with zero writes.
+   */
+  refusal?: "CANCEL_REQUIRES_REVIEW";
 }
 
 export interface CancelSessionResult {
@@ -1905,10 +1924,14 @@ const CANCEL_COMMAND_TYPE = "CancelSession";
 function isStoredCancelResult(value: unknown): value is StoredCancelResult {
   if (typeof value !== "object" || value === null) return false;
   const r = value as Record<string, unknown>;
+  // A stored refusal (D-5) keeps the session's PRE-refusal status ('draft'); a stored success is
+  // always 'cancelled'. Anything else is not a usable envelope → COMMAND_ID_CONFLICT upstream.
+  const statusOk =
+    r.refusal === "CANCEL_REQUIRES_REVIEW" ? r.status === "draft" : r.refusal === undefined && r.status === "cancelled";
   return (
     typeof r.sessionId === "string" &&
     UUID_RE.test(r.sessionId) &&
-    r.status === "cancelled" &&
+    statusOk &&
     typeof r.version === "number" &&
     Number.isInteger(r.version) &&
     r.version >= 1 &&
@@ -2023,6 +2046,14 @@ export async function cancelSession(
           isStoredCancelResult(stored) &&
           stored.sessionId === sessionId
         ) {
+          // A stored REFUSAL replays as the same refusal (D-5): no second audit event, no mutation.
+          // Thrown inside the tx on purpose — nothing has been written yet, so rollback is a no-op.
+          if (stored.refusal === "CANCEL_REQUIRES_REVIEW") {
+            failCancel(
+              "CANCEL_REQUIRES_REVIEW",
+              "draft carries an unexpected roster or charges (anomaly) — refusal replayed for this command_id",
+            );
+          }
           return {
             sessionId: stored.sessionId,
             status: stored.status,
@@ -2159,6 +2190,20 @@ export async function cancelSession(
               source: "manual",
               anomaly_fields: anomalyFields,
             },
+          });
+          // D-5: bind the refusal to this commandId so a retry replays it instead of appending a
+          // second audit event (INV-6). Same transaction as the event: both commit or neither.
+          const storedRefusal: StoredCancelResult = {
+            sessionId,
+            status: current.status,
+            version: current.version,
+            refusal: "CANCEL_REQUIRES_REVIEW",
+          };
+          await tx.insert(processedCommands).values({
+            tenantId,
+            commandId,
+            commandType: CANCEL_COMMAND_TYPE,
+            resultRef: storedRefusal,
           });
           return { anomalyRefusal: true };
         }

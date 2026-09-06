@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { assertTenantId } from "./tenant.js";
+import { assertTenantId, ensureTenantContext } from "./tenant.js";
 import type { Db } from "./client.js";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -181,7 +181,7 @@ export async function resolveCapability(
   // return into the caller's transaction, so an `if (allowed) { ...mutate... }`
   // money action stays protected against a downgrade landing between the
   // decision and the mutation.
-  await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
+  await ensureTenantContext(tx, tenantId); // set-or-assert, audit D-15
   // 0038: `app` lost UPDATE on subscriptions (audit D-1 — that grant let any tenant-scoped app path
   // mint its own host_pro row), and FOR SHARE needs UPDATE privilege, so the locking read lives in
   // resolve_subscription_locked (SECURITY DEFINER, 0027 shape). Same row lock, same transaction,

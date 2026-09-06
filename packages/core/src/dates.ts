@@ -208,13 +208,47 @@ export function parseTimeAtStart(text: string): { time: string; rest: string } |
   };
 }
 
-/** "110k" | "110000" | "110.000" -> 110000 (integer minor units, VND) */
+/**
+ * Upper bound for any parsed amount (VND, integer). One trillion is far above any club fee and
+ * far below Number.MAX_SAFE_INTEGER; anything above it is treated as "not money" rather than
+ * flowing on as a huge (or Infinite) candidate — audit 2026-09-06 C-1.
+ */
+export const MAX_MONEY_AMOUNT = 1_000_000_000_000;
+/** Longer than this cannot be a money token; refused before any regex runs. */
+const MAX_MONEY_TEXT_LENGTH = 40;
+
+function boundedMoney(value: number): number | null {
+  return Number.isSafeInteger(value) && value >= 0 && value <= MAX_MONEY_AMOUNT ? value : null;
+}
+
+/**
+ * "110k" | "110000" | "110.000" | "1.5k" -> integer VND.
+ *
+ * Grammar (audit 2026-09-06 C-1 rewrote it — the old version stripped every `.`/`,` first, so
+ * "1.5k" became "15k" = 15 000, ten times the 1 500 anyone typing it means, and a 400-digit
+ * string became Infinity):
+ *  - whitespace is ignored everywhere ("110 k vnd", "2 110 k" — chat splits tokens);
+ *  - with a `k` suffix, ONE `.`/`,` followed by 1–2 digits is a DECIMAL: "1.5k" = 1 500,
+ *    "1,25k" = 1 250;
+ *  - otherwise `.`/`,` are thousands separators and every group after the first must be
+ *    exactly 3 digits: "110.000" = 110 000, "1.234.567" = 1 234 567; "12.34" is not money;
+ *  - the result must be a safe integer within MAX_MONEY_AMOUNT.
+ */
 export function parseMoney(text: string): number | null {
-  const t = text
-    .trim()
-    .toLowerCase()
-    .replace(/[.,\s]/g, "");
-  const m = t.match(/^(\d+)(k)?(?:vnd|d|đ)?$/);
+  if (text.length > MAX_MONEY_TEXT_LENGTH) return null;
+  const t = text.trim().toLowerCase().replace(/\s+/g, "");
+  const m = t.match(/^(\d[\d.,]*)(k)?(?:vnd|d|đ)?$/);
   if (!m) return null;
-  return +m[1]! * (m[2] ? 1000 : 1);
+  const num = m[1]!;
+  const hasK = m[2] !== undefined;
+  if (hasK) {
+    const decimal = num.match(/^(\d+(?:[.,]\d{3})*)[.,](\d{1,2})$/);
+    if (decimal) {
+      const whole = Number(decimal[1]!.replace(/[.,]/g, ""));
+      const frac = Number(decimal[2]!.padEnd(3, "0"));
+      return boundedMoney(whole * 1000 + frac);
+    }
+  }
+  if (!/^\d+(?:[.,]\d{3})*$/.test(num)) return null;
+  return boundedMoney(Number(num.replace(/[.,]/g, "")) * (hasK ? 1000 : 1));
 }

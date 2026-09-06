@@ -1,5 +1,6 @@
 import pg from "pg";
 import type PgBoss from "pg-boss";
+import { isDirectRun } from "./direct-run.js";
 import { createQueue } from "./queue.js";
 import { preflightOrExit } from "./preflight.js";
 import { OUTBOX_DISPATCH_CRON, OUTBOX_DISPATCH_QUEUE } from "./queues.js";
@@ -9,6 +10,10 @@ import {
   runDispatchCycle,
   type DeliverFn,
 } from "./dispatcher.js";
+
+/** In-flight deliver() budget on SIGTERM; the hard deadline gives stop() a little extra to unwind. */
+export const SHUTDOWN_GRACE_MS = 25_000;
+export const SHUTDOWN_DEADLINE_MS = SHUTDOWN_GRACE_MS + 5_000;
 
 /**
  * Worker entrypoint (entrypoint.sh: PROCESS_ROLE=worker → `pnpm --filter
@@ -155,23 +160,41 @@ async function main(): Promise<void> {
     console.log("[worker] outbox dispatch worker not registered (schedule disabled)");
   }
 
+  // Audit 2026-09-06 B-3: the previous stop() neither WAITED for in-flight work nor bounded it —
+  // `graceful: true` without `wait: true` resolves before active jobs finish, so pool.end() and
+  // process.exit(0) ran while a deliver() could still be mid-flight, and a hung deliver could
+  // hold the process forever. Now: stop waits for active jobs up to SHUTDOWN_GRACE_MS (pg-boss
+  // `timeout`), a hard deadline slightly beyond it exits non-zero so an orchestrator sees the
+  // abnormal end, and a second signal cannot start a second shutdown.
+  let stopping = false;
   const shutdown = async (signal: string): Promise<void> => {
-    console.log(`[worker] ${signal} received — stopping`);
-    await boss.stop({ graceful: true });
-    await pool.end();
-    process.exit(0);
+    if (stopping) return;
+    stopping = true;
+    console.log(`[worker] ${signal} received — stopping (grace ${SHUTDOWN_GRACE_MS}ms)`);
+    const deadline = setTimeout(() => {
+      console.error(`[worker] shutdown exceeded ${SHUTDOWN_DEADLINE_MS}ms — exiting hard`);
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS);
+    deadline.unref();
+    try {
+      await boss.stop({ graceful: true, wait: true, timeout: SHUTDOWN_GRACE_MS });
+      await pool.end();
+      clearTimeout(deadline);
+      process.exit(0);
+    } catch (error) {
+      console.error("[worker] shutdown failed", error);
+      process.exit(1);
+    }
   };
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-// Matches provision-queue.ts's identical guard: without it, importing this
-// module (schedule.test.ts needs registerOutboxDispatchSchedule/
-// isOutboxDispatchScheduleEnabled) would run main() as an import side
-// effect and call process.exit on the test process the moment
-// DATABASE_URL_DIRECT is unset.
-const invokedDirectly = process.argv[1]?.endsWith("worker.ts");
-if (invokedDirectly) {
+// Direct-run guard (audit 2026-09-06 B-4): compares this module's URL with the entry script's,
+// so importing from a test never runs main(), and a compiled dist/worker.js started directly
+// still does. The old `argv[1].endsWith("worker.ts")` was false for any compiled path — the
+// worker would load, do nothing, and exit 0.
+if (isDirectRun(import.meta.url)) {
   main().catch((error) => {
     console.error("[worker] fatal", error);
     process.exit(1);

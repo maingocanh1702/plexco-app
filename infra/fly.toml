@@ -11,7 +11,8 @@ primary_region = "sin"   # Singapore — độ trễ thấp nhất tới VN
 [build]
   dockerfile = "Dockerfile"
 
-# ⚠️ Provisioning DB (current baseline migrations 0000→0013 RỒI pgboss schema/queues, đều bằng
+# ⚠️ Provisioning DB (TẤT CẢ migrations trong packages/db/migrations — không pin số đuôi ở đây,
+# audit 2026-09-06 X-5: "0000→0013" đã mục 26 file — RỒI pgboss schema/queues, đều bằng
 # role migration): KHÔNG dùng `[deploy] release_command` — nó đòi
 # DATABASE_URL_MIGRATION làm APP secret, mà Fly inject app secret vào MỌI máy
 # runtime (web/discovery/worker) → lộ DDL credential, phá cách ly role
@@ -25,13 +26,18 @@ primary_region = "sin"   # Singapore — độ trễ thấp nhất tới VN
   NODE_ENV = "production"
   TRUSTED_INGRESS_PROVIDER = "fly"
   # Audit 2026-09-06 W-10 — OPT-IN role assert (apps/web/lib/session-cookies.ts appDb): when set,
-  # the web process refuses to serve if DATABASE_URL does not connect as this role. Fly [env] is
-  # shared by all process groups and discovery must expect `readonly`, so it cannot live here;
-  # set it per group with `fly secrets set` / a per-process env once the DATABASE_URL secrets'
-  # roles have been verified (`psql "$DATABASE_URL" -c 'select current_user'`):
-  #   web       → DB_EXPECTED_ROLE=app
-  #   discovery → DB_EXPECTED_ROLE=readonly
+  # the web process refuses to serve if DATABASE_URL does not connect as this role.
+  # web needs `app` and discovery needs `readonly`, and on Fly there is NO per-process-group
+  # variable: [env] here is app-wide, and `fly secrets set` is app-wide too (secrets land on
+  # every Machine of the app). An earlier version of this comment said to "set it per group with
+  # fly secrets" — that is not a thing Fly does, so the partition it described was unachievable.
+  # entrypoint.sh resolves it instead, from role-suffixed variables that CAN be app-wide:
+  #   fly secrets set DATABASE_URL_WEB=... DATABASE_URL_DISCOVERY=... \
+  #                   DB_EXPECTED_ROLE_WEB=app DB_EXPECTED_ROLE_DISCOVERY=readonly
+  # and each process group picks its pair by role before exec'ing the server. Verify each URL's
+  # role first (`psql "$DATABASE_URL_WEB" -c 'select current_user'`).
   # Enabling it against an owner-role DATABASE_URL takes the site down on purpose (fail closed).
+  # (The only alternative Fly offers is one app per process group, which splits ingress too.)
   # CSP_SCRIPT_NONCE_ENABLED stays unset (OFF) until verified on a real `next start` — see
   # apps/web/lib/request-policy.ts.
 
