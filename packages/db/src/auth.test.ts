@@ -226,6 +226,164 @@ describe("web sessions", () => {
     expect(await resolveWebSession(ctx.appPool, expiredHash)).toBeNull();
   });
 
+  // 0040 (audit 2026-09-06 W-6): idle window on top of the absolute TTL.
+  it("idle TTL: a session unseen for longer than the idle window no longer resolves, even before expires_at", async () => {
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("idle-1"));
+    const tokenHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash,
+      csrfSecret: "csrf-idle",
+      ttlSeconds: 30 * 24 * 3600,
+    });
+    expect((await resolveWebSession(ctx.appPool, tokenHash))?.accountId).toBe(accountId);
+
+    // 13 days of silence: inside the 14-day default window → still resolves, and the resolve
+    // TOUCHES last_seen_at (older than a minute → rewritten).
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '13 days' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((await resolveWebSession(ctx.appPool, tokenHash))?.accountId).toBe(accountId);
+    const touched = await ctx.owner.query(
+      `SELECT now() - last_seen_at < interval '1 minute' AS fresh FROM web_sessions WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((touched.rows[0] as { fresh: boolean }).fresh).toBe(true);
+
+    // 15 days of silence: outside the window → null, even though expires_at is weeks away.
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '15 days' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect(await resolveWebSession(ctx.appPool, tokenHash)).toBeNull();
+    // A caller may pass a wider window (the SQL default is not the only policy).
+    expect((await resolveWebSession(ctx.appPool, tokenHash, 20 * 24 * 3600))?.accountId).toBe(accountId);
+  });
+
+  it("idle TTL: the touch is throttled — a session seen 30 s ago is not rewritten by another resolve", async () => {
+    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("idle-2"));
+    const tokenHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, { accountId, tokenHash, csrfSecret: "c", ttlSeconds: 900 });
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '30 seconds' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((await resolveWebSession(ctx.appPool, tokenHash))?.accountId).toBe(accountId);
+    const after = await ctx.owner.query(
+      `SELECT now() - last_seen_at BETWEEN interval '25 seconds' AND interval '2 minutes' AS untouched
+         FROM web_sessions WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((after.rows[0] as { untouched: boolean }).untouched).toBe(true);
+  });
+
+  it("idle TTL: a non-positive idle window is refused by the definer (fail closed, never 'no window')", async () => {
+    await expect(
+      ctx.appPool.query(`SELECT * FROM auth_resolve_web_session($1, interval '0')`, ["x"]),
+    ).rejects.toMatchObject({ code: "22023" });
+  });
+
+  // The half of W-6 that a resolve-only window would miss: apps/web's issueSession
+  // (session-cookies.ts) hands the RAW request cookie to rotate without resolving it
+  // first, so a rotate that only checked revoked_at/expires_at would resurrect an
+  // idle-dead cookie as a fresh 30-day session with the idle clock reset.
+  it("idle TTL: rotate refuses an idle-dead session instead of minting a fresh one from it", async () => {
+    const { accountId } = await seedPersonAccount(ctx.owner, "idle-rot");
+    const oldHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash: oldHash,
+      csrfSecret: "c",
+      ttlSeconds: 30 * 24 * 3600,
+    });
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '20 days' WHERE token_hash = $1`,
+      [oldHash],
+    );
+    const newHash = sha(randomBytes(32).toString("hex"));
+    expect(
+      await rotateWebSession(ctx.appPool, {
+        oldTokenHash: oldHash,
+        newTokenHash: newHash,
+        newCsrfSecret: "c2",
+        ttlSeconds: 30 * 24 * 3600,
+        accountId,
+      }),
+    ).toBeNull(); // issueSession turns this into SessionReauthRequiredError
+    const minted = await ctx.owner.query(`SELECT 1 FROM web_sessions WHERE token_hash = $1`, [
+      newHash,
+    ]);
+    expect(minted.rows).toHaveLength(0); // nothing was written
+
+    // an explicitly wider window still rotates it — the window is a parameter, not a hardcode
+    expect(
+      await rotateWebSession(ctx.appPool, {
+        oldTokenHash: oldHash,
+        newTokenHash: newHash,
+        newCsrfSecret: "c2",
+        ttlSeconds: 30 * 24 * 3600,
+        accountId,
+        idleSeconds: 60 * 24 * 3600,
+      }),
+    ).not.toBeNull();
+  });
+
+  /**
+   * Adding the touch turned a read-only resolve into a writer, and a writer takes the row lock.
+   * Deciding the answer BEFORE that wait is a live authentication bug: a logout that has UPDATEd
+   * the row but not committed is invisible to a READ COMMITTED read, the touch then queues behind
+   * it, and when the logout commits the function would still return the session it had already
+   * cached — a revoke that committed strictly before the answer, honoured anyway, which is what
+   * DD-80 v1.88's "revoke-all is linearizable" forbids. Locking first makes the revoke either
+   * entirely before us (nothing returned) or entirely after (it waits).
+   */
+  it("idle TTL: a revoke that COMMITS while resolve is queued on the row lock denies the resolve", async () => {
+    const { accountId } = await seedPersonAccount(ctx.owner, "idle-race");
+    const tokenHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash,
+      csrfSecret: "c",
+      ttlSeconds: 30 * 24 * 3600,
+    });
+    // older than the touch throttle, so resolve WILL try to write and therefore WILL queue
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '5 minutes' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+
+    const revoker = await ctx.superuserDb.pool.connect();
+    const resolver = await ctx.appPool.connect();
+    let pending: Promise<pg.QueryResult> | undefined;
+    try {
+      await revoker.query("BEGIN");
+      await revoker.query(`UPDATE web_sessions SET revoked_at = now() WHERE token_hash = $1`, [
+        tokenHash,
+      ]);
+      const revokerPid = await backendPid(revoker);
+      const resolverPid = await backendPid(resolver);
+      pending = resolver.query(`SELECT * FROM auth_resolve_web_session($1)`, [tokenHash]);
+      await waitUntilBlockedByHolder(ctx.owner, revokerPid, resolverPid);
+      await revoker.query("COMMIT"); // the revoke lands while the resolve is still queued
+      expect((await pending).rows).toHaveLength(0); // …and the resolve denies
+    } finally {
+      await revoker.query("ROLLBACK").catch(() => {});
+      revoker.release();
+      if (pending) await pending.catch(() => {});
+      resolver.release();
+    }
+  });
+
+  it("idle TTL: rotate refuses a non-positive idle window too", async () => {
+    await expect(
+      ctx.appPool.query(
+        `SELECT auth_rotate_web_session($1, $2, 'c', interval '900 seconds', $3, interval '0')`,
+        ["x", "y", randomUUID()],
+      ),
+    ).rejects.toMatchObject({ code: "22023" });
+  });
+
   it("rotation revokes the old token and links the new session (fixation defense)", async () => {
     const { accountId } = await loginTelegram(ctx.appPool, freshLogin("555"));
     const oldHash = sha(randomBytes(32).toString("hex"));

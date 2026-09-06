@@ -141,6 +141,9 @@ export const webSessions = pgTable("web_sessions", {
   // Exact equality against accounts.session_epoch is the sole bulk validity
   // rule — never `>=` (DD-80 v1.88, G3-I1).
   mintedEpoch: bigint("minted_epoch", { mode: "number" }).notNull().default(0),
+  // 0040 (audit 2026-09-06 W-6): touched by auth_resolve_web_session (throttled to once a minute);
+  // a session idle longer than the resolver's p_idle (default 14 days) no longer resolves.
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   mintedEpochChk: check("web_sessions_minted_epoch_chk", sql`${t.mintedEpoch} >= 0`),

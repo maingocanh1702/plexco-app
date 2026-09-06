@@ -41,7 +41,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 40; // 0000..0039 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema; A2/A4 left this at 37 — caught 06/09)
+const MIGRATION_COUNT = 41; // 0000..0040 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL; A2/A4 left this at 37 — caught 06/09)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -732,7 +732,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0039_audit_hardening_definers_ledger_link_codes.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0040_web_sessions_idle_ttl.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);

@@ -81,6 +81,7 @@ export {
   provisionTenant,
   rateLimitCheck,
   resolveWebSession,
+  SESSION_IDLE_SECONDS,
   revokeAllWebSessions,
   revokeWebSession,
   rotateWebSession,
