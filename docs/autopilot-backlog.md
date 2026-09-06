@@ -5116,14 +5116,15 @@ notes: |
 
 ## task: web-csp-script-src-nonce
 title: CSP `script-src 'nonce-…'` per-request qua middleware Next (App Router inline bootstrap) — hoàn thiện header A6
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Middleware nonce sau flag `CSP_SCRIPT_NONCE_ENABLED="true"` (OFF mặc định — không chạy được `next start` ở cloud). Row chỉ đóng khi owner bật flag sau khi verify trên trình duyệt thật; merge branch KHÔNG tự đóng row này.
 risk: P3
 change_class: security-posture
 depends_on: [audit-2026-09-06-a6-headers-ratelimit]
 invariants: [web-app, auth]
 scope: [apps/web/next.config.mjs, apps/web/middleware.ts, apps/web/lib/security-headers.test.ts]
 manifest: null
-merged_probe: none — chưa build; lane đặt probe = symbol middleware mới (vd. `withCspNonce`)
+merged_probe: apps/web/lib/request-policy.ts :: buildNonceCsp
 notes: |
   Lane A6 cố ý gửi CSP KHÔNG `default-src`/`script-src`: App Router bootstrap mọi trang bằng `<script>self.__next_f.push(...)</script>` inline, `default-src 'self'` sẽ chặn render mọi route và "fix" phản xạ là `'unsafe-inline'` (tệ hơn không có). Khuôn Next: middleware sinh nonce mỗi request, set header `Content-Security-Policy: script-src 'nonce-<x>' 'strict-dynamic'`, Next tự gắn nonce vào script của nó khi đọc header `x-nonce`. Landing OAuth (`session-cookies.ts`) đã có nonce riêng — hợp nhất hoặc giữ route-level override. Test `security-headers.test.ts` hiện PIN việc vắng `script-src` — lane này đổi test đó.
 
@@ -5181,14 +5182,15 @@ notes: |
 
 ## task: test-harness-job-definer-lock-client-leak
 title: `withJobDefinerLock` leaks its pg.Client if connect()/pg_advisory_lock rejects — cùng lớp với chat-definer leak đã sửa (`491a334`)
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). withJobDefinerLock: connect()+lock trong try/catch, end() rồi rethrow. Test đơn vị cho helper CHƯA thêm (mock pg.Client) — thêm khi chạy được vitest.
 risk: P2
 change_class: test-infra
 depends_on: []
 invariants: [test-chain]
 scope: [packages/db/src/test-harness.ts, packages/db/src/test-harness.test.ts]
 manifest: null
-merged_probe: none — fix là try/catch inline (negative scope tiền lệ chat-definer cấm helper đặt tên gộp hai hazard class); lane đặt probe = tên test case helper mới trong test-harness.test.ts, KHÔNG phải `spyOnEndedClients` (đã dùng)
+merged_probe: none — fix inline try/catch (không helper đặt tên, theo contract lane chat-definer); probe = test case mới khi lane test-harness.test.ts được viết
 notes: |
   **Đo 2026-09-03, tái xác nhận 2026-09-06 tại `30a3e90`:** `packages/db/src/test-harness.ts:357-370` — `withJobDefinerLock` tạo `pg.Client`, `await lockClient.connect()` rồi `await lockClient.query("SELECT pg_advisory_lock($1)")` **ngoài** `try`; `end()` chỉ nằm trong `finally` của block bọc `fn()`. Nếu `connect()` hoặc lock query reject (Postgres chưa sẵn sàng, password `app`/owner vừa bị suite khác đổi, quá `max_connections`) thì client không bao giờ được `end()` — cùng defect đã sửa cho `acquireChatDefinerLock` (`:293-310`, lane `test-harness-chat-definer-lock-client-leak--v2`, merge `491a334`), phần job-definer bị bỏ lại vì negative scope của lane đó tách hai hazard class.
   **Hệ quả thấy được:** vitest treo ở teardown (pool không drain vì còn client mở) thay vì fail nhanh; `migrate.test.ts` gọi `withJobDefinerLock` ở mọi `setupNonSuperuserOwnerContext` (A2 thêm 1 call site nữa trong `0037` test).
@@ -5237,14 +5239,15 @@ notes: |
 
 ## task: audit-2026-09-06-d5-cancel-draft-anomaly-no-processed-command
 title: `cancelSession` nhánh draft-anomaly commit event nhưng không ghi `processed_commands` ⇒ retry cùng `commandId` sinh event mới mỗi lần (INV-6)
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Nhánh anomaly ghi processed_commands `{refusal}` cùng tx với event; retry cùng commandId replay refusal, 0 event mới (test XC-DRAFT-ANOMALY-RETRY).
 risk: P3
 change_class: code
 depends_on: []
 invariants: [session-command, retry-liveness]
 scope: [packages/db/src/session-service.ts, packages/db/src/session-service.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe = tên test case/helper mới
+merged_probe: packages/db/src/session-service.ts :: storedRefusal
 notes: |
   Nguyên văn audit: `cancelSession` nhánh draft-anomaly commit event nhưng **không** ghi `processed_commands` (`session-service.ts:2144-2164`, throw sau commit `:2225-2230`) ⇒ retry cùng `commandId` sinh event mới mỗi lần — vi phạm INV-6.
   source: docs/sessions/2026-09-06-repo-audit.md · DD-117 D5: dedup CHỈ trên `(tenant_id, command_id)` — nhánh này phải ghi row dedup trước khi commit event, hoặc không commit.
@@ -5265,84 +5268,90 @@ notes: |
 
 ## task: audit-2026-09-06-d7-oauth-txn-definers-missing-pg-temp
 title: `create_oauth_transaction`/`consume_oauth_transaction` (`0010`) `SET search_path = public` thiếu `pg_temp`
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Migration 0039: CREATE OR REPLACE cả hai với `public, pg_temp`; psql replay + proconfig assert.
 risk: P3
 change_class: schema-migration
 depends_on: []
 invariants: [auth, schema]
 scope: [packages/db/migrations]
 manifest: null
-merged_probe: none — migration số đuôi chưa biết; probe = `CREATE OR REPLACE` hai function với `pg_temp` (lane đặt symbol)
+merged_probe: packages/db/migrations/0039_audit_hardening_definers_ledger_link_codes.sql :: consume_oauth_transaction
 notes: |
   Nguyên văn audit: `create_oauth_transaction`/`consume_oauth_transaction` (`0010:49,64`) `SET search_path = public` **thiếu `pg_temp`** — chính repo giải thích vì sao thiếu là không đủ ở `0022:12-19`.
   source: docs/sessions/2026-09-06-repo-audit.md · Một migration nhỏ, forward-only, CREATE OR REPLACE giữ nguyên body.
 
 ## task: audit-2026-09-06-d8-definers-unbound-target-identity
 title: Definer `app` gọi được nhận identity đích không ràng buộc: `auth_create_web_session`, `auth_oauth_handoff_arm`, `create_oauth_transaction(p_tenant_id)` không kiểm `app.tenant_id`
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). PHẦN LÀM ĐƯỢC: `create_oauth_transaction` assert `p_tenant_id = app.tenant_id` (0039). Hai definer LOGIN-path (`auth_create_web_session`, `auth_oauth_handoff_arm`) KHÔNG có context để assert trước khi login xong — trusted-server design, ghi lại không đổi; row đóng khi 0039 merge.
 risk: P3
 change_class: schema-migration
 depends_on: []
 invariants: [auth, schema]
 scope: [packages/db/migrations]
 manifest: null
-merged_probe: none — schema; probe do lane đặt
+merged_probe: packages/db/migrations/0039_audit_hardening_definers_ledger_link_codes.sql :: create_oauth_transaction
 notes: |
   Nguyên văn audit: Definer `app` gọi được nhận identity đích không ràng buộc: `auth_create_web_session(p_account_id)` `0015:129-153`, `auth_oauth_handoff_arm(..., p_resolved_account_id)` `0018:87-109`, `create_oauth_transaction(p_tenant_id)` **không** kiểm `app.tenant_id` (khác `raise_public_session_fence` `0033:173-180`). Trusted-server design; ghi vì khuôn chặt hơn đã có sẵn.
   source: docs/sessions/2026-09-06-repo-audit.md · A4 (`0038`) dùng khuôn assert-equality — tiền lệ để áp cho ba function này.
 
 ## task: audit-2026-09-06-d9-link-codes-dd50-columns
 title: `link_codes` thiếu cột DD-50 (XOR issuer, max_attempts, locked_until, revoked_at); `tenant_link_codes.code_hash` bare text
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). 0039: source_channel_identity_id nullable + source_account_id + max_attempts/locked_until/revoked_at + XOR CHECK, mirror schema.ts. `tenant_link_codes.code_hash` bare text KHÔNG đổi (bảng khác, data migration) — ghi ở đây, không mở row.
 risk: P3
 change_class: schema-migration
 depends_on: []
 invariants: [identity, schema]
 scope: [packages/db/migrations, packages/db/schema.ts]
 manifest: null
-merged_probe: none — schema; probe = tên constraint XOR mới (lane đặt)
+merged_probe: packages/db/migrations/0039_audit_hardening_definers_ledger_link_codes.sql :: link_codes_issuer_xor_chk
 notes: |
   Nguyên văn audit: `link_codes` thiếu cột DD-50 (`XOR issuer`, `max_attempts`, `locked_until`, `revoked_at`) — `0001:54-66` vs `decisions.md:686`; `tenant_link_codes.code_hash` bare text. Dormant.
   source: docs/sessions/2026-09-06-repo-audit.md · Tiền đề của `identity-link-code-issue-consume`.
 
 ## task: audit-2026-09-06-d11-rls-catalog-test-and-runner-ordering
 title: Không có catalog test "mọi bảng có `tenant_id` phải ENABLE+FORCE RLS" (hand-list 13/33); post-apply check chỉ `count(*) > 0`; runner không từ chối file số thấp hơn đã apply
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Catalog test trong rls-invariants (37 bảng tenant_id: FORCE-RLS hoặc allowlist definer-only 6 bảng có kiểm zero-grant sống) + runner guard ordinal/duplicate. Post-apply `count(*) > 0` giữ nguyên (catalog test mạnh hơn).
 risk: P3
 change_class: test-infra
 depends_on: []
 invariants: [schema, test-chain]
 scope: [packages/db/src/rls-invariants.test.ts, packages/db/src/migrate.ts, packages/db/src/migrate.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe = tên catalog test/helper mới
+merged_probe: packages/db/src/migrate.ts :: assertMonotonicMigrationOrder
 notes: |
   Nguyên văn audit: Không có catalog test "mọi bảng có `tenant_id` (trừ allowlist) phải ENABLE+FORCE RLS" — test hiện là hand-list 13/33 (`rls-invariants.test.ts:83-96`); post-apply check chỉ `count(*) FROM pg_policies > 0` (`migrate.ts:313-326`); runner không từ chối file số thấp hơn file đã apply.
   source: docs/sessions/2026-09-06-repo-audit.md · Đây là test giữ HARD RULE #1 (RLS fail-closed) khi bảng mới xuất hiện — giá trị cao/giá thấp.
 
 ## task: audit-2026-09-06-d12-ledger-fk-not-aggregate-bound
 title: `charges(tenant_id, player_id)` không ràng `session_id`; `payment_allocations.reverses_allocation_id` không ràng cùng `charge_id`
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). 0039: hai composite FK + candidate key; cross-session charge bị từ chối (đo psql).
 risk: P3
 change_class: schema-migration
 depends_on: []
 invariants: [money-model, schema]
 scope: [packages/db/migrations]
 manifest: null
-merged_probe: none — schema; probe = tên FK/CHECK mới
+merged_probe: packages/db/migrations/0039_audit_hardening_definers_ledger_link_codes.sql :: charges_tenant_session_player_fk
 notes: |
   Nguyên văn audit: Hai FK ledger ràng tenant nhưng không ràng aggregate: `charges(tenant_id, player_id)` không ràng `session_id` (`0019:23-25`, code tự nhận `session-service.ts:2139-2143`); `payment_allocations.reverses_allocation_id` không ràng cùng `charge_id` (`0020:21-24`).
   source: docs/sessions/2026-09-06-repo-audit.md
 
 ## task: audit-2026-09-06-d13-sync-engine-spec-claims-aggregate-ordering
 title: `feature_sync_engine_tech.md:38,139,270` claim partition theo aggregate ordering key; runtime chỉ `ORDER BY created_at` + `SKIP LOCKED` — KHÔNG có thứ tự per-aggregate
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Docs-only; runtime partition vẫn là decision riêng nếu owner muốn.
 risk: P3
 change_class: docs-reconcile
 depends_on: []
 invariants: [retry-liveness]
 scope: [docs/features/BE/feature_sync_engine_tech.md]
 manifest: null
-merged_probe: none — docs-reconcile, không symbol
+merged_probe: none — docs-reconcile (spec v2.9 ghi as-built: sequence monotonic khi ghi, delivery có thể đảo)
 notes: |
   Nguyên văn audit: `feature_sync_engine_tech.md:38,139,270` claim partition theo aggregate ordering key; runtime chỉ `ORDER BY created_at` trong CTE + `SKIP LOCKED`, không partition (`0023:176-208`). Xác nhận: **không** thứ tự per-aggregate.
   source: docs/sessions/2026-09-06-repo-audit.md · Hai lối: sửa spec ghi đúng "không per-aggregate ordering; consumer phải idempotent theo `outbox_agg_seq`" (rẻ, đúng hôm nay) hoặc mở row runtime partition (đắt). Row này = sửa spec; runtime là decision riêng.
@@ -5358,145 +5367,156 @@ scope: [packages/db/src/session-service.ts, packages/db/src/authorization.ts]
 manifest: null
 merged_probe: none — lane đặt probe = tên test lock-order mới
 notes: |
+  **06/09 (B4):** ĐÃ GHI comment lock-order tại `updateSession` (session-service.ts) nêu thứ tự chuẩn + cách sửa (pre-read status không lock → authorize khi open → lock → re-check); KHÔNG đổi code vì suite session-service không chạy được ở cloud và DD-110 D4 pin literal-không-gửi-cho-draft. Làm cùng lane suspend job.
   Nguyên văn audit: Lock-order publish (`tenants/subscriptions FOR SHARE :429` → `sessions FOR UPDATE :511`) ngược update (`sessions :1237` → `subscriptions :1297`) — thành deadlock 3 bên khi job suspend tương lai `FOR UPDATE subscriptions`. Retryable, không corrupt.
   source: docs/sessions/2026-09-06-repo-audit.md · A4 đưa read subscriptions vào definer `resolve_subscription_locked` — thứ tự lock vẫn do caller quyết; chuẩn hoá: session trước, subscriptions sau, ở MỌI command (token `session-lock-ordering`).
 
 ## task: audit-2026-09-06-d15-dead-repo-create-and-guc-reset-instead-of-assert
 title: `tenantRepo().sessions.create` nhận `status:'open'` bỏ qua cả họ command (0 caller); `authorizeTenantAction`/`resolveCapability` re-set GUC theo tham số thay vì assert bằng
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). ensureTenantContext set-or-assert (TenantContextMismatchError) dùng ở authorizeTenantAction/resolveCapability; `tenantRepo().sessions.create` GIỮ làm fixture seam + guard test 0 caller ngoài test.
 risk: P3
 change_class: code
 depends_on: [audit-2026-09-06-a4-subscriptions-definer]
 invariants: [session-command, billing-authz]
 scope: [packages/db/src/tenant.ts, packages/db/src/index.ts, packages/db/src/authorization.ts, packages/db/src/capability.ts]
 manifest: null
-merged_probe: none — lane đặt probe (vd. tên error class khi tenantId lệch GUC)
+merged_probe: packages/db/src/tenant.ts :: ensureTenantContext
 notes: |
   Nguyên văn audit: `tenantRepo().sessions.create` nhận `status:'open'`, bỏ qua cả họ command (`tenant.ts:41-53,82-102`, export `index.ts:14`), 0 caller. `authorizeTenantAction`/`resolveCapability` **re-set** GUC theo tham số (`authorization.ts:189`, `capability.ts:183`) thay vì assert bằng — tenantId lệch sẽ re-scope transaction trong im lặng.
   source: docs/sessions/2026-09-06-repo-audit.md · Sau A4, definer `resolve_subscription_locked` đã assert `p_tenant_id = app.tenant_id` — nên nửa "re-set" ở TS nay là redundant-nhưng-nguy-hiểm; đổi thành assert + xoá `sessions.create` khỏi repo (0 caller).
 
 ## task: audit-2026-09-06-w4-oauth-landing-english-only-hr5
 title: HR5: landing OAuth `<html lang="en">`, title/button English-only ngoài `t()`; test DD-118 suy "0 `t()` ⇒ 0 chuỗi user-facing"
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Landing qua t() + `<html lang=getLang()>`; tenant-lang.test reclassify session-cookies.ts (c)→(b).
 risk: P3
 change_class: code
 depends_on: []
 invariants: [i18n-surface, auth]
 scope: [apps/web/lib/session-cookies.ts, apps/web/lib/tenant-lang.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe
+merged_probe: apps/web/lib/session-cookies.ts :: getLang
 notes: |
   Nguyên văn audit: HR5: landing OAuth `session-cookies.ts:166-171` `<html lang="en">`, title/button English-only ngoài `t()`; test phân loại DD-118 (`tenant-lang.test.ts:148-159`) suy "0 `t()` ⇒ 0 chuỗi user-facing" — đúng lớp sai HR5 nó phải bắt.
   source: docs/sessions/2026-09-06-repo-audit.md · Landing là pre-tenant ⇒ theo DD-118 tiếng Việt (mặc định), `t("Đang đăng nhập…","Signing you in…")`; test phải grep chuỗi literal, không đếm `t()`.
 
 ## task: audit-2026-09-06-w6-cookie-host-prefix-secure-idle-ttl
 title: Cookie không `__Host-`; `Secure` chỉ theo `NODE_ENV`; TTL 30 ngày tuyệt đối không idle; sibling-subdomain cookie-toss ⇒ login CSRF qua `plx_oauth_google`
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). PHẦN LÀM: `__Host-plx_session` (prod) + `__Secure-plx_oauth_*`; cookieSecure() chung. CHƯA: idle TTL (schema `last_seen_at`) — giữ row mở phần đó sau khi merge, đổi title.
 risk: P3
 change_class: security-posture
 depends_on: []
 invariants: [auth, web-app]
 scope: [apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, packages/db/migrations]
 manifest: null
-merged_probe: none — lane đặt probe (vd. const tên cookie `__Host-` mới)
+merged_probe: apps/web/lib/session-cookies.ts :: sessionCookieName
 notes: |
   Nguyên văn audit: Cookie không `__Host-` prefix; `Secure` chỉ theo `NODE_ENV` (`session-cookies.ts:13-14,36-44`); TTL 30 ngày tuyệt đối không idle (`0015:171`). Sibling-subdomain cookie-toss ⇒ login CSRF qua `plx_oauth_google`.
   source: docs/sessions/2026-09-06-repo-audit.md · `__Host-` đòi `Path=/` — OAuth binding cookie hiện path-scoped (D1 design) ⇒ chỉ session cookie đổi prefix; idle TTL là migration nhỏ (`last_seen_at`).
 
 ## task: audit-2026-09-06-w7-csrf-compare-and-logout-origin
 title: CSRF secret so bằng `===` (không timing-safe); `POST /api/auth/logout` không `csrfOk`/`sameOriginRequest` — spec vs SI-4 đã reconcile docs, code còn nguyên
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). csrfOk timingSafeEqual + length check. Logout: KHÔNG thêm Origin gate (SI-4 LIVE đã fail-closed; spec đã ghi ngoại lệ có tên ở A8).
 risk: P3
 change_class: security-posture
 depends_on: []
 invariants: [auth]
 scope: [apps/web/lib/session-cookies.ts, apps/web/app/api/auth/logout/route.ts, apps/web/app/api/auth/logout/route.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe (vd. `timingSafeEqual` wrapper có tên)
+merged_probe: apps/web/lib/session-cookies.ts :: timingSafeEqual
 notes: |
   Nguyên văn audit: CSRF secret so bằng `===` (`session-cookies.ts:188-191`); `POST /api/auth/logout` không `csrfOk`/`sameOriginRequest` (`logout/route.ts:19-24`). Spec `:326` vs SI-4 (`:91-99`) **tự mâu thuẫn**.
   source: docs/sessions/2026-09-06-repo-audit.md · A8 đã sửa spec thành ngoại lệ có tên cho logout (SI-4 LIVE: revoke-before-clear). Còn lại: `timingSafeEqual` cho CSRF; logout thêm `sameOriginRequest` là **tuỳ chọn** (SI-4 đã fail-closed) — nếu thêm, giữ test SI-4 xanh.
 
 ## task: audit-2026-09-06-w8-onboarding-start-unbounded-json-and-name
 title: `onboarding/start` `request.json()` không trần; `tenants.name` không max length
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Route: content-type JSON, 4 KiB cap (declared + đọc), name ≤ 120; DB: `tenants_name_len_chk` (0039, B2).
 risk: P3
 change_class: code
 depends_on: []
 invariants: [auth, schema]
 scope: [apps/web/app/api/onboarding/start/route.ts, apps/web/app/api/onboarding/start/route.test.ts, packages/db/migrations]
 manifest: null
-merged_probe: none — lane đặt probe (vd. `MAX_START_BODY_BYTES`)
+merged_probe: apps/web/app/api/onboarding/start/route.ts :: MAX_START_BODY_BYTES
 notes: |
   Nguyên văn audit: `onboarding/start` `request.json()` không trần, `tenants.name` không max length (`start/route.ts:28-37,56`; `0002:13`).
   source: docs/sessions/2026-09-06-repo-audit.md · Khuôn A6 (`google/complete`): content-length + byteLength cap rồi mới parse; CHECK `char_length(name) <= 120` là migration nhỏ.
 
 ## task: audit-2026-09-06-w9-oauth-state-get-side-effect-img-src
 title: `GET /api/auth/google/state` có side effect cross-site (ghi transaction + đè cookie); `<img src>` ×10 đốt bucket IP nạn nhân
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Sec-Fetch-Dest ≠ document ⇒ 403 trước limiter/row/cookie; header vắng thì qua (defence in depth).
 risk: P3
 change_class: security-posture
 depends_on: []
 invariants: [auth]
 scope: [apps/web/app/api/auth/google/state/route.ts, apps/web/app/api/auth/google/state/route.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe
+merged_probe: apps/web/app/api/auth/google/state/route.ts :: isTopLevelNavigation
 notes: |
   Nguyên văn audit: GET có side effect cross-site: `google/state` ghi transaction + đè cookie; `<img src>` ×10 đốt bucket IP nạn nhân.
   source: docs/sessions/2026-09-06-repo-audit.md · Lối rẻ: `Sec-Fetch-Dest: document`/`Sec-Fetch-Mode: navigate` gate (fail-open khi header vắng ở browser cũ? — quyết trong lane), hoặc đổi thành POST từ nút login (form same-origin). Không đổi bucket.
 
 ## task: audit-2026-09-06-w10-no-runtime-role-assert-and-discovery-serves-all-routes
 title: Không gì assert runtime DB role ở web; predicate session-service chỉ `eq(sessions.id)` (tenant 100% dựa GUC); `start:discovery` = `next start` thường ⇒ ingress discovery phục vụ toàn bộ route
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). appDb() assert role khi DB_EXPECTED_ROLE set (compose: app/readonly; fly: opt-in có ghi chú); middleware.ts + lib/request-policy.ts: discovery chỉ /healthz + /discover*. Predicate `eq(sessions.id)` trong session-service KHÔNG đổi (GUC + RLS là backstop; SI-3 áp cho query mới).
 risk: P3
 change_class: security-posture
 depends_on: [audit-2026-09-06-a7-compose-loopback-app-role]
 invariants: [auth, schema, web-app]
 scope: [packages/db/src/client.ts, apps/web/next.config.mjs, infra/entrypoint.sh]
 manifest: null
-merged_probe: none — lane đặt probe (vd. `assertRuntimeRole`)
+merged_probe: apps/web/lib/session-cookies.ts :: assertRuntimeDbRole
 notes: |
   Nguyên văn audit: Không gì assert runtime DB role (`client.ts:24-31`); session-service predicate chỉ `eq(sessions.id)` (`:517,644,1252,1805,2041,2178`), tenant scope 100% dựa GUC; `start:discovery` = `next start` thường ⇒ ingress discovery phục vụ **toàn bộ** route (chỉ fail vì `readonly` thiếu EXECUTE).
   source: docs/sessions/2026-09-06-repo-audit.md · Khuôn có sẵn: worker preflight (`apps/bot/src/preflight.ts`) assert `current_user = app_worker` — làm tương tự cho web (`app`) và discovery (`readonly`); discovery giới hạn route bằng `PROCESS_ROLE` guard trong middleware. SI-3 (explicit `WHERE tenant_id`) áp cho query mới.
 
 ## task: audit-2026-09-06-w11-oauth-catch-swallows-no-log
 title: Callback/complete `catch {}` nuốt hết, 0 log; cả app 1 `console.*` runtime — outage KMS/JWKS không phân biệt với input sai
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). lib/log.ts (LOG_LEVEL reader, redact theo tên key) + catch ở callback/complete log theo class lỗi. Sentry transport vẫn là `observability-sentry-loglevel-readers`.
 risk: P3
 change_class: code
 depends_on: [observability-sentry-loglevel-readers]
 invariants: [auth]
 scope: [apps/web/app/api/auth/google/callback/route.ts, apps/web/app/api/auth/google/complete/route.ts]
 manifest: null
-merged_probe: none — lane đặt probe
+merged_probe: apps/web/lib/log.ts :: sanitizeFields
 notes: |
   Nguyên văn audit: Callback/complete `catch {}` nuốt hết, **0 log** (`google/callback/route.ts:49-66`, `complete/route.ts:31-38`); cả app chỉ 1 `console.*` runtime. Outage KMS/JWKS không phân biệt với input sai.
   source: docs/sessions/2026-09-06-repo-audit.md · Response giữ generic (D1B-8: không lộ lý do); log server-side phân loại dependency-failure vs invalid-input, KHÔNG log token/handoff.
 
 ## task: audit-2026-09-06-w13-jwt-verify-pin-rs256
 title: `jwtVerify` không pin `algorithms: ["RS256"]` (`google-oidc.ts:66-72`)
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). jwtVerify `algorithms: ["RS256"]` + test PS256 header bị từ chối.
 risk: P3
 change_class: security-posture
 depends_on: []
 invariants: [auth]
 scope: [apps/web/lib/google-oidc.ts, apps/web/lib/google-oidc.test.ts]
 manifest: null
-merged_probe: none — one-line; lane đặt probe = tên test case mới
+merged_probe: apps/web/lib/google-oidc.ts :: algorithms
 notes: |
   Nguyên văn audit: `jwtVerify` không pin `algorithms: ["RS256"]` (`google-oidc.ts:66-72`).
   source: docs/sessions/2026-09-06-repo-audit.md · jose + JWKS RSA đã giới hạn thực tế; pin tường minh là hàng rào rẻ. Test: token `alg: none`/HS256 bị từ chối.
 
 ## task: audit-2026-09-06-w14-session-route-no-store
 title: `GET /api/auth/session` trả CSRF secret, không set `Cache-Control: no-store` tường minh (PLAUSIBLE)
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). ok()/err() mặc định `Cache-Control: no-store` (caller override được).
 risk: P3
 change_class: code
 depends_on: []
 invariants: [auth, api-contract]
 scope: [apps/web/lib/api-envelope.ts, apps/web/app/api/auth/session/route.ts]
 manifest: null
-merged_probe: none — lane đặt probe
+merged_probe: apps/web/lib/api-envelope.ts :: NO_STORE
 notes: |
   Nguyên văn audit: `GET /api/auth/session` trả CSRF secret, không set `Cache-Control: no-store` tường minh (`api-envelope.ts:6-15`). PLAUSIBLE.
   source: docs/sessions/2026-09-06-repo-audit.md · Đề xuất: `ok()` mặc định `Cache-Control: no-store` cho MỌI envelope API (không route nào cacheable hôm nay), thay vì per-route.
@@ -5517,42 +5537,45 @@ notes: |
 
 ## task: audit-2026-09-06-b3-worker-shutdown-not-graceful
 title: Worker shutdown không graceful cho `deliver()` đang bay, không timeout (`worker.ts:122-129`)
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). stop({graceful, wait, timeout}) + hard deadline + chống double-shutdown.
 risk: P3
 change_class: code
 depends_on: []
 invariants: [retry-liveness]
 scope: [apps/bot/src/worker.ts, apps/bot/src/schedule.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe (vd. `SHUTDOWN_GRACE_MS`)
+merged_probe: apps/bot/src/worker.ts :: SHUTDOWN_GRACE_MS
 notes: |
   Nguyên văn audit: Shutdown không graceful cho `deliver()` đang bay, không timeout (`worker.ts:122-129`).
   source: docs/sessions/2026-09-06-repo-audit.md · pg-boss `stop({ graceful: true, timeout })` + drain in-flight deliver; lease reclaim 5 phút (0023) là backstop, không phải cơ chế.
 
 ## task: audit-2026-09-06-b4-entrypoint-guard-endswith-ts
 title: Entrypoint guard `endsWith("worker.ts")` — compile sang JS ⇒ worker start rồi exit 0 im lặng
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). So URL module với entry script; worker.ts + provision-queue.ts dùng.
 risk: P3
 change_class: code
 depends_on: []
 invariants: [retry-liveness, build-config]
 scope: [apps/bot/src/worker.ts, apps/bot/src/provision-queue.ts]
 manifest: null
-merged_probe: none — lane đặt probe (vd. helper `isDirectRun`)
+merged_probe: apps/bot/src/direct-run.ts :: isDirectRun
 notes: |
   Nguyên văn audit: Entrypoint guard `endsWith("worker.ts")` (`worker.ts:137`, `provision-queue.ts:51`) — compile sang JS ⇒ worker start rồi exit 0 im lặng.
   source: docs/sessions/2026-09-06-repo-audit.md · Hôm nay chạy bằng `tsx` nên chưa cắn; cắn ngay khi ai build. Khuôn: so `import.meta.url` với `process.argv[1]` qua `pathToFileURL`, không so đuôi tên file.
 
 ## task: audit-2026-09-06-x5-stale-infra-comments-healthcheck
 title: `fly.toml:15` "0000→0013" (tail thật cao hơn); `Dockerfile:42` "healthcheck-ready" nhưng không `HEALTHCHECK`; worker không có liveness
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Dockerfile HEALTHCHECK role-aware (web/discovery /healthz; worker exit 0), fly.toml comment; worker business liveness (heartbeat DB) CHƯA — tách ý đó khi flip.
 risk: P3
 change_class: infra-tooling
 depends_on: [audit-2026-09-06-a7-compose-loopback-app-role]
 invariants: [build-config]
 scope: [infra/fly.toml, infra/Dockerfile]
 manifest: null
-merged_probe: none — comment/config; lane đặt probe = directive `HEALTHCHECK` (không phải symbol — cần close_by khi land, scope là config nên hợp lệ)
+merged_probe: infra/Dockerfile :: HEALTHCHECK
 notes: |
   Nguyên văn audit: Comment mục: `entrypoint.sh:25-27` nhắc service `queue-provision` không tồn tại; `compose.yml:61` "0000→0033", `fly.toml:15` "0000→0013" (tail thật 0036); `Dockerfile:42` "healthcheck-ready" nhưng không `HEALTHCHECK`; worker không có liveness.
   source: docs/sessions/2026-09-06-repo-audit.md · A7 đã sửa entrypoint.sh + compose; còn fly.toml, Dockerfile, worker liveness (một endpoint/`SELECT 1` định kỳ ghi `job_audit_events`?). Không pin số đuôi migration trong prose — viết "all migrations".
@@ -5568,47 +5591,51 @@ scope: [scripts/autopilot-backlog-reconcile]
 manifest: null
 merged_probe: none — kit file; theo DD-100 D1 sửa Plexco-local trước rồi backport canonical; `ap-finish.sh` là kit-sync (KHÔNG vá trong consumer — báo lên `Claude template`)
 notes: |
+  **06/09 (B4):** KHÔNG vá — `scripts/autopilot-backlog-reconcile` là pack `kit-sync` (kit-pack-membership.json:50), luật cấm vá kit từ consumer; cả hai fix (`-e` + slug `.`/`..`) mở issue ở canonical `Claude template`.
   Nguyên văn audit: `autopilot-backlog-reconcile:378` `git grep -qE "$pr"` — regex từ backlog làm positional arg (giá trị bắt đầu `-` thành option); `ap-finish.sh:44-45` nhận slug `.`/`..` (scope-gate `:483,521` thì không).
   source: docs/sessions/2026-09-06-repo-audit.md · Fix reconcile: `git grep -qE -e "$pr" --`; `is_symbol_probe` đã chặn probe bắt đầu bằng `-` ở đường auto-flip, nhưng đường report vẫn chạy grep. `ap-finish.sh` thuộc pack `kit-sync` ⇒ mở issue ở canonical, không sửa ở đây.
 
 ## task: audit-2026-09-06-c1-parse-money-unbounded
 title: `parseMoney` không bound safe-integer (`"1.5k" → 15000` ×10; 400 chữ số → `Infinity`); `splitNameAmount` cho `Infinity` thành candidate — 0 caller ngoài core
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Grammar mới: decimal-k, grouping 3 chữ số, trần 1e12, input ≤ 40 ký tự.
 risk: P3
 change_class: core-logic
 depends_on: []
 invariants: [shared-core, money-model]
 scope: [packages/core/src/dates.ts, packages/core/src/dates.test.ts, packages/core/src/payments-logic.ts, packages/core/src/payments-logic.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe (vd. `MAX_MONEY_AMOUNT`)
+merged_probe: packages/core/src/dates.ts :: MAX_MONEY_AMOUNT
 notes: |
   Nguyên văn audit: `parseMoney` (`dates.ts:212-220`) không bound safe-integer, `"1.5k" → 15000` (×10), 400 chữ số → `Infinity`; `splitNameAmount` (`payments-logic.ts:88-89`) chỉ chặn `null`/`<=0` ⇒ `Infinity` thành candidate. 0 caller ngoài core.
   source: docs/sessions/2026-09-06-repo-audit.md · Sửa trước khi bot parser (zalo-webhook-adapter-core) gọi nó — đó là caller thật đầu tiên. `"1.5k"` = 1 500 hay 15 000? DD-87 ambiguity union: trả `ambiguous`, không đoán.
 
 ## task: audit-2026-09-06-c2-vietqr-url-no-encode-no-validate
 title: `buildVietQrUrl` interpolate `bin`/`account` không encode, `amount` không validate
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Validate bin/account/amount + encode; throw VietQrInputError.
 risk: P3
 change_class: core-logic
 depends_on: []
 invariants: [shared-core, money-model]
 scope: [packages/core/src/vietqr.ts, packages/core/src/vietqr.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe
+merged_probe: packages/core/src/vietqr.ts :: VietQrInputError
 notes: |
   Nguyên văn audit: `buildVietQrUrl` (`vietqr.ts:16`) interpolate `bin`/`account` không encode, `amount` không validate.
   source: docs/sessions/2026-09-06-repo-audit.md · `encodeURIComponent` + whitelist `^[0-9]{6}$` cho bin, `^[0-9A-Za-z]{1,19}$` cho account (VietQR spec), amount integer ≥ 0 ≤ bound của C-1.
 
 ## task: audit-2026-09-06-c3-parse-plus-one-suffix-quadratic-regex
 title: `parsePlusOneSuffix` regex quadratic trên input crafted (`matching.ts:96`) — chỉ OCR-label
-status: planned
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Cap 200 ký tự + precheck kết thúc "+1".
 risk: P3
 change_class: core-logic
 depends_on: []
 invariants: [shared-core]
 scope: [packages/core/src/matching.ts, packages/core/src/matching.test.ts]
 manifest: null
-merged_probe: none — lane đặt probe (vd. `MAX_SUFFIX_INPUT_LEN`)
+merged_probe: packages/core/src/matching.ts :: MAX_PLUS_ONE_INPUT_LENGTH
 notes: |
   Nguyên văn audit: `parsePlusOneSuffix` regex (`matching.ts:96`) quadratic trên input crafted; chỉ OCR-label.
   source: docs/sessions/2026-09-06-repo-audit.md · Cap độ dài input trước regex (chat message ≤ vài trăm ký tự) + viết lại pattern không nested quantifier; test bằng chuỗi 10k ký tự đo thời gian.
