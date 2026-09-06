@@ -1,9 +1,10 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { migrate } from "@plexco/db";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   REQUIRED_PROJECTORS,
   STUB_PROJECTOR,
@@ -859,5 +860,203 @@ describe("audit B-1: outcome grammar normalisation is enforced once, in completi
       errorCode: null,
       rawErrorCode: null,
     });
+  });
+});
+
+/**
+ * Audit 2026-09-06 X-5 (last part) — worker business liveness through the 0041 definer, called
+ * as app_worker (the only identity the worker ever has), with the table itself ungranted.
+ */
+describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
+  let ctx: DispatcherTestContext | undefined;
+
+  // Every heartbeat probe path writes (or must NOT write) a real file. Anchoring
+  // those at process.cwd() drops them into apps/bot/ in the repo: the happy-path
+  // tick has no reason to delete the file it just asserted on, and the name
+  // carries the vitest pid, so each run leaks a NEW one. A dirty working tree is
+  // not cosmetic here: `autopilot-review-readiness.mjs:658` runs `git status
+  // --porcelain --untracked-files=all` and HALTs WORKTREE_DIRTY — untracked
+  // counts — and `autopilot-scope-gate ready` invokes it at line 748, so a
+  // stray probe file blocks the ready transition; `ap-finish.sh:83` checks
+  // status itself. (backlog-reconcile uses `git blame`, not status, so it is
+  // NOT affected — do not widen this to "every script reads git status".)
+  // Each test gets a throwaway directory instead, removed whatever the
+  // assertions did.
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await mkdtemp(path.join(os.tmpdir(), "plexco-hb-"));
+  });
+  afterEach(async () => {
+    await ctx?.teardown();
+    ctx = undefined;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("app_worker can tick and read liveness through the definers, but has NO privilege on the table", async () => {
+    ctx = await setupDispatcherContext("plexco_bot_heartbeat_0041");
+    const { heartbeatOnce } = await import("./heartbeat.js");
+    const file = path.join(tmp, ".heartbeat-test");
+    const lines: string[] = [];
+
+    const ok = await heartbeatOnce({ pool: ctx.workerPool, id: "hb-test-1", pid: 4242, file, log: (l) => lines.push(l) });
+    expect(ok).toBe(true);
+    expect(lines).toEqual([]);
+    const written = await readFile(file, "utf8");
+    expect(() => new Date(written.trim()).toISOString()).not.toThrow();
+
+    const live = await ctx.workerPool.query<{ worker_id: string; pid: number; alive: boolean }>(
+      "SELECT worker_id, pid, alive FROM job_worker_liveness()",
+    );
+    expect(live.rows).toEqual([{ worker_id: "hb-test-1", pid: 4242, alive: true }]);
+
+    // A second tick from the SAME pid keeps started_at; a new pid restarts it.
+    const before = await ctx.verify.query<{ started_at: Date }>(
+      "SELECT started_at FROM job_worker_heartbeats WHERE worker_id = 'hb-test-1'",
+    );
+    await heartbeatOnce({ pool: ctx.workerPool, id: "hb-test-1", pid: 4242, file });
+    const same = await ctx.verify.query<{ started_at: Date }>(
+      "SELECT started_at FROM job_worker_heartbeats WHERE worker_id = 'hb-test-1'",
+    );
+    expect(same.rows[0]!.started_at.getTime()).toBe(before.rows[0]!.started_at.getTime());
+    await heartbeatOnce({ pool: ctx.workerPool, id: "hb-test-1", pid: 4243, file });
+    const restarted = await ctx.verify.query<{ started_at: Date; pid: number }>(
+      "SELECT started_at, pid FROM job_worker_heartbeats WHERE worker_id = 'hb-test-1'",
+    );
+    expect(restarted.rows[0]!.pid).toBe(4243);
+    expect(restarted.rows[0]!.started_at.getTime()).toBeGreaterThan(before.rows[0]!.started_at.getTime());
+
+    // Staleness: an old tick reads as not alive.
+    await ctx.verify.query(
+      "UPDATE job_worker_heartbeats SET last_seen_at = clock_timestamp() - interval '5 minutes' WHERE worker_id = 'hb-test-1'",
+    );
+    const stale = await ctx.workerPool.query<{ alive: boolean }>("SELECT alive FROM job_worker_liveness()");
+    expect(stale.rows[0]!.alive).toBe(false);
+
+    // No table grant: the definer is the only door.
+    await expect(ctx.workerPool.query("SELECT * FROM job_worker_heartbeats")).rejects.toMatchObject({ code: "42501" });
+    await expect(
+      ctx.workerPool.query("SELECT job_worker_heartbeat($1, 'h', 1)", ["x".repeat(129)]),
+    ).rejects.toMatchObject({ code: "22023" });
+  }, 60_000);
+
+  it("a failed DB tick is reported, not thrown, rolls back, releases the client, and leaves the file untouched", async () => {
+    const { heartbeatOnce } = await import("./heartbeat.js");
+    const lines: string[] = [];
+    const seen: string[] = [];
+    let released = 0;
+    const deadPool = {
+      connect: async () => ({
+        query: async (text: string) => {
+          seen.push(String(text));
+          if (String(text).includes("job_worker_heartbeat")) throw new Error("connection refused");
+          return { rows: [] };
+        },
+        release: () => {
+          released++;
+        },
+      }),
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-dead");
+    expect(await heartbeatOnce({ pool: deadPool, id: "dead", pid: 1, file, log: (l) => lines.push(l) })).toBe(false);
+    expect(lines[0]).toMatch(/heartbeat failed: connection refused/);
+    expect(seen).toContain("ROLLBACK");
+    expect(released).toBe(1); // never leaks a pooled client, which is the dispatcher's pool
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("each tick bounds itself with a transaction-local statement timeout (never a session-level SET on a pooled client)", async () => {
+    const { heartbeatOnce, HEARTBEAT_STATEMENT_TIMEOUT_MS } = await import("./heartbeat.js");
+    const seen: string[] = [];
+    const pool = {
+      connect: async () => ({
+        query: async (text: string) => {
+          seen.push(String(text));
+          return { rows: [{}] };
+        },
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-timeout");
+    expect(await heartbeatOnce({ pool, id: "t", pid: 1, file })).toBe(true);
+    expect(seen[0]).toBe("BEGIN");
+    expect(seen[1]).toBe(`SET LOCAL statement_timeout = ${HEARTBEAT_STATEMENT_TIMEOUT_MS}`);
+    expect(seen[3]).toBe("COMMIT");
+  });
+
+  /**
+   * The observer must not starve the observed. setInterval fires on a wall clock, not on
+   * completion: against a database that accepts connections but never settles queries, an
+   * unguarded loop stacks one checked-out client per tick on the DISPATCHER's pool.
+   */
+  it("startHeartbeat keeps at most one tick in flight against a hung database", async () => {
+    const { startHeartbeat } = await import("./heartbeat.js");
+    let connects = 0;
+    const hungPool = {
+      connect: async () => {
+        connects++;
+        return { query: () => new Promise(() => {}), release: () => {} };
+      },
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-hung");
+    const stop = startHeartbeat({ pool: hungPool, id: "h", pid: 1, file }, 20);
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    expect(connects).toBe(1);
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("stop() suppresses the file write of a tick that was already in flight (no green probe into a started shutdown)", async () => {
+    const { startHeartbeat } = await import("./heartbeat.js");
+    let answer: (() => void) | undefined;
+    const pool = {
+      connect: async () => ({
+        query: (text: string) =>
+          String(text).includes("job_worker_heartbeat")
+            ? new Promise((res) => {
+                answer = () => res({ rows: [{}] } as never);
+              })
+            : Promise.resolve({ rows: [] }),
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-stop");
+    const stop = startHeartbeat({ pool, id: "s", pid: 1, file }, 10_000);
+    await new Promise((r) => setTimeout(r, 40));
+    stop(); // shutdown begins while the tick is still waiting on the database
+    answer?.(); // the database answers afterwards
+    await new Promise((r) => setTimeout(r, 40));
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("the heartbeat row set is self-pruning at 30 days, so job_worker_liveness cannot drift into mostly-dead output", async () => {
+    ctx = await setupDispatcherContext("plexco_bot_heartbeat_prune");
+    await ctx.verify.query(
+      `INSERT INTO job_worker_heartbeats(worker_id, hostname, pid, started_at, last_seen_at)
+       VALUES ('gone-40d', 'old', 9, now() - interval '40 days', now() - interval '40 days'),
+              ('kept-20d', 'old', 9, now() - interval '20 days', now() - interval '20 days')`,
+    );
+    await ctx.workerPool.query("SELECT job_worker_heartbeat($1, $2, $3)", ["live", "h", 7]);
+    const { rows } = await ctx.verify.query<{ worker_id: string }>(
+      `SELECT worker_id FROM job_worker_heartbeats ORDER BY worker_id`,
+    );
+    expect(rows.map((r) => r.worker_id)).toEqual(["kept-20d", "live"]);
+  });
+});
+
+describe("heartbeat helpers (pure)", () => {
+  // The helper must return what the Dockerfile's `[ $(( now - mtime )) -le 90 ]` returns,
+  // including for a future-dated file (writer/probe clock skew): only the shell runs in
+  // production, so a stricter helper would be a test that lies about the deployed probe.
+  it("heartbeatFresh: within 90 s is fresh, older is not, future-dated matches the shell (fresh)", async () => {
+    const { heartbeatFresh, HEARTBEAT_STALE_MS, heartbeatFilePath, workerId } = await import("./heartbeat.js");
+    const now = new Date("2026-09-06T00:01:30Z");
+    expect(heartbeatFresh(new Date("2026-09-06T00:00:00Z"), now)).toBe(true);
+    expect(heartbeatFresh(new Date("2026-09-05T23:59:59Z"), now)).toBe(false);
+    expect(heartbeatFresh(new Date("2026-09-06T00:02:00Z"), now)).toBe(true);
+    expect(HEARTBEAT_STALE_MS).toBe(90_000);
+    expect(heartbeatFilePath({})).toBe("/tmp/plexco-worker-heartbeat");
+    expect(heartbeatFilePath({ WORKER_HEARTBEAT_FILE: " /run/hb " })).toBe("/run/hb");
+    expect(workerId({ WORKER_ID: "w-1" })).toBe("w-1");
+    expect(workerId({ WORKER_ID: "x".repeat(200) })).toHaveLength(128);
   });
 });

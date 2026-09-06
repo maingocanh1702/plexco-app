@@ -1,6 +1,7 @@
 import pg from "pg";
 import type PgBoss from "pg-boss";
 import { isDirectRun } from "./direct-run.js";
+import { startHeartbeat } from "./heartbeat.js";
 import { createQueue } from "./queue.js";
 import { preflightOrExit } from "./preflight.js";
 import { OUTBOX_DISPATCH_CRON, OUTBOX_DISPATCH_QUEUE } from "./queues.js";
@@ -129,6 +130,10 @@ async function main(): Promise<void> {
   await boss.start();
   console.log("[worker] pg-boss started");
 
+  // Business liveness (audit X-5): DB heartbeat via the 0041 definer + local file for the
+  // container HEALTHCHECK. Starts after boss.start() so "alive" means the loop is really running.
+  const stopHeartbeat = startHeartbeat({ pool });
+
   const deliver: DeliverFn = productionStubDeliver;
   const enablement = resolveOutboxDispatchEnablement(
     process.env.OUTBOX_DISPATCH_SCHEDULE_ENABLED,
@@ -177,6 +182,7 @@ async function main(): Promise<void> {
     }, SHUTDOWN_DEADLINE_MS);
     deadline.unref();
     try {
+      stopHeartbeat();
       await boss.stop({ graceful: true, wait: true, timeout: SHUTDOWN_GRACE_MS });
       await pool.end();
       clearTimeout(deadline);

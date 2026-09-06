@@ -74,9 +74,10 @@ EXPOSE 3000
 # PROCESS_ROLE ∈ {web, discovery, worker} — default web
 ENV PROCESS_ROLE=web
 # Audit 2026-09-06 X-5: header nói "healthcheck-ready" nhưng không có HEALTHCHECK. web/discovery
-# probe /healthz (cùng target với fly.toml http_checks; compose/DO đọc directive này). worker
-# không có HTTP: exit 0 = "process còn sống" (Docker đã restart khi process chết); liveness
-# nghiệp vụ của worker (heartbeat vào DB) là row riêng, không giả vờ ở đây.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD sh -c 'if [ "$PROCESS_ROLE" = "worker" ]; then exit 0; fi; node -e "fetch(\"http://127.0.0.1:\" + (process.env.PORT || 3000) + \"/healthz\").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"'
+# probe /healthz (cùng target với fly.toml http_checks; compose/DO đọc directive này). worker:
+# apps/bot/src/heartbeat.ts ghi DB heartbeat (0041) rồi chạm file WORKER_HEARTBEAT_FILE
+# (mặc định /tmp/plexco-worker-heartbeat) mỗi 30s — probe chỉ đo TUỔI file (< 90s = 3 tick),
+# không cần credential DB trong healthcheck. Loop kẹt / mất DB ⇒ file cũ ⇒ unhealthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+  CMD sh -c 'if [ "$PROCESS_ROLE" = "worker" ]; then f="${WORKER_HEARTBEAT_FILE:-/tmp/plexco-worker-heartbeat}"; [ -f "$f" ] && [ "$(( $(date +%s) - $(stat -c %Y "$f") ))" -le 90 ]; else node -e "fetch(\"http://127.0.0.1:\" + (process.env.PORT || 3000) + \"/healthz\").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; fi'
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

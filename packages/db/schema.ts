@@ -1681,6 +1681,22 @@ export const notificationDeliveries = pgTable("notification_deliveries", {
   }),
 }));
 
+/* ===========================================================================
+ * Job runtime plane — worker heartbeats (0041, audit 2026-09-06 X-5). GLOBAL, no tenant_id,
+ * owned by job_definer; app_worker reaches it only through job_worker_heartbeat() /
+ * job_worker_liveness(). Mirrored so the named CHECKs satisfy the schema-mirror guard.
+ * ======================================================================== */
+export const jobWorkerHeartbeats = pgTable("job_worker_heartbeats", {
+  workerId: text("worker_id").primaryKey(),
+  hostname: text("hostname").notNull(),
+  pid: integer("pid").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  workerIdChk: check("job_worker_heartbeats_worker_id_chk", sql`char_length(${t.workerId}) BETWEEN 1 AND 128`),
+  pidChk: check("job_worker_heartbeats_pid_chk", sql`${t.pid} > 0`),
+}));
+
 export const onboardingRuns = pgTable("onboarding_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
