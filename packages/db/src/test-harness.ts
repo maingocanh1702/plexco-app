@@ -790,3 +790,33 @@ export async function setupNonSuperuserOwnerContext(
     },
   };
 }
+
+/**
+ * Test-fixture person + account, seeded DIRECTLY as the owner/superuser connection.
+ *
+ * Replaces the `loginTelegram(ctx.appPool, freshLogin(uid))` fixture that 60+ tests used purely to
+ * obtain an {accountId, personId} pair (audit 2026-09-06 W-1 / row
+ * db-channel-identities-platform-chk-drop-telegram): that helper drove the Telegram login
+ * definer, which 0042 drops. Same return shape (`created` is always true — a fixture never
+ * "re-logs in"), so call sites are a one-line swap. `displayName` mirrors the old
+ * `Player <uid>` convention because a few assertions (DD-26 name-never-overwritten class) read it.
+ * NOT a production path: persons/accounts are global-protected tables with zero grants to `app`,
+ * which is exactly why this takes the owner client and not the app pool.
+ */
+export async function seedPersonAccount(
+  owner: pg.Client | pg.Pool,
+  uid: string,
+  opts: { displayName?: string | null } = {},
+): Promise<{ accountId: string; personId: string; created: true }> {
+  const displayName = opts.displayName === undefined ? `Player ${uid}` : opts.displayName;
+  const person = await owner.query<{ id: string }>(
+    `INSERT INTO persons (display_name) VALUES ($1) RETURNING id`,
+    [displayName],
+  );
+  const personId = person.rows[0]!.id;
+  const account = await owner.query<{ id: string }>(
+    `INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`,
+    [personId],
+  );
+  return { accountId: account.rows[0]!.id, personId, created: true };
+}

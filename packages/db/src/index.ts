@@ -69,14 +69,12 @@ export {
   type CancelSessionResult,
 } from "./session-service.js";
 export {
-  LoginReplayError,
   SlugTakenError,
   armOauthCompletionHandoff,
   consumeLoginState,
   consumeOauthCompletionHandoff,
   createWebSession,
   issueLoginState,
-  loginTelegram,
   onboardingSnapshot,
   provisionTenant,
   rateLimitCheck,
@@ -86,7 +84,6 @@ export {
   revokeWebSession,
   rotateWebSession,
   tenantsForPerson,
-  type LoginResult,
   type OnboardingSnapshot,
   type ResolvedSession,
   // Email credential-lifecycle app-boundary helpers (D1, migration 0016) — the

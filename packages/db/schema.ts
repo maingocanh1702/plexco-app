@@ -68,6 +68,10 @@ export const channelIdentities = pgTable("channel_identities", {
   personIdx: index("idx_channel_identities_person").on(t.personId),
   platformChk: check("channel_identities_platform_chk",
     sql`${t.platform} IN ('telegram','zalo','messenger')`),
+  // 0042 (audit 2026-09-06 W-1) narrows this further to exclude 'telegram', but with a BEFORE
+  // INSERT/UPDATE trigger rather than a second CHECK: a CHECK (even NOT VALID) is re-enforced on
+  // every later UPDATE of a legacy row, which would freeze existing telegram rows against
+  // deactivation and merge re-parenting. Drizzle has no trigger DSL — see the migration.
   statusChk: check("channel_identities_status_chk", sql`${t.status} IN ('active','inactive')`),
 }));
 

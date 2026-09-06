@@ -17,11 +17,6 @@ import type pg from "pg";
  * All token parameters are HASHES — raw session tokens never reach SQL.
  */
 
-export interface LoginResult {
-  accountId: string;
-  personId: string;
-  created: boolean;
-}
 
 export interface ResolvedSession {
   sessionId: string;
@@ -31,32 +26,9 @@ export interface ResolvedSession {
   expiresAt: Date;
 }
 
-export class LoginReplayError extends Error {
-  constructor() {
-    super("telegram login payload already used");
-  }
-}
-
 export class SlugTakenError extends Error {
   constructor() {
     super("tenant slug already taken by another owner");
-  }
-}
-
-export async function loginTelegram(
-  pool: pg.Pool,
-  input: { platformUserHash: string; displayName: string | null; loginHash: string },
-): Promise<LoginResult> {
-  try {
-    const { rows } = await pool.query(
-      `SELECT account_id, person_id, created FROM auth_login_telegram($1, $2, $3)`,
-      [input.platformUserHash, input.displayName, input.loginHash],
-    );
-    const r = rows[0] as { account_id: string; person_id: string; created: boolean };
-    return { accountId: r.account_id, personId: r.person_id, created: r.created };
-  } catch (error) {
-    if ((error as { code?: string }).code === "23505") throw new LoginReplayError();
-    throw error;
   }
 }
 
