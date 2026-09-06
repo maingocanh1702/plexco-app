@@ -727,7 +727,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0037_tenant_provision_rls_self_scope.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0038_subscriptions_read_via_definer.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
