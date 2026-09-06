@@ -2035,7 +2035,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0036_revoke_app_dml_public_sessions.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0037_tenant_provision_rls_self_scope.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4511,7 +4511,7 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
     it("UCC-8: MIGRATION_COUNT (37) matches the actual migrations/ directory listing, and the tail is 0036", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
       expect(files.length).toBe(37);
-      expect(files[files.length - 1]).toBe("0036_revoke_app_dml_public_sessions.sql");
+      expect(files[files.length - 1]).toBe("0037_tenant_provision_rls_self_scope.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {

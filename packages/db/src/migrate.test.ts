@@ -727,7 +727,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0036_revoke_app_dml_public_sessions.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0037_tenant_provision_rls_self_scope.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
@@ -869,6 +869,136 @@ describe("setupNonSuperuserOwnerContext teardown", () => {
       await ctx.teardown();
     }
   }, 30_000);
+});
+
+describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYPASSRLS owner (audit 2026-09-06 D-2)", () => {
+  // Reproduced 2026-09-06 by replaying 0000..0036 as a NOSUPERUSER NOBYPASSRLS owner:
+  //   SELECT tenant_provision(...) as app
+  //   ERROR: new row violates row-level security policy for table "memberships"
+  //   SELECT * FROM tenant_ids_for_person(...) as app -> 0 rows
+  // Both functions are SECURITY DEFINER and only ever worked because setupRlsTestContext replays as
+  // a superuser. 0037 makes each function scope its own GUC so the owner's attributes stop mattering.
+  it("tenant_provision inserts into four FORCE-RLS tables and tenant_ids_for_person lists across tenants, both as role app, with no GUC leaking to the caller", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0037_tenant_provision");
+    let appClient: pg.Client | undefined;
+    try {
+      // Same lock discipline as BR-6 above: withJobDefinerLock wraps the whole sequence because
+      // runMigration() reaches 0022 (asserts job_definer); the chat bootstrap holds its own key.
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        await ctx.bootstrapChatDefinerForOwner();
+        return ctx.runMigration();
+      });
+
+      // Prove the owner really is what this test claims — otherwise the assertions below pass
+      // vacuously (superuser-owned objects bypass RLS and the whole point is lost).
+      const ownerAttrs = await ctx.superuser.query(
+        `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = $1`,
+        [ctx.ownerRole],
+      );
+      expect(ownerAttrs.rows[0]).toEqual({ rolsuper: false, rolbypassrls: false });
+
+      // app's cluster-global test password is owned by setupRlsTestContext (ROLE_PW.app); set the
+      // SAME literal here so a concurrently running rls suite keeps connecting.
+      await ctx.superuser.query(`ALTER ROLE app WITH PASSWORD 'plexco_test_app'`);
+      appClient = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+
+      const person = await ctx.superuser.query(
+        `INSERT INTO persons DEFAULT VALUES RETURNING id`,
+      );
+      const personId = (person.rows[0] as { id: string }).id;
+      const other = await ctx.superuser.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
+      const otherId = (other.rows[0] as { id: string }).id;
+
+      // 1. fresh provision as app — the exact statement that raised at base.
+      const first = await appClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS id`,
+        ["club-0037-a", "Club A", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
+      const tenantA = (first.rows[0] as { id: string }).id;
+      expect(tenantA).toMatch(/^[0-9a-f-]{36}$/);
+
+      // 2. all four tenant-scoped rows exist (read as superuser: the point is that app WROTE them
+      //    under FORCE RLS, not that app can read them back without a GUC).
+      const counts = await ctx.superuser.query(
+        `SELECT
+           (SELECT count(*)::int FROM memberships    WHERE tenant_id = $1) AS m,
+           (SELECT count(*)::int FROM tenant_admins  WHERE tenant_id = $1) AS a,
+           (SELECT count(*)::int FROM subscriptions  WHERE tenant_id = $1) AS s,
+           (SELECT count(*)::int FROM onboarding_runs WHERE tenant_id = $1) AS o`,
+        [tenantA],
+      );
+      expect(counts.rows[0]).toEqual({ m: 1, a: 1, s: 1, o: 1 });
+
+      // 3. idempotent re-submit by the same owner returns the same id (this branch READS
+      //    tenant_admins under RLS, so it needs the GUC bracket just as much as the inserts).
+      const again = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
+        "club-0037-a",
+        "Club A",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
+      expect((again.rows[0] as { id: string }).id).toBe(tenantA);
+
+      // 4. a different person re-submitting the slug still gets SLUG_TAKEN (unique_violation).
+      await expect(
+        appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5)`, [
+          "club-0037-a",
+          "Club A",
+          "Asia/Ho_Chi_Minh",
+          "vi",
+          otherId,
+        ]),
+      ).rejects.toMatchObject({ code: "23505" });
+
+      // 5. second tenant for the same person, then the cross-tenant listing as app.
+      const second = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
+        "club-0037-b",
+        "Club B",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
+      const tenantB = (second.rows[0] as { id: string }).id;
+      const listed = await appClient.query(
+        `SELECT tenant_id, role FROM tenant_ids_for_person($1) ORDER BY tenant_id`,
+        [personId],
+      );
+      expect(listed.rows).toEqual(
+        [tenantA, tenantB].sort().map((tenant_id) => ({ tenant_id, role: "owner" })),
+      );
+      const listedOther = await appClient.query(`SELECT tenant_id FROM tenant_ids_for_person($1)`, [
+        otherId,
+      ]);
+      expect(listedOther.rows).toEqual([]);
+
+      // 6. neither function leaks its GUC into the caller's session/transaction.
+      const gucs = await appClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS id,
+                coalesce(current_setting('app.tenant_id', true), '') AS t,
+                coalesce(current_setting('app.person_id', true), '') AS p`,
+        ["club-0037-c", "Club C", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
+      expect((gucs.rows[0] as { t: string; p: string }).t).toBe("");
+      expect((gucs.rows[0] as { t: string; p: string }).p).toBe("");
+
+      // 7. the new SELECT-only policy does not widen app's direct reads: without a person GUC,
+      //    tenant_admins is still empty for app; with a tenant GUC it is still tenant-scoped.
+      const direct = await appClient.query(`SELECT count(*)::int AS n FROM tenant_admins`);
+      expect((direct.rows[0] as { n: number }).n).toBe(0);
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantA]);
+      try {
+        const scoped = await appClient.query(`SELECT count(*)::int AS n FROM tenant_admins`);
+        expect((scoped.rows[0] as { n: number }).n).toBe(1);
+      } finally {
+        await appClient.query(`SELECT set_config('app.tenant_id', '', false)`);
+      }
+    } finally {
+      await appClient?.end();
+      await ctx.teardown();
+    }
+  }, 90_000);
 });
 
 async function expectNoPartialJobCoreRow(ctx: { ownerPool: pg.Pool }): Promise<void> {
