@@ -69,7 +69,7 @@ async function resolveFromAwsKms(): Promise<Buffer> {
   }
   // codex round-13 [P1]: AWS SDK v3 does NOT infer region from the key ARN —
   // an unconfigured client throws "Region is missing" only when it actually
-  // calls Decrypt, so every Telegram login would 500 mid-request in any
+  // calls Decrypt, so every login would 500 mid-request in any
   // aws-kms environment missing this (the documented Fly secrets only listed
   // KMS_KEY_ID). Fail closed here instead, before ever touching the network.
   const region = process.env.AWS_REGION;

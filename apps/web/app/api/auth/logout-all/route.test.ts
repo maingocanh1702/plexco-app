@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createDb, createWebSession, loginTelegram, migrate, type DbHandle } from "@plexco/db";
+import { createDb, createWebSession, migrate, type DbHandle } from "@plexco/db";
 import { cookies } from "next/headers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { appDb, SESSION_COOKIE } from "../../../../lib/session-cookies";
@@ -78,20 +78,24 @@ afterAll(async () => {
 async function seedAccountWithSession(
   csrfSecret: string,
 ): Promise<{ rawToken: string; accountId: string }> {
-  const uid = randomBytes(6).toString("hex");
-  const login = await loginTelegram(owner.pool, {
-    platformUserHash: sha(`tg:${uid}`),
-    displayName: `Player ${uid}`,
-    loginHash: sha(`payload:${uid}`),
-  });
+  // Mint a bare person+account directly (superuser seed). This used to go through
+  // loginTelegram(); the Telegram login path was removed from apps/web (DD-37, audit
+  // 2026-09-06 W-1) and a logout test has no business depending on any provider.
+  const person = await owner.pool.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
+  const personId = (person.rows[0] as { id: string }).id;
+  const account = await owner.pool.query(
+    `INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`,
+    [personId],
+  );
+  const accountId = (account.rows[0] as { id: string }).id;
   const rawToken = randomBytes(32).toString("base64url");
   await createWebSession(owner.pool, {
-    accountId: login.accountId,
+    accountId,
     tokenHash: sha(rawToken),
     csrfSecret,
     ttlSeconds: 3600,
   });
-  return { rawToken, accountId: login.accountId };
+  return { rawToken, accountId };
 }
 
 async function addSession(accountId: string): Promise<void> {

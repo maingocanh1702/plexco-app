@@ -28,7 +28,7 @@ vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 
 function reqWith(headers: Record<string, string>): Request {
-  return new Request("https://plexco.app/api/auth/telegram", { method: "POST", headers });
+  return new Request("https://plexco.app/api/auth/logout", { method: "POST", headers });
 }
 
 describe("sameOriginRequest", () => {

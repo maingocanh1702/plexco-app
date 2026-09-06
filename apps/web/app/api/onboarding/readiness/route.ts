@@ -14,10 +14,16 @@ import { resolveTenantLang } from "../../../../lib/tenant-lang";
  * explicit check). The read itself also runs under withTenant → RLS
  * double-guards it.
  * Steps beyond run-creation stay not_configured until their feature slices
- * (bank → payment-reconcile, TG bind → telegram-adapter, Zalo → zalo-adapter).
+ * (bank → payment-reconcile, Zalo → zalo-adapter, first_session → session flow).
+ *
+ * Predicate = feature_web_auth_onboarding_tech.md §"Tenant readiness matrix" (WAO-OQ-2):
+ * required = club config verified + bank verified + at least one first session verified;
+ * Zalo bot is optional and never changes the answer. Until audit 2026-09-06 (W-5) this list
+ * required `tg_bind` — a step no code path ever writes, since Telegram left phase-1 in DD-37 —
+ * so `ready` could never become true. `first_session` was optional, the opposite of the spec.
  */
-const REQUIRED_STEPS = ["club_config", "bank_connect", "tg_bind"] as const;
-const OPTIONAL_STEPS = ["zalo_connect", "first_session"] as const;
+const REQUIRED_STEPS = ["club_config", "bank_connect", "first_session"] as const;
+const OPTIONAL_STEPS = ["zalo_connect"] as const;
 
 export async function GET(request: Request): Promise<Response> {
   const session = await currentSession();

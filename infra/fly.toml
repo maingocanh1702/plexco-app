@@ -3,7 +3,7 @@
 # Fly static egress + DO trusted-source allowlist + TLS sslmode=verify-full.
 # ⚠️ P0 TEMPLATE — đặt secret bằng `fly secrets set`, KHÔNG commit giá trị thật.
 # Deploy:   fly deploy -c infra/fly.toml
-# Secrets:  fly secrets set DATABASE_URL=... DATABASE_URL_DIRECT=... TELEGRAM_BOT_TOKEN=... ...
+# Secrets:  fly secrets set DATABASE_URL=... DATABASE_URL_DIRECT=... ...
 
 app = "plexco"
 primary_region = "sin"   # Singapore — độ trễ thấp nhất tới VN

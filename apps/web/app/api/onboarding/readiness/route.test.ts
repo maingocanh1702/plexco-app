@@ -150,3 +150,87 @@ describe("GET /api/onboarding/readiness — DD-118 language resolution", () => {
     expect(tenantLocale).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Audit 2026-09-06 W-5: REQUIRED_STEPS used to contain `tg_bind` — a step no code path ever
+ * writes (Telegram left phase-1 in DD-37) — so `ready` could never become true, and
+ * `first_session` was optional, the opposite of the spec. The predicate is now the BE spec's
+ * (feature_web_auth_onboarding_tech.md §"Tenant readiness matrix"): club_config + bank_connect +
+ * first_session verified; zalo_connect optional and never decisive.
+ */
+describe("GET /api/onboarding/readiness — readiness predicate (audit W-5)", () => {
+  beforeEach(async () => {
+    mockSession();
+    const { resolveWebSession } = await import("@plexco/db");
+    vi.mocked(resolveWebSession).mockResolvedValue({
+      sessionId: "s1",
+      accountId: "a1",
+      personId: "p1",
+      csrfSecret: "c1",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT_ID, role: "owner" }]);
+    vi.mocked(tenantLocale).mockResolvedValue("vi");
+  });
+
+  async function readinessOf(res: Response): Promise<{
+    ready: boolean;
+    steps: { step: string; required: boolean; status: string }[];
+  }> {
+    const body = (await res.json()) as {
+      data: { ready: boolean; steps: { step: string; required: boolean; status: string }[] };
+    };
+    return body.data;
+  }
+
+  it("CAN be ready: the three required steps verified => ready:true (this was unreachable before the fix)", async () => {
+    vi.mocked(onboardingSnapshot).mockResolvedValue({
+      runStatus: "in_progress",
+      steps: [
+        { step: "club_config", status: "verified" },
+        { step: "bank_connect", status: "verified" },
+        { step: "first_session", status: "verified" },
+      ],
+    } as never);
+    const res = await GET(reqFor(TENANT_ID));
+    expect(res.status).toBe(200);
+    const data = await readinessOf(res);
+    expect(data.ready).toBe(true);
+    expect(data.steps.map((s) => s.step)).toEqual([
+      "club_config",
+      "bank_connect",
+      "first_session",
+      "zalo_connect",
+    ]);
+    expect(data.steps.find((s) => s.step === "first_session")?.required).toBe(true);
+    expect(data.steps.some((s) => s.step === "tg_bind")).toBe(false);
+  });
+
+  it("bank_connect merely `registered` (not verified) => ready:false", async () => {
+    vi.mocked(onboardingSnapshot).mockResolvedValue({
+      runStatus: "in_progress",
+      steps: [
+        { step: "club_config", status: "verified" },
+        { step: "bank_connect", status: "registered" },
+        { step: "first_session", status: "verified" },
+      ],
+    } as never);
+    const data = await readinessOf(await GET(reqFor(TENANT_ID)));
+    expect(data.ready).toBe(false);
+  });
+
+  it("zalo_connect is optional: `error` there does not change a ready:true answer", async () => {
+    vi.mocked(onboardingSnapshot).mockResolvedValue({
+      runStatus: "in_progress",
+      steps: [
+        { step: "club_config", status: "verified" },
+        { step: "bank_connect", status: "verified" },
+        { step: "first_session", status: "verified" },
+        { step: "zalo_connect", status: "error" },
+      ],
+    } as never);
+    const data = await readinessOf(await GET(reqFor(TENANT_ID)));
+    expect(data.ready).toBe(true);
+    expect(data.steps.find((s) => s.step === "zalo_connect")?.required).toBe(false);
+  });
+});

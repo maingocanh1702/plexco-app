@@ -128,8 +128,6 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/auth/google/state/route.ts": "b",
   "app/api/auth/google/callback/route.ts": "b",
   "app/api/auth/google/complete/route.ts": "b",
-  "app/api/auth/telegram/state/route.ts": "b",
-  "app/api/auth/telegram/callback/route.ts": "b",
   // (b) — authenticated but NO single tenant is routed. /session returns a LIST of tenants, so no
   // one tenant's locale applies; logout and logout-all are account-scoped.
   "app/api/auth/session/route.ts": "b",
@@ -153,10 +151,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/tenant-lang.ts": "c",
   "lib/auth-secrets.ts": "c",
   "lib/google-oidc.ts": "c",
-  "lib/login-state.ts": "c",
   "lib/oauth-transaction.ts": "c",
   "lib/session-cookies.ts": "c",
-  "lib/telegram-login.ts": "c",
 };
 
 function discoverRouteFiles(dir: string, prefix: string): string[] {

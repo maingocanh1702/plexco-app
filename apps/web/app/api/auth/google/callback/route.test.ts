@@ -309,13 +309,11 @@ describe("GET /api/auth/google/callback", () => {
 });
 
 describe("negative scope (absence checks)", () => {
-  it("D1-14: the Telegram callback route is untouched — still present", () => {
-    expect(
-      existsSync(fileURLToPath(new URL("../../telegram/callback/route.ts", import.meta.url))),
-    ).toBe(true);
-    expect(
-      existsSync(fileURLToPath(new URL("../../telegram/state/route.ts", import.meta.url))),
-    ).toBe(true);
+  it("D1-14 (inverted 2026-09-06, audit W-1): the Telegram auth routes are GONE — DD-37 removed Telegram from phase-1 and lane A3 deleted the live login path", () => {
+    expect(existsSync(fileURLToPath(new URL("../../telegram", import.meta.url)))).toBe(false);
+    expect(existsSync(fileURLToPath(new URL("../../../../../lib/telegram-login.ts", import.meta.url)))).toBe(
+      false,
+    );
   });
 
   it("D1-15: NO Facebook adapter routes exist (order-3 negative scope)", () => {

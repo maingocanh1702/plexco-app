@@ -155,7 +155,8 @@ export function deriveAesKey(secret: Buffer, info: string): Buffer {
 
 /* ---------------------------------------------------------------------------
  * Provider-scoped Lax binding cookie — NOT the session cookie and NOT the
- * Strict Telegram login-state cookie. Host-only, `SameSite=Lax` so it rides the
+ * Strict login-state cookie (Telegram-era, DD-37 — the Telegram routes are gone; kept for the
+ * cookie-attribute precedent). Host-only, `SameSite=Lax` so it rides the
  * top-level cross-site GET redirect back from the provider, scoped to the EXACT
  * callback path so it is sent nowhere else. Value = `state.binding` (both
  * base64url, which never contains a '.').

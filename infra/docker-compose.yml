@@ -40,7 +40,7 @@ services:
       DATABASE_URL: postgres://plexco:plexco_dev@postgres:5432/plexco
       DATABASE_URL_DIRECT: postgres://plexco:plexco_dev@postgres:5432/plexco
     env_file:
-      # secret dev (TELEGRAM_BOT_TOKEN, SEPAY_WEBHOOK_SECRET, ...) — optional để
+      # secret dev (SEPAY_WEBHOOK_SECRET, ...) — optional để
       # `docker compose up` chạy được trước khi copy .env.example → .env
       - path: ../.env
         required: false
