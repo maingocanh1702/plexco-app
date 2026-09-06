@@ -3,7 +3,12 @@ import type PgBoss from "pg-boss";
 import { createQueue } from "./queue.js";
 import { preflightOrExit } from "./preflight.js";
 import { OUTBOX_DISPATCH_CRON, OUTBOX_DISPATCH_QUEUE } from "./queues.js";
-import { REQUIRED_PROJECTORS, productionStubDeliver, runDispatchCycle } from "./dispatcher.js";
+import {
+  REQUIRED_PROJECTORS,
+  productionStubDeliver,
+  runDispatchCycle,
+  type DeliverFn,
+} from "./dispatcher.js";
 
 /**
  * Worker entrypoint (entrypoint.sh: PROCESS_ROLE=worker → `pnpm --filter
@@ -58,6 +63,31 @@ export function isOutboxDispatchScheduleEnabled(rawValue: string | undefined): b
  * the flag reading "disabled". Calling unschedule() is a harmless no-op via
  * a plain `DELETE ... WHERE name = $1` (plans.js) when no row exists.
  */
+/**
+ * The schedule flag is NECESSARY but not sufficient (audit 2026-09-06 X-3). Producers exist
+ * (session-service.ts inserts outbox_events for every session command) while the only
+ * deliverer is productionStubDeliver, which DLQs every row terminally after phase 1 has
+ * already acked the event — a real product event dies at both ends. So enablement is
+ * resolved from BOTH inputs: the flag AND whether the configured deliverer is the stub.
+ * Pure, exported, and tested without process.env, like isOutboxDispatchScheduleEnabled.
+ */
+export function resolveOutboxDispatchEnablement(
+  rawFlag: string | undefined,
+  deliver: DeliverFn,
+): { enabled: boolean; reason: string | null } {
+  if (!isOutboxDispatchScheduleEnabled(rawFlag)) {
+    return { enabled: false, reason: 'OUTBOX_DISPATCH_SCHEDULE_ENABLED is not "true"' };
+  }
+  if (deliver === productionStubDeliver) {
+    return {
+      enabled: false,
+      reason:
+        "OUTBOX_DISPATCH_SCHEDULE_ENABLED is true but the configured deliverer is productionStubDeliver, which DLQs every delivery terminally — refusing to schedule until a real projector replaces the stub (audit 2026-09-06 X-3)",
+    };
+  }
+  return { enabled: true, reason: null };
+}
+
 export async function registerOutboxDispatchSchedule(
   boss: PgBoss,
   enabled: boolean,
@@ -94,9 +124,15 @@ async function main(): Promise<void> {
   await boss.start();
   console.log("[worker] pg-boss started");
 
-  const scheduleEnabled = isOutboxDispatchScheduleEnabled(
+  const deliver: DeliverFn = productionStubDeliver;
+  const enablement = resolveOutboxDispatchEnablement(
     process.env.OUTBOX_DISPATCH_SCHEDULE_ENABLED,
+    deliver,
   );
+  if (!enablement.enabled && enablement.reason) {
+    console.log(`[worker] outbox dispatch schedule OFF — ${enablement.reason}`);
+  }
+  const scheduleEnabled = enablement.enabled;
   await registerOutboxDispatchSchedule(boss, scheduleEnabled);
 
   // Gated on the SAME flag as the schedule itself (codex round-02 [P1]):
@@ -110,7 +146,7 @@ async function main(): Promise<void> {
   if (scheduleEnabled) {
     boss.work(OUTBOX_DISPATCH_QUEUE, async () => {
       const summary = await runDispatchCycle(pool, {
-        deliver: productionStubDeliver,
+        deliver,
         requiredProjectors: REQUIRED_PROJECTORS,
       });
       console.log("[worker] dispatch cycle", summary);

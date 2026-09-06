@@ -7,7 +7,12 @@ import pg from "pg";
 import PgBoss from "pg-boss";
 import { migrate } from "@plexco/db";
 import { afterEach, describe, expect, it } from "vitest";
-import { isOutboxDispatchScheduleEnabled, registerOutboxDispatchSchedule } from "./worker.js";
+import {
+  isOutboxDispatchScheduleEnabled,
+  registerOutboxDispatchSchedule,
+  resolveOutboxDispatchEnablement,
+} from "./worker.js";
+import { productionStubDeliver } from "./dispatcher.js";
 import { provisionQueue } from "./provision-queue.js";
 import { QUEUE_SCHEMA } from "./queue.js";
 import {
@@ -421,7 +426,19 @@ describe("main() — boss.work() registration (spawned process)", () => {
     expect(stdout).toContain("[worker] outbox dispatch worker not registered (schedule disabled)");
   }, 10_000);
 
-  it("DOES register a boss.work() consumer when the schedule flag is enabled", async () => {
+  /**
+   * This assertion inverted with the X-3 fix. The flag alone used to be enough to register the
+   * schedule and a boss.work() consumer; the audit showed the comment justifying that ("no
+   * producer inserts outbox_events") had rotted — session-service.ts emits eight event types —
+   * while the only configured deliverer is still productionStubDeliver, which acks then DLQs
+   * every row terminally. So worker.ts now refuses the pair even with the flag on, and says why.
+   *
+   * When a real projector replaces the stub (backlog projector-real-replace-stub), `deliver` stops
+   * being productionStubDeliver, resolveOutboxDispatchEnablement returns enabled, and THIS test
+   * flips back to asserting registration — that lane owns the flip. The unit-level matrix for the
+   * decision itself lives in the resolveOutboxDispatchEnablement describe below.
+   */
+  it("REFUSES to register the schedule even with the flag enabled, while the deliverer is still the stub (audit X-3)", async () => {
     const ctx = await setupScheduleContext("plexco_jso_worker_gate_on");
     teardown = ctx.teardown;
     await provisionQueue(ctx.migrationUrl);
@@ -431,7 +448,29 @@ describe("main() — boss.work() registration (spawned process)", () => {
     });
 
     expect(stdout).toContain("[worker] pg-boss started");
-    expect(stdout).toContain('[worker] outbox dispatch schedule registered: "* * * * *"');
-    expect(stdout).not.toContain("outbox dispatch worker not registered");
+    expect(stdout).toContain("[worker] outbox dispatch schedule OFF — ");
+    expect(stdout).toContain("productionStubDeliver");
+    expect(stdout).not.toContain("outbox dispatch schedule registered");
+    // and, because "off" must mean this process never touches dispatch at all, no consumer either
+    expect(stdout).toContain("[worker] outbox dispatch worker not registered (schedule disabled)");
   }, 10_000);
+});
+
+describe("resolveOutboxDispatchEnablement (audit 2026-09-06 X-3)", () => {
+  it("is off when the flag is off, whatever the deliverer", () => {
+    expect(resolveOutboxDispatchEnablement(undefined, async () => ({ result: "delivered" }))).toMatchObject({
+      enabled: false,
+    });
+  });
+  it("REFUSES to enable with the flag on while the deliverer is productionStubDeliver — producers exist and the stub DLQs terminally", () => {
+    const r = resolveOutboxDispatchEnablement("true", productionStubDeliver);
+    expect(r.enabled).toBe(false);
+    expect(r.reason).toMatch(/productionStubDeliver/);
+  });
+  it("enables with the flag on and a real deliverer", () => {
+    expect(resolveOutboxDispatchEnablement("true", async () => ({ result: "delivered" }))).toEqual({
+      enabled: true,
+      reason: null,
+    });
+  });
 });

@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   REQUIRED_PROJECTORS,
   STUB_PROJECTOR,
+  completionArgs,
+  normalizeErrorCode,
   runDispatchCycle,
   type DeliverFn,
 } from "./dispatcher.js";
@@ -388,6 +390,98 @@ describe("runDispatchCycle", () => {
     expect(summary.processedDeliveries).toBe(0);
   });
 
+  // audit 2026-09-06 B-1: complete_projector_delivery RAISES 22023 on a malformed outcome
+  // (error_code not ^[a-z][a-z0-9_]{0,63}$, or retry with a non-future next_attempt_at). That
+  // call sat OUTSIDE the deliver() try/catch, so one bad outcome aborted the cycle with the
+  // row still claimed — and reclaim-expired-first + ORDER BY event_id handed the SAME row back
+  // first on the next cycle, forever. Reproduced before the fix: runDispatchCycle rejected
+  // with SQLSTATE 22023 and the delivery stayed `claimed`.
+  /**
+   * The bound() hardening exists because a throw in the LOG line happens before
+   * complete_projector_delivery and would leave the delivery claimed — the B-1 failure mode. The
+   * helper's own unit table is above; this drives a projector that returns a non-string errorCode
+   * through the real cycle, so the claim is about the cycle rather than about the helper.
+   */
+  it("JRD-BOUND: a projector returning a NON-STRING error code still completes the cycle (the log line cannot abort it)", async () => {
+    const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_nonstring_code");
+    teardown = ctx.teardown;
+    const tenantId = await seedTenant(ctx.verify);
+    const eventId = await seedOutboxEvent(ctx.verify, tenantId);
+
+    const deliver: DeliverFn = async () => ({ result: "dlq", errorCode: 42 } as never);
+    const summary = await runDispatchCycle(ctx.workerPool, {
+      deliver,
+      requiredProjectors: [STUB_PROJECTOR],
+    });
+
+    expect(summary.processedDeliveries).toBe(1); // the cycle finished instead of throwing
+    const rows = await ctx.verify.query<{ status: string; error_code: string | null }>(
+      "SELECT status, error_code FROM projector_deliveries WHERE event_id = $1",
+      [eventId],
+    );
+    expect(rows.rows[0]?.status).toBe("dlq");
+    expect(rows.rows[0]?.error_code).toBe("malformed_error_code"); // in-grammar, delivery closed
+  });
+
+  it("audit B-1: a projector returning an UPPERCASE error code (dlq) does not abort the cycle — the code is normalised, the row ends dlq, and the next row is still delivered", async () => {
+    const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_bad_grammar_dlq");
+    teardown = ctx.teardown;
+    const tenantId = await seedTenant(ctx.verify);
+    const eventA = await seedOutboxEvent(ctx.verify, tenantId);
+    const eventB = await seedOutboxEvent(ctx.verify, tenantId);
+
+    let callCount = 0;
+    const deliver: DeliverFn = async () => {
+      callCount += 1;
+      if (callCount === 1) return { result: "dlq", errorCode: "ECONNRESET" };
+      return { result: "delivered" };
+    };
+
+    const summary = await runDispatchCycle(ctx.workerPool, {
+      deliver,
+      requiredProjectors: [STUB_PROJECTOR],
+    });
+    expect(callCount).toBe(2);
+    expect(summary.processedDeliveries).toBe(2);
+
+    const rows = await ctx.verify.query<{ event_id: string; status: string; error_code: string | null }>(
+      "SELECT event_id, status, error_code FROM projector_deliveries WHERE event_id = ANY($1) ORDER BY event_id",
+      [[eventA, eventB]],
+    );
+    const byStatus = Object.fromEntries(rows.rows.map((r) => [r.status, r]));
+    expect(byStatus["dlq"]?.error_code).toBe("econnreset");
+    expect(byStatus["delivered"]).toBeDefined();
+    // nothing is left claimed — the head-of-line block is gone
+    const claimed = await ctx.verify.query(
+      "SELECT 1 FROM projector_deliveries WHERE event_id = ANY($1) AND status = 'claimed'",
+      [[eventA, eventB]],
+    );
+    expect(claimed.rows).toHaveLength(0);
+  });
+
+  it("audit B-1: a projector returning retry with a PAST next_attempt_at fails closed to dlq/malformed_next_attempt instead of raising inside the cycle", async () => {
+    const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_bad_grammar_retry");
+    teardown = ctx.teardown;
+    const tenantId = await seedTenant(ctx.verify);
+    const eventA = await seedOutboxEvent(ctx.verify, tenantId);
+
+    const deliver: DeliverFn = async () => ({
+      result: "retry",
+      nextAttemptAt: new Date(0),
+      errorCode: "provider_timeout",
+    });
+    const summary = await runDispatchCycle(ctx.workerPool, {
+      deliver,
+      requiredProjectors: [STUB_PROJECTOR],
+    });
+    expect(summary.processedDeliveries).toBe(1);
+    const row = await ctx.verify.query<{ status: string; error_code: string | null }>(
+      "SELECT status, error_code FROM projector_deliveries WHERE event_id = $1",
+      [eventA],
+    );
+    expect(row.rows[0]).toEqual({ status: "dlq", error_code: "malformed_next_attempt" });
+  });
+
   it("codex round-07: a deliver() that throws for one row does not abort delivery of the rest (no head-of-line blocking)", async () => {
     const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_deliver_throws");
     teardown = ctx.teardown;
@@ -690,5 +784,80 @@ describe("REQUIRED_PROJECTORS", () => {
   it("is a single source read by both fan-out and the (future) ack argument — not duplicated", () => {
     expect(REQUIRED_PROJECTORS).toContain(STUB_PROJECTOR);
     expect(REQUIRED_PROJECTORS.length).toBe(1);
+  });
+});
+
+describe("audit B-1: outcome grammar normalisation is enforced once, in completionArgs", () => {
+  it("normalizeErrorCode lower-cases, replaces non-grammar chars, bounds to 64 and never yields a leading digit or empty code", () => {
+    expect(normalizeErrorCode("ECONNRESET")).toBe("econnreset");
+    expect(normalizeErrorCode("Provider-Timeout 504")).toBe("provider_timeout_504");
+    expect(normalizeErrorCode("")).toBe("malformed_error_code");
+    expect(normalizeErrorCode("5xx")).toBe("malformed_error_code");
+    expect(normalizeErrorCode(undefined)).toBe("malformed_error_code");
+    expect(normalizeErrorCode("a".repeat(100))).toHaveLength(64);
+    for (const sample of ["ECONNRESET", "x y", "ok_code", "Ω", "9"]) {
+      expect(normalizeErrorCode(sample)).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
+    }
+  });
+
+  it("a retry whose nextAttemptAt is not strictly in the future becomes dlq/malformed_next_attempt; a future one is kept", () => {
+    const now = () => new Date(1_000_000);
+    expect(
+      completionArgs({ result: "retry", nextAttemptAt: new Date(1_000_000), errorCode: "x" }, now),
+    ).toMatchObject({ result: "dlq", errorCode: "malformed_next_attempt", nextAttemptAt: null });
+    expect(
+      completionArgs({ result: "retry", nextAttemptAt: new Date(Number.NaN), errorCode: "x" }, now),
+    ).toMatchObject({ result: "dlq", errorCode: "malformed_next_attempt" });
+    expect(
+      completionArgs({ result: "retry", nextAttemptAt: new Date(1_000_001), errorCode: "X" }, now),
+    ).toMatchObject({ result: "retry", errorCode: "x", rawErrorCode: "X" });
+  });
+
+  it("a NON-STRING raw error code is described, never coerced with .slice() — the log line must not abort the cycle", async () => {
+    const { boundRawErrorCode, completionArgs, RAW_ERROR_CODE_LOG_MAX } = await import("./dispatcher.js");
+    // DeliveryOutcome says `errorCode: string`; a projector is external code that can send
+    // anything, and completionArgs passes the raw value straight through on retry/dlq. Bounding
+    // it must therefore never assume a string: throwing here happens BEFORE
+    // complete_projector_delivery and leaves the delivery claimed — the B-1 failure mode.
+    for (const bad of [42, true, null, undefined, { a: 1 }, [1, 2], Symbol("s"), 10n]) {
+      expect(() => boundRawErrorCode(bad as never)).not.toThrow();
+    }
+    // Every shape, driven through the REAL path the dispatcher takes: completionArgs first
+    // (which is what passes the raw value straight through on retry/dlq), then the bound.
+    const shapes: [unknown, string][] = [
+      [42, "42"],
+      [true, "true"],
+      [10n, "10"],
+      [null, "[null]"],
+      [undefined, "[undefined]"],
+      [{ a: 1 }, "[object]"],
+      [[1], "[array]"],
+      [Symbol("s"), "[symbol]"],
+      [() => "x", "[function]"],
+    ];
+    for (const [raw, described] of shapes) {
+      for (const outcome of [
+        { result: "dlq", errorCode: raw } as never,
+        { result: "retry", nextAttemptAt: new Date(Date.now() + 60_000), errorCode: raw } as never,
+      ]) {
+        const args = completionArgs(outcome);
+        expect(() => boundRawErrorCode(args.rawErrorCode as never)).not.toThrow();
+        expect(boundRawErrorCode(args.rawErrorCode as never)).toBe(described);
+        expect(args.errorCode).toBe("malformed_error_code"); // and the STORED code stays in-grammar
+      }
+    }
+    // oversized strings are still cut, with the overflow named
+    const long = "x".repeat(RAW_ERROR_CODE_LOG_MAX + 10);
+    expect(boundRawErrorCode(long)).toBe(`${"x".repeat(RAW_ERROR_CODE_LOG_MAX)}…[+10]`);
+  });
+
+  it("delivered passes providerRef through untouched and carries no error code", () => {
+    expect(completionArgs({ result: "delivered", providerRef: "ref-1" })).toEqual({
+      result: "delivered",
+      nextAttemptAt: null,
+      providerRef: "ref-1",
+      errorCode: null,
+      rawErrorCode: null,
+    });
   });
 });

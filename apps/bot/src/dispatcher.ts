@@ -59,13 +59,20 @@ export type DeliverFn = (job: ClaimedDeliveryJob) => Promise<DeliveryOutcome>;
 /**
  * Production placeholder wired into worker.ts. No real projector exists yet,
  * so every delivery is DLQed immediately rather than pretending to succeed
- * or retrying forever around work that cannot succeed. SAFE today because
- * production is code-dark: no producer inserts outbox_events (deferred out
- * of scope) and no cron drives this queue yet (slice 3). CONSEQUENCE: once
- * slice 3 registers the cron, every event this dispatcher claims WILL DLQ
- * until slice 4 replaces this stub with a real implementation — that is
- * expected, not a regression; slice 3 must not read the resulting DLQ flood
- * as a defect in this handler.
+ * or retrying forever around work that cannot succeed.
+ *
+ * NOT safe to schedule (audit 2026-09-06 X-3 corrected the old text here,
+ * which claimed "no producer inserts outbox_events"): the session command
+ * family in packages/db/src/session-service.ts has inserted outbox_events
+ * since 2026-08-14 (session.created/published/announcement_requested/
+ * updated/closed/cancelled ...). With this stub scheduled, phase 1 acks each
+ * event right after prepare and phase 2 DLQs its delivery — a terminal state
+ * with no replay path (0022:264, backlog db-projector-dlq-no-replay-path) —
+ * so a real product event dies at both ends. worker.ts therefore REFUSES to
+ * register the schedule while this stub is the configured deliverer, on top
+ * of the OUTBOX_DISPATCH_SCHEDULE_ENABLED flag defaulting off. Replacing this
+ * stub with a real projector is the first concrete projector slice's job;
+ * the DLQ flood it would produce is expected, not a regression in this file.
  */
 export const productionStubDeliver: DeliverFn = async () => ({
   result: "dlq",
@@ -249,18 +256,48 @@ export async function runDispatchCycle(
       }
 
       const args = completionArgs(outcome);
-      const completeResult = await pool.query<{ complete_projector_delivery: boolean }>(
-        "SELECT complete_projector_delivery($1, $2, $3, $4, $5, $6, $7) AS complete_projector_delivery",
-        [
-          job.eventId,
-          job.projector,
-          job.claimToken,
-          args.result,
-          args.nextAttemptAt,
-          args.providerRef,
-          args.errorCode,
-        ],
-      );
+      if (args.rawErrorCode !== null && args.rawErrorCode !== args.errorCode) {
+        // The raw code comes from a projector we do not control, so it is untrusted free text:
+        // it can carry a token-bearing URL, a response body, or arbitrary padding. The whole
+        // point of logging it is to show WHAT was normalised away, and a bounded prefix does
+        // that; the unbounded original does that plus retains whatever was embedded in it.
+        console.warn(
+          `[dispatcher] normalised projector error_code ${JSON.stringify(boundRawErrorCode(args.rawErrorCode))} -> ${args.errorCode} (event ${job.eventId}, projector ${job.projector})`,
+        );
+      }
+      const complete = (a: typeof args) =>
+        pool.query<{ complete_projector_delivery: boolean }>(
+          "SELECT complete_projector_delivery($1, $2, $3, $4, $5, $6, $7) AS complete_projector_delivery",
+          [
+            job.eventId,
+            job.projector,
+            job.claimToken,
+            a.result,
+            a.nextAttemptAt,
+            a.providerRef,
+            a.errorCode,
+          ],
+        );
+      let completeResult: { rows: { complete_projector_delivery: boolean }[] };
+      try {
+        completeResult = await complete(args);
+      } catch (error) {
+        // Defense in depth behind the normaliser: if the SQL grammar still rejects
+        // the outcome (SQLSTATE 22023 invalid_parameter_value ONLY — anything else
+        // is infra and propagates as before), fail this ROW closed to dlq with a
+        // canonical code instead of aborting the cycle with the row left claimed.
+        if ((error as { code?: string } | null)?.code !== "22023") throw error;
+        console.warn(
+          `[dispatcher] complete_projector_delivery rejected outcome for event ${job.eventId} (${String(error)}); recording dlq/malformed_outcome`,
+        );
+        completeResult = await complete({
+          result: "dlq",
+          nextAttemptAt: null,
+          providerRef: null,
+          errorCode: "malformed_outcome",
+          rawErrorCode: args.rawErrorCode,
+        });
+      }
       // false (no exception) = the token expired or was reclaimed by another
       // worker before this completion landed — the SAME "another claimant
       // owns this now" contract as ack_outbox_event's false path above, not
@@ -291,11 +328,74 @@ export async function runDispatchCycle(
   return summary;
 }
 
-function completionArgs(outcome: DeliveryOutcome): {
+/**
+ * complete_projector_delivery (0022:424-437) RAISES invalid_parameter_value
+ * (SQLSTATE 22023) when `error_code` is not `^[a-z][a-z0-9_]{0,63}$` or when a
+ * `retry` carries a non-future `next_attempt_at`. Before this normaliser, a
+ * projector returning e.g. `errorCode: "ECONNRESET"` (uppercase) raised INSIDE
+ * runDispatchCycle, outside the deliver() try/catch, and aborted the whole
+ * cycle with the row still `claimed` — and claim_projector_delivery_batch's
+ * reclaim-expired-first + ORDER BY event_id handed the SAME row back first on
+ * the next cycle, forever: exactly the head-of-line block the file-level
+ * comment says phase 2 prevents (audit 2026-09-06 B-1). The grammar is the
+ * SQL contract's, not the projector's, so it is enforced here, once:
+ *   - error codes are lower-cased, non-matching characters become `_`, an
+ *     empty/leading-digit result is replaced by `malformed_error_code`, and
+ *     the whole thing is cut to 64 chars;
+ *   - a `retry` whose nextAttemptAt is not strictly in the future is turned
+ *     into a `dlq` with `malformed_next_attempt` — a retry we cannot schedule
+ *     is not a retry, and failing closed is the same choice deliver()'s own
+ *     throw path makes.
+ * The original value is preserved in `rawErrorCode` for the log line.
+ */
+export const ERROR_CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
+/**
+ * Bound the untrusted raw error code before it reaches a log line. 64 is the same ceiling
+ * normalizeErrorCode() applies to the value it keeps, so a raw code already within the grammar's
+ * length prints in full and only genuinely oversized input is cut.
+ *
+ * Takes `unknown`, not `string`, and that is the whole point. DeliveryOutcome DECLARES
+ * `errorCode: string`, but a projector is external code and this module exists because runtime
+ * values violate that declaration — completionArgs passes `outcome.errorCode` through to
+ * rawErrorCode unguarded on the retry and dlq branches. A `.slice()` on a number would throw
+ * HERE, before complete_projector_delivery runs, leaving the delivery claimed and the cycle
+ * aborted: exactly the failure B-1 removed, reintroduced by a log line. Non-strings are described
+ * by TYPE rather than coerced — String(Symbol()) throws, and an object may be huge or carry
+ * secrets (the same rule apps/web/lib/log.ts applies to arbitrary objects).
+ */
+export const RAW_ERROR_CODE_LOG_MAX = 64;
+export function boundRawErrorCode(raw: unknown): string {
+  let text: string;
+  if (typeof raw === "string") {
+    text = raw;
+  } else if (typeof raw === "number" || typeof raw === "boolean" || typeof raw === "bigint") {
+    text = String(raw); // primitives are safe to show and are what a sloppy projector usually sends
+  } else if (raw === null) {
+    text = "[null]";
+  } else {
+    text = `[${Array.isArray(raw) ? "array" : typeof raw}]`;
+  }
+  return text.length <= RAW_ERROR_CODE_LOG_MAX
+    ? text
+    : `${text.slice(0, RAW_ERROR_CODE_LOG_MAX)}…[+${text.length - RAW_ERROR_CODE_LOG_MAX}]`;
+}
+
+export function normalizeErrorCode(raw: unknown): string {
+  const text = typeof raw === "string" ? raw : "";
+  let code = text.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 64);
+  if (!/^[a-z]/.test(code)) code = "malformed_error_code";
+  return ERROR_CODE_RE.test(code) ? code : "malformed_error_code";
+}
+
+export function completionArgs(
+  outcome: DeliveryOutcome,
+  now: () => Date = () => new Date(),
+): {
   result: "delivered" | "retry" | "dlq";
   nextAttemptAt: Date | null;
   providerRef: string | null;
   errorCode: string | null;
+  rawErrorCode: string | null;
 } {
   switch (outcome.result) {
     case "delivered":
@@ -304,20 +404,35 @@ function completionArgs(outcome: DeliveryOutcome): {
         nextAttemptAt: null,
         providerRef: outcome.providerRef ?? null,
         errorCode: null,
+        rawErrorCode: null,
       };
-    case "retry":
+    case "retry": {
+      const at = outcome.nextAttemptAt;
+      const future = at instanceof Date && !Number.isNaN(at.getTime()) && at.getTime() > now().getTime();
+      if (!future) {
+        return {
+          result: "dlq",
+          nextAttemptAt: null,
+          providerRef: null,
+          errorCode: "malformed_next_attempt",
+          rawErrorCode: typeof outcome.errorCode === "string" ? outcome.errorCode : null,
+        };
+      }
       return {
         result: "retry",
-        nextAttemptAt: outcome.nextAttemptAt,
+        nextAttemptAt: at,
         providerRef: null,
-        errorCode: outcome.errorCode,
+        errorCode: normalizeErrorCode(outcome.errorCode),
+        rawErrorCode: outcome.errorCode,
       };
+    }
     case "dlq":
       return {
         result: "dlq",
         nextAttemptAt: null,
         providerRef: null,
-        errorCode: outcome.errorCode,
+        errorCode: normalizeErrorCode(outcome.errorCode),
+        rawErrorCode: outcome.errorCode,
       };
   }
 }
