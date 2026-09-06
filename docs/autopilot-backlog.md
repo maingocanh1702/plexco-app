@@ -5089,15 +5089,16 @@ notes: |
   Nguồn: audit §4 gap #6 — DD-114 nhóm 3 · `feature_zalo_channel_tech.md` · PRD FLOW 1. Ba hình webhook mâu thuẫn (audit §5 #4): PRD:98 `/webhook/zalo/<token>` bot-per-club · `connector_onboarding_tech.md` `X-Bot-Api-Secret-Token` · `zalo_channel_tech.md:150` `POST /webhook/zalo` OA signature — **lane authoring (L6) phải chốt một** trước khi mở lane code; NFR-S4 (per-tenant, timing-safe, store-before-process) hiện NONE trong code. Phụ thuộc ngoài: spike DD-14/15 Zalo OA (owner).
 
 ## task: identity-link-code-issue-consume
-title: Identity link_code issue/consume/merge (khối 2 launch DD-113) — schema DD-50 chưa đủ cột trước (audit D-9)
-status: planned
+title: Identity link_code issue/consume (khối 2 launch DD-113) — schema DD-50 (0039) đủ cột; merge tách sang `chat-identity-merge-reparent-enablement`
+status: in-flight
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane C4 `fix/c4-identity-link-code`, CHƯA merge — flip `merged` bằng tay khi land). 0043: `link_code_issue` (issuer XOR channel/account, derive person server-side, supersede code cũ của cùng person, TTL ≤ 1h) · `link_code_salt` (read-only) · `link_code_consume` (spec §4 bước 1–5: candidate read-only → lock accounts→persons→channel_identities→row → re-derive issuer+target → terminal check TRƯỚC accounting → wrong verifier = 1 UPDATE có điều kiện + cooldown → right = 1 claim có điều kiện; outcome consumed|same_person|wrong_code|invalid) — EXECUTE `app` only. `packages/db/src/identity.ts`: code **18 ký tự Crockford (90 bit) TÁCH ĐÔI** — 8 ký tự đầu (40 bit) là lookup component được HMAC, verifier scrypt phủ TOÀN BỘ code; plaintext không bao giờ vào SQL. Sửa 07/09: bản đầu derive cả hai hash từ nguyên code ⇒ trúng lookup là chắc chắn trúng verifier, `wrong_code` không bao giờ xảy ra, và `failed_attempts`/`locked_until`/`max_attempts` (3 cột DD-50 của 0039) là code chết — tầng DB không bound gì cho việc đoán mã. Tách code làm nhánh đó chạm tới được và test giờ đi qua wrapper thật thay vì gọi thẳng definer bằng random bytes. Cũng đổi scrypt sang async (bản sync chặn event loop ~70–160 ms MỖI lần consume, kể cả mã không tồn tại) và thêm `_link_code_retention` 30 ngày (khuôn 0016/DD-80, không grant cho ai). HÀNG RÀO: KHÔNG merge plan table (consume TRẢ merge intent; merge lane mở rộng bằng CREATE OR REPLACE), KHÔNG endpoint-scope (DD-65..68 chưa có cột), KHÔNG route/bot command, KHÔNG env (`LINK_CODE_LOOKUP_HMAC_KEY` do lane surface thêm khi có reader). Owner có thể chọn posture 0034 (REVOKE app tới khi merge lane land) — 1 dòng.
 risk: P2
 change_class: identity-feature
 depends_on: [audit-2026-09-06-d9-link-codes-dd50-columns]
 invariants: [identity, schema, auth]
-scope: []
+scope: [packages/db/migrations, packages/db/src/identity.ts, packages/db/src/identity-link-code.test.ts, packages/db/src/index.ts]
 manifest: null
-merged_probe: none — chưa build
+merged_probe: packages/db/migrations/0043_identity_link_code_issue_consume.sql :: link_code_consume
 notes: |
   Nguồn: audit §4 gap #7 — DD-113:2116 (khối 2 là khớp nối; thiếu nó hai surface là hai sản phẩm rời) · `feature_identity_tech.md`. Row gần nhất `feature-identity` là `idea` `scope: []`. Thứ tự: schema D-9 (XOR issuer, max_attempts, locked_until, revoked_at; `tenant_link_codes.code_hash` không bare text) → issue/consume → merge (merge Person chưa tồn tại — xem `chat-identity-merge-reparent-enablement`).
 
@@ -5197,15 +5198,16 @@ notes: |
   **Fix:** try/catch quanh `connect()` + lock query gọi `lockClient.end()` rồi rethrow — inline, đúng khuôn `acquireChatDefinerLock`; KHÔNG đặt helper chung. Test: mock `pg.Client` reject ở `connect` và ở `query`, assert `end()` được gọi đúng 1 lần và lỗi gốc được rethrow nguyên vẹn.
 
 ## task: db-channel-identities-platform-chk-drop-telegram
-title: Gỡ tầng db của Telegram: DROP `auth_login_telegram()`, thu hẹp `channel_identities_platform_chk`, thay factory test `loginTelegram` (60 call site) — follow-up của A3
-status: planned
+title: Gỡ tầng db của Telegram: DROP `auth_login_telegram()`, trigger chặn mọi row TRỞ THÀNH `telegram`, thay factory test `loginTelegram` (54 call site) — follow-up của A3
+status: in-flight
+_readiness: AUTHORED 2026-09-06, sửa 07/09 (phiên cloud, lane C3 `fix/c3-telegram-db-tail`, CHƯA merge — flip `merged` bằng tay khi land). 0042: DROP FUNCTION `auth_login_telegram`; luật platform là TRIGGER `trg_channel_identities_no_new_telegram` + `..._no_become_telegram`, KHÔNG phải CHECK. Lý do đổi (đo 07/09): `NOT VALID` chỉ bỏ qua lần quét ĐẦU, sau đó vẫn enforce trên MỌI UPDATE của row — nên trên row telegram cũ thì `SET status='inactive'`, re-parent khi merge, và cả no-op update đều 23514, chỉ còn DELETE. Tức là CHECK ĐÓNG BĂNG đúng những row mà nó tự nhận là "khoan dung". Trigger diễn đạt đúng luật (không có row nào được TẠO hay TRỞ THÀNH telegram) và giữ mọi cột khác ghi được. `channel_identities_platform_chk` vẫn nguyên (CND-3 pin byte-for-byte). Hệ quả: KHÔNG còn bước `VALIDATE` nào; đếm row telegram vẫn nên làm nhưng là kiểm kê cho quyết định archive DD-37, không phải cổng cho migration này.
 risk: P2
 change_class: schema-migration
 depends_on: [audit-2026-09-06-a3-readiness-telegram]
 invariants: [schema, auth, identity, test-chain]
-scope: [packages/db/src/auth.ts, packages/db/src/index.ts, packages/db/src/test-harness.ts]
+scope: [packages/db/migrations, packages/db/schema.ts, packages/db/src/auth.ts, packages/db/src/index.ts, packages/db/src/test-harness.ts, packages/db/src/auth.test.ts, packages/db/src/rls-invariants.test.ts]
 manifest: null
-merged_probe: none — migration số đuôi chưa biết (sau 0038); lane đặt probe = tên factory test mới thay `loginTelegram`
+merged_probe: packages/db/migrations/0042_drop_telegram_login_path.sql :: channel_identities_no_new_telegram
 notes: |
   Nguồn: audit W-1 / §3 #7-#8. A3 gỡ route/lib web nhưng GIỮ `loginTelegram` (TS) + SQL `auth_login_telegram` vì 60 call site test dùng nó làm factory person/account. Thứ tự bắt buộc: (1) factory test mới (INSERT `persons`/`accounts` thẳng, hoặc qua `provisionTenant`) thay 60 call site — test-only; (2) **đo dữ liệu** `SELECT count(*) FROM channel_identities WHERE platform='telegram'` trên mọi env trước khi ALTER CHECK (expand→contract, không DROP mù); (3) migration DROP FUNCTION `auth_login_telegram` + narrow CHECK (`0000..`-era `channel_identities_platform_chk`). Test `google/callback` D1-14 đã pin thư mục route không tồn tại; row này pin tầng db.
 
@@ -5404,12 +5406,12 @@ notes: |
 ## task: audit-2026-09-06-w6-cookie-host-prefix-secure-idle-ttl
 title: Cookie không `__Host-`; `Secure` chỉ theo `NODE_ENV`; TTL 30 ngày tuyệt đối không idle; sibling-subdomain cookie-toss ⇒ login CSRF qua `plx_oauth_google`
 status: in-flight
-_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). PHẦN LÀM: `__Host-plx_session` (prod) + `__Secure-plx_oauth_*`; cookieSecure() chung. CHƯA: idle TTL (schema `last_seen_at`) — giữ row mở phần đó sau khi merge, đổi title.
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening` + lane C1 `fix/c1-session-idle-ttl`, CHƯA merge — flip `merged` bằng tay khi land). B3: `__Host-plx_session` (prod) + `__Secure-plx_oauth_*`; cookieSecure() chung. C1: 0040 `web_sessions.last_seen_at` + idle window TRONG CẢ `auth_resolve_web_session` LẪN `auth_rotate_web_session` (cả hai overload cũ DROP), touch throttle 1 phút. Sửa 07/09: bản đầu chỉ vá resolve ⇒ TTL idle là thuộc tính của một hàm chứ không phải của session — `issueSession` (session-cookies.ts:150) đưa thẳng cookie thô cho rotate mà không resolve, nên cookie im 20 ngày vẫn hồi sinh thành session 30 ngày mới, `last_seen_at` reset (đo được). Revoke/logout-all cố ý KHÔNG gắn window. Cả hai nửa đã author — đóng row khi cả B3 lẫn C1 merge.
 risk: P3
 change_class: security-posture
 depends_on: []
 invariants: [auth, web-app]
-scope: [apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, packages/db/migrations]
+scope: [apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, packages/db/migrations, packages/db/schema.ts, packages/db/src/auth.ts, packages/db/src/auth.test.ts]
 manifest: null
 merged_probe: apps/web/lib/session-cookies.ts :: sessionCookieName
 notes: |
@@ -5568,12 +5570,12 @@ notes: |
 ## task: audit-2026-09-06-x5-stale-infra-comments-healthcheck
 title: `fly.toml:15` "0000→0013" (tail thật cao hơn); `Dockerfile:42` "healthcheck-ready" nhưng không `HEALTHCHECK`; worker không có liveness
 status: in-flight
-_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Dockerfile HEALTHCHECK role-aware (web/discovery /healthz; worker exit 0), fly.toml comment; worker business liveness (heartbeat DB) CHƯA — tách ý đó khi flip.
+_readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service` + lane C2 `fix/c2-worker-heartbeat`, CHƯA merge — flip `merged` bằng tay khi land). B4: Dockerfile HEALTHCHECK role-aware, fly.toml comment. C2: 0041 `job_worker_heartbeats` (job_definer-owned, 0 grant, tự prune 30 ngày) + `job_worker_heartbeat()`/`job_worker_liveness()` EXECUTE app_worker; `apps/bot/src/heartbeat.ts` tick 30s (DB + file `/tmp/plexco-worker-heartbeat`); HEALTHCHECK nhánh worker đo tuổi file ≤ 90s thay vì exit 0. Sửa 07/09: (a) hai danh sách hard-code hàm `job_definer` trong `rls-invariants.test.ts` phải thêm 2 tên mới — thiếu là `pnpm -w test` ĐỎ (đúng lỗi kiểu A2/A4 quên `MIGRATION_COUNT`); (b) tick có overlap guard + `SET LOCAL statement_timeout` — DB nhận connection nhưng treo query làm 12 tick chồng nhau ăn hết pool của chính dispatcher (đo được) và làm `pool.end()` lúc shutdown trượt deadline ⇒ exit 1; (c) `stop()` chặn tick đang bay ghi file health. Đóng row khi cả B4 lẫn C2 merge.
 risk: P3
 change_class: infra-tooling
 depends_on: [audit-2026-09-06-a7-compose-loopback-app-role]
-invariants: [build-config]
-scope: [infra/fly.toml, infra/Dockerfile]
+invariants: [build-config, retry-liveness]
+scope: [infra/fly.toml, infra/Dockerfile, packages/db/migrations, packages/db/schema.ts, apps/bot/src/heartbeat.ts, apps/bot/src/worker.ts]
 manifest: null
 merged_probe: infra/Dockerfile :: HEALTHCHECK
 notes: |
