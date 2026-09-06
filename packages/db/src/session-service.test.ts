@@ -3439,24 +3439,31 @@ describe("cancelSession (B2 of the split)", () => {
     }
   });
 
-  it("XC-DRAFT-ANOMALY-CHARGE-ONLY: a DRAFT with a charge referencing a same-tenant player from ANOTHER session (charges.player_id binds by (tenant_id, player_id), NOT session_id) -> CANCEL_REQUIRES_REVIEW; event ['charges'] — the ['charges']-only shape IS reachable", async () => {
+  /**
+   * This test used to CONSTRUCT the ['charges']-only anomaly and assert it was reachable: a charge
+   * on session A referencing a player of session B was representable because the 0019 FK bound
+   * (tenant_id, player_id) and not session_id — session-service.ts:2139-2143 said so in a comment,
+   * and the audit filed it as D-12. Migration 0039 added charges_tenant_session_player_fk, so that
+   * row is now unrepresentable in the database rather than merely undesirable. The assertion
+   * inverts with it: what used to prove the shape is reachable now proves it is not, which is the
+   * regression guard for D-12. cancelSession's ['charges']-only branch stays as defense in depth —
+   * it is what would fire if this FK were ever dropped — and its sibling shapes (['players'],
+   * ['players','charges']) are still constructed and asserted by the tests around this one.
+   */
+  it("XC-DRAFT-ANOMALY-CHARGE-ONLY is now UNREPRESENTABLE: 0039's charges_tenant_session_player_fk (audit D-12) rejects a charge whose player belongs to another session", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId, version } = await seedSession(tenantId, { status: "draft" });
     const other = await seedSession(tenantId, { status: "open" });
     const foreignPlayerId = await seedRosterPlayer(tenantId, other.sessionId);
-    // A charge on the DRAFT session referencing that foreign-session player — valid because the charges
-    // FK binds (tenant_id, player_id), not session_id (0019). The draft now has a charge but NO player
-    // row of its own, so sessionHasCharges is true while sessionHasAnyPlayer is false.
-    await ctx.owner.query(
-      `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, status) VALUES ($1, $2, $3, 120000, 'open')`,
-      [tenantId, sessionId, foreignPlayerId],
-    );
-    await expectCancelReject(
-      () => cancel(tenantId, { sessionId, expectedVersion: version }),
-      "CANCEL_REQUIRES_REVIEW",
-    );
-    expect(await sessionState(sessionId)).toMatchObject({ status: "draft", version });
-    await expectAnomalyEvent(sessionId, tenantId, ["charges"]);
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, status) VALUES ($1, $2, $3, 120000, 'open')`,
+        [tenantId, sessionId, foreignPlayerId],
+      ),
+    ).rejects.toMatchObject({ code: "23503", constraint: "charges_tenant_session_player_fk" });
+    // the draft is untouched and still cancellable — no charge, no roster, no anomaly
+    const result = await cancel(tenantId, { sessionId, expectedVersion: version });
+    expect(result).toMatchObject({ status: "cancelled", version: version + 1 });
   });
 
   it("XC-SUSPENDED: cancelling while the SUBSCRIPTION is suspended SUCCEEDS (DD-110 D2 obligation-termination — the one relaxed cell)", async () => {

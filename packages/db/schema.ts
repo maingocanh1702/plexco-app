@@ -74,8 +74,11 @@ export const channelIdentities = pgTable("channel_identities", {
 export const linkCodes = pgTable("link_codes", {
   id: uuid("id").primaryKey().defaultRandom(),
   sourcePersonId: uuid("source_person_id").notNull().references(() => persons.id),
-  sourceChannelIdentityId: uuid("source_channel_identity_id").notNull()
+  // DD-50 issuer shape is XOR (migration 0039, audit 2026-09-06 D-9): exactly one of
+  // source_channel_identity_id / source_account_id. Nullable since 0039 (was NOT NULL in 0001).
+  sourceChannelIdentityId: uuid("source_channel_identity_id")
     .references(() => channelIdentities.id),
+  sourceAccountId: uuid("source_account_id").references(() => accounts.id),
   codeLookupHash: text("code_lookup_hash").notNull().unique(),
   codeHash: bytea("code_hash").notNull(),
   salt: bytea("salt").notNull(),
@@ -83,8 +86,15 @@ export const linkCodes = pgTable("link_codes", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
   failedAttempts: integer("failed_attempts").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(5),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  maxAttemptsChk: check("link_codes_max_attempts_chk", sql`${t.maxAttempts} BETWEEN 1 AND 20`),
+  issuerXorChk: check("link_codes_issuer_xor_chk",
+    sql`num_nonnulls(${t.sourceChannelIdentityId}, ${t.sourceAccountId}) = 1`),
+}));
 
 export const mergeAudit = pgTable("merge_audit", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -496,6 +506,8 @@ export const tenants = pgTable("tenants", {
 }, (t) => ({
   statusChk: check("tenants_status_chk",
     sql`${t.status} IN ('trialing','active','past_due','suspended','cancelled')`),
+  // 0039 (audit 2026-09-06 W-8): the route trims + rejects empty; the DB bounds the length.
+  nameLenChk: check("tenants_name_len_chk", sql`char_length(${t.name}) BETWEEN 1 AND 120`),
 }));
 
 export const memberships = pgTable("memberships", {
@@ -691,6 +703,9 @@ export const players = pgTable("players", {
   // DD-68 (migration 0019): candidate key targeted by the same-tenant composite
   // FK charges.player_id -> players. id is already the PK, so this is additive.
   tenantIdCandidateKey: unique("players_tenant_id_candidate_key").on(t.tenantId, t.id),
+  // 0039 (audit D-12): candidate key so charges can bind (tenant, session, player) at once.
+  tenantSessionCandidateKey: unique("players_tenant_session_candidate_key")
+    .on(t.tenantId, t.sessionId, t.id),
   // DD-68 (migration 0019): same-tenant composite FKs, additive over the single-
   // column players_session_id_fkey / players_membership_id_fkey (0002). Both
   // referencing columns are NOT NULL, so the tenant match is always enforced.
@@ -1092,6 +1107,13 @@ export const charges = pgTable("charges", {
     foreignColumns: [players.tenantId, players.id],
     name: "charges_tenant_player_fk",
   }),
+  // 0039 (audit 2026-09-06 D-12): the player must belong to charges.session_id, not merely to
+  // the tenant — a charge for session S pointing at a player of session T is unrepresentable.
+  tenantSessionPlayerFk: foreignKey({
+    columns: [t.tenantId, t.sessionId, t.playerId],
+    foreignColumns: [players.tenantId, players.sessionId, players.id],
+    name: "charges_tenant_session_player_fk",
+  }),
   // DD-68 (migration 0020): candidate key targeted by the same-tenant composite
   // FK payment_allocations.charge_id -> charges. Additive (id is the PK).
   tenantIdCandidateKey: unique("charges_tenant_id_candidate_key").on(t.tenantId, t.id),
@@ -1179,6 +1201,15 @@ export const paymentAllocations = pgTable("payment_allocations", {
     columns: [t.tenantId, t.reversesAllocationId],
     foreignColumns: [t.tenantId, t.id],
     name: "payment_allocations_tenant_reverses_allocation_fk",
+  }),
+  // 0039 (audit 2026-09-06 D-12): a reversal must reverse an allocation of the SAME charge.
+  // MATCH SIMPLE — unenforced while reverses_allocation_id is NULL (non-reversal rows).
+  tenantChargeCandidateKey: unique("payment_allocations_tenant_charge_candidate_key")
+    .on(t.tenantId, t.chargeId, t.id),
+  reversalSameChargeFk: foreignKey({
+    columns: [t.tenantId, t.chargeId, t.reversesAllocationId],
+    foreignColumns: [t.tenantId, t.chargeId, t.id],
+    name: "payment_allocations_reversal_same_charge_fk",
   }),
 }));
 

@@ -1,11 +1,16 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { format } from "node:util";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { ensureRoleExists, logMigrationFailure, migrate } from "./migrate.js";
+import {
+  assertMonotonicMigrationOrder,
+  ensureRoleExists,
+  logMigrationFailure,
+  migrate,
+} from "./migrate.js";
 import {
   acquireChatDefinerLock,
   bootstrapChatDefiner,
@@ -36,7 +41,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 37;
+const MIGRATION_COUNT = 40; // 0000..0039 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema; A2/A4 left this at 37 — caught 06/09)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -727,7 +732,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0038_subscriptions_read_via_definer.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0039_audit_hardening_definers_ledger_link_codes.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
@@ -881,6 +886,8 @@ describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYP
   it("tenant_provision inserts into four FORCE-RLS tables and tenant_ids_for_person lists across tenants, both as role app, with no GUC leaking to the caller", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0037_tenant_provision");
     let appClient: pg.Client | undefined;
+    /** superuser connection to THIS test's database (ctx.superuser is on the base one) */
+    let suDb: pg.Client | undefined;
     try {
       // Same lock discipline as BR-6 above: withJobDefinerLock wraps the whole sequence because
       // runMigration() reaches 0022 (asserts job_definer); the chat bootstrap holds its own key.
@@ -903,11 +910,18 @@ describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYP
       await ctx.superuser.query(`ALTER ROLE app WITH PASSWORD 'plexco_test_app'`);
       appClient = await connect(url(ctx.dbName, "app", "plexco_test_app"));
 
-      const person = await ctx.superuser.query(
-        `INSERT INTO persons DEFAULT VALUES RETURNING id`,
-      );
+      // ctx.superuser is connected to DATABASE_URL_TEST — the BASE database, NOT this test's
+      // per-test one (the harness only ever intends it for cluster-global role work, which is
+      // why the two statements above are correct on it). Every DATA statement and every
+      // per-DATABASE catalog read below must run against ctx.dbName instead: seeding a person
+      // on the base connection puts the row where tenant_provision can never see it, and the
+      // provision then dies on memberships_person_id_fkey. url() with no user keeps the base
+      // superuser credentials and only swaps the database.
+      suDb = await connect(url(ctx.dbName));
+
+      const person = await suDb.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
       const personId = (person.rows[0] as { id: string }).id;
-      const other = await ctx.superuser.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
+      const other = await suDb.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
       const otherId = (other.rows[0] as { id: string }).id;
 
       // 1. fresh provision as app — the exact statement that raised at base.
@@ -920,7 +934,7 @@ describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYP
 
       // 2. all four tenant-scoped rows exist (read as superuser: the point is that app WROTE them
       //    under FORCE RLS, not that app can read them back without a GUC).
-      const counts = await ctx.superuser.query(
+      const counts = await suDb.query(
         `SELECT
            (SELECT count(*)::int FROM memberships    WHERE tenant_id = $1) AS m,
            (SELECT count(*)::int FROM tenant_admins  WHERE tenant_id = $1) AS a,
@@ -996,6 +1010,7 @@ describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYP
       }
     } finally {
       await appClient?.end();
+      await suDb?.end();
       await ctx.teardown();
     }
   }, 90_000);
@@ -3883,4 +3898,210 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
       }
     });
   }, 60_000);
+});
+
+/**
+ * Audit 2026-09-06 D-11 (runner half): the runner sorted by filename but never REFUSED a pending
+ * file numbered below the applied tail, nor two files sharing an ordinal. Pure function, no
+ * Postgres — the same inputs migrate() derives from readdir() and schema_migrations.
+ */
+describe("assertMonotonicMigrationOrder (audit 2026-09-06 D-11)", () => {
+  const files = ["0000_roles.sql", "0001_a.sql", "0002_b.sql"];
+
+  it("accepts a fresh database, a partially applied one, and a fully applied one", () => {
+    expect(() => assertMonotonicMigrationOrder(files, [])).not.toThrow();
+    expect(() => assertMonotonicMigrationOrder(files, ["0000_roles.sql"])).not.toThrow();
+    expect(() => assertMonotonicMigrationOrder(files, files)).not.toThrow();
+  });
+
+  it("accepts a new file above the applied tail", () => {
+    expect(() =>
+      assertMonotonicMigrationOrder(
+        ["0000_roles.sql", "0002_b.sql", "0003_new.sql"],
+        ["0000_roles.sql", "0002_b.sql"],
+      ),
+    ).not.toThrow();
+  });
+
+  it("refuses a pending file numbered BELOW an already-applied ordinal", () => {
+    expect(() =>
+      assertMonotonicMigrationOrder(
+        ["0000_roles.sql", "0001_late.sql", "0002_b.sql"],
+        ["0000_roles.sql", "0002_b.sql"],
+      ),
+    ).toThrow(/out-of-order migration 0001_late\.sql .*0002/);
+  });
+
+  it("refuses two files sharing an ordinal, before anything is applied", () => {
+    expect(() => assertMonotonicMigrationOrder([...files, "0001_dup.sql"], [])).toThrow(
+      /duplicate migration ordinal 0001/,
+    );
+  });
+
+  /**
+   * The renamed-applied-migration case, which the duplicate scan above cannot see: the ledger
+   * records 0002_b.sql, the checkout carries 0002_renamed.sql instead, so only ONE file numbered
+   * 0002 is on disk and the pending one's ordinal EQUALS the applied tail rather than falling
+   * below it. `<` let that through and the ledger ended up with two different migrations numbered
+   * 0002 — two databases built from the same repo then diverge.
+   */
+  it("refuses a pending file whose ordinal EQUALS an applied one under a different name", () => {
+    expect(() =>
+      assertMonotonicMigrationOrder(
+        ["0000_roles.sql", "0001_a.sql", "0002_renamed.sql"],
+        ["0000_roles.sql", "0001_a.sql", "0002_b.sql"],
+      ),
+    ).toThrow(/out-of-order migration 0002_renamed\.sql .*at or below .*0002/);
+  });
+
+  it("refuses a file without a 4-digit ordinal", () => {
+    expect(() => assertMonotonicMigrationOrder(["notes.sql"], [])).toThrow(
+      /does not start with a 4-digit ordinal/,
+    );
+  });
+
+  it("the real migrations/ directory passes against its own full listing (no duplicates on disk)", async () => {
+    const onDisk = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
+    expect(() => assertMonotonicMigrationOrder(onDisk, onDisk)).not.toThrow();
+    expect(onDisk.length).toBe(MIGRATION_COUNT);
+  });
+});
+
+/**
+ * Audit 2026-09-06 — migration 0039 (P3 schema items D-7 · D-8 · D-9 · D-12 · W-8).
+ * Replayed as a NOBYPASSRLS owner like 0037/0038 so the definer assertions are not vacuous.
+ */
+describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledger aggregate FKs, tenants.name bound", () => {
+  it("applies and enforces each item", async () => {
+    // See the 0037 note: ctx.superuser is the BASE-database connection, so every data statement
+    // and every per-DATABASE catalog read (pg_proc, information_schema, pg_constraint) below has
+    // to run against ctx.dbName or it inspects the wrong database — which is how this test
+    // "passed" its proconfig assertion while the base database happened to carry 0039 too.
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0039_audit_hardening");
+    let appClient: pg.Client | undefined;
+    /** superuser connection to THIS test's database (ctx.superuser is on the base one) */
+    let suDb: pg.Client | undefined;
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        await ctx.bootstrapChatDefinerForOwner();
+        return ctx.runMigration();
+      });
+      await ctx.superuser.query(`ALTER ROLE app WITH PASSWORD 'plexco_test_app'`);
+      appClient = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      suDb = await connect(url(ctx.dbName));
+      // narrow once, before first use: the `let` above stays optional for the finally block
+      const su = suDb;
+
+      // D-7: both oauth definers now carry pg_temp in their search_path.
+      const sp = await su.query(
+        `SELECT proname, proconfig FROM pg_proc
+          WHERE proname IN ('create_oauth_transaction', 'consume_oauth_transaction') ORDER BY 1`,
+      );
+      expect(sp.rows).toHaveLength(2);
+      for (const r of sp.rows as { proname: string; proconfig: string[] }[]) {
+        expect(r.proconfig, r.proname).toContain("search_path=public, pg_temp");
+      }
+
+      // D-8: create_oauth_transaction refuses a tenant that is not the current app.tenant_id.
+      // suDb, not ctx.superuser: the latter is connected to the BASE database (see 0037).
+      const person = await su.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
+      const personId = (person.rows[0] as { id: string }).id;
+      const tenant = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
+        "club-0039",
+        "Club 0039",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
+      const tenantId = (tenant.rows[0] as { id: string }).id;
+      const otherTenant = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
+        "club-0039-other",
+        "Other",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
+      const otherId = (otherTenant.rows[0] as { id: string }).id;
+      const callCreate = (forTenant: string) =>
+        appClient!.query(
+          `SELECT create_oauth_transaction($1, $2, 'sepay', '\\x00'::bytea, 'https://plexco.app/cb', $3)`,
+          [`state-${forTenant.slice(0, 8)}`, forTenant, personId],
+        );
+      await expect(callCreate(tenantId)).rejects.toMatchObject({ code: "42501" }); // no GUC
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantId]);
+      try {
+        await expect(callCreate(otherId)).rejects.toMatchObject({ code: "42501" }); // wrong tenant
+        await expect(callCreate(tenantId)).resolves.toBeDefined(); // own tenant
+        const consumed = await appClient.query(`SELECT tenant_id FROM consume_oauth_transaction($1)`, [
+          `state-${tenantId.slice(0, 8)}`,
+        ]);
+        expect(consumed.rows).toEqual([{ tenant_id: tenantId }]);
+      } finally {
+        await appClient.query(`SELECT set_config('app.tenant_id', '', false)`);
+      }
+
+      // D-9: link_codes XOR issuer + max_attempts bound + new columns.
+      const cols = await su.query(
+        `SELECT column_name, is_nullable FROM information_schema.columns
+          WHERE table_name = 'link_codes'
+            AND column_name IN ('source_channel_identity_id','source_account_id','max_attempts','locked_until','revoked_at')
+          ORDER BY 1`,
+      );
+      expect(cols.rows).toEqual([
+        { column_name: "locked_until", is_nullable: "YES" },
+        { column_name: "max_attempts", is_nullable: "NO" },
+        { column_name: "revoked_at", is_nullable: "YES" },
+        { column_name: "source_account_id", is_nullable: "YES" },
+        { column_name: "source_channel_identity_id", is_nullable: "YES" },
+      ]);
+      const account = await su.query(
+        `INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`,
+        [personId],
+      );
+      const accountId = (account.rows[0] as { id: string }).id;
+      const insertLinkCode = (issuer: { ci?: string; acc?: string }, maxAttempts = 5) =>
+        su.query(
+          `INSERT INTO link_codes(source_person_id, source_channel_identity_id, source_account_id,
+                                  code_lookup_hash, code_hash, salt, expires_at, max_attempts)
+           VALUES ($1, $2, $3, $4, '\\x00'::bytea, '\\x00'::bytea, now() + interval '1 hour', $5)`,
+          [personId, issuer.ci ?? null, issuer.acc ?? null, `lc-${randomUUID()}`, maxAttempts],
+        );
+      await expect(insertLinkCode({})).rejects.toMatchObject({ code: "23514" }); // neither
+      await expect(insertLinkCode({ acc: accountId })).resolves.toBeDefined(); // account-issued
+      await expect(insertLinkCode({ acc: accountId }, 0)).rejects.toMatchObject({ code: "23514" });
+      await expect(insertLinkCode({ acc: accountId }, 21)).rejects.toMatchObject({ code: "23514" });
+
+      // W-8 (db half): tenants.name is bounded to 120 chars, empty rejected.
+      await expect(
+        su.query(`INSERT INTO tenants (name, slug) VALUES ($1, 'too-long-0039')`, [
+          "x".repeat(121),
+        ]),
+      ).rejects.toMatchObject({ code: "23514" });
+      await expect(
+        su.query(`INSERT INTO tenants (name, slug) VALUES ('', 'empty-0039')`),
+      ).rejects.toMatchObject({ code: "23514" });
+
+      // D-12: the two aggregate-bound FKs exist with the expected column sets.
+      const fks = await su.query(
+        `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conname IN ('charges_tenant_session_player_fk', 'payment_allocations_reversal_same_charge_fk')
+          ORDER BY 1`,
+      );
+      expect((fks.rows as { conname: string; def: string }[]).map((r) => r.conname)).toEqual([
+        "charges_tenant_session_player_fk",
+        "payment_allocations_reversal_same_charge_fk",
+      ]);
+      expect((fks.rows[0] as { def: string }).def).toMatch(
+        /FOREIGN KEY \(tenant_id, session_id, player_id\) REFERENCES players\(tenant_id, session_id, id\)/,
+      );
+      expect((fks.rows[1] as { def: string }).def).toMatch(
+        /FOREIGN KEY \(tenant_id, charge_id, reverses_allocation_id\) REFERENCES payment_allocations\(tenant_id, charge_id, id\)/,
+      );
+    } finally {
+      await appClient?.end();
+      await suDb?.end();
+      await ctx.teardown();
+    }
+  }, 90_000);
 });
