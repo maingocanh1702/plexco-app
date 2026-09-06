@@ -1,4 +1,4 @@
-import { consumeOauthCompletionHandoff } from "@plexco/db";
+import { consumeOauthCompletionHandoff, rateLimitCheck } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as session from "../../../../../lib/session-cookies";
 import { hashToken } from "../../../../../lib/session-cookies";
@@ -7,6 +7,7 @@ import { POST } from "./route";
 vi.mock("@plexco/db", () => ({
   createDb: vi.fn(() => ({ pool: {} })),
   consumeOauthCompletionHandoff: vi.fn(),
+  rateLimitCheck: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
@@ -24,30 +25,36 @@ process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 process.env.GOOGLE_OAUTH_CLIENT_ID = "test-client.apps.googleusercontent.com";
 process.env.GOOGLE_OAUTH_CLIENT_SECRET = "test-secret";
 process.env.APP_BASE_URL = "https://plexco.app";
+process.env.TRUSTED_INGRESS_PROVIDER = "digitalocean";
 
 /** Same-site auto-submitted POST from the M3 landing (carries Origin). */
 function completeReq(
   handoff: string | null = "raw-handoff",
-  opts: { origin?: string | null } = {},
+  opts: { origin?: string | null; ip?: string; contentType?: string | null; rawBody?: string } = {},
 ): Request {
   const body = new URLSearchParams();
   if (handoff !== null) body.set("handoff", handoff);
   const headers: Record<string, string> = {
     host: "plexco.app",
-    "content-type": "application/x-www-form-urlencoded",
+    "do-connecting-ip": opts.ip ?? "1.2.3.4",
   };
+  const contentType =
+    opts.contentType === undefined ? "application/x-www-form-urlencoded" : opts.contentType;
+  if (contentType !== null) headers["content-type"] = contentType;
   const origin = opts.origin === undefined ? "https://plexco.app" : opts.origin;
   if (origin !== null) headers.origin = origin;
   return new Request("https://plexco.app/api/auth/google/complete", {
     method: "POST",
     headers,
-    body: body.toString(),
+    body: opts.rawBody ?? body.toString(),
   });
 }
 
 beforeEach(() => {
   vi.mocked(consumeOauthCompletionHandoff).mockReset();
   vi.mocked(session.issueSession).mockReset();
+  // Allowed by default; the audit W-3 block below flips it.
+  vi.mocked(rateLimitCheck).mockReset().mockResolvedValue(true);
 });
 
 describe("POST /api/auth/google/complete", () => {
@@ -149,5 +156,115 @@ describe("POST /api/auth/google/complete", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     expect(res.headers.get("location")).toContain("auth_error=");
+  });
+});
+
+/**
+ * Audit 2026-09-06 W-3. Until this fix the completion hop was the ONE auth mutation with no
+ * rate-limit bucket (its siblings `/state` and `/callback` have had `oauth-*:<ip>` 10/min since
+ * D1-1) and it read the body with an unbounded `request.formData()`. Every POST — valid or not —
+ * cost one UPDATE against the handoff table. The bucket sits BEFORE the body is read and before
+ * `sameOriginRequest()`, so neither a cross-site nor a malformed POST can spend rows.
+ */
+describe("POST /api/auth/google/complete — rate limit + bounded body (audit W-3)", () => {
+  it("consults the `oauth-complete:<trusted-ip>` bucket at 10/min, same shape as the sibling hops", async () => {
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+    vi.mocked(session.issueSession).mockResolvedValue({ csrfToken: "csrf" });
+
+    await POST(completeReq("raw-handoff", { ip: "5.6.7.8" }));
+
+    expect(rateLimitCheck).toHaveBeenCalledWith(expect.anything(), "oauth-complete:5.6.7.8", 10, 60);
+  });
+
+  it("over the limit → 429 LOGIN_RATE_LIMITED envelope, no-referrer, and the handoff is NOT consumed", async () => {
+    vi.mocked(rateLimitCheck).mockResolvedValue(false); // over limit
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+
+    const res = await POST(completeReq("raw-handoff"));
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    const body = (await res.json()) as { error: { code: string } | null };
+    expect(body.error?.code).toBe("LOGIN_RATE_LIMITED");
+    expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+    expect(session.issueSession).not.toHaveBeenCalled();
+  });
+
+  it("limiter store down → fails CLOSED (429), exactly like /state (codex round-06 [P2])", async () => {
+    vi.mocked(rateLimitCheck).mockRejectedValue(new Error("pg down"));
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+
+    const res = await POST(completeReq("raw-handoff"));
+
+    expect(res.status).toBe(429);
+    expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+  });
+
+  it("the bucket is checked BEFORE same-origin: a cross-site flood still spends only the limiter, never a row", async () => {
+    vi.mocked(rateLimitCheck).mockResolvedValue(false);
+
+    const res = await POST(completeReq("raw-handoff", { origin: "https://evil.example.com" }));
+
+    expect(res.status).toBe(429);
+    expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+  });
+
+  it("a non-form Content-Type (JSON, multipart, missing) is rejected before the body is read", async () => {
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+
+    for (const contentType of [
+      "application/json",
+      "multipart/form-data; boundary=x",
+      "text/plain",
+      null,
+    ]) {
+      const res = await POST(completeReq("raw-handoff", { contentType }));
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toContain("/?auth_error=AUTH_INVALID");
+    }
+    expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+    expect(session.issueSession).not.toHaveBeenCalled();
+  });
+
+  it("a charset suffix on the form Content-Type is still accepted (browsers send it)", async () => {
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+    vi.mocked(session.issueSession).mockResolvedValue({ csrfToken: "csrf" });
+
+    const res = await POST(
+      completeReq("raw-handoff", { contentType: "application/x-www-form-urlencoded; charset=UTF-8" }),
+    );
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("https://plexco.app/");
+    expect(consumeOauthCompletionHandoff).toHaveBeenCalledOnce();
+  });
+
+  it("a body over 1 KiB is rejected without consuming — the real form is ~51 bytes", async () => {
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+    const padding = "x".repeat(2048);
+
+    // Oversized handoff value AND an oversized unrelated field: both are "not this form".
+    for (const rawBody of [`handoff=${padding}`, `handoff=raw-handoff&pad=${padding}`]) {
+      const res = await POST(completeReq("raw-handoff", { rawBody }));
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toContain("/?auth_error=AUTH_INVALID");
+    }
+    expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+  });
+
+  it("a body exactly at the cap still parses (the cap is a ceiling, not a trap for real traffic)", async () => {
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+    vi.mocked(session.issueSession).mockResolvedValue({ csrfToken: "csrf" });
+    const prefix = "handoff=raw-handoff&pad=";
+    const rawBody = prefix + "y".repeat(1024 - prefix.length);
+    expect(Buffer.byteLength(rawBody, "utf8")).toBe(1024);
+
+    const res = await POST(completeReq("raw-handoff", { rawBody }));
+
+    expect(res.headers.get("location")).toBe("https://plexco.app/");
+    expect(consumeOauthCompletionHandoff).toHaveBeenCalledWith(
+      expect.anything(),
+      hashToken("raw-handoff"),
+    );
   });
 });
