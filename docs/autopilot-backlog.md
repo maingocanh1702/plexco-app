@@ -5641,3 +5641,35 @@ merged_probe: packages/core/src/matching.ts :: MAX_PLUS_ONE_INPUT_LENGTH
 notes: |
   Nguyên văn audit: `parsePlusOneSuffix` regex (`matching.ts:96`) quadratic trên input crafted; chỉ OCR-label.
   source: docs/sessions/2026-09-06-repo-audit.md · Cap độ dài input trước regex (chat message ≤ vài trăm ký tự) + viết lại pattern không nested quantifier; test bằng chuỗi 10k ký tự đo thời gian.
+
+## task: audit-2026-09-06-codex-review-rounds-closeout
+title: Review độc lập 5 vòng cho toàn bộ A+B+C của audit 06/09 — 10 finding, vòng 5 CLEAN (bằng chứng, không phải luật mới)
+status: in-flight
+_readiness: ĐÃ CHẠY 2026-09-07 trên `~/Projects/plexco-review` @ `--base 30a3e902d87b1c44fca761685e28c63e9975128c`; 5 vòng `scripts/codex-review-pin.sh review`, vòng 5 `REVIEW_VERDICT: CLEAN`. Row này đóng bằng tay khi A+B+C land — nó ghi lại một lần chạy, không có symbol để probe.
+risk: P2
+change_class: process-evidence
+depends_on: []
+invariants: [review-integrity, test-chain]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: KHÔNG có merged_probe — deliverable là verdict + 10 bản vá đã nằm rải trong các lane A5/B2/B3/B4/A7/C1/C2, không phải một symbol mới. Đừng thêm probe giả.
+notes: |
+  Bối cảnh: bước 4 của `docs/autopilot-templates/level3-workflow.md` (review độc lập bắt buộc + 1 security round cho slice
+  chạm auth/secret/permission/tiền/external input/deployment) là món DUY NHẤT còn nợ trong gate của đợt audit 06/09 sau khi
+  `pnpm -w test` + typecheck + lint + `next build` đã xanh trên Mac. Nay đã trả.
+
+  Kết quả đo được (chi tiết từng finding ở `docs/00-start-here/HANDOFF.md`, khối "REVIEW ĐỘC LẬP ĐÃ ĐÓNG"):
+  - R1 4 finding · R2 3 · R3 2 · R4 1 · R5 CLEAN. Tổng 10, tất cả đã sửa và được vòng kế xác nhận.
+  - Test count đi 1404 → 1407 → 1408 → 1411 qua các vòng; typecheck 4/4, eslint sạch, `next build` OK ở mỗi lần chạy lại.
+  - **3/10 finding là bug production thật mà gate xanh KHÔNG bắt được:** (a) `appDb()` fire-and-forget role assert —
+    query đầu tiên chạy trước khi role được xác minh; (b) `cookies().delete()` sinh header không `Secure` nên
+    **logout không xoá được cookie có tiền tố `__Host-`/`__Secure-` trên production**; (c) `auth_resolve_web_session`
+    đọc-rồi-khoá mà không revalidate dưới khoá (đo: revoke commit trong lúc chờ khoá vẫn trả 1 row; sau khi sửa: 0 row).
+  - **1/10 do chính bản vá vòng trước sinh ra:** `boundRawErrorCode(raw: string)` của R2 ném `raw.slice is not a function`
+    khi projector trả error code không phải string, huỷ cả chu kỳ dispatch — đúng failure mode mà lane A5 sinh ra để diệt.
+
+  Vì sao ghi thành row: hai dữ kiện trên là bằng chứng cho câu "vòng review sau MỖI lần sửa, không chỉ sau lần cuối".
+  KHÔNG viết thêm luật mới vào workflow doc từ row này — `level3-workflow.md` đã yêu cầu đúng điều đó ở bước 4;
+  cái thiếu là thực thi, không phải câu chữ.
+  source: `docs/sessions/2026-09-06-repo-audit.md` · `docs/autopilot-templates/audit-fix-lanes-2026-09-06-RUN.md`
