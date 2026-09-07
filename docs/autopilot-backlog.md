@@ -5643,9 +5643,9 @@ notes: |
   source: docs/sessions/2026-09-06-repo-audit.md · Cap độ dài input trước regex (chat message ≤ vài trăm ký tự) + viết lại pattern không nested quantifier; test bằng chuỗi 10k ký tự đo thời gian.
 
 ## task: audit-2026-09-06-codex-review-rounds-closeout
-title: Review độc lập 5 vòng cho toàn bộ A+B+C của audit 06/09 — 10 finding, vòng 5 CLEAN (bằng chứng, không phải luật mới)
+title: Review độc lập 7 vòng cho toàn bộ A+B+C của audit 06/09 — 12 finding, gate bắt buộc đóng ở vòng 5 CLEAN (bằng chứng, không phải luật mới)
 status: in-flight
-_readiness: ĐÃ CHẠY 2026-09-07 trên `~/Projects/plexco-review` @ `--base 30a3e902d87b1c44fca761685e28c63e9975128c`; 5 vòng `scripts/codex-review-pin.sh review`, vòng 5 `REVIEW_VERDICT: CLEAN`. Row này đóng bằng tay khi A+B+C land — nó ghi lại một lần chạy, không có symbol để probe.
+_readiness: ĐÃ CHẠY 2026-09-07 trên `~/Projects/plexco-review` @ `--base 30a3e902d87b1c44fca761685e28c63e9975128c`. **Gate bắt buộc đóng ở vòng 5 (`REVIEW_VERDICT: CLEAN`).** Vòng 6–7 là 2 vòng tự nguyện thêm cho defect 11 (tôi tự tìm ra sau vòng 5, khi chạy validator trên máy thật) — chúng chỉ chạm comment/docs, và bản sửa cuối sau vòng 7 được xác minh bằng cách đọc thẳng `autopilot-review-readiness.mjs:658` + `autopilot-scope-gate:748` chứ KHÔNG chạy vòng 8. Row này đóng bằng tay khi A+B+C land — nó ghi lại một lần chạy, không có symbol để probe.
 risk: P2
 change_class: process-evidence
 depends_on: []
@@ -5660,8 +5660,10 @@ notes: |
   `pnpm -w test` + typecheck + lint + `next build` đã xanh trên Mac. Nay đã trả.
 
   Kết quả đo được (chi tiết từng finding ở `docs/00-start-here/HANDOFF.md`, khối "REVIEW ĐỘC LẬP ĐÃ ĐÓNG"):
-  - R1 4 finding · R2 3 · R3 2 · R4 1 · R5 CLEAN. Tổng 10, tất cả đã sửa và được vòng kế xác nhận.
+  - R1 4 finding · R2 3 · R3 2 · R4 1 · **R5 CLEAN — đây là chỗ gate đóng**. R6 1 · R7 1 (cả hai chỉ chạm comment/docs). Tổng 12.
   - Test count đi 1404 → 1407 → 1408 → 1411 qua các vòng; typecheck 4/4, eslint sạch, `next build` OK ở mỗi lần chạy lại.
+  - **Defect 11 (sau R5, tôi tự tìm, codex không thể):** 5 test heartbeat của C2 ghi file thăm dò vào `process.cwd()` = `apps/bot/` trong repo, mỗi lần chạy suite rụng thêm một file (tên mang pid vitest). Untracked file là đủ để `autopilot-review-readiness.mjs:658` `HALT WORKTREE_DIRTY` — và `autopilot-scope-gate ready` gọi đúng validator đó ở dòng 748. Sửa bằng `mkdtemp` + `afterEach`. Codex 5 vòng đều không thấy vì vitest bị sandbox chặn (`/tmp` EPERM); đây là bằng chứng cho **giới hạn của reviewer, không phải cho sự thừa của nó**.
+  - **R6 + R7 đều bắt lỗi trong chính lời tôi viết về defect 11, không phải trong code:** R6 bắt tôi khai bừa rằng backlog-reconcile đọc `git status` (nó dùng `git blame`); R7 bắt bản sửa của tôi — tôi `grep 'git status' scripts/autopilot-scope-gate` ra 0 dòng rồi kết luận scope-gate không soi working tree. **Grep một file không chứng minh được gì về thứ file đó GỌI.** Bản sửa của chính R6 cũng sai nửa (nó vẫn kể tên scope-gate như thể scope-gate tự chạy status).
   - **3/10 finding là bug production thật mà gate xanh KHÔNG bắt được:** (a) `appDb()` fire-and-forget role assert —
     query đầu tiên chạy trước khi role được xác minh; (b) `cookies().delete()` sinh header không `Secure` nên
     **logout không xoá được cookie có tiền tố `__Host-`/`__Secure-` trên production**; (c) `auth_resolve_web_session`
