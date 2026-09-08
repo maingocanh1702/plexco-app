@@ -10,6 +10,14 @@
 > **Runtime status:** Not started — authenticated Home composition/UI chưa build
 > **Negative scope:** Không tự tính money/capacity; chỉ compose person-self + public whitelist
 
+> 📍 **Đọc nhanh (2026-09-08 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_home.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@0aff7ad`, 04/09).
+>
+> **Phase-1 (DD-114):** 🟡 landing PWA (DD-79) · **Launch (DD-113):** 🟡 shell PWA v1
+>
+> **Surface:** Web app **PWA** (Next.js App Router, installable/offline — DD-113 launch = PWA + Zalo bot song song) — `/` authenticated landing của PWA; **app native iOS (App Store) + Android (CH Play) là phase-2** (DD-69): tái dùng API/contract, màn native thiết kế lại theo platform sau gate, **không phải bản sao màn này**.
+>
+> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@0aff7ad`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: `GET /api/me/home` ⬜.
+
 ---
 
 ## 1. Mô tả
@@ -361,6 +369,7 @@ thiết bị khác không hiện lại checklist.
 
 | Ngày | Version | Nội dung |
 |---|---|---|
+| 2026-09-08 | — *(cấu trúc)* | **Thêm khối 📍 Đọc nhanh** ngay dưới header: BRD module · phase-1 (DD-114) · launch (DD-113) · surface **PWA trước → native iOS/Android phase-2** (DD-69/DD-113) · feature nguồn · as-built @ `0aff7ad` theo ROADMAP v3.17. Pointer core docs: BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17 (đều có §📍). **Không đổi nội dung spec, không bump version**; dòng *Status/Implementation* trong header giữ nguyên làm ảnh chụp. |
 | 2026-07-31 | v0.4 | Baseline trước khi có changelog table — xem git history |
 | 2026-08-07 | v0.5 | Thêm 4 section Draft + nội dung OnboardingChecklist (Draft) — nguồn: Sporta FE porting analysis 2026-08-07 |
 

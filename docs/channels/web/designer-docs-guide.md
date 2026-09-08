@@ -1,9 +1,20 @@
 # Hướng dẫn: Docs nào dùng để đưa Designer thiết kế UI cho Plexco App
 
-> ✅ **Active — Gói bàn giao cho designer.** · **Version:** 1.1 · 2026-08-14
+> ✅ **Active — bản đồ tài liệu cho designer.** · **Version:** 1.2 · 2026-09-08
 > **Nguồn:** scan toàn bộ `docs/` repo
 >
-> **Gate per-screen:** Designer bắt đầu vẽ ngay từ FE specs; handoff per-screen → code cần owner ký trên tracked `design.pen` node.
+> 🔴 **CHƯA ĐƯỢC VẼ. `FE PENDING` (DD-116, owner-final 24/08/2026 — Option B KEEP) vẫn hiệu lực.**
+> Gỡ **chỉ** khi đủ **CẢ BA**: (a) owner chọn canonical design file · (b) file đó **tracked trên `main`** ·
+> (c) owner ký nghiệm thu design authority bằng một mục trong `../../standards/decisions.md` (đóng gate DD-81).
+> Đo tại `30a3e90` (08/09/2026): `git ls-files | grep '\.pen$'` → **rỗng** ⇒ (b) chưa đạt.
+> 🟡 **DD-119 (08/09) đang là đề xuất chờ owner ratify:** canonical = file **mới** `plexco.pen` do designer dựng,
+> kèm carve-out cho phép dựng file ở trạng thái **untracked** trước khi trigger đóng. **Chưa ratify thì chưa vẽ.**
+>
+> ⚠️ **Đính chính v1.1:** bản 14/08 ghi *"Designer bắt đầu vẽ ngay từ FE specs"* — viết **trước** DD-116 (24/08)
+> nên nay mâu thuẫn nguồn bền. Cùng lớp với sự cố 14/08 đã ghi trong `designer-kickoff.md` (kickoff bị sửa thành
+> "ready for designer handoff" rồi **đã revert**; guide thì chưa ai revert). Để hai chỉ thị trái nhau cùng sống
+> là cách một phiên tự chạy chọn nhầm bên.
+>
 > **Điểm khởi đầu:** Đọc `designer-kickoff.md` trước — file đó chốt scope, thứ tự vẽ và checklist nghiệm thu.
 
 ---
@@ -153,3 +164,7 @@ graph TD
 - ❌ `decisions.md` — 450KB+ decision log
 - ❌ `HANDOFF.md` — dành cho dev/AI tiếp quản
 - ❌ `BRD.md` / `PRD.md` / `TDD.md` — dành cho product/engineering
+
+---
+
+_Guide v1.2 · 2026-09-08 — sửa mâu thuẫn với DD-116 (v1.1 ghi "bắt đầu vẽ ngay", viết trước DD-116 24/08); thêm trạng thái DD-119 🟡. Bảng 4 tầng và danh sách file **không đổi**. Khi DD-119 ratify: thu bảng Tầng 3 về **6 FE spec launch-scope** (auth · onboarding · sessions · player_view · settings · home), đổi mọi tham chiếu `design.pen` → canonical file mới._

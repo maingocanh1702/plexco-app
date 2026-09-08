@@ -10,6 +10,14 @@
 > **Runtime status:** Not started — Club tab/routes/UI chưa build
 > **Negative scope:** Members CRUD → `feature_members_fe.md`; Sessions → `feature_sessions_fe.md`; Chat → `feature_chat_fe.md`; Tạo CLB → `feature_onboarding_fe.md`
 
+> 📍 **Đọc nhanh (2026-09-08 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_club.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@0aff7ad`, 04/09).
+>
+> **Phase-1 (DD-114):** 🟡 create club ✅ · Club tab ⬜ · **Launch (DD-113):** 🟡
+>
+> **Surface:** Web app **PWA** (Next.js App Router, installable/offline — DD-113 launch = PWA + Zalo bot song song) — bottom-nav slot #4 — shell PWA, Club tab ngoài 5 khối; **app native iOS (App Store) + Android (CH Play) là phase-2** (DD-69): tái dùng API/contract, màn native thiết kế lại theo platform sau gate, **không phải bản sao màn này**.
+>
+> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@0aff7ad`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: `tenant_provision()` có; Club route ⬜.
+
 ---
 
 ## 1. Mô tả
@@ -409,3 +417,4 @@ Tab CLB trong bottom navigation (slot #4) hiển thị tất cả CLB của user
 
 _FE Design Spec v0.1 · 2026-08-10 · Source: feature_club.md v1.0_
 _Changelog v0.1: Initial — 4 screens (Club List, Club Detail, News/Announcement, Settings), 7 sections, 10 edge cases, ASCII wireframes Desktop + Mobile._
+_FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `0aff7ad`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._

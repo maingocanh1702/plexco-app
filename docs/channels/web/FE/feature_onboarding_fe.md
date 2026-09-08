@@ -12,6 +12,14 @@
 > **Runtime status:** Partial legacy only — live readiness endpoint còn dùng `tg_bind` và coi `first_session` optional, nên FE target không được consume; shared target predicate + connector wizard/UI chưa build
 > **Negative scope:** Zalo manual configuration only tới khi CO-OQ-1 đóng; không hiện auto-verified state
 
+> 📍 **Đọc nhanh (2026-09-08 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_web_auth_onboarding.md` + `../../../features/FE/feature_connector_onboarding.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@0aff7ad`, 04/09).
+>
+> **Phase-1 (DD-114):** ✅ nhóm 2 create club · nhóm 3 link Zalo bot · **Launch (DD-113):** ✅ **khối 2/5 link Zalo bot** (+ create club); connector tiền ⬜
+>
+> **Surface:** Web app **PWA** (Next.js App Router, installable/offline — DD-113 launch = PWA + Zalo bot song song) — `/onboarding` — readiness endpoint có (DD-118 phủ), wizard UI ⬜; **app native iOS (App Store) + Android (CH Play) là phase-2** (DD-69): tái dùng API/contract, màn native thiết kế lại theo platform sau gate, **không phải bản sao màn này**.
+>
+> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@0aff7ad`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: `onboarding/start` + `onboarding/readiness` route có; connector wizard ⬜.
+
 ---
 
 ## 1. Mô tả
@@ -599,3 +607,4 @@ Wizard giúp host mới thiết lập CLB khi server-authorized navigation đưa
 
 _FE Design Spec v0.2 · 2026-07-31 · Source: feature_web_auth_onboarding.md v2.11 + feature_connector_onboarding.md v1.0_
 _FE Design Spec v0.3 · 2026-08-07 · Changelog: Thêm 4 section Draft (Analytics/State Machine/AC/Testing) — nguồn: Sporta FE porting analysis 2026-08-07_
+_FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `0aff7ad`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._

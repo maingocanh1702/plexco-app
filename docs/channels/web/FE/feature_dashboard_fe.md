@@ -10,6 +10,14 @@
 > **Runtime status:** Not started — không có dashboard route/API/UI
 > **Negative scope:** Không render revenue/trend/member/debt/activity aggregate tới khi có Reviewed DTO owner
 
+> 📍 **Đọc nhanh (2026-09-08 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_session_management.md` + `../../../features/FE/feature_payment_reconcile.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@0aff7ad`, 04/09).
+>
+> **Phase-1 (DD-114):** 🟡 tổng hợp nhóm 6 · **Launch (DD-113):** 🟡 host dashboard = session management (khối 3/5) + aggregate DTO chưa có authority
+>
+> **Surface:** Web app **PWA** (Next.js App Router, installable/offline — DD-113 launch = PWA + Zalo bot song song) — `/dashboard` aggregate; **app native iOS (App Store) + Android (CH Play) là phase-2** (DD-69): tái dùng API/contract, màn native thiết kế lại theo platform sau gate, **không phải bản sao màn này**.
+>
+> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@0aff7ad`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: 6/6 command + 5/6 route session; dashboard aggregate API ⬜.
+
 ---
 
 ## 1. Mô tả
@@ -325,3 +333,4 @@ Chuỗi static do file này authorize (shell + navigation + CTA). Không có res
 _FE Design Spec v0.4 · 2026-08-10 · Source: session v2.17 + payment v1.10 + notifications v3.11_
 _Changelog v0.4: A-grade upgrade — bổ sung Empty state cụ thể per-zone, mở rộng edge cases 4→10, chi tiết skeleton Loading state per-zone, thêm per-zone Error behavior, dark mode tokens._
 _Changelog v0.3: Thêm skeleton 4 section Draft (Analytics/State Machine/AC/Testing) — nguồn: Sporta FE porting analysis 2026-08-07_
+_FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `0aff7ad`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._
