@@ -198,6 +198,47 @@ Gate review/readiness ở trên vẫn áp song song và **chặt hơn** thì th�
 `docs/standards/review-code-readiness-gate.md` và `pnpm review:check:changed`.
 <!-- level3-workflow:end -->
 
+<!-- ap3-workflow:start -->
+## Làn ap3 — run do dispatcher khởi động (DD-120 🟡, từ 2026-09-09)
+
+> Ngoại lệ **có tên, có điều kiện** cho mục Level 3 ở trên. Chỉ áp khi session này được
+> `ap3/dispatch.sh` khởi động — nhận biết bằng env `AP3_SLUG` · `AP3_TASK` · `AP3_BASE_SHA` · `AP3_STATE`.
+> Không có bốn biến đó ⇒ mục Level 3 ở trên áp nguyên, không đọc tiếp mục này.
+
+- **Quy trình** = `.claude/skills/ap3-slice/SKILL.md` (English; kit `ap3/` cài từ `Claude template`;
+  contract mirror: `docs/autopilot-templates/ap3-workflow.md`). **Không** `scope-gate register`,
+  **không** manifest runtime, **không** `READY.txt`. READY của ap3 = **một PR đang mở** trên nhánh
+  `ap3/<slug>`, `verify` xanh, `AP3_REVIEW_VERDICT: CLEAN`, dòng evidence do dispatcher đẩy lên nhánh.
+- **Writer chỉ code, không review, không push, không mở PR** (sửa 09/09 theo phép đo: `codex` không
+  khởi tạo được trong sandbox Seatbelt — `W1-DECISION-codex-sandbox.md` bên `Claude template`). Writer
+  dừng ở `.ap3-run/READY-FOR-REVIEW`; **dispatcher** (bash launchd, ngoài sandbox) chạy scope-check độc
+  lập → `ap3/review.sh code` (+ `security` khi heuristic bắn) → **chỉ khi CLEAN** mới push + `gh pr
+  create` + ghi evidence. Có findings dưới trần vòng ⇒ dispatcher ghi `.ap3-run/REVIEW-FINDINGS.md` và
+  bật lại writer để sửa; chạm trần ⇒ `HALT MAX_ROUNDS` + pause class. **PR chỉ tồn tại sau một vòng
+  review sạch** — writer không nhìn thấy, không can thiệp được reviewer.
+- **Thẩm quyền để code** = file task `ap3/queue/<slug>.md` đã qua `bash ap3/lint-task.sh` và đã push lên
+  `origin/main` **+** class `enabled` trong `ap3/routines.json` (chỉ owner sửa). Class này **không** cần
+  verdict block trong `docs/slice-readiness-verdicts.md` — đó là nội dung DD-120.
+- **Không hỏi người.** Session headless, `AskUserQuestion` bị chặn. Thiếu context/quyết định ⇒ ghi
+  `.ap3-run/HALT.md` với mã `MISSING_CONTEXT` + câu hỏi cụ thể, **không** mở PR. Cần file ngoài `scope`
+  ⇒ `HALT SCOPE_DRIFT`. Ranh giới đếm được là `git diff --name-only $AP3_BASE_SHA..HEAD` ⊆ `scope`.
+- **Mọi luật khác của repo vẫn nguyên:** 5 HARD RULES · review độc lập vẫn qua **cùng**
+  `scripts/codex-review-pin.sh` (dispatcher gọi `ap3/review.sh`, không phải writer) · security round khi
+  diff chạm auth/secret/permission/tiền/external input · GitNexus `gitnexus_impact` trước khi sửa symbol
+  và `gitnexus_detect_changes()` trước commit · hook `pnpm review:check:changed` · agent-facing ⇒ English ·
+  commit message theo convention của repo.
+- **CI là cổng cuối trước merge.** PR do ap3 mở kích hoạt `.github/workflows/ci.yml` (trigger
+  `pull_request:`) — typecheck · format · `review:check` · lint · build · `pnpm -w test` với Postgres
+  service. **Không merge PR ap3 khi CI chưa xanh**, kể cả khi verdict Codex đã CLEAN: CI là lần chạy test
+  độc lập duy nhất không do writer tự khai (xem `W1-KNOWN-GAPS.md` §1 bên `Claude template`).
+- **Phạm vi hẹp có chủ ý:** chỉ class ghi trong `ap3/routines.json` (hiện: `code-quality-p2`). P0/P1,
+  schema/migration, auth, tiền, i18n string, và mọi slice đã có verdict trong
+  `docs/slice-readiness-verdicts.md` vẫn đi đường Level 3 supervised ở trên. Một HALT/crash/PR bị đóng/
+  sửa tay trước merge ⇒ class bị `paused`; bật lại là một commit có chủ ý của owner vào `routines.json`.
+- **Vận hành:** `ap3/README-W2.md` (owner) · kill switch `touch ap3/PAUSED` · trạng thái `ap3/state/`
+  (gitignored) · evidence `ap3/evidence.jsonl` (vào `main` qua PR của chính run).
+<!-- ap3-workflow:end -->
+
 ---
 
 <!-- gitnexus:start -->

@@ -154,6 +154,49 @@ The review/readiness gate above applies in parallel and the **stricter rule wins
 specs still go through `docs/standards/review-code-readiness-gate.md` and `pnpm review:check:changed`.
 <!-- level3-workflow:end -->
 
+<!-- ap3-workflow:start -->
+# ap3 lane — dispatcher-started runs (DD-120, proposal, from 2026-09-09)
+
+A named, conditional exception to the Level 3 section above. It applies only when this session was
+started by `ap3/dispatch.sh` — detectable by the environment variables `AP3_SLUG`, `AP3_TASK`,
+`AP3_BASE_SHA`, `AP3_STATE`. Without those four variables the Level 3 section above applies unchanged.
+
+- **Procedure** = `.claude/skills/ap3-slice/SKILL.md` (kit `ap3/` installed from `Claude template`;
+  contract mirror: `docs/autopilot-templates/ap3-workflow.md`). No `scope-gate register`, no runtime
+  manifest, no `READY.txt`. READY = **an open pull request** on branch `ap3/<slug>` with `verify` green,
+  `AP3_REVIEW_VERDICT: CLEAN`, and the evidence row the dispatcher pushes onto the branch.
+- **The writer only writes code: it never reviews, pushes, or opens a PR** (corrected 2026-09-09 by
+  measurement: `codex` cannot initialize inside the Seatbelt sandbox — `W1-DECISION-codex-sandbox.md` in
+  the `Claude template` repo). The writer stops at `.ap3-run/READY-FOR-REVIEW`. The **dispatcher**
+  (launchd bash, unsandboxed) then runs an independent scope-check, `ap3/review.sh code` (plus
+  `security` when the heuristic fires), and **only on CLEAN** pushes the branch, creates the PR and
+  appends the evidence row. On findings under the round cap it writes `.ap3-run/REVIEW-FINDINGS.md` and
+  restarts a fix writer; at the cap it is `HALT MAX_ROUNDS` and the class is paused. A PR exists only
+  after a clean review, and the writer can neither see nor influence the reviewer.
+- **Authority to write code** = the task file `ap3/queue/<slug>.md` (passed `bash ap3/lint-task.sh`,
+  present on `origin/main`) **plus** an `enabled` class in `ap3/routines.json` (owner-edited only).
+  No verdict block in `docs/slice-readiness-verdicts.md` is required for such a class — that is DD-120.
+- **Never ask a human.** The session is headless and `AskUserQuestion` is denied. Missing context or a
+  decision → write `.ap3-run/HALT.md` with `MISSING_CONTEXT` and the exact question; open no PR. A needed
+  file outside `scope` → `HALT SCOPE_DRIFT`. The countable boundary is
+  `git diff --name-only $AP3_BASE_SHA..HEAD` ⊆ `scope`.
+- **Every other repo rule stays in force:** the 5 HARD RULES; independent review still through the
+  same `scripts/codex-review-pin.sh` (invoked by the dispatcher via `ap3/review.sh`, not by the writer);
+  a security round when the diff touches auth/secret/permission/money/external input; GitNexus
+  `gitnexus_impact` before editing a symbol and `gitnexus_detect_changes()` before committing; the
+  `pnpm review:check:changed` hook; agent-facing text in English; the repo's commit-message convention.
+- **CI is the last gate before merge.** A PR opened by ap3 triggers `.github/workflows/ci.yml`
+  (`pull_request:`): typecheck, format, `review:check`, lint, build and `pnpm -w test` against a
+  Postgres service. Do not merge an ap3 PR while CI is red, even with a CLEAN Codex verdict — CI is the
+  only test execution not self-reported by the writer (`W1-KNOWN-GAPS.md` §1).
+- **Deliberately narrow:** only classes listed in `ap3/routines.json` (currently `code-quality-p2`).
+  P0/P1, schema/migration, auth, money, i18n strings, and any slice that already has a verdict in
+  `docs/slice-readiness-verdicts.md` stay on the supervised Level 3 path above. Any HALT/crash/closed
+  PR/hand-edit before merge pauses the class; re-enabling is a deliberate owner commit to `routines.json`.
+- **Operations:** `ap3/README-W2.md` (owner) · kill switch `touch ap3/PAUSED` · runtime state
+  `ap3/state/` (gitignored) · evidence `ap3/evidence.jsonl` (reaches `main` through the run's own PR).
+<!-- ap3-workflow:end -->
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

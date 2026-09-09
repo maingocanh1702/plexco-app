@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_ap3_note": "Plexco writer contract for ap3 (DESIGN.md section 4, as corrected by W1-DECISION-codex-sandbox.md 2026-09-09). The writer does CODING ONLY inside the sandbox and stops at .ap3-run/READY-FOR-REVIEW; the dispatcher runs the Codex review, the push and the PR unsandboxed, because codex cannot initialize inside Seatbelt. So the writer needs NO openai domains and NO gh/codex/push rules — they were removed on 2026-09-09. ap3/install.sh MERGES this into the existing .claude/settings.json: the repo's fallbackModel and both review:check:changed hooks must survive; ap3 hooks are appended. 'localhost'/'127.0.0.1' are for the Docker Postgres on 5432 that pnpm test:db needs (W2 probe item).",
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "excludedCommands": [],
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "*.githubusercontent.com",
+        "registry.npmjs.org",
+        "localhost",
+        "127.0.0.1"
+      ]
+    },
+    "filesystem": {
+      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.ap-watch.env", "~/.codex", "**/.env", "**/.env.*", "**/.envrc"],
+      "allowWrite": ["~/Library/pnpm", "~/.cache"]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Read", "Edit", "Write", "Glob", "Grep", "Agent",
+      "Bash(git *)",
+      "Bash(pnpm *)", "Bash(npx vitest*)", "Bash(npx tsc*)", "Bash(node scripts/*)",
+      "Bash(bash ap3/*)",
+      "mcp__gitnexus__*"
+    ],
+    "deny": [
+      "Bash(git push*)", "Bash(git reset --hard*)", "Bash(rm -rf *)",
+      "Bash(gh *)", "Bash(codex *)", "Bash(scripts/codex-review-pin.sh *)",
+      "Bash(pnpm db:bootstrap*)", "Bash(psql *)",
+      "Read(./.env*)", "Read(~/.ssh/**)", "Read(~/.aws/**)",
+      "WebFetch", "WebSearch"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "bash ap3/hooks/scope-guard.sh" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "bash ap3/hooks/finish-guard.sh" }] }
+    ]
+  }
+}

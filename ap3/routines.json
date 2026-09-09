@@ -1,0 +1,23 @@
+{
+  "schema": "ap3-routines-v1",
+  "_authority": "Owner-edited only. ap3/dispatch.sh reads this file and never writes it. A class is dispatchable only while status == enabled and not paused in ap3/state/trust.json. allowed_scope is the boundary a queued task's scope must fit inside; widen it only from evidence rows, never to make a task fit.",
+  "writer_model": "claude-sonnet-4-5",
+  "classes": {
+    "code-quality-p2": {
+      "status": "enabled",
+      "risk": "P2",
+      "description": "Behaviour-preserving cleanups measured by the 2026-09-08 slop audit (docs/backlog-rows-pending-plexco-2026-09-08.md): dead exports, duplicated helpers, duplicated type aliases. No schema, no migration, no auth/permission/money logic, no i18n strings.",
+      "allowed_scope": [
+        "packages/core/src/**",
+        "packages/db/src/**",
+        "apps/web/lib/**",
+        "apps/web/app/api/auth/google/**"
+      ],
+      "budget_usd_max": 10,
+      "max_runs_per_day": 1,
+      "review": "codex",
+      "security_review": "auto",
+      "evidence": "none yet — first dispatched run is core-package-const-has-no-consumer (2 files, packages/core). Widen or keep this scope only after ap3/evidence.jsonl shows three READY runs merged unchanged."
+    }
+  }
+}

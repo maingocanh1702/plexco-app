@@ -117,6 +117,7 @@
 | DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
 | DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
 | DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-120 | **Làn ap3 (proactive, native Claude Code) cho class `code-quality-p2`** → run do `ap3/dispatch.sh` (launchd) khởi động không cần người gõ lệnh; thẩm quyền code = task file `ap3/queue/<slug>.md` (qua `lint-task.sh`, trên `origin/main`) + class `enabled` trong `ap3/routines.json`; READY = **PR đang mở** + `verify` xanh + Codex `AP3_REVIEW_VERDICT: CLEAN` + dòng evidence; owner merge tay, `AUTO_MERGE: off` giữ nguyên. **Không** áp P0/P1 · schema/migration · auth · tiền · i18n string · slice đã có verdict. Class `paused` ở mọi HALT/crash/PR đóng/sửa tay trước merge; giữ làn = 3 run READY liên tiếp merge nguyên vẹn (`ap3/evidence.jsonl`) | 🟡 Đề xuất (2026-09-09, chờ owner ratify) | P0–P1 (tooling) | `../autopilot-templates/ap3-workflow.md` (mirror `docs/level3-native/DESIGN.md` bên Claude template) · `../../ap3/routines.json` · `../../ap3/README-W2.md` · `CLAUDE.md` mục "Làn ap3" |
 | DD-119 | **Canonical design file = file MỚI (`plexco.pen`) do designer dựng; carve-out gỡ deadlock DD-116** → owner chọn 08/09 "file mới hoàn toàn + designer dựng", tức **không** phải `design.pen` cũng **không** phải `fe.pen` ⇒ named trigger (a) của DD-116 **không bao giờ thoả**, mà DD-116 tự khai "không sự kiện nào khác gỡ" ⇒ **deadlock**: PENDING chặn chính việc dựng file, mà file là điều kiện gỡ PENDING. **D1** `plexco.pen` root là canonical; `design.pen`+`fe.pen` **superseded** (giữ tham khảo, không track, không import câm — 2/6 screen của `design.pen` nghịch negative scope DD-113 D3 và kickoff §3B). Amend luôn path DD-81. **D2 carve-out:** designer được dựng `plexco.pen` **untracked** cho Giai đoạn A + 5 khối launch + Home; bốn cấm tường minh của DD-116 (code · migration · FE lane · `.pen` tracking) **giữ nguyên**. **D4** checklist nghiệm thu 7 mục nhị phân (token khớp 1-1 DD-59 · WCAG AA target C trên Home · 6 state × light/dark · 4 state × 3 breakpoint · `t(vi,en)` · 0 vi phạm negative scope · exact node id DD-58). **D5** rủi ro dựng untracked, nhận tường minh. Không đảo DD-113 D5 / DD-69 | 🟡 Đề xuất (chờ owner ratify 2026-09-08) | Launch (DD-113) | DD-116 (nguồn bền PENDING) · DD-81 · DD-59 · DD-58 · DD-111 D4 · `../channels/web/designer-kickoff.md` · `../channels/web/designer-docs-guide.md` |
 | DD-118 | **Nguồn ngôn ngữ surface ĐÃ ĐĂNG NHẬP = `tenants.locale`, không nguồn nào khác** → `runWithLang` thiết lập ở request boundary; `resolveLang` giữ chữ ký, gọi `memberLocale = null`. **Số đo:** `locale` chỉ có trên `tenants` (`schema.ts:493`), KHÔNG có cột locale cấp member ⇒ tham số thứ nhất của `resolveLang` không có chỗ lưu, hàm viết cho schema chưa tồn tại — chữ ký hàm không phải authority. **KHÔNG dùng `Accept-Language`**: luật public (`?l=`) là quyết định của một surface KHÁC vì crawler không mang locale, nhưng nhận `Accept-Language` ở đây sẽ tạo hai posture mâu thuẫn. Không resolve được tenant ⇒ `vi`. Cột locale cấp member trong tương lai cần decision RIÊNG | ✅ Chốt (owner 2026-08-26) | P4 (web i18n runtime) | `packages/db/schema.ts:493` · `packages/core/src/i18n.ts` · lane `web-i18n-runwithlang-request-context` · DD-111 D4 |
 | DD-117 | **`Close`/`Cancel` nhánh paid/retry-root = fail-closed REFUSE** (mã lỗi lớp `CANCEL_REQUIRES_REVIEW`) cho tới khi subsystem payments/review_policy land; **thay** phần deferral của disposition 14/08 (`session-commands-update-close-cancel`); **KHÔNG** authorize subsystem đó / migration / route / FE. Literal `update_open_session`/`close_session`/`cancel_session` vào `ActionClass` theo DD-110 D3 (cùng commit mang command). An toàn hôm nay vì paid roster/retry root **chưa reachable** trên `main` (chưa có join/waitlist/payments); refuse ép đường review tồn tại TRƯỚC khi paid reachable. DD-112 capacity giữ ⬜ — chỉ `CAPACITY_BELOW_ROSTER`, không couple `impact_policy`/DD-49. **D5 (bổ sung 2026-08-25):** cả họ lệnh session dedup trên `(tenant_id, command_id)` **DUY NHẤT** — content fingerprint **BỊ TỪ CHỐI** (không lưu verifier phái sinh PII, không kéo surface KMS chưa pin); Slice A HALT MAX_ROUNDS trên fingerprint P1, successor bỏ fingerprint | ✅ Chốt (owner 2026-08-25) · 🔧 D5 bổ sung (2026-08-25) | P2/P4 (session management) | disposition 14/08 · DD-110 · DD-111 D4 · DD-112 · DD-105 · edge #5 (`../features/BE/feature_session_management_tech.md:215`) |
@@ -1701,6 +1702,106 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-120 — Làn ap3: run tự khởi động cho class `code-quality-p2`, READY = PR · 🟡 Đề xuất (chờ owner ratify)
+
+> **Nguồn:** owner quyết 2026-09-09 (phiên Claude template + Plexco): "áp dụng workflow lvl3 mới nhất cho task
+> tiếp theo trong roadmap Plexco". Thiết kế đầy đủ: `../autopilot-templates/ap3-workflow.md` (mirror English của
+> `docs/level3-native/DESIGN.md` bên repo `Claude template`, cùng ngày). Vận hành: `../../ap3/README-W2.md`.
+
+- **Bối cảnh — kit `autopilot/` chưa từng tự về đích.** Ngày 09/09 dispatcher launchd của kit cũ (Claude template)
+  lần đầu tự khởi động một run (`ap-watch-auto-start-attribution`): writer làm 31 phút không người trực rồi dừng ở
+  `AWAIT` vì dưới `--permission-mode acceptEdits` mọi lệnh shell headless đều cần một lần duyệt không ai có mặt.
+  Đó là toàn bộ khoảng cách còn lại tới step 3 của ladder "Steps of AI Adoption": việc **bắt đầu** được khi vắng
+  người, nhưng chưa **về đích** được. Kit cũ cũng viết lại bằng bash những thứ Claude Code 2.1.177 đã có native:
+  worktree, sandbox tự duyệt bash, allow/deny rules, hooks, trần budget, `result.json` có cost/turns/denials.
+- **Đo tại `30a3e90` / local `b37e464` (2026-09-09):** ROADMAP §📍 *Kế tiếp* = (1) merge bundle v6 (owner) · (2)
+  `capability-wiring-auto-reconcile` · (3) `tenant-capability-authority-core` · (4) DD-118 phủ nốt `runWithLang` ·
+  (5) infra L8/L4a. (2)(3)(5) chạm authz/tiền/secret ⇒ P1; (4) không còn surface rõ (`onboarding/start` pre-tenant,
+  `auth/*` pre-tenant) ⇒ run headless sẽ `HALT MISSING_CONTEXT`. Ba row slop-audit 08/09
+  (`../backlog-rows-pending-plexco-2026-09-08.md`) là đúng loại việc cho làn tự khởi động; chỉ
+  `core-package-const-has-no-consumer` độc lập với bundle v6 (`git diff --name-only 30a3e90..72394fe --
+  packages/core/src/index.ts packages/core/src/index.test.ts` rỗng).
+
+### D1 — Hai làn, một ranh giới nhận diện
+
+Repo có **hai làn** song song: **supervised** (mục "Workflow mặc định — Level 3" trong `CLAUDE.md`, mọi task người
+mở, contract `level3-workflow.md`, không đổi) và **ap3** (run do `ap3/dispatch.sh` khởi động). Ranh giới nhận diện
+là **env** `AP3_SLUG` · `AP3_TASK` · `AP3_BASE_SHA` · `AP3_STATE`; không có bốn biến đó thì làn supervised áp
+nguyên. Mục "Làn ap3" trong `CLAUDE.md` (Việt) và `AGENTS.md` (English) là luật nhận diện; `ap3-workflow.md` là
+contract.
+
+### D2 — Thẩm quyền để code, không cần verdict block
+
+Với class ghi trong `ap3/routines.json`, thẩm quyền code = **task file** `ap3/queue/<slug>.md` (frontmatter
+`class · risk · scope · verify · budget_usd · max_review_rounds`; thân `Problem · Acceptance · Context`; qua
+`bash ap3/lint-task.sh`; đã push lên `origin/main`) **+** class `status: enabled`. **Không** cần verdict
+`CODE_READY` trong `slice-readiness-verdicts.md` cho class này — gate readiness của repo vẫn áp cho mọi docs/plan/
+spec (validator `pnpm review:check:changed` chạy trong hook như cũ), nhưng một cleanup P2 không đổi hành vi không
+phải đi qua closure matrix 12/12. **Registry chỉ owner sửa**; dispatcher đọc, không bao giờ ghi.
+
+### D3 — READY = PR, người merge · **sửa 2026-09-09 sau phép đo wave 1**
+
+> ⚠️ **Bản đầu của D3 (viết sáng 09/09) nói writer tự chạy review rồi mở PR. Phép đo chiều 09/09 bác điều đó và
+> phép đo thắng** (anti-drift): `codex` 0.153 **không khởi tạo được** trong sandbox Seatbelt của Claude Code —
+> `failed to initialize in-process app-server client: Operation not permitted`, tái hiện y hệt qua **năm** cách
+> (excludedCommands cho pin script · cho `codex` · `--sandbox danger-full-access` · bỏ domain openai ·
+> `dangerouslyDisableSandbox`). Tắt sandbox cho writer **không phải** lựa chọn: chính `autoAllowBashIfSandboxed`
+> là thứ cho bash chạy không cần duyệt — đó là bản vá E12, phải giữ. Bản ghi: `W1-DECISION-codex-sandbox.md`
+> (repo `Claude template`).
+
+Phân vai sau khi sửa — **chặt hơn** bản đầu, vì reviewer nằm ở tiến trình writer không với tới được:
+
+- **Writer** (sandbox, `dontAsk`): chỉ code. plan → RED → GREEN → commit trên `ap3/<slug>` → tự scope-check →
+  ghi `.ap3-run/READY-FOR-REVIEW` (hoặc `.ap3-run/HALT.md`). Không chạy codex, không push, không mở PR ⇒ writer
+  **không cần** domain openai, không cần `gh`, không cần quyền push.
+- **Dispatcher** (bash launchd, ngoài sandbox): scope-check độc lập → `ap3/review.sh code` (+ `security` khi
+  heuristic bắn) → **chỉ khi CLEAN** mới push nhánh, `gh pr create`, ghi dòng evidence
+  (`total_cost_usd · num_turns · duration_ms · permission_denials · review_rounds · verdict`) lên chính nhánh PR,
+  báo READY. Findings dưới trần vòng ⇒ ghi `.ap3-run/REVIEW-FINDINGS.md`, tăng vòng, bật lại writer để sửa; chạm
+  trần ⇒ `HALT MAX_ROUNDS` + pause class. **PR chỉ tồn tại sau một vòng review sạch.**
+- **CI là cổng cuối.** PR ap3 kích hoạt `.github/workflows/ci.yml` (`pull_request:`): typecheck · format ·
+  `review:check` · lint · build · `pnpm -w test` với Postgres service. **Không merge khi CI chưa xanh**, kể cả
+  verdict CLEAN — hôm nay dispatcher *tin* `verify` writer tự khai chứ không chạy lại (`W1-KNOWN-GAPS.md` §1),
+  nên CI là lần chạy test độc lập duy nhất. Đây là lựa chọn của owner cho hardening W2 quan trọng nhất: dùng CI
+  sẵn có thay vì dựng re-verify phía dispatcher (worktree không có `node_modules`, cần DB — dễ sinh
+  `VERIFY_FAIL` giả).
+- **`AUTO_MERGE: off` không đổi**; owner merge tay trên GitHub sau khi CI xanh.
+
+### D4 — Phạm vi hẹp và cách tin cậy đi lên/xuống
+
+Chỉ class `code-quality-p2` (P2, behaviour-preserving: dead export, helper/type alias trùng; `allowed_scope` =
+`packages/core/src/**` · `packages/db/src/**` · `apps/web/lib/**` · `apps/web/app/api/auth/google/**`;
+1 run/ngày; trần `$10`/run). **Không** áp P0/P1, schema/migration, auth, tiền, i18n string, slice đã có verdict.
+Mọi HALT/crash/PR đóng/sửa tay trước merge ⇒ class `paused` trong `ap3/state/trust.json`, không tự phục hồi; bật
+lại = commit có chủ ý vào `routines.json`. Mở class mới hay nới `allowed_scope` **chỉ từ evidence rows**, không
+để cho task vừa. Kill switch: `touch ap3/PAUSED`.
+
+### D5 — Thứ tự triển khai và điều kiện tuyên bố step 3
+
+W1: xây kit `ap3/` bên `Claude template` (`docs/level3-native/BUILD-PROMPT.md`, 3 probe phải PASS). W2 trên
+Plexco: push `main` → cài kit (`install.sh` **merge** `ap3/settings.plexco.json` vào `.claude/settings.json`, giữ
+`fallbackModel` + hai hook `review:check:changed`) → `ap3/env` (gitignored, `DATABASE_URL_TEST`) → probe push +
+probe DB-trong-sandbox → queue `core-package-const-has-no-consumer` → tick 15 phút → PR → owner merge. Sau khi
+bundle v6 merge: hai row còn lại (`db-tx-type-alias-duplicated-six-files`, `web-oauth-302-helper-duplicated-two-routes`)
+từ `ap3/queue/_after-v6/` lên `ap3/queue/`. **`DEMONSTRATED_STEP: 3` chỉ được ghi** sau 3 run do dispatcher khởi
+động tới READY với `human_interventions = 0` trong run và `merged_unchanged = true`.
+
+### Ràng buộc chung
+
+- **Không authorize** bất kỳ task P0/P1, schema, auth, tiền, i18n nào đi làn ap3; **không** đổi contract
+  `level3-workflow.md`; **không** cài hook/sandbox vào `.claude/settings.json` trước khi kit tồn tại (hook trỏ tới
+  file chưa có sẽ làm hỏng session interactive).
+- **Cái mất khi đi làn này, ghi thẳng:** `negative_scope` ngữ nghĩa và invariant token không còn được máy kiểm
+  (thành văn bản trong Acceptance + Codex đọc); không phát hiện `REGION_THRASH`; không bind hash manifest lúc bắt
+  đầu. Đổi lại: run về đích khi vắng người, cost thật từ `result.json`.
+- **Đã mirror 09/09 dạng 🟡** (để writer/người đọc có luật nhận diện ngay): `CLAUDE.md` + `AGENTS.md` mục "Làn ap3",
+  `../00-start-here/HANDOFF.md` §5b, `../autopilot-ONBOARDING.md`, `.gitignore`, `../autopilot-templates/ap3-workflow.md`.
+- **Mirror khi ratify (theo thứ tự):** đổi 🟡 → ✅ ở bốn chỗ trên → `../product/ROADMAP.md` (một dòng ở §📍 *Kế tiếp*: "làn ap3 chạy ba row
+  slop-audit song song với chuỗi supervised") → `../slice-readiness-verdicts.md` header (ghi rõ class ap3 nằm ngoài
+  verdict flow).
+
+---
+
 ## DD-119 — Canonical design file = file MỚI do designer dựng; carve-out gỡ deadlock của DD-116 · 🟡 Đề xuất (chờ owner ratify)
 
 > **Nguồn:** owner chọn 2026-09-08: canonical design file = **file mới hoàn toàn**, **designer dựng**. Hai lựa chọn mà DD-116 named trigger (a) cho phép (`design.pen` / `fe.pen`) đều **không** được chọn ⇒ trigger như đang viết **không bao giờ thoả**, trong khi DD-116 tự khai *"Không sự kiện nào khác gỡ"*. DD-119 là chỗ ký riêng cho việc amend đó. Sửa thẳng thân DD-116, hoặc lặng lẽ track một file thứ ba, là đúng thứ **DD-111 D4** cấm.
@@ -3119,6 +3220,7 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 09/09/2026 | v2.47 | **Thêm DD-120 → 🟡 Đề xuất (chưa ratify): làn ap3 tự khởi động cho class `code-quality-p2`, READY = PR đang mở, không cần verdict block cho class này.** Bối cảnh: run tự khởi động đầu tiên của kit `autopilot/` (Claude template, 09/09) dừng ở AWAIT vì writer headless không được chạy shell; kit mới ap3 dùng sandbox + `dontAsk` + hooks + budget native của Claude Code 2.1.177. Slice đầu: `core-package-const-has-no-consumer` (row slop-audit 08/09, độc lập bundle v6); hai row còn lại chờ v6 trong `ap3/queue/_after-v6/`. Mirror cùng ngày: `CLAUDE.md` + `AGENTS.md` mục "Làn ap3", `HANDOFF.md` §5b, `autopilot-ONBOARDING.md`, `.gitignore` (`ap3/state/`, `ap3/env`, `ap3/PAUSED`), mirror `autopilot-templates/ap3-workflow.md`. Kit **chưa cài** (chờ wave 1); `.claude/settings.json` chưa đổi. **Sửa cùng ngày (chiều), sau khi wave 1 xây xong kit và đo thật:** `codex` không khởi tạo được trong sandbox Seatbelt (5 cách đều lỗi giống nhau) ⇒ **writer chỉ code**, dừng ở `.ap3-run/READY-FOR-REVIEW`; **dispatcher** (ngoài sandbox) review + push + mở PR, chỉ mở khi CLEAN — chặt hơn bản đầu vì writer không với tới reviewer. D3 sửa tại chỗ (còn 🟡, chưa từng ratify). Thêm **CI là cổng cuối** (`ci.yml` chạy trên `pull_request:`), thay cho re-verify phía dispatcher — hardening W2 số 1 theo `W1-KNOWN-GAPS.md` §1. `writer_model: claude-sonnet-4-5` đã đo: hợp lệ, không fallback, $0.0196/lượt nguội. |
 | 08/09/2026 | v2.46 | **Thêm DD-119 → 🟡 Đề xuất (chưa ratify): canonical design file = file MỚI `plexco.pen` do designer dựng; carve-out gỡ deadlock của DD-116.** Owner chọn 08/09 "file mới hoàn toàn" + "designer dựng". Hệ quả phải nói ra: DD-116 named trigger (a) chỉ cho **`design.pen` hoặc `fe.pen`** ⇒ chọn file thứ ba làm trigger **không bao giờ thoả được**, trong khi chính DD-116 ghi "không sự kiện nào khác gỡ". Nặng hơn: (b) đòi file **tracked trên `main`**, mà file mới chỉ tồn tại sau khi có người **dựng** nó — dựng file design là **việc FE**, đúng thứ PENDING treo ⇒ **PENDING chặn chính việc tạo ra điều kiện gỡ PENDING**. Với `design.pen`/`fe.pen` thì không có deadlock vì hai file đã tồn tại trước 13/08 và (b) chỉ là `git add`. **D1** pin `plexco.pen` (root) làm canonical, `design.pen`+`fe.pen` **superseded** cùng lớp `Plexco-DS-fable5.pen` (DD-81), amend luôn canonical path amend 25/07 của DD-81; cảnh báo không import câm vì `design.pen` có 6 screen frame, **2 nghịch ràng buộc hiện hành** (`Screen / Discovery` — negative scope DD-113 D3; `Screen / Session Manage / Roster Mark-paid` — trái kickoff §3B "roster không có payment column/action"). **D2 carve-out** chỉ khử nhập nhằng cụm *"mọi việc FE"*; **bốn cấm tường minh của DD-116 (code · migration · FE lane · `.pen` tracking) giữ nguyên 100%** — designer dựng ở trạng thái **untracked**, phạm vi = Giai đoạn A (token + component library) + screen của đúng 5 khối launch + Home (màn DD-81 dùng confirm target C + WCAG). 11 FE spec ngoài launch mở bằng DD sau. **D3** ràng buộc thiết kế + negative scope gom một chỗ (không QR/STK/`pay_code`, không running total client-side, không `impact_policy` selector, không chat system message, không chip "Chưa thu" DD-96 Part B, không field `UNPINNED — omit active UI`, không tiền/PII màn public). **D4** checklist nghiệm thu **7 mục nhị phân** cho điều kiện (b)+(c) — thiếu một mục là không ký, ghi blocker theo `review-code-readiness-gate.md` §7, cấm "gần ổn". **D5** rủi ro dựng untracked (không history/backup trong repo) nhận tường minh, tiền lệ `design.pen`/`fe.pen` cũng untracked có chủ ý. **Đo tại `30a3e90`:** `git ls-files | grep '\.pen$'` **rỗng**, cả hai file vẫn `??`. ⚠️ Kèm phát hiện phải sửa **kể cả nếu DD-119 bị bác**: `../channels/web/designer-docs-guide.md` v1.1 (14/08) ghi *"Designer bắt đầu vẽ ngay từ FE specs"* — viết **trước** DD-116 (24/08) nên nay mâu thuẫn nguồn bền; cùng lớp với sự cố 14/08 mà `designer-kickoff.md` đã ghi lại và **đã revert**, riêng guide thì chưa ai revert. **Không authorize** code/migration/packet/worktree/slice/enablement/FE lane/`.pen` tracking; không đảo DD-113 D5 / DD-69; không đổi P-number. |
 | 26/08/2026 | v2.45 | **OQ DD-114 D3 → ✅ CHỐT phương án (b) (owner 2026-08-26); đóng open question cuối của DD-114, không thêm DD mới.** Phát sinh từ phiên AWAIT `public-session-projector` (26/08): lane định dựng projector `public_sessions` đầu tiên, đo base `9488a21` rồi dừng ở AWAIT vì D3 có chỉ thị "slice nào chạm nhánh này phải AWAIT". Owner chốt **(b)**: phase-1 **CÓ** toggle public/private + fence immediate-deny, **KHÔNG** chiếu `public_sessions` — bảng đó **không có writer trong phase-1**; toggle + fence-raise **đã land** trong `UpdateSession` (`session-service.ts:1548`), **không cần thêm code**. Q2 (`slots_open`) và Q3 (alias moderated) **thành MOOT** dưới (b) — không chiếu thì không có value rule để ratify; cả hai chuyển thành **tiền đề có tên** của epic sau, không còn là open question. Projector = **epic "public read model" phase sau với BỐN tiền đề, không phải một slice**: (1) DD-73 share link · (2) DD-41 projection migration · (3) occupancy helper **DUY NHẤT** cho `slots_open` (DD-32:452 · BL-DSC-1 · TDD §3.9 — cấm công thức capacity thứ hai; đo 26/08 `getSessionOccupancy` + bảng holds **= 0**) · (4) alias moderated substrate cho `club_display_name` (DD-46:627 — đo 26/08 moderation **chỉ** có ở `chat_messages` `0031:133-138`). **Bốn đo được ghi lại để phiên sau khỏi đo lại:** (a) literal event thứ năm là **`session.announcement_requested`** (`session-service.ts:924`), KHÔNG phải `session.announced`; (b) outbox **KHÔNG** đảm bảo thứ tự per-aggregate (`0023:176-208` — `ORDER BY` nằm trong CTE, `SELECT` cuối không có; phase-2 sắp theo UUID + `LIMIT 1`) ⇒ consumer tương lai phải **order-independent + monotonic guard**; (c) writer path bị **ÉP** về SECURITY DEFINER grant `EXECUTE` cho `app_worker` — writer role riêng bị loại vì `preflight.ts:98-118` hard-assert `session_user`=`current_user`=`app_worker` + từ chối `SET ROLE`, còn `app` đã mất SELECT (`0033:238`); (d) **`confirmed_count` defer tường minh** tại `0033:69` — thêm vào sẽ phá literal whitelist test (`rls-invariants.test.ts:171`) VÀ làm hold count suy ra được từ `confirmed_count + slots_open + slots_max` (BL-DSC-1 cấm), STOP-condition cũ trong manifest `:75` có trước `0033` nên **đã mục**. **Đính chính CÁCH CITE (không phải lỗi nhãn — đo 26/08):** amendment DD-50 về ACL trusted-migration có **hai nhãn, cả hai đều đúng theo hệ đếm riêng** — commit `a8ae81d` + ledger của nó ghi "amendment 4" = **thứ tư của DD-50 tính từ đầu** (`f6f98ab` ghi "3rd amendment", nhất quán), còn thân bài dòng 689 ghi "#2" = **thứ hai trong ngày 2026-08-26**. Cite theo **ngày + dòng 689**, đừng cite bằng số trần. **Không authorize code/migration/enablement nào.** |
 | 26/08/2026 | v2.44 | **DD-50 amendment 4 (owner 2026-08-26 · #2) — threat model ACL migration-authored + account fail-closed TOÀN CHAIN (phát sinh REGION_THRASH v2 `identity-account-link-core`, không thêm DD mới).** (a) Migration là owner-authored + tin cậy: definer tạo-bởi-migration theo **posture 0027** (`CREATE FUNCTION` + `REVOKE FROM PUBLIC` + revoke runtime roles, `search_path=public`); hardening DDL chống search_path/default-privs/overload **NGOÀI** threat-model phase-1 — **owner security sign-off đóng lớp F1**, out-of-contract, successor cite amendment. Căn cứ: `grep 'CREATE FUNCTION public.'` khắp migrations = 0 (cả 0027). (b) Predicate account qualified-link **fail-closed toàn chain merge**: verified account trên node bất kỳ không resolve về canonical cuối ⇒ deny (đếm trên `v_chain`, không chỉ canonical); mở rộng SEC-1, không dựa merge-commit re-parent (DD-103, exposure=0). **Chỉ sửa `decisions.md`.** |

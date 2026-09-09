@@ -66,3 +66,9 @@ docker-compose.override.yml
 
 .DS_Store
 .claude/settings.local.json
+
+# ap3 — native Level-3 lane (DD-120): runtime state, env, kill switch are never committed.
+# ap3/queue, ap3/routines.json and ap3/evidence.jsonl ARE tracked.
+ap3/state/
+ap3/env
+ap3/PAUSED

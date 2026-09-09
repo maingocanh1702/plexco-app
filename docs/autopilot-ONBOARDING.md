@@ -21,6 +21,14 @@ lần/máy, ngoài phạm vi repo này — `autopilot/install-global.sh` bên te
 `docs/autopilot-templates/` trong repo Plexco chỉ là **bản fallback mirror** — dùng khi máy bạn chưa
 có shared canonical. `scripts/autopilot-onboard.sh` tự chọn đúng nguồn, ưu tiên canonical.
 
+> 🆕 **Làn ap3 (2026-09-09, DD-120 🟡):** bên cạnh flow supervised mô tả trong file này, repo có làn
+> **tự khởi động** `ap3/` — kit Level 3 mỏng trên sandbox · `--permission-mode dontAsk` · hooks · budget
+> native của Claude Code, chạy từ launchd, READY = PR đang mở. Contract:
+> [`autopilot-templates/ap3-workflow.md`](./autopilot-templates/ap3-workflow.md) · vận hành:
+> [`../ap3/README-W2.md`](../ap3/README-W2.md) · luật nhận diện: `CLAUDE.md` mục "Làn ap3". Chỉ class
+> `code-quality-p2`. Kit chưa cài (chờ wave 1 bên `Claude template`); file này vẫn là entry point cho
+> mọi task người mở.
+
 ---
 
 ## 0. Mental model (đọc trước)
