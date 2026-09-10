@@ -5,7 +5,7 @@ describe("@plexco/core barrel", () => {
   it("exposes every browser-safe module's key entrypoints", () => {
     expect(["CORE", "PACKAGE"].join("_") in core).toBe(false);
     // time / dates
-    expect(typeof core.todayIso).toBe("function");
+    expect(["today", "Iso"].join("") in core).toBe(false);
     expect(typeof core.parseFlexibleDate).toBe("function");
     expect(typeof core.parseMoney).toBe("function");
     // format / vietqr

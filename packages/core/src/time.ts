@@ -5,13 +5,6 @@
  * time (set `TZ=Asia/Ho_Chi_Minh` in env) so parsing matches user expectations.
  */
 
-/** Local calendar date as ISO "YYYY-MM-DD". */
-export function todayIso(now: Date = new Date()): string {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-    now.getDate(),
-  ).padStart(2, "0")}`;
-}
-
 /** Local midnight for the given date's calendar day (drops the time-of-day part). */
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
