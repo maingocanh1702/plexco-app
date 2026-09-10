@@ -235,6 +235,12 @@ Gate review/readiness ở trên vẫn áp song song và **chặt hơn** thì th�
   schema/migration, auth, tiền, i18n string, và mọi slice đã có verdict trong
   `docs/slice-readiness-verdicts.md` vẫn đi đường Level 3 supervised ở trên. Một HALT/crash/PR bị đóng/
   sửa tay trước merge ⇒ class bị `paused`; bật lại là một commit có chủ ý của owner vào `routines.json`.
+- **Hợp đồng writer là PER-RUN, không repo-wide** (sửa 09/09 sau lần cài thử đầu tiên). `ap3/dispatch.sh`
+  truyền `--settings <repo>/ap3/writer-settings.json` khi khởi động writer, và ap3 **không sửa**
+  `.claude/settings.json` của repo. Lý do: `sandbox` và `permissions.deny` **không thể** no-op theo env như
+  hai hook ap3 — nằm trong file settings dùng chung thì chúng chặn `gh` · `git push` · `docker` · `psql`
+  trong **mọi** session interactive của repo, và còn bị commit vào `main`. Nếu thấy `sandbox`/`permissions`
+  xuất hiện trong `.claude/settings.json`, đó là bản cài cũ: `git checkout -- .claude/settings.json`.
 - **Vận hành:** `ap3/README-W2.md` (owner) · kill switch `touch ap3/PAUSED` · trạng thái `ap3/state/`
   (gitignored) · evidence `ap3/evidence.jsonl` (vào `main` qua PR của chính run).
 <!-- ap3-workflow:end -->

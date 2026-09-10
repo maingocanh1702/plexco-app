@@ -1,24 +1,36 @@
 <!-- workflow-authority: ap3-design -->
-<!-- MIRROR — do not edit here. Sources (repo `Claude template`, 2026-09-09):
-       docs/level3-native/DESIGN.md                    -> part 1 below
+<!-- MIRROR — do not edit here. Sources (repo `Claude template`, refreshed 2026-09-10 after wave 1.1):
+       docs/level3-native/DESIGN.md                    -> part 1 below (already carries the per-run writer contract)
        docs/level3-native/W1-DECISION-codex-sandbox.md -> part 2 below (BINDING correction)
      Refresh by re-copying both under this header. Plexco-specific bindings live in
      ap3/settings.plexco.json, ap3/routines.json, ap3/README-W2.md and CLAUDE.md section "Lan ap3". -->
 
-> ⚠️ **READ PART 2 FIRST.** Wave 1 measured that `codex` cannot initialize inside Claude Code's Seatbelt
-> sandbox, so DESIGN sections 4, 6, 7 and 12.2 below are WRONG wherever they have the sandboxed writer run
-> `ap3/review.sh`, push, or open the PR. The writer codes and stops at `.ap3-run/READY-FOR-REVIEW`; the
-> unsandboxed dispatcher reviews, and only on a CLEAN verdict pushes the branch and opens the PR. Part 2 is
-> binding wherever the two disagree. Residual gaps: `docs/level3-native/W1-KNOWN-GAPS.md` in `Claude template`.
+> ⚠️ **Two measured corrections are already folded in; read them before trusting any single section.**
+> **(1) Wave 1:** `codex` cannot initialize inside Claude Code's Seatbelt sandbox, so the writer only
+> codes and stops at `.ap3-run/READY-FOR-REVIEW`; the unsandboxed dispatcher reviews and, only on a CLEAN
+> verdict, pushes and opens the PR. Part 2 below is binding wherever part 1 disagrees.
+> **(2) Wave 1.1:** the writer contract is passed **per run**
+> (`claude -p --settings <run-state copy> --setting-sources ''`), never merged into the repo's
+> `.claude/settings.json` — doing that once blocked `gh`, `git push`, `docker` and `psql` in the owner's
+> own interactive sessions. Residual gaps: `docs/level3-native/W1-KNOWN-GAPS.md` in `Claude template`.
 
 ---
 
-# Part 1 — DESIGN.md (as authored 2026-09-09; superseded where part 2 says so)
+# Part 1 — DESIGN.md (current, includes the wave-1.1 per-run contract)
 
 # ap3 — a native Level-3 workflow (design)
 
 Status: proposal, 2026-09-09. Owner: Linh Hy. Supersedes nothing yet; the existing `autopilot/`
 kit stays untouched until ap3 has produced evidence.
+
+> **W1.1 correction (2026-09-10) applies document-wide — see §4 and `W1.1-HANDOVER.md`.** The writer
+> contract is installed **per-run** (`ap3/writer-settings.json` + `claude --settings --setting-sources
+> ''`), not in the target's repo-wide `.claude/settings.json`, and `install.sh`'s default no longer
+> touches that file (opt-in `--repo-wide` keeps the old merge). Where later sections below still say the
+> contract lives in a committed `.claude/settings.json`, or tell W2 to "merge settings" repo-wide, or
+> describe in-writer/sandboxed Codex or push probes, read them through §4 and
+> `W1-DECISION-codex-sandbox.md` (Codex + push run in the unsandboxed dispatcher). Those sections are
+> not re-swept here; §4 and the handover are authoritative.
 
 ## 1. Goal, in the artifact's own words
 
@@ -90,50 +102,61 @@ Five moving parts, all small:
 
 ## 4. The writer contract (this is the E12 fix)
 
-`.claude/settings.json` in the target project (committed, so every worktree inherits it):
+> **W1.1 correction (2026-09-10, measurement wins — see `W1.1-HANDOVER.md`).** The contract below is
+> installed **per-run**, not in the target's `.claude/settings.json`. `install.sh` writes it to a
+> tracked `ap3/writer-settings.json`, and the dispatcher hands it to the writer with
+> `claude --settings <abs path in the MAIN checkout>`. It does **not** touch `.claude/settings.json`.
+> Why: `.claude/settings.json` is repo-wide **and** tracked, so its `sandbox` + `permissions.deny`
+> would govern the owner's own interactive Claude Code sessions in that repo too — and, unlike the two
+> ap3 hooks (which no-op on `[ -n "$AP3_TASK" ]`), `sandbox`/`deny` have no per-session escape. The
+> first real Plexco install proved this: it hard-denied the owner's `gh`, `git push`, `docker ps` and
+> `psql` within minutes. Probe 4 (`probes/RESULTS.md`) confirms `--settings` carries the sandbox, so
+> the per-run file is sufficient. The path is the **main checkout's** copy (never the worktree's), so a
+> writer cannot edit its own contract for the next fix round — the same discipline as the immutable
+> base `task.md`. If `ap3/writer-settings.json` is absent on the pinned base, the tick reports a
+> **non-terminal** `NO_WRITER_SETTINGS` and starts nothing (like `FETCH_FAILED`; it resolves the next
+> tick once you commit + push the contract) — never a silent unsandboxed start. (The launch-time
+> presence/`FS_ISOLATION_UNSAFE` checks are terminal HALTs for the rarer corrupted-run-state cases.)
+> The old repo-wide merge survives behind an explicit, documented `install.sh --repo-wide` for anyone
+> who deliberately wants the whole repo sandboxed.
 
-```jsonc
-{
-  "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true,          // bash runs without a prompt, inside the OS sandbox
-    "excludedCommands": [],                     // probe-decided: add "gh" / "git push" / the codex pin only if the proxy blocks them
-    "network": {
-      "allowedDomains": ["github.com", "api.github.com", "*.githubusercontent.com",
-                         "registry.npmjs.org", "api.openai.com", "chatgpt.com", "*.openai.com"]
-    },
-    "filesystem": {
-      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "**/.env", "**/.env.*"]
-    }
-  },
-  "permissions": {
-    "allow": [
-      "Read", "Edit", "Write", "Glob", "Grep", "Agent",
-      "Bash(git *)", "Bash(gh pr *)", "Bash(gh api *)",
-      "Bash(npm test*)", "Bash(npm run *)", "Bash(npx *)",
-      "Bash(bash ap3/*)", "Bash(scripts/codex-review-pin.sh *)", "Bash(codex *)"
-    ],
-    "deny": [
-      "Bash(git push --force*)", "Bash(git push -f*)", "Bash(git reset --hard*)",
-      "Bash(rm -rf *)", "Read(./.env*)", "Read(~/.ssh/**)", "Read(~/.aws/**)",
-      "WebFetch", "WebSearch"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit",
-                     "hooks": [{ "type": "command", "command": "bash ap3/hooks/scope-guard.sh" }] }],
-    "Stop":       [{ "hooks": [{ "type": "command", "command": "bash ap3/hooks/finish-guard.sh" }] }]
-  }
-}
-```
+The authoritative contract is **`ap3/settings.template.json`** (resolved from the project's
+`ap3/settings.<project>.json` when present) — read it there rather than a copy here, which drifts (the
+W1-DECISION trimming already left an older inline copy showing openai domains and `gh`/`codex` allow
+rules the real template no longer carries). Its shape, and the design intent of each part:
+
+- `sandbox.enabled: true` + `autoAllowBashIfSandboxed: true` — the OS Bash sandbox is on and a
+  sandboxable command runs without a prompt (the E12 fix; the writer needs no per-command approval).
+- `sandbox.network.allowedDomains` — github + npm only. The writer does **not** call Codex (the
+  dispatcher does, unsandboxed — `W1-DECISION-codex-sandbox.md`), so no openai domains.
+- `sandbox.filesystem.denyRead` — OS-enforced block on `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.codex`,
+  `~/.ap-watch.env`, `**/.env*`, `**/.envrc`.
+- `permissions.allow` — coding tools + `Bash(git *)`, `Bash(npm …)`, `Bash(npx *)`, `Bash(bash ap3/*)`;
+  no `gh`/`codex`/push. `permissions.deny` — `Bash(git push*)`, `git reset --hard`, `rm -rf`, `.env`
+  reads, `WebFetch`, `WebSearch`.
+- `hooks.PreToolUse` (`Edit|Write|MultiEdit`) → `scope-guard.sh`; `hooks.Stop` → `finish-guard.sh`.
+  Both no-op on `[ -n "$AP3_TASK" ]`, so they never affect a normal interactive session in the repo.
+
+The dispatcher isolates this contract from the target repo's own `.claude/settings.json` (and `~/.claude`
+and `.local`) with `--setting-sources ''`, because `--settings` otherwise LOADS ON TOP of those scopes
+and array keys (`permissions.allow`/`deny`, `allowedDomains`) union across them — so a repo's own
+settings could weaken the writer. Probe 4 (`probes/RESULTS.md`) proves this closes the **permissions**
+vector on the installed `claude` 2.1.177 (a hostile project `deny: Bash(git *)` is applied without the
+flag, ignored with it). Two precision caveats, both from the sandboxing docs: (a) excluding a source's
+`sandbox.filesystem` entries via `--setting-sources` **requires ≥ 2.1.246**, so on 2.1.177 a hostile
+scope's `filesystem.allowRead` is still merged — but a *specific* `denyRead` in the contract holds
+inside a *broader* hostile `allowRead` (deny-wins), so only a more-specific hostile allow could
+re-expose a path (narrow residual, recorded in `W1-KNOWN-GAPS.md` §6); (b) `failIfUnavailable: true`
+makes a sandbox that can't start a hard failure instead of the default warn-and-run-unsandboxed.
 
 Headless invocation (by the dispatcher, cwd = the worktree):
 
 ```bash
 claude -p "$(cat ap3/prompts/run.md)" \
+  --settings "$STATE/writer-settings.json" \      # W1.1: the per-run contract, materialized from the pinned base
+  --setting-sources '' \               # W1.1: load NONE of user/project/local — the contract stands alone
   --permission-mode dontAsk \          # never hangs: anything not allowed above is denied and logged
-  --max-budget-usd "$BUDGET" \         # native token control, per task
-  --max-turns 300 \
+  --max-budget-usd "$BUDGET" \         # native token control, per task (no --max-turns: absent in 2.1.177)
   --model "$WRITER_MODEL" \
   --output-format json > "$STATE/result.json" 2> "$STATE/stderr.log"
 ```
@@ -363,7 +386,7 @@ crash, rejected PR or human fix-before-merge pauses the class and resets `clean_
 | Routines / loops | the dispatcher is the routine; queue files are the batch; upgrade path: `/schedule` (cloud routines) once the repo is on GitHub with a cloud environment, `/loop` for interactive supervision |
 | `CLAUDE.md` standards + Skills | `CLAUDE.md` section "ap3 slices" + `ap3-slice` and `ap3-review` skills |
 | Automated code + security review | `review.sh` → pinned Codex, verdict contract, bounded loop |
-| Token controls | `--max-budget-usd`, `--max-turns`, per-class `budget_usd_max`, daily cap |
+| Token controls | `--max-budget-usd` (no `--max-turns`: absent in 2.1.177), per-class `budget_usd_max`, daily cap |
 | Sandboxing | Claude Code sandbox with domain allow-list; `dontAsk` permission mode |
 | Cost monitoring | `evidence.jsonl` from `result.json`, `report.sh`, weekly Telegram |
 
@@ -473,8 +496,17 @@ reviewer, because the reviewer runs in a different process the writer has no acc
 
 ## Ripple for W2 (owner, before installing on Plexco)
 
-- `ap3/settings.plexco.json` still lists the openai domains and `Bash(codex *)` / the pin in the
-  writer allow list. Harmless (the writer won't call codex) but now unnecessary — may be trimmed.
+> **Superseded in part by W1.1 (2026-09-10).** The first real Plexco install exposed a second, worse
+> problem than any ripple below: merging the writer contract into the repo-wide, tracked
+> `.claude/settings.json` hard-denied the owner's OWN interactive `gh`/`git push`/`docker`/`psql` in
+> that repo (the `sandbox`/`deny` keys have no `[ -n "$AP3_TASK" ]` escape the two hooks do). The kit
+> now installs the contract per-run as `ap3/writer-settings.json` + `claude --settings`; `install.sh`
+> leaves `.claude/settings.json` untouched by default. See `W1.1-HANDOVER.md`. The re-install command
+> is now `bash <kit>/ap3/install.sh ~/Projects/Plexco\ app --yes` (NOT `--repo-wide`).
+
+- `ap3/settings.plexco.json` — if present, it is the resolved `writer-settings.json` source and still
+  lists the openai domains and `Bash(codex *)` / the pin in the writer allow list. Harmless (the
+  writer won't call codex) but now unnecessary — may be trimmed.
 - `ap3/CLAUDE-section.md` says the writer runs `bash ap3/review.sh code --base "$AP3_BASE_SHA"`.
   Under this correction the **dispatcher** runs it. The writer's rule is "stop at READY-FOR-REVIEW";
   the skill `ap3-slice` states this. Reconcile that sentence in the Plexco CLAUDE section.

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_ap3_note": "Plexco writer contract for ap3 (DESIGN.md section 4, as corrected by W1-DECISION-codex-sandbox.md and wave 1.1). The writer does CODING ONLY inside the sandbox and stops at .ap3-run/READY-FOR-REVIEW; the dispatcher runs the Codex review, the push and the PR unsandboxed, because codex cannot initialize inside Seatbelt. So the writer needs NO openai domains and NO gh/codex/push rules. This file is the SOURCE the installer resolves into ap3/writer-settings.json, which the dispatcher passes PER RUN via `claude --settings <abs path> --setting-sources ''`; .claude/settings.json is never modified (installing it repo-wide on 2026-09-09 blocked gh/git push/docker/psql in the owner's own sessions). Plexco-specific vs the kit template: pnpm instead of npm, mcp__gitnexus__*, localhost/127.0.0.1 for the Docker Postgres on 5432 that pnpm test:db needs, allowWrite for the pnpm store, and psql/db:bootstrap explicitly denied.",
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": true,
+    "excludedCommands": [],
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "*.githubusercontent.com",
+        "registry.npmjs.org",
+        "localhost",
+        "127.0.0.1"
+      ]
+    },
+    "filesystem": {
+      "denyRead": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.gnupg",
+        "~/.ap-watch.env",
+        "~/.codex",
+        "**/.env",
+        "**/.env.*",
+        "**/.envrc"
+      ],
+      "allowWrite": [
+        "~/Library/pnpm",
+        "~/.cache"
+      ]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Agent",
+      "Bash(git *)",
+      "Bash(pnpm *)",
+      "Bash(npx vitest*)",
+      "Bash(npx tsc*)",
+      "Bash(node scripts/*)",
+      "Bash(bash ap3/*)",
+      "mcp__gitnexus__*"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf *)",
+      "Bash(gh *)",
+      "Bash(codex *)",
+      "Bash(scripts/codex-review-pin.sh *)",
+      "Bash(pnpm db:bootstrap*)",
+      "Bash(psql *)",
+      "Read(./.env*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ap3/hooks/scope-guard.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ap3/hooks/finish-guard.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

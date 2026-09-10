@@ -1,0 +1,17 @@
+{
+  "schema": "ap3-routines-v1",
+  "_authority": "Owner-edited only. ap3/dispatch.sh reads this file and never writes it. A class is dispatchable only while status == enabled and not paused in ap3/state/trust.json. allowed_scope is the ceiling a queued task's scope must fit inside; widen it only from evidence rows, never to make one task fit.",
+  "writer_model": "claude-sonnet-4-5",
+  "classes": {
+    "bugfix-small": {
+      "status": "enabled",
+      "risk": "P2",
+      "description": "Small, behaviour-preserving fixes with a test that pins the acceptance criterion. No schema/migration, no auth/permission/money logic.",
+      "allowed_scope": ["src/**", "test/**"],
+      "budget_usd_max": 10,
+      "max_runs_per_day": 1,
+      "review": "codex",
+      "security_review": "auto"
+    }
+  }
+}

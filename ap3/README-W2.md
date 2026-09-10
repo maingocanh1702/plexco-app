@@ -25,6 +25,18 @@ Cập nhật 2026-09-09 (chiều), **sau khi wave 1 xong**. Đọc kèm `docs/au
 - **`--max-turns` không tồn tại** trong Claude Code 2.1.177 (đã kiểm: `claude --help | grep -c -- --max-turns`
   = 0). Mọi lệnh `claude -p` chỉ dùng `--max-budget-usd`.
 
+## ⚠️ Wave 1.1 — phải chạy trước wave 2 (phát hiện 09/09 tối)
+
+Lần cài thử đầu tiên merge hợp đồng writer vào `.claude/settings.json` (repo-wide **và tracked**) và
+lập tức chặn `gh` · `git push` · `docker` · `psql` trong chính session interactive của owner. Merge
+không sai — kiến trúc sai: hai hook ap3 no-op được theo `$AP3_TASK`, còn `sandbox` và
+`permissions.deny` thì không, nên chúng áp cho mọi session đọc file đó, và sẽ vào `main`.
+
+Đã xử lý: `.claude/settings.json` đã revert về bản committed. Cách sửa: dispatcher truyền
+`--settings <repo>/ap3/writer-settings.json` (đường dẫn tuyệt đối tới checkout chính, không phải
+worktree — writer không sửa được hợp đồng của chính nó). Prompt 1.5 trong `ap3/PROMPTS.md` là bản
+đặc tả đầy đủ, kèm probe bắt buộc chứng minh `--settings` có mang theo sandbox thật.
+
 ## Việc còn lại, theo thứ tự (prompt sẵn ở `ap3/PROMPTS.md`)
 
 1. **Commit + push** phần governance ap3 (7 đường dẫn, không `git add -A`) — working tree đang có ~59 file

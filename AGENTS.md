@@ -193,6 +193,13 @@ started by `ap3/dispatch.sh` — detectable by the environment variables `AP3_SL
   P0/P1, schema/migration, auth, money, i18n strings, and any slice that already has a verdict in
   `docs/slice-readiness-verdicts.md` stay on the supervised Level 3 path above. Any HALT/crash/closed
   PR/hand-edit before merge pauses the class; re-enabling is a deliberate owner commit to `routines.json`.
+- **The writer contract is PER-RUN, never repo-wide** (corrected 2026-09-09 after the first install
+  attempt). `ap3/dispatch.sh` passes `--settings <repo>/ap3/writer-settings.json` when it launches the
+  writer, and ap3 does **not** modify the repo's `.claude/settings.json`. Reason: unlike the two ap3 hooks,
+  `sandbox` and `permissions.deny` cannot no-op on an environment variable — in a shared settings file they
+  block `gh`, `git push`, `docker` and `psql` in **every** interactive session in this repo, and they would
+  be committed to `main`. If you find `sandbox`/`permissions` in `.claude/settings.json`, that is the old
+  install: `git checkout -- .claude/settings.json`.
 - **Operations:** `ap3/README-W2.md` (owner) · kill switch `touch ap3/PAUSED` · runtime state
   `ap3/state/` (gitignored) · evidence `ap3/evidence.jsonl` (reaches `main` through the run's own PR).
 <!-- ap3-workflow:end -->

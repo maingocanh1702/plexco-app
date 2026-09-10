@@ -1759,6 +1759,13 @@ Phân vai sau khi sửa — **chặt hơn** bản đầu, vì reviewer nằm ở
   (`total_cost_usd · num_turns · duration_ms · permission_denials · review_rounds · verdict`) lên chính nhánh PR,
   báo READY. Findings dưới trần vòng ⇒ ghi `.ap3-run/REVIEW-FINDINGS.md`, tăng vòng, bật lại writer để sửa; chạm
   trần ⇒ `HALT MAX_ROUNDS` + pause class. **PR chỉ tồn tại sau một vòng review sạch.**
+- **Hợp đồng writer là per-run** (sửa 09/09 lần hai, sau lần cài thử đầu tiên): dispatcher truyền
+  `--settings <repo>/ap3/writer-settings.json`; ap3 **không** sửa `.claude/settings.json`. Bản cài đầu merge
+  hợp đồng writer vào file dùng chung và lập tức chặn `gh` · `git push` · `docker` · `psql` trong session
+  interactive của chính owner — `sandbox` và `permissions.deny` không no-op theo env như hai hook ap3 được,
+  và file đó **tracked** nên sẽ vào `main`. Đường truyền cho writer là bản trong checkout chính, không phải
+  bản trong worktree, nên writer không tự sửa được hợp đồng của mình — cùng nguyên tắc với task file đọc
+  bằng `git show <base_sha>:`.
 - **CI là cổng cuối.** PR ap3 kích hoạt `.github/workflows/ci.yml` (`pull_request:`): typecheck · format ·
   `review:check` · lint · build · `pnpm -w test` với Postgres service. **Không merge khi CI chưa xanh**, kể cả
   verdict CLEAN — hôm nay dispatcher *tin* `verify` writer tự khai chứ không chạy lại (`W1-KNOWN-GAPS.md` §1),

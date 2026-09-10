@@ -72,3 +72,4 @@ docker-compose.override.yml
 ap3/state/
 ap3/env
 ap3/PAUSED
+.ap3-run/
