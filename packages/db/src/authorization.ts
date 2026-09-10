@@ -1,8 +1,6 @@
 import { sql } from "drizzle-orm";
 import { assertTenantId, ensureTenantContext } from "./tenant.js";
-import type { Db } from "./client.js";
-
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+import type { Tx } from "./client.js";
 
 /**
  * Tenant-action authorization choke-point (feature_billing_lifecycle_tech.md

@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chatChannels, chatMembers, chatMessages } from "../schema.js";
-import type { Db } from "./client.js";
+import type { Db, Tx } from "./client.js";
 import {
   expectErrorChainToMatch,
   setupRlsTestContext,
@@ -160,7 +160,6 @@ async function seedDmMessage(
 /** Local app.person_id (+ optional app.tenant_id) setter, mirroring withTenant's
  *  own set_config('app.tenant_id', ..., true) idiom exactly (tenant.ts) — deliberately
  *  NOT exported/added there, see this file's own header comment. */
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 async function withChatPerson<T>(
   db: Db,
