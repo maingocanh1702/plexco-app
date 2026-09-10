@@ -14,7 +14,7 @@
         "apps/web/app/api/auth/google/**"
       ],
       "budget_usd_max": 10,
-      "max_runs_per_day": 2,
+      "max_runs_per_day": 3,
       "review": "codex",
       "security_review": "auto",
       "evidence": "none yet — first dispatched run is core-package-const-has-no-consumer (2 files, packages/core). Widen or keep this scope only after ap3/evidence.jsonl shows three READY runs merged unchanged."
