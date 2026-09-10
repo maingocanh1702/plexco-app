@@ -4,9 +4,25 @@ Cập nhật **2026-09-09 (tối)** sau khi lần cài thử đầu tiên lộ r
 English theo luật agent-facing của repo. Chạy **theo thứ tự**, mỗi prompt một session Claude Code
 **interactive** ở đúng repo ghi trên đầu.
 
-> **Trạng thái (2026-09-10):** wave 1 ✅ · wave 1.1 ✅ (`f707592` trên `feat/ap3`, 13 commit, chưa push) ·
-> **wave 2 ⬜ chạy lại từ Step 0** sau khi cài lại kit bằng
-> `bash "$HOME/Projects/Claude template/ap3/install.sh" "$HOME/Projects/Plexco app" --yes` (KHÔNG `--repo-wide`).
+> **Trạng thái (2026-09-10, tối):** wave 1 ✅ · wave 1.1 ✅ · **wave 2 ✅ — run tự trị đầu tiên đã READY và
+> được merge**: PR #2 (`ap3/core-package-const-has-no-consumer`, head `02d1010`, merge `751e019`), $3.01,
+> 49 turns, 1 finding Codex thật ở round 1 được fix writer tự sửa, CLEAN, dispatcher tự push + mở PR.
+> Nhật ký đầy đủ: `ap3/state/W2-HANDOFF-2026-09-10.md`. Ba lỗi gốc tìm ra trên đường đi, đều đã sửa trên
+> `origin/main` (`48c08bf`, `026bfdf`, `f00e613`): task file dẫn doc untracked → INVALID_TASK; launchd
+> SIGKILL writer khi tick thoát → `AbandonProcessGroup=true`; CI `review:check` không có ref `main` trên
+> checkout `pull_request` → step "Ensure local main ref". Ruleset `main-ci-gate` đã bật (require `verify`,
+> admin bypass).
+>
+> **Luật vận hành rút ra (áp cho mọi session sau):**
+> - Task trong `ap3/queue/` chỉ được dẫn file **tracked** — dispatcher lint trong worktree của `origin/main`.
+> - **Push trước, unpause sau**: tick khởi động lại pin task + `writer_model` từ `origin/main`.
+> - **Không bao giờ bấm "Update branch"/rebase/push lên nhánh `ap3/*`**: head khác SHA đã review ⇒
+>   dispatcher tính "merged with human changes" ⇒ pause class, reset `clean_runs`. Ruleset để trống
+>   "Require branches to be up to date" là vì thế.
+> - Push thẳng lên `main` giờ là dùng quyền bypass admin — chỉ cho governance/docs; code thật đi qua PR.
+> - Kit test suite (`ap3/test/run.sh` bên Claude template) FAIL chừng nào class Plexco còn paused (K4).
+>
+> Lịch sử wave 2 lần cài đầu (2026-09-09) giữ dưới đây để tra cứu:
 >
 > **Chuyện gì đã xảy ra.** `install.sh` merge hợp đồng writer vào `.claude/settings.json` của Plexco —
 > merge **đúng** như đặc tả (giữ `fallbackModel`, giữ cả hai hook `review:check:changed`), nhưng file đó
@@ -192,7 +208,7 @@ what happened. Write raw output to ap3/state/probes/W2-<date>.md (gitignored).
       including the per-run contract by ABSOLUTE path to THIS repo's copy (not the worktree's):
         cd /tmp/ap3-probe-wt && claude -p "Run 'pnpm install --frozen-lockfile', then 'pnpm --filter @plexco/core run typecheck', then 'pnpm test:core'. Report the pass count of each. Change no files." \
           --permission-mode dontAsk --max-budget-usd 2 \
-          --settings "<absolute path of this repo>/ap3/writer-settings.json" --output-format json
+          --settings "<absolute path of this repo>/ap3/writer-settings.json" --setting-sources '' --output-format json
       This measures at once: that --settings carries the contract on Plexco's real files
       (expect permission_denials: []), that pnpm install works inside the sandbox from a worktree with
       no node_modules, and the real cost of a trivial writer turn. Expect core = 153 tests.
