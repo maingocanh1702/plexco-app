@@ -47,7 +47,7 @@ Call sites: `callback:72,85`, `complete:47`. The right home is `apps/web/lib/req
   check. If the install itself fails (network or store path blocked by the sandbox), that is not
   something to work around: HALT `MISSING_CONTEXT` and report the exact error.
 
-- Row text: `docs/backlog-rows-pending-plexco-2026-09-08.md` § `web-oauth-302-helper-duplicated-two-routes`.
+- Row text: owner's untracked backlog-rows note of 2026-09-08 § web-oauth-302-helper-duplicated-two-routes (NOT in the repo).
 - `apps/web/lib/request-policy.ts` — read its existing exports (`isTopLevelNavigation` from lane B3)
   and keep the file's style.
 - HARD RULE 5 (i18n) is not touched: the helpers carry no user-visible strings.

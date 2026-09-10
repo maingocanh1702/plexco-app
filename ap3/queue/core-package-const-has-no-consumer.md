@@ -12,7 +12,7 @@ max_review_rounds: 3
 ## Problem
 
 `packages/core/src/index.ts:14` exports `CORE_PACKAGE = "@plexco/core"`. Measured at
-`main@30a3e90` (slop audit 2026-09-08, `docs/backlog-rows-pending-plexco-2026-09-08.md`, row
+`main@30a3e90` (slop audit 2026-09-08, owner's backlog-rows note, row
 `core-package-const-has-no-consumer`): the constant has exactly one reader in the whole repository —
 `packages/core/src/index.test.ts:6`, `expect(core.CORE_PACKAGE).toBe("@plexco/core")` — a test that
 asserts the constant against itself and therefore checks nothing. Re-derive the count at your base
@@ -43,7 +43,8 @@ If the count differs, HALT `MISSING_CONTEXT` and report the extra hits; do not w
   check. If the install itself fails (network or store path blocked by the sandbox), that is not
   something to work around: HALT `MISSING_CONTEXT` and report the exact error.
 
-- Row text and measurements: `docs/backlog-rows-pending-plexco-2026-09-08.md` § `core-package-const-has-no-consumer`.
+- Row text and measurements are inlined above (the source row lives in the owner's untracked
+  backlog-rows note of 2026-09-08 — it is NOT in the repo, do not look for it).
 - The two scope files are the entire blast radius; there is no production caller, so no GitNexus
   impact run is needed beyond confirming `CORE_PACKAGE` has zero callers (`gitnexus_context`).
 - Do NOT touch `todayIso` (`packages/core/src/time.ts`) even though `index.test.ts:8` only checks

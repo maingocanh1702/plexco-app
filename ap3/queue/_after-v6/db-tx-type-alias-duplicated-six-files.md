@@ -59,7 +59,7 @@ git grep -n 'type Tx = Parameters<Parameters<Db\["transaction"\]>\[0\]>\[0\]' --
   check. If the install itself fails (network or store path blocked by the sandbox), that is not
   something to work around: HALT `MISSING_CONTEXT` and report the exact error.
 
-- Row text: `docs/backlog-rows-pending-plexco-2026-09-08.md` § `db-tx-type-alias-duplicated-six-files`
+- Row text: owner's untracked backlog-rows note of 2026-09-08 § db-tx-type-alias-duplicated-six-files (NOT in the repo)
   (explains why `client.ts`, not `tenant.ts`, is the home).
 - Guard-test precedent: `packages/db/src/tenant.test.ts:192-213` (file walk + `toEqual` on the hit list).
 - Invariants named by the row: `session-command`, `billing-authz` — a type-only change must not
