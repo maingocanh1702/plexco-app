@@ -1,7 +1,9 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
+import { getLang, t } from "@plexco/core/i18n";
 import { cookies } from "next/headers";
 import { createDb, resolveWebSession, type DbHandle, type ResolvedSession } from "@plexco/db";
+import { log } from "./log";
 
 /**
  * Web session plumbing shared by the API routes.
@@ -10,18 +12,122 @@ import { createDb, resolveWebSession, type DbHandle, type ResolvedSession } from
  * echo it in the x-csrf-token header (secret never lives in a cookie).
  */
 
-export const SESSION_COOKIE = "plx_session";
+/**
+ * Cookies are `Secure` exactly when the app is served over https (production). The session
+ * cookie additionally carries the `__Host-` prefix there (audit 2026-09-06 W-6): the browser then
+ * refuses the cookie unless it is Secure, has no Domain, and Path=/ — so a sibling subdomain can
+ * neither set nor overwrite it (cookie-toss). The OAuth binding cookie is path-scoped by design
+ * (D1: exact callback path), which `__Host-` forbids, so it gets `__Secure-` instead — see
+ * oauth-transaction.ts. Dev/test stay unprefixed over plain http; the shape is pinned by
+ * session-cookies.test.ts through sessionCookieName(secure).
+ */
+export function cookieSecure(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+export function sessionCookieName(secure: boolean = cookieSecure()): string {
+  return secure ? "__Host-plx_session" : "plx_session";
+}
+export const SESSION_COOKIE = sessionCookieName();
 export const SESSION_TTL_SECONDS = 30 * 24 * 3600; // refresh-style single cookie for P4 shell
 
 let handle: DbHandle | null = null;
-/** App-role pool (RLS enforced); one per server process. */
+let dbRoleViolation: string | null = null;
+/**
+ * App-role pool (RLS enforced); one per server process.
+ *
+ * Audit 2026-09-06 W-10: nothing asserted which DATABASE ROLE the web process actually runs as —
+ * tenant scoping is 100% the RLS GUC, so a DATABASE_URL pointing at the owner/superuser (as the
+ * dev compose did until A7) silently disables every policy. When DB_EXPECTED_ROLE is set (compose
+ * sets `app` for web and `readonly` for discovery; on Fly entrypoint.sh resolves the role-suffixed
+ * pair) the handle is GATED on the check: every query and every checkout waits for it, and a
+ * mismatch poisons the handle so appDb() throws and the DB-touching routes fail closed (500)
+ * instead of serving unscoped data. Mirrors the worker's preflight (apps/bot/src/preflight.ts),
+ * which exits on the same class of misconfiguration. Unset (tests, ad-hoc tooling) → no check.
+ *
+ * The gate is not decoration. `void assertRuntimeDbRole(...)` — the first cut — left the check
+ * racing the traffic it was supposed to guard: appDb() returned a live 10-connection pool
+ * immediately, so the first requests could run business queries on other connections and return
+ * unscoped rows BEFORE the check resolved and set dbRoleViolation. Exactly the misconfiguration
+ * this exists to catch is the one where those first rows are the whole tenant table.
+ */
 export function appDb(): DbHandle {
+  if (dbRoleViolation) throw new Error(dbRoleViolation);
   if (!handle) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL is not set");
     handle = createDb(url);
+    const expected = process.env.DB_EXPECTED_ROLE?.trim();
+    if (expected) gateHandleOnRoleAssert(handle, expected);
   }
   return handle;
+}
+
+/**
+ * Make every pool.query / pool.connect await the role check first. The check itself is handed the
+ * ORIGINAL, ungated query function, or it would wait on its own promise forever. Drizzle runs
+ * through this same pool, so gating the two entry points covers `handle.db` as well.
+ * Promise form only — nothing in this repo passes node-pg's callback argument, and a callback
+ * caller would bypass the gate, so it is rejected outright rather than silently let through.
+ */
+function gateHandleOnRoleAssert(db: DbHandle, expected: string): void {
+  const pool = db.pool as unknown as {
+    query: (...a: unknown[]) => unknown;
+    connect: (...a: unknown[]) => unknown;
+  };
+  const rawQuery = pool.query.bind(db.pool) as (...a: unknown[]) => Promise<unknown>;
+  const rawConnect = pool.connect.bind(db.pool) as (...a: unknown[]) => Promise<unknown>;
+  const ready = assertRuntimeDbRole(db, expected, rawQuery).then((ok) => {
+    if (!ok)
+      throw new Error(dbRoleViolation ?? "DATABASE_URL role check failed — refusing to serve");
+  });
+  ready.catch(() => {}); // the rejection is re-thrown to every gated caller below; don't warn twice
+  const gate =
+    (raw: (...a: unknown[]) => Promise<unknown>) =>
+    (...args: unknown[]) => {
+      if (typeof args[args.length - 1] === "function") {
+        return Promise.reject(
+          new Error(
+            "appDb(): callback-style pool access is not supported while the role gate is armed",
+          ),
+        );
+      }
+      return ready.then(() => raw(...args));
+    };
+  pool.query = gate(rawQuery);
+  pool.connect = gate(rawConnect);
+}
+
+/** Exported for tests; production reaches it only through appDb(). */
+export async function assertRuntimeDbRole(
+  db: DbHandle,
+  expected: string,
+  rawQuery?: (...a: unknown[]) => Promise<unknown>,
+): Promise<boolean> {
+  const query = rawQuery ?? ((sql: unknown) => db.pool.query(sql as string));
+  try {
+    const { rows } = (await query("SELECT current_user AS u, session_user AS s")) as {
+      rows: { u: string; s: string }[];
+    };
+    const row = rows[0];
+    if (!row || row.u !== expected || row.s !== expected) {
+      dbRoleViolation =
+        `DATABASE_URL connects as role "${row?.s ?? "?"}" (current_user "${row?.u ?? "?"}"), ` +
+        `expected "${expected}" — refusing to serve with the wrong database role`;
+      log.error("db.role.mismatch", { expected, sessionUser: row?.s, currentUser: row?.u });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    dbRoleViolation = "DATABASE_URL role check failed — refusing to serve";
+    log.error("db.role.check_failed", { error });
+    return false;
+  }
+}
+
+/** Test-only reset of the poisoned-handle state (module singletons survive across cases). */
+export function resetDbRoleViolationForTests(): void {
+  dbRoleViolation = null;
+  handle = null;
 }
 
 export function newSessionToken(): { token: string; tokenHash: string } {
@@ -36,15 +142,32 @@ export function hashToken(token: string): string {
 export async function setSessionCookie(token: string): Promise<void> {
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecure(),
     sameSite: "strict",
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   });
 }
 
+/**
+ * Clearing a PREFIXED cookie needs the same attributes that set it. `__Host-` is only accepted
+ * with Secure + Path=/ and no Domain; a deletion header that omits Secure violates the prefix
+ * rule and the browser DROPS it, so the cookie survives — measured against the installed Next
+ * cookie serializer, which emits `__Host-plx_session=; Path=/; Expires=<past>` with no Secure
+ * for a bare delete(name). The stale cookie then sends `issueSession()` down the rotate branch
+ * on every subsequent login, where rotate correctly returns null for a revoked session and the
+ * user gets SessionReauthRequiredError instead of a fresh login — locked out until the cookie
+ * expires on its own. Writing an empty value with maxAge 0 and the ORIGINAL attributes is the
+ * shape that survives the prefix rules.
+ */
 export async function clearSessionCookie(): Promise<void> {
-  (await cookies()).delete(SESSION_COOKIE);
+  (await cookies()).set(SESSION_COOKIE, "", {
+    httpOnly: true,
+    secure: cookieSecure(),
+    sameSite: "strict",
+    path: "/",
+    maxAge: 0,
+  });
 }
 
 export async function currentSession(): Promise<ResolvedSession | null> {
@@ -162,13 +285,19 @@ export function buildCompletionLanding(handoffToken: string): {
 } {
   const nonce = randomBytes(16).toString("base64");
   const token = escapeHtml(handoffToken);
+  // Pre-authentication surface (DD-118 bucket b): no tenant is known, so the landing answers in
+  // the default language through t() like every other pre-tenant response — it used to be the one
+  // user-facing document hard-coded in English outside t() (audit 2026-09-06 W-4, HR5).
+  const lang = getLang();
+  const title = escapeHtml(t("Đang đăng nhập…", "Signing you in…"));
+  const cont = escapeHtml(t("Tiếp tục", "Continue"));
   const body =
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>Signing you in…</title></head><body>` +
+    `<title>${title}</title></head><body>` +
     `<form id="plx-complete" method="POST" action="${COMPLETION_PATH}">` +
     `<input type="hidden" name="${HANDOFF_FIELD}" value="${token}">` +
-    `<noscript><button type="submit">Continue</button></noscript>` +
+    `<noscript><button type="submit">${cont}</button></noscript>` +
     `</form>` +
     `<script nonce="${nonce}">document.getElementById("plx-complete").submit()</script>` +
     `</body></html>`;
@@ -184,10 +313,18 @@ export function buildCompletionLanding(handoffToken: string): {
   return { body, headers };
 }
 
-/** CSRF double-submit: mutation requests must echo the session secret. */
+/**
+ * CSRF double-submit: mutation requests must echo the session secret. Compared in constant time
+ * (audit 2026-09-06 W-7): `===` short-circuits on the first differing byte, which is a timing
+ * oracle on a per-session secret. Length mismatch is rejected before the comparison — timingSafeEqual
+ * throws on unequal lengths, and the length of the secret is not itself secret.
+ */
 export function csrfOk(request: Request, session: ResolvedSession): boolean {
   const header = request.headers.get("x-csrf-token");
-  return typeof header === "string" && header.length > 0 && header === session.csrfSecret;
+  if (typeof header !== "string" || header.length === 0) return false;
+  const a = Buffer.from(header, "utf8");
+  const b = Buffer.from(session.csrfSecret, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /**

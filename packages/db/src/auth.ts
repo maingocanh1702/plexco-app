@@ -17,12 +17,6 @@ import type pg from "pg";
  * All token parameters are HASHES — raw session tokens never reach SQL.
  */
 
-export interface LoginResult {
-  accountId: string;
-  personId: string;
-  created: boolean;
-}
-
 export interface ResolvedSession {
   sessionId: string;
   accountId: string;
@@ -31,32 +25,9 @@ export interface ResolvedSession {
   expiresAt: Date;
 }
 
-export class LoginReplayError extends Error {
-  constructor() {
-    super("telegram login payload already used");
-  }
-}
-
 export class SlugTakenError extends Error {
   constructor() {
     super("tenant slug already taken by another owner");
-  }
-}
-
-export async function loginTelegram(
-  pool: pg.Pool,
-  input: { platformUserHash: string; displayName: string | null; loginHash: string },
-): Promise<LoginResult> {
-  try {
-    const { rows } = await pool.query(
-      `SELECT account_id, person_id, created FROM auth_login_telegram($1, $2, $3)`,
-      [input.platformUserHash, input.displayName, input.loginHash],
-    );
-    const r = rows[0] as { account_id: string; person_id: string; created: boolean };
-    return { accountId: r.account_id, personId: r.person_id, created: r.created };
-  } catch (error) {
-    if ((error as { code?: string }).code === "23505") throw new LoginReplayError();
-    throw error;
   }
 }
 
@@ -93,14 +64,24 @@ export async function createWebSession(
   return (rows[0] as { id: string }).id;
 }
 
+/** Idle window the resolver applies when none is passed (mirrors the SQL default in 0040). */
+export const SESSION_IDLE_SECONDS = 14 * 24 * 3600;
+
+/**
+ * Resolve a live session by token hash. Since 0040 (audit 2026-09-06 W-6) a session must ALSO
+ * have been seen within `idleSeconds` (default 14 days) — the absolute 30-day TTL alone let a
+ * copied cookie stay valid through a month of silence. Resolving touches last_seen_at, throttled
+ * to once per minute per session inside the SECURITY DEFINER function.
+ */
 export async function resolveWebSession(
   pool: pg.Pool,
   tokenHash: string,
+  idleSeconds: number = SESSION_IDLE_SECONDS,
 ): Promise<ResolvedSession | null> {
   const { rows } = await pool.query(
     `SELECT session_id, account_id, person_id, csrf_secret, expires_at
-     FROM auth_resolve_web_session($1)`,
-    [tokenHash],
+     FROM auth_resolve_web_session($1, make_interval(secs => $2))`,
+    [tokenHash, idleSeconds],
   );
   if (rows.length === 0) return null;
   const r = rows[0] as {
@@ -129,16 +110,25 @@ export async function rotateWebSession(
     ttlSeconds: number;
     /** the account the user JUST authenticated as — the new session binds here */
     accountId: string;
+    /**
+     * Idle window the OLD session must still be inside (0040). Rotate carries
+     * the same window as resolve on purpose: issueSession() hands us the raw
+     * request cookie without resolving it first, so without this an idle-dead
+     * cookie would be rotated into a fresh session instead of forcing re-auth.
+     */
+    idleSeconds?: number;
   },
 ): Promise<string | null> {
   const { rows } = await pool.query(
-    `SELECT auth_rotate_web_session($1, $2, $3, make_interval(secs => $4), $5) AS id`,
+    `SELECT auth_rotate_web_session($1, $2, $3, make_interval(secs => $4), $5,
+                                    make_interval(secs => $6)) AS id`,
     [
       input.oldTokenHash,
       input.newTokenHash,
       input.newCsrfSecret,
       input.ttlSeconds,
       input.accountId,
+      input.idleSeconds ?? SESSION_IDLE_SECONDS,
     ],
   );
   return (rows[0] as { id: string | null }).id;

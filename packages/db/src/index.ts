@@ -69,23 +69,21 @@ export {
   type CancelSessionResult,
 } from "./session-service.js";
 export {
-  LoginReplayError,
   SlugTakenError,
   armOauthCompletionHandoff,
   consumeLoginState,
   consumeOauthCompletionHandoff,
   createWebSession,
   issueLoginState,
-  loginTelegram,
   onboardingSnapshot,
   provisionTenant,
   rateLimitCheck,
   resolveWebSession,
+  SESSION_IDLE_SECONDS,
   revokeAllWebSessions,
   revokeWebSession,
   rotateWebSession,
   tenantsForPerson,
-  type LoginResult,
   type OnboardingSnapshot,
   type ResolvedSession,
   // Email credential-lifecycle app-boundary helpers (D1, migration 0016) — the
@@ -98,3 +96,22 @@ export {
   type EmailArtifactKeys,
   type EmailArtifacts,
 } from "./auth.js";
+export {
+  // Identity link_code issue/consume — typed wrappers over the 0043 definers
+  // (feature_identity_tech.md §4, DD-50). Key material is injected by the caller.
+  consumeLinkCode,
+  deriveLinkCodeLookupHash,
+  deriveLinkCodeVerifier,
+  formatLinkCode,
+  generateLinkCode,
+  issueLinkCode,
+  normalizeLinkCode,
+  LINK_CODE_COOLDOWN_SECONDS,
+  LINK_CODE_MAX_ATTEMPTS,
+  LINK_CODE_TTL_SECONDS,
+  type IssuedLinkCode,
+  type LinkCodeConsumeOutcome,
+  type LinkCodeConsumeResult,
+  type LinkCodeKeys,
+  type LinkCodeParty,
+} from "./identity.js";

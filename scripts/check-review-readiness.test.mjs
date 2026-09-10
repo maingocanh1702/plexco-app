@@ -324,3 +324,115 @@ test("leaves SECURITY_AND_MIGRATION_GATE PASS/PARTIAL/FAIL unchanged on every ve
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Audit 2026-09-06 X-1: AUTHORITY pins were checked against the literal ref "main". A
+// pull_request / feat/** checkout on CI has refs/remotes/origin/main and NO local main, and git
+// does not DWIM merge-base's "main" onto origin/main — so every pinned verdict failed
+// AUTHORITY_NOT_MAIN off-main. These tests build throwaway repos with node built-ins only.
+// ---------------------------------------------------------------------------
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { resolveMainRef } from "./check-review-readiness.mjs";
+
+function git(cwd, ...args) {
+  return execFileSync("git", ["--no-optional-locks", ...args], { cwd, stdio: "pipe" })
+    .toString()
+    .trim();
+}
+
+function makeRepoWithOneCommit() {
+  const dir = mkdtempSync(join(tmpdir(), "rr-main-ref-"));
+  git(dir, "init", "-q", "-b", "main");
+  git(dir, "config", "user.email", "t@t");
+  git(dir, "config", "user.name", "t");
+  writeFileSync(join(dir, "f"), "x\n");
+  git(dir, "add", "f");
+  git(dir, "commit", "-q", "-m", "base");
+  return { dir, sha: git(dir, "rev-parse", "HEAD") };
+}
+
+function reviewDoc(sha) {
+  return document(block({ AUTHORITY_SHA: sha }));
+}
+
+test("resolveMainRef prefers refs/remotes/origin/main when no local main exists (the PR / feat/** checkout shape)", () => {
+  const { dir, sha } = makeRepoWithOneCommit();
+  try {
+    // simulate actions/checkout on a PR: detached HEAD, origin/main present, local main gone
+    git(dir, "update-ref", "refs/remotes/origin/main", sha);
+    git(dir, "checkout", "-q", "--detach", sha);
+    git(dir, "branch", "-D", "main");
+    assert.throws(() => git(dir, "rev-parse", "--verify", "--quiet", "refs/heads/main^{commit}"));
+    assert.equal(resolveMainRef(dir), "refs/remotes/origin/main");
+    const { errors } = validateReviewDocument({
+      file: "docs/example.md",
+      content: reviewDoc(sha),
+      repoRoot: dir,
+      gitCheck: true,
+      checkPaths: false,
+    });
+    assert.deepEqual(
+      errors.filter((e) => e.code === "AUTHORITY_NOT_MAIN" || e.code === "MAIN_REF_UNRESOLVABLE"),
+      [],
+      `unexpected main-ref errors: ${JSON.stringify(errors)}`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("resolveMainRef falls back to a local main when there is no remote-tracking ref (the push-to-main checkout shape)", () => {
+  const { dir } = makeRepoWithOneCommit();
+  try {
+    assert.equal(resolveMainRef(dir), "refs/heads/main");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a checkout with NEITHER ref reports MAIN_REF_UNRESOLVABLE — a named error, never a silent pass or a misleading AUTHORITY_NOT_MAIN", () => {
+  const { dir, sha } = makeRepoWithOneCommit();
+  try {
+    git(dir, "checkout", "-q", "-b", "feat/x");
+    git(dir, "branch", "-D", "main");
+    assert.equal(resolveMainRef(dir), null);
+    const { errors } = validateReviewDocument({
+      file: "docs/example.md",
+      content: reviewDoc(sha),
+      repoRoot: dir,
+      gitCheck: true,
+      checkPaths: false,
+    });
+    assert.ok(errors.some((e) => e.code === "MAIN_REF_UNRESOLVABLE"), JSON.stringify(errors));
+    assert.ok(!errors.some((e) => e.code === "AUTHORITY_NOT_MAIN"), JSON.stringify(errors));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a SHA that is on origin/main's history but not an ancestor of it still fails AUTHORITY_NOT_MAIN (the resolver did not weaken the check)", () => {
+  const { dir, sha: base } = makeRepoWithOneCommit();
+  try {
+    git(dir, "update-ref", "refs/remotes/origin/main", base);
+    git(dir, "checkout", "-q", "-b", "feat/y");
+    writeFileSync(join(dir, "g"), "y\n");
+    git(dir, "add", "g");
+    git(dir, "commit", "-q", "-m", "not on main");
+    const off = git(dir, "rev-parse", "HEAD");
+    git(dir, "branch", "-D", "main");
+    const { errors } = validateReviewDocument({
+      file: "docs/example.md",
+      content: reviewDoc(off),
+      repoRoot: dir,
+      gitCheck: true,
+      checkPaths: false,
+    });
+    assert.ok(errors.some((e) => e.code === "AUTHORITY_NOT_MAIN"), JSON.stringify(errors));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

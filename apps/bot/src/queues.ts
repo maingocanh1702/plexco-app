@@ -9,9 +9,12 @@
  * PLACEHOLDER — not a real channel/projector name. The only queue this repo
  * has ever registered: a periodic trigger for the outbox dispatch cycle
  * (dispatcher.ts). worker.ts registers a schedule against it (job-infra slice
- * 3a), gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED — no producer inserts
- * outbox_events yet (deferred out of scope), so a running schedule claims
- * zero rows today regardless of the flag.
+ * 3a), gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED. Producers DO exist
+ * (packages/db/src/session-service.ts inserts outbox_events for every session
+ * command since 2026-08-14 — the old "no producer yet" text here was stale,
+ * audit 2026-09-06 X-3): the flag stays off because the only deliverer is
+ * productionStubDeliver, which DLQs every row terminally. worker.ts refuses
+ * to schedule while that stub is configured — see its own doc comment.
  */
 export const OUTBOX_DISPATCH_QUEUE = "outbox_dispatch";
 

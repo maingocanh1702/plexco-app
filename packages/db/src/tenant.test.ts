@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
-import { tenantLocale } from "./tenant.js";
+import { sql } from "drizzle-orm";
+import { ensureTenantContext, TenantContextMismatchError, tenantLocale } from "./tenant.js";
 
 /**
  * THE DIAGNOSTIC. v1 of this lane shipped a no-op and every gate it ran was green: lint,
@@ -153,5 +154,62 @@ describe("tenantLocale — read as the app role, the identity production actuall
     // choke-point is an outage. What is amended is that never-throws must not mean "every
     // failure becomes null" — hence the two distinguishing tests above.
     await expect(tenantLocale(ctx.appDb.db, "not-a-uuid")).resolves.toBeNull();
+  });
+});
+
+/**
+ * Audit 2026-09-06 D-15 — the two guards around tenant context and the direct session writer.
+ */
+describe("ensureTenantContext — set-or-assert (audit D-15)", () => {
+  let ctx: RlsTestContext;
+  beforeAll(async () => {
+    ctx = await setupRlsTestContext("plexco_tenant_context_guard");
+  });
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  it("sets the GUC on an unscoped transaction and is a no-op when it already matches", async () => {
+    await ctx.appDb.db.transaction(async (tx) => {
+      await ensureTenantContext(tx, ctx.tenantA);
+      const r1 = await tx.execute(sql`SELECT current_setting('app.tenant_id', true) AS t`);
+      expect((r1.rows[0] as { t: string }).t).toBe(ctx.tenantA);
+      await ensureTenantContext(tx, ctx.tenantA.toUpperCase()); // case-insensitive equality
+      await ensureTenantContext(tx, ctx.tenantA);
+    });
+  });
+
+  it("REFUSES to re-scope a transaction already set to another tenant (the silent re-scope the audit named)", async () => {
+    await expect(
+      ctx.appDb.db.transaction(async (tx) => {
+        await ensureTenantContext(tx, ctx.tenantA);
+        await ensureTenantContext(tx, ctx.tenantB);
+      }),
+    ).rejects.toBeInstanceOf(TenantContextMismatchError);
+  });
+});
+
+describe("tenantRepo().sessions.create is a TEST-ONLY seam (audit D-15)", () => {
+  it("has no caller under apps/ and none in a non-test module of packages/db", async () => {
+    const { readdirSync, readFileSync, statSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        if (entry === "node_modules" || entry === ".next" || entry === "dist") continue;
+        const full = path.join(dir, entry);
+        if (statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx|mjs)$/.test(entry) && !/\.test\.(ts|tsx|mjs)$/.test(entry)) {
+          if (readFileSync(full, "utf8").includes("tenantRepo("))
+            hits.push(path.relative(root, full));
+        }
+      }
+    };
+    walk(path.join(root, "apps"));
+    walk(path.join(root, "packages", "db", "src"));
+    // tenant.ts DEFINES it; nothing else may call it outside tests.
+    expect(hits).toEqual(["packages/db/src/tenant.ts"]);
   });
 });

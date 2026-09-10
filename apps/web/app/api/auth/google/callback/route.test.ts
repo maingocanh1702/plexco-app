@@ -133,10 +133,14 @@ describe("GET /api/auth/google/callback", () => {
         ttlSeconds: expect.any(Number),
       }),
     );
-    // No session cookie is set at the callback (that happens same-site at /complete).
-    expect(store.set).not.toHaveBeenCalled();
-    // The binding cookie is consumed single-use on a state match.
-    expect(store.delete).toHaveBeenCalled();
+    // No SESSION cookie is set at the callback (that happens same-site at /complete); the only
+    // set() here is the binding cookie being expired, which is how a __Secure- cookie is cleared.
+    expect(store.set).toHaveBeenCalledOnce();
+    expect(store.set).toHaveBeenCalledWith(
+      expect.stringContaining("plx_oauth_google"),
+      "",
+      expect.objectContaining({ maxAge: 0 }),
+    );
     expect(res.status).toBe(200);
   });
 
@@ -309,13 +313,11 @@ describe("GET /api/auth/google/callback", () => {
 });
 
 describe("negative scope (absence checks)", () => {
-  it("D1-14: the Telegram callback route is untouched — still present", () => {
+  it("D1-14 (inverted 2026-09-06, audit W-1): the Telegram auth routes are GONE — DD-37 removed Telegram from phase-1 and lane A3 deleted the live login path", () => {
+    expect(existsSync(fileURLToPath(new URL("../../telegram", import.meta.url)))).toBe(false);
     expect(
-      existsSync(fileURLToPath(new URL("../../telegram/callback/route.ts", import.meta.url))),
-    ).toBe(true);
-    expect(
-      existsSync(fileURLToPath(new URL("../../telegram/state/route.ts", import.meta.url))),
-    ).toBe(true);
+      existsSync(fileURLToPath(new URL("../../../../../lib/telegram-login.ts", import.meta.url))),
+    ).toBe(false);
   });
 
   it("D1-15: NO Facebook adapter routes exist (order-3 negative scope)", () => {

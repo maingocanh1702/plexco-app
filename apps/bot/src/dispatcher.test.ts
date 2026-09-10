@@ -1,12 +1,15 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { migrate } from "@plexco/db";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   REQUIRED_PROJECTORS,
   STUB_PROJECTOR,
+  completionArgs,
+  normalizeErrorCode,
   runDispatchCycle,
   type DeliverFn,
 } from "./dispatcher.js";
@@ -388,6 +391,102 @@ describe("runDispatchCycle", () => {
     expect(summary.processedDeliveries).toBe(0);
   });
 
+  // audit 2026-09-06 B-1: complete_projector_delivery RAISES 22023 on a malformed outcome
+  // (error_code not ^[a-z][a-z0-9_]{0,63}$, or retry with a non-future next_attempt_at). That
+  // call sat OUTSIDE the deliver() try/catch, so one bad outcome aborted the cycle with the
+  // row still claimed — and reclaim-expired-first + ORDER BY event_id handed the SAME row back
+  // first on the next cycle, forever. Reproduced before the fix: runDispatchCycle rejected
+  // with SQLSTATE 22023 and the delivery stayed `claimed`.
+  /**
+   * The bound() hardening exists because a throw in the LOG line happens before
+   * complete_projector_delivery and would leave the delivery claimed — the B-1 failure mode. The
+   * helper's own unit table is above; this drives a projector that returns a non-string errorCode
+   * through the real cycle, so the claim is about the cycle rather than about the helper.
+   */
+  it("JRD-BOUND: a projector returning a NON-STRING error code still completes the cycle (the log line cannot abort it)", async () => {
+    const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_nonstring_code");
+    teardown = ctx.teardown;
+    const tenantId = await seedTenant(ctx.verify);
+    const eventId = await seedOutboxEvent(ctx.verify, tenantId);
+
+    const deliver: DeliverFn = async () => ({ result: "dlq", errorCode: 42 }) as never;
+    const summary = await runDispatchCycle(ctx.workerPool, {
+      deliver,
+      requiredProjectors: [STUB_PROJECTOR],
+    });
+
+    expect(summary.processedDeliveries).toBe(1); // the cycle finished instead of throwing
+    const rows = await ctx.verify.query<{ status: string; error_code: string | null }>(
+      "SELECT status, error_code FROM projector_deliveries WHERE event_id = $1",
+      [eventId],
+    );
+    expect(rows.rows[0]?.status).toBe("dlq");
+    expect(rows.rows[0]?.error_code).toBe("malformed_error_code"); // in-grammar, delivery closed
+  });
+
+  it("audit B-1: a projector returning an UPPERCASE error code (dlq) does not abort the cycle — the code is normalised, the row ends dlq, and the next row is still delivered", async () => {
+    const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_bad_grammar_dlq");
+    teardown = ctx.teardown;
+    const tenantId = await seedTenant(ctx.verify);
+    const eventA = await seedOutboxEvent(ctx.verify, tenantId);
+    const eventB = await seedOutboxEvent(ctx.verify, tenantId);
+
+    let callCount = 0;
+    const deliver: DeliverFn = async () => {
+      callCount += 1;
+      if (callCount === 1) return { result: "dlq", errorCode: "ECONNRESET" };
+      return { result: "delivered" };
+    };
+
+    const summary = await runDispatchCycle(ctx.workerPool, {
+      deliver,
+      requiredProjectors: [STUB_PROJECTOR],
+    });
+    expect(callCount).toBe(2);
+    expect(summary.processedDeliveries).toBe(2);
+
+    const rows = await ctx.verify.query<{
+      event_id: string;
+      status: string;
+      error_code: string | null;
+    }>(
+      "SELECT event_id, status, error_code FROM projector_deliveries WHERE event_id = ANY($1) ORDER BY event_id",
+      [[eventA, eventB]],
+    );
+    const byStatus = Object.fromEntries(rows.rows.map((r) => [r.status, r]));
+    expect(byStatus["dlq"]?.error_code).toBe("econnreset");
+    expect(byStatus["delivered"]).toBeDefined();
+    // nothing is left claimed — the head-of-line block is gone
+    const claimed = await ctx.verify.query(
+      "SELECT 1 FROM projector_deliveries WHERE event_id = ANY($1) AND status = 'claimed'",
+      [[eventA, eventB]],
+    );
+    expect(claimed.rows).toHaveLength(0);
+  });
+
+  it("audit B-1: a projector returning retry with a PAST next_attempt_at fails closed to dlq/malformed_next_attempt instead of raising inside the cycle", async () => {
+    const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_bad_grammar_retry");
+    teardown = ctx.teardown;
+    const tenantId = await seedTenant(ctx.verify);
+    const eventA = await seedOutboxEvent(ctx.verify, tenantId);
+
+    const deliver: DeliverFn = async () => ({
+      result: "retry",
+      nextAttemptAt: new Date(0),
+      errorCode: "provider_timeout",
+    });
+    const summary = await runDispatchCycle(ctx.workerPool, {
+      deliver,
+      requiredProjectors: [STUB_PROJECTOR],
+    });
+    expect(summary.processedDeliveries).toBe(1);
+    const row = await ctx.verify.query<{ status: string; error_code: string | null }>(
+      "SELECT status, error_code FROM projector_deliveries WHERE event_id = $1",
+      [eventA],
+    );
+    expect(row.rows[0]).toEqual({ status: "dlq", error_code: "malformed_next_attempt" });
+  });
+
   it("codex round-07: a deliver() that throws for one row does not abort delivery of the rest (no head-of-line blocking)", async () => {
     const ctx = await setupDispatcherContext("plexco_jrd_dispatcher_deliver_throws");
     teardown = ctx.teardown;
@@ -690,5 +789,294 @@ describe("REQUIRED_PROJECTORS", () => {
   it("is a single source read by both fan-out and the (future) ack argument — not duplicated", () => {
     expect(REQUIRED_PROJECTORS).toContain(STUB_PROJECTOR);
     expect(REQUIRED_PROJECTORS.length).toBe(1);
+  });
+});
+
+describe("audit B-1: outcome grammar normalisation is enforced once, in completionArgs", () => {
+  it("normalizeErrorCode lower-cases, replaces non-grammar chars, bounds to 64 and never yields a leading digit or empty code", () => {
+    expect(normalizeErrorCode("ECONNRESET")).toBe("econnreset");
+    expect(normalizeErrorCode("Provider-Timeout 504")).toBe("provider_timeout_504");
+    expect(normalizeErrorCode("")).toBe("malformed_error_code");
+    expect(normalizeErrorCode("5xx")).toBe("malformed_error_code");
+    expect(normalizeErrorCode(undefined)).toBe("malformed_error_code");
+    expect(normalizeErrorCode("a".repeat(100))).toHaveLength(64);
+    for (const sample of ["ECONNRESET", "x y", "ok_code", "Ω", "9"]) {
+      expect(normalizeErrorCode(sample)).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
+    }
+  });
+
+  it("a retry whose nextAttemptAt is not strictly in the future becomes dlq/malformed_next_attempt; a future one is kept", () => {
+    const now = () => new Date(1_000_000);
+    expect(
+      completionArgs({ result: "retry", nextAttemptAt: new Date(1_000_000), errorCode: "x" }, now),
+    ).toMatchObject({ result: "dlq", errorCode: "malformed_next_attempt", nextAttemptAt: null });
+    expect(
+      completionArgs({ result: "retry", nextAttemptAt: new Date(Number.NaN), errorCode: "x" }, now),
+    ).toMatchObject({ result: "dlq", errorCode: "malformed_next_attempt" });
+    expect(
+      completionArgs({ result: "retry", nextAttemptAt: new Date(1_000_001), errorCode: "X" }, now),
+    ).toMatchObject({ result: "retry", errorCode: "x", rawErrorCode: "X" });
+  });
+
+  it("a NON-STRING raw error code is described, never coerced with .slice() — the log line must not abort the cycle", async () => {
+    const { boundRawErrorCode, completionArgs, RAW_ERROR_CODE_LOG_MAX } =
+      await import("./dispatcher.js");
+    // DeliveryOutcome says `errorCode: string`; a projector is external code that can send
+    // anything, and completionArgs passes the raw value straight through on retry/dlq. Bounding
+    // it must therefore never assume a string: throwing here happens BEFORE
+    // complete_projector_delivery and leaves the delivery claimed — the B-1 failure mode.
+    for (const bad of [42, true, null, undefined, { a: 1 }, [1, 2], Symbol("s"), 10n]) {
+      expect(() => boundRawErrorCode(bad as never)).not.toThrow();
+    }
+    // Every shape, driven through the REAL path the dispatcher takes: completionArgs first
+    // (which is what passes the raw value straight through on retry/dlq), then the bound.
+    const shapes: [unknown, string][] = [
+      [42, "42"],
+      [true, "true"],
+      [10n, "10"],
+      [null, "[null]"],
+      [undefined, "[undefined]"],
+      [{ a: 1 }, "[object]"],
+      [[1], "[array]"],
+      [Symbol("s"), "[symbol]"],
+      [() => "x", "[function]"],
+    ];
+    for (const [raw, described] of shapes) {
+      for (const outcome of [
+        { result: "dlq", errorCode: raw } as never,
+        { result: "retry", nextAttemptAt: new Date(Date.now() + 60_000), errorCode: raw } as never,
+      ]) {
+        const args = completionArgs(outcome);
+        expect(() => boundRawErrorCode(args.rawErrorCode as never)).not.toThrow();
+        expect(boundRawErrorCode(args.rawErrorCode as never)).toBe(described);
+        expect(args.errorCode).toBe("malformed_error_code"); // and the STORED code stays in-grammar
+      }
+    }
+    // oversized strings are still cut, with the overflow named
+    const long = "x".repeat(RAW_ERROR_CODE_LOG_MAX + 10);
+    expect(boundRawErrorCode(long)).toBe(`${"x".repeat(RAW_ERROR_CODE_LOG_MAX)}…[+10]`);
+  });
+
+  it("delivered passes providerRef through untouched and carries no error code", () => {
+    expect(completionArgs({ result: "delivered", providerRef: "ref-1" })).toEqual({
+      result: "delivered",
+      nextAttemptAt: null,
+      providerRef: "ref-1",
+      errorCode: null,
+      rawErrorCode: null,
+    });
+  });
+});
+
+/**
+ * Audit 2026-09-06 X-5 (last part) — worker business liveness through the 0041 definer, called
+ * as app_worker (the only identity the worker ever has), with the table itself ungranted.
+ */
+describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
+  let ctx: DispatcherTestContext | undefined;
+
+  // Every heartbeat probe path writes (or must NOT write) a real file. Anchoring
+  // those at process.cwd() drops them into apps/bot/ in the repo: the happy-path
+  // tick has no reason to delete the file it just asserted on, and the name
+  // carries the vitest pid, so each run leaks a NEW one. A dirty working tree is
+  // not cosmetic here: `autopilot-review-readiness.mjs:658` runs `git status
+  // --porcelain --untracked-files=all` and HALTs WORKTREE_DIRTY — untracked
+  // counts — and `autopilot-scope-gate ready` invokes it at line 748, so a
+  // stray probe file blocks the ready transition; `ap-finish.sh:83` checks
+  // status itself. (backlog-reconcile uses `git blame`, not status, so it is
+  // NOT affected — do not widen this to "every script reads git status".)
+  // Each test gets a throwaway directory instead, removed whatever the
+  // assertions did.
+  let tmp: string;
+  beforeEach(async () => {
+    tmp = await mkdtemp(path.join(os.tmpdir(), "plexco-hb-"));
+  });
+  afterEach(async () => {
+    await ctx?.teardown();
+    ctx = undefined;
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  it("app_worker can tick and read liveness through the definers, but has NO privilege on the table", async () => {
+    ctx = await setupDispatcherContext("plexco_bot_heartbeat_0041");
+    const { heartbeatOnce } = await import("./heartbeat.js");
+    const file = path.join(tmp, ".heartbeat-test");
+    const lines: string[] = [];
+
+    const ok = await heartbeatOnce({
+      pool: ctx.workerPool,
+      id: "hb-test-1",
+      pid: 4242,
+      file,
+      log: (l) => lines.push(l),
+    });
+    expect(ok).toBe(true);
+    expect(lines).toEqual([]);
+    const written = await readFile(file, "utf8");
+    expect(() => new Date(written.trim()).toISOString()).not.toThrow();
+
+    const live = await ctx.workerPool.query<{ worker_id: string; pid: number; alive: boolean }>(
+      "SELECT worker_id, pid, alive FROM job_worker_liveness()",
+    );
+    expect(live.rows).toEqual([{ worker_id: "hb-test-1", pid: 4242, alive: true }]);
+
+    // A second tick from the SAME pid keeps started_at; a new pid restarts it.
+    const before = await ctx.verify.query<{ started_at: Date }>(
+      "SELECT started_at FROM job_worker_heartbeats WHERE worker_id = 'hb-test-1'",
+    );
+    await heartbeatOnce({ pool: ctx.workerPool, id: "hb-test-1", pid: 4242, file });
+    const same = await ctx.verify.query<{ started_at: Date }>(
+      "SELECT started_at FROM job_worker_heartbeats WHERE worker_id = 'hb-test-1'",
+    );
+    expect(same.rows[0]!.started_at.getTime()).toBe(before.rows[0]!.started_at.getTime());
+    await heartbeatOnce({ pool: ctx.workerPool, id: "hb-test-1", pid: 4243, file });
+    const restarted = await ctx.verify.query<{ started_at: Date; pid: number }>(
+      "SELECT started_at, pid FROM job_worker_heartbeats WHERE worker_id = 'hb-test-1'",
+    );
+    expect(restarted.rows[0]!.pid).toBe(4243);
+    expect(restarted.rows[0]!.started_at.getTime()).toBeGreaterThan(
+      before.rows[0]!.started_at.getTime(),
+    );
+
+    // Staleness: an old tick reads as not alive.
+    await ctx.verify.query(
+      "UPDATE job_worker_heartbeats SET last_seen_at = clock_timestamp() - interval '5 minutes' WHERE worker_id = 'hb-test-1'",
+    );
+    const stale = await ctx.workerPool.query<{ alive: boolean }>(
+      "SELECT alive FROM job_worker_liveness()",
+    );
+    expect(stale.rows[0]!.alive).toBe(false);
+
+    // No table grant: the definer is the only door.
+    await expect(ctx.workerPool.query("SELECT * FROM job_worker_heartbeats")).rejects.toMatchObject(
+      { code: "42501" },
+    );
+    await expect(
+      ctx.workerPool.query("SELECT job_worker_heartbeat($1, 'h', 1)", ["x".repeat(129)]),
+    ).rejects.toMatchObject({ code: "22023" });
+  }, 60_000);
+
+  it("a failed DB tick is reported, not thrown, rolls back, releases the client, and leaves the file untouched", async () => {
+    const { heartbeatOnce } = await import("./heartbeat.js");
+    const lines: string[] = [];
+    const seen: string[] = [];
+    let released = 0;
+    const deadPool = {
+      connect: async () => ({
+        query: async (text: string) => {
+          seen.push(String(text));
+          if (String(text).includes("job_worker_heartbeat")) throw new Error("connection refused");
+          return { rows: [] };
+        },
+        release: () => {
+          released++;
+        },
+      }),
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-dead");
+    expect(
+      await heartbeatOnce({ pool: deadPool, id: "dead", pid: 1, file, log: (l) => lines.push(l) }),
+    ).toBe(false);
+    expect(lines[0]).toMatch(/heartbeat failed: connection refused/);
+    expect(seen).toContain("ROLLBACK");
+    expect(released).toBe(1); // never leaks a pooled client, which is the dispatcher's pool
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("each tick bounds itself with a transaction-local statement timeout (never a session-level SET on a pooled client)", async () => {
+    const { heartbeatOnce, HEARTBEAT_STATEMENT_TIMEOUT_MS } = await import("./heartbeat.js");
+    const seen: string[] = [];
+    const pool = {
+      connect: async () => ({
+        query: async (text: string) => {
+          seen.push(String(text));
+          return { rows: [{}] };
+        },
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-timeout");
+    expect(await heartbeatOnce({ pool, id: "t", pid: 1, file })).toBe(true);
+    expect(seen[0]).toBe("BEGIN");
+    expect(seen[1]).toBe(`SET LOCAL statement_timeout = ${HEARTBEAT_STATEMENT_TIMEOUT_MS}`);
+    expect(seen[3]).toBe("COMMIT");
+  });
+
+  /**
+   * The observer must not starve the observed. setInterval fires on a wall clock, not on
+   * completion: against a database that accepts connections but never settles queries, an
+   * unguarded loop stacks one checked-out client per tick on the DISPATCHER's pool.
+   */
+  it("startHeartbeat keeps at most one tick in flight against a hung database", async () => {
+    const { startHeartbeat } = await import("./heartbeat.js");
+    let connects = 0;
+    const hungPool = {
+      connect: async () => {
+        connects++;
+        return { query: () => new Promise(() => {}), release: () => {} };
+      },
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-hung");
+    const stop = startHeartbeat({ pool: hungPool, id: "h", pid: 1, file }, 20);
+    await new Promise((r) => setTimeout(r, 200));
+    stop();
+    expect(connects).toBe(1);
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("stop() suppresses the file write of a tick that was already in flight (no green probe into a started shutdown)", async () => {
+    const { startHeartbeat } = await import("./heartbeat.js");
+    let answer: (() => void) | undefined;
+    const pool = {
+      connect: async () => ({
+        query: (text: string) =>
+          String(text).includes("job_worker_heartbeat")
+            ? new Promise((res) => {
+                answer = () => res({ rows: [{}] } as never);
+              })
+            : Promise.resolve({ rows: [] }),
+        release: () => {},
+      }),
+    } as unknown as pg.Pool;
+    const file = path.join(tmp, ".heartbeat-test-stop");
+    const stop = startHeartbeat({ pool, id: "s", pid: 1, file }, 10_000);
+    await new Promise((r) => setTimeout(r, 40));
+    stop(); // shutdown begins while the tick is still waiting on the database
+    answer?.(); // the database answers afterwards
+    await new Promise((r) => setTimeout(r, 40));
+    await expect(readFile(file, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("the heartbeat row set is self-pruning at 30 days, so job_worker_liveness cannot drift into mostly-dead output", async () => {
+    ctx = await setupDispatcherContext("plexco_bot_heartbeat_prune");
+    await ctx.verify.query(
+      `INSERT INTO job_worker_heartbeats(worker_id, hostname, pid, started_at, last_seen_at)
+       VALUES ('gone-40d', 'old', 9, now() - interval '40 days', now() - interval '40 days'),
+              ('kept-20d', 'old', 9, now() - interval '20 days', now() - interval '20 days')`,
+    );
+    await ctx.workerPool.query("SELECT job_worker_heartbeat($1, $2, $3)", ["live", "h", 7]);
+    const { rows } = await ctx.verify.query<{ worker_id: string }>(
+      `SELECT worker_id FROM job_worker_heartbeats ORDER BY worker_id`,
+    );
+    expect(rows.map((r) => r.worker_id)).toEqual(["kept-20d", "live"]);
+  });
+});
+
+describe("heartbeat helpers (pure)", () => {
+  // The helper must return what the Dockerfile's `[ $(( now - mtime )) -le 90 ]` returns,
+  // including for a future-dated file (writer/probe clock skew): only the shell runs in
+  // production, so a stricter helper would be a test that lies about the deployed probe.
+  it("heartbeatFresh: within 90 s is fresh, older is not, future-dated matches the shell (fresh)", async () => {
+    const { heartbeatFresh, HEARTBEAT_STALE_MS, heartbeatFilePath, workerId } =
+      await import("./heartbeat.js");
+    const now = new Date("2026-09-06T00:01:30Z");
+    expect(heartbeatFresh(new Date("2026-09-06T00:00:00Z"), now)).toBe(true);
+    expect(heartbeatFresh(new Date("2026-09-05T23:59:59Z"), now)).toBe(false);
+    expect(heartbeatFresh(new Date("2026-09-06T00:02:00Z"), now)).toBe(true);
+    expect(HEARTBEAT_STALE_MS).toBe(90_000);
+    expect(heartbeatFilePath({})).toBe("/tmp/plexco-worker-heartbeat");
+    expect(heartbeatFilePath({ WORKER_HEARTBEAT_FILE: " /run/hb " })).toBe("/run/hb");
+    expect(workerId({ WORKER_ID: "w-1" })).toBe("w-1");
+    expect(workerId({ WORKER_ID: "x".repeat(200) })).toHaveLength(128);
   });
 });

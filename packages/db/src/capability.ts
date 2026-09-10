@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { assertTenantId } from "./tenant.js";
+import { assertTenantId, ensureTenantContext } from "./tenant.js";
 import type { Db } from "./client.js";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -168,10 +168,11 @@ export async function resolveCapability(
   // this same tx (it set the identical value).
   //
   // FOR SHARE pins the (plan_key, plan_version) binding for the rest of the
-  // caller's transaction. `app` can execute it: it holds full CRUD on
-  // subscriptions (0009), and PostgreSQL only requires UPDATE privilege for a
-  // row-locking clause (the 0027 lesson — the very reason plans below CANNOT be
-  // locked). Without it, a concurrent host_pro→free downgrade committing between
+  // caller's transaction. Since 0038 `app` holds no UPDATE on subscriptions, and
+  // PostgreSQL only requires UPDATE privilege for a row-locking clause (the
+  // 0027 lesson — the very reason plans below CANNOT be locked), so the lock is
+  // taken inside resolve_subscription_locked instead of by a direct SELECT.
+  // Without it, a concurrent host_pro→free downgrade committing between
   // this read and the plans read below would leave the resolver reading the
   // stale (immutable) host_pro row and wrongly returning allowed:true (codex
   // round-01 [P1]). The lock makes the resolver correct on its OWN — standalone,
@@ -180,9 +181,14 @@ export async function resolveCapability(
   // return into the caller's transaction, so an `if (allowed) { ...mutate... }`
   // money action stays protected against a downgrade landing between the
   // decision and the mutation.
-  await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
+  await ensureTenantContext(tx, tenantId); // set-or-assert, audit D-15
+  // 0038: `app` lost UPDATE on subscriptions (audit D-1 — that grant let any tenant-scoped app path
+  // mint its own host_pro row), and FOR SHARE needs UPDATE privilege, so the locking read lives in
+  // resolve_subscription_locked (SECURITY DEFINER, 0027 shape). Same row lock, same transaction,
+  // same pinning semantics described above; the function additionally refuses a tenant id that is
+  // not the transaction's app.tenant_id, which the set_config one line above guarantees.
   const subResult = await tx.execute(
-    sql`SELECT plan_key, plan_version FROM subscriptions WHERE tenant_id = ${tenantId} FOR SHARE`,
+    sql`SELECT plan_key, plan_version FROM resolve_subscription_locked(${tenantId}::uuid)`,
   );
   const subRows = subResult.rows as Record<string, unknown>[];
   const subscription = subRows[0];

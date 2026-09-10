@@ -147,13 +147,19 @@ describe("provider-scoped Lax binding cookie", () => {
     expect(await readOauthBindingCookie("google")).toBeNull();
   });
 
-  it("clearOauthBindingCookie: deletes the provider cookie at its callback path", async () => {
+  it("clearOauthBindingCookie: expires the provider cookie WITH its original attributes (a bare delete is dropped under __Secure-)", async () => {
     const store = mockCookieStore();
     await clearOauthBindingCookie("google");
-    expect(store.delete).toHaveBeenCalledWith({
-      name: "plx_oauth_google",
-      path: "/api/auth/google/callback",
-    });
+    expect(store.set).toHaveBeenCalledWith(
+      "plx_oauth_google",
+      "",
+      expect.objectContaining({
+        maxAge: 0,
+        path: "/api/auth/google/callback",
+        httpOnly: true,
+        sameSite: "lax",
+      }),
+    );
   });
 });
 

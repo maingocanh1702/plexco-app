@@ -37,7 +37,11 @@ describe("POST /api/auth/logout", () => {
     const res = await POST();
 
     expect(revokeWebSession).toHaveBeenCalledWith(expect.anything(), expect.any(String));
-    expect(store.delete).toHaveBeenCalledWith(SESSION_COOKIE);
+    expect(store.set).toHaveBeenCalledWith(
+      SESSION_COOKIE,
+      "",
+      expect.objectContaining({ maxAge: 0, path: "/", httpOnly: true }),
+    ); // cleared as an expiring SET: a bare delete() omits Secure and a prefixed cookie ignores it
     expect(res.status).toBe(200);
   });
 

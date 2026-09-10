@@ -1,7 +1,7 @@
 # Feature: Sync Engine & Re-projection — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 2.8 · 2026-08-10
+> **Version:** 2.9 · 2026-09-06
 > **Status:** Reviewed (v2.4: live-schema rollout truth + endpoint-exact channel delivery)
 > **Implementation:** Infrastructure in progress — `0022`/`0023` + fail-closed preflight/dispatcher/flagged scheduler merged; schedule OFF, dispatcher placeholder, no producer/real projector/replay/sub-minute drain · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_sync_engine.md`
@@ -35,7 +35,7 @@ Worker (FOR UPDATE SKIP LOCKED) → Claim events by aggregate order
 - Duplicate command → return stored result without re-running mutation.
 - Event schemas versioned — avoid secrets/PII in payload.
 - Crash after provider success handled via provider idempotency or convergent edit/upsert.
-- Worker partitions by aggregate ordering key (not tenant-wide).
+- ⚠️ **As-built (audit 2026-09-06 D-13): worker does NOT partition by aggregate.** `claim_outbox_batch` (`0023:176-208`) claims `ORDER BY created_at … FOR UPDATE SKIP LOCKED` across all aggregates; two workers can hold events of the SAME aggregate concurrently and deliver them out of sequence. `outbox_events.sequence` is monotonic **at write time** (`outbox_agg_seq_uq`) — it lets a consumer DETECT out-of-order delivery, it does not prevent it. Every projector must therefore be idempotent per `(aggregate_id, sequence)` and tolerate seeing `n+1` before `n` (re-queue or last-writer-wins by sequence). Partitioned claiming is a runtime change with its own row (`audit-2026-09-06-d13-sync-engine-spec-claims-aggregate-ordering` names both options); the TARGET remains per-aggregate ordering.
 - Messenger và Zalo delivery đều resolve exact endpoint-bound `channel_identity_id` (Page hoặc bot/OA), authorize target tenant bằng check riêng, rồi chọn đúng một route. Logical notification id dedups mọi candidate; không broadcast.
 
 ### Entry points
@@ -136,7 +136,7 @@ CREATE INDEX idx_surface_refs_aggregate ON surface_refs(aggregate_id);
 | 1 | Concurrency | Duplicate command (same command_id) | UNIQUE constraint → return stored result |
 | 2 | Data Integrity | Mutation rollback | No outbox event — atomic commit ensures consistency |
 | 3 | Concurrency | Parallel workers claim same event | `FOR UPDATE SKIP LOCKED` partitioning |
-| 4 | Concurrency | Aggregate ordering regression | Monotonic sequence enforced per aggregate |
+| 4 | Concurrency | Aggregate ordering regression | Monotonic `sequence` enforced per aggregate **at write** (`outbox_agg_seq_uq`); delivery order NOT guaranteed as-built (D-13) — projector must dedup/reorder by sequence |
 | 5 | Resilience | Crash before provider call | Retry claims event — delivery pending |
 | 6 | Resilience | Crash after provider success | Provider idempotency or convergent upsert |
 | 7 | Resilience | Projector A fails, B succeeds | Independent tracking — B delivered, A retries |
@@ -267,7 +267,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 | 2 | Command concurrent | Same command_id parallel | One wins, one dedup |
 | 3 | Atomic commit | Mutation + event | Both committed or neither |
 | 4 | Rollback no event | Mutation fails | No outbox event |
-| 5 | Aggregate ordering | Events out of order | Monotonic sequence enforced |
+| 5 | Aggregate ordering | Events out of order | Monotonic sequence enforced at write; delivery may reorder (as-built, D-13) — test the projector's idempotency, not the dispatcher's order |
 | 6 | Worker claim skip locked | Parallel workers | No duplicate claims |
 | 7 | Projector A fail B success | Mixed results | Independent tracking |
 | 8 | Missing surface message | Deleted Zalo/Messenger message ref | Replacement created (Messenger: only within 24h) |
@@ -326,6 +326,7 @@ Short session-bound connection, heartbeat, reconnect cursor, per-account connect
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-06 | v2.9 | **Audit code ↔ docs 06/09 D-13 — as-built ordering truth (docs-only).** Ba chỗ (§1 bullet, edge #4, test #5) từng khai "partition theo aggregate ordering key"/"monotonic sequence enforced" như thể delivery có thứ tự; runtime `0023` chỉ `ORDER BY created_at` + `SKIP LOCKED`, không partition. Ghi đúng: sequence monotonic **khi ghi**, delivery **có thể** đảo — projector phải idempotent theo `(aggregate_id, sequence)`. Target không đổi; partition là row runtime riêng. |
 | 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/sync model. |
 | 2026-07-28 | v2.7 | Re-pin as-built overlay to `main@784bc8d`; docs-only Chat authority commits do not add Sync producers/projectors/E2E, and schedule remains OFF/placeholder. |
 | 2026-07-27 | v2.6 | Reconcile `0022`/`0023` + bot preflight/dispatcher/flagged scheduler as implemented infrastructure. Pin schedule OFF/placeholder boundary and missing producer, real projector, replay, sub-minute drain; update rollout order without claiming Sync E2E. |

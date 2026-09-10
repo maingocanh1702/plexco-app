@@ -5,8 +5,50 @@
 set -eu
 
 # Ưu tiên arg ($1) — deployment process group truyền "web|discovery|worker" làm command;
-# fallback PROCESS_ROLE env (dùng cho docker-compose); cuối cùng default web.
-ROLE="${1:-${PROCESS_ROLE:-web}}"
+# rồi FLY_PROCESS_GROUP (Fly đặt biến này cho mọi Machine); rồi PROCESS_ROLE env
+# (docker-compose); cuối cùng default web.
+ROLE="${1:-${FLY_PROCESS_GROUP:-${PROCESS_ROLE:-web}}}"
+
+# EXPORT, không chỉ gán. `apps/web/middleware.ts` đọc process.env.PROCESS_ROLE để quyết định
+# discovery chỉ được phục vụ /healthz + /discover*. Một biến shell không export KHÔNG tới được
+# tiến trình Next: trên Fly, process group truyền role qua COMMAND (arg), còn image thì
+# `ENV PROCESS_ROLE=web`, nên tiến trình discovery sẽ khởi động với PROCESS_ROLE=web và
+# allowlist không bao giờ bật — mọi route auth/session/onboarding đều mở trên ingress discovery.
+export PROCESS_ROLE="$ROLE"
+
+# Fly: CẢ [env] LẪN `fly secrets set` đều là app-wide, không có biến nào theo process group.
+# Vì vậy giá trị khác nhau theo role phải giải ở đây, từ biến có hậu tố role (đặt app-wide):
+#   DATABASE_URL_WEB / DATABASE_URL_DISCOVERY, DB_EXPECTED_ROLE_WEB / DB_EXPECTED_ROLE_DISCOVERY.
+# Không đặt thì giữ nguyên DATABASE_URL/DB_EXPECTED_ROLE chung (hành vi cũ).
+case "$ROLE" in
+  web)
+    EXPECT_DB_ROLE=app
+    if [ -n "${DATABASE_URL_WEB:-}" ]; then export DATABASE_URL="$DATABASE_URL_WEB"; fi
+    if [ -n "${DB_EXPECTED_ROLE_WEB:-}" ]; then export DB_EXPECTED_ROLE="$DB_EXPECTED_ROLE_WEB"; fi
+    ;;
+  discovery)
+    EXPECT_DB_ROLE=readonly
+    if [ -n "${DATABASE_URL_DISCOVERY:-}" ]; then export DATABASE_URL="$DATABASE_URL_DISCOVERY"; fi
+    if [ -n "${DB_EXPECTED_ROLE_DISCOVERY:-}" ]; then export DB_EXPECTED_ROLE="$DB_EXPECTED_ROLE_DISCOVERY"; fi
+    ;;
+  *)
+    EXPECT_DB_ROLE=
+    ;;
+esac
+
+# Vai trò DB kỳ vọng là thuộc tính của ROLE, không phải của một biến dùng chung. Nếu chỉ có
+# biến CHUNG `DB_EXPECTED_ROLE` (cấu hình Fly mới làm một nửa) thì nó phải KHỚP vai trò của
+# process này; nếu không, discovery sẽ chạy bằng credential của web và assert của chính nó
+# cũng PASS — fail-open đúng chỗ mà W-10 sinh ra để chặn. Không khớp thì từ chối khởi động.
+# (Để trống `DB_EXPECTED_ROLE` vẫn là tắt kiểm tra — opt-in là quyết định của owner, không đổi
+# ở đây; xem fly.toml.)
+if [ -n "${EXPECT_DB_ROLE:-}" ] && [ -n "${DB_EXPECTED_ROLE:-}" ] \
+   && [ "$DB_EXPECTED_ROLE" != "$EXPECT_DB_ROLE" ]; then
+  echo "[entrypoint] REFUSING: role=${ROLE} expects DB role '${EXPECT_DB_ROLE}' but DB_EXPECTED_ROLE='${DB_EXPECTED_ROLE}'." >&2
+  echo "[entrypoint] Set DB_EXPECTED_ROLE_$(echo "$ROLE" | tr '[:lower:]' '[:upper:]') (and DATABASE_URL_$(echo "$ROLE" | tr '[:lower:]' '[:upper:]')) per role, or drop the shared value." >&2
+  exit 1
+fi
+
 echo "[entrypoint] starting role=${ROLE}"
 
 case "$ROLE" in
@@ -25,8 +67,12 @@ case "$ROLE" in
     ;;
   provision)
     # One-shot trước worker: dựng pgboss schema + queues bằng role migration
-    # (DATABASE_URL_MIGRATION). Prod: CI/one-shot job-scoped secret;
-    # local compose: service queue-provision (worker depends_on completed).
+    # (DATABASE_URL_MIGRATION). Prod: CI/one-shot job-scoped secret. Local compose
+    # KHÔNG có service riêng cho bước này (audit 2026-09-06: comment cũ trỏ tới một
+    # service `queue-provision` chưa từng tồn tại) — chạy ad-hoc, URL truyền qua -e:
+    #   docker compose -f infra/docker-compose.yml run --rm \
+    #     -e DATABASE_URL_MIGRATION=postgres://plexco:plexco_dev@postgres:5432/plexco \
+    #     worker provision
     exec pnpm --filter @plexco/bot provision:queue
     ;;
   *)

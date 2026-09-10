@@ -56,6 +56,58 @@ export interface MigrateResult {
   skipped: string[];
 }
 
+/** The 4-digit ordinal every migration filename starts with (`0039_…sql`). */
+const MIGRATION_ORDINAL = /^(\d{4})_/;
+
+/**
+ * Audit 2026-09-06 D-11: the runner applied files "in filename order" but never refused a file
+ * numbered BELOW one already applied — a branch merging `0031b`/a renumbered file after `0038`
+ * had landed would apply out of order, silently, and every later reader would trust the ordinal.
+ * Two static facts are checked before anything touches the database:
+ *   1. every .sql file carries a 4-digit ordinal and no ordinal appears twice on disk;
+ *   2. every NOT-yet-applied file is numbered above the highest applied file.
+ * Pure so it can be unit-tested without Postgres; migrate() calls it with the real inputs.
+ */
+export function assertMonotonicMigrationOrder(files: string[], applied: Iterable<string>): void {
+  const ordinalOf = (f: string): string => {
+    const m = MIGRATION_ORDINAL.exec(f);
+    if (!m) throw new Error(`migrate: ${f} does not start with a 4-digit ordinal`);
+    return m[1]!;
+  };
+  const seenOrdinals = new Map<string, string>();
+  for (const f of files) {
+    const o = ordinalOf(f);
+    const dup = seenOrdinals.get(o);
+    if (dup !== undefined) {
+      throw new Error(`migrate: duplicate migration ordinal ${o}: ${dup} and ${f}`);
+    }
+    seenOrdinals.set(o, f);
+  }
+  const appliedSet = new Set(applied);
+  let highestApplied: string | null = null;
+  for (const name of appliedSet) {
+    const o = MIGRATION_ORDINAL.exec(name)?.[1];
+    if (o !== undefined && (highestApplied === null || o > highestApplied)) highestApplied = o;
+  }
+  if (highestApplied === null) return;
+  for (const f of files) {
+    if (appliedSet.has(f)) continue;
+    // `<=`, not `<`. A pending file is by definition not the applied one, so an ordinal EQUAL to
+    // the applied tail means two DIFFERENT migrations share that number — e.g. 0040_original.sql
+    // is recorded in the ledger but a checkout carries 0040_replacement.sql instead. The on-disk
+    // duplicate scan above cannot see that (only one 0040 is present), and `<` waved it through,
+    // so the ledger would end up with two different files numbered 0040 and two databases built
+    // from the same repo would diverge. Renaming an applied migration is the mutation this guard
+    // exists to refuse.
+    if (ordinalOf(f) <= highestApplied) {
+      throw new Error(
+        `migrate: out-of-order migration ${f} — numbered at or below already-applied ordinal ` +
+          `${highestApplied}; renumber it above the current tail (applied migrations are immutable)`,
+      );
+    }
+  }
+}
+
 /** Caller-supplied SAFE summary for CLI logging, keyed by Error identity — separate from
  *  `.message`, which stays exactly what every throw site already sets (existing tests assert on
  *  its content, e.g. /job_definer/i). Only the throw site knows whether its own text is safe: a
@@ -187,6 +239,15 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
       );
     }
     const seen = new Map<string, string>(schemaMigrationsRows.map((r) => [r.name, r.sha256]));
+    // Static ordering guard (audit D-11) — refuses a duplicate ordinal on disk or a pending file
+    // numbered below the applied tail, BEFORE any file is applied. The message names only
+    // repo-controlled filenames, so it is safe to surface as-is.
+    try {
+      assertMonotonicMigrationOrder(files, seen.keys());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throwMigrateError(message, message, { cause: error });
+    }
 
     // Ensure the cluster-global runtime roles BEFORE 0000 runs. Gated on 0000
     // not yet applied so an already-migrated database keeps exactly today's

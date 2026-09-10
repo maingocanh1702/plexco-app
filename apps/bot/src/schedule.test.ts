@@ -7,7 +7,12 @@ import pg from "pg";
 import PgBoss from "pg-boss";
 import { migrate } from "@plexco/db";
 import { afterEach, describe, expect, it } from "vitest";
-import { isOutboxDispatchScheduleEnabled, registerOutboxDispatchSchedule } from "./worker.js";
+import {
+  isOutboxDispatchScheduleEnabled,
+  registerOutboxDispatchSchedule,
+  resolveOutboxDispatchEnablement,
+} from "./worker.js";
+import { productionStubDeliver } from "./dispatcher.js";
 import { provisionQueue } from "./provision-queue.js";
 import { QUEUE_SCHEMA } from "./queue.js";
 import {
@@ -421,7 +426,19 @@ describe("main() — boss.work() registration (spawned process)", () => {
     expect(stdout).toContain("[worker] outbox dispatch worker not registered (schedule disabled)");
   }, 10_000);
 
-  it("DOES register a boss.work() consumer when the schedule flag is enabled", async () => {
+  /**
+   * This assertion inverted with the X-3 fix. The flag alone used to be enough to register the
+   * schedule and a boss.work() consumer; the audit showed the comment justifying that ("no
+   * producer inserts outbox_events") had rotted — session-service.ts emits eight event types —
+   * while the only configured deliverer is still productionStubDeliver, which acks then DLQs
+   * every row terminally. So worker.ts now refuses the pair even with the flag on, and says why.
+   *
+   * When a real projector replaces the stub (backlog projector-real-replace-stub), `deliver` stops
+   * being productionStubDeliver, resolveOutboxDispatchEnablement returns enabled, and THIS test
+   * flips back to asserting registration — that lane owns the flip. The unit-level matrix for the
+   * decision itself lives in the resolveOutboxDispatchEnablement describe below.
+   */
+  it("REFUSES to register the schedule even with the flag enabled, while the deliverer is still the stub (audit X-3)", async () => {
     const ctx = await setupScheduleContext("plexco_jso_worker_gate_on");
     teardown = ctx.teardown;
     await provisionQueue(ctx.migrationUrl);
@@ -431,7 +448,61 @@ describe("main() — boss.work() registration (spawned process)", () => {
     });
 
     expect(stdout).toContain("[worker] pg-boss started");
-    expect(stdout).toContain('[worker] outbox dispatch schedule registered: "* * * * *"');
-    expect(stdout).not.toContain("outbox dispatch worker not registered");
+    expect(stdout).toContain("[worker] outbox dispatch schedule OFF — ");
+    expect(stdout).toContain("productionStubDeliver");
+    expect(stdout).not.toContain("outbox dispatch schedule registered");
+    // and, because "off" must mean this process never touches dispatch at all, no consumer either
+    expect(stdout).toContain("[worker] outbox dispatch worker not registered (schedule disabled)");
   }, 10_000);
+});
+
+describe("resolveOutboxDispatchEnablement (audit 2026-09-06 X-3)", () => {
+  it("is off when the flag is off, whatever the deliverer", () => {
+    expect(
+      resolveOutboxDispatchEnablement(undefined, async () => ({ result: "delivered" })),
+    ).toMatchObject({
+      enabled: false,
+    });
+  });
+  it("REFUSES to enable with the flag on while the deliverer is productionStubDeliver — producers exist and the stub DLQs terminally", () => {
+    const r = resolveOutboxDispatchEnablement("true", productionStubDeliver);
+    expect(r.enabled).toBe(false);
+    expect(r.reason).toMatch(/productionStubDeliver/);
+  });
+  it("enables with the flag on and a real deliverer", () => {
+    expect(resolveOutboxDispatchEnablement("true", async () => ({ result: "delivered" }))).toEqual({
+      enabled: true,
+      reason: null,
+    });
+  });
+});
+
+/**
+ * Audit 2026-09-06 B-4 — the direct-run guard compares module URL to the entry script URL
+ * instead of `argv[1].endsWith("worker.ts")`, which was false for any compiled path (the worker
+ * would import, do nothing, and exit 0).
+ */
+describe("isDirectRun (audit B-4)", () => {
+  it("is true only when the entry script IS this module, for .ts and compiled .js alike", async () => {
+    const { isDirectRun } = await import("./direct-run.js");
+    const { pathToFileURL } = await import("node:url");
+    const tsUrl = pathToFileURL("/app/apps/bot/src/worker.ts").href;
+    const jsUrl = pathToFileURL("/app/apps/bot/dist/worker.js").href;
+    expect(isDirectRun(tsUrl, "/app/apps/bot/src/worker.ts")).toBe(true);
+    expect(isDirectRun(jsUrl, "/app/apps/bot/dist/worker.js")).toBe(true);
+    // The old check: a compiled entry does not end in "worker.ts" — it must still count.
+    expect("/app/apps/bot/dist/worker.js".endsWith("worker.ts")).toBe(false);
+    // Imported from a test (argv[1] is the runner), or no argv at all → not a direct run.
+    expect(isDirectRun(tsUrl, "/app/node_modules/vitest/dist/cli.js")).toBe(false);
+    expect(isDirectRun(tsUrl, undefined)).toBe(false);
+    // A different module with the same basename is not this module.
+    expect(isDirectRun(tsUrl, "/elsewhere/worker.ts")).toBe(false);
+  });
+
+  it("importing worker.ts from this test did NOT run main() (the guard is what keeps this suite alive)", async () => {
+    const mod = await import("./worker.js");
+    expect(typeof mod.registerOutboxDispatchSchedule).toBe("function");
+    expect(mod.SHUTDOWN_GRACE_MS).toBeLessThan(mod.SHUTDOWN_DEADLINE_MS);
+    expect(mod.SHUTDOWN_GRACE_MS).toBeGreaterThanOrEqual(10_000);
+  });
 });

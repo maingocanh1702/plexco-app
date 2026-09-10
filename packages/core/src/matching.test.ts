@@ -554,3 +554,31 @@ describe("pay-code extraction (config-driven, DD-02)", () => {
     expect(extractPayCode("BMT7Q2A jun13", cfg)).toBeNull();
   });
 });
+
+/**
+ * Audit 2026-09-06 C-3 — parsePlusOneSuffix is bounded: over-long labels are returned untouched
+ * and the suffix regexes only run on strings that end in "+1".
+ */
+describe("parsePlusOneSuffix — bounded (audit C-3)", () => {
+  it("returns an over-long label untouched without running the regexes", () => {
+    const long = `${"a ".repeat(150)}'s +1`;
+    expect(long.length).toBeGreaterThan(200);
+    expect(parsePlusOneSuffix(long)).toEqual({ name: long.trim(), host: null });
+  });
+
+  it("a crafted non-matching input of the maximum length returns in bounded time", () => {
+    const crafted = `${"a ".repeat(99)}'s +2`; // never ends in +1 → regexes are skipped
+    const started = Date.now();
+    expect(parsePlusOneSuffix(crafted)).toEqual({ name: crafted.trim(), host: null });
+    expect(Date.now() - started).toBeLessThan(50);
+  });
+
+  it("still splits the real shapes", () => {
+    expect(parsePlusOneSuffix("Hao Chung's +1")).toEqual({ name: "Hao", host: "Chung" });
+    expect(parsePlusOneSuffix("Hao +1")).toEqual({ name: "Hao", host: null });
+    expect(parsePlusOneSuffix("Hao Ngoc-Anh Mai's +1", ["Ngoc-Anh Mai"])).toEqual({
+      name: "Hao",
+      host: "Ngoc-Anh Mai",
+    });
+  });
+});

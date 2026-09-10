@@ -656,6 +656,118 @@ describe("concurrency — mutating branch locking read (E1, E2, E3)", () => {
  * `resolve_tenant_status_locked` (0027). DBG-N ids cite AP-43's own manifest
  * acceptance matrix, not the case numbers above.
  */
+describe("0038: app-role access to subscriptions goes through resolve_subscription_locked (audit 2026-09-06 D-1)", () => {
+  // Before 0038, 0009's tenant_tables loop gave `app` full DML on subscriptions — the table both
+  // gates read as the truth for suspension (status) and entitlement (plan_key, plan_version). Any
+  // app path inside withTenant(T) could mint its own host_pro row. 0027 closed the same hole for
+  // tenants.status; 0038 closes it here with the same shape.
+  it("app cannot INSERT/UPDATE/DELETE subscriptions even inside its own tenant context (the exact statement the audit named)", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    const client = await ctx.appPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await expect(
+        client.query(
+          `UPDATE subscriptions SET plan_key = 'host_pro', plan_version = 1, status = 'active' WHERE tenant_id = $1`,
+          [tenantId],
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+      await client.query("ROLLBACK");
+
+      await client.query("BEGIN");
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await expect(
+        client.query(`DELETE FROM subscriptions WHERE tenant_id = $1`, [tenantId]),
+      ).rejects.toMatchObject({ code: "42501" });
+      await client.query("ROLLBACK");
+
+      await client.query("BEGIN");
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await expect(
+        client.query(
+          `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+           VALUES ($1, 'free', 1, 'active', now(), 'infinity')`,
+          [tenantId],
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+      await client.query("ROLLBACK");
+
+      // SELECT stays (RLS-scoped) — the finding was about writes, not reads.
+      await client.query("BEGIN");
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      const read = await client.query(`SELECT status FROM subscriptions WHERE tenant_id = $1`, [
+        tenantId,
+      ]);
+      expect(read.rows).toEqual([{ status: "active" }]);
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+  });
+
+  it("resolve_subscription_locked returns the row only for the transaction's own app.tenant_id, and refuses any other tenant or an unscoped transaction (insufficient_privilege)", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    const other = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    const client = await ctx.appPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      const own = await client.query(
+        `SELECT status, plan_key, plan_version FROM resolve_subscription_locked($1)`,
+        [tenantId],
+      );
+      expect(own.rows).toEqual([{ status: "active", plan_key: "free", plan_version: 1 }]);
+      await expect(
+        client.query(`SELECT status FROM resolve_subscription_locked($1)`, [other]),
+      ).rejects.toMatchObject({ code: "42501" });
+      await client.query("ROLLBACK");
+
+      // no GUC at all → refused, not "0 rows"
+      await expect(
+        client.query(`SELECT status FROM resolve_subscription_locked($1)`, [tenantId]),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      client.release();
+    }
+  });
+
+  it("app_worker and readonly cannot execute resolve_subscription_locked -- only app has EXECUTE", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    await expect(
+      ctx.workerPool.query(`SELECT status FROM resolve_subscription_locked($1)`, [tenantId]),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      ctx.readonlyPool.query(`SELECT status FROM resolve_subscription_locked($1)`, [tenantId]),
+    ).rejects.toThrow(/permission denied/i);
+  });
+
+  it("the row lock resolve_subscription_locked takes belongs to the caller's transaction: a concurrent status write waits until the caller commits (same property the direct FOR SHARE had)", async () => {
+    const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });
+    const holder = await ctx.appPool.connect();
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await holder.query(`SELECT status FROM resolve_subscription_locked($1)`, [tenantId]);
+
+      let writerDone = false;
+      const writer = ctx.owner
+        .query(`UPDATE subscriptions SET status = 'suspended' WHERE tenant_id = $1`, [tenantId])
+        .then(() => {
+          writerDone = true;
+        });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(writerDone).toBe(false); // blocked on the FOR SHARE the definer took
+
+      await holder.query("COMMIT");
+      await writer;
+      expect(writerDone).toBe(true);
+    } finally {
+      holder.release();
+    }
+  });
+});
+
 describe("app-role access through resolve_tenant_status_locked (DBG-1, DBG-2, DBG-5)", () => {
   it("DBG-1: app role, tenant active + subscription active — allow", async () => {
     const tenantId = await seedTenant(ctx.owner, { tenantStatus: "active", subStatus: "active" });

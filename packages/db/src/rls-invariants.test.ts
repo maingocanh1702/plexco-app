@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(37); // 0000..0036 (0036 = revoke-app-dml-public-sessions)
+    expect(ctx.migrateResult.applied.length).toBe(44); // 0000..0043 (0043 = identity link_code issue/consume)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(37);
+    expect(second.skipped.length).toBe(44);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1752,12 +1752,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
           return migrate(url(dbName));
         }),
       );
-      expect(res.applied.length).toBe(37); // 0000..0036
+      expect(res.applied.length).toBe(44); // 0000..0043
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(37);
+        expect(rows.length).toBe(44);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2035,7 +2035,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0036_revoke_app_dml_public_sessions.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0043_identity_link_code_issue_consume.sql",
+        );
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -2048,6 +2050,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
             "complete_projector_delivery",
             "forbid_job_audit_mutation",
             "job_prepare_projector_delivery",
+            // 0041 (audit X-5): worker business liveness, same job_definer posture.
+            "job_worker_heartbeat",
+            "job_worker_liveness",
           ].sort(),
         );
       });
@@ -2494,6 +2499,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
           "complete_projector_delivery",
           "forbid_job_audit_mutation",
           "job_prepare_projector_delivery",
+          // 0041 (audit X-5): worker business liveness, same job_definer posture.
+          "job_worker_heartbeat",
+          "job_worker_liveness",
         ].sort(),
       );
 
@@ -4428,7 +4436,7 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
           const personId = await makePerson();
           await ctx.owner.query(
             `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
-             VALUES ($1,'telegram','\\x00'::bytea,$2,$3)`,
+             VALUES ($1,'zalo','\\x00'::bytea,$2,$3)`,
             [personId, randomUUID(), v],
           );
         },
@@ -4469,7 +4477,7 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         const personId = await makePerson();
         await ctx.owner.query(
           `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
-           VALUES ($1,'telegram','\\x00'::bytea,$2,$3)`,
+           VALUES ($1,'zalo','\\x00'::bytea,$2,$3)`,
           [personId, randomUUID(), v],
         );
       };
@@ -4508,10 +4516,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (37) matches the actual migrations/ directory listing, and the tail is 0036", async () => {
+    it("UCC-8: MIGRATION_COUNT (44) matches the actual migrations/ directory listing, and the tail is 0043", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(37);
-      expect(files[files.length - 1]).toBe("0036_revoke_app_dml_public_sessions.sql");
+      expect(files.length).toBe(44);
+      expect(files[files.length - 1]).toBe("0043_identity_link_code_issue_consume.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
@@ -4527,5 +4535,118 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         .length;
       expect(renameCount).toBe(6);
     });
+  });
+});
+
+/**
+ * Audit 2026-09-06 D-11 — the FORCE-RLS guard above is a HAND-LIST (13 names) while the catalog
+ * holds 37 tables carrying `tenant_id`. A new tenant table added without ENABLE+FORCE RLS would
+ * pass that list forever. This block derives the population from the catalog instead:
+ *
+ *   every relation with a tenant_id column is EITHER
+ *     (a) ENABLE + FORCE RLS with ≥1 policy (the HARD RULE #1 shape), OR
+ *     (b) in the CLOSED allowlist below, each entry carrying a reason that is itself verified live:
+ *         "definer-only" = ZERO table privileges for app / app_worker / readonly (0009 header:
+ *         "Global protected tables … NO blanket grant to app"), so the table is unreachable
+ *         except through SECURITY DEFINER functions or the owner.
+ *
+ * The allowlist cannot rot into permanent noise: an entry that stops being definer-only (someone
+ * GRANTs a runtime role on it) fails the reason check, and an entry that gains RLS is reported as
+ * no longer needing the exemption. Measured 2026-09-06 on a replay of 0000..0039: exactly these
+ * six are non-RLS tenant tables, and all six have zero runtime-role privileges.
+ */
+describe("RLS catalog invariant — every tenant_id table is FORCE-RLS or provably definer-only (audit D-11)", () => {
+  const DEFINER_ONLY_TENANT_TABLES: { table: string; reason: string }[] = [
+    {
+      table: "billing_overrides",
+      reason: "0009 global-protected: owner-only ledger override; no runtime grant",
+    },
+    {
+      table: "job_audit_events",
+      reason: "0022 job runtime: written by job_definer functions only",
+    },
+    {
+      table: "oauth_transactions",
+      reason: "0010: reached only via create/consume_oauth_transaction definers",
+    },
+    {
+      table: "player_chat_context",
+      reason: "0009 global-protected: identity service / definer only",
+    },
+    {
+      table: "public_sessions",
+      reason: "0033+0036: base table has ZERO grants; reads go through public_session_share_v",
+    },
+    { table: "routing_audit", reason: "0009 global-protected: audit sink, no runtime grant" },
+  ];
+  const RUNTIME_ROLES = ["app", "app_worker", "readonly"] as const;
+
+  async function tenantTables(): Promise<{ relname: string; forced: boolean; policies: number }[]> {
+    const { rows } = await ctx.owner.query(
+      `SELECT c.relname,
+              (c.relrowsecurity AND c.relforcerowsecurity) AS forced,
+              (SELECT count(*)::int FROM pg_policies p
+                WHERE p.schemaname = 'public' AND p.tablename = c.relname) AS policies
+         FROM pg_class c
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped
+        WHERE c.relkind = 'r' AND c.relnamespace = 'public'::regnamespace
+        ORDER BY c.relname`,
+    );
+    return rows as { relname: string; forced: boolean; policies: number }[];
+  }
+
+  async function runtimePrivileges(table: string): Promise<string[]> {
+    const { rows } = await ctx.owner.query(
+      `SELECT grantee || ':' || privilege_type AS p
+         FROM information_schema.role_table_grants
+        WHERE table_schema = 'public' AND table_name = $1 AND grantee = ANY($2::text[])
+        ORDER BY 1`,
+      [table, [...RUNTIME_ROLES]],
+    );
+    return (rows as { p: string }[]).map((r) => r.p);
+  }
+
+  it("every tenant_id table is FORCE-RLS with a policy, or allowlisted as definer-only", async () => {
+    const allow = new Set(DEFINER_ONLY_TENANT_TABLES.map((e) => e.table));
+    const violations: string[] = [];
+    for (const t of await tenantTables()) {
+      if (t.forced && t.policies > 0) continue;
+      if (allow.has(t.relname)) continue;
+      violations.push(`${t.relname} (forced=${t.forced}, policies=${t.policies})`);
+    }
+    expect(violations, "tenant_id tables that are neither FORCE-RLS nor allowlisted").toEqual([]);
+  });
+
+  it("the population is larger than the hand-list above — the catalog is what this guard reads", async () => {
+    const all = await tenantTables();
+    expect(all.length).toBeGreaterThanOrEqual(37);
+    expect(all.filter((t) => t.forced).length).toBeGreaterThanOrEqual(31);
+  });
+
+  it("every allowlist entry is a real non-RLS tenant table with ZERO privileges for app/app_worker/readonly", async () => {
+    const live = new Map((await tenantTables()).map((t) => [t.relname, t]));
+    for (const entry of DEFINER_ONLY_TENANT_TABLES) {
+      const t = live.get(entry.table);
+      expect(
+        t,
+        `${entry.table} must exist and carry tenant_id (else drop it from the allowlist)`,
+      ).toBeDefined();
+      expect(t!.forced, `${entry.table} gained FORCE RLS — remove it from the allowlist`).toBe(
+        false,
+      );
+      expect(
+        await runtimePrivileges(entry.table),
+        `${entry.table} is allowlisted as definer-only but a runtime role holds a privilege on it`,
+      ).toEqual([]);
+    }
+  });
+
+  it("a tenant-scoped table read by app under the wrong GUC returns nothing — the property the catalog guard protects", async () => {
+    // Spot-check the shape on the two newest FORCE-RLS tables the hand-list never named.
+    for (const table of ["session_surface_refs", "zalo_reply_contexts"]) {
+      await ctx.appPool.query(`SELECT set_config('app.tenant_id', '', false)`);
+      const { rows } = await ctx.appPool.query(`SELECT count(*)::int AS n FROM ${table}`);
+      expect((rows[0] as { n: number }).n, `${table} without GUC`).toBe(0);
+    }
   });
 });

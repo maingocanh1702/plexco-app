@@ -2,7 +2,6 @@ import { createCipheriv, createHash, createHmac, randomBytes, randomUUID } from 
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  LoginReplayError,
   armOauthCompletionHandoff,
   consumeOauthCompletionHandoff,
   onboardingSnapshot,
@@ -15,7 +14,6 @@ import {
   deriveProviderIdempotencyKey,
   InvalidEmailError,
   issueLoginState,
-  loginTelegram,
   normalizeEmail,
   provisionTenant,
   resolveWebSession,
@@ -24,7 +22,7 @@ import {
   rotateWebSession,
   tenantsForPerson,
 } from "./auth.js";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import { setupRlsTestContext, type RlsTestContext, seedPersonAccount } from "./test-harness.js";
 
 /** S4 auth invariants — run as the REAL `app` role via the 0012 fns. */
 
@@ -39,12 +37,6 @@ afterAll(async () => {
 });
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
-const freshLogin = (uid: string) => ({
-  platformUserHash: sha(`tg:${uid}`),
-  displayName: `Player ${uid}`,
-  loginHash: sha(`payload:${uid}:${randomBytes(8).toString("hex")}`),
-});
-
 /**
  * Deterministic concurrency barrier for the D0a epoch race suite (G3 §8: "two
  * checked-out PostgreSQL connections and deterministic barriers ... timing
@@ -84,75 +76,100 @@ async function backendPid(client: pg.PoolClient): Promise<number> {
   return (rows[0] as { pid: number }).pid;
 }
 
-describe("auth_login_telegram", () => {
-  it("first login creates person+account; re-login reuses them", async () => {
-    const input = freshLogin("111");
-    const first = await loginTelegram(ctx.appPool, input);
-    expect(first.created).toBe(true);
-
-    const again = await loginTelegram(ctx.appPool, {
-      ...freshLogin("111"),
-      platformUserHash: input.platformUserHash,
-    });
-    expect(again.created).toBe(false);
-    expect(again.accountId).toBe(first.accountId);
-    expect(again.personId).toBe(first.personId);
+describe("Telegram login path is GONE from the database (0042, audit 2026-09-06 W-1)", () => {
+  it("auth_login_telegram no longer exists and app cannot call it", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM pg_proc WHERE proname = 'auth_login_telegram'`,
+    );
+    expect((rows[0] as { n: number }).n).toBe(0);
+    await expect(
+      ctx.appPool.query(`SELECT * FROM auth_login_telegram('x', 'y', 'z')`),
+    ).rejects.toMatchObject({ code: "42883" });
   });
 
-  it("replayed login payload (same nonce) is rejected", async () => {
-    const input = freshLogin("222");
-    await loginTelegram(ctx.appPool, input);
-    await expect(loginTelegram(ctx.appPool, input)).rejects.toThrow(LoginReplayError);
-  });
+  it("no row may be created as, or turned into, 'telegram' — while a legacy telegram row stays fully updatable", async () => {
+    const { personId } = await seedPersonAccount(ctx.owner, "no-tg");
+    const { personId: other } = await seedPersonAccount(ctx.owner, "no-tg-2");
+    const hash = () => `ci-${randomBytes(6).toString("hex")}`;
 
-  it("DD-26: an existing person's display name is NEVER overwritten at login", async () => {
-    const input = freshLogin("333");
-    const { personId } = await loginTelegram(ctx.appPool, input);
-    await loginTelegram(ctx.appPool, {
-      platformUserHash: input.platformUserHash,
-      displayName: "Totally Different Name",
-      loginHash: sha(`payload:333:${randomBytes(8).toString("hex")}`),
-    });
-    const { rows } = await ctx.owner.query(`SELECT display_name FROM persons WHERE id = $1`, [
-      personId,
+    // (a) INSERT as telegram: refused.
+    await expect(
+      ctx.owner.query(
+        `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash)
+         VALUES ($1, 'telegram', '\\x00'::bytea, $2)`,
+        [personId, hash()],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    // (b) 'zalo' accepted, and it cannot later BECOME telegram.
+    const zalo = await ctx.owner.query<{ id: string }>(
+      `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash)
+       VALUES ($1, 'zalo', '\\x00'::bytea, $2) RETURNING id`,
+      [personId, hash()],
+    );
+    await expect(
+      ctx.owner.query(`UPDATE channel_identities SET platform = 'telegram' WHERE id = $1`, [
+        zalo.rows[0]!.id,
+      ]),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    // (c) THE POINT OF THE TRIGGER: a legacy telegram row (seeded with the triggers off, the
+    // only way to get one now) is still deactivatable and re-parentable. A NOT VALID CHECK
+    // would reject all three of these — including the no-op — leaving DELETE as the only
+    // permitted mutation and blocking the merge lane from re-parenting it.
+    await ctx.owner.query(`ALTER TABLE channel_identities DISABLE TRIGGER USER`);
+    const legacy = await ctx.owner.query<{ id: string }>(
+      `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash)
+       VALUES ($1, 'telegram', '\\x00'::bytea, $2) RETURNING id`,
+      [personId, hash()],
+    );
+    await ctx.owner.query(`ALTER TABLE channel_identities ENABLE TRIGGER USER`);
+    const legacyId = legacy.rows[0]!.id;
+    await expect(
+      ctx.owner.query(`UPDATE channel_identities SET status = 'inactive' WHERE id = $1`, [
+        legacyId,
+      ]),
+    ).resolves.toBeDefined();
+    await expect(
+      ctx.owner.query(`UPDATE channel_identities SET person_id = $2 WHERE id = $1`, [
+        legacyId,
+        other,
+      ]),
+    ).resolves.toBeDefined();
+    await expect(
+      ctx.owner.query(`UPDATE channel_identities SET username_enc = username_enc WHERE id = $1`, [
+        legacyId,
+      ]),
+    ).resolves.toBeDefined();
+    // ...but it still may not be re-asserted as telegram from another platform value
+    await ctx.owner.query(`ALTER TABLE channel_identities DISABLE TRIGGER USER`);
+    await ctx.owner.query(`DELETE FROM channel_identities WHERE id = $1`, [legacyId]);
+    await ctx.owner.query(`ALTER TABLE channel_identities ENABLE TRIGGER USER`);
+
+    // (d) the pre-0025 platform CHECK is untouched (CND-3 pins its definition byte-for-byte)
+    const chk = await ctx.owner.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_constraint
+        WHERE conrelid = 'channel_identities'::regclass AND conname = 'channel_identities_platform_no_telegram_chk'`,
+    );
+    expect(chk.rows[0]!.n).toBe(0); // the rule is a trigger, deliberately not a second CHECK
+    const trg = await ctx.owner.query<{ tgname: string }>(
+      `SELECT tgname FROM pg_trigger WHERE tgrelid = 'channel_identities'::regclass
+         AND NOT tgisinternal ORDER BY tgname`,
+    );
+    expect(trg.rows.map((r) => r.tgname)).toEqual([
+      "trg_channel_identities_no_become_telegram",
+      "trg_channel_identities_no_new_telegram",
     ]);
-    expect((rows[0] as { display_name: string }).display_name).toBe("Player 333");
   });
 
-  it("app role still has NO direct access to the nonce table", async () => {
+  it("the login-nonce retention index and app's lack of access to the nonce table are unchanged", async () => {
     await expect(ctx.appPool.query(`SELECT * FROM auth_login_nonces`)).rejects.toThrow(
       /permission denied/i,
     );
-  });
-
-  it("has a standalone index on `seen_at` so the retention sweep never full-scans (codex round-09)", async () => {
     const { rows } = await ctx.owner.query(
       `SELECT indexdef FROM pg_indexes WHERE tablename = 'auth_login_nonces' AND indexname = 'idx_auth_login_nonces_seen_at'`,
     );
     expect(rows).toHaveLength(1);
-    expect((rows[0] as { indexdef: string }).indexdef).toMatch(/\(seen_at\)/);
-  });
-});
-
-describe("auth_login_telegram concurrency", () => {
-  it("two concurrent FIRST logins (distinct nonces) converge on one account", async () => {
-    const userHash = sha("tg:race-user");
-    const mk = () => ({
-      platformUserHash: userHash,
-      displayName: "Race User",
-      loginHash: sha(`payload:race:${randomBytes(8).toString("hex")}`),
-    });
-    const [a, b] = await Promise.all([
-      loginTelegram(ctx.appPool, mk()),
-      loginTelegram(ctx.appPool, mk()),
-    ]);
-    expect(a.accountId).toBe(b.accountId);
-    expect(a.personId).toBe(b.personId);
-    const { rows } = await ctx.owner.query(
-      `SELECT count(*)::int AS n FROM account_identities WHERE platform_user_hash = $1`,
-      [userHash],
-    );
-    expect((rows[0] as { n: number }).n).toBe(1);
   });
 });
 
@@ -199,7 +216,7 @@ describe("auth_login_state (DD-31 SI-1 — login-state CSRF binding)", () => {
 
 describe("web sessions", () => {
   it("create → resolve → revoke lifecycle; expired/revoked resolve to null", async () => {
-    const { accountId, personId } = await loginTelegram(ctx.appPool, freshLogin("444"));
+    const { accountId, personId } = await seedPersonAccount(ctx.owner, "444");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -226,8 +243,168 @@ describe("web sessions", () => {
     expect(await resolveWebSession(ctx.appPool, expiredHash)).toBeNull();
   });
 
+  // 0040 (audit 2026-09-06 W-6): idle window on top of the absolute TTL.
+  it("idle TTL: a session unseen for longer than the idle window no longer resolves, even before expires_at", async () => {
+    const { accountId } = await seedPersonAccount(ctx.owner, "idle-1");
+    const tokenHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash,
+      csrfSecret: "csrf-idle",
+      ttlSeconds: 30 * 24 * 3600,
+    });
+    expect((await resolveWebSession(ctx.appPool, tokenHash))?.accountId).toBe(accountId);
+
+    // 13 days of silence: inside the 14-day default window → still resolves, and the resolve
+    // TOUCHES last_seen_at (older than a minute → rewritten).
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '13 days' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((await resolveWebSession(ctx.appPool, tokenHash))?.accountId).toBe(accountId);
+    const touched = await ctx.owner.query(
+      `SELECT now() - last_seen_at < interval '1 minute' AS fresh FROM web_sessions WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((touched.rows[0] as { fresh: boolean }).fresh).toBe(true);
+
+    // 15 days of silence: outside the window → null, even though expires_at is weeks away.
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '15 days' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect(await resolveWebSession(ctx.appPool, tokenHash)).toBeNull();
+    // A caller may pass a wider window (the SQL default is not the only policy).
+    expect((await resolveWebSession(ctx.appPool, tokenHash, 20 * 24 * 3600))?.accountId).toBe(
+      accountId,
+    );
+  });
+
+  it("idle TTL: the touch is throttled — a session seen 30 s ago is not rewritten by another resolve", async () => {
+    const { accountId } = await seedPersonAccount(ctx.owner, "idle-2");
+    const tokenHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, { accountId, tokenHash, csrfSecret: "c", ttlSeconds: 900 });
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '30 seconds' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((await resolveWebSession(ctx.appPool, tokenHash))?.accountId).toBe(accountId);
+    const after = await ctx.owner.query(
+      `SELECT now() - last_seen_at BETWEEN interval '25 seconds' AND interval '2 minutes' AS untouched
+         FROM web_sessions WHERE token_hash = $1`,
+      [tokenHash],
+    );
+    expect((after.rows[0] as { untouched: boolean }).untouched).toBe(true);
+  });
+
+  it("idle TTL: a non-positive idle window is refused by the definer (fail closed, never 'no window')", async () => {
+    await expect(
+      ctx.appPool.query(`SELECT * FROM auth_resolve_web_session($1, interval '0')`, ["x"]),
+    ).rejects.toMatchObject({ code: "22023" });
+  });
+
+  // The half of W-6 that a resolve-only window would miss: apps/web's issueSession
+  // (session-cookies.ts) hands the RAW request cookie to rotate without resolving it
+  // first, so a rotate that only checked revoked_at/expires_at would resurrect an
+  // idle-dead cookie as a fresh 30-day session with the idle clock reset.
+  it("idle TTL: rotate refuses an idle-dead session instead of minting a fresh one from it", async () => {
+    const { accountId } = await seedPersonAccount(ctx.owner, "idle-rot");
+    const oldHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash: oldHash,
+      csrfSecret: "c",
+      ttlSeconds: 30 * 24 * 3600,
+    });
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '20 days' WHERE token_hash = $1`,
+      [oldHash],
+    );
+    const newHash = sha(randomBytes(32).toString("hex"));
+    expect(
+      await rotateWebSession(ctx.appPool, {
+        oldTokenHash: oldHash,
+        newTokenHash: newHash,
+        newCsrfSecret: "c2",
+        ttlSeconds: 30 * 24 * 3600,
+        accountId,
+      }),
+    ).toBeNull(); // issueSession turns this into SessionReauthRequiredError
+    const minted = await ctx.owner.query(`SELECT 1 FROM web_sessions WHERE token_hash = $1`, [
+      newHash,
+    ]);
+    expect(minted.rows).toHaveLength(0); // nothing was written
+
+    // an explicitly wider window still rotates it — the window is a parameter, not a hardcode
+    expect(
+      await rotateWebSession(ctx.appPool, {
+        oldTokenHash: oldHash,
+        newTokenHash: newHash,
+        newCsrfSecret: "c2",
+        ttlSeconds: 30 * 24 * 3600,
+        accountId,
+        idleSeconds: 60 * 24 * 3600,
+      }),
+    ).not.toBeNull();
+  });
+
+  /**
+   * Adding the touch turned a read-only resolve into a writer, and a writer takes the row lock.
+   * Deciding the answer BEFORE that wait is a live authentication bug: a logout that has UPDATEd
+   * the row but not committed is invisible to a READ COMMITTED read, the touch then queues behind
+   * it, and when the logout commits the function would still return the session it had already
+   * cached — a revoke that committed strictly before the answer, honoured anyway, which is what
+   * DD-80 v1.88's "revoke-all is linearizable" forbids. Locking first makes the revoke either
+   * entirely before us (nothing returned) or entirely after (it waits).
+   */
+  it("idle TTL: a revoke that COMMITS while resolve is queued on the row lock denies the resolve", async () => {
+    const { accountId } = await seedPersonAccount(ctx.owner, "idle-race");
+    const tokenHash = sha(randomBytes(32).toString("hex"));
+    await createWebSession(ctx.appPool, {
+      accountId,
+      tokenHash,
+      csrfSecret: "c",
+      ttlSeconds: 30 * 24 * 3600,
+    });
+    // older than the touch throttle, so resolve WILL try to write and therefore WILL queue
+    await ctx.owner.query(
+      `UPDATE web_sessions SET last_seen_at = now() - interval '5 minutes' WHERE token_hash = $1`,
+      [tokenHash],
+    );
+
+    const revoker = await ctx.superuserDb.pool.connect();
+    const resolver = await ctx.appPool.connect();
+    let pending: Promise<pg.QueryResult> | undefined;
+    try {
+      await revoker.query("BEGIN");
+      await revoker.query(`UPDATE web_sessions SET revoked_at = now() WHERE token_hash = $1`, [
+        tokenHash,
+      ]);
+      const revokerPid = await backendPid(revoker);
+      const resolverPid = await backendPid(resolver);
+      pending = resolver.query(`SELECT * FROM auth_resolve_web_session($1)`, [tokenHash]);
+      await waitUntilBlockedByHolder(ctx.owner, revokerPid, resolverPid);
+      await revoker.query("COMMIT"); // the revoke lands while the resolve is still queued
+      expect((await pending).rows).toHaveLength(0); // …and the resolve denies
+    } finally {
+      await revoker.query("ROLLBACK").catch(() => {});
+      revoker.release();
+      if (pending) await pending.catch(() => {});
+      resolver.release();
+    }
+  });
+
+  it("idle TTL: rotate refuses a non-positive idle window too", async () => {
+    await expect(
+      ctx.appPool.query(
+        `SELECT auth_rotate_web_session($1, $2, 'c', interval '900 seconds', $3, interval '0')`,
+        ["x", "y", randomUUID()],
+      ),
+    ).rejects.toMatchObject({ code: "22023" });
+  });
+
   it("rotation revokes the old token and links the new session (fixation defense)", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("555"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "555");
     const oldHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -251,7 +428,7 @@ describe("web sessions", () => {
 
     // cross-account login over a live cookie binds the NEW session to the
     // NEWLY authenticated account (account-confusion regression)
-    const other = await loginTelegram(ctx.appPool, freshLogin("5555"));
+    const other = await seedPersonAccount(ctx.owner, "5555");
     const crossHash = sha(randomBytes(32).toString("hex"));
     await rotateWebSession(ctx.appPool, {
       oldTokenHash: newHash,
@@ -276,7 +453,7 @@ describe("web sessions", () => {
   });
 
   it("a token guess (person B) cannot resolve person A's session", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("666"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "666");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -346,7 +523,7 @@ describe("rate_limit_check (shared store)", () => {
 
 describe("tenant_provision (BL-BIL-1)", () => {
   it("new tenant is ACTIVE on the free plan immediately — no trial, period never ends", async () => {
-    const { personId } = await loginTelegram(ctx.appPool, freshLogin("777"));
+    const { personId } = await seedPersonAccount(ctx.owner, "777");
     const tenantId = await provisionTenant(ctx.appPool, {
       slug: "wao-club-a",
       name: "WAO Club A",
@@ -381,7 +558,7 @@ describe("tenant_provision (BL-BIL-1)", () => {
   });
 
   it("re-submit by the same owner is idempotent; another person gets SLUG_TAKEN", async () => {
-    const owner = await loginTelegram(ctx.appPool, freshLogin("888"));
+    const owner = await seedPersonAccount(ctx.owner, "888");
     const first = await provisionTenant(ctx.appPool, {
       slug: "wao-club-b",
       name: "WAO Club B",
@@ -394,7 +571,7 @@ describe("tenant_provision (BL-BIL-1)", () => {
     });
     expect(again).toBe(first);
 
-    const intruder = await loginTelegram(ctx.appPool, freshLogin("999"));
+    const intruder = await seedPersonAccount(ctx.owner, "999");
     await expect(
       provisionTenant(ctx.appPool, {
         slug: "wao-club-b",
@@ -405,7 +582,7 @@ describe("tenant_provision (BL-BIL-1)", () => {
   });
 
   it("concurrent same-owner submissions both get the SAME tenant (no false 409)", async () => {
-    const owner = await loginTelegram(ctx.appPool, freshLogin("1313"));
+    const owner = await seedPersonAccount(ctx.owner, "1313");
     const [a, b] = await Promise.all([
       provisionTenant(ctx.appPool, {
         slug: "wao-club-race",
@@ -426,13 +603,13 @@ describe("tenant_provision (BL-BIL-1)", () => {
   });
 
   it("a mere MEMBER re-submitting the slug gets SLUG_TAKEN (not the tenant id)", async () => {
-    const owner = await loginTelegram(ctx.appPool, freshLogin("1111"));
+    const owner = await seedPersonAccount(ctx.owner, "1111");
     const tenantId = await provisionTenant(ctx.appPool, {
       slug: "wao-club-c",
       name: "WAO Club C",
       personId: owner.personId,
     });
-    const member = await loginTelegram(ctx.appPool, freshLogin("1212"));
+    const member = await seedPersonAccount(ctx.owner, "1212");
     await ctx.owner.query(
       `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active')`,
       [tenantId, member.personId],
@@ -447,7 +624,7 @@ describe("tenant_provision (BL-BIL-1)", () => {
   });
 
   it("invalid slug is rejected (routing-grade input only)", async () => {
-    const { personId } = await loginTelegram(ctx.appPool, freshLogin("1010"));
+    const { personId } = await seedPersonAccount(ctx.owner, "1010");
     await expect(
       provisionTenant(ctx.appPool, { slug: "Bad Slug!", name: "X", personId }),
     ).rejects.toThrow();
@@ -568,11 +745,11 @@ describe("SECURITY DEFINER search_path hardening (codex round-15)", () => {
   // would silently not even be visible to the second query regardless of
   // whether the vulnerability exists.
   it("auth_resolve_web_session ignores an attacker's same-named temp table (pg_temp shadow attempt)", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("shadow-victim"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "shadow-victim");
     // A SECOND real account — the shadow row points here, so if the function
     // is fooled, the join still succeeds (proving cross-account confusion)
     // instead of just failing to join a fabricated id.
-    const attacker = await loginTelegram(ctx.appPool, freshLogin("shadow-attacker"));
+    const attacker = await seedPersonAccount(ctx.owner, "shadow-attacker");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -643,8 +820,8 @@ describe("SECURITY DEFINER search_path hardening (codex round-15)", () => {
  */
 describe("auth_revoke_account_sessions (internal helper, D0-1/D0-2)", () => {
   it("revokes exactly the target account's live sessions, leaves another account untouched (D0-1)", async () => {
-    const a = await loginTelegram(ctx.appPool, freshLogin("revoke-a"));
-    const b = await loginTelegram(ctx.appPool, freshLogin("revoke-b"));
+    const a = await seedPersonAccount(ctx.owner, "revoke-a");
+    const b = await seedPersonAccount(ctx.owner, "revoke-b");
     for (let i = 0; i < 3; i++) {
       await createWebSession(ctx.appPool, {
         accountId: a.accountId,
@@ -679,7 +856,7 @@ describe("auth_revoke_account_sessions (internal helper, D0-1/D0-2)", () => {
   });
 
   it("app/readonly roles have NO grant on the internal helper (D0-2 / G3-A11)", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("revoke-denied"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "revoke-denied");
     await expect(
       ctx.appPool.query(`SELECT auth_revoke_account_sessions($1)`, [accountId]),
     ).rejects.toThrow(/permission denied/i);
@@ -697,7 +874,7 @@ describe("auth_revoke_account_sessions (internal helper, D0-1/D0-2)", () => {
 
 describe("rotated chain then logout-all (D0-6)", () => {
   it("both the rotated-away token and the current token fail to resolve after logout-all", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("chain"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "chain");
     const oldHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -722,7 +899,7 @@ describe("rotated chain then logout-all (D0-6)", () => {
 
 describe("logout_all audit is atomic and redacted (D0-8)", () => {
   it("records exact account, before/after epoch and count in the same transaction; no raw token", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("audit"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "audit");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     const sessionId = await createWebSession(ctx.appPool, {
       accountId,
@@ -766,7 +943,7 @@ describe("logout_all audit is atomic and redacted (D0-8)", () => {
   });
 
   it("a denied (already-revoked) replay writes zero mutation and zero new audit rows", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("audit-denied"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "audit-denied");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -835,7 +1012,7 @@ describe("auth_audit_events retention index (codex round-03)", () => {
 
 describe("epoch columns: defaults, CHECKs, backfill (D0-14)", () => {
   it("accounts.session_epoch and web_sessions.minted_epoch default to 0 and are non-negative", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("epoch-default"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "epoch-default");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -873,7 +1050,7 @@ describe("epoch columns: defaults, CHECKs, backfill (D0-14)", () => {
 
 describe("resolve equality fail-closed (D0-15)", () => {
   it("only exact minted_epoch = session_epoch resolves; lower/higher fixtures do not", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("epoch-equal"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "epoch-equal");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -903,7 +1080,7 @@ describe("resolve equality fail-closed (D0-15)", () => {
 
 describe("create(X) x logout-all(X) barrier (D0-16)", () => {
   it("create-first: the newly created row is revoked once logout-all commits", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("barrier-16a"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "barrier-16a");
     const existingHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -958,7 +1135,7 @@ describe("create(X) x logout-all(X) barrier (D0-16)", () => {
   });
 
   it("logout-first: a session created AFTER logout-all commits stamps the new epoch and survives", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("barrier-16b"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "barrier-16b");
     const existingHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1014,7 +1191,7 @@ describe("create(X) x logout-all(X) barrier (D0-16)", () => {
 
 describe("rotate(X->X) x logout-all(X) barrier (D0-7)", () => {
   it("rotate-first: the replacement session is minted then revoked by logout-all", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("barrier-7a"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "barrier-7a");
     const oldHash = sha(randomBytes(32).toString("hex"));
     const otherHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
@@ -1075,7 +1252,7 @@ describe("rotate(X->X) x logout-all(X) barrier (D0-7)", () => {
   });
 
   it("logout-first: the stale old token fails revalidation and rotate mints nothing", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("barrier-7b"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "barrier-7b");
     const oldHash = sha(randomBytes(32).toString("hex"));
     const otherHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
@@ -1137,8 +1314,8 @@ describe("rotate(X->X) x logout-all(X) barrier (D0-7)", () => {
 
 describe("rotate(A->B) x logout-all(A) barrier (D0-17)", () => {
   it("rotate-first: B's session commits; logout-all(A) still succeeds on A's remaining state but never touches B's session", async () => {
-    const a = await loginTelegram(ctx.appPool, freshLogin("barrier-17a-A"));
-    const b = await loginTelegram(ctx.appPool, freshLogin("barrier-17a-B"));
+    const a = await seedPersonAccount(ctx.owner, "barrier-17a-A");
+    const b = await seedPersonAccount(ctx.owner, "barrier-17a-B");
     const tA = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId: a.accountId,
@@ -1206,8 +1383,8 @@ describe("rotate(A->B) x logout-all(A) barrier (D0-17)", () => {
   });
 
   it("logout-first: A's old token fails locked revalidation; rotate mints zero B session", async () => {
-    const a = await loginTelegram(ctx.appPool, freshLogin("barrier-17b-A"));
-    const b = await loginTelegram(ctx.appPool, freshLogin("barrier-17b-B"));
+    const a = await seedPersonAccount(ctx.owner, "barrier-17b-A");
+    const b = await seedPersonAccount(ctx.owner, "barrier-17b-B");
     const tA = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId: a.accountId,
@@ -1262,8 +1439,8 @@ describe("rotate(A->B) x logout-all(A) barrier (D0-17)", () => {
 
 describe("rotate(A->B) x logout-all(B) barrier (D0-18)", () => {
   it("rotate-first: B's freshly minted session is then revoked by logout-all(B)", async () => {
-    const a = await loginTelegram(ctx.appPool, freshLogin("barrier-18a-A"));
-    const b = await loginTelegram(ctx.appPool, freshLogin("barrier-18a-B"));
+    const a = await seedPersonAccount(ctx.owner, "barrier-18a-A");
+    const b = await seedPersonAccount(ctx.owner, "barrier-18a-B");
     const tA = sha(randomBytes(32).toString("hex"));
     const tB0 = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
@@ -1324,8 +1501,8 @@ describe("rotate(A->B) x logout-all(B) barrier (D0-18)", () => {
   });
 
   it("logout-first: rotate stamps B's bumped epoch and the new session survives", async () => {
-    const a = await loginTelegram(ctx.appPool, freshLogin("barrier-18b-A"));
-    const b = await loginTelegram(ctx.appPool, freshLogin("barrier-18b-B"));
+    const a = await seedPersonAccount(ctx.owner, "barrier-18b-A");
+    const b = await seedPersonAccount(ctx.owner, "barrier-18b-B");
     const tA = sha(randomBytes(32).toString("hex"));
     const tB0 = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
@@ -1388,7 +1565,7 @@ describe("rotate(A->B) x logout-all(B) barrier (D0-18)", () => {
 
 describe("concurrent logout-all replay (D0-19)", () => {
   it("exactly one of two simultaneous calls on the SAME token bumps/audits; the other is a no-op", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("barrier-19"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "barrier-19");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1450,7 +1627,7 @@ describe("concurrent logout-all replay (D0-19)", () => {
 
 describe("logout-all's own validity signal is epoch equality, not revoked_at (codex round-06 [P1])", () => {
   it("a sequential replay with an ALREADY-dead token still fails at step 1 (D0-4-style, unaffected)", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("single-revoke-sequential"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "single-revoke-sequential");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1466,7 +1643,7 @@ describe("logout-all's own validity signal is epoch equality, not revoked_at (co
   });
 
   it("still succeeds when a CONCURRENT single-session revoke of the SAME token races it, since the account epoch never moves", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("single-revoke-race"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "single-revoke-race");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1517,7 +1694,7 @@ describe("logout-all's own validity signal is epoch equality, not revoked_at (co
 
 describe("rotate(X->X) races logout-all called with the EXACT rotated token (codex round-06 [P1])", () => {
   it("rotate wins the account lock first: logout-all still succeeds and revokes the replacement (G3 §5)", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("barrier-round06-a"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "barrier-round06-a");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1572,7 +1749,7 @@ describe("rotate(X->X) races logout-all called with the EXACT rotated token (cod
 
 describe("a token that expires while queued on the account lock performs zero mutation (codex round-08 [P2])", () => {
   it("re-checks expiry under the lock, not just at the initial read (G3 §4.5 step 4)", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("expires-during-lock-wait"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "expires-during-lock-wait");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1639,7 +1816,7 @@ describe("a token that expires while queued on the account lock performs zero mu
 
 describe("the locked expiry re-check uses real wall-clock time, not the frozen transaction now() (codex round-09 [P2])", () => {
   it("logout-all: a token that naturally crosses its expiry DURING the lock wait performs zero mutation", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("expires-naturally-logout"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "expires-naturally-logout");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     // Short-lived on purpose: this session must genuinely expire, in real
     // wall-clock time, while connB is queued on the account lock below.
@@ -1698,7 +1875,7 @@ describe("the locked expiry re-check uses real wall-clock time, not the frozen t
   });
 
   it("rotate: a token that naturally crosses its expiry DURING the lock wait mints nothing", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("expires-naturally-rotate"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "expires-naturally-rotate");
     const oldHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1744,7 +1921,7 @@ describe("the locked expiry re-check uses real wall-clock time, not the frozen t
 
 describe("atomic failure and overflow (D0-20)", () => {
   it("a failure between the epoch bump and the audit insert rolls back the ENTIRE transaction", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("atomic-fail"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "atomic-fail");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1784,7 +1961,7 @@ describe("atomic failure and overflow (D0-20)", () => {
   });
 
   it("the epoch-shape CHECK rejects a ONE-SIDED null (codex round-01: UNKNOWN must not pass)", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("epoch-one-sided"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "epoch-one-sided");
     await expect(
       ctx.owner.query(
         `INSERT INTO auth_audit_events(event_type, account_id, outcome_class, actor_class,
@@ -1804,7 +1981,7 @@ describe("atomic failure and overflow (D0-20)", () => {
   });
 
   it("bigint overflow at the max epoch boundary aborts rather than wrapping", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("overflow"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "overflow");
     await ctx.owner.query(`UPDATE accounts SET session_epoch = 9223372036854775807 WHERE id = $1`, [
       accountId,
     ]);
@@ -1823,8 +2000,8 @@ describe("atomic failure and overflow (D0-20)", () => {
 
 describe("exact revoke materialization and count via the public wrapper (D0-21)", () => {
   it("A has 3 live sessions, B has 1; logout-all(A) bumps once and revokes exactly A's 3, B untouched", async () => {
-    const a = await loginTelegram(ctx.appPool, freshLogin("materialize-A"));
-    const b = await loginTelegram(ctx.appPool, freshLogin("materialize-B"));
+    const a = await seedPersonAccount(ctx.owner, "materialize-A");
+    const b = await seedPersonAccount(ctx.owner, "materialize-B");
     const aHashes = [0, 1, 2].map((i) =>
       sha(`materialize-a-${i}-${randomBytes(8).toString("hex")}`),
     );
@@ -1870,7 +2047,7 @@ describe("exact revoke materialization and count via the public wrapper (D0-21)"
 
 describe("forward rollback safety (D0-22)", () => {
   it("dropping the epoch predicate cannot resurrect a session already materialized as revoked", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("rollback-safety"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "rollback-safety");
     const tokenHash = sha(randomBytes(32).toString("hex"));
     await createWebSession(ctx.appPool, {
       accountId,
@@ -1977,7 +2154,7 @@ async function seedVerifyToken(
 async function seedLinkCode(personId: string): Promise<string> {
   const ci = await ctx.owner.query(
     `INSERT INTO channel_identities(person_id, platform, platform_user_id_enc, platform_user_lookup_hash)
-     VALUES ($1, 'telegram', '\\x00'::bytea, $2) RETURNING id`,
+     VALUES ($1, 'zalo', '\\x00'::bytea, $2) RETURNING id`,
     [personId, `ci-${randomBytes(6).toString("hex")}`],
   );
   const lc = await ctx.owner.query(
@@ -3887,7 +4064,7 @@ describe("auth-s4-d1b completion handoff — arm/consume (0018)", () => {
       `SELECT auth_oauth_transaction_issue($1, 'google', $2, $3, $4, $5, make_interval(secs => $6))`,
       [stateHash, bindingHash, sha("nonce"), Buffer.from(randomBytes(24)), "kv", 600],
     );
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-arm-unclaimed"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "d1b-arm-unclaimed");
 
     const armed = await armOauthCompletionHandoff(ctx.appPool, {
       stateHash,
@@ -3900,7 +4077,7 @@ describe("auth-s4-d1b completion handoff — arm/consume (0018)", () => {
 
   it("arm is single-use: a second arm on the same claimed row returns false", async () => {
     const { stateHash } = await seedClaimedGoogleTxn();
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-arm-twice"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "d1b-arm-twice");
 
     const first = await armOauthCompletionHandoff(ctx.appPool, {
       stateHash,
@@ -3920,7 +4097,7 @@ describe("auth-s4-d1b completion handoff — arm/consume (0018)", () => {
 
   it("D1B-5: a handoff consumes exactly once — replay returns null, zero second resolution", async () => {
     const { stateHash } = await seedClaimedGoogleTxn();
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-replay"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "d1b-replay");
     const rawHash = sha(randomBytes(32).toString("hex"));
     await armOauthCompletionHandoff(ctx.appPool, {
       stateHash,
@@ -3943,7 +4120,7 @@ describe("auth-s4-d1b completion handoff — arm/consume (0018)", () => {
 
   it("D1B-6: an EXPIRED handoff never resolves — consume returns null, zero mutation", async () => {
     const { stateHash } = await seedClaimedGoogleTxn();
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-expired"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "d1b-expired");
     const rawHash = sha(randomBytes(32).toString("hex"));
     // Negative TTL → handoff_expires_at is in the past the instant it is armed
     // (deterministic; no timing sleep).
@@ -4006,7 +4183,7 @@ describe("auth-s4-d1b completion rotate × logout-all barrier (D1B-8)", () => {
   }
 
   it("rotate-first: the completion's new session is minted then revoked by logout-all", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-8a"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "d1b-8a");
     const resolved = await consumeHandoffForAccount(accountId);
     const oldHash = sha(randomBytes(32).toString("hex"));
     const otherHash = sha(randomBytes(32).toString("hex"));
@@ -4055,7 +4232,7 @@ describe("auth-s4-d1b completion rotate × logout-all barrier (D1B-8)", () => {
   });
 
   it("logout-first: the stale cookie fails revalidation and the completion rotate mints nothing", async () => {
-    const { accountId } = await loginTelegram(ctx.appPool, freshLogin("d1b-8b"));
+    const { accountId } = await seedPersonAccount(ctx.owner, "d1b-8b");
     const resolved = await consumeHandoffForAccount(accountId);
     const oldHash = sha(randomBytes(32).toString("hex"));
     const otherHash = sha(randomBytes(32).toString("hex"));

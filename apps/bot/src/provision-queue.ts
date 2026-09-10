@@ -1,3 +1,4 @@
+import { isDirectRun } from "./direct-run.js";
 import pg from "pg";
 import PgBoss from "pg-boss";
 import { QUEUE_SCHEMA } from "./queue.js";
@@ -48,8 +49,9 @@ export async function provisionQueue(migrationUrl: string): Promise<void> {
   }
 }
 
-const invokedDirectly = process.argv[1]?.endsWith("provision-queue.ts");
-if (invokedDirectly) {
+// Direct-run guard (audit 2026-09-06 B-4) — see direct-run.ts; the old endsWith() check was
+// false for a compiled path, so `node dist/provision-queue.js` would exit 0 having done nothing.
+if (isDirectRun(import.meta.url)) {
   provisionQueue(process.env.DATABASE_URL_MIGRATION ?? "")
     .then(() => {
       console.log("[provision-queue] pgboss schema + queues provisioned");

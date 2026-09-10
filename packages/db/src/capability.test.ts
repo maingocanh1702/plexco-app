@@ -6,6 +6,7 @@ import { resolveCapability, type Capability, type CapabilityDecision } from "./c
 import { authorizeTenantAction } from "./authorization.js";
 import type { Db } from "./client.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import { TenantContextMismatchError } from "./tenant.js";
 
 /**
  * `resolveCapability` acceptance suite (capability.ts). The commercial-
@@ -157,13 +158,24 @@ async function resolveCapabilityWithoutLock(
  * custom prototype), for the prototype-safety suite. Call order: 1 set_config,
  * 2 subscriptions (host_pro@1), 3 plans (the injected entitlements).
  */
+/**
+ * The statement sequence resolveCapability issues, which these fakes must mirror exactly:
+ *   1. ensureTenantContext's READ  (SELECT current_setting('app.tenant_id')) — D-15 made the GUC
+ *      set-or-ASSERT, so it reads first; returning no row means "unset"
+ *   2. ensureTenantContext's WRITE (set_config), taken only because step 1 came back unset
+ *   3. resolve_subscription_locked  -> plan_key / plan_version
+ *   4. plans                        -> entitlements
+ * Before D-15 the context cost ONE call, so these fakes were numbered 1..3; leaving them that way
+ * feeds the plans row to the subscriptions read and every such test dies on "malformed
+ * subscriptions row" instead of exercising what it was written for.
+ */
 function fakeTxWithEntitlements(entitlements: unknown): Tx {
   let call = 0;
   return {
     execute: () => {
       call += 1;
-      if (call === 1) return Promise.resolve({ rows: [] });
-      if (call === 2) {
+      if (call <= 2) return Promise.resolve({ rows: [] }); // context read (unset) + set_config
+      if (call === 3) {
         return Promise.resolve({ rows: [{ plan_key: "host_pro", plan_version: 1 }] });
       }
       return Promise.resolve({ rows: [{ entitlements }] });
@@ -405,8 +417,8 @@ describe("cause-agnostic deny shape + error propagation (G1, D1)", () => {
     const fakeTx = {
       execute: () => {
         call += 1;
-        if (call === 1) return Promise.resolve({ rows: [] }); // set_config
-        if (call === 2) {
+        if (call <= 2) return Promise.resolve({ rows: [] }); // context read (unset) + set_config
+        if (call === 3) {
           return Promise.resolve({ rows: [{ plan_key: "host_pro", plan_version: 1 }] });
         }
         return Promise.resolve({ rows: [{ price: 0 }] }); // present plan row, no entitlements column
@@ -447,18 +459,25 @@ describe("app-role access under RLS + plans grant", () => {
     );
   });
 
-  it("app role: the resolver reads its OWN tenant even if a different tenant's GUC was set earlier in the tx", async () => {
-    // Cross-tenant safety: the resolver sets app.tenant_id to its own argument,
-    // so a stale GUC from earlier work in the same tx cannot make it read (or
-    // leak) another tenant's plan.
+  it("app role: a DIFFERENT tenant's GUC already set in the tx makes the resolver THROW, not silently re-scope (audit D-15)", async () => {
+    // This assertion inverted with D-15. resolveCapability used to set app.tenant_id to its own
+    // argument unconditionally, which reads as "cross-tenant safe" — it does resolve the right
+    // plan — but it silently RE-SCOPES a transaction that some earlier statement had already
+    // pinned to another tenant, so every unrelated read after it in that same transaction
+    // quietly changes meaning. ensureTenantContext is set-or-assert: unset it sets, mismatched
+    // it refuses. A caller that genuinely wants a different tenant must use its own transaction.
     const other = await seedTenant(ctx.owner, { planKey: "host_pro", planVersion: 1 });
     const self = await seedTenant(ctx.owner, { planKey: "free", planVersion: 1 });
-    const decision = await ctx.appDb.db.transaction(async (tx) => {
-      // arm a DIFFERENT tenant's GUC first
-      await tx.execute(sql`SELECT set_config('app.tenant_id', ${other}, true)`);
-      return resolveCapability(tx, self, "payment_reconcile_auto");
-    });
-    expect(decision).toEqual(DENY); // resolved `self` (free), not `other` (host_pro)
+    await expect(
+      ctx.appDb.db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT set_config('app.tenant_id', ${other}, true)`);
+        return resolveCapability(tx, self, "payment_reconcile_auto");
+      }),
+    ).rejects.toThrow(TenantContextMismatchError);
+    // and the honest shape — its own transaction — still resolves `self` (free) to a deny
+    expect(await resolveInOwnTransaction(ctx.appDb.db, self, "payment_reconcile_auto")).toEqual(
+      DENY,
+    );
   });
 });
 

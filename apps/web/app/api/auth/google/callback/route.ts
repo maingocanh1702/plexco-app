@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { t } from "@plexco/core/i18n";
 import { armOauthCompletionHandoff, deriveEmailArtifacts, InvalidEmailError } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
+import { log } from "../../../../../lib/log";
 import { resolveAuthSecretKey, keyedHash } from "../../../../../lib/auth-secrets";
 import { exchangeGoogleCode, verifyGoogleIdToken } from "../../../../../lib/google-oidc";
 import {
@@ -49,11 +50,15 @@ import {
 export async function GET(request: Request): Promise<Response> {
   try {
     return await handleGoogleCallback(request);
-  } catch {
+  } catch (error) {
     // Never let Next emit a 500 without the leakage fence while the request URL
     // still carries the OAuth code/state (§4.1 — codex round-01 [P2]). Any
     // unexpected dependency failure (rate-limit store down, KMS/DB throw) fails
     // closed to the home page with a generic error and no referrer.
+    // The RESPONSE stays generic; the LOG says which dependency failed (audit
+    // 2026-09-06 W-11: an outage was indistinguishable from bad input). The
+    // logger reduces the error to name/message and never sees the request.
+    log.error("auth.google.callback.unhandled", { error });
     const base = process.env.APP_BASE_URL?.trim() ?? "";
     return new Response(null, {
       status: 302,

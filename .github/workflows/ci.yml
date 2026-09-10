@@ -5,8 +5,16 @@ on:
     branches: [main, "feat/**"]
   pull_request:
 
+# Least-privilege token (audit 2026-09-06 X-6): this workflow only reads the checkout and
+# talks to the postgres service; nothing here writes to the repo, issues, or packages.
+# security.yml / linear-sync.yml already declare theirs.
+permissions:
+  contents: read
+
 # Actions-minutes hygiene (2026-08-07): quota tháng này từng cạn vì linear-sync cron */10.
 # Run bị đẩy lùi bởi push mới trên cùng ref thì hủy — trạng thái đáng tin là của HEAD.
+# Known, accepted trade-off: cancel-in-progress applies to main too, so two quick pushes to
+# main leave only the latest run — a superseded main SHA has no CI record (X-6, not fixed here).
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -36,9 +44,12 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)
         with:
           # Full history REQUIRED: the "Review-readiness policy" step below runs
-          # `git merge-base --is-ancestor <AUTHORITY_SHA> main` for every pinned
-          # verdict. The default shallow checkout (depth 1) has neither those
-          # commits nor main's history, so every pin fails AUTHORITY_NOT_MAIN.
+          # `git merge-base --is-ancestor <AUTHORITY_SHA> <main>` for every pinned
+          # verdict, and a shallow checkout has neither those commits nor main's
+          # history. Necessary but NOT sufficient: on pull_request / feat/** runs
+          # there is no local branch named main, only refs/remotes/origin/main —
+          # scripts/check-review-readiness.mjs resolveMainRef() handles that
+          # (audit 2026-09-06 X-1: 50/50 pins failed AUTHORITY_NOT_MAIN off-main).
           fetch-depth: 0
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (peeled SHA verified vs tag 2026-07-17; Node 24 runtime)

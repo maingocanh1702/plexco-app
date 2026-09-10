@@ -1,18 +1,24 @@
-import { createWebSession, rotateWebSession } from "@plexco/db";
+import { createDb, createWebSession, rotateWebSession } from "@plexco/db";
 import { cookies } from "next/headers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runWithLang } from "@plexco/core/i18n";
 import {
+  assertRuntimeDbRole,
   buildCompletionLanding,
   clientIp,
   COMPLETION_PATH,
+  csrfOk,
   HANDOFF_FIELD,
   hashToken,
   issueSession,
   newHandoffToken,
+  resetDbRoleViolationForTests,
   sameOriginRequest,
   SESSION_COOKIE,
+  sessionCookieName,
   SessionReauthRequiredError,
   trustedIngressProvider,
+  appDb,
 } from "./session-cookies";
 
 vi.mock("@plexco/db", () => ({
@@ -28,7 +34,7 @@ vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 
 function reqWith(headers: Record<string, string>): Request {
-  return new Request("https://plexco.app/api/auth/telegram", { method: "POST", headers });
+  return new Request("https://plexco.app/api/auth/logout", { method: "POST", headers });
 }
 
 describe("sameOriginRequest", () => {
@@ -213,8 +219,15 @@ describe("issueSession — issuance fence (G3-B1/B2, D0-12)", () => {
 
     expect(rotateWebSession).toHaveBeenCalledOnce();
     expect(createWebSession).not.toHaveBeenCalled(); // no fallback mint
-    expect(store.delete).toHaveBeenCalledWith(SESSION_COOKIE); // cookie cleared
-    expect(store.set).not.toHaveBeenCalled(); // no new cookie set
+    // Cleared as an expiring SET, not delete(): a bare delete() emits the header without
+    // Secure, which a __Host- prefixed cookie is required to ignore, so the stale cookie would
+    // survive and send every later login back down this same failing rotate branch.
+    expect(store.set).toHaveBeenCalledWith(
+      SESSION_COOKIE,
+      "",
+      expect.objectContaining({ maxAge: 0, path: "/", httpOnly: true, sameSite: "strict" }),
+    );
+    expect(store.set).toHaveBeenCalledOnce(); // the clear only — no new session cookie minted
   });
 
   it("G3-B1: cookie exists + rotate succeeds → mints via rotate, sets the new cookie, never creates", async () => {
@@ -324,5 +337,158 @@ describe("buildCompletionLanding (M3 first-party landing)", () => {
     const { body } = buildCompletionLanding(`a<b>"&'`);
     expect(body).toContain(`value="a&lt;b&gt;&quot;&amp;&#39;"`);
     expect(body).not.toContain(`value="a<b>`);
+  });
+});
+
+/**
+ * Audit 2026-09-06 W-6 — cookie prefixes. `__Host-` is a browser-enforced contract (Secure, no
+ * Domain, Path=/) that makes a sibling-subdomain overwrite of the session cookie impossible. It
+ * is only usable where the cookie is Secure, i.e. production; dev/test over plain http keep the
+ * bare name. The shape is pinned through the pure helper because NODE_ENV cannot be flipped
+ * mid-test for the module-load constant.
+ */
+describe("session cookie name (audit W-6)", () => {
+  it("carries the __Host- prefix when secure and the bare name otherwise", () => {
+    expect(sessionCookieName(true)).toBe("__Host-plx_session");
+    expect(sessionCookieName(false)).toBe("plx_session");
+  });
+
+  it("the module constant is the non-secure name under the test runtime (NODE_ENV != production)", () => {
+    expect(process.env.NODE_ENV).not.toBe("production");
+    expect(SESSION_COOKIE).toBe("plx_session");
+  });
+});
+
+/**
+ * Audit 2026-09-06 W-7 — csrfOk compares in constant time. Behaviour is unchanged (equal → true,
+ * anything else → false); the property under test is that a length mismatch or a missing header
+ * cannot reach timingSafeEqual (which throws on unequal lengths) and still returns false.
+ */
+describe("csrfOk (audit W-7 — constant-time compare)", () => {
+  const session = {
+    sessionId: "s",
+    accountId: "a",
+    personId: "p",
+    csrfSecret: "secret-value-1234567890",
+    expiresAt: new Date(Date.now() + 60_000),
+  };
+  const req = (header?: string) =>
+    new Request("https://plexco.app/x", {
+      headers: header === undefined ? {} : { "x-csrf-token": header },
+    });
+
+  it("accepts the exact secret", () => {
+    expect(csrfOk(req("secret-value-1234567890"), session)).toBe(true);
+  });
+  it("rejects a missing, empty, shorter, longer, or same-length-different header without throwing", () => {
+    expect(csrfOk(req(), session)).toBe(false);
+    expect(csrfOk(req(""), session)).toBe(false);
+    expect(csrfOk(req("secret"), session)).toBe(false);
+    expect(csrfOk(req("secret-value-1234567890-extra"), session)).toBe(false);
+    expect(csrfOk(req("secret-value-1234567891"), session)).toBe(false);
+  });
+});
+
+/**
+ * Audit 2026-09-06 W-4 (HR5) — the landing is a pre-tenant surface (DD-118 bucket b): it answers in
+ * the default language through t(), and follows the request language context when one is set,
+ * instead of hard-coding English outside t().
+ */
+describe("buildCompletionLanding — language (audit W-4)", () => {
+  it("defaults to Vietnamese: lang=vi, Vietnamese title and Continue button", () => {
+    const { body } = buildCompletionLanding("tok");
+    expect(body).toContain(`<html lang="vi">`);
+    expect(body).toContain("<title>Đang đăng nhập…</title>");
+    expect(body).toContain(">Tiếp tục</button>");
+    expect(body).not.toContain("Signing you in");
+  });
+
+  it("renders English under an English language context, through the same seam", () => {
+    const { body } = runWithLang("en", () => buildCompletionLanding("tok"));
+    expect(body).toContain(`<html lang="en">`);
+    expect(body).toContain("<title>Signing you in…</title>");
+    expect(body).toContain(">Continue</button>");
+  });
+});
+
+/**
+ * Audit 2026-09-06 W-10 — the runtime database role is asserted once when DB_EXPECTED_ROLE is set;
+ * a mismatch poisons the handle so every later appDb() fails closed. Exercised through the
+ * exported check with a fake pool (the real pool needs Postgres).
+ */
+describe("assertRuntimeDbRole (audit W-10)", () => {
+  afterEach(() => resetDbRoleViolationForTests());
+
+  const fakePool = (row: { u: string; s: string } | Error) => ({
+    pool: {
+      query: vi.fn(async () => {
+        if (row instanceof Error) throw row;
+        return { rows: [row] };
+      }),
+    },
+  });
+
+  it("passes when both current_user and session_user are the expected role", async () => {
+    expect(await assertRuntimeDbRole(fakePool({ u: "app", s: "app" }) as never, "app")).toBe(true);
+  });
+
+  it("fails when the connection is the superuser/owner, or a SET ROLE from another login", async () => {
+    expect(await assertRuntimeDbRole(fakePool({ u: "plexco", s: "plexco" }) as never, "app")).toBe(
+      false,
+    );
+    expect(await assertRuntimeDbRole(fakePool({ u: "app", s: "plexco" }) as never, "app")).toBe(
+      false,
+    );
+  });
+
+  it("fails closed when the check itself cannot run", async () => {
+    expect(await assertRuntimeDbRole(fakePool(new Error("pg down")) as never, "app")).toBe(false);
+  });
+
+  /**
+   * The check is worth nothing if traffic can outrun it. Before the gate, appDb() fired the
+   * assertion with `void` and handed back a live 10-connection pool in the same tick, so the
+   * first business queries could run on other connections and return unscoped rows while the
+   * check was still in flight — against exactly the misconfiguration (owner/superuser URL, every
+   * RLS policy off) it exists to catch. This drives appDb() with a pool whose role answer is
+   * deferred, and proves no business query reaches the database before the verdict does.
+   */
+  it("appDb GATES every query on the role check: nothing reaches the database before the verdict, and a mismatch rejects", async () => {
+    const reached: string[] = [];
+    let answerRole!: (row: { u: string; s: string }) => void;
+    const roleAnswer = new Promise<{ u: string; s: string }>((resolve) => {
+      answerRole = resolve;
+    });
+    const poolQuery = vi.fn(async (sql: unknown) => {
+      if (String(sql).includes("current_user")) {
+        reached.push("role-check");
+        return { rows: [await roleAnswer] };
+      }
+      reached.push("business-query");
+      return { rows: [{ secret: "unscoped tenant data" }] };
+    });
+    vi.mocked(createDb).mockReturnValueOnce({
+      pool: { query: poolQuery, connect: vi.fn() },
+      db: {},
+      close: vi.fn(),
+    } as never);
+    const prevUrl = process.env.DATABASE_URL;
+    const prevRole = process.env.DB_EXPECTED_ROLE;
+    process.env.DATABASE_URL = "postgres://app@localhost/plexco";
+    process.env.DB_EXPECTED_ROLE = "app";
+    try {
+      const handle = appDb();
+      const business = handle.pool.query("SELECT * FROM sessions");
+      await new Promise((r) => setTimeout(r, 20));
+      expect(reached).toEqual(["role-check"]); // the business query has NOT hit the database
+
+      answerRole({ u: "plexco", s: "plexco" }); // owner role — the misconfiguration W-10 is about
+      await expect(business).rejects.toThrow(/refusing to serve with the wrong database role/);
+      expect(reached).toEqual(["role-check"]); // and it never hit the database at all
+      expect(() => appDb()).toThrow(/refusing to serve/);
+    } finally {
+      process.env.DATABASE_URL = prevUrl;
+      process.env.DB_EXPECTED_ROLE = prevRole;
+    }
   });
 });
