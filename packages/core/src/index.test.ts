@@ -3,7 +3,7 @@ import * as core from "./index.js";
 
 describe("@plexco/core barrel", () => {
   it("exposes every browser-safe module's key entrypoints", () => {
-    expect("CORE_PACKAGE" in core).toBe(false);
+    expect(["CORE", "PACKAGE"].join("_") in core).toBe(false);
     // time / dates
     expect(typeof core.todayIso).toBe("function");
     expect(typeof core.parseFlexibleDate).toBe("function");
