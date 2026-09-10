@@ -11,7 +11,7 @@ scope:
   - packages/db/src/session-service.ts
   - packages/db/src/chat-schema-invariants.test.ts
   - packages/db/src/tx-alias.test.ts
-verify: pnpm --filter @plexco/db run typecheck && pnpm test:db
+verify: pnpm --filter @plexco/db run typecheck && pnpm --filter @plexco/db exec vitest run src/tx-alias.test.ts
 budget_usd: 10
 max_review_rounds: 3
 ---
@@ -43,8 +43,12 @@ git grep -n 'type Tx = Parameters<Parameters<Db\["transaction"\]>\[0\]>\[0\]' --
    `capability.test.ts`) and asserts the alias literal appears in exactly one file, `client.ts` —
    mirroring the guard pattern in `tenant.test.ts:192-213`. It must fail at base (6 hits) and pass
    after the change (1 hit).
-4. `verify` green: `@plexco/db` typecheck and the full db suite (764 tests at `c59674a`; expect
-   764 + the new guard).
+4. `verify` green IN THE SANDBOX: `tsc --noEmit` for `@plexco/db` and the new guard test only.
+   The full db suite (`pnpm test:db`, ~765 tests) CANNOT run inside the writer sandbox — measured
+   2026-09-10 run 3: `connect EPERM 127.0.0.1:5432` (raw TCP to Postgres is not proxied by the
+   sandbox; `allowedDomains` only covers HTTP). It runs in CI on the PR (`pnpm -w test` with a
+   Postgres service) — that is the last gate — so do NOT try to run it, work around it, or HALT
+   over it. A type-only change that typechecks cannot alter runtime behaviour.
 5. `packages/db/src/index.ts` (the package barrel) is NOT in scope: if `Tx` must be re-exported
    from the package root for a consumer outside `packages/db/src`, HALT `SCOPE_DRIFT` and say
    which consumer.
@@ -56,10 +60,7 @@ git grep -n 'type Tx = Parameters<Parameters<Db\["transaction"\]>\[0\]>\[0\]' --
   check. If the install itself fails (network or store path blocked by the sandbox), that is not
   something to work around: HALT `MISSING_CONTEXT` and report the exact error.
 
-- **First ap3 slice to run `pnpm test:db` inside the sandboxed writer** (slices 1-2 only exercised
-  `test:core`). Confirmed before promotion: `ap3/env` has a `DATABASE_URL_TEST=` line and
-  `plexco-postgres-1` is up and healthy. If the sandbox cannot reach Postgres at all, that is a new
-  finding, not something to work around: HALT `MISSING_CONTEXT` and report the exact error.
+- DB access from the sandbox: none (see Acceptance 4). Do not call `docker`, `psql` or `pnpm test:db`.
 - Row text: owner's untracked backlog-rows note of 2026-09-08 § db-tx-type-alias-duplicated-six-files (NOT in the repo)
   (explains why `client.ts`, not `tenant.ts`, is the home).
 - Guard-test precedent: `packages/db/src/tenant.test.ts:192-213` (file walk + `toEqual` on the hit list).
