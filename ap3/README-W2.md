@@ -13,8 +13,10 @@ Cập nhật 2026-09-09 (chiều), **sau khi wave 1 xong**. Đọc kèm `docs/au
   Hệ quả: writer **không cần** domain openai, không cần `gh`, không được push — `ap3/settings.plexco.json`
   đã cắt đúng như vậy.
 - **Ba quyết định của owner đã chốt** (bạn không phải quyết lại):
-  1. `writer_model: claude-sonnet-4-5` — đã đo trên máy này: hợp lệ, `modelUsage` đúng model (không
-     fallback), **$0.0196** cho một lượt nguội. Giữ nguyên; `budget_usd: 6` của slice đầu là dư.
+  1. `writer_model: claude-sonnet-5` (đổi từ `claude-sonnet-4-5` ngày 2026-09-10 theo yêu cầu owner —
+     Sonnet 5 là mặc định của repo, xem `fallbackModel` trong `.claude/settings.json`). Đã đo trên máy
+     này: `claude -p … --model claude-sonnet-5` → `subtype: success`, `modelUsage: ['claude-sonnet-5']`
+     (không fallback), **$0.116** cho một lượt nguội. `budget_usd: 6` của slice đầu vẫn dư.
   2. Hardening W2 số 1 = **CI làm cổng cuối**, không dựng re-verify phía dispatcher. Lý do: Plexco đã có
      `.github/workflows/ci.yml` chạy trên `pull_request:` với typecheck · format · `review:check` · lint ·
      build · `pnpm -w test` + Postgres service. Worktree của ap3 không có `node_modules` và cần DB ⇒

@@ -1,7 +1,7 @@
 {
   "schema": "ap3-routines-v1",
   "_authority": "Owner-edited only. ap3/dispatch.sh reads this file and never writes it. A class is dispatchable only while status == enabled and not paused in ap3/state/trust.json. allowed_scope is the boundary a queued task's scope must fit inside; widen it only from evidence rows, never to make a task fit.",
-  "writer_model": "claude-sonnet-4-5",
+  "writer_model": "claude-sonnet-5",
   "classes": {
     "code-quality-p2": {
       "status": "enabled",

@@ -22,6 +22,11 @@ PATHSET="$(printf '%s\n' \
 xmle() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&apos;/g'; }
 TARGET_X="$(xmle "$TARGET")"; PATHSET_X="$(xmle "$PATHSET")"; HOME_X="$(xmle "$HOME")"; LOGDIR_X="$(xmle "$LOGDIR")"
 
+# AbandonProcessGroup=true is load-bearing: dispatch.sh exits right after STARTED and leaves the
+# writer (`nohup claude -p ... &`) running. launchd's default is to SIGKILL every process still in
+# the job's process group when the job's main process exits — W2 run 1 (Plexco, 2026-09-10) died
+# that way within the same second as STARTED, with 0-byte result.json/stderr.log. nohup only
+# covers SIGHUP; this key is what keeps the writer alive between ticks.
 write_plist() { # <label> <logname> <program-args-xml> <schedule-xml>
   local label logname args sched file
   label="$(xmle "$1")"; logname="$(xmle "$2")"; args="$3"; sched="$4"; file="$AGENTS/$1.plist"
@@ -39,6 +44,7 @@ $args
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>$PATHSET_X</string><key>HOME</key><string>$HOME_X</string></dict>
   <key>RunAtLoad</key><false/>
+  <key>AbandonProcessGroup</key><true/>
 $sched
   <key>StandardOutPath</key><string>$LOGDIR_X/$logname.log</string>
   <key>StandardErrorPath</key><string>$LOGDIR_X/$logname.log</string>

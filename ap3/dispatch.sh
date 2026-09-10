@@ -218,7 +218,7 @@ launch_writer() { # <slug> — start (or restart) the sandboxed coding session, 
     return 1
   fi
   base="$(jget "$rec" base_sha)"
-  model="$(jget "$rec" writer_model claude-sonnet-4-5)"   # pinned at start, not the live tree
+  model="$(jget "$rec" writer_model claude-sonnet-5)"   # pinned at start, not the live tree
   # remaining budget = declared - already spent across fix rounds (never re-grants the full cap)
   budget="$(BT="$(jget "$rec" budget_usd 0)" SP="$(jget "$rec" spent_usd 0)" \
     python3 -c 'import os;print(round(max(0.0,float(os.environ["BT"])-float(os.environ["SP"])),4))')"
@@ -434,7 +434,7 @@ start_next() {
     git show "$origin_sha:ap3/writer-settings.json" > "$RUNS/$slug/writer-settings.json"
     local rsec rmodel
     rsec="$(jget "$rjson" "classes.$cls.security_review" auto)"
-    rmodel="$(jget "$rjson" writer_model claude-sonnet-4-5)"
+    rmodel="$(jget "$rjson" writer_model claude-sonnet-5)"
     RSLUG="$slug" RCLASS="$cls" RRISK="$risk" RBASE="$origin_sha" RBUDGET="$budget" RSTART="$(now)" \
       RSEC="$rsec" RMODEL="$rmodel" \
       RREC="$RUNS/$slug/record.json" python3 -c 'import json,os

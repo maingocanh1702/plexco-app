@@ -224,7 +224,7 @@ max_review_rounds: 3
 ```json
 {
   "schema": "ap3-routines-v1",
-  "writer_model": "claude-sonnet-4-5",
+  "writer_model": "claude-sonnet-5",
   "classes": {
     "bugfix-small": {
       "status": "enabled",
@@ -434,7 +434,7 @@ reached READY with `human_interventions = 0` during the run.
   2026-09-09: Plexco app, `core-package-const-has-no-consumer` (see §11 W2).
 - DD-120 in Plexco's `decisions.md` + the `CLAUDE.md` "ap3" section — without them the headless
   writer follows Plexco's old Level-3 contract (scope-gate register, manifests) and stalls.
-- Writer model and default budget (proposal: `claude-sonnet-4-5`, `$8`, `max_runs_per_day: 1`).
+- Writer model and default budget (proposal: `claude-sonnet-5`, `$8`, `max_runs_per_day: 1`).
 - Whether Codex needs `excludedCommands` (runs outside the sandbox) — decided by probe 2.
 - Whether sandboxed `pnpm test:db` can reach `localhost:5432` (Docker Postgres) — W2 probe;
   `DATABASE_URL_TEST` must reach the dispatcher's environment without being tracked.
