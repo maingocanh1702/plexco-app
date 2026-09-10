@@ -1,9 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Tx } from "./client.js";
 
-// Same derivation as tenant.ts's Tx: the argument the withTenant transaction callback receives.
-// Structurally identical, so a tx from withTenant() passes here without a cast.
-
 /**
  * The CLOSED reason enum migration 0033's raise_public_session_fence accepts
  * (visibility_private | cancelled | closed). The SECURITY DEFINER function fails closed on any
