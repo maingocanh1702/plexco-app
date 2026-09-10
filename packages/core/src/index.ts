@@ -11,8 +11,6 @@
  * here, or client imports of e.g. fmtMoney would drag a Node builtin into
  * the browser bundle.
  */
-export const CORE_PACKAGE = "@plexco/core";
-
 export * from "./api-contract.js";
 export * from "./app-error.js";
 export * from "./time.js";
