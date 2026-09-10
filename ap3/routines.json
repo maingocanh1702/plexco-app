@@ -14,10 +14,10 @@
         "apps/web/app/api/auth/google/**"
       ],
       "budget_usd_max": 10,
-      "max_runs_per_day": 3,
+      "max_runs_per_day": 2,
       "review": "codex",
       "security_review": "auto",
-      "evidence": "none yet — first dispatched run is core-package-const-has-no-consumer (2 files, packages/core). Widen or keep this scope only after ap3/evidence.jsonl shows three READY runs merged unchanged."
+      "evidence": "3/3 READY runs merged unchanged, human_interventions=0 (2026-09-10): PR #2 core-package-const-has-no-consumer, PR #6 core-todayiso-has-no-callers, PR #8 db-tx-type-alias-duplicated-six-files. All touched only packages/core/src or packages/db/src — already inside allowed_scope, so scope was not widened. clean_runs=3."
     }
   }
 }
