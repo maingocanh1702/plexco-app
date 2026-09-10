@@ -77,17 +77,22 @@ function gateHandleOnRoleAssert(db: DbHandle, expected: string): void {
   const rawQuery = pool.query.bind(db.pool) as (...a: unknown[]) => Promise<unknown>;
   const rawConnect = pool.connect.bind(db.pool) as (...a: unknown[]) => Promise<unknown>;
   const ready = assertRuntimeDbRole(db, expected, rawQuery).then((ok) => {
-    if (!ok) throw new Error(dbRoleViolation ?? "DATABASE_URL role check failed — refusing to serve");
+    if (!ok)
+      throw new Error(dbRoleViolation ?? "DATABASE_URL role check failed — refusing to serve");
   });
   ready.catch(() => {}); // the rejection is re-thrown to every gated caller below; don't warn twice
-  const gate = (raw: (...a: unknown[]) => Promise<unknown>) => (...args: unknown[]) => {
-    if (typeof args[args.length - 1] === "function") {
-      return Promise.reject(
-        new Error("appDb(): callback-style pool access is not supported while the role gate is armed"),
-      );
-    }
-    return ready.then(() => raw(...args));
-  };
+  const gate =
+    (raw: (...a: unknown[]) => Promise<unknown>) =>
+    (...args: unknown[]) => {
+      if (typeof args[args.length - 1] === "function") {
+        return Promise.reject(
+          new Error(
+            "appDb(): callback-style pool access is not supported while the role gate is armed",
+          ),
+        );
+      }
+      return ready.then(() => raw(...args));
+    };
   pool.query = gate(rawQuery);
   pool.connect = gate(rawConnect);
 }

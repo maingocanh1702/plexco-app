@@ -18,7 +18,8 @@ const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 } as const;
 export type LogLevel = keyof typeof LEVELS;
 
 /** Keys whose VALUES are never written, whatever they contain (case-insensitive substring). */
-const REDACT_KEY = /token|secret|cookie|handoff|password|authorization|verifier|nonce|code|state|key|hash/i;
+const REDACT_KEY =
+  /token|secret|cookie|handoff|password|authorization|verifier|nonce|code|state|key|hash/i;
 
 export function parseLogLevel(raw: string | undefined): LogLevel {
   const v = raw?.trim().toLowerCase();
@@ -54,7 +55,10 @@ export function bound(text: unknown, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…[+${s.length - max}]`;
 }
 
-export function sanitizeFields(fields: Record<string, unknown>, level: LogLevel): Record<string, unknown> {
+export function sanitizeFields(
+  fields: Record<string, unknown>,
+  level: LogLevel,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(fields)) {
     if (REDACT_KEY.test(key)) {

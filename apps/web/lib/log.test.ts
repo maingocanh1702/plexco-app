@@ -23,7 +23,16 @@ describe("log — redaction and level (audit W-11)", () => {
       },
       "info",
     );
-    for (const k of ["handoff", "idToken", "csrfSecret", "cookie", "code", "state", "nonce", "codeVerifier"]) {
+    for (const k of [
+      "handoff",
+      "idToken",
+      "csrfSecret",
+      "cookie",
+      "code",
+      "state",
+      "nonce",
+      "codeVerifier",
+    ]) {
       expect(out[k], k).toBe("[redacted]");
     }
     expect(out.expected).toBe("app");
@@ -36,7 +45,9 @@ describe("log — redaction and level (audit W-11)", () => {
       message: "permission denied for table sessions",
       code: "42501",
     });
-    expect((sanitizeFields({ error: err }, "debug").error as { stack?: string }).stack).toBeTruthy();
+    expect(
+      (sanitizeFields({ error: err }, "debug").error as { stack?: string }).stack,
+    ).toBeTruthy();
   });
 
   /**

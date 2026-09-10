@@ -281,7 +281,8 @@ export async function consumeLinkCode(
   const lookupHash = deriveLinkCodeLookupHash(canonical, keys);
   const saltRes = await pool.query(`SELECT link_code_salt($1) AS salt`, [lookupHash]);
   const storedSalt = (saltRes.rows[0] as { salt: Buffer | null } | undefined)?.salt ?? null;
-  const salt = Buffer.isBuffer(storedSalt) && storedSalt.length >= SALT_BYTES ? storedSalt : DUMMY_SALT;
+  const salt =
+    Buffer.isBuffer(storedSalt) && storedSalt.length >= SALT_BYTES ? storedSalt : DUMMY_SALT;
   const verifier = await deriveLinkCodeVerifier(canonical, salt);
   const { rows } = await pool.query(
     `SELECT outcome, link_code_id, source_person_id, target_person_id, issuer_kind,

@@ -17,7 +17,6 @@ import type pg from "pg";
  * All token parameters are HASHES — raw session tokens never reach SQL.
  */
 
-
 export interface ResolvedSession {
   sessionId: string;
   accountId: string;

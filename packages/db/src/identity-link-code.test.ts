@@ -167,7 +167,9 @@ describe("pure helpers (no DB)", () => {
     // ...but the verifier separates them, which is what makes a wrong guess countable
     const salt = randomBytes(16);
     expect(
-      (await deriveLinkCodeVerifier(cousin, salt)).equals(await deriveLinkCodeVerifier(canonical, salt)),
+      (await deriveLinkCodeVerifier(cousin, salt)).equals(
+        await deriveLinkCodeVerifier(canonical, salt),
+      ),
     ).toBe(false);
   });
 
@@ -236,9 +238,11 @@ describe("0043 definer shape and grants", () => {
 
   it("app_worker / readonly are permission-denied; app still has no table access on link_codes", async () => {
     for (const pool of [ctx.workerPool, ctx.readonlyPool]) {
-      await expect(pool.query(`SELECT link_code_salt($1)`, ["x".repeat(64)])).rejects.toMatchObject({
-        code: "42501",
-      });
+      await expect(pool.query(`SELECT link_code_salt($1)`, ["x".repeat(64)])).rejects.toMatchObject(
+        {
+          code: "42501",
+        },
+      );
     }
     await expect(ctx.appPool.query(`SELECT count(*) FROM link_codes`)).rejects.toMatchObject({
       code: "42501",
@@ -254,8 +258,12 @@ describe("link_code_issue", () => {
     expect(first.sourcePersonId).toBe(person);
     expect(first.superseded).toBe(0);
     expect(first.code).toMatch(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}-[0-9A-Z]{2}$/);
-    expect(first.expiresAt.getTime() - Date.now()).toBeGreaterThan((LINK_CODE_TTL_SECONDS - 30) * 1000);
-    expect(first.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(LINK_CODE_TTL_SECONDS * 1000);
+    expect(first.expiresAt.getTime() - Date.now()).toBeGreaterThan(
+      (LINK_CODE_TTL_SECONDS - 30) * 1000,
+    );
+    expect(first.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(
+      LINK_CODE_TTL_SECONDS * 1000,
+    );
     expect((await row(first.linkCodeId)).max_attempts).toBe(LINK_CODE_MAX_ATTEMPTS);
 
     const second = await issueLinkCode(ctx.appPool, { accountId: account }, keys);
@@ -284,28 +292,41 @@ describe("link_code_issue", () => {
       { channelIdentityId: await makeLegacyTelegramChannel(active) },
       { accountId: randomUUID() },
     ]) {
-      await expect(issueLinkCode(ctx.appPool, issuer, keys)).rejects.toMatchObject({ code: "42501" });
+      await expect(issueLinkCode(ctx.appPool, issuer, keys)).rejects.toMatchObject({
+        code: "42501",
+      });
     }
   });
 
   it("input contract is 22023: XOR issuer, TTL cap 1 hour, max_attempts 1..20, short hashes", async () => {
     const person = await makePerson();
     const account = await makeAccount(person);
-    await expect(issueLinkCode(ctx.appPool, { accountId: account }, keys, { ttlSeconds: 3601 })).rejects.toMatchObject({
+    await expect(
+      issueLinkCode(ctx.appPool, { accountId: account }, keys, { ttlSeconds: 3601 }),
+    ).rejects.toMatchObject({
       code: "22023",
     });
-    await expect(issueLinkCode(ctx.appPool, { accountId: account }, keys, { maxAttempts: 21 })).rejects.toMatchObject({
+    await expect(
+      issueLinkCode(ctx.appPool, { accountId: account }, keys, { maxAttempts: 21 }),
+    ).rejects.toMatchObject({
       code: "22023",
     });
     const h16 = Buffer.alloc(16, 1);
     await expect(
-      ctx.appPool.query(`SELECT * FROM link_code_issue(NULL, NULL, $1, $2, $2)`, ["a".repeat(64), h16]),
+      ctx.appPool.query(`SELECT * FROM link_code_issue(NULL, NULL, $1, $2, $2)`, [
+        "a".repeat(64),
+        h16,
+      ]),
     ).rejects.toMatchObject({ code: "22023" });
     await expect(
       ctx.appPool.query(`SELECT * FROM link_code_issue(NULL, $1, 'short', $2, $2)`, [account, h16]),
     ).rejects.toMatchObject({ code: "22023" });
     await expect(
-      ctx.appPool.query(`SELECT * FROM link_code_issue(NULL, $1, $2, $3, $3)`, [account, "a".repeat(64), Buffer.alloc(8)]),
+      ctx.appPool.query(`SELECT * FROM link_code_issue(NULL, $1, $2, $3, $3)`, [
+        account,
+        "a".repeat(64),
+        Buffer.alloc(8),
+      ]),
     ).rejects.toMatchObject({ code: "22023" });
     // the wrapper refuses a malformed party before any SQL
     await expect(issueLinkCode(ctx.appPool, {} as never, keys)).rejects.toThrow(/exactly one/);
@@ -320,7 +341,12 @@ describe("link_code_consume — happy paths", () => {
     const chB = await makeChannel(b);
     const issued = await issueLinkCode(ctx.appPool, { accountId: accA }, keys);
     // user typed it lowercase with spaces
-    const r = await consumeLinkCode(ctx.appPool, ` ${issued.code.toLowerCase().replace(/-/g, " ")} `, { channelIdentityId: chB }, keys);
+    const r = await consumeLinkCode(
+      ctx.appPool,
+      ` ${issued.code.toLowerCase().replace(/-/g, " ")} `,
+      { channelIdentityId: chB },
+      keys,
+    );
     expect(r).toMatchObject({
       outcome: "consumed",
       linkCodeId: issued.linkCodeId,
@@ -342,7 +368,12 @@ describe("link_code_consume — happy paths", () => {
     const accB = await makeAccount(b);
     const issued = await issueLinkCode(ctx.appPool, { channelIdentityId: chA }, keys);
     const r = await consumeLinkCode(ctx.appPool, issued.code, { accountId: accB }, keys);
-    expect(r).toMatchObject({ outcome: "consumed", sourcePersonId: a, targetPersonId: b, issuerKind: "channel" });
+    expect(r).toMatchObject({
+      outcome: "consumed",
+      sourcePersonId: a,
+      targetPersonId: b,
+      issuerKind: "channel",
+    });
   });
 
   it("target already IS the issuer's person → same_person, and the code is still spent", async () => {
@@ -374,12 +405,19 @@ describe("link_code_consume — verifier accounting (spec §4 step 4)", () => {
     expect(wrong.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
     expect(wrong.linkCodeId).toBeNull(); // an attempt result still leaks no refs
 
-    const during = await consumeLinkCode(ctx.appPool, issued.code, { channelIdentityId: chB }, keys);
+    const during = await consumeLinkCode(
+      ctx.appPool,
+      issued.code,
+      { channelIdentityId: chB },
+      keys,
+    );
     expect(during.outcome).toBe("invalid");
     expect((await row(issued.linkCodeId)).failed_attempts).toBe(1); // no double accounting
     expect((await row(issued.linkCodeId)).consumed_at).toBeNull();
 
-    await ctx.owner.query(`UPDATE link_codes SET locked_until = NULL WHERE id = $1`, [issued.linkCodeId]);
+    await ctx.owner.query(`UPDATE link_codes SET locked_until = NULL WHERE id = $1`, [
+      issued.linkCodeId,
+    ]);
     const after = await consumeLinkCode(ctx.appPool, issued.code, { channelIdentityId: chB }, keys);
     expect(after.outcome).toBe("consumed");
     expect(after.failedAttempts).toBe(1);
@@ -393,14 +431,19 @@ describe("link_code_consume — verifier accounting (spec §4 step 4)", () => {
     const issued = await issueLinkCode(ctx.appPool, { accountId: accA }, keys, { maxAttempts: 2 });
     const mistyped = sameLookupDifferentTail(issued.code);
     const guess = () =>
-      consumeLinkCode(ctx.appPool, mistyped, { channelIdentityId: chB }, keys, { cooldownSeconds: 0 });
+      consumeLinkCode(ctx.appPool, mistyped, { channelIdentityId: chB }, keys, {
+        cooldownSeconds: 0,
+      });
 
     expect(await guess()).toMatchObject({ outcome: "wrong_code", failedAttempts: 1 });
     expect(await guess()).toMatchObject({ outcome: "wrong_code", failedAttempts: 2 });
     expect(await guess()).toMatchObject({ outcome: "invalid", failedAttempts: null });
     expect(
-      (await consumeLinkCode(ctx.appPool, issued.code, { channelIdentityId: chB }, keys, { cooldownSeconds: 0 }))
-        .outcome,
+      (
+        await consumeLinkCode(ctx.appPool, issued.code, { channelIdentityId: chB }, keys, {
+          cooldownSeconds: 0,
+        })
+      ).outcome,
     ).toBe("invalid"); // a capped code is dead even for the person who owns it
     const r = await row(issued.linkCodeId);
     expect(r.failed_attempts).toBe(2);
@@ -418,18 +461,28 @@ describe("link_code_consume — verifier accounting (spec §4 step 4)", () => {
   it("a code that does not exist, or is malformed, is invalid — no accounting anywhere, no throw", async () => {
     const a = await makePerson();
     const accA = await makeAccount(a);
-    expect((await consumeLinkCode(ctx.appPool, generateLinkCode(), { accountId: accA }, keys)).outcome).toBe("invalid");
-    expect((await consumeLinkCode(ctx.appPool, "nope", { accountId: accA }, keys)).outcome).toBe("invalid");
-    expect((await consumeLinkCode(ctx.appPool, "UUUU-UUUU-UUUU-UUUU-UU", { accountId: accA }, keys)).outcome).toBe("invalid");
+    expect(
+      (await consumeLinkCode(ctx.appPool, generateLinkCode(), { accountId: accA }, keys)).outcome,
+    ).toBe("invalid");
+    expect((await consumeLinkCode(ctx.appPool, "nope", { accountId: accA }, keys)).outcome).toBe(
+      "invalid",
+    );
+    expect(
+      (await consumeLinkCode(ctx.appPool, "UUUU-UUUU-UUUU-UUUU-UU", { accountId: accA }, keys))
+        .outcome,
+    ).toBe("invalid");
     // definer-level: unknown lookup → invalid row (not an error); short verifier → 22023
-    const { rows } = await ctx.appPool.query(`SELECT outcome FROM link_code_consume($1, $2, NULL, $3)`, [
-      "q".repeat(64),
-      randomBytes(32),
-      accA,
-    ]);
+    const { rows } = await ctx.appPool.query(
+      `SELECT outcome FROM link_code_consume($1, $2, NULL, $3)`,
+      ["q".repeat(64), randomBytes(32), accA],
+    );
     expect(rows[0]).toEqual({ outcome: "invalid" });
     await expect(
-      ctx.appPool.query(`SELECT outcome FROM link_code_consume($1, $2, NULL, $3)`, ["q".repeat(64), Buffer.alloc(4), accA]),
+      ctx.appPool.query(`SELECT outcome FROM link_code_consume($1, $2, NULL, $3)`, [
+        "q".repeat(64),
+        Buffer.alloc(4),
+        accA,
+      ]),
     ).rejects.toMatchObject({ code: "22023" });
   });
 });
@@ -442,7 +495,9 @@ describe("link_code_consume — terminal checks come BEFORE accounting (spec §4
     const chB = await makeChannel(b);
     const issued = await issueLinkCode(ctx.appPool, { accountId: accA }, keys, { ttlSeconds: 1 });
     await new Promise((r) => setTimeout(r, 1_200));
-    expect((await consumeLinkCode(ctx.appPool, issued.code, { channelIdentityId: chB }, keys)).outcome).toBe("invalid");
+    expect(
+      (await consumeLinkCode(ctx.appPool, issued.code, { channelIdentityId: chB }, keys)).outcome,
+    ).toBe("invalid");
     expect((await row(issued.linkCodeId)).failed_attempts).toBe(0);
   });
 
@@ -453,8 +508,12 @@ describe("link_code_consume — terminal checks come BEFORE accounting (spec §4
     const chB = await makeChannel(b);
     const first = await issueLinkCode(ctx.appPool, { accountId: accA }, keys);
     const second = await issueLinkCode(ctx.appPool, { accountId: accA }, keys);
-    expect((await consumeLinkCode(ctx.appPool, first.code, { channelIdentityId: chB }, keys)).outcome).toBe("invalid");
-    expect((await consumeLinkCode(ctx.appPool, second.code, { channelIdentityId: chB }, keys)).outcome).toBe("consumed");
+    expect(
+      (await consumeLinkCode(ctx.appPool, first.code, { channelIdentityId: chB }, keys)).outcome,
+    ).toBe("invalid");
+    expect(
+      (await consumeLinkCode(ctx.appPool, second.code, { channelIdentityId: chB }, keys)).outcome,
+    ).toBe("consumed");
   });
 
   it("issuer drift: the issuing channel deactivated, or the issuer's person merged, after issue → invalid; a wrong verifier then does NOT count either", async () => {
@@ -465,21 +524,37 @@ describe("link_code_consume — terminal checks come BEFORE accounting (spec §4
     const issued = await issueLinkCode(ctx.appPool, { channelIdentityId: chA }, keys);
 
     await ctx.owner.query(`UPDATE channel_identities SET status = 'inactive' WHERE id = $1`, [chA]);
-    expect((await consumeLinkCode(ctx.appPool, issued.code, { accountId: accB }, keys)).outcome).toBe("invalid");
+    expect(
+      (await consumeLinkCode(ctx.appPool, issued.code, { accountId: accB }, keys)).outcome,
+    ).toBe("invalid");
     await ctx.owner.query(`UPDATE channel_identities SET status = 'active' WHERE id = $1`, [chA]);
 
-    await ctx.owner.query(`UPDATE persons SET status = 'merged', merged_into_person_id = $2 WHERE id = $1`, [a, b]);
-    expect((await consumeLinkCode(ctx.appPool, issued.code, { accountId: accB }, keys)).outcome).toBe("invalid");
+    await ctx.owner.query(
+      `UPDATE persons SET status = 'merged', merged_into_person_id = $2 WHERE id = $1`,
+      [a, b],
+    );
+    expect(
+      (await consumeLinkCode(ctx.appPool, issued.code, { accountId: accB }, keys)).outcome,
+    ).toBe("invalid");
     // and a guess that WOULD be countable (right lookup, wrong tail) is not counted either,
     // because the issuer-drift check runs before any accounting
     expect(
-      (await consumeLinkCode(ctx.appPool, sameLookupDifferentTail(issued.code), { accountId: accB }, keys))
-        .outcome,
+      (
+        await consumeLinkCode(
+          ctx.appPool,
+          sameLookupDifferentTail(issued.code),
+          { accountId: accB },
+          keys,
+        )
+      ).outcome,
     ).toBe("invalid");
     const r = await row(issued.linkCodeId);
     expect(r.failed_attempts).toBe(0);
     expect(r.consumed_at).toBeNull();
-    await ctx.owner.query(`UPDATE persons SET status = 'active', merged_into_person_id = NULL WHERE id = $1`, [a]);
+    await ctx.owner.query(
+      `UPDATE persons SET status = 'active', merged_into_person_id = NULL WHERE id = $1`,
+      [a],
+    );
   });
 
   it("ineligible TARGET raises 42501 before the code is touched (merged person's channel, legacy telegram channel); XOR target is 22023", async () => {
@@ -491,10 +566,15 @@ describe("link_code_consume — terminal checks come BEFORE accounting (spec §4
       { channelIdentityId: await makeChannel(merged) },
       { channelIdentityId: await makeLegacyTelegramChannel(await makePerson()) },
     ]) {
-      await expect(consumeLinkCode(ctx.appPool, issued.code, target, keys)).rejects.toMatchObject({ code: "42501" });
+      await expect(consumeLinkCode(ctx.appPool, issued.code, target, keys)).rejects.toMatchObject({
+        code: "42501",
+      });
     }
     await expect(
-      ctx.appPool.query(`SELECT * FROM link_code_consume($1, $2, NULL, NULL)`, ["q".repeat(64), randomBytes(32)]),
+      ctx.appPool.query(`SELECT * FROM link_code_consume($1, $2, NULL, NULL)`, [
+        "q".repeat(64),
+        randomBytes(32),
+      ]),
     ).rejects.toMatchObject({ code: "22023" });
     const r = await row(issued.linkCodeId);
     expect(r.failed_attempts).toBe(0);
@@ -518,12 +598,18 @@ describe("link_code_consume — concurrency (spec §4 step 2/5, 0034 lock order)
       const holderPid = await backendPid(holder);
       const consumerPid = await backendPid(consumer);
       const lookup = deriveLinkCodeLookupHash(normalizeLinkCode(issued.code)!, keys);
-      const { rows: saltRows } = await consumer.query(`SELECT link_code_salt($1) AS salt`, [lookup]);
+      const { rows: saltRows } = await consumer.query(`SELECT link_code_salt($1) AS salt`, [
+        lookup,
+      ]);
       const verifier = await deriveLinkCodeVerifier(
         normalizeLinkCode(issued.code)!,
         (saltRows[0] as { salt: Buffer }).salt,
       );
-      pending = consumer.query(`SELECT outcome FROM link_code_consume($1, $2, $3, NULL)`, [lookup, verifier, chB]);
+      pending = consumer.query(`SELECT outcome FROM link_code_consume($1, $2, $3, NULL)`, [
+        lookup,
+        verifier,
+        chB,
+      ]);
       await waitUntilBlockedByHolder(holderPid, consumerPid);
       expect((await row(issued.linkCodeId)).consumed_at).toBeNull(); // nothing claimed while blocked
       await holder.query("COMMIT");
@@ -558,9 +644,9 @@ describe("_link_code_retention (0016/DD-80 30-day precedent)", () => {
     const chB = await makeChannel(b);
 
     const consumed = await issueLinkCode(ctx.appPool, { accountId: accA }, keys);
-    expect((await consumeLinkCode(ctx.appPool, consumed.code, { channelIdentityId: chB }, keys)).outcome).toBe(
-      "consumed",
-    );
+    expect(
+      (await consumeLinkCode(ctx.appPool, consumed.code, { channelIdentityId: chB }, keys)).outcome,
+    ).toBe("consumed");
     const live = await issueLinkCode(ctx.appPool, { accountId: accA }, keys);
     await ctx.owner.query(
       `UPDATE link_codes SET created_at = now() - interval '40 days' WHERE id IN ($1, $2)`,
@@ -574,14 +660,20 @@ describe("_link_code_retention (0016/DD-80 30-day precedent)", () => {
       ctx.owner.query(`SELECT 1 FROM link_codes WHERE id = $1`, [consumed.linkCodeId]),
     ).resolves.toMatchObject({ rows: [] });
 
-    await expect(ctx.owner.query(`SELECT _link_code_retention(interval '0')`)).rejects.toMatchObject({
+    await expect(
+      ctx.owner.query(`SELECT _link_code_retention(interval '0')`),
+    ).rejects.toMatchObject({
       code: "22023",
     });
-    await expect(ctx.owner.query(`SELECT _link_code_retention(interval '30 days', 0)`)).rejects.toMatchObject({
+    await expect(
+      ctx.owner.query(`SELECT _link_code_retention(interval '30 days', 0)`),
+    ).rejects.toMatchObject({
       code: "22023",
     });
     for (const pool of [ctx.appPool, ctx.workerPool, ctx.readonlyPool]) {
-      await expect(pool.query(`SELECT _link_code_retention()`)).rejects.toMatchObject({ code: "42501" });
+      await expect(pool.query(`SELECT _link_code_retention()`)).rejects.toMatchObject({
+        code: "42501",
+      });
     }
   });
 });

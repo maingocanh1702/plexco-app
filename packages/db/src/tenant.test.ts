@@ -202,7 +202,8 @@ describe("tenantRepo().sessions.create is a TEST-ONLY seam (audit D-15)", () => 
         const full = path.join(dir, entry);
         if (statSync(full).isDirectory()) walk(full);
         else if (/\.(ts|tsx|mjs)$/.test(entry) && !/\.test\.(ts|tsx|mjs)$/.test(entry)) {
-          if (readFileSync(full, "utf8").includes("tenantRepo(")) hits.push(path.relative(root, full));
+          if (readFileSync(full, "utf8").includes("tenantRepo("))
+            hits.push(path.relative(root, full));
         }
       }
     };

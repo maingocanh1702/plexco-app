@@ -3440,7 +3440,9 @@ describe("cancelSession (B2 of the split)", () => {
       [tenantId, commandId],
     );
     expect(stored.rows).toHaveLength(1);
-    expect((stored.rows[0] as { result_ref: { refusal?: string; status?: string } }).result_ref).toMatchObject({
+    expect(
+      (stored.rows[0] as { result_ref: { refusal?: string; status?: string } }).result_ref,
+    ).toMatchObject({
       refusal: "CANCEL_REQUIRES_REVIEW",
       status: "draft",
     });

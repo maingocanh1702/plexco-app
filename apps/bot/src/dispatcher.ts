@@ -382,7 +382,10 @@ export function boundRawErrorCode(raw: unknown): string {
 
 export function normalizeErrorCode(raw: unknown): string {
   const text = typeof raw === "string" ? raw : "";
-  let code = text.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 64);
+  let code = text
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .slice(0, 64);
   if (!/^[a-z]/.test(code)) code = "malformed_error_code";
   return ERROR_CODE_RE.test(code) ? code : "malformed_error_code";
 }
@@ -408,7 +411,8 @@ export function completionArgs(
       };
     case "retry": {
       const at = outcome.nextAttemptAt;
-      const future = at instanceof Date && !Number.isNaN(at.getTime()) && at.getTime() > now().getTime();
+      const future =
+        at instanceof Date && !Number.isNaN(at.getTime()) && at.getTime() > now().getTime();
       if (!future) {
         return {
           result: "dlq",

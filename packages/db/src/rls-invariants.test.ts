@@ -2035,7 +2035,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0043_identity_link_code_issue_consume.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0043_identity_link_code_issue_consume.sql",
+        );
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4555,11 +4557,26 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
  */
 describe("RLS catalog invariant — every tenant_id table is FORCE-RLS or provably definer-only (audit D-11)", () => {
   const DEFINER_ONLY_TENANT_TABLES: { table: string; reason: string }[] = [
-    { table: "billing_overrides", reason: "0009 global-protected: owner-only ledger override; no runtime grant" },
-    { table: "job_audit_events", reason: "0022 job runtime: written by job_definer functions only" },
-    { table: "oauth_transactions", reason: "0010: reached only via create/consume_oauth_transaction definers" },
-    { table: "player_chat_context", reason: "0009 global-protected: identity service / definer only" },
-    { table: "public_sessions", reason: "0033+0036: base table has ZERO grants; reads go through public_session_share_v" },
+    {
+      table: "billing_overrides",
+      reason: "0009 global-protected: owner-only ledger override; no runtime grant",
+    },
+    {
+      table: "job_audit_events",
+      reason: "0022 job runtime: written by job_definer functions only",
+    },
+    {
+      table: "oauth_transactions",
+      reason: "0010: reached only via create/consume_oauth_transaction definers",
+    },
+    {
+      table: "player_chat_context",
+      reason: "0009 global-protected: identity service / definer only",
+    },
+    {
+      table: "public_sessions",
+      reason: "0033+0036: base table has ZERO grants; reads go through public_session_share_v",
+    },
     { table: "routing_audit", reason: "0009 global-protected: audit sink, no runtime grant" },
   ];
   const RUNTIME_ROLES = ["app", "app_worker", "readonly"] as const;
@@ -4610,8 +4627,13 @@ describe("RLS catalog invariant — every tenant_id table is FORCE-RLS or provab
     const live = new Map((await tenantTables()).map((t) => [t.relname, t]));
     for (const entry of DEFINER_ONLY_TENANT_TABLES) {
       const t = live.get(entry.table);
-      expect(t, `${entry.table} must exist and carry tenant_id (else drop it from the allowlist)`).toBeDefined();
-      expect(t!.forced, `${entry.table} gained FORCE RLS — remove it from the allowlist`).toBe(false);
+      expect(
+        t,
+        `${entry.table} must exist and carry tenant_id (else drop it from the allowlist)`,
+      ).toBeDefined();
+      expect(t!.forced, `${entry.table} gained FORCE RLS — remove it from the allowlist`).toBe(
+        false,
+      );
       expect(
         await runtimePrivileges(entry.table),
         `${entry.table} is allowlisted as definer-only but a runtime role holds a privilege on it`,

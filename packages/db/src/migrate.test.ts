@@ -925,10 +925,13 @@ describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYP
       const otherId = (other.rows[0] as { id: string }).id;
 
       // 1. fresh provision as app — the exact statement that raised at base.
-      const first = await appClient.query(
-        `SELECT tenant_provision($1, $2, $3, $4, $5) AS id`,
-        ["club-0037-a", "Club A", "Asia/Ho_Chi_Minh", "vi", personId],
-      );
+      const first = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
+        "club-0037-a",
+        "Club A",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
       const tenantA = (first.rows[0] as { id: string }).id;
       expect(tenantA).toMatch(/^[0-9a-f-]{36}$/);
 
@@ -4015,13 +4018,10 @@ describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledg
         personId,
       ]);
       const tenantId = (tenant.rows[0] as { id: string }).id;
-      const otherTenant = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
-        "club-0039-other",
-        "Other",
-        "Asia/Ho_Chi_Minh",
-        "vi",
-        personId,
-      ]);
+      const otherTenant = await appClient.query(
+        `SELECT tenant_provision($1, $2, $3, $4, $5) AS id`,
+        ["club-0039-other", "Other", "Asia/Ho_Chi_Minh", "vi", personId],
+      );
       const otherId = (otherTenant.rows[0] as { id: string }).id;
       const callCreate = (forTenant: string) =>
         appClient!.query(
@@ -4033,9 +4033,10 @@ describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledg
       try {
         await expect(callCreate(otherId)).rejects.toMatchObject({ code: "42501" }); // wrong tenant
         await expect(callCreate(tenantId)).resolves.toBeDefined(); // own tenant
-        const consumed = await appClient.query(`SELECT tenant_id FROM consume_oauth_transaction($1)`, [
-          `state-${tenantId.slice(0, 8)}`,
-        ]);
+        const consumed = await appClient.query(
+          `SELECT tenant_id FROM consume_oauth_transaction($1)`,
+          [`state-${tenantId.slice(0, 8)}`],
+        );
         expect(consumed.rows).toEqual([{ tenant_id: tenantId }]);
       } finally {
         await appClient.query(`SELECT set_config('app.tenant_id', '', false)`);
@@ -4055,10 +4056,9 @@ describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledg
         { column_name: "source_account_id", is_nullable: "YES" },
         { column_name: "source_channel_identity_id", is_nullable: "YES" },
       ]);
-      const account = await su.query(
-        `INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`,
-        [personId],
-      );
+      const account = await su.query(`INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`, [
+        personId,
+      ]);
       const accountId = (account.rows[0] as { id: string }).id;
       const insertLinkCode = (issuer: { ci?: string; acc?: string }, maxAttempts = 5) =>
         su.query(

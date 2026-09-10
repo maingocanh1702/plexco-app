@@ -458,7 +458,9 @@ describe("main() — boss.work() registration (spawned process)", () => {
 
 describe("resolveOutboxDispatchEnablement (audit 2026-09-06 X-3)", () => {
   it("is off when the flag is off, whatever the deliverer", () => {
-    expect(resolveOutboxDispatchEnablement(undefined, async () => ({ result: "delivered" }))).toMatchObject({
+    expect(
+      resolveOutboxDispatchEnablement(undefined, async () => ({ result: "delivered" })),
+    ).toMatchObject({
       enabled: false,
     });
   });

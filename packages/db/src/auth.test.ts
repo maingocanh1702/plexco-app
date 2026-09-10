@@ -126,10 +126,15 @@ describe("Telegram login path is GONE from the database (0042, audit 2026-09-06 
     await ctx.owner.query(`ALTER TABLE channel_identities ENABLE TRIGGER USER`);
     const legacyId = legacy.rows[0]!.id;
     await expect(
-      ctx.owner.query(`UPDATE channel_identities SET status = 'inactive' WHERE id = $1`, [legacyId]),
+      ctx.owner.query(`UPDATE channel_identities SET status = 'inactive' WHERE id = $1`, [
+        legacyId,
+      ]),
     ).resolves.toBeDefined();
     await expect(
-      ctx.owner.query(`UPDATE channel_identities SET person_id = $2 WHERE id = $1`, [legacyId, other]),
+      ctx.owner.query(`UPDATE channel_identities SET person_id = $2 WHERE id = $1`, [
+        legacyId,
+        other,
+      ]),
     ).resolves.toBeDefined();
     await expect(
       ctx.owner.query(`UPDATE channel_identities SET username_enc = username_enc WHERE id = $1`, [
@@ -270,7 +275,9 @@ describe("web sessions", () => {
     );
     expect(await resolveWebSession(ctx.appPool, tokenHash)).toBeNull();
     // A caller may pass a wider window (the SQL default is not the only policy).
-    expect((await resolveWebSession(ctx.appPool, tokenHash, 20 * 24 * 3600))?.accountId).toBe(accountId);
+    expect((await resolveWebSession(ctx.appPool, tokenHash, 20 * 24 * 3600))?.accountId).toBe(
+      accountId,
+    );
   });
 
   it("idle TTL: the touch is throttled — a session seen 30 s ago is not rewritten by another resolve", async () => {

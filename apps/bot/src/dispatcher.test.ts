@@ -409,7 +409,7 @@ describe("runDispatchCycle", () => {
     const tenantId = await seedTenant(ctx.verify);
     const eventId = await seedOutboxEvent(ctx.verify, tenantId);
 
-    const deliver: DeliverFn = async () => ({ result: "dlq", errorCode: 42 } as never);
+    const deliver: DeliverFn = async () => ({ result: "dlq", errorCode: 42 }) as never;
     const summary = await runDispatchCycle(ctx.workerPool, {
       deliver,
       requiredProjectors: [STUB_PROJECTOR],
@@ -445,7 +445,11 @@ describe("runDispatchCycle", () => {
     expect(callCount).toBe(2);
     expect(summary.processedDeliveries).toBe(2);
 
-    const rows = await ctx.verify.query<{ event_id: string; status: string; error_code: string | null }>(
+    const rows = await ctx.verify.query<{
+      event_id: string;
+      status: string;
+      error_code: string | null;
+    }>(
       "SELECT event_id, status, error_code FROM projector_deliveries WHERE event_id = ANY($1) ORDER BY event_id",
       [[eventA, eventB]],
     );
@@ -815,7 +819,8 @@ describe("audit B-1: outcome grammar normalisation is enforced once, in completi
   });
 
   it("a NON-STRING raw error code is described, never coerced with .slice() — the log line must not abort the cycle", async () => {
-    const { boundRawErrorCode, completionArgs, RAW_ERROR_CODE_LOG_MAX } = await import("./dispatcher.js");
+    const { boundRawErrorCode, completionArgs, RAW_ERROR_CODE_LOG_MAX } =
+      await import("./dispatcher.js");
     // DeliveryOutcome says `errorCode: string`; a projector is external code that can send
     // anything, and completionArgs passes the raw value straight through on retry/dlq. Bounding
     // it must therefore never assume a string: throwing here happens BEFORE
@@ -898,7 +903,13 @@ describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
     const file = path.join(tmp, ".heartbeat-test");
     const lines: string[] = [];
 
-    const ok = await heartbeatOnce({ pool: ctx.workerPool, id: "hb-test-1", pid: 4242, file, log: (l) => lines.push(l) });
+    const ok = await heartbeatOnce({
+      pool: ctx.workerPool,
+      id: "hb-test-1",
+      pid: 4242,
+      file,
+      log: (l) => lines.push(l),
+    });
     expect(ok).toBe(true);
     expect(lines).toEqual([]);
     const written = await readFile(file, "utf8");
@@ -923,17 +934,23 @@ describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
       "SELECT started_at, pid FROM job_worker_heartbeats WHERE worker_id = 'hb-test-1'",
     );
     expect(restarted.rows[0]!.pid).toBe(4243);
-    expect(restarted.rows[0]!.started_at.getTime()).toBeGreaterThan(before.rows[0]!.started_at.getTime());
+    expect(restarted.rows[0]!.started_at.getTime()).toBeGreaterThan(
+      before.rows[0]!.started_at.getTime(),
+    );
 
     // Staleness: an old tick reads as not alive.
     await ctx.verify.query(
       "UPDATE job_worker_heartbeats SET last_seen_at = clock_timestamp() - interval '5 minutes' WHERE worker_id = 'hb-test-1'",
     );
-    const stale = await ctx.workerPool.query<{ alive: boolean }>("SELECT alive FROM job_worker_liveness()");
+    const stale = await ctx.workerPool.query<{ alive: boolean }>(
+      "SELECT alive FROM job_worker_liveness()",
+    );
     expect(stale.rows[0]!.alive).toBe(false);
 
     // No table grant: the definer is the only door.
-    await expect(ctx.workerPool.query("SELECT * FROM job_worker_heartbeats")).rejects.toMatchObject({ code: "42501" });
+    await expect(ctx.workerPool.query("SELECT * FROM job_worker_heartbeats")).rejects.toMatchObject(
+      { code: "42501" },
+    );
     await expect(
       ctx.workerPool.query("SELECT job_worker_heartbeat($1, 'h', 1)", ["x".repeat(129)]),
     ).rejects.toMatchObject({ code: "22023" });
@@ -957,7 +974,9 @@ describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
       }),
     } as unknown as pg.Pool;
     const file = path.join(tmp, ".heartbeat-test-dead");
-    expect(await heartbeatOnce({ pool: deadPool, id: "dead", pid: 1, file, log: (l) => lines.push(l) })).toBe(false);
+    expect(
+      await heartbeatOnce({ pool: deadPool, id: "dead", pid: 1, file, log: (l) => lines.push(l) }),
+    ).toBe(false);
     expect(lines[0]).toMatch(/heartbeat failed: connection refused/);
     expect(seen).toContain("ROLLBACK");
     expect(released).toBe(1); // never leaks a pooled client, which is the dispatcher's pool
@@ -1048,7 +1067,8 @@ describe("heartbeat helpers (pure)", () => {
   // including for a future-dated file (writer/probe clock skew): only the shell runs in
   // production, so a stricter helper would be a test that lies about the deployed probe.
   it("heartbeatFresh: within 90 s is fresh, older is not, future-dated matches the shell (fresh)", async () => {
-    const { heartbeatFresh, HEARTBEAT_STALE_MS, heartbeatFilePath, workerId } = await import("./heartbeat.js");
+    const { heartbeatFresh, HEARTBEAT_STALE_MS, heartbeatFilePath, workerId } =
+      await import("./heartbeat.js");
     const now = new Date("2026-09-06T00:01:30Z");
     expect(heartbeatFresh(new Date("2026-09-06T00:00:00Z"), now)).toBe(true);
     expect(heartbeatFresh(new Date("2026-09-05T23:59:59Z"), now)).toBe(false);

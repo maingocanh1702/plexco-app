@@ -48,15 +48,21 @@ describe("pathAllowedForRole (audit W-10)", () => {
 
 /** backlog `web-csp-script-src-nonce` — flag-gated nonce policy. */
 describe("CSP nonce policy (flag-gated)", () => {
-  it("is enabled only by the exact string \"true\"", () => {
+  it('is enabled only by the exact string "true"', () => {
     expect(cspNonceEnabled("true")).toBe(true);
-    for (const v of [undefined, "", "TRUE", "1", "yes", " true"]) expect(cspNonceEnabled(v)).toBe(false);
+    for (const v of [undefined, "", "TRUE", "1", "yes", " true"])
+      expect(cspNonceEnabled(v)).toBe(false);
   });
 
   it("the nonce policy keeps every floor directive from next.config.mjs and adds script-src", () => {
     const csp = buildNonceCsp("abc123");
     expect(csp).toMatch(/script-src 'nonce-abc123' 'strict-dynamic'/);
-    for (const d of ["frame-ancestors 'none'", "base-uri 'self'", "form-action 'self'", "object-src 'none'"]) {
+    for (const d of [
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ]) {
       expect(csp).toContain(d);
     }
     expect(csp).not.toMatch(/unsafe-inline|unsafe-eval|default-src/);

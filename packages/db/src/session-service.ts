@@ -1927,7 +1927,9 @@ function isStoredCancelResult(value: unknown): value is StoredCancelResult {
   // A stored refusal (D-5) keeps the session's PRE-refusal status ('draft'); a stored success is
   // always 'cancelled'. Anything else is not a usable envelope → COMMAND_ID_CONFLICT upstream.
   const statusOk =
-    r.refusal === "CANCEL_REQUIRES_REVIEW" ? r.status === "draft" : r.refusal === undefined && r.status === "cancelled";
+    r.refusal === "CANCEL_REQUIRES_REVIEW"
+      ? r.status === "draft"
+      : r.refusal === undefined && r.status === "cancelled";
   return (
     typeof r.sessionId === "string" &&
     UUID_RE.test(r.sessionId) &&

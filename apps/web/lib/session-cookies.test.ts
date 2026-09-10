@@ -373,7 +373,9 @@ describe("csrfOk (audit W-7 — constant-time compare)", () => {
     expiresAt: new Date(Date.now() + 60_000),
   };
   const req = (header?: string) =>
-    new Request("https://plexco.app/x", { headers: header === undefined ? {} : { "x-csrf-token": header } });
+    new Request("https://plexco.app/x", {
+      headers: header === undefined ? {} : { "x-csrf-token": header },
+    });
 
   it("accepts the exact secret", () => {
     expect(csrfOk(req("secret-value-1234567890"), session)).toBe(true);
@@ -431,8 +433,12 @@ describe("assertRuntimeDbRole (audit W-10)", () => {
   });
 
   it("fails when the connection is the superuser/owner, or a SET ROLE from another login", async () => {
-    expect(await assertRuntimeDbRole(fakePool({ u: "plexco", s: "plexco" }) as never, "app")).toBe(false);
-    expect(await assertRuntimeDbRole(fakePool({ u: "app", s: "plexco" }) as never, "app")).toBe(false);
+    expect(await assertRuntimeDbRole(fakePool({ u: "plexco", s: "plexco" }) as never, "app")).toBe(
+      false,
+    );
+    expect(await assertRuntimeDbRole(fakePool({ u: "app", s: "plexco" }) as never, "app")).toBe(
+      false,
+    );
   });
 
   it("fails closed when the check itself cannot run", async () => {

@@ -22,7 +22,11 @@ describe("api envelope — Cache-Control (audit W-14)", () => {
     expect(res.headers.get("x-extra")).toBe("1");
     expect(res.headers.get("content-type")).toMatch(/application\/json/);
     expect(err("FORBIDDEN", "no", 403).status).toBe(403);
-    const body = (await res.json()) as { data: { x: number }; error: null; meta: { requestId: string } };
+    const body = (await res.json()) as {
+      data: { x: number };
+      error: null;
+      meta: { requestId: string };
+    };
     expect(body.data).toEqual({ x: 1 });
     expect(body.meta.requestId).toMatch(/^req_/);
   });

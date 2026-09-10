@@ -173,7 +173,12 @@ describe("POST /api/auth/google/complete — rate limit + bounded body (audit W-
 
     await POST(completeReq("raw-handoff", { ip: "5.6.7.8" }));
 
-    expect(rateLimitCheck).toHaveBeenCalledWith(expect.anything(), "oauth-complete:5.6.7.8", 10, 60);
+    expect(rateLimitCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      "oauth-complete:5.6.7.8",
+      10,
+      60,
+    );
   });
 
   it("over the limit → 429 LOGIN_RATE_LIMITED envelope, no-referrer, and the handoff is NOT consumed", async () => {
@@ -231,7 +236,9 @@ describe("POST /api/auth/google/complete — rate limit + bounded body (audit W-
     vi.mocked(session.issueSession).mockResolvedValue({ csrfToken: "csrf" });
 
     const res = await POST(
-      completeReq("raw-handoff", { contentType: "application/x-www-form-urlencoded; charset=UTF-8" }),
+      completeReq("raw-handoff", {
+        contentType: "application/x-www-form-urlencoded; charset=UTF-8",
+      }),
     );
 
     expect(res.status).toBe(302);

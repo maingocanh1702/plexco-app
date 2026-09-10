@@ -475,7 +475,9 @@ describe("app-role access under RLS + plans grant", () => {
       }),
     ).rejects.toThrow(TenantContextMismatchError);
     // and the honest shape — its own transaction — still resolves `self` (free) to a deny
-    expect(await resolveInOwnTransaction(ctx.appDb.db, self, "payment_reconcile_auto")).toEqual(DENY);
+    expect(await resolveInOwnTransaction(ctx.appDb.db, self, "payment_reconcile_auto")).toEqual(
+      DENY,
+    );
   });
 });
 

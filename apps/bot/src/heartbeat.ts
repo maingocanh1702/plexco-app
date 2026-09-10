@@ -93,7 +93,9 @@ export async function heartbeatOnce(deps: HeartbeatDeps): Promise<boolean> {
     await writeFile(file, `${(deps.now ?? (() => new Date()))().toISOString()}\n`, "utf8");
   } catch (error) {
     // The DB tick is the truth; a missing local file only degrades the container probe.
-    (deps.log ?? console.error)(`[worker] heartbeat file write failed: ${(error as Error).message}`);
+    (deps.log ?? console.error)(
+      `[worker] heartbeat file write failed: ${(error as Error).message}`,
+    );
   }
   return true;
 }
@@ -103,7 +105,10 @@ export async function heartbeatOnce(deps: HeartbeatDeps): Promise<boolean> {
  * in flight: a tick that outlives its interval (a stalled database) makes the next one a no-op
  * rather than stacking another checked-out client on the dispatcher's pool.
  */
-export function startHeartbeat(deps: HeartbeatDeps, intervalMs = HEARTBEAT_INTERVAL_MS): () => void {
+export function startHeartbeat(
+  deps: HeartbeatDeps,
+  intervalMs = HEARTBEAT_INTERVAL_MS,
+): () => void {
   let stopped = false;
   let inFlight = false;
   const cancelled = () => stopped || deps.cancelled?.() === true;

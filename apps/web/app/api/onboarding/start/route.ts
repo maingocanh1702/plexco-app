@@ -73,7 +73,11 @@ export async function POST(request: Request): Promise<Response> {
   }
   // MAX_TENANT_NAME_CHARS mirrors tenants_name_len_chk (0039): reject here with a 400 rather
   // than let the CHECK surface as a 500 from tenant_provision.
-  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug) || name.length === 0 || name.length > MAX_TENANT_NAME_CHARS) {
+  if (
+    !/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug) ||
+    name.length === 0 ||
+    name.length > MAX_TENANT_NAME_CHARS
+  ) {
     return err(
       "INVALID_BODY",
       t("Tên CLB hoặc slug không hợp lệ.", "Invalid club name or slug."),

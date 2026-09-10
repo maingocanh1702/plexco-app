@@ -36,7 +36,9 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  */
 export class TenantContextMismatchError extends Error {
   constructor() {
-    super("tenant context mismatch: app.tenant_id already set to a different tenant in this transaction");
+    super(
+      "tenant context mismatch: app.tenant_id already set to a different tenant in this transaction",
+    );
     this.name = "TenantContextMismatchError";
   }
 }

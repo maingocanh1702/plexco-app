@@ -72,7 +72,14 @@ describe("buildVietQrUrl — input validation (audit C-2)", () => {
   });
 
   it("refuses an account carrying path/query/fragment characters or over 19 chars", () => {
-    for (const account of ["1102/../evil", "1102?x=1", "1102#frag", "1102 696", "", "1".repeat(20)]) {
+    for (const account of [
+      "1102/../evil",
+      "1102?x=1",
+      "1102#frag",
+      "1102 696",
+      "",
+      "1".repeat(20),
+    ]) {
       expect(() => buildVietQrUrl({ ...good, account })).toThrow(/invalid account/);
     }
     expect(buildVietQrUrl({ ...good, account: "AB12cd" })).toContain("970407-AB12cd-compact2.png");
@@ -83,6 +90,8 @@ describe("buildVietQrUrl — input validation (audit C-2)", () => {
       expect(() => buildVietQrUrl({ ...good, amount })).toThrow(/invalid amount/);
     }
     expect(buildVietQrUrl({ ...good, amount: 0 })).toContain("amount=0");
-    expect(buildVietQrUrl({ ...good, amount: 1_000_000_000_000 })).toContain("amount=1000000000000");
+    expect(buildVietQrUrl({ ...good, amount: 1_000_000_000_000 })).toContain(
+      "amount=1000000000000",
+    );
   });
 });

@@ -192,7 +192,11 @@ describe("POST /api/onboarding/start — bounded body + name length (audit W-8)"
   function rawReq(body: string, contentType: string | null = "application/json"): Request {
     const headers: Record<string, string> = { "x-csrf-token": "secret" };
     if (contentType !== null) headers["content-type"] = contentType;
-    return new Request("https://plexco.app/api/onboarding/start", { method: "POST", headers, body });
+    return new Request("https://plexco.app/api/onboarding/start", {
+      method: "POST",
+      headers,
+      body,
+    });
   }
 
   it("rejects a body over 4 KiB with 413 before provisioning, even with a lying Content-Length", async () => {
