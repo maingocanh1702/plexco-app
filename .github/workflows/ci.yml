@@ -60,6 +60,9 @@ jobs:
       - name: Format
         run: pnpm -w format:check
 
+      - name: Ensure local main ref (pull_request checkouts have none)
+        run: git show-ref --verify --quiet refs/heads/main || git branch main origin/main
+
       - name: Review-readiness policy
         run: pnpm -w review:check
 
