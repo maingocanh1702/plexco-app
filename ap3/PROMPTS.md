@@ -238,8 +238,10 @@ is green. Stop.
 
 ```text
 ap3 follow-up in Plexco app. Verify these preconditions first and stop if any fails:
-- the PR for core-package-const-has-no-consumer is merged, its CI was green, and
-  ap3/state/trust.json shows code-quality-p2 with clean_runs = 1 and paused = false;
+- the PR for core-package-const-has-no-consumer is merged (PR #2, 751e019) and
+  ap3/state/trust.json shows code-quality-p2 with clean_runs >= 1 and paused = false;
+  slice 2 (core-todayiso-has-no-callers) is either merged or not yet started — never in flight
+  (`tail -1 ~/Library/Logs/ap3/dispatch-Plexco-app.log` is not BUSY/STARTED);
 - bundle v6 is merged: `git merge-base --is-ancestor 72394fe origin/main` succeeds.
 
 1. Re-measure both drafts in ap3/queue/_after-v6/ against the current origin/main: the six copies of the
@@ -248,7 +250,8 @@ ap3 follow-up in Plexco app. Verify these preconditions first and stop if any fa
    Do not change class, scope, verify or budget unless a measurement forces it - then say why.
 2. Promote ONLY db-tx-type-alias-duplicated-six-files.md into ap3/queue/. The web-oauth one stays a
    draft until the db task is merged (it will trigger a security round - do that with trust earned).
-   Move the finished task file to ap3/queue/done/core-package-const-has-no-consumer.md.
+   Move every merged task file (core-package-const-has-no-consumer.md, and core-todayiso-has-no-callers.md
+   if its PR is merged) to ap3/queue/done/.
 3. bash ap3/lint-task.sh ap3/queue/db-tx-type-alias-duplicated-six-files.md   # expect: OK
    This one needs the DB suite: confirm ap3/env has DATABASE_URL_TEST and plexco-postgres-1 is up.
 4. Commit exactly those files:
@@ -259,8 +262,62 @@ ap3 follow-up in Plexco app. Verify these preconditions first and stop if any fa
 
 ---
 
-## Sau ba run READY
+## Prompt S — Nợ bảo mật có sẵn (ngoài ap3, PR thường) · chạy ở repo **Plexco app** · làm trong tuần
 
-`bash ap3/report.sh --since 30d` → dán số vào `current-workflow.md § Position on the artifact ladder`
-bên repo `Claude template`, rồi đo lại `DEMONSTRATED_STEP`. Chỉ ghi step 3 khi cả ba run có
-`human_interventions = 0` trong run và `merged_unchanged = true`.
+"OSV full dependency scan" đỏ trên **mọi** push main từ 2026-09-09 (đo run `34442926564`): `next 15.5.21`
+→ 15.5.24 (GHSA-2xp9-vwfh-vxw4 9.5, GHSA-p293-qw3h-jr36 9.0), `sharp 0.35.3` → 0.35.4 (GHSA-rgj7-g3m4-5g8c
+8.9, đang pin bằng `pnpm.overrides`), `vitest`/`@vitest/mocker 3.2.6` (GHSA-82fw-gwwq-j7x9 5.9, OSV chỉ
+fix ở 4.1.11 = major). Không thuộc class `code-quality-p2`, không nằm trong `allowed_scope` → PR thường,
+ruleset `main-ci-gate` gác. Chạy khi **không** có run ap3 đang BUSY (xem log dispatcher).
+
+```text
+Security dependency bump, two PRs, CI is the gate. Every push/PR creation pauses for my "go".
+
+PR A — patch-level, do now:
+1. `git switch -c fix/deps-next-sharp-2026-09 origin/main`.
+2. apps/web/package.json: "next" stays "^15.1.4" (range already admits 15.5.24); root package.json
+   pnpm.overrides.sharp: "^0.35.0" → "^0.35.4". Then `pnpm update next@15.5.24 sharp@0.35.4
+   --recursive` (or `pnpm install` after editing the override) and confirm in pnpm-lock.yaml:
+   `next@15.5.24` and `sharp@0.35.4` resolved, nothing else changed except their transitive deps
+   (`git diff --stat pnpm-lock.yaml` and a quick read of the hunk).
+3. Local gate, all green: `pnpm -w typecheck && pnpm -w lint && pnpm --filter @plexco/web run build
+   && pnpm -w test` (Postgres plexco-postgres-1 must be up; DATABASE_URL_TEST from your shell).
+4. Commit `fix(deps): next 15.5.24, sharp 0.35.4 — OSV Critical/High (GHSA-2xp9-vwfh-vxw4,
+   GHSA-p293-qw3h-jr36, GHSA-rgj7-g3m4-5g8c)`; pause; push; `gh pr create` with the three GHSA
+   links and the local gate output in the body; `gh pr checks --watch`. Do not merge — I merge.
+
+PR B — vitest, only after PR A is merged:
+5. Check `pnpm view vitest versions --json | tail` and the advisory GHSA-82fw-gwwq-j7x9 for a 3.x
+   fixed release. If one exists, bump to it on a branch `fix/deps-vitest-2026-09` exactly like PR A.
+   If the only fix is 4.x, STOP and write me a one-paragraph migration note (breaking changes that
+   touch this repo's vitest configs and the 4 packages that depend on ^3.0.4) — the major bump is a
+   separate decision, not part of this task.
+```
+
+---
+
+## Prompt 4 — Sau ba run READY (`clean_runs = 3`) · Plexco **và** Claude template
+
+Điều kiện: `ap3/state/trust.json` `code-quality-p2.clean_runs >= 3`, cả ba row trong
+`ap3/state/evidence.local.jsonl` có `terminal: READY`, `human_interventions: 0`, `merged_unchanged: true`.
+
+```text
+ap3 trust milestone: three clean runs. Read-only first, quote the numbers:
+`bash ap3/report.sh --since 30d`; the three READY rows of ap3/state/evidence.local.jsonl
+(slug, total_cost_usd, review_rounds, permission_denials, merged_unchanged); trust.json.
+Stop if any row has human_interventions != 0 or merged_unchanged != true.
+
+1. Plexco: widen `code-quality-p2.allowed_scope` in ap3/routines.json ONLY to globs the three
+   evidence rows actually touched plus the two _after-v6 drafts' scopes; update the class's
+   `evidence` string with the three PR numbers. Optionally raise max_runs_per_day to 2 — say why.
+   Commit `chore(ap3): widen code-quality-p2 scope from three clean runs`; pause; push.
+2. Claude template (feat/ap3): delete the `--repo-wide` path from ap3/install.sh, its test branch
+   in ap3/test/writer-settings.sh, and its mention in README/DESIGN — the owner rule was "delete
+   after 3 clean runs; it reproduces the 2026-09-09 incident". `bash ap3/test/run.sh` → PASS.
+   Commit `chore(ap3): remove --repo-wide (3 clean runs reached)`; pause; push feat/ap3.
+3. Claude template: update `current-workflow.md § Position on the artifact ladder` with the
+   report numbers and set DEMONSTRATED_STEP = 3, citing the three PRs and the ruleset as the
+   human-merge gate. Commit `docs: ladder position — step 3 demonstrated (3 clean ap3 runs)`;
+   pause; push.
+4. Print the three commit SHAs and stop.
+```
