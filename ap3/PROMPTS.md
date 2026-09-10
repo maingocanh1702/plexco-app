@@ -242,7 +242,9 @@ ap3 follow-up in Plexco app. Verify these preconditions first and stop if any fa
   ap3/state/trust.json shows code-quality-p2 with clean_runs >= 1 and paused = false;
   slice 2 (core-todayiso-has-no-callers) is either merged or not yet started — never in flight
   (`tail -1 ~/Library/Logs/ap3/dispatch-Plexco-app.log` is not BUSY/STARTED);
-- bundle v6 is merged: `git merge-base --is-ancestor 72394fe origin/main` succeeds.
+- bundle v6 is merged: PR #7 (merge commit cffa993, 2026-09-10; the branch was REBASED before
+  merging, so the old tip 72394fe is not an ancestor — verify by content instead:
+  `test -f apps/web/lib/request-policy.ts` and the six `type Tx` copies exist in packages/db/src).
 
 1. Re-measure both drafts in ap3/queue/_after-v6/ against the current origin/main: the six copies of the
    `type Tx` alias and their line numbers; that apps/web/lib/request-policy.ts and its test exist; the
@@ -280,8 +282,9 @@ PR A — patch-level, do now:
    --recursive` (or `pnpm install` after editing the override) and confirm in pnpm-lock.yaml:
    `next@15.5.24` and `sharp@0.35.4` resolved, nothing else changed except their transitive deps
    (`git diff --stat pnpm-lock.yaml` and a quick read of the hunk).
-3. Local gate, all green: `pnpm -w typecheck && pnpm -w lint && pnpm --filter @plexco/web run build
-   && pnpm -w test` (Postgres plexco-postgres-1 must be up; DATABASE_URL_TEST from your shell).
+3. Local gate in the exact CI order, all green: `pnpm -w typecheck && pnpm -w format:check &&
+   pnpm -w review:check && pnpm -w lint && pnpm --filter @plexco/web run build && pnpm -w test`
+   (Postgres plexco-postgres-1 must be up; DATABASE_URL_TEST from your shell).
 4. Commit `fix(deps): next 15.5.24, sharp 0.35.4 — OSV Critical/High (GHSA-2xp9-vwfh-vxw4,
    GHSA-p293-qw3h-jr36, GHSA-rgj7-g3m4-5g8c)`; pause; push; `gh pr create` with the three GHSA
    links and the local gate output in the body; `gh pr checks --watch`. Do not merge — I merge.

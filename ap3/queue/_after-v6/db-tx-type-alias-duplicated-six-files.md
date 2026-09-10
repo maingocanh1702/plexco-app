@@ -15,8 +15,8 @@ verify: pnpm --filter @plexco/db run typecheck && pnpm test:db
 budget_usd: 10
 max_review_rounds: 3
 ---
-> DRAFT — move this file up into `ap3/queue/` only AFTER bundle v6 (`fix/audit-2026-09-06`) has
-> merged to `origin/main`: v6 rewrites `tenant.ts`, `capability.ts`, `authorization.ts` and
+> DRAFT — move this file up into `ap3/queue/` only AFTER bundle v6 (`fix/audit-2026-09-06`, merged
+> as PR #7 / cffa993 on 2026-09-10) has merged to `origin/main`: v6 rewrites `tenant.ts`, `capability.ts`, `authorization.ts` and
 > `session-service.ts`, so every line number below must be re-measured at the post-merge base.
 > Needs the W2 "DB inside sandbox" probe to have passed (`DATABASE_URL_TEST` reachable at
 > `localhost:5432` from a sandboxed `pnpm test:db`).

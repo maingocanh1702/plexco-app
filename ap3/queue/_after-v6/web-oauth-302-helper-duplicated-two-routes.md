@@ -11,7 +11,7 @@ verify: pnpm --filter @plexco/web run typecheck && pnpm test:web && pnpm --filte
 budget_usd: 10
 max_review_rounds: 3
 ---
-> DRAFT — move up into `ap3/queue/` only AFTER bundle v6 has merged: `apps/web/lib/request-policy.ts`
+> DRAFT — move up into `ap3/queue/` only AFTER bundle v6 has merged (it did: PR #7 / cffa993, 2026-09-10): `apps/web/lib/request-policy.ts`
 > does not exist on `main@30a3e90`; it arrives with v6 (lane B3). Re-measure the duplicated block's
 > line numbers at the post-merge base. This task touches auth routes, so `review.sh`'s security
 > heuristic WILL trigger a security round — that is expected and is the W3 evidence for the
