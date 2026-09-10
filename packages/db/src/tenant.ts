@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { sessions } from "../schema.js";
-import type { Db } from "./client.js";
+import type { Db, Tx } from "./client.js";
 
 /**
  * Tenant choke-point (HR1 / INV-1 / BL-TEN-1).
@@ -23,8 +23,6 @@ export function assertTenantId(tenantId: string): void {
     throw new Error("withTenant: tenantId must be a UUID from trusted routing, never user input");
   }
 }
-
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /**
  * Thrown when a caller passes a tenantId that differs from the transaction's ALREADY-SET

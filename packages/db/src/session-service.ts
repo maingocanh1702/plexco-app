@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { charges, outboxEvents, players, processedCommands, sessions, sports } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
-import type { Db } from "./client.js";
+import type { Db, Tx } from "./client.js";
 import { raisePublicSessionFence } from "./public-session-fence.js";
 import { withTenant } from "./tenant.js";
 
@@ -1578,7 +1578,6 @@ export async function updateSession(
 
 // so a tx from withTenant passes to the helper below without a cast). Used by the shared
 // close/cancel money choke-point.
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /**
  * Money choke-point for the obligation-termination commands (edge #5 / DD-117 D3): a session

@@ -1,10 +1,8 @@
 import { sql } from "drizzle-orm";
-import type { Db } from "./client.js";
+import type { Tx } from "./client.js";
 
-// Same derivation as tenant.ts's private Tx (that file does not export it, and it is out of
-// this slice's scope): the argument the withTenant transaction callback receives. Structurally
-// identical, so a tx from withTenant() passes here without a cast.
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+// Same derivation as tenant.ts's Tx: the argument the withTenant transaction callback receives.
+// Structurally identical, so a tx from withTenant() passes here without a cast.
 
 /**
  * The CLOSED reason enum migration 0033's raise_public_session_fence accepts
