@@ -382,7 +382,7 @@ count_today() { # <class> -> runs of this class started today
 }
 
 start_next() {
-  local origin_sha cands path slug cls cap n rjson tsrc fm risk budget wt
+  local origin_sha cands path slug cls cap n rjson tsrc fm risk budget wt inv lint_out reason
   origin_sha="$1"
   # only top-level queue files whose basename is a valid slug (excludes EXAMPLE.md,
   # _-prefixed drafts and any queue/done or queue/_after-*/ subdirectory).
@@ -402,6 +402,22 @@ start_next() {
     [ -n "$path" ] || continue
     slug="$(basename "$path" .md)"
     [ -e "$RUNS/$slug/record.json" ] && continue                       # already has a run
+
+    # K1: quarantine an INVALID_TASK by the pinned origin_sha it was last found invalid at — an
+    # invalid file was rebuilt into a worktree and re-notified on EVERY tick; once a given commit
+    # is known-bad, skip it silently (one log line, no network branch probe, no worktree) until
+    # origin/main moves. Keyed on the WHOLE commit, not just the task file's own blob (round-1
+    # review finding 4): lint also depends on routines.json (class enabled/paused/scope) and on
+    # Context-path existence elsewhere in the tree, so a fix landing in EITHER of those without
+    # touching the task file itself must still clear the quarantine — and any such fix is, by
+    # construction, a new commit, hence a new origin_sha.
+    inv="$STATE/invalid/$slug.json"
+    if [ -e "$inv" ] && [ "$(jget "$inv" origin_sha "")" = "$origin_sha" ]; then
+      log "INVALID_TASK $slug (quarantined, at ${origin_sha:0:7})"
+      continue
+    fi
+    rm -f "$inv"   # origin moved (or no record yet) — clear any stale verdict and re-lint fresh
+
     git ls-remote --heads origin "ap3/$slug" 2>/dev/null | grep -q . && continue  # branch exists
     # class + cap + paused, all from the origin snapshot / real trust (cheap, no worktree yet)
     tsrc="$(mktemp)"; git show "origin/main:$path" > "$tsrc" 2>/dev/null || { rm -f "$tsrc"; continue; }
@@ -418,9 +434,11 @@ start_next() {
     wt="$WT/$slug"
     git worktree add -q -b "ap3/$slug" "$wt" "$origin_sha" 2>/dev/null \
       || { log "INVALID_TASK $slug (worktree add failed)"; continue; }
-    if ! ( cd "$wt" && AP3_TRUST_PATH="$TRUST" bash "$DIR/lint-task.sh" "$path" ) >/dev/null 2>&1; then
+    if ! lint_out="$( cd "$wt" && AP3_TRUST_PATH="$TRUST" bash "$DIR/lint-task.sh" "$path" 2>&1 )"; then
       git worktree remove --force "$wt" 2>/dev/null || true
       git branch -D "ap3/$slug" 2>/dev/null || true
+      reason="$(printf '%s\n' "$lint_out" | head -1)"
+      jset "$inv" origin_sha "$origin_sha"; jset "$inv" reason "$reason"; jset "$inv" at "$(now)"
       log "INVALID_TASK $slug"; notify "INVALID_TASK $slug (see lint)"; continue
     fi
     # START — pin the class policy (security_review, writer_model) from the origin snapshot into
