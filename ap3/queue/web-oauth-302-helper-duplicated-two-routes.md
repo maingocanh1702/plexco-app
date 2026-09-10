@@ -11,12 +11,8 @@ verify: pnpm --filter @plexco/web run typecheck && pnpm test:web && pnpm --filte
 budget_usd: 10
 max_review_rounds: 3
 ---
-> DRAFT — bundle v6 merged (PR #7 / cffa993, 2026-09-10) so `apps/web/lib/request-policy.ts` (it did
-> not exist on `main@30a3e90`; it arrives with v6, lane B3) is present and the line numbers below are
-> re-measured at the post-merge base. Still a draft: per `ap3/PROMPTS.md` Prompt 3, promote only
-> AFTER `db-tx-type-alias-duplicated-six-files.md` has merged — this is the first slice expected to
-> trigger `review.sh`'s security heuristic (auth routes), and that path gets exercised with trust
-> already earned from a clean db-tx run, not as the very next thing after v6.
+> Promoted 2026-09-10 after db-tx was queued; the dispatcher will not start this until db-tx's PR is
+> merged (open PR = in flight).
 
 ## Problem
 
@@ -31,8 +27,8 @@ numbers no longer apply): `callback/route.ts` calls `redirect()` once, at `:101`
 `redirect()` three times, at `:50`, `:70` (inside its own `fail()` closure) and `:133`, and
 `noReferrer()` twice, at `:61` and `:85`. Note: `callback/route.ts`'s top-level catch handler
 (`:63-69`) builds its own 302 inline instead of calling `redirect()` — a third, un-deduplicated copy
-of the same shape that Acceptance #1 does not name; leaving it alone is in scope, not an oversight,
-unless the writer judges otherwise. The right home is `apps/web/lib/request-policy.ts` (same concern:
+of the same shape that Acceptance #1 does not name; leaving it alone is OUT OF SCOPE per
+Acceptance #6, not an oversight. The right home is `apps/web/lib/request-policy.ts` (same concern:
 referrer / navigation policy), NOT `lib/api-envelope.ts` (JSON envelopes only).
 
 ## Acceptance
@@ -46,9 +42,13 @@ referrer / navigation policy), NOT `lib/api-envelope.ts` (JSON envelopes only).
 3. **Route files export nothing new.** App Router route modules may export only HTTP verbs and the
    fixed config set; a stray export breaks `next build` and neither vitest nor tsc catches it
    (audit 06/09, bug 13). `verify` therefore includes `next build`.
-4. `verify` green: web typecheck, web vitest (426 at `c59674a` + the new test), `next build`.
+4. `verify` green: web typecheck, web vitest (426 at `342ccdc` + the new test), `next build`.
 5. No change to auth logic, cookie handling, CSRF, or state validation in either route — helpers
    only. If the deduplication needs any behavioural change, HALT `MISSING_CONTEXT`.
+6. `callback/route.ts`'s top-level catch handler (`:63-69`), which builds its own 302 inline, is
+   OUT OF SCOPE: leave it byte-identical, do not route it through `redirect()`. This slice is
+   helper hoisting only — touching error-path behaviour in an auth route needs its own task and
+   review.
 
 ## Context
 - **Dependencies: the worktree is a FRESH checkout with no `node_modules`.** pnpm workspaces are not
