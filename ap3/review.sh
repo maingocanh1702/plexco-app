@@ -73,7 +73,9 @@ MARKER="$(printf '%s\n' \
   "AP3_REVIEW_VERDICT: FINDINGS   (then a numbered list of actionable findings)")"
 
 set +e
-OUT="$("$PIN" review --base "$BASE" "$MARKER" 2>&1)"
+# stdin from /dev/null, not inherited: `codex exec` blocks on stdin outside launchd (fine
+# there; a trap for a hand-run probe/dispatcher invocation whose own stdin is not /dev/null).
+OUT="$("$PIN" review --base "$BASE" "$MARKER" < /dev/null 2>&1)"
 RC=$?
 set -e
 printf '%s\n' "$OUT"

@@ -5,8 +5,9 @@ JSON has no comments; this file cites where each key was verified. Sources: the 
 (`https://code.claude.com/docs/en/{sandboxing,settings,hooks}` — `docs.claude.com/...` 301-redirects
 there). W1.1 (2026-09-10): `install.sh` resolves this file (or the project's `settings.<project>.json`)
 into a tracked, per-run `ap3/writer-settings.json`, and the dispatcher hands it to the writer with
-`claude --settings` — it is NOT merged into the target's repo-wide `.claude/settings.json` (that merge
-is now the opt-in `install.sh --repo-wide` path only; see `W1.1-HANDOVER.md`).
+`claude --settings` — it is NOT merged into the target's repo-wide `.claude/settings.json` (see
+`W1.1-HANDOVER.md`). The old opt-in `install.sh --repo-wide` path that did that merge was removed
+2026-09-10 after three clean wave-2 runs proved the per-run contract sufficient on its own.
 
 | Key | Verified | Meaning |
 |---|---|---|

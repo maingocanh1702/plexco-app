@@ -6,18 +6,20 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR/.." && pwd)"; cd "$REPO"
-SINCE_DAYS=0; TG=0
+SINCE_DAYS=0; TG=0; FEATURE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --since) SINCE_DAYS="$(printf '%s' "$2" | tr -dc '0-9')"; shift 2 ;;
     --telegram) TG=1; shift ;;
-    *) echo "usage: report.sh [--since Nd] [--telegram]" >&2; exit 2 ;;
+    --feature) FEATURE="$2"; shift 2 ;;
+    *) echo "usage: report.sh [--since Nd] [--telegram] [--feature name]" >&2; exit 2 ;;
   esac
 done
 
-OUT="$(SINCE_DAYS="${SINCE_DAYS:-0}" python3 - ap3/evidence.jsonl ap3/state/evidence.local.jsonl <<'PY'
+OUT="$(SINCE_DAYS="${SINCE_DAYS:-0}" FEATURE="$FEATURE" python3 - ap3/evidence.jsonl ap3/state/evidence.local.jsonl <<'PY'
 import json, os, sys, datetime
 since = int(os.environ.get("SINCE_DAYS", "0"))
+feature = os.environ.get("FEATURE", "")
 cutoff = None
 if since > 0:
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=since)
@@ -52,6 +54,8 @@ def within(r):
     except ValueError:
         return True
 rows = [r for r in rows if within(r)]
+if feature:
+    rows = [r for r in rows if r.get("feature") == feature]
 n = len(rows)
 ready = [r for r in rows if r.get("terminal") == "READY"]
 costs = [r["total_cost_usd"] for r in rows if isinstance(r.get("total_cost_usd"), (int, float))]
@@ -61,6 +65,13 @@ den = sum(r["permission_denials"] for r in rows if isinstance(r.get("permission_
 term = {}
 for r in rows:
     term[r.get("terminal", "unavailable")] = term.get(r.get("terminal", "unavailable"), 0) + 1
+# K7: writer-fault vs outage halts, counted separately (only halted rows carry terminal_kind;
+# a READY row has none and is excluded here, same as it is from `term` via its own terminal).
+tkind = {}
+for r in rows:
+    k = r.get("terminal_kind")
+    if k:
+        tkind[k] = tkind.get(k, 0) + 1
 def mean(xs):
     return round(sum(xs) / len(xs), 4) if xs else None
 print("ap3 report" + (" (last %dd)" % since if since else " (all)"))
@@ -69,6 +80,7 @@ print("  cost_usd mean=%s max=%s total=%s" % (mean(costs), max(costs) if costs e
 print("  cycle_ms mean=%s max=%s" % (mean(durs), max(durs) if durs else None))
 print("  human_interventions=%d  permission_denials=%d" % (inter, den))
 print("  terminals=" + json.dumps(term))
+print("  terminal_kinds=" + json.dumps(tkind))
 PY
 )"
 printf '%s\n' "$OUT"

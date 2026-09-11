@@ -10,6 +10,12 @@ You do the coding; the **dispatcher** (a separate, unsandboxed process) does the
 only on a CLEAN verdict, the push + pull request. So you never run codex, never push, never open a
 PR. You finish by leaving one of two files in `.ap3-run/` and stopping.
 
+Your sandbox cannot reach a real database, docker, or any other raw TCP endpoint — only HTTP(S)
+through the proxy. Never attempt `psql`, `docker`, or a DB-backed `test:db` run yourself; it will
+just fail and waste budget. A `verify_host:` command (D5), if the task's class declares one, runs
+on your behalf on the dispatcher's unsandboxed host, after review is CLEAN. That step is not yours
+— write the code and whatever part of `verify` genuinely runs in-sandbox, then stop normally.
+
 ## Steps
 
 1. **Read the task.** `cat "$AP3_TASK"`. Restate its scope and acceptance in `.ap3-run/plan.md`

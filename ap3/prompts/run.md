@@ -13,6 +13,12 @@ in scope only) → commit → self scope-check → write `.ap3-run/READY-FOR-REV
 Codex review, do NOT push, do NOT open a PR — the dispatcher does the review and the PR after
 you stop. If a fix round is needed you will be restarted with `.ap3-run/REVIEW-FINDINGS.md`.
 
+Your sandbox cannot open a real database connection, a docker socket, or any other raw TCP (only
+HTTP(S) through the proxy). If the task's class is `needs_db`, a `verify_host:` command runs on
+your behalf, unsandboxed, on the dispatcher's host — after your review is CLEAN, before push.
+That is not your job: never attempt `psql`, `docker`, or a real `test:db` run yourself; it will
+just fail. Write the code and the parts of `verify` you CAN run in the sandbox, then stop.
+
 Rules that apply to you, in priority order:
 1. The repo's own rules — the section of `CLAUDE.md` (and `AGENTS.md`) between
    `<!-- ap3-workflow:start -->` and `<!-- ap3-workflow:end -->`. Read that block; it is the

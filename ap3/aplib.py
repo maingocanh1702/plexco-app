@@ -113,6 +113,55 @@ def _contained(inner, outer):
     return gmatch(outer, inner)
 
 
+def _static_prefix(glob):
+    """The literal portion of a glob before its first wildcard character."""
+    for i, c in enumerate(glob):
+        if c in "*?":
+            return glob[:i]
+    return glob
+
+
+def scopes_overlap(globs_a, globs_b):
+    """D3: conservative (fail-closed) glob-set overlap check for the parallel-scope gate — reuses
+    this module's own glob matcher (the one scope-check.sh and the PreToolUse hook use), so it
+    can never drift from what "in scope" means elsewhere in the kit.
+
+    Two globs are ruled DISJOINT only when that is provable: two different literal paths, or a
+    literal that the other (wildcarded) glob does not match. Two wildcarded globs are compared by
+    static prefix; a nesting/ambiguous pair (e.g. src/** vs src/payments/**) is treated as
+    OVERLAPPING rather than risking a silent collision between two concurrent writers.
+    """
+    for a in globs_a:
+        an = _norm(a)
+        a_wild = "*" in an or "?" in an
+        for b in globs_b:
+            bn = _norm(b)
+            b_wild = "*" in bn or "?" in bn
+            if not a_wild and not b_wild:
+                if an == bn:
+                    return True
+                continue
+            if not a_wild:
+                if gmatch(bn, an):
+                    return True
+                continue
+            if not b_wild:
+                if gmatch(an, bn):
+                    return True
+                continue
+            pa, pb = _static_prefix(an), _static_prefix(bn)
+            if pa.startswith(pb) or pb.startswith(pa):
+                return True
+    return False
+
+
+def tokens_overlap(tokens_a, tokens_b):
+    """D3 review-2 finding 1: exact-match overlap for optional per-task invariant_tokens -- a
+    coarser, cheaper signal than file-glob disjointness for shared state a glob can't see (ports,
+    external fixtures, domain invariants). Any shared token means busy."""
+    return bool(set(tokens_a) & set(tokens_b))
+
+
 def _norm(path):
     p = path.replace("\\", "/")
     while p.startswith("./"):
@@ -198,9 +247,32 @@ def lint(taskfile):
     scope = fm.get("scope")
     if not isinstance(scope, list) or not scope:
         return bad("scope must be a non-empty list of globs")
+    # D3 review-2 finding 1: optional -- free-form tags for shared state a file glob can't see
+    # (ports, external fixtures, domain invariants) that ALSO gate parallel admission. Absent =
+    # today's file-glob-only behaviour, unaffected.
+    inv_tokens = fm.get("invariant_tokens")
+    if inv_tokens is not None:
+        if not isinstance(inv_tokens, list) or not all(isinstance(t, str) and t for t in inv_tokens):
+            return bad("invariant_tokens must be a list of non-empty strings")
     verify = fm.get("verify")
     if not isinstance(verify, str) or not verify.strip():
         return bad("verify must be a non-empty string")
+    # D5: optional -- a command the DISPATCHER runs unsandboxed on the host, after review is
+    # CLEAN and before push, for verification the sandboxed writer cannot do itself (e.g. a real
+    # DB connection). A single command string, same shape as `verify`.
+    verify_host = fm.get("verify_host")
+    if verify_host is not None:
+        if not isinstance(verify_host, str) or not verify_host.strip():
+            return bad("verify_host must be a non-empty single command string")
+        # review round-3 finding 4: runs via `bash -c` on the host -- any shell composition
+        # (chaining, piping, substitution, redirection, subshell, background) could fabricate a
+        # PASS regardless of the real command's outcome (e.g. `npm test || true` always exits 0),
+        # defeating the whole point of the gate. Same character class `verify` already rejects
+        # above, but stricter: verify_host allows NO joining at all (not even '&&'/';') -- it
+        # must be exactly ONE plain command + arguments, matching the addendum's own words ("a
+        # single command string"); a multi-step check belongs in a committed wrapper script.
+        if re.search(r"[\n|`$><()]", verify_host) or "\\" in verify_host or "&" in verify_host or ";" in verify_host:
+            return bad("verify_host must be a single plain command (no chaining/pipe/substitution/redirection/subshell/background)")
     try:
         budget = float(fm.get("budget_usd"))
     except (TypeError, ValueError):
@@ -242,7 +314,63 @@ def lint(taskfile):
         return bad("class %r max_runs_per_day must be a positive integer" % cls)
     if cdef.get("security_review") not in ("auto", "always", "none"):
         return bad("class %r security_review must be one of auto|always|none" % cls)
+    # review round-2 finding 2: a malformed max_parallel (e.g. a string) slips past dispatch.sh's
+    # bash integer comparisons and fails OPEN into the parallel-admission branch -- catch it here,
+    # at lint time, before any candidate of this class is ever dispatched under it.
+    mp = cdef.get("max_parallel", 1)
+    if not isinstance(mp, int) or isinstance(mp, bool) or mp < 1:
+        return bad("class %r max_parallel must be a positive integer" % cls)
+    if "db_per_run" in cdef and not isinstance(cdef["db_per_run"], bool):
+        return bad("class %r db_per_run must be a boolean" % cls)
+    # D5: needs_db (optional, default false) marks a class whose sandboxed writer can never reach
+    # a real database (sandbox network denies raw TCP to Postgres) -- a task in that class must
+    # route DB-touching verification through verify_host (dispatcher-side, unsandboxed) rather
+    # than a `verify` that would just fail in the sandbox every time.
+    if "needs_db" in cdef and not isinstance(cdef["needs_db"], bool):
+        return bad("class %r needs_db must be a boolean" % cls)
+    # review round-4 finding 3: this must fire regardless of verify_host. verify_host is an
+    # ADDITIONAL dispatcher-side step, never a substitute for `verify` -- the writer's own
+    # `verify` always runs inside the sandbox first (reconcile_running requires .ap3-run/verify to
+    # read pass before review even starts), so a DB marker in `verify` fails there every time,
+    # whether or not the task also declares a verify_host. The original D5 addendum's "when
+    # verify_host is absent" qualifier was a spec oversight, not a deliberate design choice.
+    if cdef.get("needs_db"):
+        for marker in ("test:db", "psql", "docker"):
+            if marker in verify:
+                return bad("class %r is needs_db: verify %r mentions %r, which would fail in the sandbox -- route DB-touching checks through verify_host instead" % (cls, verify, marker))
+        # review round-5 finding 1: forbidding DB markers in `verify` isn't enough on its own -- a
+        # needs_db task with an innocuous `verify` (e.g. "npm test", no DB markers) and no
+        # verify_host at all would still reach READY having never run any real DB check, exactly
+        # the gap D5 exists to close. needs_db must actually REQUIRE verify_host, not just forbid
+        # one way of faking a DB check inside the sandbox. This is the limit of what lint can
+        # enforce here: it cannot verify a command's real semantics, so a lying verify_host (e.g.
+        # `true`) still passes -- the rest is an operator/reviewer trust boundary, same as `verify`
+        # itself already is.
+        if not verify_host:
+            return bad("class %r is needs_db: task must set verify_host (verify alone cannot reach a real database from the sandbox)" % cls)
+    # review round-4 finding 6: an explicit [] must be rejected, not silently treated the same as
+    # "key absent" -- `cdef.get(...) or [default]` masks a config mistake either way. And a
+    # writer_models_allowed that is accidentally a STRING (not a list) makes the later `model not
+    # in models_allowed` check do Python's SUBSTRING match instead of list membership (e.g.
+    # "claude-sonnet-5" in "claude-sonnet-50" is True) -- validating the type here, once, makes
+    # that downstream `in` check correct for free (it can only ever see a real list from here on).
+    if "writer_models_allowed" in cdef:
+        wma = cdef["writer_models_allowed"]
+        if not isinstance(wma, list) or not wma or not all(isinstance(m, str) and m for m in wma):
+            return bad("class %r writer_models_allowed must be a non-empty list of non-empty strings" % cls)
     allowed = cdef.get("allowed_scope") or []
+
+    # D2: model: <id> (optional) must be one of the class's writer_models_allowed, defaulting to
+    # the single model start_next would pick anyway (class writer_model > top-level writer_model
+    # > claude-sonnet-5) when the class declares no explicit allowlist.
+    model = fm.get("model")
+    if model is not None:
+        if not isinstance(model, str) or not model.strip():
+            return bad("model must be a non-empty string")
+        default_model = cdef.get("writer_model") or routines.get("writer_model") or "claude-sonnet-5"
+        models_allowed = cdef.get("writer_models_allowed") or [default_model]
+        if model not in models_allowed:
+            return bad("model %r is not in class %r's writer_models_allowed %r" % (model, cls, models_allowed))
 
     # trust.json: paused classes are not dispatchable (absent file = not paused). The dispatcher
     # points AP3_TRUST_PATH at the real state file when it lints inside a worktree (whose own
@@ -297,6 +425,40 @@ def lint(taskfile):
         if not os.path.exists(tok):
             return bad("Context names %r which does not exist in the working tree" % tok)
 
+    # D1: after: <slug> (optional, one slug or a list) -- shape + existence only here. Whether a
+    # named predecessor has actually RUN and succeeded is a dispatch-time (run-state) concern,
+    # checked by dispatch.sh's start_next, not this file (which only reads the working tree).
+    after = fm.get("after")
+    if after is not None:
+        after_list = [after] if isinstance(after, str) else (after if isinstance(after, list) else None)
+        if after_list is None:
+            return bad("after must be a slug string or a list of slug strings")
+        # review round-4 finding 4: `after:` present but blank parses to [] (parse_frontmatter's
+        # "empty value opens a list block" that never gets any '- item' lines) -- indistinguishable
+        # from a deliberate empty list, and near-certainly a templating/authoring mistake (the key
+        # was declared but never filled in), NOT "no dependency" (that case never reaches here --
+        # `after` stays None when the key is absent entirely). Reject it rather than silently
+        # treating it the same as no `after:` at all.
+        if not after_list:
+            return bad("after is present but empty -- remove the key entirely for no dependency, or fill in at least one slug")
+        for a in after_list:
+            if not isinstance(a, str) or not re.match(r"^[a-z0-9][a-z0-9-]{2,60}$", a):
+                return bad("after entry %r must match ^[a-z0-9][a-z0-9-]{2,60}$" % (a,))
+            # review round-6 finding 1: a task referencing its own slug would wait on itself
+            # forever -- detectable from this ONE file alone (unlike a genuine A<->B cycle across
+            # separate files, which needs the whole queue graph -- that's dispatch.sh's job).
+            if a == slug_from_name:
+                return bad("after entry %r references its own slug -- a task cannot depend on itself" % (a,))
+            if not (os.path.exists("ap3/queue/%s.md" % a) or os.path.exists("ap3/queue/done/%s.md" % a)):
+                return bad("after entry %r has no ap3/queue/%s.md or ap3/queue/done/%s.md" % (a, a, a))
+
+    # review round-6 finding 5: feature: (optional, copied into the record/evidence row and
+    # filtered by report.sh --feature) was never type-checked -- a blank or list-valued feature:
+    # passed lint and was serialized as the literal string "[]" downstream, breaking that filter.
+    feature = fm.get("feature")
+    if feature is not None and (not isinstance(feature, str) or not feature.strip()):
+        return bad("feature must be a non-empty string")
+
     return None
 
 
@@ -338,6 +500,17 @@ def main(argv):
                 print("DRIFT %s (%s)" % (p, v))
                 drift += 1
         return 1 if drift else 0
+    if cmd == "scopes-overlap":
+        # D3: dispatch.sh's parallel-scope gate. argv[2]/argv[3] are each a JSON array of globs.
+        a = json.loads(argv[2]); b = json.loads(argv[3])
+        print("OVERLAP" if scopes_overlap(a, b) else "DISJOINT")
+        return 0
+    if cmd == "tokens-overlap":
+        # D3 review-2 finding 1: dispatch.sh's parallel invariant-token gate. argv[2]/argv[3] are
+        # each a JSON array of strings.
+        a = json.loads(argv[2]); b = json.loads(argv[3])
+        print("OVERLAP" if tokens_overlap(a, b) else "DISJOINT")
+        return 0
     sys.stderr.write("unknown subcommand %r\n" % cmd)
     return 2
 
