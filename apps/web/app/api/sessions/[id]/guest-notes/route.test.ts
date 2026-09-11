@@ -258,5 +258,15 @@ describe("POST /api/sessions/:id/guest-notes", () => {
       expect(keyB).toContain(OTHER_SESSION_ID);
       expect(keyA).not.toBe(keyB);
     });
+
+    // Codex review, both rounds: createGuestNote canonicalizes sessionId to lowercase before use,
+    // so an uppercase spelling of the SAME session must not split the quota into a second bucket.
+    it("gives an uppercase and a lowercase spelling of the SAME session the SAME bucket", async () => {
+      await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx(SESSION_ID.toLowerCase()));
+      await POST(req({ commandId: "cmd_2", guestName: "Khách A" }), ctx(SESSION_ID.toUpperCase()));
+
+      const [keyA, keyB] = createBucketKeys();
+      expect(keyA).toBe(keyB);
+    });
   });
 });

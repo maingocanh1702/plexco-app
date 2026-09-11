@@ -37,9 +37,15 @@ export async function POST(
   // AUTH_REQUIRED before this bucket is ever consumed, so the placeholder below is never live.
   const bucketActor = (await currentSession())?.personId ?? "unauthenticated";
   const { id } = await params;
+  // Lowercased for the BUCKET KEY ONLY (codex review finding, both rounds): createGuestNote
+  // canonicalizes sessionId to lowercase before using it, so an uppercase/mixed-case spelling of
+  // the same session id would otherwise land in a distinct bucket and let a caller multiply their
+  // effective quota by cycling case variants. The RAW `id` below is still what reaches the
+  // command, unchanged — this route still does not pre-validate UUID shape (see the docstring).
+  const bucketSessionId = id.toLowerCase();
   return handleSessionCommand(
     request,
-    { bucket: `session-guest-note-create:${bucketActor}:${id}`, limit: 10 },
+    { bucket: `session-guest-note-create:${bucketActor}:${bucketSessionId}`, limit: 10 },
     async (context) =>
       withGuestNoteErrors(async () => {
         // The AUTHOR, read from the session cookie exactly where the choke-point itself reads it.
