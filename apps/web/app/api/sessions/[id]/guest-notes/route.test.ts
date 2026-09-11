@@ -40,6 +40,8 @@ const OTHER_TENANT = "22222222-2222-4222-8222-222222222222";
 const SESSION_ID = "33333333-3333-4333-8333-333333333333";
 const NOTE_ID = "44444444-4444-4444-8444-444444444444";
 const PERSON_ID = "55555555-5555-4555-8555-555555555555";
+const OTHER_PERSON_ID = "66666666-6666-4666-8666-666666666666";
+const OTHER_SESSION_ID = "77777777-7777-4777-8777-777777777777";
 
 function req(body: unknown, tenant = TENANT): Request {
   return new Request(`https://plexco.app/api/sessions/${SESSION_ID}/guest-notes?tenant=${tenant}`, {
@@ -209,5 +211,52 @@ describe("POST /api/sessions/:id/guest-notes", () => {
     await expect(POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx())).rejects.toThrow(
       "connection terminated",
     );
+  });
+
+  // BE spec §3 Rate Limits (feature_session_management_tech.md:600) pins create to 10/min PER
+  // USER PER SESSION, not per tenant. Codex review finding: a fixed bucket literal here let the
+  // choke-point's `${bucket}:${tenantId}` key collapse to one counter shared by every actor in the
+  // tenant. These assert the actual string handed to the (mocked) rate limiter, not just behavior.
+  describe("rate-limit bucket scoping (codex review finding)", () => {
+    function createBucketKeys(): string[] {
+      return vi
+        .mocked(rateLimited)
+        .mock.calls.map((call) => call[0])
+        .filter((key) => key.startsWith("session-guest-note-create:"));
+    }
+
+    it("never uses the bare un-scoped literal as the bucket", async () => {
+      await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
+      const keys = createBucketKeys();
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).not.toBe("session-guest-note-create");
+    });
+
+    it("gives two different actors on the SAME session two different buckets", async () => {
+      await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
+      vi.mocked(currentSession).mockResolvedValue({
+        sessionId: "s2",
+        accountId: "b",
+        personId: OTHER_PERSON_ID,
+        csrfSecret: "secret",
+        expiresAt: new Date(Date.now() + 3_600_000),
+      });
+      await POST(req({ commandId: "cmd_2", guestName: "Khách B" }), ctx());
+
+      const [keyA, keyB] = createBucketKeys();
+      expect(keyA).toContain(PERSON_ID);
+      expect(keyB).toContain(OTHER_PERSON_ID);
+      expect(keyA).not.toBe(keyB);
+    });
+
+    it("gives the SAME actor on two different sessions two different buckets", async () => {
+      await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx(SESSION_ID));
+      await POST(req({ commandId: "cmd_2", guestName: "Khách A" }), ctx(OTHER_SESSION_ID));
+
+      const [keyA, keyB] = createBucketKeys();
+      expect(keyA).toContain(SESSION_ID);
+      expect(keyB).toContain(OTHER_SESSION_ID);
+      expect(keyA).not.toBe(keyB);
+    });
   });
 });

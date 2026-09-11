@@ -37,6 +37,8 @@ const OTHER_TENANT = "22222222-2222-4222-8222-222222222222";
 const SESSION_ID = "33333333-3333-4333-8333-333333333333";
 const NOTE_ID = "44444444-4444-4444-8444-444444444444";
 const PERSON_ID = "55555555-5555-4555-8555-555555555555";
+const OTHER_PERSON_ID = "66666666-6666-4666-8666-666666666666";
+const OTHER_SESSION_ID = "77777777-7777-4777-8777-777777777777";
 
 function req(body: unknown, tenant = TENANT): Request {
   return new Request(
@@ -160,5 +162,52 @@ describe("DELETE /api/sessions/:id/guest-notes/:noteId", () => {
     await expect(DELETE(req({ commandId: "cmd_1" }), ctx())).rejects.toThrow(
       "connection terminated",
     );
+  });
+
+  // BE spec §3 Rate Limits (feature_session_management_tech.md:601) pins delete to 10/min PER
+  // USER, not per tenant and NOT per session (contrast the create sibling, which is also
+  // per-session). Codex review finding: a fixed bucket literal here let the choke-point's
+  // `${bucket}:${tenantId}` key collapse to one counter shared by every actor in the tenant.
+  describe("rate-limit bucket scoping (codex review finding)", () => {
+    function deleteBucketKeys(): string[] {
+      return vi
+        .mocked(rateLimited)
+        .mock.calls.map((call) => call[0])
+        .filter((key) => key.startsWith("session-guest-note-delete:"));
+    }
+
+    it("never uses the bare un-scoped literal as the bucket", async () => {
+      await DELETE(req({ commandId: "cmd_1" }), ctx());
+      const keys = deleteBucketKeys();
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).not.toBe("session-guest-note-delete");
+    });
+
+    it("gives two different actors two different buckets", async () => {
+      await DELETE(req({ commandId: "cmd_1" }), ctx());
+      vi.mocked(currentSession).mockResolvedValue({
+        sessionId: "s2",
+        accountId: "b",
+        personId: OTHER_PERSON_ID,
+        csrfSecret: "secret",
+        expiresAt: new Date(Date.now() + 3_600_000),
+      });
+      await DELETE(req({ commandId: "cmd_2" }), ctx());
+
+      const [keyA, keyB] = deleteBucketKeys();
+      expect(keyA).toContain(PERSON_ID);
+      expect(keyB).toContain(OTHER_PERSON_ID);
+      expect(keyA).not.toBe(keyB);
+    });
+
+    // Contrast with create: the spec pins delete per-user ONLY, so the SAME actor deleting notes
+    // on two different sessions must share ONE bucket, not get two.
+    it("gives the SAME actor on two different sessions the SAME bucket", async () => {
+      await DELETE(req({ commandId: "cmd_1" }), ctx(SESSION_ID));
+      await DELETE(req({ commandId: "cmd_2" }), ctx(OTHER_SESSION_ID));
+
+      const [keyA, keyB] = deleteBucketKeys();
+      expect(keyA).toBe(keyB);
+    });
   });
 });

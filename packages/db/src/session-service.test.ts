@@ -3933,12 +3933,7 @@ describe("guest notes", () => {
     const author = await seedPerson(ctx.tenantA, sessionId);
     const other = await seedPerson(ctx.tenantA, sessionId);
     const commandId = cmdId();
-    const first = await create(
-      ctx.tenantA,
-      author,
-      { sessionId, guestName: "Khách A" },
-      commandId,
-    );
+    const first = await create(ctx.tenantA, author, { sessionId, guestName: "Khách A" }, commandId);
 
     await expectGuestNoteReject(
       () => create(ctx.tenantA, other, { sessionId, guestName: "Khách A" }, commandId),

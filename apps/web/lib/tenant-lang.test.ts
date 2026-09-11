@@ -120,6 +120,11 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/sessions/[id]/publish/route.ts": "a",
   "app/api/sessions/[id]/close/route.ts": "a",
   "app/api/sessions/[id]/cancel/route.ts": "a",
+  // (a) — same wiring as the five above: both delegate to handleSessionCommand and call
+  // withGuestNoteErrors (lib/session-guest-note-route.ts) INSIDE that handler, so both run
+  // within runWithLang. Neither emits t() directly; the error mapping does.
+  "app/api/sessions/[id]/guest-notes/route.ts": "a",
+  "app/api/sessions/[id]/guest-notes/[noteId]/route.ts": "a",
   // (b) — the tenant does not exist yet: this is the tenant-CREATION route, every t() is an error
   // path, and at the locale check the value is still an unvalidated request-body field. Reading it
   // would be a SECOND language source, which DD-118 forbids.
@@ -143,6 +148,11 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (a) — the shared entry gate for the five session routes. It resolves language itself and runs
   // its handler body inside runWithLang; it is the reason those five need no wiring of their own.
   "lib/session-command-route.ts": "a",
+  // (a) — the guest-note error boundary. It calls t() to build every mapped message
+  // (COMMAND_ID_CONFLICT..SESSION_NOT_OPEN) and its own docstring requires running inside
+  // runWithLang; both callers only ever invoke it from within an already-wired "a" route's
+  // handleSessionCommand handler, so tenant+auth are always known when its output renders.
+  "lib/session-guest-note-route.ts": "a",
   // (c) — reached only through a route, and emits NO translatable string of its own: api-envelope
   // passes `message` through verbatim, and the rest hold zero t() calls (verify:
   // grep -rlP '(?<![A-Za-z0-9_.$])t\(' apps/web/lib). A file with no translatable output cannot
