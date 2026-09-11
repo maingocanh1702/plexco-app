@@ -7,6 +7,14 @@ planned_at: 2026-09-11
 
 ## Emission status (this PR)
 
+**Update 2026-09-11 (after PR #12):** M3a `session-management-m03-guest-note-schema-migration` landed on
+`main` at `8eae449` (migration `0044_session_guest_notes.sql`, hardened in 3 codex rounds: same-tenant
+composite FK, trigger locks the sessions row, no UPDATE grant). `plan.json` marked `landed: true` +
+`landed_sha`, M3b `session-management-m03-guest-note-commands` re-emitted and queued (Problem/Acceptance
+refreshed: schema now live; GET/list route dropped from M3b — a body-less GET needs the resolver M2 builds,
+see D5). M2 moved after M3 in `plan.json` list order (no dependency for M3b; an unlanded supervised group
+blocks every later group). M3b is the first real dispatch under `feature-session-p2` after M1's withdrawal.
+
 No queue file is emitted by this PR. Milestone 1 is **withdrawn** (decision amended; existing
 `isValidTimezone()` already correct — see Milestone 1 below, no successor slice). Milestone 2 was
 reclassified **supervised** during review (see Milestone 2 below) and is not emitted as a queue
