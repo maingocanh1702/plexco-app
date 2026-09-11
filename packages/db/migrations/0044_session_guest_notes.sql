@@ -43,13 +43,33 @@
 -- column does not change either policy, so no policy work for those two
 -- (0014 precedent, same reasoning).
 --
+-- Same-tenant composite FK (DD-68/0019 pattern, codex review finding, both
+-- rounds independently): RLS alone does not stop tenant A from inserting an
+-- A-visible row whose session_id points at tenant B's session — the FK check
+-- validates session_id exists in `sessions` at all, not that it belongs to
+-- the caller's tenant, since FK enforcement is not RLS-filtered. 0019 closed
+-- exactly this class for players/session_surface_refs/charges/join_requests
+-- via a composite `(tenant_id, session_id) -> sessions(tenant_id, id)` FK
+-- against the `sessions_tenant_id_candidate_key` UNIQUE (tenant_id, id) added
+-- there. session_guest_notes is a brand-new empty table in this same
+-- migration, so the constraint is added inline (no `NOT VALID` + separate
+-- VALIDATE step needed — that two-step dance in 0019 was only for retrofitting
+-- onto tables that could already hold rows).
+--
 -- Trigger: session_guest_note_limit_guard() is a plain SECURITY INVOKER
 -- function, not SECURITY DEFINER — it only reads session_guest_notes, which
 -- the inserting app role already has SELECT on inside the same RLS/tenant
 -- context, so no privilege elevation is needed (unlike every other
 -- `SET search_path` function in this codebase, which pairs it with
 -- SECURITY DEFINER). A fixed search_path is still set here as cheap
--- defense-in-depth even without that pairing.
+-- defense-in-depth even without that pairing. It also takes the canonical
+-- `sessions` row lock (session-lock-ordering invariant, same idiom every
+-- session-mutating path in this codebase already uses) BEFORE counting, so
+-- two concurrent inserts for the same session cannot both observe count=2
+-- and both commit a 4th row — the second waits for the first's transaction,
+-- matching the BE spec's own "check COUNT dưới session lock TRƯỚC INSERT"
+-- framing (edge #40) inside the trigger itself rather than only in the
+-- future service.
 -- ============================================================================
 
 -- ---- 1. sessions.allow_player_invite --------------------------------------
@@ -69,7 +89,9 @@ CREATE TABLE session_guest_notes (
     CONSTRAINT guest_name_length CHECK (char_length(guest_name) BETWEEN 1 AND 100),
   note text
     CONSTRAINT note_length CHECK (note IS NULL OR char_length(note) <= 200),
-  created_at timestamptz NOT NULL DEFAULT now()
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT session_guest_notes_tenant_session_fk
+    FOREIGN KEY (tenant_id, session_id) REFERENCES sessions (tenant_id, id)
 );
 CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, created_by_person_id);
 
@@ -87,6 +109,12 @@ LANGUAGE plpgsql
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  -- Serialize concurrent inserts for the same session BEFORE counting, so two
+  -- simultaneous inserts cannot both observe count=2 and both commit a 4th
+  -- row. A row with no visible session under RLS locks nothing here (PERFORM
+  -- selects zero rows) and is rejected afterward by the tenant-session FK
+  -- instead.
+  PERFORM 1 FROM sessions WHERE id = NEW.session_id FOR UPDATE;
   IF (SELECT count(*) FROM session_guest_notes
       WHERE session_id = NEW.session_id
         AND created_by_person_id = NEW.created_by_person_id) >= 3

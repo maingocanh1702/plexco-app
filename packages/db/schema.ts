@@ -760,6 +760,15 @@ export const sessionGuestNotes = pgTable("session_guest_notes", {
     sql`char_length(${t.guestName}) BETWEEN 1 AND 100`),
   noteLengthChk: check("note_length",
     sql`${t.note} IS NULL OR char_length(${t.note}) <= 200`),
+  // DD-68 pattern (migration 0019 precedent): same-tenant composite FK so a
+  // row's session_id cannot belong to a different tenant than its own
+  // tenant_id — RLS alone does not stop this (FK checks are not RLS-filtered).
+  // Added inline since this table is new/empty in 0044 (no NOT VALID needed).
+  tenantSessionFk: foreignKey({
+    columns: [t.tenantId, t.sessionId],
+    foreignColumns: [sessions.tenantId, sessions.id],
+    name: "session_guest_notes_tenant_session_fk",
+  }),
 }));
 
 export const telegramLinks = pgTable("telegram_links", {

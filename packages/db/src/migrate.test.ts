@@ -4106,10 +4106,11 @@ describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledg
   }, 90_000);
 });
 
-describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id / trigger + RLS", () => {
-  it("applies cleanly, defaults allow_player_invite true, exposes invited_by_person_id, enforces the 3-note trigger limit, and RLS blocks a cross-tenant read", async () => {
+describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id / trigger + RLS + tenant FK", () => {
+  it("applies cleanly, defaults allow_player_invite true, exposes invited_by_person_id, enforces the 3-note trigger limit under real concurrency, rejects a cross-tenant session_id, and RLS blocks a cross-tenant read", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0044_guest_notes");
     let appClient: pg.Client | undefined;
+    let appClient2: pg.Client | undefined;
     let suDb: pg.Client | undefined;
     try {
       await withJobDefinerLock(BASE!, async () => {
@@ -4196,8 +4197,70 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
         [sessionId],
       );
       expect(ownTenant.rows).toHaveLength(3);
+
+      // D-5: session_guest_notes_tenant_session_fk rejects a session_id owned by another tenant —
+      // RLS's WITH CHECK alone would pass (tenant_id=A matches the GUC); only the composite FK
+      // (tenant_id, session_id) -> sessions(tenant_id, id) catches session_id actually being B's.
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantBId]);
+      const sessionB = await appClient.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status)
+         VALUES ($1, $2, now(), now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')
+         RETURNING id`,
+        [tenantBId, sportId],
+      );
+      const sessionBId = (sessionB.rows[0] as { id: string }).id;
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
+      await expect(
+        appClient.query(
+          `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name)
+           VALUES ($1, $2, $3, 'Cross-tenant guest')`,
+          [tenantAId, sessionBId, personId],
+        ),
+      ).rejects.toMatchObject({ code: "23503" });
+
+      // D-6: two GENUINELY concurrent 3rd-note inserts for the same (session, person) cannot both
+      // commit. trg_session_guest_note_limit locks the sessions row before counting, so the second
+      // connection blocks until the first's insert commits, then observes count=3 and is rejected —
+      // proving the trigger's own limit holds under real concurrency, not just sequential calls.
+      const session2 = await appClient.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status)
+         VALUES ($1, $2, now(), now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')
+         RETURNING id`,
+        [tenantAId, sportId],
+      );
+      const session2Id = (session2.rows[0] as { id: string }).id;
+      const insertRaceNote = (client: pg.Client) =>
+        client.query(
+          `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name)
+           VALUES ($1, $2, $3, 'Race note') RETURNING id`,
+          [tenantAId, session2Id, personId],
+        );
+      await insertRaceNote(appClient);
+      await insertRaceNote(appClient);
+
+      appClient2 = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      await appClient2.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
+      const raced = await Promise.allSettled([
+        insertRaceNote(appClient),
+        insertRaceNote(appClient2),
+      ]);
+      expect(raced.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const raceRejections = raced.filter(
+        (r): r is PromiseRejectedResult => r.status === "rejected",
+      );
+      expect(raceRejections).toHaveLength(1);
+      expect(raceRejections[0]!.reason).toMatchObject({
+        code: "P0001",
+        message: expect.stringContaining("GUEST_NOTE_LIMIT_REACHED"),
+      });
+      const raceFinal = await su.query(
+        `SELECT count(*)::int AS n FROM session_guest_notes WHERE session_id = $1`,
+        [session2Id],
+      );
+      expect((raceFinal.rows[0] as { n: number }).n).toBe(3);
     } finally {
       await appClient?.end();
+      await appClient2?.end();
       await suDb?.end();
       await ctx.teardown();
     }
