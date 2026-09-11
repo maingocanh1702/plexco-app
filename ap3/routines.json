@@ -32,7 +32,7 @@
         "packages/db/src/index.ts"
       ],
       "budget_usd_max": 15,
-      "max_runs_per_day": 3,
+      "max_runs_per_day": 4,
       "max_parallel": 1,
       "writer_model": "claude-sonnet-5",
       "writer_models_allowed": [
