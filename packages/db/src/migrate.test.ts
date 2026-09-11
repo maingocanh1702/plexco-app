@@ -41,7 +41,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 44; // 0000..0043 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume)
+const MIGRATION_COUNT = 45; // 0000..0044 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -732,7 +732,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0043_identity_link_code_issue_consume.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0044_session_guest_notes.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
@@ -4100,6 +4100,200 @@ describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledg
       );
     } finally {
       await appClient?.end();
+      await suDb?.end();
+      await ctx.teardown();
+    }
+  }, 90_000);
+});
+
+describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id / trigger + RLS + tenant FK", () => {
+  it("applies cleanly, defaults allow_player_invite true, exposes invited_by_person_id, enforces the 3-note trigger limit under real concurrency, rejects a cross-tenant session_id, and RLS blocks a cross-tenant read", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0044_guest_notes");
+    let appClient: pg.Client | undefined;
+    let appClient2: pg.Client | undefined;
+    let suDb: pg.Client | undefined;
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        await ctx.bootstrapChatDefinerForOwner();
+        return ctx.runMigration();
+      });
+      await ctx.superuser.query(`ALTER ROLE app WITH PASSWORD 'plexco_test_app'`);
+      appClient = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      suDb = await connect(url(ctx.dbName));
+      const su = suDb;
+
+      const person = await su.query(`INSERT INTO persons DEFAULT VALUES RETURNING id`);
+      const personId = (person.rows[0] as { id: string }).id;
+      const tenantA = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
+        "club-0044-a",
+        "Club 0044 A",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
+      const tenantAId = (tenantA.rows[0] as { id: string }).id;
+      const tenantB = await appClient.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
+        "club-0044-b",
+        "Club 0044 B",
+        "Asia/Ho_Chi_Minh",
+        "vi",
+        personId,
+      ]);
+      const tenantBId = (tenantB.rows[0] as { id: string }).id;
+
+      // D-1: sessions.allow_player_invite defaults true.
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
+      const sport = await appClient.query(`SELECT id FROM sports WHERE key = 'badminton'`);
+      const sportId = (sport.rows[0] as { id: string }).id;
+      const session = await appClient.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status)
+         VALUES ($1, $2, now(), now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')
+         RETURNING id, allow_player_invite`,
+        [tenantAId, sportId],
+      );
+      const sessionId = (session.rows[0] as { id: string }).id;
+      expect((session.rows[0] as { allow_player_invite: boolean }).allow_player_invite).toBe(true);
+
+      // D-2: players.invited_by_person_id column + its partial index exist.
+      const cols = await su.query(
+        `SELECT column_name, is_nullable FROM information_schema.columns
+          WHERE table_name = 'players' AND column_name = 'invited_by_person_id'`,
+      );
+      expect(cols.rows).toEqual([{ column_name: "invited_by_person_id", is_nullable: "YES" }]);
+      const idx = await su.query(
+        `SELECT indexname FROM pg_indexes
+          WHERE tablename = 'players' AND indexname = 'idx_players_invited_by'`,
+      );
+      expect(idx.rows).toHaveLength(1);
+
+      // D-3: trg_session_guest_note_limit rejects a 4th note for the same (session, person).
+      const insertNote = (n: number) =>
+        appClient!.query(
+          `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name)
+           VALUES ($1, $2, $3, $4) RETURNING id`,
+          [tenantAId, sessionId, personId, `Guest ${n}`],
+        );
+      await insertNote(1);
+      await insertNote(2);
+      await insertNote(3);
+      await expect(insertNote(4)).rejects.toMatchObject({
+        code: "P0001",
+        message: expect.stringContaining("GUEST_NOTE_LIMIT_REACHED"),
+      });
+
+      // D-4: RLS fail-closed — same connection, GUC flipped to the other tenant sees nothing.
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantBId]);
+      const crossTenant = await appClient.query(
+        `SELECT id FROM session_guest_notes WHERE session_id = $1`,
+        [sessionId],
+      );
+      expect(crossTenant.rows).toEqual([]);
+
+      // sanity: the 3 committed rows are visible again once the GUC is restored to their own tenant.
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
+      const ownTenant = await appClient.query(
+        `SELECT id FROM session_guest_notes WHERE session_id = $1`,
+        [sessionId],
+      );
+      expect(ownTenant.rows).toHaveLength(3);
+
+      // D-5: session_guest_notes_tenant_session_fk rejects a session_id owned by another tenant —
+      // RLS's WITH CHECK alone would pass (tenant_id=A matches the GUC); only the composite FK
+      // (tenant_id, session_id) -> sessions(tenant_id, id) catches session_id actually being B's.
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantBId]);
+      const sessionB = await appClient.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status)
+         VALUES ($1, $2, now(), now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')
+         RETURNING id`,
+        [tenantBId, sportId],
+      );
+      const sessionBId = (sessionB.rows[0] as { id: string }).id;
+      await appClient.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
+      await expect(
+        appClient.query(
+          `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name)
+           VALUES ($1, $2, $3, 'Cross-tenant guest')`,
+          [tenantAId, sessionBId, personId],
+        ),
+      ).rejects.toMatchObject({ code: "23503" });
+
+      // D-6: a DETERMINISTIC proof that trg_session_guest_note_limit's session-row lock actually
+      // blocks a second connection, not just "two autocommit promises happened to interleave" (which
+      // could pass by luck even against the pre-fix unlocked trigger — codex round-02 [P2]). Connection
+      // A opens an explicit transaction, inserts the 3rd note (acquiring + holding the sessions row
+      // lock) and stays OPEN. Connection B's 4th-note attempt is started but not awaited; a third
+      // connection (su) polls pg_blocking_pids() until Postgres itself confirms B is waiting on A's
+      // backend — proving genuine lock contention, not timing luck. Only then does A commit, B
+      // unblocks, observes count=3, and is rejected.
+      const session2 = await appClient.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status)
+         VALUES ($1, $2, now(), now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')
+         RETURNING id`,
+        [tenantAId, sportId],
+      );
+      const session2Id = (session2.rows[0] as { id: string }).id;
+      const insertRaceNote = (client: pg.Client) =>
+        client.query(
+          `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name)
+           VALUES ($1, $2, $3, 'Race note') RETURNING id`,
+          [tenantAId, session2Id, personId],
+        );
+      await insertRaceNote(appClient);
+      await insertRaceNote(appClient);
+
+      appClient2 = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      await appClient2.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
+      const appPid = (await appClient.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as {
+        pid: number;
+      };
+      const app2Pid = (await appClient2.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as {
+        pid: number;
+      };
+
+      await appClient.query("BEGIN");
+      await insertRaceNote(appClient); // holds the sessions row lock, uncommitted
+      const blockedInsert = insertRaceNote(appClient2); // started, deliberately not awaited yet
+
+      let genuinelyBlocked = false;
+      for (let attempt = 0; attempt < 200 && !genuinelyBlocked; attempt++) {
+        const { rows } = await su.query(
+          `SELECT $1::int = ANY(pg_blocking_pids($2::int)) AS is_blocked`,
+          [appPid.pid, app2Pid.pid],
+        );
+        genuinelyBlocked = (rows[0] as { is_blocked: boolean }).is_blocked;
+        if (!genuinelyBlocked) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(
+        genuinelyBlocked,
+        "second connection's insert must be lock-blocked on the first's open transaction",
+      ).toBe(true);
+
+      await appClient.query("COMMIT");
+      await expect(blockedInsert).rejects.toMatchObject({
+        code: "P0001",
+        message: expect.stringContaining("GUEST_NOTE_LIMIT_REACHED"),
+      });
+      await appClient2.query("ROLLBACK");
+
+      const raceFinal = await su.query(
+        `SELECT count(*)::int AS n FROM session_guest_notes WHERE session_id = $1`,
+        [session2Id],
+      );
+      expect((raceFinal.rows[0] as { n: number }).n).toBe(3);
+
+      // D-7: no UPDATE grant — an app-role caller cannot reassign an existing note's grouping key
+      // to sneak past trg_session_guest_note_limit, which only fires BEFORE INSERT (codex review
+      // finding: UPDATE was part of the copied 0009 blanket grant but nothing in the BE command
+      // surface ever updates a guest note).
+      await expect(
+        appClient.query(`UPDATE session_guest_notes SET note = 'edited' WHERE session_id = $1`, [
+          session2Id,
+        ]),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await appClient?.end();
+      await appClient2?.end();
       await suDb?.end();
       await ctx.teardown();
     }

@@ -618,6 +618,10 @@ export const sessions = pgTable("sessions", {
   version: integer("version").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // 0044: host toggle for SES-UC-16 invite-friend (future InviteFriend command).
+  // Declared LAST to match the physical column order 0044's ALTER TABLE ADD
+  // COLUMN produces.
+  allowPlayerInvite: boolean("allow_player_invite").notNull().default(true),
 }, (t) => ({
   tenantStatusIdx: index("idx_sessions_tenant_status").on(t.tenantId, t.status),
   startsIdx: index("idx_sessions_starts_at").on(t.startsAt).where(sql`${t.status} = 'open'`),
@@ -692,6 +696,9 @@ export const players = pgTable("players", {
   // deprioritize reuses that rule). Declared LAST to match the physical column
   // order 0014's ALTER TABLE ADD COLUMN produces.
   waitlistPosition: integer("waitlist_position"),
+  // 0044: NULL = self-join; non-NULL = invited by another player (SES-UC-16).
+  // Declared LAST to match 0044's ALTER TABLE ADD COLUMN physical order.
+  invitedByPersonId: uuid("invited_by_person_id").references(() => persons.id),
 }, (t) => ({
   uq: uniqueIndex("players_tenant_session_member_uq")
     .on(t.tenantId, t.sessionId, t.membershipId),
@@ -707,6 +714,10 @@ export const players = pgTable("players", {
   // ORDER BY waitlist_position, joined_at, id FOR UPDATE.
   waitlistOrderIdx: index("idx_players_waitlist_order")
     .on(t.sessionId, t.status, t.waitlistPosition, t.joinedAt, t.id),
+  // 0044: NULL = self-join; non-NULL = invited by another player (SES-UC-16).
+  invitedByIdx: index("idx_players_invited_by")
+    .on(t.invitedByPersonId)
+    .where(sql`${t.invitedByPersonId} IS NOT NULL`),
   // DD-68 (migration 0019): candidate key targeted by the same-tenant composite
   // FK charges.player_id -> players. id is already the PK, so this is additive.
   tenantIdCandidateKey: unique("players_tenant_id_candidate_key").on(t.tenantId, t.id),
@@ -725,6 +736,38 @@ export const players = pgTable("players", {
     columns: [t.tenantId, t.membershipId],
     foreignColumns: [memberships.tenantId, memberships.id],
     name: "players_tenant_membership_fk",
+  }),
+}));
+
+// 0044: SES-UC-16/17 guest notes (host session, player-authored note for a
+// non-member guest). created_by_person_id references persons directly (not
+// players/memberships) — the DDL has no membership requirement at the DB
+// layer; "must be an active player of this session" is a service-layer check
+// (Milestone 3b, not this migration).
+export const sessionGuestNotes = pgTable("session_guest_notes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  sessionId: uuid("session_id").notNull().references(() => sessions.id),
+  createdByPersonId: uuid("created_by_person_id").notNull().references(() => persons.id),
+  guestName: text("guest_name").notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  sessionIdx: index("idx_session_guest_notes_session").on(t.sessionId, t.createdByPersonId),
+  // Constraint names match the BE spec's DDL verbatim (feature_session_management_tech.md
+  // §2, lines 144-177) — not this file's usual table-prefixed _chk convention.
+  guestNameLengthChk: check("guest_name_length",
+    sql`char_length(${t.guestName}) BETWEEN 1 AND 100`),
+  noteLengthChk: check("note_length",
+    sql`${t.note} IS NULL OR char_length(${t.note}) <= 200`),
+  // DD-68 pattern (migration 0019 precedent): same-tenant composite FK so a
+  // row's session_id cannot belong to a different tenant than its own
+  // tenant_id — RLS alone does not stop this (FK checks are not RLS-filtered).
+  // Added inline since this table is new/empty in 0044 (no NOT VALID needed).
+  tenantSessionFk: foreignKey({
+    columns: [t.tenantId, t.sessionId],
+    foreignColumns: [sessions.tenantId, sessions.id],
+    name: "session_guest_notes_tenant_session_fk",
   }),
 }));
 
