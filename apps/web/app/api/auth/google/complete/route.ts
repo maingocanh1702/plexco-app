@@ -2,6 +2,7 @@ import { t } from "@plexco/core/i18n";
 import { consumeOauthCompletionHandoff } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
 import { log } from "../../../../../lib/log";
+import { noReferrer, redirect } from "../../../../../lib/request-policy";
 import {
   appDb,
   clientIp,
@@ -131,17 +132,4 @@ async function handleComplete(request: Request): Promise<Response> {
     throw error;
   }
   return redirect(`${baseUrl}/`);
-}
-
-/** 302 redirect that leaks no referrer. */
-function redirect(location: string): Response {
-  return new Response(null, {
-    status: 302,
-    headers: { location, "referrer-policy": "no-referrer" },
-  });
-}
-
-function noReferrer(response: Response): Response {
-  response.headers.set("referrer-policy", "no-referrer");
-  return response;
 }
