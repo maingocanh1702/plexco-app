@@ -2398,6 +2398,33 @@ const GUEST_NOTE_DEFAULT_PREFIX = "Bạn của ";
  */
 const codePointLength = (value: string): number => [...value].length;
 
+/**
+ * Code-point length is necessary but not sufficient. Two classes of JS string clear every bound
+ * above and still cannot round-trip through a PostgreSQL `text` column, so both are refused here
+ * rather than one layer down:
+ *
+ *  - U+0000. PostgreSQL rejects a NUL byte in text outright; the driver surfaces that as an
+ *    untyped error, turning a request whose only defect is its payload into a 500 instead of the
+ *    400 this validation exists to produce.
+ *  - An UNPAIRED surrogate. It measures one code point above, but has no UTF-8 encoding — the
+ *    driver substitutes U+FFFD, so the row would silently hold text the caller never sent.
+ *
+ * Both reach here from a real request body, not only a hand-built call: JSON.parse accepts the
+ * escaped forms of each and yields exactly these strings.
+ *
+ * Iterating with `for...of` is what makes the surrogate half correct: it walks CODE POINTS, so a
+ * well-formed pair arrives as a single astral code point (>= 0x10000) and passes, while a lone
+ * code unit still yields itself and is caught. Scanning UTF-16 units would reject every emoji.
+ */
+const isStorableText = (value: string): boolean => {
+  for (const ch of value) {
+    const cp = ch.codePointAt(0)!;
+    if (cp === 0) return false;
+    if (cp >= 0xd800 && cp <= 0xdfff) return false;
+  }
+  return true;
+};
+
 /** Guards a replayed result_ref before trusting it: both ids must be UUIDs. A corrupt or
  *  hand-written row fails closed into COMMAND_ID_CONFLICT rather than replaying a bad envelope. */
 function isStoredGuestNoteResult(value: unknown): value is StoredGuestNoteResult {
@@ -2599,6 +2626,12 @@ export async function createGuestNote(
     ) {
       failGuestNote("INVALID_INPUT", `guest_name must be 1..${GUEST_NAME_MAX} characters`);
     }
+    if (!isStorableText(input.guestName as string)) {
+      failGuestNote(
+        "INVALID_INPUT",
+        "guest_name contains a character PostgreSQL text cannot store (NUL or an unpaired surrogate)",
+      );
+    }
     const guestName = input.guestName as string;
 
     const noteProvided = Object.hasOwn(input, "note") && input.note !== undefined;
@@ -2606,6 +2639,12 @@ export async function createGuestNote(
     if (noteProvided && input.note !== null) {
       if (typeof input.note !== "string" || codePointLength(input.note) > GUEST_NOTE_TEXT_MAX) {
         failGuestNote("INVALID_INPUT", `note must be at most ${GUEST_NOTE_TEXT_MAX} characters`);
+      }
+      if (!isStorableText(input.note as string)) {
+        failGuestNote(
+          "INVALID_INPUT",
+          "note contains a character PostgreSQL text cannot store (NUL or an unpaired surrogate)",
+        );
       }
       note = input.note as string;
     } else if (!noteProvided) {

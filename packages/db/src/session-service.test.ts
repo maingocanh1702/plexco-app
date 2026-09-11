@@ -4032,6 +4032,50 @@ describe("guest notes", () => {
     );
   });
 
+  // ---- codex round-01 [P2]: strings that clear the length bound but are not storable ----
+  // Built with String.fromCharCode so this source file carries no raw NUL or lone surrogate of
+  // its own. These are the exact strings JSON.parse yields for the JSON escapes of U+0000 and of
+  // an unpaired high surrogate, so a real request body reaches the service holding them — this
+  // is not a hand-built-only shape.
+  const NUL = String.fromCharCode(0);
+  const LONE_SURROGATE = String.fromCharCode(0xd800);
+
+  it.each<[string, Omit<CreateGuestNoteInputPayload, "sessionId">]>([
+    ["guest_name containing NUL", { guestName: `Khách${NUL}A` }],
+    ["guest_name containing a lone surrogate", { guestName: `Khách${LONE_SURROGATE}A` }],
+    ["note containing NUL", { guestName: "Khách A", note: `bạn${NUL}bè` }],
+    ["note containing a lone surrogate", { guestName: "Khách A", note: `bạn${LONE_SURROGATE}bè` }],
+  ])(
+    "GN13b: %s is rejected as INVALID_INPUT — not a driver 500, not a U+FFFD-corrupted row",
+    async (_label, payload) => {
+      const sessionId = await seedSession(ctx.tenantA);
+      const personId = await seedPerson(ctx.tenantA, sessionId);
+      // expectGuestNoteReject's instanceof assertion is what separates the two outcomes: without
+      // the guard the NUL cases surface as an UNTYPED driver error (a 500 on a payload defect),
+      // and the surrogate cases do not throw at all — they COMMIT a row whose guest_name/note has
+      // been silently mangled to U+FFFD, which the helper's zero-mutation half catches.
+      await expectGuestNoteReject(
+        () => create(ctx.tenantA, personId, { sessionId, ...payload }),
+        "INVALID_INPUT",
+        sessionId,
+      );
+    },
+  );
+
+  it("GN13c: a WELL-FORMED surrogate pair (emoji) is still accepted and stored exactly — the guard above must not cost valid astral text", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    // One astral code point: two UTF-16 units, but a legal pair. The rejection walks code points
+    // precisely so this passes; scanning UTF-16 units instead would refuse every emoji.
+    const guestName = `Khách ${String.fromCodePoint(0x1f600)}`;
+    const result = await create(ctx.tenantA, personId, { sessionId, guestName });
+
+    const notes = (await notesOf(sessionId)) as { guest_name: string }[];
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.guest_name).toBe(guestName);
+    expect(result.replayed).toBe(false);
+  });
+
   it("GN14: a session in ANOTHER tenant is invisible, not forbidden (SESSION_NOT_FOUND)", async () => {
     const sessionId = await seedSession(ctx.tenantB);
     const personId = await seedPerson(ctx.tenantB, sessionId);
