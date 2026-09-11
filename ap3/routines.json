@@ -29,7 +29,7 @@
         "packages/db/src/public-session-fence*"
       ],
       "budget_usd_max": 15,
-      "max_runs_per_day": 1,
+      "max_runs_per_day": 2,
       "max_parallel": 1,
       "writer_model": "claude-sonnet-5",
       "writer_models_allowed": [
