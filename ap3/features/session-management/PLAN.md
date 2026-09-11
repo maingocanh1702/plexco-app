@@ -7,16 +7,18 @@ planned_at: 2026-09-11
 
 ## Emission status (this PR)
 
-Only `ap3/queue/session-management-m01-timezone-validation-canonical-iana.md` is queued by this
-PR — unblocked today, lint clean. Milestone 2 was reclassified **supervised** during review (see
-Milestone 2 below) and is no longer emitted as a queue file; milestone 3 (both the
-schema-migration slice and its guest-note-commands sibling) and milestone 4 (auto-expiry job) are
-also **not** emitted: `session-management-m03-guest-note-commands` is mechanically blocked by
-`plan-emit` until the schema migration (3a) is merged and its `plan.json` entry is marked
-`landed: true` + `landed_sha`. Re-running `python3 ap3/aplib.py plan-emit` with the full slice
-list (including 3a's confirmed `landed_sha`) once the owner has merged the migration will queue
-3b in one shot; milestone 4 has no such gate and can be emitted whenever the owner is ready to
-plan it in detail (it only has a supervised entry today — see Deferred item, milestone 4 below).
+No queue file is emitted by this PR. Milestone 1 is **withdrawn** (decision amended; existing
+`isValidTimezone()` already correct — see Milestone 1 below, no successor slice). Milestone 2 was
+reclassified **supervised** during review (see Milestone 2 below) and is not emitted as a queue
+file; milestone 3a (schema migration) and milestone 4 (auto-expiry job) are **supervised** and
+also not emitted. Milestone 3b (`session-management-m03-guest-note-commands`) is now the only
+remaining `feature-session-p2` slice, and it is mechanically blocked by `plan-emit` until
+milestone 3a is merged and its `plan.json` entry is marked `landed: true` + `landed_sha` —
+**no dispatchable slice until M3a lands**. Re-running `python3 ap3/aplib.py plan-emit` with the
+full slice list (including 3a's confirmed `landed_sha`) once the owner has merged the migration
+will queue 3b in one shot; milestone 4 has no such gate and can be emitted whenever the owner is
+ready to plan it in detail (it only has a supervised entry today — see Deferred item, milestone 4
+below).
 
 ## What already exists (not re-planned)
 
@@ -32,22 +34,21 @@ Everything below is either a genuine gap this intake round surfaced, or an expli
 a reason. Milestones are ordered M1→M4 in `plan.json`'s slice list; that list order is also the
 literal dispatch order the `after:` chain will enforce.
 
-## Milestone 1 — timezone validation tightened to canonical IANA (`feature-session-p2`, P2, dispatchable)
+## Milestone 1 — timezone validation tightened to canonical IANA — **WITHDRAWN 2026-09-11**
 
 Slug: `session-management-m01-timezone-validation-canonical-iana`
 
-Closes SES-OQ-10 (`docs/features/FE/feature_session_management.md:902`) / BE test row #92
-(`docs/features/BE/feature_session_management_tech.md:923`). `isValidTimezone()`
-(`packages/db/src/session-service.ts:96-103`) already exists and is already wired into both
-`createSession` (:169-171) and `updateSession` (:1206-1209) with the `INVALID_TIMEZONE` error
-code — but it validates via `Intl.DateTimeFormat(...)` try/catch, which resolves legacy zone
-aliases (e.g. `US/Eastern`, `Asia/Calcutta`). The owner's ratified answer requires membership in
-`Intl.supportedValuesOf('timeZone')` specifically (canonical names only, stricter). This is the
-**first slice ever dispatched under `feature-session-p2`** (`ap3/routines.json`, `clean_runs: 0`)
-— deliberately the smallest, best-understood change in this plan, to prove the class out before
-trusting it with anything bigger.
-
-Scope: `packages/db/src/session-service.ts`, `packages/db/src/session-service.test.ts`.
+**WITHDRAWN 2026-09-11 — decision amended, existing behaviour correct; run HALT BUDGET $6.04, both
+reviews P1, see `ap3/state/runs-archive/`.** SES-OQ-10's original decision (whitelist against
+`Intl.supportedValuesOf('timeZone')`) was wrong on the CI runtime: Node 22/ICU 78's
+`supportedValuesOf` is CLDR-canonical, not IANA-canonical — it misses `Asia/Ho_Chi_Minh`
+(has `Asia/Saigon`), `Asia/Kolkata` (has `Asia/Calcutta`), `Europe/Kyiv` (has `Europe/Kiev`). Both
+Codex review rounds on this slice (code + security) independently flagged this `[P1]`. The
+decision is now amended to reject only what `Intl.DateTimeFormat('en-US', { timeZone })` cannot
+construct (`RangeError`) — `isValidTimezone()` (`packages/db/src/session-service.ts:96-103`)
+already implements exactly that, unchanged, since before this run started. Full evidence and the
+amended SES-OQ-10 text: `docs/standards/decisions.md` changelog 2026-09-11 (v2.50). No successor
+slice for M1.
 
 ## Milestone 2 — admin-scoped session read routes (supervised — auth choke-point change)
 

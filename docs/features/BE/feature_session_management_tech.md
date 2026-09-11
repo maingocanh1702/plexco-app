@@ -920,7 +920,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 89 | Auto-close closes past-`ends_at`+grace session (edge #50 — **OWNER-CHECK, chưa build**) | `open` session, `ends_at`+grace `<= now()`, job runs | `status='closed'`, `close_reason='auto'` (mirror `cancel_reason='auto'` pattern), exactly one `session.closed` event — mirror test #54 (auto-expiry). Grace duration TBD |
 | 90 | Auto-close concurrent runs + race vs manual close (edges #51/#52 — **OWNER-CHECK, chưa build**) | Two overlapping scheduled runs target the same due session; separately, job races `CloseSession`/`UpdateSession` under deterministic lock-order harness | Exactly one run's `FOR UPDATE SKIP LOCKED` claims it (mirror test #56); whichever acquires row lock first wins deterministically, no double-transition (mirror test #57) |
 | 91 | Recurrence edit this-and-future (DD-121, SES-OQ-2) | Host edits a recurrence rule from occurrence N onward | New rule version created applying từ occurrence N trở đi; occurrences trước N và đã-generate trước đó KHÔNG bị rewrite; no schema change |
-| 92 | Timezone validation rejects unsupported string (SES-OQ-10) | Create/update session với `timezone` KHÔNG nằm trong `Intl.supportedValuesOf('timeZone')` | `INVALID_TIMEZONE` (400); zero mutation |
+| 92 | Timezone validation rejects unconstructible string (SES-OQ-10, sửa 2026-09-11) | Create/update session với `timezone` mà `Intl.DateTimeFormat('en-US', { timeZone })` KHÔNG dựng được (ném `RangeError`) — KHÔNG áp dụng cho IANA link/alias hợp lệ như `US/Eastern`/`Asia/Saigon`, các chuỗi này PASS (xem `decisions.md` changelog 2026-09-11, v2.50) | `INVALID_TIMEZONE` (400); zero mutation |
 
 ### Integration Tests
 
