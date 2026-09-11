@@ -2,11 +2,11 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.25 · 2026-08-13
+> **Version:** 2.26 · 2026-09-11
 > **Status:** Reviewed  
-> **Implementation:** Not started — waitlist schema `0014` và validated public finite-capacity invariant `0024` đã merge; SessionService/routes/projector/auto-promote vẫn chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** DB substrate (`0014` waitlist, `0019` same-tenant integrity, `0024` public-capacity CHECK) + **SessionService đủ 6 command** (`packages/db/src/session-service.ts`: create · publish · announce · update · close · cancel) + **5 route** (`POST /api/sessions` · `/[id]` · `/[id]/publish` · `/[id]/close` · `/[id]/cancel`; `announce` gate DD-56 clause 1) đã merge (đo 2026-09-06 tại `30a3e90`, re-verified 2026-09-11 tại `6bfa905`); **chưa có**: route đọc (`GET /api/sessions`, `/[id]`), projector thật (stub `dlq`), auto-promote, auto-expiry, writer cho `players` (roster — invite/guest-note/approve/reject family) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
-> **Tài liệu liên quan:** `../../product/BRD.md` FR-2 · `../../product/PRD.md` FLOW 2/13 · `../../product/TDD.md` §3.2/3.8 · `../../standards/decisions.md` **DD-32/DD-39/DD-45/DD-45a/DD-49** · DD-37/DD-65..68 · `../../standards/business-rules.md` BL-CBF/BL-SES-9/10 · `feature_channel_booking_funnel.md` · `../BE/feature_session_management_tech.md`
+> **Tài liệu liên quan:** `../../product/BRD.md` FR-2 · `../../product/PRD.md` FLOW 2/13 (FLOW 13 — cross-club join qua marketplace listing — **deferred tới epic "public read model"**, xem §1 "Ngoài phạm vi") · `../../product/TDD.md` §3.2/3.8 · `../../standards/decisions.md` **DD-32/DD-39/DD-45/DD-45a/DD-49** · DD-37/DD-65..68/**DD-114 D3**/**DD-121** · `../../standards/business-rules.md` BL-CBF/BL-SES-9/10 · `feature_channel_booking_funnel.md` · `../BE/feature_session_management_tech.md`
 
 > **Cập nhật v3.4 (DD-37, 2026-07-10):** kênh phase-1 = **Zalo + Messenger** + web (bỏ Telegram). **Giá theo giới tính** (giá nam/nữ) nay **✅ phase-1** — xem **DD-39 (✅ Chốt)** / `feature_user_settings.md`; schema giới tính sống ở `feature_user_settings`, KHÔNG thêm vào doc này (chỉ pointer).
 >
@@ -25,7 +25,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 - **Friend chưa follow player** → tạo **guest note** (text: tên người được rủ + ghi chú "Bạn của [player]"). Guest note chiếm slot, KHÔNG phải user/person trong hệ thống. Max 3 notes/player/session. Không tạo charge (offline payment / slot reservation only).
 - Host cấu hình `allow_player_invite` (boolean) lúc tạo session **và** có thể bật/tắt bất kỳ lúc nào.
 
-**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `../BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (draft-lifecycle gap có sẵn từ `create=draft`, v2.12c) nay đã author: host-discard (SES-UC-13) và system auto-expiry draft quá giờ (SES-UC-14) đều flip `draft`→`cancelled` qua `CancelSession` mở rộng (state machine §4, founder-ratified `docs-session-draft-lifecycle`); publish contract giữ nguyên chỉ author `draft`→`open`. **Hard delete session:** rút khỏi spec 2026-08-13 — cơ chế chốt ở `decisions.md` DD-104 (D0–D4); spec sẽ được author trong slice DD-104 riêng.
+**Ngoài phạm vi:** Đặt sân (court booking), chấm điểm theo môn (sport-specific scoring) — **được theo dõi riêng ở `feature_session_organize.md` + `../BE/feature_session_organize_tech.md` (DD-61..64 ✅ accept-in-principle, build post-P4)**; pointer only, không thêm scope organize vào body Reviewed này. **Dọn draft chưa publish** (draft-lifecycle gap có sẵn từ `create=draft`, v2.12c) nay đã author: host-discard (SES-UC-13) và system auto-expiry draft quá giờ (SES-UC-14) đều flip `draft`→`cancelled` qua `CancelSession` mở rộng (state machine §4, founder-ratified `docs-session-draft-lifecycle`); publish contract giữ nguyên chỉ author `draft`→`open`. **Hard delete session:** rút khỏi spec 2026-08-13 — cơ chế chốt ở `decisions.md` DD-104 (D0–D4); spec sẽ được author trong slice DD-104 riêng. **Marketplace discovery / FLOW 13 (cross-club join qua public listing):** SES-UC-8 (join session public) chỉ scope tới **toggle `visibility` + immediate-deny fence** (đã land trong `UpdateSession`, raise `public_session_fences` khi chuyển `private`) — KHÔNG bao gồm một `public_sessions` projection tìm được thật. Chiếu (projector) thuộc epic **"public read model"** của phase sau, epic đó có **bốn tiền đề**: (1) **DD-73** share link (route opaque slug theo DD-83); (2) **DD-41** projection migration — whitelist BL-DSC-1 chưa có trong `public_sessions`; (3) occupancy helper DUY NHẤT cho `slots_open` (DD-32:452 · BL-DSC-1 `../../standards/business-rules.md:50` · `../../product/TDD.md` §3.9) — cấm công thức capacity thứ hai; (4) alias moderated substrate cho `club_display_name` (DD-46:627, fail-closed alias trống ⇒ không project). **Slice nào chạm giá trị projection phải AWAIT tới khi epic được authorize** (DD-114 D3, owner 2026-08-26; `../../standards/decisions.md`). `../../product/PRD.md` §FLOW 13 vẫn đúng như hành vi đích nhưng bị epic-gate ở phase-1 — đọc "public" trong phase-1 = toggle + fence, không phải một listing tìm được (PRD changelog v2.8q).
 
 ### Entry points
 
@@ -115,6 +115,14 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 36 | Security | Invite friend đã là player trong session (active/waitlisted/pending) | Reject `ALREADY_JOINED` — idempotent no-op nếu cùng `commandId` |
 | 37 | Security | Invite friend bị block (DD-55) | Reject `MEMBER_BLOCKED` — block boundary overrides follow |
 | 38 | Concurrency | Delete guest note khi đang có waitlist | Release slot → trigger waitlist auto-promote (cùng mechanism SES-UC-9 leave) |
+| 39 | State | Đóng session (SES-UC-5) không ở trạng thái `open` (draft/closed/cancelled) | Reject `SESSION_NOT_OPEN`; session đã `closed` = no-op idempotent (dedup theo `commandId`, cùng pattern publish/cancel — nhánh no-op KHÔNG cần `expectedVersion` khớp). Chỉ Host (`session.manage`) |
+| 40 | Financial | Đóng session đang có charges đã phát sinh | Reject `CANCEL_REQUIRES_REVIEW` (cùng mã lỗi review dùng cho huỷ có tiền) — **khác huỷ**: đóng KHÔNG check số roster đang active, chỉ check đã có charges hay chưa |
+| 41 | Security/Concurrency | Đóng session với `expectedVersion` thiếu hoặc không khớp | Reject `STALE_VERSION` — chỉ áp dụng trên nhánh mutate (session đã `closed` là no-op, không cần version) |
+| 42 | State | System auto-close session `open` đã qua `ends_at` + grace period (SES-UC-10) | **OWNER-CHECK (chưa build):** cùng transition `open`→`closed` như đóng thủ công (status/version/outbox event); idempotent nếu host đã đóng tay trước đó; không nhận join mới sau transition; public projection gỡ ngay; charges/venue giữ nguyên không đổi. Thời lượng grace period sau `ends_at` **chưa chốt** |
+| 43 | Resilience/Concurrency | Hai lượt auto-close job chạy chồng (nhiều cron tick) | **OWNER-CHECK (chưa build):** cùng discipline `FOR UPDATE SKIP LOCKED` như auto-expiry draft (edge #22) — claim filter tự nhiên idempotent, không double-close/double-event |
+| 44 | Concurrency | Auto-close job đua với đóng/sửa thủ công đồng thời trên cùng session | **OWNER-CHECK (chưa build):** cả hai lock session row `FOR UPDATE` trước khi mutate (session-lock-ordering) — ai lock trước thắng, không double-transition |
+| 45 | State | Host duyệt invite khi session đã đầy (capacity recheck, SES-UC-18) | Reject `SESSION_FULL` dưới session lock — occupancy có thể đã đổi từ lúc invite được tạo tới lúc duyệt (mirror BE edge #44) |
+| 46 | State | Host từ chối invite đang `pending` (SES-UC-18) | Remove player row (KHÔNG set `left` — pending chưa từng active); giải phóng slot → trigger waitlist auto-promote (mirror BE edge #45) |
 
 ---
 
@@ -221,21 +229,34 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 
 > Nút "Đăng kèo" chỉ hiện khi `status=draft`; nút "Huỷ nháp" thay "Huỷ" khi `status=draft`.
 
+**4 States:**
+
+| State | Nội dung |
+|-------|----------|
+| Loading | "Đang tải..." |
+| Ready | Layout trên (info + roster + payment) |
+| Error | "Không tìm thấy" (session không tồn tại trong tenant context / đã bị xoá khỏi ngữ cảnh host) |
+| Empty | N/A (session luôn có data khi tồn tại) |
+
 ### Bot — Publish draft / Discard draft
 
 **Publish (lệnh/callback "Đăng kèo"):**
 
 | State | Nội dung |
 |-------|----------|
+| Loading | N/A — instant command (single-action, không có network round-trip hiển thị) |
 | Ready | Confirm: "Đăng kèo này?" → `draft`→`open` (single-action, KHÔNG wizard) |
 | Error | `SESSION_NOT_OPEN`: "Buổi chơi không mở được" (quá giờ/không draft) · `MISSING_DISCOVERY_FIELDS`: "Thiếu thông tin công khai" · `TENANT_SUSPENDED` (403): "Gói bị tạm ngưng" |
+| Empty | N/A — thao tác trên session đã tồn tại, không có empty state |
 
 **Discard (lệnh/callback "Huỷ nháp"):**
 
 | State | Nội dung |
 |-------|----------|
+| Loading | N/A — instant command (single-action, không có network round-trip hiển thị) |
 | Ready | Confirm: "Huỷ buổi nháp này?" → `draft`→`cancelled` (xác nhận một chạm khi rỗng) |
 | Error | `SESSION_NOT_OPEN`: "Buổi chơi không thể huỷ" · `STALE_VERSION`: "Dữ liệu đã thay đổi" · `CANCEL_REQUIRES_REVIEW`: "Cần xác nhận huỷ" (anomaly — route sang review UI SES-UC-6) |
+| Empty | N/A — thao tác trên session đã tồn tại, không có empty state |
 
 ### Web P4 — Session list
 
@@ -708,12 +729,30 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 | Ready | Approve/Reject inline buttons |
 | Error | Toast: "Không thể duyệt" / "Buổi chơi đã đầy" |
 | Empty | N/A |
-| Web P4 | Join/Leave action | ✅ Button spinner | ✅ Confirm dialog | ✅ Error toast | ⚪ N/A |
-| Web P4 | Publish control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
-| Web P4 | Discard draft control | ✅ Button spinner | ✅ Confirm dialog | ✅ Inline error codes | ⚪ N/A |
-| Web P4 | Invite Friend picker | ✅ Skeleton list | ✅ Friend list + search + "Đã tham gia" badge | ✅ Toast + retry | ✅ "👥 Chưa có ai follow" + CTA Thêm khách |
-| Web P4 | Guest Note form | ⚪ N/A | ✅ Form + counter | ✅ Inline errors (limit, full) | ⚪ N/A (form) |
-| Web P4 | Approve/Reject pending | ✅ Button spinner | ✅ Inline approve/reject | ✅ Toast error | ⚪ N/A |
+
+### Web P4 — Join/Leave action
+
+**Purpose:** Player join hoặc leave session từ session detail (player view) hoặc session list.
+
+> Nút "Tham gia" / "Rời buổi" trên session detail (player view) và trên `SessionCard` (list). Xác nhận qua dialog trước khi gửi command.
+
+| State | Nội dung |
+|-------|---------|
+| Loading | Button spinner |
+| Ready | Confirm dialog ("Tham gia buổi chơi này?" / "Rời buổi chơi này?") |
+| Error | Error toast (`SESSION_FULL`, `SESSION_NOT_OPEN`, v.v.) |
+| Empty | N/A |
+
+### Web P4 — Publish / Discard draft control (Web)
+
+**Purpose:** Host publish hoặc discard một session `draft` từ Web session list / session detail (mirror Bot "Đăng kèo"/"Huỷ nháp" trên; xem "Component: Publish/Discard controls (Web)" ở Session detail).
+
+| State | Nội dung |
+|-------|---------|
+| Loading | Button spinner |
+| Ready | Confirm dialog ("Đăng kèo buổi chơi này?" / "Huỷ buổi nháp này?") |
+| Error | Inline error codes (mirror Bot Publish/Discard error states ở trên) |
+| Empty | N/A |
 
 ---
 
@@ -859,7 +898,8 @@ stateDiagram-v2
 | ID | Quyết định | Trạng thái |
 |---|---|---|
 | SES-OQ-1 | Behavior khi host change price mà đã có charges | ✅ **Chốt DD-49; timing closure ghi tại decisions v1.58** — chưa refund carry-over; refunded chỉ append lifecycle khi outcome active. Full→waitlisted defer lifecycle/nợ mới tới promotion. Không mặc định row `charges` thứ hai; storage/API chờ design-probe. |
-| SES-OQ-2 | Recurrence editing: sửa 1 occurrence hay this-and-future? | ⬜ Chưa chốt |
+| SES-OQ-2 | Recurrence editing: sửa 1 occurrence hay this-and-future? | ✅ **Chốt DD-121 (owner 2026-09-11)** — phase hiện tại chỉ **this-and-future**: sửa rule tạo **rule version mới** áp dụng từ occurrence được chọn trở đi; occurrence quá khứ/đã generate trước đó KHÔNG bị rewrite (khớp nguyên văn BE "Recurrence Implementation", không đổi schema). Sửa **1 occurrence riêng lẻ** là **Ngoài phạm vi** — ghi làm open question follow-up, không chặn slice hiện tại. |
+| SES-OQ-10 | Timezone input validation: chuỗi timezone sai định dạng khi create/update session | ✅ **Chốt (owner 2026-09-11)** — reject mọi `timezone` KHÔNG nằm trong `Intl.supportedValuesOf('timeZone')` tại create/update, mã lỗi `INVALID_TIMEZONE` (400). Phát hiện qua `docs/issues/session-management-acceptance-checklist.md` §9-A (item không được track ở bảng này trước v2.26). |
 | SES-OQ-3 | Waitlist + auto-promote | ✅ **Chốt DD-45/DD-45a/DD-49** — schema `0014` đã merge; behavior chưa build. DD-45a owner-final 2026-07-28 yêu cầu future promotion slice thêm partial `UNIQUE (session_id, waitlist_position) WHERE status='waitlisted'` bằng migration monotonic mới; duplicate preflight phải HALT/manual, không auto-renumber; gaps hợp lệ. Allocator vẫn gán tail rank dưới session lock, unique là final fence. Chờ DD-39/41/42/52, DD-49 correction core, SessionService, queue-entry-version, tenant-private root store + narrow scheduler/CAS worker + expired-final finalizer, candidate audit consumer, root-keyed owner digest và DLQ. **Không có runtime/migration mới từ quyết định này.** |
 | SES-OQ-4 | Field mô tả session + gating (title/notes/`session_type`/byoe/cost_shared + gating level-rank/gender/age) | ✅ **Chốt DD-41** — enforce ở shared `evaluateSessionEligibility`←`addMemberToSession`, self-attested, 9 exact codes; body/schema propagate lúc build → `../../decisions/analysis/dd-41-session-fields-gating-analysis.md` |
 | SES-OQ-5 | No-show/attendance/reliability + policy deprioritize/ban | ✅ **Chốt DD-42** — per-tenant (attendance trên `players`, reliability trên `memberships`, RLS, không public); build P4+ → `../../decisions/analysis/dd-42-reliability-analysis.md` |
@@ -872,6 +912,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-11 | v2.26 | **ap3-intake gap closure (9 owner answers, `ap3/features/session-management/INTAKE.md`):** (1) Implementation line cập nhật khớp BE:6 — SessionService 6 command + 5 route đã merge, đo `6bfa905`; (2) §1 thêm đoạn "Marketplace discovery / FLOW 13" — SES-UC-8 scope tới toggle+fence, projection thật deferred tới epic "public read model" (4 tiền đề DD-73/DD-41/occupancy-helper/DD-46, DD-114 D3); (3) §2 thêm 8 edge case mới #39–46: close transition (#39–41, từ live code `closeSession`), auto-close OWNER-CHECK chưa build (#42–44, từ DD-45/45a + auto-expiry pattern), mirror BE #44/#45 cho approve/reject pending (#45–46); (4) §3 thêm bảng 4-state cho Bot Session detail (trước đây chỉ có ở aggregate matrix); Bot Publish/Discard draft thêm dòng Loading/Empty tường minh; dọn 6 dòng mồ côi thành 2 section riêng (Join/Leave action, Publish/Discard control Web), xoá 3 dòng trùng lặp; (5) §7 SES-OQ-2 chốt DD-121 (this-and-future only); SES-OQ-10 mới (timezone validation, `INVALID_TIMEZONE`). |
 | 2026-08-13 | v2.25 | **Gỡ WIP DeleteSession (rút toàn bộ nội dung v2.20) theo DD-104:** `decisions.md` v2.27 chốt D0–D4 (D1a: mọi FK giữ `NO ACTION` và chặn delete — KHÔNG có cascade, cơ chế v2.20 khai không tồn tại (9 FK trỏ `sessions` đều `NO ACTION`); D2a: action class `delete_draft_session`; D3c: bắt `23503` rồi tra `pg_constraint`; D4a: concurrency ordering chung delete+publish). Gỡ khỏi body: SES-UC-15, edges #27–#30, bot/web delete surfaces + confirm dialog, state-machine transitions, permission row, `session_deleted` analytics, 6 AC bullets, 2 state-coverage rows. ID edges #27–#30 giữ trống, KHÔNG renumber #31+. Spec DeleteSession sẽ được author trong slice DD-104 sau khi `tenant-capability-authority-core` có packet. |
 | 2026-08-12 | v2.24 | **Create Session form upgrade (Playo reference #3):** (1) **Activity Access segmented control:** thay dropdown "Hiển thị" bằng segmented control "🌐 Công khai" / "🔒 Chỉ mời" + contextual info text. (2) **Skill Range Slider:** toggle ON/OFF + dual-thumb range slider (5-6 levels DD-41) + "Bắt buộc (MH)" checkbox enforcement. (3) **Activity Type:** radio `regular`/`coaching`/`tournament`. (4) **Tag a Group:** picker chọn club/group, session xuất hiện trong timeline + notify members. (5) **Instructions preset:** 4 checkbox presets (BYOE, cost shared, water, backup court) + free-text textarea (max 500). (6) **Advanced Settings collapsed section:** gom skill + activity type + join policy + invite toggle. Web form field spec từ 11 → 19 fields. Bot wizard từ 6 → 10 steps (thêm area, access, tag, instructions, advanced). Domain model: `sessions` thêm 7 fields mới (`activity_type`, `skill_level_min/max`, `skill_required`, `instructions_presets`, `instructions_text`, `tagged_tenant_id`, `cover_image_url`). |
 | 2026-08-12 | v2.23 | **SessionCard upgrade (Playo reference #2):** Session list row: thêm `cover_image_url` (thumbnail 48×48px), urgency badge ("Chỉ N chỗ!" đỏ khi ≤3 slots), skill level range format ("Người mới – Trung bình" green chip). 3 fields mới. Không đổi domain model. |
