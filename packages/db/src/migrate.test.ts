@@ -4218,10 +4218,14 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
         ),
       ).rejects.toMatchObject({ code: "23503" });
 
-      // D-6: two GENUINELY concurrent 3rd-note inserts for the same (session, person) cannot both
-      // commit. trg_session_guest_note_limit locks the sessions row before counting, so the second
-      // connection blocks until the first's insert commits, then observes count=3 and is rejected —
-      // proving the trigger's own limit holds under real concurrency, not just sequential calls.
+      // D-6: a DETERMINISTIC proof that trg_session_guest_note_limit's session-row lock actually
+      // blocks a second connection, not just "two autocommit promises happened to interleave" (which
+      // could pass by luck even against the pre-fix unlocked trigger — codex round-02 [P2]). Connection
+      // A opens an explicit transaction, inserts the 3rd note (acquiring + holding the sessions row
+      // lock) and stays OPEN. Connection B's 4th-note attempt is started but not awaited; a third
+      // connection (su) polls pg_blocking_pids() until Postgres itself confirms B is waiting on A's
+      // backend — proving genuine lock contention, not timing luck. Only then does A commit, B
+      // unblocks, observes count=3, and is rejected.
       const session2 = await appClient.query(
         `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status)
          VALUES ($1, $2, now(), now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')
@@ -4240,24 +4244,53 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
 
       appClient2 = await connect(url(ctx.dbName, "app", "plexco_test_app"));
       await appClient2.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
-      const raced = await Promise.allSettled([
-        insertRaceNote(appClient),
-        insertRaceNote(appClient2),
-      ]);
-      expect(raced.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-      const raceRejections = raced.filter(
-        (r): r is PromiseRejectedResult => r.status === "rejected",
-      );
-      expect(raceRejections).toHaveLength(1);
-      expect(raceRejections[0]!.reason).toMatchObject({
+      const appPid = (await appClient.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as {
+        pid: number;
+      };
+      const app2Pid = (await appClient2.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as {
+        pid: number;
+      };
+
+      await appClient.query("BEGIN");
+      await insertRaceNote(appClient); // holds the sessions row lock, uncommitted
+      const blockedInsert = insertRaceNote(appClient2); // started, deliberately not awaited yet
+
+      let genuinelyBlocked = false;
+      for (let attempt = 0; attempt < 200 && !genuinelyBlocked; attempt++) {
+        const { rows } = await su.query(
+          `SELECT $1::int = ANY(pg_blocking_pids($2::int)) AS is_blocked`,
+          [appPid.pid, app2Pid.pid],
+        );
+        genuinelyBlocked = (rows[0] as { is_blocked: boolean }).is_blocked;
+        if (!genuinelyBlocked) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(
+        genuinelyBlocked,
+        "second connection's insert must be lock-blocked on the first's open transaction",
+      ).toBe(true);
+
+      await appClient.query("COMMIT");
+      await expect(blockedInsert).rejects.toMatchObject({
         code: "P0001",
         message: expect.stringContaining("GUEST_NOTE_LIMIT_REACHED"),
       });
+      await appClient2.query("ROLLBACK");
+
       const raceFinal = await su.query(
         `SELECT count(*)::int AS n FROM session_guest_notes WHERE session_id = $1`,
         [session2Id],
       );
       expect((raceFinal.rows[0] as { n: number }).n).toBe(3);
+
+      // D-7: no UPDATE grant — an app-role caller cannot reassign an existing note's grouping key
+      // to sneak past trg_session_guest_note_limit, which only fires BEFORE INSERT (codex review
+      // finding: UPDATE was part of the copied 0009 blanket grant but nothing in the BE command
+      // surface ever updates a guest note).
+      await expect(
+        appClient.query(`UPDATE session_guest_notes SET note = 'edited' WHERE session_id = $1`, [
+          session2Id,
+        ]),
+      ).rejects.toMatchObject({ code: "42501" });
     } finally {
       await appClient?.end();
       await appClient2?.end();

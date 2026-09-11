@@ -2,12 +2,17 @@
 -- 0044_session_guest_notes.sql
 -- session-management-m03-guest-note-schema-migration — the schema half of
 -- SES-UC-16/17 guest notes (host session, player-authored note for a
--- non-member guest). DDL authority: feature_session_management_tech.md §2
+-- non-member guest). Started from feature_session_management_tech.md §2
 -- lines 144-177 + "Migration & Rollback" section (this migration's own
 -- pending-list entry, audit 2026-09-11 / ap3/features/session-management/
--- INTAKE.md R3.2/R6.1). Planning authority: ap3/features/session-management/
--- PLAN.md Milestone 3a — must merge BEFORE any invite/guest-note command
--- code (Milestone 3b, session-management-m03-guest-note-commands).
+-- INTAKE.md R3.2/R6.1) as a DRAFT starting point, then hardened beyond it
+-- per two codex review rounds (tenant-session FK, session-lock in the
+-- trigger, UPDATE removed from the grant — see the three blocks below).
+-- THIS FILE, not the spec's §2 prose block, is the authoritative live DDL —
+-- the doc note directly under the spec's CREATE TABLE block cross-references
+-- back here. Planning authority: ap3/features/session-management/PLAN.md
+-- Milestone 3a — must merge BEFORE any invite/guest-note command code
+-- (Milestone 3b, session-management-m03-guest-note-commands).
 --
 -- Three objects, all pinned in the BE spec's §2 SQL since v2.21 (2026-08-12)
 -- but never migrated:
@@ -100,7 +105,13 @@ ALTER TABLE session_guest_notes FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON session_guest_notes
   USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
-GRANT SELECT, INSERT, UPDATE, DELETE ON session_guest_notes TO app;
+-- No UPDATE: the BE command surface only ever creates (CreateGuestNote) or
+-- deletes (DeleteGuestNote) a note — never edits one in place. Granting
+-- UPDATE anyway (0009's blanket tenant-table default) would let a caller
+-- reassign an existing row's session_id/created_by_person_id and bypass
+-- trg_session_guest_note_limit, which only fires BEFORE INSERT (codex
+-- review finding).
+GRANT SELECT, INSERT, DELETE ON session_guest_notes TO app;
 
 -- Max 3 guest notes per player per session (defense-in-depth; BE spec: the
 -- future service also checks this under the session lock before INSERT).
