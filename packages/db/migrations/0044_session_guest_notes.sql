@@ -6,8 +6,9 @@
 -- lines 144-177 + "Migration & Rollback" section (this migration's own
 -- pending-list entry, audit 2026-09-11 / ap3/features/session-management/
 -- INTAKE.md R3.2/R6.1) as a DRAFT starting point, then hardened beyond it
--- per two codex review rounds (tenant-session FK, session-lock in the
--- trigger, UPDATE removed from the grant — see the three blocks below).
+-- across codex review: round 1 added the tenant-session FK and the
+-- session-lock in the trigger; round 2 removed UPDATE from the grant (see
+-- the three blocks below). Branch-authored, not yet merged into main.
 -- THIS FILE, not the spec's §2 prose block, is the authoritative live DDL —
 -- the doc note directly under the spec's CREATE TABLE block cross-references
 -- back here. Planning authority: ap3/features/session-management/PLAN.md
