@@ -210,4 +210,47 @@ describe("DELETE /api/sessions/:id/guest-notes/:noteId", () => {
       expect(keyA).toBe(keyB);
     });
   });
+
+  // The BE spec's "per user" (no tenant/session qualifier) is the WIDEST scope in the table's own
+  // vocabulary, so it must hold even across tenants the same actor belongs to — something the
+  // per-tenant choke-point structurally cannot express (codex review finding, second round). This
+  // route layers a second, genuinely global rateLimited() call for exactly that.
+  describe("global per-actor rate limit (codex review finding — cross-tenant)", () => {
+    function globalBucketKeys(): string[] {
+      return vi
+        .mocked(rateLimited)
+        .mock.calls.map((call) => call[0])
+        .filter((key) => key.startsWith("session-guest-note-delete-global:"));
+    }
+
+    it("uses a bucket distinct from the per-tenant one, keyed by the actor", async () => {
+      await DELETE(req({ commandId: "cmd_1" }), ctx());
+      const keys = globalBucketKeys();
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).toBe(`session-guest-note-delete-global:${PERSON_ID}`);
+    });
+
+    it("gives the SAME actor authorized in two DIFFERENT tenants the SAME global bucket", async () => {
+      await DELETE(req({ commandId: "cmd_1" }, TENANT), ctx());
+      vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: OTHER_TENANT, role: "owner" }]);
+      await DELETE(req({ commandId: "cmd_2" }, OTHER_TENANT), ctx());
+
+      // Guards the guard: an empty globalBucketKeys() (e.g. the global layer removed entirely)
+      // would destructure to [undefined, undefined] and pass the equality check below trivially.
+      const keys = globalBucketKeys();
+      expect(keys).toHaveLength(2);
+      expect(keys[0]).toBe(keys[1]);
+    });
+
+    it("rejects with 429 RATE_LIMITED when only the global bucket is exhausted, without reaching the command", async () => {
+      vi.mocked(rateLimited).mockImplementation(async (key) =>
+        key.startsWith("session-guest-note-delete-global:"),
+      );
+      const response = await DELETE(req({ commandId: "cmd_1" }), ctx());
+      expect(response.status).toBe(429);
+      const { error } = await envelope(response);
+      expect(error).toMatchObject({ code: "RATE_LIMITED", statusCode: 429 });
+      expect(deleteGuestNote).not.toHaveBeenCalled();
+    });
+  });
 });

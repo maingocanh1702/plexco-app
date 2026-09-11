@@ -42,6 +42,10 @@ const NOTE_ID = "44444444-4444-4444-8444-444444444444";
 const PERSON_ID = "55555555-5555-4555-8555-555555555555";
 const OTHER_PERSON_ID = "66666666-6666-4666-8666-666666666666";
 const OTHER_SESSION_ID = "77777777-7777-4777-8777-777777777777";
+// Deliberately contains hex letters (a-f): every other fixture above is a single repeated digit,
+// so its upper/lowercase spellings are byte-identical and a case-folding regression test against
+// them would pass even if the fix were reverted (codex review finding).
+const SESSION_ID_WITH_HEX_LETTERS = "aabbccdd-eeff-4abc-8def-abcdef123456";
 
 function req(body: unknown, tenant = TENANT): Request {
   return new Request(`https://plexco.app/api/sessions/${SESSION_ID}/guest-notes?tenant=${tenant}`, {
@@ -262,8 +266,16 @@ describe("POST /api/sessions/:id/guest-notes", () => {
     // Codex review, both rounds: createGuestNote canonicalizes sessionId to lowercase before use,
     // so an uppercase spelling of the SAME session must not split the quota into a second bucket.
     it("gives an uppercase and a lowercase spelling of the SAME session the SAME bucket", async () => {
-      await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx(SESSION_ID.toLowerCase()));
-      await POST(req({ commandId: "cmd_2", guestName: "Khách A" }), ctx(SESSION_ID.toUpperCase()));
+      const lower = SESSION_ID_WITH_HEX_LETTERS.toLowerCase();
+      const upper = SESSION_ID_WITH_HEX_LETTERS.toUpperCase();
+      // Guards the guard: if this ever failed, the test below would pass trivially and stop
+      // proving anything (codex review finding — the original fixture had no hex letters, so its
+      // upper/lowercase spellings were byte-identical and the assertion below would have passed
+      // even against the pre-fix, un-lowercased bucket).
+      expect(lower).not.toBe(upper);
+
+      await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx(lower));
+      await POST(req({ commandId: "cmd_2", guestName: "Khách A" }), ctx(upper));
 
       const [keyA, keyB] = createBucketKeys();
       expect(keyA).toBe(keyB);
