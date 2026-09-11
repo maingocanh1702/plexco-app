@@ -28,7 +28,8 @@
         "packages/db/src/session-service*",
         "packages/db/src/public-session-fence*",
         "packages/core/src/api-contract.ts",
-        "packages/core/src/api-contract.test.ts"
+        "packages/core/src/api-contract.test.ts",
+        "packages/db/src/index.ts"
       ],
       "budget_usd_max": 15,
       "max_runs_per_day": 3,

@@ -224,6 +224,18 @@ one).
 
 ---
 
+
+**D8 (owner follow-up, 2026-09-11).** CreateGuestNote/DeleteGuestNote ship with NO billing/suspension gate:
+`packages/db/src/authorization.ts` pins `ActionClass` to seven literals (none guest-note) and the BE spec's
+algorithms call for none. Decide whether the Suspended Action Matrix (DD-110) needs a guest-note row; if yes,
+that is a spec change + `authorization.ts` slice, not part of M3b.
+
+**M3b attempt log.** #1 HALT SCOPE_DRIFT (needs `packages/core/src/api-contract.ts` registry for the six
+error codes) → rescoped. #2 HALT SCOPE_DRIFT (needs `packages/db/src/index.ts` barrel export; error mapping
+consolidated in new `apps/web/lib/session-guest-note-route.ts`) → rescoped. Planner lesson (W5.2): impact
+analysis must enumerate every registration point a new command/route/error code touches (barrel, error-code
+registry, status/message tables), not just the files that hold the logic.
+
 ## Unresolved questions for the owner
 
 1. D1 above: should SES-UC-16 (invite friend via follow) / SES-UC-18 (approve/reject) move to
