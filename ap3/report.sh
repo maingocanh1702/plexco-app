@@ -60,6 +60,11 @@ n = len(rows)
 ready = [r for r in rows if r.get("terminal") == "READY"]
 costs = [r["total_cost_usd"] for r in rows if isinstance(r.get("total_cost_usd"), (int, float))]
 durs = [r["duration_ms"] for r in rows if isinstance(r.get("duration_ms"), (int, float))]
+# I4: rounds is the one column the per-feature rollup was missing (slices/READY_rate/cost were
+# already here) -- only rows that reached a review at all carry it, same "isinstance" filter as
+# cost/duration above so a row missing it (e.g. a pre-review HALT) is silently excluded, not
+# counted as zero.
+rounds = [r["review_rounds"] for r in rows if isinstance(r.get("review_rounds"), (int, float))]
 inter = sum(r["human_interventions"] for r in rows if isinstance(r.get("human_interventions"), int))
 den = sum(r["permission_denials"] for r in rows if isinstance(r.get("permission_denials"), int))
 term = {}
@@ -78,6 +83,7 @@ print("ap3 report" + (" (last %dd)" % since if since else " (all)"))
 print("  runs=%d  READY=%d  READY_rate=%s" % (n, len(ready), ("%.0f%%" % (100.0 * len(ready) / n)) if n else "n/a"))
 print("  cost_usd mean=%s max=%s total=%s" % (mean(costs), max(costs) if costs else None, round(sum(costs), 4) if costs else None))
 print("  cycle_ms mean=%s max=%s" % (mean(durs), max(durs) if durs else None))
+print("  review_rounds mean=%s max=%s" % (mean(rounds), max(rounds) if rounds else None))
 print("  human_interventions=%d  permission_denials=%d" % (inter, den))
 print("  terminals=" + json.dumps(term))
 print("  terminal_kinds=" + json.dumps(tkind))

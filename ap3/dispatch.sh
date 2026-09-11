@@ -661,6 +661,24 @@ reconcile_ready() { # <slug> — a PR is open; watch for merge / close
         jsetj "$rec" merged_unchanged true; jsetj "$rec" human_interventions 0
         jsetj "$TRUST" "$cls.clean_runs" "$(( $(jget "$TRUST" "$cls.clean_runs" 0) + 1 ))"
         notify "🎉 merged unchanged $slug — clean_runs=$(jget "$TRUST" "$cls.clean_runs" 0)"
+        # I4: the plan skill (tier 2) stamps milestone: true on a milestone's last slice; the
+        # actual milestone-review (Codex over the cumulative diff, security round) is W6 -- this
+        # is only the announcement that the mechanical part (every slice merged clean) is done.
+        if [ "$(jget "$rec" milestone false)" = true ]; then
+          local mfeature mnum
+          mfeature="$(jget "$rec" feature "?")"
+          # review round 1 (code): plan-emit pins the real milestone_id (e.g. "M1") into the
+          # record -- prefer it. Guessing a number back out of the slug is a fallback only, for a
+          # hand-authored task that sets milestone: true without going through plan-emit at all.
+          mnum="$(jget "$rec" milestone_id "")"
+          if [ -z "$mnum" ]; then
+            mnum="$(SLUG="$slug" python3 -c 'import os, re
+m = re.search(r"-m([0-9]+)-", os.environ["SLUG"])
+print("M" + m.group(1) if m else "M?")')"
+          fi
+          log "MILESTONE $mfeature $mnum complete"
+          notify "🏁 MILESTONE $mfeature $mnum complete ($slug)"
+        fi
       else
         jsetj "$rec" merged_unchanged false
         jsetj "$rec" human_interventions "$(( $(jget "$rec" human_interventions 0) + 1 ))"
@@ -906,7 +924,7 @@ count_today() { # <class> -> runs of this class started today
 }
 
 start_next() {
-  local origin_sha cands path slug cls cap n rjson tsrc fm risk budget wt inv lint_out reason blocker feature task_model
+  local origin_sha cands path slug cls cap n rjson tsrc fm risk budget wt inv lint_out reason blocker feature milestone milestone_id task_model
   local max_par running_now cscope cverify cinv dbpr busy_slug inv_busy_slug started_any=0
   local after_lines after_missing s db_orig_url db_orig_name db_admin_url db_provision_failed rdbname
   origin_sha="$1"
@@ -1042,6 +1060,8 @@ for s in slugs:
 ')"
     if [ -n "$blocker" ]; then rm -f "$tsrc" "$fm"; log "WAITING_ON $blocker"; continue; fi
     feature="$(jget "$fm" feature "")"       # D1: optional, copied into the record + evidence row
+    milestone="$(jget "$fm" milestone "")"   # I4: optional, pinned so reconcile_ready knows to announce a clean merge
+    milestone_id="$(jget "$fm" milestone_id "")"   # I4/review-round-1: the real number, plan-emit's own -- avoids slug-guessing
     task_model="$(jget "$fm" model "")"      # D2: optional, top of the writer_model precedence
     cscope="$(jget "$fm" scope '[]')"        # D3: pinned into the record for later disjointness checks
     cverify="$(jget "$fm" verify "")"        # D3: pinned into the record for the DB_SHARED check
@@ -1165,7 +1185,7 @@ print(prefix + suffix)')"
     # D3: db_per_run's database (rdbname) was already created fail-closed, above, before any
     # run-state was written for this candidate -- reused here only to pin it into the record.
     RSLUG="$slug" RCLASS="$cls" RRISK="$risk" RBASE="$origin_sha" RBUDGET="$budget" RSTART="$(now)" \
-      RSEC="$rsec" RMODEL="$rmodel" RFEATURE="$feature" RFIXMODEL="$rfixmodel" \
+      RSEC="$rsec" RMODEL="$rmodel" RFEATURE="$feature" RMILESTONE="$milestone" RMILESTONEID="$milestone_id" RFIXMODEL="$rfixmodel" \
       RSCOPE="$cscope" RVERIFY="$cverify" RINV="$cinv" RDBNAME="$rdbname" \
       RREC="$RUNS/$slug/record.json" python3 -c 'import json,os
 o={"slug":os.environ["RSLUG"],"class":os.environ["RCLASS"],"risk":os.environ["RRISK"],
@@ -1177,6 +1197,8 @@ o={"slug":os.environ["RSLUG"],"class":os.environ["RCLASS"],"risk":os.environ["RR
    "nonce":os.environ["RSLUG"]+"-"+os.environ["RSTART"],
    "status":"running","phase":"writing","review_round":0}
 if os.environ.get("RFEATURE"): o["feature"]=os.environ["RFEATURE"]
+if os.environ.get("RMILESTONE") == "true": o["milestone"]=True
+if os.environ.get("RMILESTONEID"): o["milestone_id"]=os.environ["RMILESTONEID"]
 if os.environ.get("RFIXMODEL"): o["fix_model"]=os.environ["RFIXMODEL"]
 if os.environ.get("RDBNAME"): o["db_name"]=os.environ["RDBNAME"]
 open(os.environ["RREC"],"w").write(json.dumps(o,indent=2)+"\n")'
