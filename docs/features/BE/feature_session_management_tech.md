@@ -1,11 +1,11 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.26 · 2026-09-06
+> **Version:** 2.27 · 2026-09-11
 > **Status:** Reviewed  
-> **Implementation:** DB substrate (`0014` waitlist, `0019` same-tenant integrity, `0024` public-capacity CHECK) + **SessionService đủ 6 command** (`packages/db/src/session-service.ts`: create · publish · announce · update · close · cancel) + **5 route** (`POST /api/sessions` · `/[id]` · `/[id]/publish` · `/[id]/close` · `/[id]/cancel`; `announce` gate DD-56 clause 1) đã merge (đo 2026-09-06 tại `30a3e90`); **chưa có**: route đọc (`GET /api/sessions`, `/[id]` — xem DD-56 amendment #3 draft, row `session-read-routes-list-detail`), projector thật (stub `dlq`), auto-promote, auto-expiry, writer cho `players` (roster) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** DB substrate (`0014` waitlist, `0019` same-tenant integrity, `0024` public-capacity CHECK) + **SessionService đủ 6 command** (`packages/db/src/session-service.ts`: create · publish · announce · update · close · cancel) + **5 route** (`POST /api/sessions` · `/[id]` · `/[id]/publish` · `/[id]/close` · `/[id]/cancel`; `announce` gate DD-56 clause 1) đã merge (đo 2026-09-06 tại `30a3e90`, re-verified 2026-09-11 tại `6bfa905`); **chưa có**: route đọc (`GET /api/sessions`, `/[id]` — xem DD-56 amendment #3 draft, row `session-read-routes-list-detail`), projector thật (stub `dlq`), auto-promote, auto-expiry, writer cho `players` (roster) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_session_management.md`  
-> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-32/DD-39/DD-45/**DD-45a**/DD-49/**DD-52**/**DD-65..68** · `../../decisions/analysis/dd-45-waitlist-analysis.md` · `feature_channel_booking_funnel_tech.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`)
+> **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-32/DD-39/DD-45/**DD-45a**/DD-49/**DD-52**/**DD-65..68**/**DD-121** · `../../decisions/analysis/dd-45-waitlist-analysis.md` · `feature_channel_booking_funnel_tech.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `docs/autopilot-invariant-catalog.md` (`session-lock-ordering`/`publish-suspend-gate`/`session-command`/`billing-authz`/`retry-liveness`/`member-safety`)
 
 > **DD-32/DD-45/DD-49 contract:** waitlisted tự thân không chiếm capacity, không tạo charge/new-obligation/venue; live paid-unlinked booking intent có thể giữ đúng một slot trong 15 phút. Admission occupancy dùng một helper `active + unexpired holds`. Promotion free/linked giữ DD-45/DD-49 timing; paid+unlinked candidate vẫn waitlisted/ẩn venue tới verified settlement, expiry release + audited requeue-tail. Runtime/intent schema chưa tồn tại.
 >
@@ -25,7 +25,7 @@ Surface (Zalo/Messenger/Web) → Command (CreateSession/Update/Publish/Close/Can
 Commands: `CreateSession`, `UpdateSession`, `PublishSession`, `AnnounceSession`, `CloseSession`, `CancelSession`, `InviteFriend`, `CreateGuestNote`, `DeleteGuestNote`, `ApproveInvite`, `RejectInvite`, `GenerateOccurrences`. Mỗi command mang `commandId`, tenant/actor từ trusted context, `expected_version` cho conflicting edits. `PublishSession` là transition status-only `draft` → `open` (algorithm §4) — không đổi `visibility`. `CancelSession` nhận nguồn `draft` hoặc `open`, transition sang `cancelled` (algorithm §4, subsection "Draft discard + auto-expiry"); một scheduled job invoke cùng mutation cho draft quá giờ bị bỏ quên, không qua client `commandId`. *(Hard-delete session: rút khỏi spec 2026-08-13 — cơ chế chốt ở `decisions.md` DD-104 D0–D4, author lại trong slice DD-104.)* `InviteFriend` (player active invite friend đã follow) + `CreateGuestNote` / `DeleteGuestNote` (khách ngoài hệ thống) + `ApproveInvite` / `RejectInvite` (host duyệt pending) — §3 API Contract, §4 Algorithm.
 
 **Design decisions:**
-- Single domain service shared by chat + web — no duplicate logic.
+- Single domain service shared by chat + web — no duplicate logic (catalog invariant `session-command`, `docs/autopilot-invariant-catalog.md` — SessionService command family, `packages/db/src/session-service.ts`).
 - Optimistic concurrency via `version` column — stale edits rejected.
 - Outbox events carry identifiers + safe changed fields — projectors reload canonical data cho sensitive rendering.
 - Messenger central/tenant adapters emit the same commands. A single pre-dispatch interaction interceptor owns create wizard state; final consume re-authorizes `session.manage` and target tenant before `SessionService`.
@@ -193,9 +193,10 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 
 ### Migration & Rollback
 
-> Grep live `packages/db/migrations/` ngày 2026-07-27: `0000`–`0024` đã merge (25 migrations; tail `0024_public_visibility_capacity_check.sql`). Baseline `sessions` · recurrence · surface refs · `players` từ `0002`; waitlist objects từ `0014`; same-tenant candidate keys/FKs DD-68 từ `0019`; public-capacity CHECK từ `0024`. Tất cả **reuse, không recreate**.
+> Grep live `packages/db/migrations/` ngày 2026-07-27: `0000`–`0024` đã merge (25 migrations; tail `0024_public_visibility_capacity_check.sql`). **Re-verified 2026-09-11 tại `6bfa905`:** tail hiện tại `0043_identity_link_code_issue_consume.sql` (44 migrations `0000`–`0043`) — 19 migration mới sau `0024`, không cái nào chạm `sessions`/`players`/`session_guest_notes` (grep xác nhận). Baseline `sessions` · recurrence · surface refs · `players` từ `0002`; waitlist objects từ `0014`; same-tenant candidate keys/FKs DD-68 từ `0019`; public-capacity CHECK từ `0024`. Tất cả **reuse, không recreate**.
 
 - **Migration (genuinely new → migration mới monotonic sau tail hiện hành):** DD-45a hardening `UNIQUE (session_id, waitlist_position) WHERE status='waitlisted'`; retry objects (`waitlist_entry_version`, root `promotion_retry_jobs` + candidate events — §4, rollout §6 bước 4); `idx_sessions_draft_starts_at` partial index cho auto-expiry claim query (§4 Draft discard + auto-expiry, `docs-session-draft-lifecycle`) — chưa applied, cùng budget `≤1 monotonic migration`. DD-45a migration phải preflight duplicate trước DDL: có bất kỳ duplicate nào thì **HALT/manual**, không auto-renumber; gaps hợp lệ. **Không** đưa DD-68 hoặc public-capacity CHECK vào danh sách pending: chúng đã land ở `0019`/`0024`. Auto-expiry job cũng cần privileged cross-tenant execution (role, grants, migration wiring) + queue/cron registration — **build-slice detail, mirror `feature_billing_lifecycle_tech.md` §4 Daily Lifecycle Job**.
+- **Migration mới, RIÊNG BIỆT (supervised slice, merge trước mọi invite/guest-note code slice — feature-readiness R6.1; audit 2026-09-11, `ap3/features/session-management/INTAKE.md` R3.2/R6.1):** ba object sau đã đặc tả đủ trong §2 SQL từ v2.21 (2026-08-12) nhưng KHÔNG có trong `schema.ts` hay bất kỳ migration nào đã merge — danh sách pending phía trên (grep gốc dated 2026-07-27, trước v2.21) chưa từng track chúng: (1) `sessions.allow_player_invite boolean NOT NULL DEFAULT true`; (2) `players.invited_by_person_id uuid REFERENCES persons(id)` + `idx_players_invited_by`; (3) bảng `session_guest_notes` đầy đủ (id/tenant_id/session_id/created_by_person_id/guest_name/note/created_at, 2 CHECK độ dài, trigger `trg_session_guest_note_limit`) + `idx_session_guest_notes_session`. Rollback: disable invite/guest-note routes trước, rồi revert 3 object trên bằng forward migration; KHÔNG ảnh hưởng `sessions`/`players` baseline (`0002`) hay waitlist (`0014`).
 - **Rollback:**
 
 | Bước | Hành động | An toàn? |
@@ -251,6 +252,12 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 | 44 | Security | Approve pending invite khi session đầy (capacity recheck) | Approve cần verify capacity dưới session lock; pending đã chiếm slot nên thường OK, nhưng concurrent note/join có thể làm đầy → reject `SESSION_FULL` |
 | 45 | Data Integrity | Reject pending invite | Remove player row (không set `left` — pending chưa bao giờ active). Release slot → trigger waitlist auto-promote |
 | 46 | State | Announce session `open`: `starts_at<=now()<ends_at` (đang diễn ra) = **ALLOWED**; `ends_at<=now()` (đã hết giờ) = **REJECT** | `AnnounceSession` (DD-111 D1–D3) gate trên `status='open'` **VÀ** ends_at freshness — HAI lý do TÁCH BIỆT, không gộp: **(a)** announce **exempt khỏi edge #11** vì **không mutate** session (emit `session.announcement_requested`, không đổi `sessions` row) — edge #11 chặn *mutation* trên closed/cancelled/past, không áp cho một notification; **VÀ (b)** announce vẫn **tự guard ends_at** — một buổi `open` đã qua `ends_at` (auto-expiry chưa build → row `open` tồn tại vô hạn) không được announce, vì thông báo "vào kèo đi" cho một buổi ĐÃ XONG là harm mà một mutation không có → `SESSION_ALREADY_ENDED` (409). (a) một mình sẽ khiến người đọc sau xoá guard (b). **KHÔNG có past-START cutoff:** một buổi đang diễn ra (`starts_at<=now()<ends_at`) vẫn announce mời join muộn hợp lệ ("kèo đang chạy, vào ngay"); publish's cutoff (edge #23) là publish-specific. Clock: đọc `ends_at <= clock_timestamp()` bằng query RIÊNG SAU row lock (mirror publish's post-lock pattern, KHÔNG `now()`/`Date.now()`). Chỉ `draft`/`closed`/`cancelled` → `SESSION_NOT_OPEN` |
+| 47 | State | `CloseSession` trên session không ở `open` (draft/closed/cancelled) | Reject `SESSION_NOT_OPEN`; source `closed` = no-op idempotent (`commandId` dedup, KHÔNG check `expectedVersion` trên nhánh no-op — cùng pattern `PublishSession`/`CancelSession`). `packages/db/src/session-service.ts` `closeSession` :1698-1847 |
+| 48 | Financial | `CloseSession` với existing charges | Reject `CANCEL_REQUIRES_REVIEW` (reuse code, không invent code riêng cho close) — **bất đối xứng có chủ ý với cancel**: close KHÔNG check active-roster count (chỉ check `sessionHasCharges`), trong khi cancel check CẢ HAI (roster VÀ charges) trên nguồn `open` (edge #5) |
+| 49 | Security/Concurrency | `CloseSession` với `expectedVersion` thiếu hoặc không khớp | Reject `STALE_VERSION` (409) — chỉ áp dụng trên nhánh mutate SAU no-op check, cùng rule int4-positive-and-must-match các command khác đã dùng |
+| 50 | State | System auto-close job: session `open` đã qua `ends_at` + grace period → `closed` | **CHƯA BUILD — OWNER-CHECK.** Mirror `closeSession`'s core mutation (status/version/outbox `session.closed`) nhưng system-invoked KHÔNG qua client `commandId` (cùng pattern draft auto-expiry, §1 dòng 25); idempotent nếu đã đóng tay trước đó (cùng no-op branch); không nhận join mới sau transition; public projection gỡ (cùng DD-12 fence reason `'closed'`). **DD-45 (`../../standards/decisions.md:604`) đã yêu cầu close/cancel resolve mọi nonterminal promotion-retry root trong cùng tx — `closeSession`/`cancelSession` hiện KHÔNG implement điều này (gap pre-existing, không phải gap mới của auto-close)**; auto-close kế thừa gap tương tự, không phát sinh riêng. Thời lượng grace period sau `ends_at` **chưa chốt** |
+| 51 | Resilience/Concurrency | Hai lượt auto-close job chạy chồng | **CHƯA BUILD — OWNER-CHECK.** Mirror edge #30 (auto-expiry): claim filter (`status='open' AND ends_at<=now()-grace`) tự nhiên idempotent + `FOR UPDATE SKIP LOCKED` — lượt chạy thứ hai skip row lượt đầu đang giữ lock |
+| 52 | Concurrency | Auto-close job đua với `CloseSession`/`UpdateSession` thủ công đồng thời | **CHƯA BUILD — OWNER-CHECK.** Mirror edge #29 (session-lock-ordering): cả hai lock session row `FOR UPDATE` trước khi mutate; ai lock trước thắng, phía sau thấy state đã đổi → reject tương ứng, không double-transition |
 
 ---
 
@@ -268,6 +275,12 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 | POST | /api/sessions/:id/cancel | TenantAdmin | Huỷ session (`open` hoặc `draft`; nguồn `draft` = discard, zero roster/charge impact) |
 | GET | /api/sessions | TenantAdmin | List sessions (tenant-scoped) |
 | GET | /api/sessions/:id | TenantAdmin/Player | Detail (scoped by role) |
+| POST | /api/sessions/:id/invite | Player (active) | `InviteFriend` — mời friend đã follow (DD-47) |
+| POST | /api/sessions/:id/guest-notes | Player (active) | `CreateGuestNote` — thêm khách (max 3/player) |
+| DELETE | /api/sessions/:id/guest-notes/:noteId | Player (note creator) | `DeleteGuestNote` |
+| GET | /api/sessions/:id/guest-notes | Player (active) / Host | List guest notes for session |
+| POST | /api/sessions/:id/players/:playerId/approve | Host | `ApproveInvite` — duyệt pending → `active` |
+| POST | /api/sessions/:id/players/:playerId/reject | Host | `RejectInvite` — remove player row |
 
 ### Error Codes
 
@@ -330,6 +343,12 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 { "data": null, "error": { "code": "CAPACITY_BELOW_ROSTER", "message": "Số chỗ không thể thấp hơn active roster", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
 ```
 
+**PUT `/api/sessions/:id`** — Success (HTTP 200 — mutation áp dụng, `version` bump):
+
+```json
+{ "data": { "session": { "id": "…", "status": "open", "version": 2 } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
 **POST `/api/sessions/:id/publish`** — command mang `commandId` + `expected_version` (§1); status-only `draft` → `open`:
 
 - Request:
@@ -352,6 +371,51 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 ```
 
 - Error khác: non-draft/past → `SESSION_NOT_OPEN` (`409`); public thiếu discovery → `MISSING_DISCOVERY_FIELDS` (`400`); tenant billing-`suspended` → **`TENANT_SUSPENDED`** (`403`, canonical tenant-routing code; fail-closed per billing matrix — §4 publish billing note). `commandId` dedup theo canonical `processed_commands` (edge #3).
+
+**POST `/api/sessions/:id/announce`** — command mang `commandId` (§1); **notification, KHÔNG mutate** `sessions` row (edge #11 exempt) nhưng tự guard `ends_at` freshness (edge #46):
+
+- Request:
+
+```json
+{ "commandId": "cmd_…", "channel": "zalo" }
+```
+
+- Success (HTTP 200 — announcement queued qua outbox; session row không đổi):
+
+```json
+{ "data": { "announced": true, "channel": "zalo" }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Error — session `open` nhưng đã qua `ends_at` (đã hết giờ, auto-expiry chưa build nên row vẫn `open`):
+
+```json
+{ "data": null, "error": { "code": "SESSION_ALREADY_ENDED", "message": "Buổi chơi đã kết thúc · Session has already ended", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+```
+
+- Error khác: `draft`/`closed`/`cancelled` → `SESSION_NOT_OPEN` (`409`, edge #46); `channel` ngoài enum logical đóng (`zalo`/`messenger`) → `INVALID_CHANNEL` (`400`). `commandId` dedup theo canonical `processed_commands` (edge #3).
+
+**POST `/api/sessions/:id/close`** — command mang `commandId` + `expectedVersion` (§1; **bắt buộc** trên nhánh mutate — edge #49); chỉ nhận nguồn `open`:
+
+- Request:
+
+```json
+{ "commandId": "cmd_…", "expectedVersion": 2 }
+```
+
+- Success — mutation `open` → `closed` (`version` bump; `close_reason` nội bộ `manual` — không phải field response, chỉ trong outbox payload):
+
+```json
+{ "data": { "session": { "id": "…", "status": "closed", "version": 3 } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Success — idempotent no-op khi session đã `closed` (hoặc `commandId` replay): cùng envelope, `status: "closed"`, `version` **không** đổi; nhánh no-op **không** cần `expectedVersion` khớp (edge #47, mirror publish/cancel idempotent-thắng-version).
+- Error — non-`open` source (draft/cancelled) → `SESSION_NOT_OPEN` (`409`, edge #47):
+
+```json
+{ "data": null, "error": { "code": "SESSION_NOT_OPEN", "message": "Buổi chơi không ở trạng thái mở", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+```
+
+- Error khác: `expectedVersion` thiếu/mismatch → `STALE_VERSION` (`409`, edge #49); existing charges → `CANCEL_REQUIRES_REVIEW` (`400`, edge #48 — **không check active-roster**, khác cancel). `commandId` dedup theo canonical `processed_commands` (edge #3).
 
 **POST `/api/sessions/:id/cancel`** — command mang `commandId` + `expectedVersion` (§1; **bắt buộc** trên nhánh mutate, mọi nguồn — edge #26, không phải field tuỳ chọn như DTO minh hoạ chung ở đầu section); nhận nguồn `draft` (discard) hoặc `open` (cancel thường):
 
@@ -377,6 +441,28 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 - Error khác: session `closed` → `SESSION_NOT_OPEN` (`409`, edge #11/#27). **CancelSession** trên session `open` với `starts_at<=now()` (past) → `SESSION_NOT_OPEN` (`409`, edge #31 — cancel-scoped past-guard; no-past-guard exemption chỉ cho nguồn `draft`). **KHÔNG generalise sang command khác:** AnnounceSession trên `open` đang-diễn-ra (past-start, `ends_at` chưa qua) vẫn **ALLOWED** (edge #46) — announce là notification (exempt edge #11), không mutation; nhưng session đã hết giờ (`ends_at<=now()`) → `SESSION_ALREADY_ENDED` (freshness guard RIÊNG của announce, KHÔNG phải edge #31's cancel-weight). Nguồn `open` với paid roster (`starts_at` bất kỳ) → `CANCEL_REQUIRES_REVIEW` (`400`, edge #5; mechanism review chưa detail schema trong doc này, chốt ở build slice — cùng gap pre-existing trước slice này). Nguồn `draft` với anomaly (`players`/`charges` bất thường) → **cùng** `CANCEL_REQUIRES_REVIEW` (`400`) + audit (edge #28) — không invent code riêng cho draft. `commandId` dedup theo canonical `processed_commands` (edge #3), cùng cơ chế mọi session command — không đổi cho nguồn `draft`.
 
 - `commandId` dedup theo canonical `processed_commands` (edge #3).
+
+**GET `/api/sessions`** — list, tenant-scoped:
+
+- Success (HTTP 200):
+
+```json
+{ "data": { "sessions": [ { "id": "…", "status": "open", "startsAt": "…", "slotsMax": 8 } ], "pageInfo": { "hasMore": false } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+**GET `/api/sessions/:id`** — detail, scoped by role (Host thấy full roster; Player thấy theo E#6 venue-visibility — chỉ `players.status='active'` mới thấy venue chi tiết):
+
+- Success (HTTP 200 — Host view):
+
+```json
+{ "data": { "session": { "id": "…", "status": "open", "startsAt": "…", "venueName": "…", "players": [ { "id": "…", "status": "active" } ] } }, "error": null, "meta": { "requestId": "req_…" } }
+```
+
+- Error — session không tồn tại trong tenant context:
+
+```json
+{ "data": null, "error": { "code": "SESSION_NOT_FOUND", "message": "Buổi chơi không tồn tại", "statusCode": 404 }, "meta": { "requestId": "req_…" } }
+```
 
 ### Idempotency
 
@@ -532,7 +618,7 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 
 > **⛔ CODE-READINESS — publish contract AUTHORED, 3 gate đã đóng ở spec level (không còn spec gap known-open):** contract này được author ahead of ba gate. **(1)** `docs-billing-publish-suspension-authority` — **RESOLVED/merged**: billing status-authority (cột/giá trị nào block) pin tại `feature_billing_lifecycle_tech.md` §3 Status Authority (fail-closed 2-step, `authorizeTenantAction`, founder-ratified 2026-07-24). **(2)** `docs-prd-flow2-publish-projection-reconcile` — **RESOLVED/merged**: `PRD.md` v2.8g FLOW 2 (+FLOW 12/14, `business-rules.md` BL-DSC-2) nay khớp project-on-publish (step 7 dưới), hết conflict với project-on-create. **(3)** `docs-session-publish-concurrency-recheck` — **RESOLVED AT SPEC LEVEL bởi chính slice này**: billing status-authority check phải re-evaluate TRONG CÙNG transaction/row-lock với mutation `draft`→`open`, qua **locking read** (`SELECT ... FOR SHARE` trên `tenants` rồi `subscriptions`) — KHÔNG chỉ upfront step 1, và KHÔNG chỉ plain re-select cùng transaction (round-01 [P1]: không lock thì không serialize với writer trên bảng khác) — xem step 6 + blockquote "Billing suspension — concurrency" dưới; đóng đúng race mà `feature_billing_lifecycle_tech.md` §3 Concurrency clause + test #36 pin làm acceptance criterion. Đây **KHÔNG** phải certification `CODE_READY` đầy đủ theo `../../standards/review-code-readiness-gate.md` (chưa chạy closure matrix/acceptance-matrix/implementation-artifact pass) — build slice kế tiếp vẫn phải tự chứng minh implementation thoả cả 3 gate trên (đặc biệt billing test #36) trước khi enable. (Draft-cleanup `docs-session-draft-lifecycle` vẫn là follow-up mềm hơn, ngoài 3 gate trên.) Slice `docs-session-publish-contract` gốc chỉ AUTHOR docs contract; slice này đóng gate (3) — **không authorize code**.
 
-1. Resolve trusted actor/tenant từ context (không từ payload). **AuthZ re-checked trên MỌI publish call (kể cả replay/no-op — authz đứng TRƯỚC dedup + state lookup):** (a) `session.manage` (Host) — actor thiếu quyền → 403 kể cả khi retry một session đã `open` (**authz thắng no-op**); non-admin 403 (edge #10). (b) **Billing suspension (fail-closed, dependency on `feature_billing_lifecycle`):** publish là action "publish new sessions" → block **`TENANT_SUSPENDED`** (403, canonical tenant-routing code) khi tenant billing-suspended per billing **Suspended Action Matrix** (`suspended` ❌; `active`/`past_due` ✅). Status-authority **resolved** — `feature_billing_lifecycle_tech.md` §3 (fail-closed 2-step, `authorizeTenantAction`). **Đây là upfront/fail-fast check (cũng gate no-op/replay — authz thắng no-op, step 3) — KHÔNG phải gate authoritative cho mutation thật**, vì nó chạy TRƯỚC session lock; gate authoritative cho mutation nằm ở step 6 (re-check bắt buộc trong cùng transaction/lock). Sau khi authz+billing pass → command dedup theo **canonical `processed_commands` command-dedup** (edge #3) — publish dùng chung cơ chế dedup như MỌI session command, KHÔNG special-case. Collision-safety (cùng `commandId`, khác resource/payload) là property của canonical dedup contract đó (nó mạnh lên thành `IDEMPOTENCY_CONFLICT` khi `processed_commands.request_hash` additive migration land — owned by Session Organize plan); publish **inherit** whatever canonical dedup cung cấp, KHÔNG re-specify hay tự gate trên `request_hash`.
+1. Resolve trusted actor/tenant từ context (không từ payload). **AuthZ re-checked trên MỌI publish call (kể cả replay/no-op — authz đứng TRƯỚC dedup + state lookup):** (a) `session.manage` (Host) — actor thiếu quyền → 403 kể cả khi retry một session đã `open` (**authz thắng no-op**); non-admin 403 (edge #10). (b) **Billing suspension (fail-closed, dependency on `feature_billing_lifecycle`):** publish là action "publish new sessions" → block **`TENANT_SUSPENDED`** (403, canonical tenant-routing code) khi tenant billing-suspended per billing **Suspended Action Matrix** (catalog invariant `billing-authz`, `docs/autopilot-invariant-catalog.md` — ActionClass enum + Suspended Action Matrix; `suspended` ❌; `active`/`past_due` ✅). Status-authority **resolved** — `feature_billing_lifecycle_tech.md` §3 (fail-closed 2-step, `authorizeTenantAction`). **Đây là upfront/fail-fast check (cũng gate no-op/replay — authz thắng no-op, step 3) — KHÔNG phải gate authoritative cho mutation thật**, vì nó chạy TRƯỚC session lock; gate authoritative cho mutation nằm ở step 6 (re-check bắt buộc trong cùng transaction/lock). Sau khi authz+billing pass → command dedup theo **canonical `processed_commands` command-dedup** (edge #3) — publish dùng chung cơ chế dedup như MỌI session command, KHÔNG special-case. Collision-safety (cùng `commandId`, khác resource/payload) là property của canonical dedup contract đó (nó mạnh lên thành `IDEMPOTENCY_CONFLICT` khi `processed_commands.request_hash` additive migration land — owned by Session Organize plan); publish **inherit** whatever canonical dedup cung cấp, KHÔNG re-specify hay tự gate trên `request_hash`.
 2. Lock session row `FOR UPDATE` trong tenant context (RLS choke-point). Đọc `status`, `visibility`, `starts_at`, `version` under lock — không quyết định từ cache.
 3. **Idempotent no-op (thắng `expectedVersion`):** đã pass authz+billing (step 1); nếu `status='open'` sẵn → return success no-op, zero mutation, **không** emit `session.published` trùng (mirror close-already-closed / cancel-already-cancelled). `expectedVersion` **KHÔNG** kiểm ở nhánh này: publish không mutation ở đây nên không có lost-update để guard — một `commandId` mới với `expectedVersion` stale trên session đã `open` vẫn trả **no-op success** (idempotency thắng `STALE_VERSION`; goal state `open` đã đạt). *Ordering:* nếu actor đã mất `session.manage` hoặc tenant billing-suspended, **step 1 trả 403 TRƯỚC** khi tới no-op (authz/billing thắng no-op) — no-op chỉ dành cho actor còn quyền.
 4. **Transition guard:** `status ∈ {closed, cancelled}`, hoặc `status='draft'` nhưng `starts_at <= now()` (past) → `SESSION_NOT_OPEN` (409), zero mutation. Chỉ `draft` với `starts_at > now()` mới publish được (past-guard cùng ngưỡng `starts_at <= now()` như promotion §4 và auto-close).
@@ -542,7 +628,7 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 
 > Idempotency là hai lớp: (a) `commandId` dedup theo **canonical `processed_commands` command-dedup** (edge #3) — publish inherit như mọi command, không re-specify; collision-safety per canonical contract (mạnh lên khi `request_hash` migration land) và (b) state no-op (session đã `open`) — cả hai đều không double-emit `session.published` hay double-flip status. Cùng contract với close/cancel no-op (§3 Idempotency).
 
-> **Billing suspension gate (fail-closed — dependency on `feature_billing_lifecycle`, RESOLVED/merged):** publish là action **"publish new sessions"** trong billing **Suspended Action Matrix** (`active`/`past_due` ✅, **`suspended` ❌**). Publish **fail-closed block `TENANT_SUSPENDED`** (403, canonical tenant-routing code) khi tenant billing-suspended, zero mutation, không emit event. **Status-authority resolved:** billing (matrix owner) định nghĩa **authoritative status source** (`suspended` sống trong `tenants.status`/`subscriptions.status`, cả hai `CHECK 'suspended'` từ 0002/0007) tại `feature_billing_lifecycle_tech.md` §3 Status Authority — fail-closed 2-step (`tenants.status` trục tenant-root xét trước, thắng vô điều kiện; `subscriptions.status` trục billing chỉ xét khi trục tenant clear), founder-ratified 2026-07-24; session publish contract chỉ **cross-ref** matrix/authority qua `authorizeTenantAction('publish_new_sessions')`, không tự đọc `tenants.status`/`subscriptions.status`. **Không** thêm session error code (denial là billing-owned 403); matrix single source of truth — adapters không tự nới.
+> **Billing suspension gate** (catalog invariant `publish-suspend-gate`, `docs/autopilot-invariant-catalog.md`) **(fail-closed — dependency on `feature_billing_lifecycle`, RESOLVED/merged):** publish là action **"publish new sessions"** trong billing **Suspended Action Matrix** (`active`/`past_due` ✅, **`suspended` ❌**). Publish **fail-closed block `TENANT_SUSPENDED`** (403, canonical tenant-routing code) khi tenant billing-suspended, zero mutation, không emit event. **Status-authority resolved:** billing (matrix owner) định nghĩa **authoritative status source** (`suspended` sống trong `tenants.status`/`subscriptions.status`, cả hai `CHECK 'suspended'` từ 0002/0007) tại `feature_billing_lifecycle_tech.md` §3 Status Authority — fail-closed 2-step (`tenants.status` trục tenant-root xét trước, thắng vô điều kiện; `subscriptions.status` trục billing chỉ xét khi trục tenant clear), founder-ratified 2026-07-24; session publish contract chỉ **cross-ref** matrix/authority qua `authorizeTenantAction('publish_new_sessions')`, không tự đọc `tenants.status`/`subscriptions.status`. **Không** thêm session error code (denial là billing-owned 403); matrix single source of truth — adapters không tự nới.
 >
 > **Billing suspension — concurrency (build-time correctness requirement, tách biệt với status-authority ở trên):** status-authority resolve **status nào authoritative**; nó KHÔNG tự resolve **khi nào** và **bằng cách nào** phải đọc status đó. `authorizeTenantAction` không phải advisory check-một-lần-sớm-rồi-quên (billing §3 Concurrency clause) — implementation PHẢI re-evaluate nó **trong cùng transaction với session lock, ngay trước commit** (step 6 trên) **VÀ đọc qua locking read (`SELECT ... FOR SHARE` trên `tenants` rồi `subscriptions`, cùng thứ tự step 1→step 2 của status-authority)** — **một plain re-SELECT trong cùng transaction KHÔNG đủ** (codex round-01 [P1]: dưới READ COMMITTED, một read thường không serialize với writer concurrent trên bảng khác chỉ vì "cùng transaction"; giữ session lock không khoá được row billing — chỉ lock thật trên đúng row `tenants`/`subscriptions` mới ép ordering với Daily Lifecycle Job's `FOR UPDATE SKIP LOCKED`). **Failure mode nếu implement sai (thiếu re-check, hoặc re-check không lock):** một suspend transition (Daily Lifecycle Job `past_due→suspended`) commit **giữa** lúc step 1 check và lúc mutation commit → publish vẫn thành công cho tenant vừa suspend; `TENANT_SUSPENDED` phải luôn thắng bất kể suspend đến giữa chừng publish. `docs-session-publish-concurrency-recheck` đóng gate này **AT SPEC LEVEL** (step 6 trên); build slice phải tự chứng minh implementation thoả bằng billing test #36 (competing-writer acceptance criterion, `feature_billing_lifecycle_tech.md` §5).
 
@@ -665,13 +751,15 @@ Scheduled run → Claim sessions WHERE status='draft' AND starts_at<=now() FOR U
 
 1. Lock session row `FOR UPDATE`; resolve trusted identity, then lookup existing membership/player read-only theo UNIQUE `(tenant_id,session_id,membership_id)` mà chưa create/lock player/finance.
 2. Existing `active` hoặc `waitlisted`: return current outcome idempotently; không đổi position/charge và ban áp về sau không biến replay này thành join error.
-3. Không có player hoặc existing `left`: re-check session joinability — gồm defense-in-depth §2 Capacity × visibility. Current DB `0024` đã reject `visibility='public'` + `slots_max IS NULL`; nếu pre-`0024`/fixture/constraint-bypass row vẫn tới service thì fail-closed reject, zero mutation, audit + owner-review. Đây là **một choke-point cho MỌI branch phía dưới** (first-entry step 5, left-rejoin step 6, approval path) — không branch nào treat NULL as unlimited khi state invalid — cùng DD-41, DD-42 và shared `evaluateJoinRestriction()` DD-52.
+3. Không có player hoặc existing `left`: re-check session joinability — gồm defense-in-depth §2 Capacity × visibility. Current DB `0024` đã reject `visibility='public'` + `slots_max IS NULL`; nếu pre-`0024`/fixture/constraint-bypass row vẫn tới service thì fail-closed reject, zero mutation, audit + owner-review. Đây là **một choke-point cho MỌI branch phía dưới** (first-entry step 5, left-rejoin step 6, approval path) — không branch nào treat NULL as unlimited khi state invalid — cùng DD-41, DD-42 và shared `evaluateJoinRestriction()` DD-52 (catalog invariant `member-safety`, `docs/autopilot-invariant-catalog.md`).
 4. Lock every nonterminal DD-45 root immediately after session/current-state resolution and **before** membership/player/financial locks. Sau đó mới create/reuse membership. Existing `left` lock aggregate và re-derive DD-49 disposition; partial/ambiguous/core-missing → `REJOIN_REQUIRES_REVIEW`, zero mutation.
 5. Không có player row: còn slot/unlimited (unlimited chỉ non-public — public+NULL đã fail-closed tại choke-point step 3) → derive amount trước mutation; success thì insert `active` + đúng một charge atomically; DD-39 derivation failure aborts join fail-closed (không membership/player/charge/venue, không fallback). Full → insert `waitlisted` + tail position + `waitlist_entry_version=1`, không charge/venue.
 6. Existing `left`: còn slot → chưa-refund carry-over; refunded append lifecycle idempotent, atomic với `active`. Full → set `waitlisted`, increment durable `waitlist_entry_version`; chưa-refund giữ aggregate lịch sử, refunded **không append lifecycle/nợ mới**. Promotion re-derives later. Không INSERT duplicate `charges` row.
 7. Nếu outcome observes/causes full capacity, resolve every nonterminal root in the same transaction; active outcome writes player/finance/outbox only after root lock.
 
 ### Waitlist promotion (DD-45)
+
+> CAS-claim/lease/claimed-attempt-budget/DLQ discipline dưới đây khớp catalog invariant `retry-liveness` (`docs/autopilot-invariant-catalog.md` — worker ownership, claimed-attempt budget, DLQ/owner-review sink, DD-45).
 
 1. Lock session row `FOR UPDATE`. If session is closed/cancelled/not joinable or `starts_at <= now()`, lock nonterminal roots next, resolve them as no longer applicable, and return without candidate/finance mutation. Capacity decrease below shared occupancy (`active + unexpired payment holds`) rejects with zero mutation or implicit hold cancellation; retain `CAPACITY_BELOW_ROSTER` for an active-only breach and use `CAPACITY_BELOW_OCCUPANCY` when a live hold is the extra blocker.
 2. Establish root epoch **before any candidate/player/finance lock**. A synchronous new capacity opener locks and resolves/supersedes older nonterminal roots (increment generation, clear token), but creates no new row yet. A retry worker instead locks the exact claimed root after session and validates state/token/generation/live lease. Both paths now hold the required root order.
@@ -825,6 +913,14 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 82 | Approve pending invite happy path | Host approves `pending` player | Player `status='active'`; `player.invite_approved` event |
 | 83 | Reject pending invite releases slot | Host rejects `pending` player | Player row removed; slot freed; waitlist auto-promote if applicable; `player.invite_rejected` event |
 | 84 | Capacity DECREASE with existing charges + allocation, staying at/above active roster (edge #4b) | `slots_max: 10 → 6`, `active_count = 6` (exactly at the new floor), one active player has an existing `charges` row AND a linked `payment_allocations` row | Succeeds; no `impact_policy` required; no `PRICE_CHANGE_REQUIRES_POLICY`; snapshot `charges`/`payment_allocations` before and after — both byte-for-byte identical (write-set is `sessions`/`outbox_events`/`processed_commands` only). A capacity INCREASE with the same charge/allocation fixture is a separate, easier case already covered by not hitting `CAPACITY_BELOW_ROSTER` — this row exists specifically for the decrease-at-the-boundary branch DD-112 rules on |
+| 85 | Close session happy path / already-closed idempotent (edge #47) | Host closes `open` session no charges; then replay on already-`closed` | First: `status='closed'`, `version` bumped, one `session.closed` event. Replay: no-op success, no duplicate event, `expectedVersion` not required to match |
+| 86 | Close non-open source | Session `draft` hoặc `cancelled` | `SESSION_NOT_OPEN` (edge #47); zero mutation |
+| 87 | Close with existing charges, no active-roster check (edge #48) | `open` session with a `charges` row but **zero active players** | `CANCEL_REQUIRES_REVIEW`; confirms close checks charges only, NOT active-roster count — contrast test #7 (cancel checks both) |
+| 88 | Close with stale/missing expectedVersion | `open` session; `expectedVersion` != live `version`, or omitted | `STALE_VERSION` (409, edge #49); zero mutation |
+| 89 | Auto-close closes past-`ends_at`+grace session (edge #50 — **OWNER-CHECK, chưa build**) | `open` session, `ends_at`+grace `<= now()`, job runs | `status='closed'`, `close_reason='auto'` (mirror `cancel_reason='auto'` pattern), exactly one `session.closed` event — mirror test #54 (auto-expiry). Grace duration TBD |
+| 90 | Auto-close concurrent runs + race vs manual close (edges #51/#52 — **OWNER-CHECK, chưa build**) | Two overlapping scheduled runs target the same due session; separately, job races `CloseSession`/`UpdateSession` under deterministic lock-order harness | Exactly one run's `FOR UPDATE SKIP LOCKED` claims it (mirror test #56); whichever acquires row lock first wins deterministically, no double-transition (mirror test #57) |
+| 91 | Recurrence edit this-and-future (DD-121, SES-OQ-2) | Host edits a recurrence rule from occurrence N onward | New rule version created applying từ occurrence N trở đi; occurrences trước N và đã-generate trước đó KHÔNG bị rewrite; no schema change |
+| 92 | Timezone validation rejects unsupported string (SES-OQ-10) | Create/update session với `timezone` KHÔNG nằm trong `Intl.supportedValuesOf('timeZone')` | `INVALID_TIMEZONE` (400); zero mutation |
 
 ### Integration Tests
 
@@ -840,6 +936,18 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 8 | Auto-expiry job + host discard both present | Multiple past unpublished drafts across tenants; one also manually discarded by host just before the job runs | Job claim filter (`status='draft'`) no longer matches the manually-discarded one — no double event; remaining past drafts cancel with `cancel_reason='auto'`; tenant isolation holds (RLS) |
 | 10 | Invite friend + approval flow | Player joins session → invites friend (approval policy) → friend becomes `pending` → host approves → friend becomes `active`; host rejects second invite → player row removed + slot freed | Full lifecycle: invite → pending → approve/reject with capacity accounting |
 | 11 | Guest note occupancy + waitlist interaction | Session 4/5 capacity → player creates 1 guest note (5/5) → new join waitlisted → player deletes note → waitlisted promoted to active | Guest notes participate in occupancy; deleting note triggers promotion |
+
+### Verify
+
+| Layer | Command | Runs where |
+|-------|---------|-----------|
+| `@plexco/db` sandbox verify | `pnpm --filter @plexco/db run typecheck` | Writer sandbox |
+| `@plexco/db` test (cần DB) | `pnpm --filter @plexco/db exec vitest run src/session-service.test.ts` (hoặc file test của slice) | `verify_host` — dispatcher chạy sau Codex CLEAN, cần `DATABASE_URL_TEST` |
+| `@plexco/web` sandbox verify | `pnpm --filter @plexco/web run typecheck` | Writer sandbox |
+| `@plexco/web` route test | `pnpm --filter @plexco/web exec vitest run app/api/sessions` | Writer sandbox — route test mock DB, KHÔNG cần `DATABASE_URL_TEST` |
+| Full suite + build (gate cuối) | `pnpm -w typecheck` → `pnpm -w format:check` → `pnpm -w review:check` → `pnpm -w lint` → `pnpm -w build` → `pnpm -w test` (cần Postgres) | CI (`.github/workflows/ci.yml`) — cổng cuối trước merge |
+
+Slice nào chạm `session-service.ts` hoặc route test thật (khác typecheck) thuộc class `needs_db` — phải khai `verify_host` trong manifest, không chỉ verify sandbox.
 
 ---
 
@@ -869,6 +977,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-11 | v2.27 | **ap3-intake gap closure (9 owner answers, `ap3/features/session-management/INTAKE.md`):** (1) §2 Migration & Rollback: re-verified tail `0043` (từ `0024`); thêm migration slice RIÊNG cho `allow_player_invite`/`invited_by_person_id`+index/`session_guest_notes` (đặc tả từ v2.21 nhưng chưa từng track pending); (2) §2 Edge Cases thêm #47–52: close transition (#47–49, từ live code `closeSession`), auto-close OWNER-CHECK chưa build (#50–52, từ DD-45 + auto-expiry pattern); (3) §3 Endpoints table reconcile đủ 14 endpoint (thêm invite/guest-note/approve/reject family); thêm ví dụ request/response còn thiếu cho `PUT` success, `announce`, `close`, `GET` list, `GET` detail; (4) §4 thêm parenthetical cho 5 catalog invariant token còn thiếu (`publish-suspend-gate`/`session-command`/`billing-authz`/`retry-liveness`/`member-safety` — `session-lock-ordering` đã khớp sẵn); (5) §5 thêm unit test #85–92 (close/auto-close mirror edge #47–52; recurrence this-and-future DD-121; timezone validation) + subsection Verify (lệnh sandbox/verify_host/CI thật, đo từ `package.json` + `.github/workflows/ci.yml`). |
 | 2026-09-06 | v2.26 | **Audit code ↔ docs 06/09 — hai đính chính header/DDL, không đổi contract.** (1) Header *Implementation* từng nói "SessionService/routes/projectors… vẫn chưa build" trong khi `main` có đủ 6 command + 5 route (`b48625c`…`8e668a1`, `770ff4b`, `6d62cf8`) — ghi đúng phần đã có và phần chưa có (route đọc, projector, auto-promote/expiry, roster writer). (2) DDL `players_status_chk` §2 liệt kê `'pending'` mà `0014:79-80` không có — bỏ khỏi spec; thêm giá trị là việc của một migration mới, không phải của prose. Nguồn: `../../sessions/2026-09-06-repo-audit.md` §3 #6/#11. |
 | 2026-08-27 | v2.25 | **Tách edge #4 thành `4a` (price) / `4b` (capacity + retry root) theo DD-112 ✅ (owner 27/08, `decisions.md` "Chốt (owner 2026-08-27)").** Hàng #4 gộp hai luật khác nhau: vế `impact_policy` được viết cho **price** (nguyên bản trước 19/07/2026 chỉ có price), còn capacity bị commit `c18ac65` — một sweep "pointer refresh" 99 file — chèn vào sau mà **không decision nào đứng sau**; DD-49, decision duy nhất chi phối `impact_policy`, có ba mục (đổi giá · leave/cancel/refund · rejoin) và **không có capacity**. Hàng #4 vì thế mâu thuẫn với chính hai hàng capacity của bảng này (#15/#16) và với code trên `main` (`session-service.ts` guard bằng `CAPACITY_BELOW_ROSTER`, không đọc `charges` trừ nhánh `priceAmount`). Lane `docs-impact-policy-contract--narrowed` đã đốt 6 vòng codex tới HALT `MAX_ROUNDS` vì reviewer dao động trên đúng vùng này. **`4a`** giữ nguyên semantics giá (lock → `impact_policy`) nên trích dẫn "edge #4" gắn với `impact_policy` đang sống vẫn đúng; ÍT NHẤT hai chỗ vẫn dùng "edge #4"/"edge #4/#5" cho ý capacity của hàng gộp cũ, CHƯA đồng bộ sang `4b` — đo được: `docs-impact-policy-contract.json` §A6, và `docs/autopilot/contracts/autopilot-session-commands-update-close-cancel.md` (dòng gate `PRICE_CHANGE_REQUIRES_POLICY` / `CAPACITY_BELOW_ROSTER` ghi "edge #4/#5"). Danh sách này KHÔNG khai là đủ — chỉ hai chỗ đã đo, không phải toàn bộ repo; trích dẫn chưa đồng bộ là nợ tài liệu để lại cho lần sửa từng file đó (cả hai không thuộc scope của slice này), KHÔNG phải lời khai "mọi trích dẫn khác đều đúng". **`4b`** ghi capacity/retry-root **không phải nhánh tiền**, trỏ về guard sẵn có ở #15/#16 thay vì dựng luật thứ ba, và mang theo điều kiện tự huỷ của DD-112. **KHÔNG renumber** — ID 5..46 giữ nguyên (bảng vốn đã có khoảng trống 32–35 từ v2.22, tiền lệ "ID giữ trống, KHÔNG renumber"). Docs-only: không đổi code/migration/schema, không chạm edge #5, không đặt error code mới. **KHÔNG** gỡ chặn `docs-impact-policy-contract` — điều kiện của nó là hàng `4a` tồn tại trên `main`, nên đó là commit riêng sau khi hàng này land. *(Đính chính, cùng ngày: hàng `4b` ghi hành vi thành công nhưng Unit Tests §5 chưa có case dương cho nó — chỉ có case âm của `4a` (test #6, price+charges → `PRICE_CHANGE_REQUIRES_POLICY`); đã thêm test #84 phủ đúng case dương của `4b` (capacity+charges → success, `charges`/`payment_allocations` không đổi, không đòi `impact_policy`).)* |
 | 2026-08-25 | v2.24 | **Mirror DD-117 ✅ (owner 25/08) vào edge #5 (docs-only, không đổi contract):** ghi cách đọc đã chốt — nhánh paid-roster/retry-root của Close/Cancel = **fail-closed refuse** (`CANCEL_REQUIRES_REVIEW` class) cho tới khi subsystem payments/`review_policy` tồn tại, thay deferral 14/08; kèm D5 (họ lệnh dedup `(tenant_id, command_id)` DUY NHẤT — content fingerprint bị bác). An toàn hôm nay vì paid roster/retry root chưa reachable trên `main`. Chi tiết + phạm vi authorize thuộc `../../standards/decisions.md` DD-117. |
