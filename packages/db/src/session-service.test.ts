@@ -22,6 +22,11 @@ import {
   SessionCancelError,
   SessionCancelAuthorizationError,
   type CancelSessionInputPayload,
+  createGuestNote,
+  deleteGuestNote,
+  SessionGuestNoteError,
+  type CreateGuestNoteInputPayload,
+  type DeleteGuestNoteInputPayload,
   type CreateSessionInputPayload,
   type PublishSessionInputPayload,
   type AnnounceSessionInputPayload,
@@ -3711,5 +3716,446 @@ describe("cancelSession (B2 of the split)", () => {
       if (b) await b;
       holder.release();
     }
+  });
+});
+
+// ======================= Guest notes (CreateGuestNote / DeleteGuestNote) =======================
+//
+// Real-PG rows from the BE unit table: #78 (happy path), #79 (4th note -> GUEST_NOTE_LIMIT_REACHED
+// raised by the SERVICE pre-check, not by 0044's trg_session_guest_note_limit), #81 (delete a note
+// the caller did not create -> NOT_NOTE_CREATOR). Runs as the `app` role through the RLS harness,
+// so tenant_isolation, the SELECT/INSERT/DELETE-only grant (no UPDATE) and the same-tenant
+// composite FK are all exercised, not mocked.
+describe("guest notes", () => {
+  const future = () => new Date(Date.now() + 24 * 3600 * 1000);
+
+  async function seedSession(
+    tenantId: string,
+    over: { status?: string; slotsMax?: number | null; allowPlayerInvite?: boolean } = {},
+  ): Promise<string> {
+    const startsAt = future();
+    const s = await ctx.owner.query(
+      `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, area, slots_max,
+                             visibility, price_amount, status, allow_player_invite)
+       VALUES ($1, $2, $3, $4, 'Asia/Ho_Chi_Minh', 'Quận 1', $5, 'private', 120000, $6, $7)
+       RETURNING id`,
+      [
+        tenantId,
+        ctx.badmintonSportId,
+        startsAt,
+        new Date(startsAt.getTime() + 2 * 3600 * 1000),
+        over.slotsMax === undefined ? 8 : over.slotsMax,
+        over.status ?? "open",
+        over.allowPlayerInvite ?? true,
+      ],
+    );
+    return (s.rows[0] as { id: string }).id;
+  }
+
+  // person -> membership -> player row. The actor identity the command takes is the PERSON id
+  // (that is what session_guest_notes.created_by_person_id stores and what the route reads from
+  // currentSession()); the ACTIVE check walks players -> memberships to reach it.
+  async function seedPerson(
+    tenantId: string,
+    sessionId: string | null,
+    opts: { playerStatus?: string | null; displayName?: string | null } = {},
+  ): Promise<string> {
+    const unique = randomUUID();
+    const p = await ctx.owner.query(`INSERT INTO persons (display_name) VALUES ($1) RETURNING id`, [
+      `P ${unique}`,
+    ]);
+    const personId = (p.rows[0] as { id: string }).id;
+    const m = await ctx.owner.query(
+      `INSERT INTO memberships (tenant_id, person_id, display_name, status)
+       VALUES ($1, $2, $3, 'active') RETURNING id`,
+      [tenantId, personId, opts.displayName === undefined ? `Nam ${unique}` : opts.displayName],
+    );
+    const membershipId = (m.rows[0] as { id: string }).id;
+    const playerStatus = opts.playerStatus === undefined ? "active" : opts.playerStatus;
+    if (sessionId !== null && playerStatus !== null) {
+      await ctx.owner.query(
+        `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenantId, sessionId, membershipId, playerStatus, playerStatus === "waitlisted" ? 1 : null],
+      );
+    }
+    return personId;
+  }
+
+  // Owner connection: sees every tenant, so a cross-tenant leak cannot hide behind RLS.
+  const notesOf = (sessionId: string) =>
+    rows(
+      `SELECT id, tenant_id, created_by_person_id, guest_name, note
+         FROM session_guest_notes WHERE session_id = $1 ORDER BY created_at, id`,
+      [sessionId],
+    );
+  const eventsOf = (sessionId: string) =>
+    rows(
+      `SELECT type, sequence, payload FROM outbox_events WHERE aggregate_id = $1 ORDER BY sequence`,
+      [sessionId],
+    );
+  const commandRows = (commandId: string) =>
+    rows(`SELECT command_type, result_ref FROM processed_commands WHERE command_id = $1`, [
+      commandId,
+    ]);
+
+  const create = (
+    tenantId: string,
+    actorPersonId: string,
+    input: CreateGuestNoteInputPayload,
+    commandId = cmdId(),
+  ) => createGuestNote(ctx.appDb.db, { tenantId, commandId, actorPersonId, input });
+  const remove = (
+    tenantId: string,
+    actorPersonId: string,
+    input: DeleteGuestNoteInputPayload,
+    commandId = cmdId(),
+  ) => deleteGuestNote(ctx.appDb.db, { tenantId, commandId, actorPersonId, input });
+
+  async function expectGuestNoteReject(
+    run: () => Promise<unknown>,
+    code: string,
+    sessionId: string,
+  ): Promise<void> {
+    const before = await notesOf(sessionId);
+    const error = await run().catch((e: unknown) => e);
+    // instanceof is the load-bearing assertion for #79: 0044's BEFORE INSERT trigger raises the
+    // SAME message as a raw pg error, so only a TYPED SessionGuestNoteError proves the service's
+    // own pre-check refused before any INSERT was attempted.
+    expect(error).toBeInstanceOf(SessionGuestNoteError);
+    expect((error as SessionGuestNoteError).code).toBe(code);
+    expect(await notesOf(sessionId)).toEqual(before);
+  }
+
+  // ---- #78 happy path ----
+  it("GN1 (#78): an active player creates a guest note, one outbox row, one ledger row", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const commandId = cmdId();
+
+    const result = await create(
+      ctx.tenantA,
+      personId,
+      { sessionId, guestName: "Khách A", note: "Bạn cùng công ty" },
+      commandId,
+    );
+    expect(result).toMatchObject({ sessionId, replayed: false });
+
+    const notes = (await notesOf(sessionId)) as {
+      id: string;
+      tenant_id: string;
+      created_by_person_id: string;
+      guest_name: string;
+      note: string | null;
+    }[];
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({
+      id: result.noteId,
+      tenant_id: ctx.tenantA,
+      created_by_person_id: personId,
+      guest_name: "Khách A",
+      note: "Bạn cùng công ty",
+    });
+
+    const events = (await eventsOf(sessionId)) as {
+      type: string;
+      sequence: number;
+      payload: Record<string, unknown>;
+    }[];
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "guest_note.created", sequence: 1 });
+    expect(events[0]!.payload).toMatchObject({
+      session_id: sessionId,
+      guest_note_id: result.noteId,
+      created_by_person_id: personId,
+    });
+    // The guest's NAME never reaches the outbox: the payload is ids only, so a projector cannot
+    // fan a non-member's name out to a channel that was never told about them.
+    expect(JSON.stringify(events[0]!.payload)).not.toContain("Khách A");
+
+    const ledger = (await commandRows(commandId)) as {
+      command_type: string;
+      result_ref: Record<string, unknown>;
+    }[];
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0]!.command_type).toBe("CreateGuestNote");
+    // Same reason, one layer down (DD-117 D5): dedup is commandId-only and the ledger stores no
+    // request content.
+    expect(ledger[0]!.result_ref).toEqual({ noteId: result.noteId, sessionId });
+  });
+
+  it("GN2: an omitted note defaults to 'Bạn của <display name>' (spec §4 step 6)", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId, { displayName: "Nam" });
+    await create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" });
+    const notes = (await notesOf(sessionId)) as { note: string | null }[];
+    expect(notes[0]!.note).toBe("Bạn của Nam");
+  });
+
+  it("GN3: an explicit null note stays null (the default fills an ABSENT note only)", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId, { displayName: "Nam" });
+    await create(ctx.tenantA, personId, { sessionId, guestName: "Khách A", note: null });
+    const notes = (await notesOf(sessionId)) as { note: string | null }[];
+    expect(notes[0]!.note).toBeNull();
+  });
+
+  it("GN4: a replayed commandId returns the stored envelope and creates no second note", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const commandId = cmdId();
+    const first = await create(
+      ctx.tenantA,
+      personId,
+      { sessionId, guestName: "Khách A" },
+      commandId,
+    );
+    // DD-117 D5: the RETRY payload is irrelevant — even a malformed one replays.
+    const replay = await create(ctx.tenantA, personId, { sessionId, guestName: "" }, commandId);
+    expect(replay).toEqual({ noteId: first.noteId, sessionId, replayed: true });
+    expect(await notesOf(sessionId)).toHaveLength(1);
+    expect(await eventsOf(sessionId)).toHaveLength(1);
+  });
+
+  it("GN5: a commandId already used by a DIFFERENT command conflicts", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const commandId = cmdId();
+    await create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" }, commandId);
+    await expectGuestNoteReject(
+      () => remove(ctx.tenantA, personId, { sessionId, noteId: randomUUID() }, commandId),
+      "COMMAND_ID_CONFLICT",
+      sessionId,
+    );
+  });
+
+  // ---- #79 limit ----
+  it("GN6 (#79): the FOURTH note is refused by the service pre-check, not by the DB trigger", async () => {
+    const sessionId = await seedSession(ctx.tenantA, { slotsMax: null });
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    for (let i = 0; i < 3; i += 1) {
+      await create(ctx.tenantA, personId, { sessionId, guestName: `Khách ${i}` });
+    }
+    expect(await notesOf(sessionId)).toHaveLength(3);
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, personId, { sessionId, guestName: "Khách 4" }),
+      "GUEST_NOTE_LIMIT_REACHED",
+      sessionId,
+    );
+    // The limit is per (session, person): a DIFFERENT player still gets their own three.
+    const other = await seedPerson(ctx.tenantA, sessionId);
+    await create(ctx.tenantA, other, { sessionId, guestName: "Khách B" });
+    expect(await notesOf(sessionId)).toHaveLength(4);
+  });
+
+  // ---- guards ----
+  it("GN7: a non-open session is refused (SESSION_NOT_OPEN)", async () => {
+    const sessionId = await seedSession(ctx.tenantA, { status: "closed" });
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" }),
+      "SESSION_NOT_OPEN",
+      sessionId,
+    );
+  });
+
+  it("GN8: allow_player_invite=false is refused (INVITE_NOT_ALLOWED, edge #37)", async () => {
+    const sessionId = await seedSession(ctx.tenantA, { allowPlayerInvite: false });
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" }),
+      "INVITE_NOT_ALLOWED",
+      sessionId,
+    );
+  });
+
+  it.each(["waitlisted", "left", null] as const)(
+    "GN9: a %s (non-active) caller is refused (PLAYER_NOT_ACTIVE, edge #38)",
+    async (playerStatus) => {
+      const sessionId = await seedSession(ctx.tenantA);
+      const personId = await seedPerson(ctx.tenantA, sessionId, { playerStatus });
+      await expectGuestNoteReject(
+        () => create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" }),
+        "PLAYER_NOT_ACTIVE",
+        sessionId,
+      );
+    },
+  );
+
+  it("GN10: occupancy counts active players AND existing guest notes against slots_max", async () => {
+    // slots_max 3: one active player + two guest notes = 3 -> the third note is SESSION_FULL.
+    const sessionId = await seedSession(ctx.tenantA, { slotsMax: 3 });
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 1" });
+    await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 2" });
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, personId, { sessionId, guestName: "Khách 3" }),
+      "SESSION_FULL",
+      sessionId,
+    );
+  });
+
+  it("GN11: a NULL slots_max means unlimited — no SESSION_FULL", async () => {
+    const sessionId = await seedSession(ctx.tenantA, { slotsMax: null });
+    const a = await seedPerson(ctx.tenantA, sessionId);
+    const b = await seedPerson(ctx.tenantA, sessionId);
+    await create(ctx.tenantA, a, { sessionId, guestName: "Khách 1" });
+    await create(ctx.tenantA, b, { sessionId, guestName: "Khách 2" });
+    expect(await notesOf(sessionId)).toHaveLength(2);
+  });
+
+  it.each([
+    ["", "empty guest_name"],
+    ["x".repeat(101), "guest_name over 100"],
+  ])("GN12: %s is rejected as INVALID_INPUT", async (guestName) => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, personId, { sessionId, guestName }),
+      "INVALID_INPUT",
+      sessionId,
+    );
+  });
+
+  it("GN13: a note over 200 characters is rejected as INVALID_INPUT", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    await expectGuestNoteReject(
+      () =>
+        create(ctx.tenantA, personId, {
+          sessionId,
+          guestName: "Khách A",
+          note: "x".repeat(201),
+        }),
+      "INVALID_INPUT",
+      sessionId,
+    );
+  });
+
+  it("GN14: a session in ANOTHER tenant is invisible, not forbidden (SESSION_NOT_FOUND)", async () => {
+    const sessionId = await seedSession(ctx.tenantB);
+    const personId = await seedPerson(ctx.tenantB, sessionId);
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" }),
+      "SESSION_NOT_FOUND",
+      sessionId,
+    );
+  });
+
+  it("GN15: a non-UUID sessionId fails closed as SESSION_NOT_FOUND, never a raw 22P02", async () => {
+    const error = await create(ctx.tenantA, randomUUID(), {
+      sessionId: "not-a-uuid",
+      guestName: "Khách A",
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SessionGuestNoteError);
+    expect((error as SessionGuestNoteError).code).toBe("SESSION_NOT_FOUND");
+  });
+
+  // ---- delete ----
+  it("GN16: the creator deletes their own note and one guest_note.deleted row is emitted", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const created = await create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" });
+
+    const result = await remove(ctx.tenantA, personId, { sessionId, noteId: created.noteId });
+    expect(result).toMatchObject({ noteId: created.noteId, sessionId, replayed: false });
+    expect(await notesOf(sessionId)).toHaveLength(0);
+
+    const events = (await eventsOf(sessionId)) as { type: string; sequence: number }[];
+    expect(events.map((e) => e.type)).toEqual(["guest_note.created", "guest_note.deleted"]);
+    expect(events[1]!.sequence).toBe(2);
+  });
+
+  it("GN17: deleting twice with the same commandId replays instead of re-emitting", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const created = await create(ctx.tenantA, personId, { sessionId, guestName: "Khách A" });
+    const commandId = cmdId();
+    await remove(ctx.tenantA, personId, { sessionId, noteId: created.noteId }, commandId);
+    const replay = await remove(
+      ctx.tenantA,
+      personId,
+      { sessionId, noteId: created.noteId },
+      commandId,
+    );
+    expect(replay).toEqual({ noteId: created.noteId, sessionId, replayed: true });
+    expect(await eventsOf(sessionId)).toHaveLength(2);
+  });
+
+  // ---- #81 ownership ----
+  it("GN18 (#81): a player who did not create the note cannot delete it (NOT_NOTE_CREATOR)", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const creator = await seedPerson(ctx.tenantA, sessionId);
+    const other = await seedPerson(ctx.tenantA, sessionId);
+    const created = await create(ctx.tenantA, creator, { sessionId, guestName: "Khách A" });
+
+    await expectGuestNoteReject(
+      () => remove(ctx.tenantA, other, { sessionId, noteId: created.noteId }),
+      "NOT_NOTE_CREATOR",
+      sessionId,
+    );
+    // 403, not a silent success: the row is still there and nothing was emitted for the attempt.
+    expect(await notesOf(sessionId)).toHaveLength(1);
+    expect(await eventsOf(sessionId)).toHaveLength(1);
+  });
+
+  it("GN19: a missing note is GUEST_NOTE_NOT_FOUND, and so is a non-UUID noteId", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    await expectGuestNoteReject(
+      () => remove(ctx.tenantA, personId, { sessionId, noteId: randomUUID() }),
+      "GUEST_NOTE_NOT_FOUND",
+      sessionId,
+    );
+    await expectGuestNoteReject(
+      () => remove(ctx.tenantA, personId, { sessionId, noteId: "not-a-uuid" }),
+      "GUEST_NOTE_NOT_FOUND",
+      sessionId,
+    );
+  });
+
+  it("GN20: a note belonging to ANOTHER tenant is invisible (GUEST_NOTE_NOT_FOUND, not 403)", async () => {
+    const sessionB = await seedSession(ctx.tenantB);
+    const personB = await seedPerson(ctx.tenantB, sessionB);
+    const created = await create(ctx.tenantB, personB, {
+      sessionId: sessionB,
+      guestName: "Khách B",
+    });
+    // Same person id, wrong tenant context: RLS hides the row, so the answer is 404-shaped rather
+    // than NOT_NOTE_CREATOR — a 403 here would confirm the note exists to a foreign tenant.
+    await expectGuestNoteReject(
+      () => remove(ctx.tenantA, personB, { sessionId: sessionB, noteId: created.noteId }),
+      "GUEST_NOTE_NOT_FOUND",
+      sessionB,
+    );
+  });
+
+  it("GN21: a noteId that belongs to a DIFFERENT session than the path id is not found", async () => {
+    const sessionOne = await seedSession(ctx.tenantA);
+    const sessionTwo = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionOne);
+    const created = await create(ctx.tenantA, personId, {
+      sessionId: sessionOne,
+      guestName: "Khách A",
+    });
+    await expectGuestNoteReject(
+      () => remove(ctx.tenantA, personId, { sessionId: sessionTwo, noteId: created.noteId }),
+      "GUEST_NOTE_NOT_FOUND",
+      sessionOne,
+    );
+  });
+
+  it("GN22: deleting frees a slot — a session at capacity accepts a new note afterwards", async () => {
+    const sessionId = await seedSession(ctx.tenantA, { slotsMax: 2 });
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const created = await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 1" });
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, personId, { sessionId, guestName: "Khách 2" }),
+      "SESSION_FULL",
+      sessionId,
+    );
+    await remove(ctx.tenantA, personId, { sessionId, noteId: created.noteId });
+    await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 2" });
+    expect(await notesOf(sessionId)).toHaveLength(1);
   });
 });
