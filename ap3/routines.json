@@ -26,10 +26,12 @@
         "apps/web/app/api/sessions/**",
         "apps/web/lib/session-*",
         "packages/db/src/session-service*",
-        "packages/db/src/public-session-fence*"
+        "packages/db/src/public-session-fence*",
+        "packages/core/src/api-contract.ts",
+        "packages/core/src/api-contract.test.ts"
       ],
       "budget_usd_max": 15,
-      "max_runs_per_day": 2,
+      "max_runs_per_day": 3,
       "max_parallel": 1,
       "writer_model": "claude-sonnet-5",
       "writer_models_allowed": [
