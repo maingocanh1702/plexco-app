@@ -4,8 +4,10 @@ import {
   cspNonceEnabled,
   DISCOVERY_PATH_ALLOWLIST,
   newNonce,
+  noReferrer,
   parseProcessRole,
   pathAllowedForRole,
+  redirect,
 } from "./request-policy";
 
 /** Audit 2026-09-06 W-10 — the discovery ingress must not serve the whole app. */
@@ -74,5 +76,33 @@ describe("CSP nonce policy (flag-gated)", () => {
     expect(a).toMatch(/^[A-Za-z0-9+/]{22}==$/);
     expect(a).not.toBe(b);
     expect(newNonce(new Uint8Array(16))).toBe("AAAAAAAAAAAAAAAAAAAAAA==");
+  });
+});
+
+/**
+ * Hoisted from the two Google OAuth routes (callback/route.ts, complete/route.ts) — was
+ * duplicated byte-for-byte in both. Pins the exact response shape so the hoist is
+ * behaviour-preserving: same status, same headers, same body.
+ */
+describe("redirect / noReferrer (hoisted OAuth 302 helpers)", () => {
+  it("redirect() returns an empty-body 302 with Location and Referrer-Policy: no-referrer", async () => {
+    const res = redirect("https://example.test/?auth_error=AUTH_INVALID");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("https://example.test/?auth_error=AUTH_INVALID");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(await res.text()).toBe("");
+  });
+
+  it("noReferrer() sets Referrer-Policy: no-referrer on an existing response without touching status or body", async () => {
+    const original = new Response(JSON.stringify({ ok: true }), {
+      status: 429,
+      headers: { "content-type": "application/json" },
+    });
+    const res = noReferrer(original);
+    expect(res).toBe(original);
+    expect(res.status).toBe(429);
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("content-type")).toBe("application/json");
+    expect(await res.text()).toBe(JSON.stringify({ ok: true }));
   });
 });

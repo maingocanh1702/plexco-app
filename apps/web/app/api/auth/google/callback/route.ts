@@ -17,6 +17,7 @@ import {
   readOauthBindingCookie,
   sha256Hex,
 } from "../../../../../lib/oauth-transaction";
+import { noReferrer, redirect } from "../../../../../lib/request-policy";
 import {
   appDb,
   buildCompletionLanding,
@@ -219,17 +220,4 @@ async function handleGoogleCallback(request: Request): Promise<Response> {
   if (!armed) return fail("AUTH_INVALID");
   const landing = buildCompletionLanding(handoff.token);
   return new Response(landing.body, { status: 200, headers: landing.headers });
-}
-
-/** 302 redirect that leaks no referrer (the callback URL carries code/state). */
-function redirect(location: string): Response {
-  return new Response(null, {
-    status: 302,
-    headers: { location, "referrer-policy": "no-referrer" },
-  });
-}
-
-function noReferrer(response: Response): Response {
-  response.headers.set("referrer-policy", "no-referrer");
-  return response;
 }

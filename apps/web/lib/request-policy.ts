@@ -87,3 +87,21 @@ export function isTopLevelNavigation(request: Request): boolean {
   if (dest === null) return true;
   return dest.toLowerCase() === "document";
 }
+
+/**
+ * Hoisted out of `app/api/auth/google/{callback,complete}/route.ts`, where it was duplicated
+ * byte-for-byte: a 302 redirect that leaks no referrer (both hops carry auth code/state/handoff
+ * on the URL they redirect away from).
+ */
+export function redirect(location: string): Response {
+  return new Response(null, {
+    status: 302,
+    headers: { location, "referrer-policy": "no-referrer" },
+  });
+}
+
+/** Also hoisted from the two Google OAuth routes — see `redirect()` above. */
+export function noReferrer(response: Response): Response {
+  response.headers.set("referrer-policy", "no-referrer");
+  return response;
+}
