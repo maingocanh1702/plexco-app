@@ -71,32 +71,56 @@ beforeEach(() => {
   vi.mocked(createGuestNote).mockResolvedValue({
     noteId: NOTE_ID,
     sessionId: SESSION_ID,
+    remainingNotes: 2,
     replayed: false,
   });
 });
 
 describe("POST /api/sessions/:id/guest-notes", () => {
-  it("creates and returns the pinned DTO", async () => {
+  it("creates and returns the pinned DTO, remainingNotes included (BE unit row #78)", async () => {
     const response = await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
     expect(response.status).toBe(200);
     const { data } = await envelope(response);
-    expect(data).toEqual({ guestNote: { id: NOTE_ID, sessionId: SESSION_ID } });
+    expect(data).toEqual({
+      guestNote: { id: NOTE_ID, sessionId: SESSION_ID, remainingNotes: 2 },
+    });
   });
 
   // The DTO deliberately does NOT echo guestName/note. They are the caller's own payload and are
   // never stored in processed_commands.result_ref (DD-117 D5 keeps request content — here a
   // non-member's name — out of the idempotency ledger), so a REPLAY could not return them and the
-  // two responses would differ. One shape for both paths.
+  // two responses would differ. One shape for both paths. remainingNotes IS in both shapes: the
+  // command stores it in the ledger precisely so the replay can answer with the original number.
   it("returns the same DTO for a replayed commandId", async () => {
     vi.mocked(createGuestNote).mockResolvedValue({
       noteId: NOTE_ID,
       sessionId: SESSION_ID,
+      remainingNotes: 2,
       replayed: true,
     });
     const response = await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
     expect(response.status).toBe(200);
     const { data } = await envelope(response);
-    expect(data).toEqual({ guestNote: { id: NOTE_ID, sessionId: SESSION_ID } });
+    expect(data).toEqual({
+      guestNote: { id: NOTE_ID, sessionId: SESSION_ID, remainingNotes: 2 },
+    });
+  });
+
+  // The route must not recompute or invent the number — a zero from the command is a real answer
+  // (the author just spent their third note) and has to survive to the caller.
+  it("passes remainingNotes through verbatim, including 0", async () => {
+    vi.mocked(createGuestNote).mockResolvedValue({
+      noteId: NOTE_ID,
+      sessionId: SESSION_ID,
+      remainingNotes: 0,
+      replayed: false,
+    });
+    const { data } = await envelope(
+      await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx()),
+    );
+    expect(data).toEqual({
+      guestNote: { id: NOTE_ID, sessionId: SESSION_ID, remainingNotes: 0 },
+    });
   });
 
   it("takes sessionId from the PATH, actor from the session cookie, tenant/commandId from context", async () => {

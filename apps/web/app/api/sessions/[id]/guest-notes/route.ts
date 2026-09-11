@@ -56,10 +56,19 @@ export async function POST(
             ...(present(context.body, "note") ? { note: context.body.note as string | null } : {}),
           },
         });
-        // Ids only — the DTO never echoes guestName/note, because a REPLAY cannot produce them
-        // (the idempotency ledger stores no request content, DD-117 D5) and one command must not
-        // have two response shapes.
-        return ok({ guestNote: { id: result.noteId, sessionId: result.sessionId } });
+        // Ids plus remainingNotes — the DTO never echoes guestName/note, because a REPLAY cannot
+        // produce them (the idempotency ledger stores no request content, DD-117 D5) and one
+        // command must not have two response shapes. remainingNotes CAN be replayed (it is stored
+        // in the ledger for exactly that reason), and BE unit row #78 makes it part of this
+        // command's result: the author needs to know how many of their three notes are left
+        // without issuing a second request to find out.
+        return ok({
+          guestNote: {
+            id: result.noteId,
+            sessionId: result.sessionId,
+            remainingNotes: result.remainingNotes,
+          },
+        });
       }),
   );
 }

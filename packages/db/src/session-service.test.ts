@@ -3839,7 +3839,9 @@ describe("guest notes", () => {
       { sessionId, guestName: "Khách A", note: "Bạn cùng công ty" },
       commandId,
     );
-    expect(result).toMatchObject({ sessionId, replayed: false });
+    // remainingNotes is part of row #78's expected result, not decoration: the author has spent
+    // one of GUEST_NOTE_LIMIT=3, so two are left.
+    expect(result).toMatchObject({ sessionId, replayed: false, remainingNotes: 2 });
 
     const notes = (await notesOf(sessionId)) as {
       id: string;
@@ -3864,13 +3866,17 @@ describe("guest notes", () => {
     }[];
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: "guest_note.created", sequence: 1 });
-    expect(events[0]!.payload).toMatchObject({
+    // EXACT payload, not a subset: the spec's Events table pins these four keys for
+    // guest_note.created, and toMatchObject would pass just as happily on a payload that carried
+    // the wrong key name beside the right ones.
+    expect(events[0]!.payload).toEqual({
       session_id: sessionId,
-      guest_note_id: result.noteId,
+      note_id: result.noteId,
       created_by_person_id: personId,
+      note_count: 1,
     });
-    // The guest's NAME never reaches the outbox: the payload is ids only, so a projector cannot
-    // fan a non-member's name out to a channel that was never told about them.
+    // The guest's NAME never reaches the outbox: the payload is ids and a count, so a projector
+    // cannot fan a non-member's name out to a channel that was never told about them.
     expect(JSON.stringify(events[0]!.payload)).not.toContain("Khách A");
 
     const ledger = (await commandRows(commandId)) as {
@@ -3879,9 +3885,76 @@ describe("guest notes", () => {
     }[];
     expect(ledger).toHaveLength(1);
     expect(ledger[0]!.command_type).toBe("CreateGuestNote");
-    // Same reason, one layer down (DD-117 D5): dedup is commandId-only and the ledger stores no
-    // request content.
-    expect(ledger[0]!.result_ref).toEqual({ noteId: result.noteId, sessionId });
+    // Ids, the actor the replay is bound to, and the number row #78 requires — and nothing else.
+    // No guest_name/note: dedup is commandId-only (DD-117 D5) and the ledger stores no request
+    // content, least of all a non-member's name.
+    expect(ledger[0]!.result_ref).toEqual({
+      noteId: result.noteId,
+      sessionId,
+      actorPersonId: personId,
+      remainingNotes: 2,
+    });
+  });
+
+  // remainingNotes has to count DOWN across a session, or it is a constant dressed as a result.
+  it("GN1b (#78): remainingNotes walks 2 -> 1 -> 0 as the author spends the limit", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const seen: number[] = [];
+    for (const guestName of ["Khách 1", "Khách 2", "Khách 3"]) {
+      seen.push((await create(ctx.tenantA, personId, { sessionId, guestName })).remainingNotes);
+    }
+    expect(seen).toEqual([2, 1, 0]);
+    // The event's note_count is the same number read from the other end.
+    const events = (await eventsOf(sessionId)) as { payload: Record<string, unknown> }[];
+    expect(events.map((e) => e.payload.note_count)).toEqual([1, 2, 3]);
+  });
+
+  // The count is PER AUTHOR, which is what makes it agree with the per-(session, person) limit —
+  // a co-player's notes must not eat into this author's three.
+  it("GN1c: note_count/remainingNotes count only the author's own notes", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const author = await seedPerson(ctx.tenantA, sessionId);
+    const coPlayer = await seedPerson(ctx.tenantA, sessionId);
+    await create(ctx.tenantA, coPlayer, { sessionId, guestName: "Khách của B1" });
+    await create(ctx.tenantA, coPlayer, { sessionId, guestName: "Khách của B2" });
+
+    const mine = await create(ctx.tenantA, author, { sessionId, guestName: "Khách của A" });
+    expect(mine.remainingNotes).toBe(2);
+    const events = (await eventsOf(sessionId)) as { payload: Record<string, unknown> }[];
+    expect(events[2]!.payload.note_count).toBe(1);
+  });
+
+  // The replay-actor binding, create side. Dedup runs BEFORE the active-player guard (DD-117 D5
+  // makes the retry payload irrelevant), so without the ledger's actorPersonId a second person in
+  // the same tenant could present someone else's commandId and be handed their note id.
+  it("GN4b: a DIFFERENT person replaying the author's commandId is refused, not served", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const author = await seedPerson(ctx.tenantA, sessionId);
+    const other = await seedPerson(ctx.tenantA, sessionId);
+    const commandId = cmdId();
+    const first = await create(
+      ctx.tenantA,
+      author,
+      { sessionId, guestName: "Khách A" },
+      commandId,
+    );
+
+    await expectGuestNoteReject(
+      () => create(ctx.tenantA, other, { sessionId, guestName: "Khách A" }, commandId),
+      "COMMAND_ID_CONFLICT",
+      sessionId,
+    );
+    // The author's own replay still works — the binding narrows the key to one caller, it does not
+    // break idempotency.
+    const replay = await create(ctx.tenantA, author, { sessionId, guestName: "" }, commandId);
+    expect(replay).toEqual({
+      noteId: first.noteId,
+      sessionId,
+      remainingNotes: 2,
+      replayed: true,
+    });
+    expect(await eventsOf(sessionId)).toHaveLength(1);
   });
 
   it("GN2: an omitted note defaults to 'Bạn của <display name>' (spec §4 step 6)", async () => {
@@ -3912,7 +3985,12 @@ describe("guest notes", () => {
     );
     // DD-117 D5: the RETRY payload is irrelevant — even a malformed one replays.
     const replay = await create(ctx.tenantA, personId, { sessionId, guestName: "" }, commandId);
-    expect(replay).toEqual({ noteId: first.noteId, sessionId, replayed: true });
+    expect(replay).toEqual({
+      noteId: first.noteId,
+      sessionId,
+      remainingNotes: first.remainingNotes,
+      replayed: true,
+    });
     expect(await notesOf(sessionId)).toHaveLength(1);
     expect(await eventsOf(sessionId)).toHaveLength(1);
   });
@@ -4105,9 +4183,55 @@ describe("guest notes", () => {
     expect(result).toMatchObject({ noteId: created.noteId, sessionId, replayed: false });
     expect(await notesOf(sessionId)).toHaveLength(0);
 
-    const events = (await eventsOf(sessionId)) as { type: string; sequence: number }[];
+    const events = (await eventsOf(sessionId)) as {
+      type: string;
+      sequence: number;
+      payload: Record<string, unknown>;
+    }[];
     expect(events.map((e) => e.type)).toEqual(["guest_note.created", "guest_note.deleted"]);
     expect(events[1]!.sequence).toBe(2);
+    // EXACT payload: session_id/note_id/deleted_by_person_id are the spec's pinned keys, plus the
+    // step-4 occupancy recompute. 1, not 0: the author is themselves an active player of this
+    // session and still occupies their own slot — only the guest's slot was released (the created
+    // event above was emitted at occupancy 2).
+    expect(events[1]!.payload).toEqual({
+      session_id: sessionId,
+      note_id: created.noteId,
+      deleted_by_person_id: personId,
+      occupancy_after: 1,
+    });
+  });
+
+  // The replay-actor binding, delete side. The note is already gone by the time a replay arrives,
+  // so NOT_NOTE_CREATOR can no longer refuse anyone — the ledger is the only remaining record of
+  // who was allowed to delete it.
+  it("GN17b: a DIFFERENT person replaying the deleter's commandId is refused, not served", async () => {
+    const sessionId = await seedSession(ctx.tenantA);
+    const author = await seedPerson(ctx.tenantA, sessionId);
+    const other = await seedPerson(ctx.tenantA, sessionId);
+    const created = await create(ctx.tenantA, author, { sessionId, guestName: "Khách A" });
+    const commandId = cmdId();
+    await remove(ctx.tenantA, author, { sessionId, noteId: created.noteId }, commandId);
+
+    const error = await remove(
+      ctx.tenantA,
+      other,
+      { sessionId, noteId: created.noteId },
+      commandId,
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SessionGuestNoteError);
+    expect((error as SessionGuestNoteError).code).toBe("COMMAND_ID_CONFLICT");
+    expect(await eventsOf(sessionId)).toHaveLength(2);
+
+    // The deleter's own replay is unaffected.
+    const replay = await remove(
+      ctx.tenantA,
+      author,
+      { sessionId, noteId: created.noteId },
+      commandId,
+    );
+    expect(replay).toEqual({ noteId: created.noteId, sessionId, replayed: true });
+    expect(await eventsOf(sessionId)).toHaveLength(2);
   });
 
   it("GN17: deleting twice with the same commandId replays instead of re-emitting", async () => {

@@ -2364,18 +2364,49 @@ export interface DeleteGuestNoteParams {
  * content is needed to replay, and the content here is a NON-MEMBER's name — writing it into the
  * idempotency ledger would put a third party's personal data in a row that outlives the note it
  * came from. The ledger keeps pointers; the table keeps the data, under RLS.
+ *
+ * `actorPersonId` is the one field that is NOT a pointer to the result, and it is load-bearing.
+ * Dedup runs BEFORE the active-player check (create) and before the ownership check (delete),
+ * because DD-117 D5 makes the retry's payload irrelevant. Without the actor bound into the ledger
+ * row, a SECOND authenticated person in the same tenant who reuses the first one's commandId would
+ * be handed that success — the created note's id, or a "deleted" verdict on a note they do not own
+ * — having satisfied neither PLAYER_NOT_ACTIVE nor NOT_NOTE_CREATOR. Replay is a retry of the SAME
+ * caller's command, so the stored actor is part of the command key's identity, not of its payload.
+ * It is a person id already visible to every guard downstream, not third-party content.
  */
 interface StoredGuestNoteResult {
   noteId: string;
   sessionId: string;
+  actorPersonId: string;
 }
 
-/** replayed=true when a prior processed_commands row was returned (zero new mutation). */
-export interface CreateGuestNoteResult extends StoredGuestNoteResult {
+/**
+ * The create side stores one number more than it points at: BE unit row #78 makes `remainingNotes`
+ * part of the command's result, so a REPLAY has to answer with the same number the original did.
+ * Recomputing it at replay time would drift (the author may have added or removed notes since),
+ * which would make one commandId return two different results.
+ */
+interface StoredCreateGuestNoteResult extends StoredGuestNoteResult {
+  remainingNotes: number;
+}
+
+/**
+ * replayed=true when a prior processed_commands row was returned (zero new mutation).
+ *
+ * These are the DTOs, not the ledger envelope: actorPersonId is deliberately absent — the caller
+ * supplied it, so echoing it back tells them nothing and only widens the response surface.
+ */
+export interface CreateGuestNoteResult {
+  noteId: string;
+  sessionId: string;
+  /** Notes this author may still record on this session (BE unit row #78): GUEST_NOTE_LIMIT - used. */
+  remainingNotes: number;
   replayed: boolean;
 }
 
-export interface DeleteGuestNoteResult extends StoredGuestNoteResult {
+export interface DeleteGuestNoteResult {
+  noteId: string;
+  sessionId: string;
   replayed: boolean;
 }
 
@@ -2425,8 +2456,11 @@ const isStorableText = (value: string): boolean => {
   return true;
 };
 
-/** Guards a replayed result_ref before trusting it: both ids must be UUIDs. A corrupt or
- *  hand-written row fails closed into COMMAND_ID_CONFLICT rather than replaying a bad envelope. */
+/** Guards a replayed result_ref before trusting it: all three ids must be UUIDs. A corrupt or
+ *  hand-written row fails closed into COMMAND_ID_CONFLICT rather than replaying a bad envelope.
+ *  The actor guard is what makes a PRE-fix ledger row (written without actorPersonId) unreplayable
+ *  instead of replayable-by-anyone: it fails closed, which is the right direction for a row whose
+ *  owner cannot be established. */
 function isStoredGuestNoteResult(value: unknown): value is StoredGuestNoteResult {
   if (typeof value !== "object" || value === null) return false;
   const r = value as Record<string, unknown>;
@@ -2434,7 +2468,22 @@ function isStoredGuestNoteResult(value: unknown): value is StoredGuestNoteResult
     typeof r.noteId === "string" &&
     UUID_RE.test(r.noteId) &&
     typeof r.sessionId === "string" &&
-    UUID_RE.test(r.sessionId)
+    UUID_RE.test(r.sessionId) &&
+    typeof r.actorPersonId === "string" &&
+    UUID_RE.test(r.actorPersonId)
+  );
+}
+
+/** The create envelope additionally carries row #78's remainingNotes, and it must be a count the
+ *  limit could actually have produced — otherwise the replay answers with a fabricated number. */
+function isStoredCreateGuestNoteResult(value: unknown): value is StoredCreateGuestNoteResult {
+  if (!isStoredGuestNoteResult(value)) return false;
+  const remaining = (value as unknown as Record<string, unknown>).remainingNotes;
+  return (
+    typeof remaining === "number" &&
+    Number.isInteger(remaining) &&
+    remaining >= 0 &&
+    remaining < GUEST_NOTE_LIMIT
   );
 }
 
@@ -2550,14 +2599,25 @@ export async function createGuestNote(
     if (prior !== null) {
       if (
         prior.commandType === CREATE_GUEST_NOTE_COMMAND_TYPE &&
-        isStoredGuestNoteResult(prior.stored) &&
-        prior.stored.sessionId === sessionId
+        isStoredCreateGuestNoteResult(prior.stored) &&
+        prior.stored.sessionId === sessionId &&
+        // A replay is the SAME author retrying. A different person in this tenant presenting this
+        // commandId has not passed step 3's active-player guard (dedup runs before it), so handing
+        // them the stored success would be an authorization bypass, not idempotency. They get the
+        // conflict every other misuse of an owned command key gets — which also tells them nothing
+        // about the note behind it.
+        prior.stored.actorPersonId === personId
       ) {
-        return { noteId: prior.stored.noteId, sessionId, replayed: true };
+        return {
+          noteId: prior.stored.noteId,
+          sessionId,
+          remainingNotes: prior.stored.remainingNotes,
+          replayed: true,
+        };
       }
       failGuestNote(
         "COMMAND_ID_CONFLICT",
-        "command_id belongs to a different command or session, or has no usable result",
+        "command_id belongs to a different command, session or actor, or has no usable result",
       );
     }
 
@@ -2603,8 +2663,11 @@ export async function createGuestNote(
       failGuestNote("PLAYER_NOT_ACTIVE", "actor is not an active player of this session");
     }
 
-    // Step 4 — the per-(session, person) limit, under the session lock.
-    if ((await guestNoteCountFor(tx, sessionId, personId)) >= GUEST_NOTE_LIMIT) {
+    // Step 4 — the per-(session, person) limit, under the session lock. The count is kept: it is
+    // the base for the event's note_count and for row #78's remainingNotes, and reading it once
+    // under the lock is what makes those two agree with the refusal above.
+    const notesBefore = await guestNoteCountFor(tx, sessionId, personId);
+    if (notesBefore >= GUEST_NOTE_LIMIT) {
       failGuestNote(
         "GUEST_NOTE_LIMIT_REACHED",
         `a player may record at most ${GUEST_NOTE_LIMIT} guest notes per session`,
@@ -2668,8 +2731,16 @@ export async function createGuestNote(
       .values({ tenantId, sessionId, createdByPersonId: personId, guestName, note })
       .returning({ id: sessionGuestNotes.id });
 
-    // Step 8 — one guest_note.created row. IDS ONLY: a projector fans these out to channels that
-    // were never told about a non-member, so the guest's name stays in the RLS-protected table.
+    // Step 8 — one guest_note.created row. The four keys are exactly the ones the spec's Events
+    // table pins for this type (feature_session_management_tech.md §4 Events): session_id, note_id,
+    // created_by_person_id, note_count. `note_count` is this AUTHOR's count on this session after
+    // the insert, not the session's total — it sits beside created_by_person_id and it is the
+    // number the 3-per-player limit counts, which is the only reading that makes it actionable to a
+    // consumer. Read under the session lock, so it cannot disagree with the row that was inserted.
+    //
+    // Still IDS ONLY apart from that count: a projector fans these out to channels that were never
+    // told about a non-member, so the guest's name stays in the RLS-protected table.
+    const noteCount = notesBefore + 1;
     await tx.insert(outboxEvents).values({
       tenantId,
       aggregateType: "session",
@@ -2678,19 +2749,30 @@ export async function createGuestNote(
       type: "guest_note.created",
       payload: {
         session_id: sessionId,
-        guest_note_id: created!.id,
+        note_id: created!.id,
         created_by_person_id: personId,
+        note_count: noteCount,
       },
     });
 
-    const stored: StoredGuestNoteResult = { noteId: created!.id, sessionId };
+    const stored: StoredCreateGuestNoteResult = {
+      noteId: created!.id,
+      sessionId,
+      actorPersonId: personId,
+      remainingNotes: GUEST_NOTE_LIMIT - noteCount,
+    };
     await tx.insert(processedCommands).values({
       tenantId,
       commandId,
       commandType: CREATE_GUEST_NOTE_COMMAND_TYPE,
       resultRef: stored,
     });
-    return { noteId: stored.noteId, sessionId, replayed: false };
+    return {
+      noteId: stored.noteId,
+      sessionId,
+      remainingNotes: stored.remainingNotes,
+      replayed: false,
+    };
   });
 }
 
@@ -2739,13 +2821,17 @@ export async function deleteGuestNote(
         prior.commandType === DELETE_GUEST_NOTE_COMMAND_TYPE &&
         isStoredGuestNoteResult(prior.stored) &&
         prior.stored.sessionId === sessionId &&
-        prior.stored.noteId === noteId
+        prior.stored.noteId === noteId &&
+        // Same reason as create, one guard sharper here: the note is already gone, so the ownership
+        // check below can no longer refuse anyone. Only the ledger still knows who was allowed to
+        // delete it, and a replay must stay that person's replay.
+        prior.stored.actorPersonId === personId
       ) {
         return { noteId, sessionId, replayed: true };
       }
       failGuestNote(
         "COMMAND_ID_CONFLICT",
-        "command_id belongs to a different command or note, or has no usable result",
+        "command_id belongs to a different command, note or actor, or has no usable result",
       );
     }
 
@@ -2799,15 +2885,23 @@ export async function deleteGuestNote(
       aggregateId: sessionId,
       sequence: nextOutboxSequence(sessionId),
       type: "guest_note.deleted",
+      // session_id / note_id / deleted_by_person_id are the three keys the spec's Events table
+      // pins for this type. The actor is the DELETER — which for this command is necessarily the
+      // author, since the ownership check above is what let the delete happen; naming the key after
+      // the act rather than the authorship is the contract's wording and the honest one.
+      //
+      // occupancy_after is additive, and is the one thing the spec's step 4 recompute produces:
+      // publishing it is what makes the freed slot observable to the consumer the recompute exists
+      // for. It is a count, never roster content.
       payload: {
         session_id: sessionId,
-        guest_note_id: noteId,
-        created_by_person_id: personId,
+        note_id: noteId,
+        deleted_by_person_id: personId,
         occupancy_after: occupancyAfter,
       },
     });
 
-    const stored: StoredGuestNoteResult = { noteId, sessionId };
+    const stored: StoredGuestNoteResult = { noteId, sessionId, actorPersonId: personId };
     await tx.insert(processedCommands).values({
       tenantId,
       commandId,
