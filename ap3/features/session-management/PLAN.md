@@ -7,16 +7,16 @@ planned_at: 2026-09-11
 
 ## Emission status (this PR)
 
-`ap3/queue/session-management-m01-timezone-validation-canonical-iana.md` and
-`ap3/queue/session-management-m02-read-routes-admin-scoped.md` are queued by this PR — both are
-unblocked today and lint clean. Milestone 3 (both the schema-migration slice and its
-guest-note-commands sibling) and milestone 4 (auto-expiry job) are **not** emitted yet:
-`session-management-m03-guest-note-commands` is mechanically blocked by `plan-emit` until the
-schema migration (3a) is merged and its `plan.json` entry is marked `landed: true` +
-`landed_sha`. Re-running `python3 ap3/aplib.py plan-emit` with the full slice list (including 3a's
-confirmed `landed_sha`) once the owner has merged the migration will queue 3b in one shot;
-milestone 4 has no such gate and can be emitted whenever the owner is ready to plan it in detail
-(it only has a supervised entry today — see Deferred item, milestone 4 below).
+Only `ap3/queue/session-management-m01-timezone-validation-canonical-iana.md` is queued by this
+PR — unblocked today, lint clean. Milestone 2 was reclassified **supervised** during review (see
+Milestone 2 below) and is no longer emitted as a queue file; milestone 3 (both the
+schema-migration slice and its guest-note-commands sibling) and milestone 4 (auto-expiry job) are
+also **not** emitted: `session-management-m03-guest-note-commands` is mechanically blocked by
+`plan-emit` until the schema migration (3a) is merged and its `plan.json` entry is marked
+`landed: true` + `landed_sha`. Re-running `python3 ap3/aplib.py plan-emit` with the full slice
+list (including 3a's confirmed `landed_sha`) once the owner has merged the migration will queue
+3b in one shot; milestone 4 has no such gate and can be emitted whenever the owner is ready to
+plan it in detail (it only has a supervised entry today — see Deferred item, milestone 4 below).
 
 ## What already exists (not re-planned)
 
@@ -49,26 +49,37 @@ trusting it with anything bigger.
 
 Scope: `packages/db/src/session-service.ts`, `packages/db/src/session-service.test.ts`.
 
-## Milestone 2 — admin-scoped session read routes (`feature-session-p2`, P2, dispatchable)
+## Milestone 2 — admin-scoped session read routes (supervised — auth choke-point change)
 
 Slug: `session-management-m02-read-routes-admin-scoped`
 
 Closes the BE spec header's own "chưa có: route đọc (`GET /api/sessions`, `/[id]`)" gap
 (`docs/features/BE/feature_session_management_tech.md:6`). Confirmed on live main: no file under
 `apps/web/app/api/sessions/**` exports `GET` anywhere. This slice adds `GET /api/sessions` (list)
-and `GET /api/sessions/:id` (detail) for **TenantAdmin-capable callers only**, reusing the existing
-auth/tenant-resolution choke-point in `apps/web/lib/session-command-route.ts` (the file's own
-comment states the DD-56 design intent: one choke-point, not scattered `role === ...` checks).
+and `GET /api/sessions/:id` (detail) for **TenantAdmin-capable callers only**.
+
+**Reclassified supervised on review (was P2/dispatchable in the first cut of this plan).**
+`apps/web/lib/session-command-route.ts` is the shared auth/CSRF/tenant/rate-limit choke-point for
+every session route (it carries codex round-01 [P1] and round-02 [P2] fixes). `GET` has no request
+body and no `commandId`, so serving it through this choke-point means **modifying**
+`resolveSessionCommandContext` to add a body-less context-resolution path — not just calling the
+existing function unchanged. Editing the auth choke-point itself is an auth-surface change, which
+this plan's own risk rule (see PLAN.md's governing skill, step 1 "Risk": crosses auth/RLS/
+permissions -> P1 -> supervised) requires to be supervised, not headless P2. `plan.json` records
+the reason verbatim: "modifies the session auth choke-point (session-command-route.ts) to add a
+body-less GET context resolver; auth surface -> P1 per plan risk rule; run by a human/Level-3
+session after M1 lands."
 
 **Negative scope, explicit:** this slice does NOT add the Player-facing branch of
 `GET /api/sessions/:id` (Host sees full roster/payment; Player sees a redacted,
 venue-visibility-gated view per FE spec E#6 and BE edge #8/#19's public-serializer-whitelist
 precedent). That is new, security-sensitive response-shaping logic with **zero existing precedent**
 in this codebase (verified: every route today gates on exactly one TenantAdmin-capable role; there
-is no Player-facing session route to branch from). It is intentionally left as a future
-human-supervised increment — see "Deferred" below, item D5.
+is no Player-facing session route to branch from). It is a further follow-up after this
+(now-supervised) milestone lands — see "Deferred" below, item D5.
 
-Scope: `apps/web/app/api/sessions/route.ts`, `apps/web/app/api/sessions/[id]/route.ts`,
+Scope for the supervised run (kept here as the spec, since `plan.json`'s supervised entry carries
+no queue fields): `apps/web/app/api/sessions/route.ts`, `apps/web/app/api/sessions/[id]/route.ts`,
 `apps/web/app/api/sessions/route.test.ts`, `apps/web/app/api/sessions/[id]/route.test.ts`,
 `apps/web/lib/session-command-route.ts`.
 
@@ -218,3 +229,11 @@ one).
 3. D6: is Messenger host-parity/wizard-lifecycle test coverage (#35-37, integration #7) actually
    missing, or does it live somewhere the shallow search missed? Worth a dedicated look before the
    next planning round touches Messenger-side session behavior.
+4. Milestone 2 (now supervised): should it instead be scoped **reuse-only** — i.e. is there
+   already a body-less auth/tenant-resolution path in `apps/web/lib/session-command-route.ts` (or
+   elsewhere) that `GET /api/sessions`/`GET /api/sessions/:id` could call unmodified, avoiding any
+   edit to the choke-point at all? If such a path exists, milestone 2 could potentially be
+   re-scoped back to a narrower P2 dispatchable slice (touching only the two route files, not
+   `session-command-route.ts`). This was not verified during planning — decide when the supervised
+   run for M2 actually starts, by reading `resolveSessionCommandContext`'s current signature/body
+   first, before assuming a new context-resolver function is required.
