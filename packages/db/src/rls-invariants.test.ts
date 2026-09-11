@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(44); // 0000..0043 (0043 = identity link_code issue/consume)
+    expect(ctx.migrateResult.applied.length).toBe(45); // 0000..0044 (0044 = session guest notes schema)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(44);
+    expect(second.skipped.length).toBe(45);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1752,12 +1752,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
           return migrate(url(dbName));
         }),
       );
-      expect(res.applied.length).toBe(44); // 0000..0043
+      expect(res.applied.length).toBe(45); // 0000..0044
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(44);
+        expect(rows.length).toBe(45);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2035,9 +2035,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe(
-          "0043_identity_link_code_issue_consume.sql",
-        );
+        expect(res.applied[res.applied.length - 1]).toBe("0044_session_guest_notes.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4516,10 +4514,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (44) matches the actual migrations/ directory listing, and the tail is 0043", async () => {
+    it("UCC-8: MIGRATION_COUNT (45) matches the actual migrations/ directory listing, and the tail is 0044", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(44);
-      expect(files[files.length - 1]).toBe("0043_identity_link_code_issue_consume.sql");
+      expect(files.length).toBe(45);
+      expect(files[files.length - 1]).toBe("0044_session_guest_notes.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
