@@ -1,9 +1,9 @@
 # Feature: Session Management — Backend Tech Spec
 
 > **Canonical phase:** P2/P4  
-> **Version:** 2.28 · 2026-09-11
+> **Version:** 2.29 · 2026-09-12
 > **Status:** Reviewed  
-> **Implementation:** DB substrate (`0014` waitlist, `0019` same-tenant integrity, `0024` public-capacity CHECK) + **SessionService đủ 6 command** (`packages/db/src/session-service.ts`: create · publish · announce · update · close · cancel) + **5 route** (`POST /api/sessions` · `/[id]` · `/[id]/publish` · `/[id]/close` · `/[id]/cancel`; `announce` gate DD-56 clause 1) đã merge (đo 2026-09-06 tại `30a3e90`, re-verified 2026-09-11 tại `6bfa905`); **chưa có**: route đọc (`GET /api/sessions`, `/[id]` — xem DD-56 amendment #3 draft, row `session-read-routes-list-detail`), projector thật (stub `dlq`), auto-promote, auto-expiry, writer cho `players` (roster) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** DB substrate (`0014` waitlist, `0019` same-tenant integrity, `0024` public-capacity CHECK) + **SessionService đủ 6 command** (`packages/db/src/session-service.ts`: create · publish · announce · update · close · cancel) + **5 route** (`POST /api/sessions` · `/[id]` · `/[id]/publish` · `/[id]/close` · `/[id]/cancel`; `announce` gate DD-56 clause 1) đã merge (đo 2026-09-06 tại `30a3e90`, re-verified 2026-09-11 tại `6bfa905`); guest-note commands (`CreateGuestNote`/`DeleteGuestNote`) + 2 route đã merge PR #13; **chưa có**: route đọc (`GET /api/sessions`, `/[id]` — xem DD-56 amendment #3 draft, row `session-read-routes-list-detail`), `GET /api/sessions/:id/guest-notes` (chờ Milestone 2, cùng body-less resolver), projector thật (stub `dlq`), auto-promote, auto-expiry, writer cho `players` (roster) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_session_management.md`  
 > **References:** `../../product/TDD.md` §3.2/3.8 · `../../standards/business-rules.md` · `../../standards/decisions.md` DD-32/DD-39/DD-45/**DD-45a**/DD-49/**DD-52**/**DD-65..68**/**DD-121** · `../../decisions/analysis/dd-45-waitlist-analysis.md` · `feature_channel_booking_funnel_tech.md` · `feature_user_settings_tech.md` (`deriveChargeAmount`) · `docs/autopilot-invariant-catalog.md` (`session-lock-ordering`/`publish-suspend-gate`/`session-command`/`billing-authz`/`retry-liveness`/`member-safety`)
 
@@ -45,7 +45,7 @@ Commands: `CreateSession`, `UpdateSession`, `PublishSession`, `AnnounceSession`,
 | `POST /api/sessions/:id/invite` | Player (active) | `InviteFriend` command (friend đã follow) |
 | `POST /api/sessions/:id/guest-notes` | Player (active) | `CreateGuestNote` command |
 | `DELETE /api/sessions/:id/guest-notes/:noteId` | Player (note creator) | `DeleteGuestNote` command |
-| `GET /api/sessions/:id/guest-notes` | Player (active) / Host | List guest notes for session |
+| `GET /api/sessions/:id/guest-notes` | Player (active) / Host | List guest notes for session — **CHƯA BUILD**, chờ Milestone 2 (xem §3) |
 | `POST /api/sessions/:id/players/:playerId/approve` | Host | `ApproveInvite` command |
 | `POST /api/sessions/:id/players/:playerId/reject` | Host | `RejectInvite` command |
 | Projectors (Zalo/Messenger/Web SSE/Public) | Outbox consumer | Render canonical session changes |
@@ -184,9 +184,15 @@ CREATE TRIGGER trg_session_guest_note_limit
 --     packages/db/migrations/0044_session_guest_notes.sql for the exact,
 --     authoritative DDL — this block stays as the v2.21 draft it always was.
 
--- v2.21: pending status docs-note — pending đã thêm vào players_status_chk enum;
--- waitlist_shape_chk vẫn đúng vì pending KHÔNG có waitlist_position (chỉ waitlisted mới có).
--- pending chiếm slot và được đếm trong occupancy.
+-- v2.21 draft note — ĐÍNH CHÍNH 2026-09-12 (ap3-intake rescore, INTAKE.md mục A): dòng gốc claim
+-- "pending đã thêm vào players_status_chk enum" là SAI. Constraint vẫn đúng nguyên
+-- ('active','left','waitlisted') từ 0014_players_waitlist.sql — chưa migration nào khác từng
+-- chạm nó, kể cả 0044 (chính migration đó tự flag đúng lỗi này trong SCOPE FENCE comment, 2026-09-11).
+-- Thêm 'pending' là prerequisite slice của D1 (InviteFriend/ApproveInvite/RejectInvite,
+-- ap3/features/session-management/PLAN.md D1 — vẫn open), không phải việc của migration guest-note.
+-- waitlist_shape_chk vẫn đúng vì pending KHÔNG có waitlist_position (chỉ waitlisted mới có); câu
+-- "pending chiếm slot, đếm vào occupancy" mô tả hành vi SẼ CÓ sau khi D1 thêm giá trị này, không
+-- phải hành vi hôm nay (pending không tồn tại nên không tham gia occupancy hiện tại).
 ```
 
 > **Capacity × visibility (PRD E#7 authority):** `visibility='public'` bắt buộc `slots_max IS NOT NULL` — public session không được unlimited; `NULL` = unlimited vẫn hợp lệ cho non-public. Validated DB constraint `sessions_public_capacity_chk` đã land trong `0024_public_visibility_capacity_check.sql`, nên direct INSERT/UPDATE vi phạm bị reject. SessionService validation trên create **và mọi update dẫn tới public** vẫn bắt buộc để trả domain error `MISSING_DISCOVERY_FIELDS` trước DB exception. Guard consume-time/projector vẫn giữ defense-in-depth cho pre-`0024` data, fixture hoặc constraint-bypass; không được dùng chúng để hạ claim DB invariant hoặc claim service/projector đã build.
@@ -263,7 +269,7 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 | 40 | Data Integrity | Guest note thứ 4 (vượt max 3/player/session) | Reject `GUEST_NOTE_LIMIT_REACHED`; check COUNT dưới session lock TRƯỚC INSERT + DB trigger guard (defense-in-depth) |
 | 41 | Security | Invite friend đã là player (active/waitlisted/pending) | Reject `ALREADY_JOINED`; query `players WHERE session_id AND membership_id AND status IN ('active','waitlisted','pending')` |
 | 42 | Security | Invite friend bị block (DD-55) | Reject `MEMBER_BLOCKED`; check `person_blocks` trước follow check — block overrides follow |
-| 43 | Concurrency | Delete guest note khi đang có waitlist | Release slot → trigger waitlist auto-promote (cùng occupancy re-count + promotion algorithm SES-UC-9) |
+| 43 | Concurrency | Delete guest note khi đang có waitlist | Release slot, re-count occupancy, publish event — **KHÔNG** promotion thật (sửa 2026-09-12: waitlist/promotion engine chưa build, xem §4 DeleteGuestNote step 4 + D2) |
 | 44 | Security | Approve pending invite khi session đầy (capacity recheck) | Approve cần verify capacity dưới session lock; pending đã chiếm slot nên thường OK, nhưng concurrent note/join có thể làm đầy → reject `SESSION_FULL` |
 | 45 | Data Integrity | Reject pending invite | Remove player row (không set `left` — pending chưa bao giờ active). Release slot → trigger waitlist auto-promote |
 | 46 | State | Announce session `open`: `starts_at<=now()<ends_at` (đang diễn ra) = **ALLOWED**; `ends_at<=now()` (đã hết giờ) = **REJECT** | `AnnounceSession` (DD-111 D1–D3) gate trên `status='open'` **VÀ** ends_at freshness — HAI lý do TÁCH BIỆT, không gộp: **(a)** announce **exempt khỏi edge #11** vì **không mutate** session (emit `session.announcement_requested`, không đổi `sessions` row) — edge #11 chặn *mutation* trên closed/cancelled/past, không áp cho một notification; **VÀ (b)** announce vẫn **tự guard ends_at** — một buổi `open` đã qua `ends_at` (auto-expiry chưa build → row `open` tồn tại vô hạn) không được announce, vì thông báo "vào kèo đi" cho một buổi ĐÃ XONG là harm mà một mutation không có → `SESSION_ALREADY_ENDED` (409). (a) một mình sẽ khiến người đọc sau xoá guard (b). **KHÔNG có past-START cutoff:** một buổi đang diễn ra (`starts_at<=now()<ends_at`) vẫn announce mời join muộn hợp lệ ("kèo đang chạy, vào ngay"); publish's cutoff (edge #23) là publish-specific. Clock: đọc `ends_at <= clock_timestamp()` bằng query RIÊNG SAU row lock (mirror publish's post-lock pattern, KHÔNG `now()`/`Date.now()`). Chỉ `draft`/`closed`/`cancelled` → `SESSION_NOT_OPEN` |
@@ -293,7 +299,7 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 | POST | /api/sessions/:id/invite | Player (active) | `InviteFriend` — mời friend đã follow (DD-47) |
 | POST | /api/sessions/:id/guest-notes | Player (active) | `CreateGuestNote` — thêm khách (max 3/player) |
 | DELETE | /api/sessions/:id/guest-notes/:noteId | Player (note creator) | `DeleteGuestNote` |
-| GET | /api/sessions/:id/guest-notes | Player (active) / Host | List guest notes for session |
+| GET | /api/sessions/:id/guest-notes | Player (active) / Host | List guest notes for session — **CHƯA BUILD**, chờ Milestone 2 (route body-less auth-context resolver, `ap3/features/session-management/PLAN.md` Milestone 2, supervised, chưa chạy) |
 | POST | /api/sessions/:id/players/:playerId/approve | Host | `ApproveInvite` — duyệt pending → `active` |
 | POST | /api/sessions/:id/players/:playerId/reject | Host | `RejectInvite` — remove player row |
 
@@ -323,6 +329,7 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 | 400 | `GUEST_NOTE_LIMIT_REACHED` | Đã hết lượt ghi chú (tối đa 3) | Player đã có 3 guest notes trong session |
 | 403 | `NOT_NOTE_CREATOR` | Bạn không tạo ghi chú này | Delete guest note không phải của mình |
 | 404 | `GUEST_NOTE_NOT_FOUND` | Ghi chú không tồn tại | Delete guest note không tìm thấy |
+| 400 | `INVALID_INPUT` | Nội dung không hợp lệ | `guest_name`/`note` sai độ dài, hoặc chứa ký tự PostgreSQL text không lưu được (NUL hoặc lone surrogate) — `createGuestNote`, `packages/db/src/session-service.ts:2690,2694-2695,2704,2708-2709`, commit `c1e8bcf` |
 | 404 | `PLAYER_NOT_FOUND` | Người chơi không tồn tại | Approve/reject player không tìm thấy |
 | 400 | `INVALID_CHANNEL` | Kênh thông báo không hợp lệ | Announce với `channel` ngoài enum logical đóng (`zalo`/`messenger`, DD-37) — rỗng, raw destination id, platform lạ, sai case, hoặc non-string (§4 Announce step 2) |
 | 409 | `COMMAND_ID_CONFLICT` | Yêu cầu trùng mã lệnh | `commandId` đã thuộc một command/kết quả khác (không phải replay đúng request) — canonical `processed_commands` dedup (edge #3), dùng chung mọi session command (create/publish/announce) |
@@ -540,28 +547,29 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 { "commandId": "cmd_…", "guestName": "Nguyễn Văn A", "note": "Bạn của Trần B" }
 ```
 
-- Success (HTTP 201):
+- Success (HTTP 201) — **✅ khớp DTO thật đã ship** (`apps/web/app/api/sessions/[id]/guest-notes/route.ts:81-87`, pinned bởi `route.test.ts:90-92`; sửa 2026-09-12, `ap3-intake` Q1a): DTO KHÔNG echo `guestName`/`note`/`createdAt` — replay không tái tạo được request content (DD-117 D5), một command chỉ có MỘT response shape:
 
 ```json
 {
   "data": {
-    "guestNote": { "id": "note_…", "guestName": "Nguyễn Văn A", "note": "Bạn của Trần B", "createdAt": "…" },
-    "remainingNotes": 2
+    "guestNote": { "id": "note_…", "sessionId": "…", "remainingNotes": 2 }
   },
   "error": null
 }
 ```
 
-- Error cases: `INVITE_NOT_ALLOWED` (403), `PLAYER_NOT_ACTIVE` (403), `GUEST_NOTE_LIMIT_REACHED` (400), `SESSION_FULL` (409), `SESSION_NOT_OPEN` (409)
+- Error cases: `INVITE_NOT_ALLOWED` (403), `PLAYER_NOT_ACTIVE` (403), `GUEST_NOTE_LIMIT_REACHED` (400), `INVALID_INPUT` (400 — độ dài hoặc NUL/lone-surrogate, xem Error Codes), `SESSION_FULL` (409), `SESSION_NOT_OPEN` (409)
 
 **DELETE `/api/sessions/:id/guest-notes/:noteId`** — Player xoá note mình tạo:
 
-- Success (HTTP 200): `{ "data": { "deleted": true, "slotsFreed": 1 }, "error": null }`
+- Success (HTTP 200) — **✅ khớp DTO thật đã ship** (`apps/web/app/api/sessions/[id]/guest-notes/[noteId]/route.ts:81-83`, pinned bởi `route.test.ts:85`; sửa 2026-09-12, `ap3-intake` Q1b): `{ "data": { "guestNote": { "id": "note_…", "sessionId": "…", "deleted": true } }, "error": null }` — không có `slotsFreed` field (chưa từng tồn tại trong code)
 - Error cases: `NOT_NOTE_CREATOR` (403), `GUEST_NOTE_NOT_FOUND` (404)
 
 **GET `/api/sessions/:id/guest-notes`** — List guest notes for session:
 
-- Success (HTTP 200):
+> ⏸ **CHƯA BUILD — deferred, chờ Milestone 2** (sửa 2026-09-12, `ap3-intake` Q1c). `apps/web/app/api/sessions/[id]/guest-notes/route.ts` tự comment: "There is deliberately NO GET on this path in this slice" — một list endpoint không có body cần route qua một body-less auth-context resolver mà `resolveSessionCommandContext` chưa có. Đó là `session-management-m02-read-routes-admin-scoped` (Milestone 2, `ap3/features/session-management/PLAN.md`) — **supervised, chưa chạy** (sửa auth choke-point). Example dưới là contract DỰ KIẾN, không phải đã ship.
+
+- Success (HTTP 200, dự kiến):
 
 ```json
 {
@@ -736,7 +744,7 @@ Scheduled run → Claim sessions WHERE status='draft' AND starts_at<=now() FOR U
 1. Resolve actor. Lookup guest note row. **Not found** → 404 `GUEST_NOTE_NOT_FOUND`. **`created_by_person_id != actor`** → 403 `NOT_NOTE_CREATOR`.
 2. Lock session `FOR UPDATE` (cùng ordering discipline).
 3. `DELETE FROM session_guest_notes WHERE id = :noteId`. Emit `guest_note.deleted`.
-4. **Slot release:** re-compute occupancy. Nếu có waitlist candidates → trigger waitlist auto-promote (cùng algorithm §4 Waitlist promotion).
+4. **Slot release:** re-compute occupancy, publish trên `guest_note.deleted` event. **KHÔNG trigger promotion thật** (sửa 2026-09-12, `ap3-intake` Q2) — deliberately absent, xem `packages/db/src/session-service.ts:2818-2825`: chưa có join/leave/waitlist-entry code nào từng ghi `players.status='waitlisted'`, nên không có candidate để promote và không có promotion function để gọi. Promotion thật land cùng waitlist/promotion engine (D2, `ap3/features/session-management/PLAN.md`, vẫn fully blocked).
 5. **Commit.**
 
 ### Approve/Reject pending invite
@@ -923,7 +931,7 @@ Queue entry assigns `max(waitlist_position)+1` under the same session lock. DD-4
 | 77 | Invite when session full | Occupancy = slots_max | `SESSION_FULL` (409); zero mutation |
 | 78 | Create guest note happy path | Player active, < 3 notes, capacity available | Note created; slot occupied; `guest_note.created` event; `remainingNotes` returned |
 | 79 | Guest note limit reached (4th note) | Player already has 3 notes in session | `GUEST_NOTE_LIMIT_REACHED` (400); zero mutation; DB trigger also rejects |
-| 80 | Delete guest note releases slot + promotes waitlist | Note creator deletes; waitlist has candidates | Note deleted; slot freed; first eligible candidate promoted; `guest_note.deleted` event |
+| 80 | Delete guest note releases slot (sửa 2026-09-12: promotion KHÔNG build, xem §4) | Note creator deletes | Note deleted; slot freed + occupancy recompute; `guest_note.deleted` event; **KHÔNG** candidate promotion (waitlist engine chưa tồn tại, D2) — test thật GN22 chỉ phủ nửa buildable (slot freed → session nhận note mới) |
 | 81 | Delete guest note not creator | Different player tries to delete | `NOT_NOTE_CREATOR` (403); zero mutation |
 | 82 | Approve pending invite happy path | Host approves `pending` player | Player `status='active'`; `player.invite_approved` event |
 | 83 | Reject pending invite releases slot | Host rejects `pending` player | Player row removed; slot freed; waitlist auto-promote if applicable; `player.invite_rejected` event |
@@ -992,6 +1000,7 @@ Slice nào chạm `session-service.ts` hoặc route test thật (khác typecheck
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-12 | v2.29 | **ap3-intake rescore reconciliation (Q1/Q2, `ap3/features/session-management/INTAKE.md` 2026-09-12 round):** M3b (guest-note commands, PR #13) landed 2026-09-11 but §1/§3/§4/§5 were never reconciled to the merged code — only §2's schema bullet was, in v2.28. **(1)** §3 POST `/guest-notes` success example fixed to the actual shipped/tested DTO (`guestNote:{id,sessionId,remainingNotes}` — no `guestName`/`note`/`createdAt` echo, DD-117 D5); added missing `INVALID_INPUT` to its error-case list plus a proper Error Codes table row (NUL/lone-surrogate guard, commit `c1e8bcf`). **(2)** §3 DELETE `/guest-notes/:noteId` success example fixed (`{guestNote:{id,sessionId,deleted:true}}` — no `slotsFreed`, that field never existed in code). **(3)** `GET /api/sessions/:id/guest-notes` annotated **CHƯA BUILD** in header Implementation line, §1 entry points, §3 endpoint table and its own example block — deliberately dropped from M3b, blocked on Milestone 2's body-less auth-context resolver (still supervised, not run). **(4)** §2's `pending`-enum doc-comment corrected — `players_status_chk` was never updated to include `pending` (still exactly `active`/`left`/`waitlisted` since `0014`; migration `0044` itself already flagged this exact inaccuracy in a SCOPE FENCE comment, 2026-09-11 — nobody had gone back to fix the prose until now). **(5)** §2 edge #43, §4 DeleteGuestNote step 4, and §5 test row #80 reworded: `deleteGuestNote` deliberately does not promote a waitlist candidate on slot release (no waitlist/join/leave code exists yet — D2, fully blocked); occupancy is recomputed and published, but promotion itself is deferred to the waitlist/promotion engine. Docs-only — no code/schema change. |
 | 2026-09-11 | v2.28 | **session-management-m03-guest-note-schema-migration ✅ landed trong `0044_session_guest_notes.sql` (PR #12, supervised slice, `ap3/features/session-management/PLAN.md` Milestone 3a):** migration `0044_session_guest_notes.sql` — 3 object pending từ v2.21 (2026-08-12) nay có trong `schema.ts` + migration: `sessions.allow_player_invite`, `players.invited_by_person_id` + `idx_players_invited_by`, bảng `session_guest_notes` đầy đủ (2 CHECK độ dài + trigger `trg_session_guest_note_limit`) + `idx_session_guest_notes_session`. RLS mirror `players`/`sessions` (ENABLE+FORCE+`tenant_isolation` policy), grant `app` theo 0009 rule (chỉ SELECT/INSERT/DELETE — không UPDATE, xem finding dưới). §2 Migration & Rollback pending-list bullet cập nhật thành landed. Schema-only — không command/route/waitlist code (mirror 0014 precedent); Milestone 3b (guest-note commands) chờ milestone này **merge** mới được `plan-emit`. **Codex review nhiều vòng (code + security), mỗi vòng tìm finding thật và fix ngay trong slice trước khi mở PR — không phải 1 vòng sạch:** vòng 1: thiếu same-tenant composite FK `(tenant_id, session_id) -> sessions(tenant_id, id)` (mẫu DD-68/0019, RLS không chặn tenant A trỏ session_id của tenant B vì FK check không lọc RLS) + trigger đếm không khoá row (race 2-insert-đồng-thời có thể cùng thấy count=2, cùng commit thành 4 note) — fix: thêm composite FK inline + `PERFORM ... FOR UPDATE` trên `sessions` trước khi đếm (session-lock-ordering invariant). Vòng 2 (sau fix vòng 1): GRANT còn UPDATE dù không command nào cần — cho phép caller reassign note sang (session,person) khác để né trigger (chỉ bắt BEFORE INSERT) — fix: bỏ UPDATE khỏi grant + test 42501; test race gốc dùng 2 promise autocommit không tự thân chứng minh lock hoạt động (có thể pass ngay cả khi trigger không khoá, do timing) — fix: viết lại bằng transaction tường minh + `pg_blocking_pids()` polling để chứng minh connection thứ hai THẬT SỰ bị khoá bởi connection thứ nhất trước khi commit; mutation-tested (tắt tạm dòng `FOR UPDATE`, xác nhận test fail, rồi khôi phục — xem log phiên). Tests: `packages/db/src/migrate.test.ts` (trigger 4th-note reject + RLS cross-tenant block + column/index shape + cross-tenant FK reject 23503 + race thật qua 2 connection với `pg_blocking_pids()` + UPDATE bị từ chối 42501, chạy thật với `DATABASE_URL_TEST`) + 4 assertion migration-count/tail hardcode trong `rls-invariants.test.ts` cập nhật 44→45 / `0043`→`0044`. |
 | 2026-09-11 | v2.27 | **ap3-intake gap closure (9 owner answers, `ap3/features/session-management/INTAKE.md`):** (1) §2 Migration & Rollback: re-verified tail `0043` (từ `0024`); thêm migration slice RIÊNG cho `allow_player_invite`/`invited_by_person_id`+index/`session_guest_notes` (đặc tả từ v2.21 nhưng chưa từng track pending); (2) §2 Edge Cases thêm #47–52: close transition (#47–49, từ live code `closeSession`), auto-close OWNER-CHECK chưa build (#50–52, từ DD-45 + auto-expiry pattern); (3) §3 Endpoints table reconcile đủ 14 endpoint (thêm invite/guest-note/approve/reject family); thêm ví dụ request/response còn thiếu cho `PUT` success, `announce`, `close`, `GET` list, `GET` detail; (4) §4 thêm parenthetical cho 5 catalog invariant token còn thiếu (`publish-suspend-gate`/`session-command`/`billing-authz`/`retry-liveness`/`member-safety` — `session-lock-ordering` đã khớp sẵn); (5) §5 thêm unit test #85–92 (close/auto-close mirror edge #47–52; recurrence this-and-future DD-121; timezone validation) + subsection Verify (lệnh sandbox/verify_host/CI thật, đo từ `package.json` + `.github/workflows/ci.yml`). |
 | 2026-09-06 | v2.26 | **Audit code ↔ docs 06/09 — hai đính chính header/DDL, không đổi contract.** (1) Header *Implementation* từng nói "SessionService/routes/projectors… vẫn chưa build" trong khi `main` có đủ 6 command + 5 route (`b48625c`…`8e668a1`, `770ff4b`, `6d62cf8`) — ghi đúng phần đã có và phần chưa có (route đọc, projector, auto-promote/expiry, roster writer). (2) DDL `players_status_chk` §2 liệt kê `'pending'` mà `0014:79-80` không có — bỏ khỏi spec; thêm giá trị là việc của một migration mới, không phải của prose. Nguồn: `../../sessions/2026-09-06-repo-audit.md` §3 #6/#11. |
