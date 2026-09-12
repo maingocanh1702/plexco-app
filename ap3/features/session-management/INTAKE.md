@@ -1,9 +1,9 @@
 ---
 feature: session-management
 readiness_version: null
-status: NOT_READY
-measured_at: 2026-09-12T14:26:42Z
-base_sha: e235ea42d7946daac5d25ecccf51e298837e7c41
+status: READY_WITH_SUPERVISED_SLICES
+measured_at: 2026-09-12T14:46:51Z
+base_sha: 3fda34d97b1a10e7743f19318d9eb56288eaa037
 sources:
   - docs/features/FE/feature_session_management.md
   - docs/features/BE/feature_session_management_tech.md
@@ -22,87 +22,173 @@ sources:
 
 ## Rubric
 
-Re-score of the 2026-09-11 round (`base_sha bf7933b`, `status: READY_WITH_SUPERVISED_SLICES`, full
-history preserved in this file's git history — 9 owner-resolved questions from that round). Since then
-Milestone 3 (guest notes: schema + commands) fully landed — `0044_session_guest_notes.sql` (PR #12) and
-the `CreateGuestNote`/`DeleteGuestNote` commands + routes (PR #13), per
-`ap3/features/session-management/PLAN.md`. §2 Migration & Rollback was properly reconciled to the
-landed schema (BE spec v2.28) — but §3 API Contract / §4 Algorithm / §5 Testing Plan were **not**
-reconciled to the landed *commands*, and that gap is real, verified directly against the merged code
-(not inferred from prose).
-
-`git diff bf7933b..HEAD` for the FE/BE spec pair touches exactly 3 lines total (1 in FE, 2 in BE, both
-about the SES-OQ-10 timezone correction + the migration-landed bullet) — every other section is
-byte-identical to the 09-11 round, so those verdicts carry forward unchanged. Only `R3.2`-`R3.4`,
-`R5.1`, and `R6.1`'s citation are re-derived against current code this round.
+Apply round for the 2026-09-12 NOT_READY score (full history in this file's git history). Owner
+answered Q1/Q2 yes; both applied verbatim in commit `3fda34d` (FE v2.26→v2.27, BE v2.28→v2.29,
+docs-only). Re-scoring the 5 items that changed; everything else carries forward unchanged from the
+NOT_READY round's table.
 
 | id | gate | verdict | decided by | note |
 |----|------|---------|------------|------|
-| R1.1 | hard | PASS | `docs/features/FE/feature_session_management.md:3` + `docs/product/ROADMAP.md:635,166,170-173` (unchanged) | Carried forward from 2026-09-11 round — source untouched. |
+| R1.1 | hard | PASS | `docs/features/FE/feature_session_management.md:3` + `docs/product/ROADMAP.md:635,166,170-173` (unchanged) | Carried forward. |
 | R1.2 | hard | PASS | `docs/features/FE/feature_session_management.md:28,9` (unchanged) | Carried forward. |
 | R1.3 | hard | PASS | `docs/features/FE/feature_session_management.md:6` | `> **Status:** Reviewed` — unchanged. |
-| R2.1 | hard | PASS | `docs/features/FE/feature_session_management.md:806-851` §6 (unchanged) | Carried forward. **Caveat (see Q2):** 3 lines (§UC-17 `:77`, edge #38 `:117`, AC checklist `:885`) claim guest-note deletion "trigger waitlist auto-promote" — sentence form itself satisfies R2.1, but the claim is stale against shipped code (see R3.4). |
-| R2.2 | hard | PASS | `docs/features/FE/feature_session_management.md:7` (unchanged) | Named RED criterion (InviteFriend → `ALREADY_JOINED`) still fails at current base — re-verified this round: no `inviteFriend`/`approveInvite`/`rejectInvite` export exists anywhere in `packages/db/src/session-service.ts`. `InviteFriend` remains fully unbuilt (PLAN.md D1: blocked on `person_follows`/`person_blocks`/`players.status='pending'`, none of which exist in `schema.ts`). Carried forward. |
-| R2.3 | hard | PASS | `docs/features/FE/feature_session_management.md:39-46` + `docs/features/BE/feature_session_management_tech.md:47-52` (unchanged) | Carried forward. Edge #38 (FE `:117`) exists as required; same staleness caveat as R2.1 in its outcome column. |
+| R2.1 | hard | PASS | `docs/features/FE/feature_session_management.md:806-851` §6 (unchanged) | Carried forward. **Caveat RESOLVED (Q2, commit `3fda34d`):** the 3 stale "trigger waitlist auto-promote" lines (§UC-17 `:77`, edge #38 `:117`, AC checklist `:885`) now read "occupancy recompute; KHÔNG promote waitlist thật" with the D2 citation. |
+| R2.2 | hard | PASS | `docs/features/FE/feature_session_management.md:7` (unchanged) | Named RED criterion (InviteFriend → `ALREADY_JOINED`) still fails at current base — `InviteFriend` remains fully unbuilt (D1). Carried forward. |
+| R2.3 | hard | PASS | `docs/features/FE/feature_session_management.md:39-46` + `docs/features/BE/feature_session_management_tech.md:47-52` (unchanged) | Carried forward. Same Q2 resolution as R2.1 — edge #38's outcome column no longer contradicts shipped code. |
 | R3.1 | hard | PASS | `docs/features/BE/feature_session_management_tech.md` §1-§6 vs `docs/templates/be-tech-spec-template.md` (unchanged) | Carried forward. |
-| R3.2 | hard | PASS | `docs/features/BE/feature_session_management_tech.md:214` (✅ Landed bullet, v2.28) + live grep this round: `packages/db/schema.ts:624` (`allowPlayerInvite`), `:701,719-720` (`invitedByPersonId` + partial index), `:747,756,770` (`sessionGuestNotes` table + index + FK) + `packages/db/migrations/0044_session_guest_notes.sql` (file present) | **Stronger than last round** — the 3 objects flagged "pending" in the 09-11 round are now verified live in both `schema.ts` and the merged migration, checked against the actual columns this round (not just the doc's own claim of landing). |
-| R3.3 | hard | **GAP** | `docs/features/BE/feature_session_management_tech.md:546-552` (POST example), `:559` (DELETE example), `:46-48,294-296,562-575` (GET entry point/row/example) vs `apps/web/app/api/sessions/[id]/guest-notes/route.ts:81-87` + its `route.test.ts:90-92` ("pinned DTO"), `apps/web/app/api/sessions/[id]/guest-notes/[noteId]/route.ts:81-83` + its `route.test.ts:85` ("pinned DTO"), and `route.ts:12-15`'s own docstring | **New finding this round.** §2 was reconciled when the schema landed (v2.28); §3 was never reconciled when the commands landed (PR #13). Three concrete, code-and-test-verified mismatches: **(a)** POST success example shows `guestNote:{id,guestName,note,createdAt}` + a sibling `remainingNotes`; the actual shipped/tested response is `guestNote:{id,sessionId,remainingNotes}` — `guestName`/`note`/`createdAt` are never echoed (deliberate: DD-117 D5 — a replay cannot reproduce request content, and one command must have one response shape). **(b)** DELETE success example shows `{deleted:true,slotsFreed:1}`; the actual shipped/tested response is `{guestNote:{id,sessionId,deleted:true}}` — no `slotsFreed` field exists anywhere in the code. **(c)** `GET /api/sessions/:id/guest-notes` is fully documented (entry point, endpoint table row, full response example) as if available now; the route file's own comment states it was deliberately dropped from M3b, blocked on Milestone 2's not-yet-built body-less auth-context resolver (`ap3/features/session-management/PLAN.md` Milestone 2 / Deferred D5) — the BE spec carries zero indication this endpoint is deferred or has a prerequisite. |
-| R3.4 | hard | PASS | `docs/features/BE/feature_session_management_tech.md:739` (§4 step 4) vs `packages/db/src/session-service.ts:2818-2825` (`deleteGuestNote` docstring) | **Caveat, not GAP** — R3.4's own text asks only that the transition be *described*, which it is. §4 DeleteGuestNote step 4 still reads "waitlist candidates → trigger waitlist auto-promote" as real behavior. The shipped code's own inline comment: *"WAITLIST PROMOTION IS DELIBERATELY ABSENT... there is no candidate to promote and no promotion function to call... It lands with the waitlist engine"* (D2, still fully blocked per PLAN.md). Same root cause as R3.3 — see Q2. |
-| R4.1 | hard | PASS | `docs/standards/decisions.md` (unchanged DD set cited by FE/BE + new v2.50 entry, all governing DDs still ✅) | Carried forward; v2.50's SES-OQ-10 correction doesn't reopen any DD status. |
-| R4.2 | hard | PASS | `docs/features/FE/feature_session_management.md:902` (SES-OQ-10, corrected wording, still ✅) | Carried forward — the whitelist→`RangeError`-constructibility correction stays resolved, doesn't reopen the question. |
-| R5.1 | hard | PASS | `docs/features/BE/feature_session_management_tech.md:924-927` (rows #78/#79/#80/#81) vs `packages/db/src/session-service.test.ts:3831` (GN1, #78), `:4006` (GN6, #79), `:4249` (GN18, #81), `:4311` (GN22) | Rows #78/#79/#81 verified accurate against real, passing tests. **Caveat, not GAP:** row #80's outcome column ("first eligible candidate promoted") contradicts the deliberately-shipped no-op — the actual regression test (GN22, line 4311, "deleting frees a slot — a session at capacity accepts a new note afterwards") covers only the buildable half of row #80 (slot freed), never candidate promotion. Same root cause as R3.4. |
-| R5.2 | hard | PASS | `docs/features/BE/feature_session_management_tech.md` "### Verify" subsection (unchanged) | Carried forward — verify commands (`pnpm --filter @plexco/db run typecheck`, `verify_host` vitest invocation) unaffected by this landing; guest-note tests live in the same `session-service.test.ts` file the command already names. |
-| R6.1 | supervised | GAP (by design) | `ap3/features/session-management/PLAN.md` D1 (`person_follows`, `person_blocks`, `players.status='pending'` all confirmed absent from `schema.ts`/migrations) and D4 (`idx_sessions_draft_starts_at` partial index, not yet migrated) | Condition still triggers — **citation updated from last round**: the specific pending-schema item scored here on 09-11 (guest-notes: `allow_player_invite`/`invited_by_person_id`/`session_guest_notes`) is now landed (`0044`). These are the feature's next concrete schema gaps. Expected, non-blocking. |
-| R7.1 | supervised | GAP (by design) | `docs/features/FE/feature_session_management.md:194,231,238,290,419-420,696` (unchanged) | Unchanged — feature remains copy-heavy across bot/web surfaces (HARD RULE 5). Expected, non-blocking. |
-| R8.1 | supervised | GAP (by design) | `docs/features/FE/feature_session_management.md` §3 (unchanged since the 09-11 restructure) | Unchanged — feature still owns `apps/web/app/**` screens. Expected, non-blocking. |
+| R3.2 | hard | PASS | `docs/features/BE/feature_session_management_tech.md:214` (✅ Landed bullet, v2.28) + `packages/db/schema.ts:624,701,719-720,747,756,770` + `packages/db/migrations/0044_session_guest_notes.sql` | Carried forward — unaffected by this round's edits (schema section was already reconciled). |
+| R3.3 | hard | **PASS (was GAP)** | `docs/features/BE/feature_session_management_tech.md:551-561` (POST/DELETE examples, rewritten), `:48,302,570` (GET annotated CHƯA BUILD), `:332` (new `INVALID_INPUT` Error Codes row), commit `3fda34d` | **Fixed (Q1a/b/c).** POST/DELETE success examples now match the actual shipped/tested DTOs verbatim (`guestNote:{id,sessionId,remainingNotes}` / `guestNote:{id,sessionId,deleted:true}`, no `slotsFreed`); POST error-case list + the canonical Error Codes table both gained `INVALID_INPUT` (owner's item C, verified against `packages/db/src/session-service.ts:2690-2709` + commit `c1e8bcf` before applying); `GET /guest-notes` now annotated **CHƯA BUILD — chờ Milestone 2** everywhere it appears (header Implementation line, §1 entry points, §3 endpoint table, its own example block). |
+| R3.4 | hard | PASS | `docs/features/BE/feature_session_management_tech.md:747` (§4 step 4, reworded) | **Caveat RESOLVED (Q2, commit `3fda34d`):** step 4 now says occupancy is recomputed and published, and explicitly states promotion itself is deferred to the waitlist/promotion engine (D2), citing the shipped code's own inline rationale (`session-service.ts:2818-2825`). |
+| R4.1 | hard | PASS | `docs/standards/decisions.md` (unchanged DD set, all governing DDs still ✅) | Carried forward. |
+| R4.2 | hard | PASS | `docs/features/FE/feature_session_management.md:902` (SES-OQ-10, unchanged this round) | Carried forward. |
+| R5.1 | hard | PASS | `docs/features/BE/feature_session_management_tech.md:934` (row #80, reworded) | **Caveat RESOLVED (Q2, commit `3fda34d`):** row #80 no longer claims candidate promotion; outcome column now states occupancy recompute + event only, explicitly citing that GN22 (the real test) covers only the buildable half. |
+| R5.2 | hard | PASS | `docs/features/BE/feature_session_management_tech.md` "### Verify" subsection (unchanged) | Carried forward. |
+| R6.1 | supervised | GAP (by design) | `ap3/features/session-management/PLAN.md` D1 (`person_follows`/`person_blocks`/`players.status='pending'` absent) and D4 (`idx_sessions_draft_starts_at`, not yet migrated) | Unchanged from the NOT_READY round — the feature's next concrete schema gaps are still open. D1 and D4 are now also tracked below under **Decisions to finalize** (owner request, item A) — that's forward-planning context, not a rubric re-score; this row's verdict is unaffected. Expected, non-blocking. |
+| R7.1 | supervised | GAP (by design) | `docs/features/FE/feature_session_management.md:194,231,238,290,419-420,696` (unchanged) | Unchanged. Expected, non-blocking. |
+| R8.1 | supervised | GAP (by design) | `docs/features/FE/feature_session_management.md` §3 (unchanged) | Unchanged. Expected, non-blocking. |
 
 ## Status
 
-`NOT_READY` — one hard-gate GAP (`R3.3`), computed via `python3 ap3/aplib.py intake-score
-docs/standards/feature-readiness.md <evidence.json>` (fail-closed: any hard-tier GAP wins over any
-number of supervised-tier GAPs, regardless of R6-R8 — confirmed by reading `ap3/aplib.py`'s
-`intake_score()` directly, not hand-derived). Both questions below are documentation-reconciliation
-only — no code change, no new product decision, no schema/migration — but per this skill's fail-closed
-rule the fix must go through the owner's explicit approval before it is applied.
+`READY_WITH_SUPERVISED_SLICES` — zero hard-gate GAPs (R3.3 fixed), computed via `python3
+ap3/aplib.py intake-score docs/standards/feature-readiness.md <evidence.json>`. Supervised gaps
+R6.1/R7.1/R8.1 remain by design (any slice touching schema/copy/web-pages is still tagged
+supervised) — this is the expected non-blocking end state per `feature-readiness.md`'s own
+fail-closed rule.
 
-## Questions
+## Questions — RESOLVED 2026-09-12
 
-1. **(R3.3, blocking) Reconcile BE §1/§3 to the actual PR #13 response shapes, and mark GET as
-   deferred.**
-   (a) Update the POST `/guest-notes` success example (BE spec `:546-552`) to
-   `{"guestNote":{"id":"…","sessionId":"…","remainingNotes":2},"error":null}` — drop `guestName`,
-   `note`, `createdAt` from the example (the shipped DTO deliberately never echoes them, matching
-   every other command's DD-117 D5 replay contract).
-   (b) Update the DELETE `/guest-notes/:noteId` success example (BE spec `:559`) to
-   `{"guestNote":{"id":"…","sessionId":"…","deleted":true},"error":null}` — drop `slotsFreed` (no
-   such field exists anywhere in the shipped code).
-   (c) Annotate `GET /api/sessions/:id/guest-notes` (BE spec `:48,296,562-575`) as **deferred,
-   blocked on Milestone 2** (the body-less auth-context resolver, itself supervised) — either move
-   the example into a "not yet built" callout or strike it until M2 lands, mirroring how §2's
-   migration bullet was updated in v2.28 once its own blocker cleared.
-   Proposed answer: yes to all three, worded to mirror the v2.28 precedent (state what's landed vs.
-   deferred and why; cite PR #13 / `PLAN.md` Milestone 2).
+Both questions were answered `yes` by the owner in one round and applied verbatim to the FE/BE specs
+in commit `3fda34d` (branch `docs/intake-session-management`). Kept as the historical record of what
+was asked and why; see the Rubric table above for the resulting verdict per item.
 
-2. **(R3.4/R5.1/R2.1/R2.3, non-blocking, same root cause as Q1) Fix the "trigger waitlist
-   auto-promote" wording in 5 places to say what's actually shipped.**
-   `docs/features/FE/feature_session_management.md:77` (UC-17), `:117` (edge #38), `:885` (AC
-   checklist), `docs/features/BE/feature_session_management_tech.md:739` (§4 step 4), and `:926` (§5
-   row #80) all describe real candidate promotion on guest-note delete. The shipped
-   `deleteGuestNote` (`packages/db/src/session-service.ts:2818-2825`) deliberately no-ops this —
-   occupancy is recomputed and published on the event, but no candidate is promoted, because no
-   join/leave/waitlist-entry code exists anywhere yet (D2, fully blocked per PLAN.md). Should all 5
-   locations be reworded to say occupancy-recompute-and-publish happens now, and actual promotion is
-   deferred until the waitlist/promotion engine (D2) lands — matching the shipped code's own inline
-   rationale?
-   Proposed answer: yes — same "state landed vs. deferred, cite the blocking decision" pattern as
-   Q1c.
+1. **(R3.3, blocking)** Reconcile BE §1/§3 to the actual PR #13 response shapes (POST/DELETE
+   examples), and mark `GET /guest-notes` as deferred, blocked on Milestone 2.
+   **Owner answer:** yes to all three — owner independently verified the same three mismatches
+   against shipped code before answering (POST returns `guestNote{id,sessionId,remainingNotes}`;
+   DELETE returns `guestNote{id,sessionId,deleted:true}`; `slotsFreed` has zero occurrences
+   repo-wide; no `GET` handler exported under the guest-notes route tree). Applied in Vietnamese,
+   mirroring the v2.28 "what landed vs. what is deferred, and why" pattern, citing PR #13 +
+   `PLAN.md` Milestone 2 for the GET deferral.
+
+2. **(R3.4/R5.1/R2.1/R2.3, non-blocking, same root cause as Q1)** Fix the "trigger waitlist
+   auto-promote" wording in the 5 places that describe real candidate promotion on guest-note
+   delete, to say what `deleteGuestNote` actually does (occupancy recompute + publish; promotion
+   deferred to D2).
+   **Owner answer:** yes, reword all 5 places the same way, citing `PLAN.md` D2 and the inline
+   rationale in `deleteGuestNote`.
+   **Addition beyond the literal 5 (flagged, not separately asked):** while applying this fix, a 6th
+   location with the identical pattern was found and fixed the same way — BE §2 edge #43
+   (`docs/features/BE/feature_session_management_tech.md:272`, "Delete guest note khi đang có
+   waitlist"), which the original score round's citation (`FE:47-52`) had not enumerated
+   individually. Same root cause, same fix, same commit — flagged here so the owner can review or
+   revert it independently of Q1/Q2 proper.
 
 ## Decisions to finalize
 
-None. Both questions above are documentation-reconciliation only (make the spec match already-shipped,
-already-reviewed code) — no new product/technical decision, no `decisions.md` entry needed beyond
-what applying Q1/Q2 touches directly in the FE/BE specs themselves.
+Three items the owner asked to record this round. **None of these gate this round's `READY_WITH_
+SUPERVISED_SLICES` status** — they are forward-looking, non-blocking, and do not overlap any slice
+already shipped or in flight. Carried into the next `/ap3-plan` round as open context.
+
+- **D4 — Auto-close grace period (SES-UC-10, BE edge #50, row #89).** Still `chưa chốt`
+  (`docs/features/BE/feature_session_management_tech.md:279`, unchanged this round) — this is what
+  blocks Milestone 4 (`PLAN.md` D4) from being scoped at all. **Owner's recommendation (not yet a
+  decision — his own words, for himself to confirm or reject on review):** no grace period —
+  `ends_at` itself is the cutoff, because closing only stops new joins and removes the public
+  projection; nothing about a late-running session needs the session to stay open past `ends_at`.
+  Recorded verbatim as a recommendation, not applied to any spec — `feature-readiness.md`'s own
+  language rule (R4.1) requires an actual `decisions.md` entry with owner sign-off before a decision
+  is `DECISION_FINAL`, and this skill's rule forbids marking anything final without that explicit
+  step.
+
+- **D8 — Does `CreateGuestNote`/`DeleteGuestNote` need a Suspended Action Matrix (DD-110) row?**
+  Verified this round: `ActionClass` (`packages/db/src/authorization.ts:49-56`) pins exactly 7
+  literals (`publish_new_sessions`, `admin_mutation`, `integration_changes`, `announce_session`,
+  `update_open_session`, `close_session`, `cancel_session`) — none guest-note-related — and neither
+  shipped guest-note command calls `authorizeTenantAction` anywhere (confirmed: zero matches in
+  `createGuestNote`/`deleteGuestNote`'s line range). **Cost of "yes"** (not recommended either way,
+  per owner's ask — just the cost, for the owner to weigh): a new BE §3/§4 spec row describing the
+  gate, an `authorization.ts` change adding an 8th `ActionClass` literal + its Suspended Action
+  Matrix row, and its own slice to wire + test it (guest-note creation/deletion while
+  billing-suspended is currently **unguarded** — neither blocked nor explicitly decided as
+  exempt).
+
+- **D1 — SES-UC-16/18 (InviteFriend/ApproveInvite/RejectInvite) phase placement.** Confirmed
+  blocked on 3 prerequisites, none of which exist on `main`: `person_follows` (DD-47, ✅ Chốt
+  framework 2026-07-13, scheduled **P4+**), `person_blocks` (DD-55, ✅ Chốt policy 2026-07-16,
+  scoped **P4 chat slice**), and `players.status='pending'` (constraint still exactly
+  `('active','left','waitlisted')` per `0014_players_waitlist.sql:79-80` — the doc-comment claiming
+  otherwise was the factual error fixed in this same round's commit `3fda34d`, see R3.2's history).
+  **Open choice for the owner** (not decided here): (a) move SES-UC-16/18 to whichever phase
+  DD-47/DD-55 actually land in (and annotate the feature header the same way SES-UC-8's
+  marketplace-discovery dependency is already annotated, per the 2026-09-11 round's answer 1), or
+  (b) fast-track `person_follows`/`person_blocks`/`pending` as their own supervised prerequisite
+  slice ahead of schedule. No recommendation given (owner didn't ask for one on this item).
+
+## Goal for the next plan round
+
+Per owner instruction, for `/ap3-plan` to inherit verbatim: **the objective is not the largest
+remaining increment.** It is the smallest genuinely-`P2` slice a headless writer can take from RED to
+a merged PR with zero human edit. This class (`feature-session-p2`) has been dispatched four times
+(M1 twice-ish across the timezone slice's BUDGET halt, M3b three times before its supervised finish)
+and has never once reached READY fully unattended.
+
+Preference order for the next slice: (1) touches exactly one package, (2) requires no new schema
+migration, (3) makes no auth-surface change (i.e. does not touch `session-command-route.ts` or any
+other choke-point), (4) if possible, needs no real-database dependency at verify time (sandbox
+typecheck + mocked-DB route tests only, no `verify_host`).
+
+If no such DB-free, schema-free, auth-free slice exists anywhere in this feature's remaining scope,
+`/ap3-plan` must say so explicitly and name the smallest DB-dependent slice instead, including its
+exact `verify`/`verify_host` commands (see BE spec `### Verify` subsection for the canonical forms).
+Do not silently default to planning the largest or most valuable remaining milestone (M2, M4, or the
+D1/D3 families) just because it is next in `PLAN.md`'s list order — re-evaluate against this
+preference order first.
 
 ## Answers
 <!-- the owner edits below this line, or dictates answers in chat and Claude writes them here
      verbatim before the --apply round reads them -->
+
+Both questions: YES — I verified all three Q1 mismatches against the shipped code myself (POST
+returns guestNote{id,sessionId,remainingNotes}; DELETE returns guestNote{id,sessionId,deleted:true};
+slotsFreed has zero occurrences repo-wide; no GET is exported under
+apps/web/app/api/sessions/[id]/guest-notes/). Apply them exactly as proposed, in Vietnamese,
+mirroring the v2.28 "what landed vs what is deferred, and why" pattern, and cite PR #13 + PLAN.md
+Milestone 2 for the GET deferral. Q2: yes, reword all 5 places the same way, citing PLAN.md D2 and
+the inline rationale in deleteGuestNote.
+
+Three additions to write into INTAKE.md in the same round — they were missing because I gave you this
+context too late, not because they are closed:
+
+A. Record these as OPEN owner decisions under "Decisions to finalize" (they do NOT gate this round's
+   status; none of them blocks a P2 slice):
+   - D4 auto-close grace period after ends_at (SES-UC-10). Still "chưa chốt" in BE. Blocks M4 from
+     being scoped at all. My recommendation to the owner, for him to confirm or reject: no grace —
+     ends_at itself is the cutoff, because closing only stops new joins and removes the public
+     projection; nothing about a late-running session needs the session to stay open. State it as a
+     recommendation, not a decision.
+   - D8 whether CreateGuestNote/DeleteGuestNote need a row in the Suspended Action Matrix (DD-110).
+     ActionClass pins seven literals, none guest-note, and the shipped commands call no
+     authorizeTenantAction. Record what a "yes" costs: a spec row + an authorization.ts change + its
+     own slice.
+   - D1 SES-UC-16/18 (InviteFriend/Approve/Reject): blocked on person_follows (DD-47, P4+),
+     person_blocks (DD-55, P4 chat slice), and 'pending' absent from the live players_status_chk. The
+     owner must choose between moving SES-UC-16/18 to whatever phase DD-47/DD-55 land in, or
+     fast-tracking those three prerequisites as their own supervised slice. Also note that BE §2's
+     doc comment claiming 'pending' was already added to the enum is still inaccurate against
+     0014_players_waitlist.sql — fix that comment in this same round, it is a factual error about
+     live schema.
+
+B. Add a short "Goal for the next plan round" section to INTAKE.md so /ap3-plan inherits it verbatim:
+   the objective is NOT the largest remaining increment. It is the SMALLEST genuinely-P2 slice a
+   headless writer can take from RED to a merged PR with no human edit — this class has been
+   dispatched four times and has never once reached READY unattended. Prefer a slice in one package,
+   no new schema, no auth-surface change, and if possible no real-database dependency. If no such
+   DB-free slice exists in this feature, say so explicitly and name the smallest DB-dependent one
+   instead, with its verify/verify_host commands.
+
+C. While you are in the docs anyway: BE §3's error-case list for POST /guest-notes omits
+   INVALID_INPUT, which the shipped code returns for NUL/lone-surrogate text (commit c1e8bcf). Add it
+   if my reading is right; if the code says otherwise, say so and leave it alone.
+
+Then run /ap3-intake session-management --apply, open the docs PR, and STOP. Report the PR number and
+the re-scored status. Do not merge.
