@@ -1,5 +1,14 @@
 import { and, eq, sql } from "drizzle-orm";
-import { charges, outboxEvents, players, processedCommands, sessions, sports } from "../schema.js";
+import {
+  charges,
+  memberships,
+  outboxEvents,
+  players,
+  processedCommands,
+  sessionGuestNotes,
+  sessions,
+  sports,
+} from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
 import type { Db, Tx } from "./client.js";
 import { raisePublicSessionFence } from "./public-session-fence.js";
@@ -2275,4 +2284,630 @@ export async function cancelSession(
     );
   }
   return outcome;
+}
+
+// =================== CreateGuestNote / DeleteGuestNote (SES-UC-17) ===================
+
+/**
+ * ONE code union for BOTH guest-note commands, and one error class, because they share a surface:
+ * the delete path can raise SESSION_NOT_FOUND and COMMAND_ID_CONFLICT exactly like the create path,
+ * and a caller cannot receive a code its own command cannot produce. The six literals §3 adds here
+ * (INVITE_NOT_ALLOWED, PLAYER_NOT_ACTIVE, SESSION_FULL, GUEST_NOTE_LIMIT_REACHED, NOT_NOTE_CREATOR,
+ * GUEST_NOTE_NOT_FOUND) are transcribed verbatim from
+ * docs/features/BE/feature_session_management_tech.md §3, which owns them.
+ *
+ * INVALID_INPUT is the family's usual narrow validation variant — §3 does not pin it, so the route
+ * collapses it onto the registered INVALID_BODY 400 rather than inventing public surface.
+ */
+export type SessionGuestNoteErrorCode =
+  | "SESSION_NOT_FOUND"
+  | "SESSION_NOT_OPEN"
+  | "INVITE_NOT_ALLOWED"
+  | "PLAYER_NOT_ACTIVE"
+  | "GUEST_NOTE_LIMIT_REACHED"
+  | "SESSION_FULL"
+  | "GUEST_NOTE_NOT_FOUND"
+  | "NOT_NOTE_CREATOR"
+  | "INVALID_INPUT"
+  | "COMMAND_ID_CONFLICT";
+
+export class SessionGuestNoteError extends Error {
+  readonly code: SessionGuestNoteErrorCode;
+  constructor(code: SessionGuestNoteErrorCode, message: string) {
+    super(message);
+    this.name = "SessionGuestNoteError";
+    this.code = code;
+  }
+}
+
+const failGuestNote = (code: SessionGuestNoteErrorCode, message: string): never => {
+  throw new SessionGuestNoteError(code, message);
+};
+
+/** User payload. Carries NO tenant_id/actor/commandId (those are trusted context). */
+export interface CreateGuestNoteInputPayload {
+  sessionId: string;
+  /** 1–100 characters (0044's guest_name_length CHECK is the same bound, one layer down). */
+  guestName: string;
+  /**
+   * Optional, <= 200 characters. ABSENT means "fill the spec's default" (§4 step 6:
+   * "Bạn của [player display name]"); an explicit `null` means the author chose no note and is
+   * stored as NULL. Collapsing the two would make the default unrefusable.
+   */
+  note?: string | null;
+}
+
+export interface CreateGuestNoteParams {
+  tenantId: string; // trusted routing context, asserted as a UUID by withTenant
+  commandId: string; // idempotency key from trusted context
+  /** The AUTHOR, from the session cookie — never from the body. Stored as created_by_person_id. */
+  actorPersonId: string;
+  input: CreateGuestNoteInputPayload;
+}
+
+export interface DeleteGuestNoteInputPayload {
+  sessionId: string;
+  noteId: string;
+}
+
+export interface DeleteGuestNoteParams {
+  tenantId: string;
+  commandId: string;
+  actorPersonId: string;
+  input: DeleteGuestNoteInputPayload;
+}
+
+/**
+ * processed_commands.result_ref envelope, shared by both commands: IDS ONLY.
+ *
+ * guest_name and note are deliberately absent. Dedup is commandId-only (DD-117 D5) so no request
+ * content is needed to replay, and the content here is a NON-MEMBER's name — writing it into the
+ * idempotency ledger would put a third party's personal data in a row that outlives the note it
+ * came from. The ledger keeps pointers; the table keeps the data, under RLS.
+ *
+ * `actorPersonId` is the one field that is NOT a pointer to the result, and it is load-bearing.
+ * Dedup runs BEFORE the active-player check (create) and before the ownership check (delete),
+ * because DD-117 D5 makes the retry's payload irrelevant. Without the actor bound into the ledger
+ * row, a SECOND authenticated person in the same tenant who reuses the first one's commandId would
+ * be handed that success — the created note's id, or a "deleted" verdict on a note they do not own
+ * — having satisfied neither PLAYER_NOT_ACTIVE nor NOT_NOTE_CREATOR. Replay is a retry of the SAME
+ * caller's command, so the stored actor is part of the command key's identity, not of its payload.
+ * It is a person id already visible to every guard downstream, not third-party content.
+ */
+interface StoredGuestNoteResult {
+  noteId: string;
+  sessionId: string;
+  actorPersonId: string;
+}
+
+/**
+ * The create side stores one number more than it points at: BE unit row #78 makes `remainingNotes`
+ * part of the command's result, so a REPLAY has to answer with the same number the original did.
+ * Recomputing it at replay time would drift (the author may have added or removed notes since),
+ * which would make one commandId return two different results.
+ */
+interface StoredCreateGuestNoteResult extends StoredGuestNoteResult {
+  remainingNotes: number;
+}
+
+/**
+ * replayed=true when a prior processed_commands row was returned (zero new mutation).
+ *
+ * These are the DTOs, not the ledger envelope: actorPersonId is deliberately absent — the caller
+ * supplied it, so echoing it back tells them nothing and only widens the response surface.
+ */
+export interface CreateGuestNoteResult {
+  noteId: string;
+  sessionId: string;
+  /** Notes this author may still record on this session (BE unit row #78): GUEST_NOTE_LIMIT - used. */
+  remainingNotes: number;
+  replayed: boolean;
+}
+
+export interface DeleteGuestNoteResult {
+  noteId: string;
+  sessionId: string;
+  replayed: boolean;
+}
+
+const CREATE_GUEST_NOTE_COMMAND_TYPE = "CreateGuestNote";
+const DELETE_GUEST_NOTE_COMMAND_TYPE = "DeleteGuestNote";
+
+/** BE spec §4 step 4 / edge #40, and 0044's trg_session_guest_note_limit one layer down. */
+const GUEST_NOTE_LIMIT = 3;
+const GUEST_NAME_MAX = 100;
+const GUEST_NOTE_TEXT_MAX = 200;
+const GUEST_NOTE_DEFAULT_PREFIX = "Bạn của ";
+
+/**
+ * Length in CODE POINTS, which is what PostgreSQL's char_length() counts.
+ *
+ * `String.length` counts UTF-16 code units, so a name of 60 emoji measures 120 there and 60 in the
+ * CHECK constraint. Using it would make this pre-check disagree with the column it is guarding —
+ * always in the stricter direction, but disagreement is the defect: the service's answer to
+ * "is this name legal" must be the same answer the table gives.
+ */
+const codePointLength = (value: string): number => [...value].length;
+
+/**
+ * Code-point length is necessary but not sufficient. Two classes of JS string clear every bound
+ * above and still cannot round-trip through a PostgreSQL `text` column, so both are refused here
+ * rather than one layer down:
+ *
+ *  - U+0000. PostgreSQL rejects a NUL byte in text outright; the driver surfaces that as an
+ *    untyped error, turning a request whose only defect is its payload into a 500 instead of the
+ *    400 this validation exists to produce.
+ *  - An UNPAIRED surrogate. It measures one code point above, but has no UTF-8 encoding — the
+ *    driver substitutes U+FFFD, so the row would silently hold text the caller never sent.
+ *
+ * Both reach here from a real request body, not only a hand-built call: JSON.parse accepts the
+ * escaped forms of each and yields exactly these strings.
+ *
+ * Iterating with `for...of` is what makes the surrogate half correct: it walks CODE POINTS, so a
+ * well-formed pair arrives as a single astral code point (>= 0x10000) and passes, while a lone
+ * code unit still yields itself and is caught. Scanning UTF-16 units would reject every emoji.
+ */
+const isStorableText = (value: string): boolean => {
+  for (const ch of value) {
+    const cp = ch.codePointAt(0)!;
+    if (cp === 0) return false;
+    if (cp >= 0xd800 && cp <= 0xdfff) return false;
+  }
+  return true;
+};
+
+/** Guards a replayed result_ref before trusting it: all three ids must be UUIDs. A corrupt or
+ *  hand-written row fails closed into COMMAND_ID_CONFLICT rather than replaying a bad envelope.
+ *  The actor guard is what makes a PRE-fix ledger row (written without actorPersonId) unreplayable
+ *  instead of replayable-by-anyone: it fails closed, which is the right direction for a row whose
+ *  owner cannot be established. */
+function isStoredGuestNoteResult(value: unknown): value is StoredGuestNoteResult {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.noteId === "string" &&
+    UUID_RE.test(r.noteId) &&
+    typeof r.sessionId === "string" &&
+    UUID_RE.test(r.sessionId) &&
+    typeof r.actorPersonId === "string" &&
+    UUID_RE.test(r.actorPersonId)
+  );
+}
+
+/** The create envelope additionally carries row #78's remainingNotes, and it must be a count the
+ *  limit could actually have produced — otherwise the replay answers with a fabricated number. */
+function isStoredCreateGuestNoteResult(value: unknown): value is StoredCreateGuestNoteResult {
+  if (!isStoredGuestNoteResult(value)) return false;
+  const remaining = (value as unknown as Record<string, unknown>).remainingNotes;
+  return (
+    typeof remaining === "number" &&
+    Number.isInteger(remaining) &&
+    remaining >= 0 &&
+    remaining < GUEST_NOTE_LIMIT
+  );
+}
+
+/** Reserve the command key, then read any prior row for it. Shared by both commands so the two
+ *  can never drift on the dedup contract (edge #3, commandId-only per DD-117 D5). */
+async function reserveGuestNoteCommand(
+  tx: Tx,
+  tenantId: string,
+  commandId: string,
+): Promise<{ commandType: string; stored: unknown } | null> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended('processed-command:' || ${tenantId}::uuid::text || ':' || ${commandId}, 0))`,
+  );
+  const prior = await tx
+    .select({
+      commandType: processedCommands.commandType,
+      resultRef: processedCommands.resultRef,
+    })
+    .from(processedCommands)
+    .where(
+      and(eq(processedCommands.tenantId, tenantId), eq(processedCommands.commandId, commandId)),
+    );
+  if (prior.length === 0) return null;
+  return { commandType: prior[0]!.commandType, stored: prior[0]!.resultRef };
+}
+
+/** Guest notes authored on a session by one person — the per-(session, person) limit's own count. */
+async function guestNoteCountFor(tx: Tx, sessionId: string, personId: string): Promise<number> {
+  const rows = await tx
+    .select({ n: sql<number>`count(*)` })
+    .from(sessionGuestNotes)
+    .where(
+      and(
+        eq(sessionGuestNotes.sessionId, sessionId),
+        eq(sessionGuestNotes.createdByPersonId, personId),
+      ),
+    );
+  return Number(rows[0]!.n);
+}
+
+/**
+ * Live occupancy of a session, the shared denominator behind SESSION_FULL (§4 step 5/7, edge #39).
+ *
+ * The spec's formula is `active + pending players + guest notes + live holds`. Two of its four
+ * terms are STRUCTURALLY zero at this base and are therefore not queried:
+ *  - `pending` is not a live players.status value. 0014_players_waitlist.sql pins players_status_chk
+ *    to exactly ('active','left','waitlisted') and no later migration touches it, so a pending row
+ *    cannot exist to be counted (one stale doc comment at feature_session_management_tech.md:174
+ *    says otherwise; the constraint is the authority).
+ *  - `live holds` has no table anywhere in schema.ts or the migrations — payment holds are not
+ *    built.
+ * Both terms return here with the migrations that make them representable. Counting a column that
+ * does not exist is not possible; pretending to count one would be worse.
+ */
+async function sessionOccupancy(tx: Tx, sessionId: string): Promise<number> {
+  const active = await sessionActiveRosterCount(tx, sessionId);
+  const notes = await tx
+    .select({ n: sql<number>`count(*)` })
+    .from(sessionGuestNotes)
+    .where(eq(sessionGuestNotes.sessionId, sessionId));
+  return active + Number(notes[0]!.n);
+}
+
+/** Next per-aggregate outbox sequence, computed in-statement like every other session command. */
+const nextOutboxSequence = (sessionId: string) =>
+  sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${sessionId}), 0) + 1`;
+
+/**
+ * CreateGuestNote — an ACTIVE player records a non-member guest who occupies a slot but carries no
+ * charge (BE tech spec §4 "Guest Note management", steps 1-8). One withTenant transaction:
+ * validate the session id → advisory command-key lock → dedup (commandId-only, DD-117 D5) →
+ * session FOR UPDATE → status/allow_player_invite guards → inviter-active guard → 3-per-player
+ * pre-check → capacity → validate the payload → insert → one `guest_note.created` outbox row →
+ * record.
+ *
+ * LOCK ORDER IS LOAD-BEARING. The session row is locked FOR UPDATE before the count and before the
+ * INSERT, which is both the repo's session-lock-ordering invariant and the only thing that makes
+ * the 3-per-player pre-check real: without it two concurrent authors both read count=2 and both
+ * commit a fourth note. 0044's trg_session_guest_note_limit takes the SAME row lock, so taking it
+ * here first also means the trigger never has to wait behind a lock this transaction would go on
+ * to acquire. The trigger stays defense-in-depth (it catches any future writer that skips this
+ * function); it is not a substitute for the pre-check, because a trigger's RAISE surfaces as an
+ * untyped fault rather than GUEST_NOTE_LIMIT_REACHED.
+ *
+ * NO SUSPENSION GATE, deliberately: the spec's algorithm for both guest-note commands (lines
+ * 702-742) calls no authorizeTenantAction, and ActionClass has no guest-note literal to pass it —
+ * adding either would be inventing authority this slice does not have. Tracked as an owner
+ * follow-up in ap3/features/session-management/PLAN.md (D8).
+ */
+export async function createGuestNote(
+  db: Db,
+  params: CreateGuestNoteParams,
+): Promise<CreateGuestNoteResult> {
+  const { tenantId, commandId, actorPersonId, input } = params;
+  return withTenant(db, tenantId, async (tx) => {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      failGuestNote("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    // Shape-checked before it reaches SQL: a non-UUID would raise a raw 22P02 instead of the
+    // spec's code. Same fail-closed treatment closeSession gives it.
+    if (typeof input.sessionId !== "string" || !UUID_RE.test(input.sessionId)) {
+      failGuestNote("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    const sessionId = input.sessionId.toLowerCase();
+    // The actor is trusted context, but a malformed one still must not reach SQL. It can never
+    // match an active player, so it gets that command's own refusal.
+    if (typeof actorPersonId !== "string" || !UUID_RE.test(actorPersonId)) {
+      failGuestNote("PLAYER_NOT_ACTIVE", "actor is not an active player of this session");
+    }
+    const personId = actorPersonId.toLowerCase();
+
+    const prior = await reserveGuestNoteCommand(tx, tenantId, commandId);
+    if (prior !== null) {
+      if (
+        prior.commandType === CREATE_GUEST_NOTE_COMMAND_TYPE &&
+        isStoredCreateGuestNoteResult(prior.stored) &&
+        prior.stored.sessionId === sessionId &&
+        // A replay is the SAME author retrying. A different person in this tenant presenting this
+        // commandId has not passed step 3's active-player guard (dedup runs before it), so handing
+        // them the stored success would be an authorization bypass, not idempotency. They get the
+        // conflict every other misuse of an owned command key gets — which also tells them nothing
+        // about the note behind it.
+        prior.stored.actorPersonId === personId
+      ) {
+        return {
+          noteId: prior.stored.noteId,
+          sessionId,
+          remainingNotes: prior.stored.remainingNotes,
+          replayed: true,
+        };
+      }
+      failGuestNote(
+        "COMMAND_ID_CONFLICT",
+        "command_id belongs to a different command, session or actor, or has no usable result",
+      );
+    }
+
+    // Step 2 — the session lock, taken before every read that follows.
+    const [locked] = await tx
+      .select({
+        status: sessions.status,
+        allowPlayerInvite: sessions.allowPlayerInvite,
+        slotsMax: sessions.slotsMax,
+      })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .for("update");
+    if (locked === undefined) {
+      // RLS makes another tenant's session invisible, so this is also the cross-tenant answer: a
+      // 404, never a 403 that would confirm the session exists.
+      failGuestNote("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    const session = locked!;
+    if (session.status !== "open") {
+      failGuestNote("SESSION_NOT_OPEN", "guest notes can only be added to an open session");
+    }
+    if (!session.allowPlayerInvite) {
+      failGuestNote("INVITE_NOT_ALLOWED", "this session does not allow player invites (edge #37)");
+    }
+
+    // Step 3 — the author must be an ACTIVE player of THIS session (edge #38). players carries a
+    // membership, not a person, so the join is what reaches the actor's identity. The membership's
+    // display name is read in the same statement because step 6's default note needs it.
+    const [player] = await tx
+      .select({ displayName: memberships.displayName })
+      .from(players)
+      .innerJoin(memberships, eq(players.membershipId, memberships.id))
+      .where(
+        and(
+          eq(players.sessionId, sessionId),
+          eq(players.status, "active"),
+          eq(memberships.personId, personId),
+        ),
+      )
+      .limit(1);
+    if (player === undefined) {
+      failGuestNote("PLAYER_NOT_ACTIVE", "actor is not an active player of this session");
+    }
+
+    // Step 4 — the per-(session, person) limit, under the session lock. The count is kept: it is
+    // the base for the event's note_count and for row #78's remainingNotes, and reading it once
+    // under the lock is what makes those two agree with the refusal above.
+    const notesBefore = await guestNoteCountFor(tx, sessionId, personId);
+    if (notesBefore >= GUEST_NOTE_LIMIT) {
+      failGuestNote(
+        "GUEST_NOTE_LIMIT_REACHED",
+        `a player may record at most ${GUEST_NOTE_LIMIT} guest notes per session`,
+      );
+    }
+
+    // Step 5 — capacity. A NULL slots_max is "unbounded" everywhere else in this service, so a
+    // session without a cap can never be SESSION_FULL.
+    if (session.slotsMax !== null && (await sessionOccupancy(tx, sessionId)) >= session.slotsMax) {
+      failGuestNote("SESSION_FULL", "the session has no free slot for another guest (edge #39)");
+    }
+
+    // Step 6 — payload validation, AFTER the guards, exactly where the spec puts it. It is also
+    // after dedup (DD-117 D5), so a retry of an already-committed note replays instead of 400ing.
+    if (
+      typeof input.guestName !== "string" ||
+      codePointLength(input.guestName) < 1 ||
+      codePointLength(input.guestName) > GUEST_NAME_MAX
+    ) {
+      failGuestNote("INVALID_INPUT", `guest_name must be 1..${GUEST_NAME_MAX} characters`);
+    }
+    if (!isStorableText(input.guestName as string)) {
+      failGuestNote(
+        "INVALID_INPUT",
+        "guest_name contains a character PostgreSQL text cannot store (NUL or an unpaired surrogate)",
+      );
+    }
+    const guestName = input.guestName as string;
+
+    const noteProvided = Object.hasOwn(input, "note") && input.note !== undefined;
+    let note: string | null = null;
+    if (noteProvided && input.note !== null) {
+      if (typeof input.note !== "string" || codePointLength(input.note) > GUEST_NOTE_TEXT_MAX) {
+        failGuestNote("INVALID_INPUT", `note must be at most ${GUEST_NOTE_TEXT_MAX} characters`);
+      }
+      if (!isStorableText(input.note as string)) {
+        failGuestNote(
+          "INVALID_INPUT",
+          "note contains a character PostgreSQL text cannot store (NUL or an unpaired surrogate)",
+        );
+      }
+      note = input.note as string;
+    } else if (!noteProvided) {
+      // The spec's default. display_name is nullable and unbounded, so the default is only applied
+      // when it produces a value the column would accept — a name long enough to overflow the
+      // 200-character limit leaves the note NULL rather than being silently truncated into a
+      // different sentence than the one the spec describes.
+      const displayName = player!.displayName;
+      const candidate =
+        displayName === null || displayName.length === 0
+          ? null
+          : `${GUEST_NOTE_DEFAULT_PREFIX}${displayName}`;
+      note =
+        candidate !== null && codePointLength(candidate) <= GUEST_NOTE_TEXT_MAX ? candidate : null;
+    }
+
+    // Step 7 — insert. tenant_id is injected from trusted context, so 0044's composite
+    // (tenant_id, session_id) FK re-proves the session belongs to this tenant at the DB layer.
+    const [created] = await tx
+      .insert(sessionGuestNotes)
+      .values({ tenantId, sessionId, createdByPersonId: personId, guestName, note })
+      .returning({ id: sessionGuestNotes.id });
+
+    // Step 8 — one guest_note.created row. The four keys are exactly the ones the spec's Events
+    // table pins for this type (feature_session_management_tech.md §4 Events): session_id, note_id,
+    // created_by_person_id, note_count. `note_count` is this AUTHOR's count on this session after
+    // the insert, not the session's total — it sits beside created_by_person_id and it is the
+    // number the 3-per-player limit counts, which is the only reading that makes it actionable to a
+    // consumer. Read under the session lock, so it cannot disagree with the row that was inserted.
+    //
+    // Still IDS ONLY apart from that count: a projector fans these out to channels that were never
+    // told about a non-member, so the guest's name stays in the RLS-protected table.
+    const noteCount = notesBefore + 1;
+    await tx.insert(outboxEvents).values({
+      tenantId,
+      aggregateType: "session",
+      aggregateId: sessionId,
+      sequence: nextOutboxSequence(sessionId),
+      type: "guest_note.created",
+      payload: {
+        session_id: sessionId,
+        note_id: created!.id,
+        created_by_person_id: personId,
+        note_count: noteCount,
+      },
+    });
+
+    const stored: StoredCreateGuestNoteResult = {
+      noteId: created!.id,
+      sessionId,
+      actorPersonId: personId,
+      remainingNotes: GUEST_NOTE_LIMIT - noteCount,
+    };
+    await tx.insert(processedCommands).values({
+      tenantId,
+      commandId,
+      commandType: CREATE_GUEST_NOTE_COMMAND_TYPE,
+      resultRef: stored,
+    });
+    return {
+      noteId: stored.noteId,
+      sessionId,
+      remainingNotes: stored.remainingNotes,
+      replayed: false,
+    };
+  });
+}
+
+/**
+ * DeleteGuestNote — the AUTHOR removes their own guest note (BE tech spec §4, steps 1-5). One
+ * withTenant transaction: validate ids → advisory command-key lock → dedup → note lookup
+ * (GUEST_NOTE_NOT_FOUND / NOT_NOTE_CREATOR) → session FOR UPDATE (same lock ordering as create) →
+ * delete → one `guest_note.deleted` outbox row → occupancy recompute → record.
+ *
+ * There is NO status guard: the spec's algorithm does not gate the delete on the session being
+ * open, and withdrawing a guest from a session that has since closed is not an error the spec
+ * describes. The ownership check is the authority here, not the session's lifecycle.
+ *
+ * WAITLIST PROMOTION IS DELIBERATELY ABSENT. The spec's step 4 says a freed slot should "trigger
+ * waitlist auto-promote". That mechanism does not exist anywhere in this repo — there are no
+ * join/leave/waitlist-entry functions and nothing has ever written players.status='waitlisted' —
+ * so there is no candidate to promote and no promotion function to call. The occupancy recompute
+ * the same step calls for IS implemented (and published on the event, so the freed slot is
+ * observable); the promotion call is left as this comment rather than a stub, because a stub would
+ * be an invented implementation of an unbuilt subsystem. It lands with the waitlist engine.
+ */
+export async function deleteGuestNote(
+  db: Db,
+  params: DeleteGuestNoteParams,
+): Promise<DeleteGuestNoteResult> {
+  const { tenantId, commandId, actorPersonId, input } = params;
+  return withTenant(db, tenantId, async (tx) => {
+    if (typeof input !== "object" || input === null || Array.isArray(input)) {
+      failGuestNote("GUEST_NOTE_NOT_FOUND", "guest note not found in tenant context");
+    }
+    if (typeof input.sessionId !== "string" || !UUID_RE.test(input.sessionId)) {
+      failGuestNote("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+    const sessionId = input.sessionId.toLowerCase();
+    // A malformed noteId is simply a note that cannot exist — the same answer a missing one gets,
+    // so a caller learns nothing from the difference.
+    if (typeof input.noteId !== "string" || !UUID_RE.test(input.noteId)) {
+      failGuestNote("GUEST_NOTE_NOT_FOUND", "guest note not found in tenant context");
+    }
+    const noteId = input.noteId.toLowerCase();
+    const personId = typeof actorPersonId === "string" ? actorPersonId.toLowerCase() : "";
+
+    const prior = await reserveGuestNoteCommand(tx, tenantId, commandId);
+    if (prior !== null) {
+      if (
+        prior.commandType === DELETE_GUEST_NOTE_COMMAND_TYPE &&
+        isStoredGuestNoteResult(prior.stored) &&
+        prior.stored.sessionId === sessionId &&
+        prior.stored.noteId === noteId &&
+        // Same reason as create, one guard sharper here: the note is already gone, so the ownership
+        // check below can no longer refuse anyone. Only the ledger still knows who was allowed to
+        // delete it, and a replay must stay that person's replay.
+        prior.stored.actorPersonId === personId
+      ) {
+        return { noteId, sessionId, replayed: true };
+      }
+      failGuestNote(
+        "COMMAND_ID_CONFLICT",
+        "command_id belongs to a different command, note or actor, or has no usable result",
+      );
+    }
+
+    // Step 1 — lookup. RLS hides another tenant's note, so a cross-tenant caller gets the 404
+    // rather than the 403: a NOT_NOTE_CREATOR here would confirm the note exists.
+    const [note] = await tx
+      .select({
+        id: sessionGuestNotes.id,
+        sessionId: sessionGuestNotes.sessionId,
+        createdByPersonId: sessionGuestNotes.createdByPersonId,
+      })
+      .from(sessionGuestNotes)
+      .where(eq(sessionGuestNotes.id, noteId));
+    if (note === undefined || note.sessionId !== sessionId) {
+      failGuestNote("GUEST_NOTE_NOT_FOUND", "guest note not found in tenant context");
+    }
+    if (note!.createdByPersonId !== personId) {
+      failGuestNote("NOT_NOTE_CREATOR", "only the author of a guest note may delete it");
+    }
+
+    // Step 2 — the session lock, same ordering discipline as create (and as 0044's trigger).
+    const [locked] = await tx
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.id, sessionId))
+      .for("update");
+    if (locked === undefined) {
+      failGuestNote("SESSION_NOT_FOUND", "session not found in tenant context");
+    }
+
+    // Step 3 — delete. RETURNING is the race check: a concurrent delete of the same note (two
+    // tabs, two commandIds) removed the row while this transaction waited for the session lock,
+    // and that caller owns the event. Answering "not found" is honest; emitting a second
+    // guest_note.deleted for one note would not be.
+    const deleted = await tx
+      .delete(sessionGuestNotes)
+      .where(eq(sessionGuestNotes.id, noteId))
+      .returning({ id: sessionGuestNotes.id });
+    if (deleted.length === 0) {
+      failGuestNote("GUEST_NOTE_NOT_FOUND", "guest note not found in tenant context");
+    }
+
+    // Step 4 — the freed slot, recomputed AFTER the delete so it reflects the release. Published
+    // on the event rather than dropped, which is what makes the recompute observable; the
+    // promotion this number is meant to feed does not exist yet (see the doc comment above).
+    const occupancyAfter = await sessionOccupancy(tx, sessionId);
+
+    await tx.insert(outboxEvents).values({
+      tenantId,
+      aggregateType: "session",
+      aggregateId: sessionId,
+      sequence: nextOutboxSequence(sessionId),
+      type: "guest_note.deleted",
+      // session_id / note_id / deleted_by_person_id are the three keys the spec's Events table
+      // pins for this type. The actor is the DELETER — which for this command is necessarily the
+      // author, since the ownership check above is what let the delete happen; naming the key after
+      // the act rather than the authorship is the contract's wording and the honest one.
+      //
+      // occupancy_after is additive, and is the one thing the spec's step 4 recompute produces:
+      // publishing it is what makes the freed slot observable to the consumer the recompute exists
+      // for. It is a count, never roster content.
+      payload: {
+        session_id: sessionId,
+        note_id: noteId,
+        deleted_by_person_id: personId,
+        occupancy_after: occupancyAfter,
+      },
+    });
+
+    const stored: StoredGuestNoteResult = { noteId, sessionId, actorPersonId: personId };
+    await tx.insert(processedCommands).values({
+      tenantId,
+      commandId,
+      commandType: DELETE_GUEST_NOTE_COMMAND_TYPE,
+      resultRef: stored,
+    });
+    return { noteId, sessionId, replayed: false };
+  });
 }

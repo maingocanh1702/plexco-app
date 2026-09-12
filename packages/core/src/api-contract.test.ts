@@ -54,6 +54,31 @@ describe("API_ERROR_CODES registry", () => {
       expect(isApiErrorCode(code)).toBe(true);
     }
   });
+
+  // The two guest-note routes (POST /api/sessions/:id/guest-notes, DELETE …/:noteId) shipped with
+  // the same additive two-file edit CANCEL_REQUIRES_REVIEW made: a code is registered when
+  // something can actually emit it. These six are pinned by §3 of
+  // docs/features/BE/feature_session_management_tech.md (lines 317-325) and are emitted by
+  // apps/web/lib/session-guest-note-route.ts. Collapsing them onto FORBIDDEN/NOT_FOUND would lose
+  // the distinction §3 draws — e.g. NOT_NOTE_CREATOR (403, someone else's note) vs
+  // GUEST_NOTE_NOT_FOUND (404, no such note in this tenant).
+  //
+  // The invite-side literals §3 also pins — FOLLOW_REQUIRED, ALREADY_JOINED, MEMBER_BLOCKED,
+  // PLAYER_NOT_FOUND, PLAYER_NOT_PENDING — are deliberately NOT here: InviteFriend/Approve/Reject
+  // need person_follows/person_blocks and a `pending` player status, none of which exist. They
+  // return with their commands.
+  it("registers every literal the two shipped guest-note routes can emit", () => {
+    for (const code of [
+      "GUEST_NOTE_LIMIT_REACHED",
+      "GUEST_NOTE_NOT_FOUND",
+      "INVITE_NOT_ALLOWED",
+      "NOT_NOTE_CREATOR",
+      "PLAYER_NOT_ACTIVE",
+      "SESSION_FULL",
+    ]) {
+      expect(isApiErrorCode(code)).toBe(true);
+    }
+  });
 });
 
 describe("isApiErrorCode", () => {

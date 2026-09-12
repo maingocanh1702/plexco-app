@@ -67,6 +67,18 @@ export {
   type CancelSessionInputPayload,
   type CancelSessionParams,
   type CancelSessionResult,
+  // SES-UC-17 guest notes (BE tech spec §4 "Guest Note management"). One error class for both
+  // commands: they share SESSION_NOT_FOUND/COMMAND_ID_CONFLICT and the route maps one union.
+  createGuestNote,
+  deleteGuestNote,
+  SessionGuestNoteError,
+  type SessionGuestNoteErrorCode,
+  type CreateGuestNoteInputPayload,
+  type CreateGuestNoteParams,
+  type CreateGuestNoteResult,
+  type DeleteGuestNoteInputPayload,
+  type DeleteGuestNoteParams,
+  type DeleteGuestNoteResult,
 } from "./session-service.js";
 export {
   SlugTakenError,

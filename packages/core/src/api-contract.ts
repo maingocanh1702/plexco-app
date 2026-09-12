@@ -38,6 +38,14 @@
  * a session carries ANY charge (including a `void` one) or, on cancel, a non-zero
  * active roster — DD-117 / edge #5. Registering it is what lets the route return the
  * real refusal instead of a generic 500.
+ *
+ * The six guest-note codes (GUEST_NOTE_LIMIT_REACHED, GUEST_NOTE_NOT_FOUND, INVITE_NOT_ALLOWED,
+ * NOT_NOTE_CREATOR, PLAYER_NOT_ACTIVE, SESSION_FULL) arrived the same way, with the
+ * CreateGuestNote/DeleteGuestNote routes. They are transcribed from the §3 catalog, not chosen
+ * here, and each says something FORBIDDEN/NOT_FOUND cannot: "the host disabled invites" is not
+ * "you are not a member", and "this note is not yours" (403) is not "there is no such note" (404).
+ * createGuestNote also raises a narrow INVALID_INPUT, which the route collapses onto INVALID_BODY
+ * exactly like the other commands' validation variants.
  */
 export const API_ERROR_CODES = [
   "AUTH_INVALID",
@@ -49,13 +57,19 @@ export const API_ERROR_CODES = [
   "COMMAND_ID_CONFLICT",
   "CSRF_INVALID",
   "FORBIDDEN",
+  "GUEST_NOTE_LIMIT_REACHED",
+  "GUEST_NOTE_NOT_FOUND",
   "INVALID_BODY",
   "INVALID_TIME_RANGE",
+  "INVITE_NOT_ALLOWED",
   "LOGIN_RATE_LIMITED",
   "MISSING_DISCOVERY_FIELDS",
   "NOT_FOUND",
+  "NOT_NOTE_CREATOR",
+  "PLAYER_NOT_ACTIVE",
   "PRICE_CHANGE_REQUIRES_POLICY",
   "RATE_LIMITED",
+  "SESSION_FULL",
   "SESSION_NOT_FOUND",
   "SESSION_NOT_OPEN",
   "SLUG_TAKEN",
