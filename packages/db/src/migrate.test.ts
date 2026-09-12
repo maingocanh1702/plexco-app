@@ -4253,7 +4253,17 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
 
       await appClient.query("BEGIN");
       await insertRaceNote(appClient); // holds the sessions row lock, uncommitted
-      const blockedInsert = insertRaceNote(appClient2); // started, deliberately not awaited yet
+      // Handler attached IMMEDIATELY, not after COMMIT: CI flake fix. If B's P0001 rejection is
+      // processed by the event loop before the `await blockedOutcome` below claims it, an
+      // unhandled-rejection-free window never opens, since `.then` here converts the rejection
+      // into a resolved outcome object right away. The bare promise (started, not awaited) used
+      // to leave that window open long enough for Vitest to occasionally observe an unhandled
+      // rejection and exit 1 on `pull_request`-triggered CI runs specifically (never reproduced
+      // locally or on `push` runs of the identical commit).
+      const blockedOutcome = insertRaceNote(appClient2).then(
+        () => ({ settled: "resolved" as const }),
+        (e: unknown) => ({ settled: "rejected" as const, error: e }),
+      );
 
       let genuinelyBlocked = false;
       for (let attempt = 0; attempt < 200 && !genuinelyBlocked; attempt++) {
@@ -4270,9 +4280,13 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
       ).toBe(true);
 
       await appClient.query("COMMIT");
-      await expect(blockedInsert).rejects.toMatchObject({
-        code: "P0001",
-        message: expect.stringContaining("GUEST_NOTE_LIMIT_REACHED"),
+      const outcome = await blockedOutcome;
+      expect(outcome.settled).toBe("rejected");
+      expect(outcome).toMatchObject({
+        error: expect.objectContaining({
+          code: "P0001",
+          message: expect.stringContaining("GUEST_NOTE_LIMIT_REACHED"),
+        }),
       });
       await appClient2.query("ROLLBACK");
 
