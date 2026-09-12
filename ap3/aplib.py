@@ -12,6 +12,8 @@ Subcommands (all read cwd = the repo being operated on):
   rubric <rubric.md>           print a feature-readiness rubric as {readiness_version, items} JSON
   intake-score <rubric.md> <evidence.json>   print {status, hard_gaps, supervised_gaps, gaps}
   plan-emit <plan.json>        write ap3/queue/<slug>.md per dispatchable slice; see plan_emit()
+  findings <transcript.txt>    print the reviewer's real verdict block; exit 1 if none exists
+  budget-remaining <budget_usd> <spent_usd>   print the rounded remaining budget; exit 1 if <= 0.5
 
 The git/network-dependent lint checks (run record, origin branch) live in lint-task.sh;
 this file only does what it can decide from files in the working tree.
@@ -931,6 +933,133 @@ def plan_emit(plan_path):
     return 0
 
 
+# ---------------------------------------------------------------- extract_findings (I1)
+# review.sh's own MARKER prompt quotes both verdict literals as instructions ("AP3_REVIEW_VERDICT:
+# CLEAN (no actionable finding...)", "... FINDINGS (then a numbered list...)"), and codex commonly
+# echoes that instruction text -- and a rubric-style '### Findings' (three '#') -- near the top of
+# a long transcript while restating what it was asked to do. Neither is the real verdict: the
+# actual block opens with a two-'#' '## Findings' heading further down, after tool calls and file
+# dumps, and review.sh always appends its own canonicalized 'AP3_REVIEW_VERDICT: ...' line after
+# printing the reviewer's raw output -- so the true verdict line is often repeated. A real pilot
+# run buried two P1 findings at line 6465 of a 14,130-line concatenation of two raw transcripts
+# while the fix writer found and fixed only the P2 sitting at line 14116 (see W5.2-BUILD-PROMPT.md
+# I1) -- taking the LAST '## Findings' heading through the LAST verdict line skips every
+# prompt-echo (always earlier in the transcript) and keeps the whole real tail, including a
+# trailing 'ADVISORY (outside change set)' section and every repeated verdict line.
+# review round 1 (code) finding 1: no leading whitespace allowed -- a real heading always starts
+# at column 0; a 4-space-indented '## Findings' is Markdown CODE (a fenced/indented block quoting
+# the convention, e.g. inside an example or a nested transcript), and matching it too would let a
+# later, spurious quoted heading reset `start` and silently drop every real finding before it.
+# security review round 4 finding 1: `\s` (and plain `.strip()` below) match/strip ANY Unicode
+# whitespace (e.g. U+00A0 NBSP), but CommonMark permits only ASCII space/tab in these exact
+# positions -- accepting more lets an attacker use an "invisible" Unicode space to smuggle a line
+# past a strict reader's own idea of what closes a fence or what starts a heading, exactly the
+# desync this module exists to refuse. `[ \t]` throughout, never `\s`.
+_FINDINGS_HEADING_RE = re.compile(r"^##[ \t]+Findings\b")
+_VERDICT_LINE_RE = re.compile(r"^AP3_REVIEW_VERDICT:")
+# security review round 2 finding 1: a CommonMark fence is 3+ backticks OR 3+ tildes, allowed up to
+# 3 leading spaces (4+ is a DIFFERENT construct, an indented code block, already excluded by the
+# column-0 anchor above); a fence closes only on a line using the SAME character, AT LEAST as many
+# repeats as the opener, and nothing but whitespace after them (round 1's simple toggle missed
+# exactly these: an indented fence, a `~~~` fence, and a 4-backtick-opened fence wrongly "closed" by
+# an inner 3-backtick example line).
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _fence_marker(line):
+    """-> (char, length, could_close, valid_open) if `line` matches a fence pattern, else None.
+    could_close: nothing but ASCII space/tab after the delimiter (a closing fence allows no info
+    string; CommonMark permits only space/tab here, NOT arbitrary Unicode whitespace -- security
+    review round 4 finding 1). valid_open: CommonMark forbids a backtick anywhere in a BACKTICK
+    fence's own info string (a tilde fence has no such restriction) -- a line that fails this is
+    literal text, not a real fence marker, however much it may look like one.
+    """
+    m = _FENCE_RE.match(line)
+    if not m:
+        return None
+    token, rest = m.group(1), m.group(2)
+    char, length = token[0], len(token)
+    could_close = rest.strip(" \t") == ""
+    valid_open = could_close or char != "`" or "`" not in rest
+    return char, length, could_close, valid_open
+
+
+def _fenced_lines(lines):
+    """-> a list of bools, one per line (True if that line is a fence delimiter itself or inside
+    one), or None if a fence is left UNCLOSED by EOF. security review round 3 finding 1: an
+    unbalanced fence means this function's own bookkeeping cannot be trusted -- adversarial text
+    that opens a fence and never closes it can desynchronize which lines count as "real" for the
+    rest of the document, letting an EARLIER, attacker-influenced heading/verdict pair be returned
+    while the genuine LATER one is wrongly treated as fenced-out. Failing closed here (the caller
+    treats None as "no heading found," triggering the existing full-transcript fallback) is safer
+    than trusting a parse that might be hiding real content.
+    """
+    fenced = [False] * len(lines)
+    fence = None  # None when not in a fence, else the (char, length) of the opening delimiter
+    for i, ln in enumerate(lines):
+        marker = _fence_marker(ln)
+        if marker is not None:
+            char, length, could_close, valid_open = marker
+            if fence is None:
+                if valid_open:
+                    fenced[i] = True
+                    fence = (char, length)
+                # else: not a real fence marker (e.g. a backtick in a backtick fence's own info
+                # string) -- literal text, fenced[i] stays False
+            else:
+                fenced[i] = True
+                if could_close and char == fence[0] and length >= fence[1]:
+                    fence = None
+            continue
+        fenced[i] = fence is not None
+    if fence is not None:
+        return None
+    return fenced
+
+
+def extract_findings(text):
+    """-> the reviewer's real verdict block (str), or None if no '## Findings' heading exists
+    (including when fence state cannot be trusted -- see _fenced_lines)."""
+    # security review round 1 finding 2: column-0 indentation alone (round 1 (code) finding 1)
+    # only catches an INDENTED quoted example -- a FENCED code block quoting the convention
+    # renders its contents at column 0 too, so a later, spurious quoted heading INSIDE a fence
+    # could still reset `start` and silently drop every real finding before it.
+    lines = text.split("\n")
+    fenced = _fenced_lines(lines)
+    if fenced is None:
+        return None
+    start = None
+    for i, ln in enumerate(lines):
+        if not fenced[i] and _FINDINGS_HEADING_RE.match(ln):
+            start = i
+    if start is None:
+        return None
+    end = None
+    for i in range(start, len(lines)):
+        if not fenced[i] and _VERDICT_LINE_RE.match(lines[i]):
+            end = i
+    if end is None:
+        return None
+    return "\n".join(lines[start:end + 1])
+
+
+# ---------------------------------------------------------------- budget headroom (I3/I4 shared)
+# review round 5 (code) finding 1: three call sites (run_review's pre-flight fix-round check,
+# finalize_ready's verify_host check, retry.sh's --extend-budget validation) all ask the exact
+# same question -- "is there enough budget left to fund another round?" -- and had drifted into
+# TWO different answers for the same inputs. Raw float subtraction can put an intended-exact $0.50
+# fractionally on either side of the `> 0.5` boundary (1.1-0.6 == 0.5000000000000001 in IEEE 754);
+# one call site rounded first, the others did not, so the SAME (budget, spent) pair could be
+# "fundable" through one path and "not fundable" through another -- violating I4's own "gated on
+# the SAME round/budget ceilings" contract. One canonical implementation, called from all three,
+# closes the class instead of patching each site's copy individually.
+def budget_remaining(budget_usd, spent_usd):
+    """-> the remaining budget, rounded to the same 4-decimal precision budget_usd/spent_usd are
+    already stored at -- so '> 0.5' means what it says everywhere this is checked, not whatever
+    raw float subtraction happens to produce."""
+    return round(float(budget_usd) - float(spent_usd), 4)
+
+
 # ---------------------------------------------------------------- CLI
 def main(argv):
     if len(argv) < 2:
@@ -953,6 +1082,18 @@ def main(argv):
         return 0
     if cmd == "plan-emit":
         return plan_emit(argv[2])
+    if cmd == "findings":
+        with open(argv[2], encoding="utf-8") as fh:
+            text = fh.read()
+        block = extract_findings(text)
+        if block is None:
+            return 1
+        print(block)
+        return 0
+    if cmd == "budget-remaining":
+        remaining = budget_remaining(argv[2], argv[3])
+        print(remaining)
+        return 0 if remaining > 0.5 else 1
     if cmd == "lint":
         err = lint(argv[2])
         if err:

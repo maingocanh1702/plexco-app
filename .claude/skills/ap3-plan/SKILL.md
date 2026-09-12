@@ -86,6 +86,15 @@ happen before or after this `worktree add`, but nothing that writes may happen a
    - **Risk**: does any touched surface cross auth, RLS/row-level security, permissions, or
      money/pricing? That makes the slice (and usually the whole feature) `risk: P1` and forces
      `security_review: always` on its class. Everything else defaults to `P2`.
+   - **Registration points**: every place a new command, route, error code, or status value must be
+     REGISTERED before its own consumers can see it — barrel/index exports, error-code or
+     action-class registries, status/message tables, rate-limit bucket contracts, route manifests.
+     Impact analysis above finds the files that HOLD the new logic; this finds the separate files
+     that make it REACHABLE. A slice whose `scope` omits the registration file can only halt
+     `SCOPE_DRIFT` once the writer discovers it needs to touch it (a real pilot hit this twice --
+     $2.67 and $3.25 -- for exactly this reason, on a command and a route respectively). Put every
+     registration file this feature needs into scope up front, in the slice that adds the thing
+     being registered.
 
 2. **Design milestones and slices.** A milestone is a coherent, shippable increment (M1, M2, ...);
    each ends with one slice that finishes it. Order slices so behaviour lands in the smallest

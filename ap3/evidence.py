@@ -63,6 +63,9 @@ def main(argv):
         "pr_url": rec.get("pr_url"),
         "human_interventions": rec.get("human_interventions"),
         "merged_unchanged": rec.get("merged_unchanged"),
+        # W5.2 I3 (K16/K19): absence is a known fact (this run was never owner-extended), not an
+        # unknown one -- False, not null, matching report.sh/the trust ladder's own reading of it.
+        "owner_extended": rec.get("owner_extended", False),
     }
     print(json.dumps(row))
     return 0

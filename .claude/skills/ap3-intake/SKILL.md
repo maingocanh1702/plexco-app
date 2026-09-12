@@ -137,7 +137,26 @@ defeats the point. Parse it once with `python3 ap3/aplib.py rubric docs/standard
 2. For each answered question, propose the exact doc edit (FE/BE spec, `decisions.md`, etc.) as a
    unified diff. **Never edit a decision's status line to `FINAL` without the owner's explicit
    yes on that exact edit** — a DD becomes final only by the owner's own hand, never inferred from
-   "they answered the question so they must mean yes."
+   "they answered the question so they must mean yes." **If the answer pins the behaviour of a
+   library or platform API** (a runtime function's exact output, a supported-values list, a
+   version-dependent default), do not write it into the doc edit on the owner's word or your own
+   training data alone — probe it on the PROJECT's own runtime (its CI Node version, its real
+   database, whatever the edit will actually be read against) and quote the probe's real output in
+   the doc edit itself. A ratified answer once said "reject any timezone not in
+   `Intl.supportedValuesOf('timeZone')`," and only discovered during execution that the set is
+   CLDR-canonical on the project's Node 22 and omits `Asia/Ho_Chi_Minh` — the spec, exactly as
+   ratified, rejected Vietnam's own timezone. Show the owner the probe output before they approve
+   the edit, not after a writer hits it. **Quote only the minimal fact the probe was run to
+   confirm** (a version string, a supported-values list, one representative row shape) **— never a
+   raw dump of a query or command that could carry real records, credentials, or other secrets/PII
+   into a committed doc.** A probe against any real, non-disposable database — empty or not, since
+   "empty right now" is not a safety property and the risk is connecting to a live system with
+   real credentials at all, not only what data it happens to hold — needs the owner's own
+   read-only credentials and their explicit go-ahead before it runs; only an explicitly disposable
+   local fixture (e.g. a throwaway sqlite file or a test container you provisioned yourself for
+   this probe) is exempt. Once run, redact anything beyond the single fact being verified before
+   it goes anywhere near a doc edit — a
+   committed secret is far harder to undo than a missed probe.
 3. Apply only the edits the owner approved, in the same `ap3/state/worktrees/intake-<slug>`
    worktree (branch `docs/intake-<slug>`) the score round already created. **This is TWO SEPARATE
    commits, in this exact order — never one:**
