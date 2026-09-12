@@ -10,13 +10,19 @@
 #                                        fixed terminal set, or if the worktree no longer holds
 #                                        .ap3-run/READY-FOR-REVIEW at the recorded head_sha.
 #   ap3/retry.sh --extend-rounds <N> <slug>    W5.2 I3 (K16/K19): owner-authorized recovery from a
-#   ap3/retry.sh --extend-budget <USD> <slug>  MAX_ROUNDS or BUDGET halt that is holding real,
-#                                        reviewed, committed work no other tool can take forward.
-#                                        Raises the ceiling that actually blocked and resumes review
-#                                        at the same head -- no second writer session either. Both
-#                                        flags may be given together. Marks the record
-#                                        owner_extended so a later unchanged merge is never counted
-#                                        as a clean UNATTENDED run (see reconcile_ready).
+#   ap3/retry.sh --extend-budget <USD> <slug>  MAX_ROUNDS or BUDGET halt, OR (W5.2.1, K21) a
+#                                        VERIFY_HOST_FAIL halt whose OWN round/budget ceiling is
+#                                        what exhausted (halt_cause verify_host_rounds /
+#                                        verify_host_budget) -- all three hold real, reviewed,
+#                                        committed work no other tool can take forward. A
+#                                        VERIFY_HOST_FAIL caused by a MUTATED worktree (halt_cause
+#                                        verify_host_mutated) is never extendable: see
+#                                        dispatch.sh's finalize_ready. Raises the ceiling that
+#                                        actually blocked and resumes review at the same head -- no
+#                                        second writer session either. Both flags may be given
+#                                        together. Marks the record owner_extended so a later
+#                                        unchanged merge is never counted as a clean UNATTENDED run
+#                                        (see reconcile_ready).
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR/.." && pwd)"; cd "$REPO"
@@ -143,6 +149,21 @@ fi
 # alone would just re-halt the SAME way immediately. dispatch.sh's run_review prefers a recorded
 # max_review_rounds_override over the task's own max_review_rounds; every budget check already
 # reads the record's live budget_usd, so raising it here is picked up automatically.
+#
+# W5.2.1 (K21): widened to also accept a VERIFY_HOST_FAIL halt whose OWN round/budget ceiling
+# exhausted (dispatch.sh's finalize_ready, gated on the SAME review_round/max_review_rounds_override
+# and budget_usd/spent_usd fields run_review's own MAX_ROUNDS/BUDGET checks use -- raising them here
+# is picked up by finalize_ready's checks exactly the same way, automatically). Resuming re-enters
+# run_review, so a resumed VERIFY_HOST_FAIL run pays for one redundant re-review of the unchanged,
+# already-CLEAN diff before verify_host ever runs again -- the SAME "+2 not +1" consequence already
+# documented below for MAX_ROUNDS applies identically here. Deliberate: this script cannot call
+# dispatch.sh's launch_writer directly (it is never sourced by dispatch.sh -- see the top-of-file
+# comment), and duplicating launch_writer's own env/sandbox/model-escalation logic a second time
+# just to skip one redundant review round is not worth the maintenance surface. A VERIFY_HOST_FAIL
+# caused by a MUTATED worktree (halt_cause verify_host_mutated) is refused by EITHER flag: no
+# fix-round edit to application code could ever address verify_host breaking its own read-only
+# contract. A record with no halt_cause at all (an older run, or any future halt() call site that
+# forgets to set it) fails closed the same way -- not-recognized means not-extendable.
 if [ -n "$EXTEND_ROUNDS" ] || [ -n "$EXTEND_BUDGET" ]; then
   terminal="$(python3 "$DIR/rec.py" get "$REC" terminal unknown)"
   # review round 2 (code) finding 1: the flag that actually raises the ceiling which HALTED must
@@ -159,7 +180,31 @@ if [ -n "$EXTEND_ROUNDS" ] || [ -n "$EXTEND_BUDGET" ]; then
       [ -n "$EXTEND_BUDGET" ] \
         || { echo "retry: refusing $SLUG -- terminal BUDGET requires --extend-budget (use a full 'retry.sh $SLUG' instead)" >&2; exit 1; }
       ;;
-    *) echo "retry: refusing --extend-rounds/--extend-budget $SLUG -- terminal '$terminal' is not MAX_ROUNDS or BUDGET (use a full 'retry.sh $SLUG' instead)" >&2; exit 1 ;;
+    VERIFY_HOST_FAIL)
+      # W5.2.1 (K21): same flag-matching rule as MAX_ROUNDS/BUDGET above, keyed off the
+      # machine-readable halt_cause dispatch.sh's finalize_ready records, never off this halt's
+      # English message.
+      halt_cause="$(python3 "$DIR/rec.py" get "$REC" halt_cause "")"
+      case "$halt_cause" in
+        verify_host_rounds)
+          [ -n "$EXTEND_ROUNDS" ] \
+            || { echo "retry: refusing $SLUG -- terminal VERIFY_HOST_FAIL (halt_cause verify_host_rounds) requires --extend-rounds (use a full 'retry.sh $SLUG' instead)" >&2; exit 1; }
+          ;;
+        verify_host_budget)
+          [ -n "$EXTEND_BUDGET" ] \
+            || { echo "retry: refusing $SLUG -- terminal VERIFY_HOST_FAIL (halt_cause verify_host_budget) requires --extend-budget (use a full 'retry.sh $SLUG' instead)" >&2; exit 1; }
+          ;;
+        verify_host_mutated)
+          echo "retry: refusing $SLUG -- terminal VERIFY_HOST_FAIL (halt_cause verify_host_mutated) cannot be extended -- verify_host itself broke its own read-only contract, no fix-round edit to application code could ever address that (use a full 'retry.sh $SLUG' instead)" >&2
+          exit 1
+          ;;
+        *)
+          echo "retry: refusing $SLUG -- terminal VERIFY_HOST_FAIL has no recognized halt_cause (got '${halt_cause:-<absent>}') -- refusing to extend an unclassified halt (use a full 'retry.sh $SLUG' instead)" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *) echo "retry: refusing --extend-rounds/--extend-budget $SLUG -- terminal '$terminal' is not MAX_ROUNDS, BUDGET or VERIFY_HOST_FAIL (use a full 'retry.sh $SLUG' instead)" >&2; exit 1 ;;
   esac
   [ -d "$WT" ] || { echo "retry: refusing extend $SLUG -- no worktree at $WT" >&2; exit 1; }
   [ -f "$WT/.ap3-run/READY-FOR-REVIEW" ] \
@@ -251,6 +296,10 @@ sys.exit(1) if not math.isfinite(v) else print(v)')"; then
   [ -n "$NEW_MAX_ROUNDS" ] && python3 "$DIR/rec.py" setjson "$REC" max_review_rounds_override "$NEW_MAX_ROUNDS"
   [ -n "$NEW_BUDGET" ] && python3 "$DIR/rec.py" setjson "$REC" budget_usd "$NEW_BUDGET"
   python3 "$DIR/rec.py" setjson "$REC" terminal null
+  # W5.2.1 (K21): clear alongside terminal -- a resumed run that halts again gets a freshly
+  # stamped halt_cause from that new halt() call regardless, but nothing should read a
+  # VERIFY_HOST_FAIL-era cause while this record no longer carries that terminal.
+  python3 "$DIR/rec.py" setjson "$REC" halt_cause null
   python3 "$DIR/rec.py" setjson "$REC" resume_review true
   python3 "$DIR/rec.py" setjson "$REC" pid 0
   # Read by reconcile_ready: a run that only reached READY because the owner raised a ceiling

@@ -183,13 +183,19 @@ os.replace(tmp, os.environ["REC"])
 '
 }
 
-halt() { # <slug> <reason> <msg>
-  local slug="$1" reason="$2" msg="$3" rec="$RUNS/$1/record.json" kind
+halt() { # <slug> <reason> <msg> [<halt_cause>] -- halt_cause is an optional MACHINE-READABLE
+        # sub-reason, currently used only by VERIFY_HOST_FAIL (finalize_ready's three call sites)
+        # so retry.sh's extend gate can tell an exhausted-ceiling halt (recoverable) from a
+        # mutated-worktree halt (never recoverable) apart without parsing this halt's English msg.
+        # Every OTHER halt call clears it to null unconditionally -- a stale cause from an earlier
+        # halt on this same run record must never survive into a later, unrelated halt.
+  local slug="$1" reason="$2" msg="$3" cause="${4:-}" rec="$RUNS/$1/record.json" kind
   local cls; cls="$(jget "$rec" class unknown)"
   kind="$(terminal_kind "$reason")"
   jset "$rec" status halted; jset "$rec" terminal "$reason"; jset "$rec" finished_at "$(now)"
   jset "$rec" review_verdict "$(jget "$rec" review_verdict unavailable)"
   jset "$rec" terminal_kind "$kind"
+  if [ -n "$cause" ]; then jset "$rec" halt_cause "$cause"; else jsetj "$rec" halt_cause null; fi
   if [ "$kind" = outage ]; then pause_class "$cls" "$reason" --keep-trust; else pause_class "$cls" "$reason"; fi
   cleanup_run_db "$slug" || true
   write_evidence "$slug" || log "WARN $slug: evidence append failed at halt"
@@ -325,7 +331,10 @@ finalize_ready() { # <slug> — review was CLEAN. Fail closed: READY means an OP
     vh_dirty="$(git -C "$wt" status --porcelain -uall)"
     if [ "$vh_head" != "$nowsha" ] || [ -n "$vh_dirty" ]; then
       jset "$rec" verify_host fail
-      halt "$slug" VERIFY_HOST_FAIL "verify_host mutated the worktree (HEAD $vh_head, reviewed $nowsha, dirty=$([ -n "$vh_dirty" ] && echo yes || echo no)) -- refusing to push a tree verify_host did not actually validate"
+      # W5.2.1 (K21): halt_cause verify_host_mutated -- retry.sh's extend gate refuses this cause
+      # unconditionally (by EITHER flag): a command that broke its own read-only contract can
+      # never be made recoverable by raising a round/budget ceiling.
+      halt "$slug" VERIFY_HOST_FAIL "verify_host mutated the worktree (HEAD $vh_head, reviewed $nowsha, dirty=$([ -n "$vh_dirty" ] && echo yes || echo no)) -- refusing to push a tree verify_host did not actually validate" verify_host_mutated
       return
     fi
     if [ "$vh_rc" -ne 0 ]; then
@@ -345,7 +354,9 @@ finalize_ready() { # <slug> — review was CLEAN. Fail closed: READY means an OP
       vh_maxr="$(jget "$rec" max_review_rounds_override "")"
       [ -n "$vh_maxr" ] || vh_maxr="$(python3 "$DIR/aplib.py" frontmatter "$RUNS/$slug/task.md" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("max_review_rounds",3))')"
       if [ "$vh_round" -ge "$vh_maxr" ]; then
-        halt "$slug" VERIFY_HOST_FAIL "verify_host exited $vh_rc at round cap $vh_maxr: $verify_host (see ap3/state/runs/$slug/verify-host.txt)"
+        # W5.2.1 (K21): halt_cause verify_host_rounds -- retry.sh --extend-rounds can raise
+        # max_review_rounds_override and resume, the SAME field this check reads via vh_maxr above.
+        halt "$slug" VERIFY_HOST_FAIL "verify_host exited $vh_rc at round cap $vh_maxr: $verify_host (see ap3/state/runs/$slug/verify-host.txt)" verify_host_rounds
         return
       fi
       # review round 5 (code) finding 1: the SAME aplib.py budget_remaining() run_review's own
@@ -353,7 +364,9 @@ finalize_ready() { # <slug> — review was CLEAN. Fail closed: READY means an OP
       # violates I4's own "gated on the SAME round/budget ceilings" contract: the same (budget,
       # spent) pair must be equally (un)fundable everywhere it is asked.
       if ! python3 "$DIR/aplib.py" budget-remaining "$(jget "$rec" budget_usd 0)" "$(jget "$rec" spent_usd 0)" >/dev/null; then
-        halt "$slug" VERIFY_HOST_FAIL "verify_host exited $vh_rc and insufficient remaining budget for another fix round: $verify_host (see ap3/state/runs/$slug/verify-host.txt)"
+        # W5.2.1 (K21): halt_cause verify_host_budget -- retry.sh --extend-budget can raise
+        # budget_usd and resume, the SAME field budget_remaining() reads above.
+        halt "$slug" VERIFY_HOST_FAIL "verify_host exited $vh_rc and insufficient remaining budget for another fix round: $verify_host (see ap3/state/runs/$slug/verify-host.txt)" verify_host_budget
         return
       fi
       # security review round 1 finding 3: verify_host's captured output is a real DB-backed
