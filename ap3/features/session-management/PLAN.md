@@ -92,7 +92,19 @@ no queue fields): `apps/web/app/api/sessions/route.ts`, `apps/web/app/api/sessio
 `apps/web/app/api/sessions/route.test.ts`, `apps/web/app/api/sessions/[id]/route.test.ts`,
 `apps/web/lib/session-command-route.ts`.
 
-## Milestone 3 — guest notes (schema + commands)
+## Milestone 3 — guest notes (schema + commands) — ✅ COMPLETE 2026-09-12
+
+**M3a** landed in `0044_session_guest_notes.sql` (PR #12, `8eae449`). **M3b** landed in PR #13 (`b024e07`)
+— dispatched autonomously 3 times (2x HALT `SCOPE_DRIFT` for missing registration points: the
+`API_ERROR_CODES` registry and the `@plexco/db` barrel; then a full implementation reaching review
+round 3), HALTed `MAX_ROUNDS` with one security P2 outstanding, and was **finished supervised** from
+the halted worktree's commits on `feat/session-guest-note-commands`. Autonomous spend $15.29;
+`human_interventions = 1`, so this does NOT count as an unattended READY run and `clean_runs` stays 0.
+Findings caught across the 3 ap3 rounds + 4 supervised rounds: outbox payload contract, missing
+`remainingNotes`, NUL/lone-surrogate text, replay not bound to the actor (authz), tenant-shared
+rate-limit buckets, a UUID case-variant bucket bypass, two tautological tests, a cross-tenant DELETE
+quota gap, a DD-118 classification gap, and a pre-existing CI flake in the 0044 lock-race test.
+
 
 Two slices, in order. The second is **blocked** until the first is confirmed merged.
 

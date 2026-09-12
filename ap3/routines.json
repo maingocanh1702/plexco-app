@@ -32,7 +32,7 @@
         "packages/db/src/index.ts"
       ],
       "budget_usd_max": 15,
-      "max_runs_per_day": 4,
+      "max_runs_per_day": 2,
       "max_parallel": 1,
       "writer_model": "claude-sonnet-5",
       "writer_models_allowed": [
@@ -44,7 +44,8 @@
       "security_review": "always",
       "needs_db": true,
       "db_per_run": false,
-      "description": "Session-management feature (DESIGN-v2 pilot): P2 slices only, emitted by /ap3-plan; P1 slices are supervised and never queued. Class added 2026-09-11, clean_runs 0."
+      "description": "Session-management feature (DESIGN-v2 pilot): P2 slices only, emitted by /ap3-plan; P1 slices are supervised and never queued. Class added 2026-09-11, clean_runs 0.",
+      "evidence": "M3b guest-note commands: 3 dispatches (SCOPE_DRIFT x2 on missing registration points, then a full implementation that reached review round 3) -> HALT MAX_ROUNDS with 1 security P2 left; finished SUPERVISED and merged as PR #13 (b024e07). human_interventions=1, clean_runs stays 0 - this class has not yet produced an unattended READY run. allowed_scope widened 2026-09-11 with the exact registration points a new command/route needs: packages/core/src/api-contract.ts(+test), packages/db/src/index.ts."
     }
   }
 }
