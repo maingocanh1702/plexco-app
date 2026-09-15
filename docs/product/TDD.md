@@ -1,12 +1,12 @@
 # Technical Design Document (TDD) — Plexco
 ## Platform thể thao đa môn (host + player) — multi-tenant, marketplace discovery, sync đa surface, Zalo + Facebook Messenger + Web app *(Telegram đã loại khỏi phạm vi — DD-37)*
 
-**Phiên bản:** 3.1l — *04/09: live-truth refresh tại `0aff7ad` — **API route 13 → 15, route nghiệp vụ 3 → 5** (`POST /api/sessions/:id/close` + `/cancel`, dưới DD-56 amendment #2); DD-118 phủ tới `GET /api/onboarding/readiness`; **37 migrations (tail `0036`) KHÔNG đổi** — hai slice hôm nay không chạm schema; trục Tests authority **1308 workspace + 124 readiness/kit @ `0aff7ad`**. Contract kỹ thuật không đổi. Ghi chú 25/08 và 06/08 bên dưới là lịch sử.*
-> *(lịch sử)* **3.1k** — *25/08: live-truth refresh tại `1215a6a` — **34 migrations (tail `0033`)**; `authorizeTenantAction` **có caller production** (publish/announce); DD-29 registry có **reader đầu tiên** `resolveCapability()` (`f2af39d`, bản thân nó 0 caller); `public_projection_fences` + guarded view `public_session_share_v` **đã land** (`0033`); trục Tests authority **854 workspace + 30 validator @ `93f1e93`** (suite sau merge 25/08 informal 919+30, chưa re-pin). Contract kỹ thuật không đổi — ghi chú 06/08 bên dưới là lịch sử.*
-**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 25/08/2026
+**Phiên bản:** 3.2 — *15/09: thêm **§📍 Đọc nhanh** (bảng surface kỹ thuật + gate native DD-69 + **bảng 13 lớp thiết kế-vs-as-built @ `main@e235ea4`**) và **§📜** gom ba khối as-built cũ; **contract kỹ thuật không đổi một chữ**. TDD **không re-pin số** — số đo ở `ROADMAP.md` §📍.*
+> *(lịch sử)* **3.1l** — *04/09: live-truth refresh tại `0aff7ad` — API route 13 → 15, route nghiệp vụ 3 → 5; DD-118 phủ tới `GET /api/onboarding/readiness`; 37 migrations (tail `0036`) không đổi. Nguyên văn ở §📜.*
+**Ngày tạo:** 16/06/2026 · **Cập nhật tham chiếu:** 15/09/2026
 **Tài liệu tham chiếu:**
-- `BRD.md` v3.9n — yêu cầu nghiệp vụ
-- `PRD.md` v2.8m — user flows + edge cases
+- `BRD.md` v3.10 — yêu cầu nghiệp vụ
+- `PRD.md` v2.9 — user flows + edge cases
 - `../features/BE/feature_channel_booking_funnel_tech.md` — exact DD-32 intent/hold/finalizer contract
 - `../strategy/saas-implementation-plan.md` — kiến trúc multi-tenant
 - `../research/player-side-saas-reconciliation.md` — identity/kênh/matching
@@ -20,23 +20,42 @@
 > **Scope:** TDD cover tới **P6** ở mức thiết kế. BRD là nguồn sự thật cho product scope; PRD cho behavior; TDD là implementation contract; ROADMAP cho thứ tự/progress. Security constraints nghiêm ngặt hơn giữa BRD và AUDIT luôn thắng.
 > **Khác bot single-club hiện tại:** Plexco là **repo riêng**, lift logic thuần (matching, payments-logic, dates, format) sang `packages/core`; viết lại tầng data trên Postgres + RLS.
 > **Bốn bất biến lõi:** (1) tiền/roster không rò cross-tenant; (2) tiền/PII không lọt public discovery; (3) allocation không làm mất/đếm quá tiền; (4) PostgreSQL/domain model là nguồn sự thật, surface chỉ là projection.
+
+---
+
+## 📍 Đọc nhanh (cập nhật 15/09/2026 · `main@e235ea4`)
+
+**TDD là gì / không là gì:** nguồn sự thật cho **implementation contract**. *Scope* ở `BRD.md` §📍 · *behavior* ở `PRD.md` §📍 · **số đo và tiến độ ở `ROADMAP.md` §📍** — **TDD không re-pin số**, chỉ mô tả *thiết kế đang hiệu lực* và *khoảng cách với as-built*.
+
+**Surface kỹ thuật — gate native là gate ĐO ĐƯỢC, không phải lời hứa:**
+
+| Mốc | Surface kỹ thuật | Điều kiện mở |
+|---|---|---|
+| **Launch** | Next.js App Router (web app installable/offline) + Zalo bot, chung canonical backend | DD-113 |
+| **Phase-1** | + Messenger adapter (hybrid central + optional Page) | App Review Meta (DD-37/DD-65–68) |
+| **Phase-2 native** | iOS/Android client dùng lại API/contract | **Technical gate DD-69, tất cả đều đo được:** client-safe contract · `/api/v1` versioned · bearer auth + tuân thủ login iOS · device push riêng + payload privacy-safe · offline read-only · store review. Chưa mục nào đóng ⇒ native **chưa được lên lịch build** |
+
+**13 lớp — thiết kế (TDD) vs as-built @ `main@e235ea4` (15/09):**
+
+| # | Lớp | Thiết kế ở | As-built @ `e235ea4` |
+|---|---|---|---|
+| 1 | Multi-tenant + RLS choke-point | §3.3 · §3.4 | ✅ khớp — RLS fail-closed, repo choke-point, `ensureTenantContext` **set-or-assert** (D-15) |
+| 2 | Data model + migration runner | §3.2 · §8 | ✅ **45 migration** (`0000`–`0044`), runner có ordering guard (`<=`) |
+| 3 | Auth web (Google + session cookie) | §3.3 · §4 | 🟢 merged **⛔ chưa bật** — 6 route; `__Host-`/`__Secure-`, xoá cookie bằng **SET rỗng** (không `delete()`), idle TTL `0040` ở CẢ resolve LẪN rotate |
+| 4 | Session command family | §3.5 · §3.6 | ✅ **8 command** (`session-service.ts`) — create · publish · announce · update · close · cancel · **createGuestNote · deleteGuestNote** |
+| 5 | API surface + envelope | §3.5 | 🟡 **15 route (7 nghiệp vụ)**; `announce` chưa có route (gate DD-56 clause 1); **0 route ĐỌC** |
+| 6 | Choke-point actor tạm (DD-56) | §3.5 | ⚠️ **7 route** đi qua `apps/web/lib/session-command-route.ts` trong khi **amendment #2 chỉ pin NĂM** ⇒ **decision còn thiếu** cho 2 route guest-note. Amendment tự **void** khi `tenant-capability-authority-core` land |
+| 7 | Shared job runtime (outbox/dispatcher/scheduler) | §3.7 · §3.8 | 🟡 infra merged, **`OUTBOX_DISPATCH_SCHEDULE_ENABLED` OFF**, projector production vẫn là `productionStubDeliver` (DLQ mọi delivery) |
+| 8 | Public read model + fence | §3.9 | ✅ `0033`/`0036` — guarded view `security_barrier`, CAS-clear exact-token, `app`/`readonly` **0 quyền** trên bảng gốc |
+| 9 | Capability/authz (DD-29) | §3.4 · §4 | 🟡 `authorizeTenantAction` có **6 call site** thật; `resolveCapability()` **0 caller production** ⇒ **hard-dep (a) của phase-1 vẫn mở** |
+| 10 | Identity + link code | §3.3 · §5 | 🟢 `0034` + `0043` merged, **code dark** — mã 18 ký tự **tách đôi** (8 ký tự lookup HMAC, verifier scrypt async), attempt cap mới có hiệu lực thật |
+| 11 | i18n / tenant locale (DD-118) | §3.3 | 🟡 `runWithLang` phủ session-command + `GET /api/onboarding/readiness`; **locale phân giải SAU authorization** — route authenticated mới phải tự mang `runWithLang` |
+| 12 | Liveness / observability | §3.7 · §7 | 🟡 `0041` `job_worker_heartbeats` + heartbeat file-age HEALTHCHECK (overlap guard + `SET LOCAL statement_timeout`); observability rộng hơn vẫn ⬜ |
+| 13 | Deployment & infra | §7 | 🟡 `entrypoint.sh` đối chiếu `DB_EXPECTED_ROLE` (**opt-in**, chỉ từ chối khi biến ĐƯỢC SET và lệch); Fly **không có secret theo process group** — phân biệt role bằng hậu tố biến; CSP nonce sau flag `CSP_SCRIPT_NONCE_ENABLED` (**OFF**) |
+
+> ⚠️ **Đọc bảng trên theo luật 5 của ROADMAP:** một lớp ✅ **không** kéo sản phẩm lên — trục yếu nhất vẫn là **FE/UI = 0 màn**.
 >
-> 🟣 **As-built boundary — đo lại `main@0aff7ad` (04/09/2026). ĐỌC MỤC NÀY TRƯỚC mọi đoạn dưới; các đoạn đó đã mục ở phần route, migration và test.**
-> **`0aff7ad` KHÔNG chạm schema.** **37 migrations (`0000`–`0036`)** — bằng đúng mốc 03/09; hai slice hôm nay là route + lib, không migration.
-> **Bề mặt API đã đổi hạng, đây là điểm quan trọng nhất của bản refresh này:** **15 API route**, trong đó **5 route nghiệp vụ** — `POST /api/sessions` · `PUT /api/sessions/:id` · `POST /api/sessions/:id/publish` · **`/close`** · **`/cancel`**. Câu "10 API route, 0 route nghiệp vụ" ở các đoạn dưới **đã mục**; đọc chúng như lịch sử.
-> **Cả năm route đi qua MỘT choke-point actor tạm** `apps/web/lib/session-command-route.ts`, được **DD-56 amendment #2** cho phép tường minh, đúng năm route liệt kê tên — và amendment đó **tự hết hiệu lực** khi `tenant-capability-authority-core` land (điều khoản 5). Đo tại `0aff7ad`: nguồn role `tenantsForPerson` chỉ được import ở **đúng ba** file allowlist, và toàn `apps/web` có **đúng một** điểm quyết định trên role (`session-command-route.ts:232`).
-> **DD-118 phủ tới `GET /api/onboarding/readiness` qua `apps/web/lib/tenant-lang.ts`.** Ràng buộc là **thứ tự**, không phải format: locale phân giải **SAU** authorization. Phân giải trước sẽ trả lời cú dò của người lạ bằng ngôn ngữ của tenant bị dò ⇒ rò cả sự tồn tại tenant lẫn cấu hình — **cùng bất biến** mà `session-command-route.ts:232` đã giữ ở kênh mã trạng thái (*"a distinct 404 would turn this into a tenant-existence oracle"*). Vòng security xác nhận độc lập ở cả hai call site.
-> **Trục Tests:** authority **1308 workspace** (core 153 · db 716 · web 399 · bot 40, trên 50 test file) **+ 124 readiness/kit**, đo tại `772681f` và carry sang `0aff7ad` bằng hai lệnh `git diff --name-only` trả rỗng. Provenance đầy đủ ở khối 🟪 04/09 của `ROADMAP.md` v3.15 — **không trích số từ đây đi nơi khác**.
-> **Vẫn CODE DARK, đừng đọc là feature:** `resolveCapability()` **vẫn 0 caller production** ⇒ hard-dep (a) của DD-114 còn mở, và đó là lý do lane `capability-wiring-auto-reconcile` bị hoãn có chủ ý chứ không phải bỏ quên.
-> **Không đổi:** **0 màn FE** · FE PENDING (DD-116) · Chat 0 migration/API/UI · `OUTBOX_DISPATCH_SCHEDULE_ENABLED` OFF · không contract kỹ thuật nào đổi. Hai slice thêm **bề mặt API**, không thêm surface người dùng chạm được.
->
-> 🔴 **As-built boundary — đo lại `main@2cd52ce` (06/08/2026). Đọc mục này TRƯỚC đoạn `784bc8d` ngay dưới; đoạn đó đã mục ở phần migration và test.**
-> **30 migrations (`0000`–`0029`)**, không phải 25: thêm `0025`/`0026` (rename CHECK, RENAME-only, zero predicate change), `0027` (`resolve_tenant_status_locked` — SECURITY DEFINER read-only), `0028`/`0029` (**DD-29 capability registry**, expand→contract: `plans.plan_key` về 2-tier `free|host_pro`, `entitlements` sang shape `{"capabilities": {...}}`, repoint `tenant_provision()`).
-> **Trục Tests `STALE`:** canonical runner chưa chạy lại kể từ `3d75c90` (561 workspace + 13 validator, 29/07). Static tại `2cd52ce` = **655** (core 132 · db 346 · web 137 · bot 40), 33 file — static là **tín hiệu drift**, không phải số test; đừng cộng `655 + 9` rồi khai.
-> **Đã merge nhưng CODE DARK, đừng đọc là feature:** `authorizeTenantAction` (`ddb69a9`) — 0 production caller; DD-29 registry — **0 TypeScript đọc `entitlements`/`capabilities`**, nên chưa entitlement nào được thực thi dù `tenant_provision()` đã repoint; role `chat_definer` provision bằng bootstrap script (`infra/postgres-init/02-chat-definer.sql`), không phải migration.
-> **Không đổi:** 10 API route (8 auth + 2 onboarding), 0 route nghiệp vụ, **0 màn FE**, Chat 0 migration/API/UI. 12 FE **design spec** đã commit tại `docs/channels/web/FE/` nhưng là spec Draft, không phải màn đã build — FE vẫn HOLD.
->
-> **As-built boundary — `main@784bc8d` (28/07), historical:** 25 migrations (`0000`–`0024`); `0022`/`0023` + `apps/bot` đã có narrow worker claim/ack, dispatcher, queue provision/preflight và recovery schedule, nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định OFF và chưa có producer/projector nghiệp vụ thật. `0024` chỉ enforce `sessions_public_capacity_chk`. Last canonical aggregate: **32 test files / 537 workspace PASS** (core 132 · db 219 · web 146 · bot 40) + **13 validator PASS**; static cross-check **528 + 9 generated = 537**. Safari macOS/iOS M3 measurement đã pass, Google login vẫn OFF. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed; primary Chat plan v1.8 = `PLAN_READY` tại authority `90d292d`, nhưng từng slice còn strict `CODE_READY`. Không có chat/payment product runtime, migration, API hoặc UI.
+> 📌 **Chat:** DB root `0030`–`0032` đã merge và **0 dòng TS production nào đọc `chat_*`** — schema không phải runtime.
 
 ---
 
@@ -850,10 +869,46 @@ P3 phát hành memo **name-based**; matcher có thể chuẩn bị nhánh `pay_c
 
 ---
 
+## 📜 As-built boundary — các mốc trước (nguyên văn)
+
+> Dời nguyên văn từ đầu file ở v3.2 (15/09/2026) — **không đổi một chữ nào**. Mốc hiện hành đọc ở §📍.
+
+<details>
+<summary><b><code>0aff7ad</code> (04/09) · <code>2cd52ce</code> (06/08) · <code>784bc8d</code> (28/07) — ba khối as-built cũ</b></summary>
+
+
+**Dòng version nguyên văn của 3.1l và 3.1k (giữ để tra ngược):**
+
+**Phiên bản:** 3.1l — *04/09: live-truth refresh tại `0aff7ad` — **API route 13 → 15, route nghiệp vụ 3 → 5** (`POST /api/sessions/:id/close` + `/cancel`, dưới DD-56 amendment #2); DD-118 phủ tới `GET /api/onboarding/readiness`; **37 migrations (tail `0036`) KHÔNG đổi** — hai slice hôm nay không chạm schema; trục Tests authority **1308 workspace + 124 readiness/kit @ `0aff7ad`**. Contract kỹ thuật không đổi. Ghi chú 25/08 và 06/08 bên dưới là lịch sử.*
+
+> *(lịch sử)* **3.1k** — *25/08: live-truth refresh tại `1215a6a` — **34 migrations (tail `0033`)**; `authorizeTenantAction` **có caller production** (publish/announce); DD-29 registry có **reader đầu tiên** `resolveCapability()` (`f2af39d`, bản thân nó 0 caller); `public_projection_fences` + guarded view `public_session_share_v` **đã land** (`0033`); trục Tests authority **854 workspace + 30 validator @ `93f1e93`** (suite sau merge 25/08 informal 919+30, chưa re-pin). Contract kỹ thuật không đổi — ghi chú 06/08 bên dưới là lịch sử.*
+>
+> 🟣 **As-built boundary — đo lại `main@0aff7ad` (04/09/2026). ĐỌC MỤC NÀY TRƯỚC mọi đoạn dưới; các đoạn đó đã mục ở phần route, migration và test.**
+> **`0aff7ad` KHÔNG chạm schema.** **37 migrations (`0000`–`0036`)** — bằng đúng mốc 03/09; hai slice hôm nay là route + lib, không migration.
+> **Bề mặt API đã đổi hạng, đây là điểm quan trọng nhất của bản refresh này:** **15 API route**, trong đó **5 route nghiệp vụ** — `POST /api/sessions` · `PUT /api/sessions/:id` · `POST /api/sessions/:id/publish` · **`/close`** · **`/cancel`**. Câu "10 API route, 0 route nghiệp vụ" ở các đoạn dưới **đã mục**; đọc chúng như lịch sử.
+> **Cả năm route đi qua MỘT choke-point actor tạm** `apps/web/lib/session-command-route.ts`, được **DD-56 amendment #2** cho phép tường minh, đúng năm route liệt kê tên — và amendment đó **tự hết hiệu lực** khi `tenant-capability-authority-core` land (điều khoản 5). Đo tại `0aff7ad`: nguồn role `tenantsForPerson` chỉ được import ở **đúng ba** file allowlist, và toàn `apps/web` có **đúng một** điểm quyết định trên role (`session-command-route.ts:232`).
+> **DD-118 phủ tới `GET /api/onboarding/readiness` qua `apps/web/lib/tenant-lang.ts`.** Ràng buộc là **thứ tự**, không phải format: locale phân giải **SAU** authorization. Phân giải trước sẽ trả lời cú dò của người lạ bằng ngôn ngữ của tenant bị dò ⇒ rò cả sự tồn tại tenant lẫn cấu hình — **cùng bất biến** mà `session-command-route.ts:232` đã giữ ở kênh mã trạng thái (*"a distinct 404 would turn this into a tenant-existence oracle"*). Vòng security xác nhận độc lập ở cả hai call site.
+> **Trục Tests:** authority **1308 workspace** (core 153 · db 716 · web 399 · bot 40, trên 50 test file) **+ 124 readiness/kit**, đo tại `772681f` và carry sang `0aff7ad` bằng hai lệnh `git diff --name-only` trả rỗng. Provenance đầy đủ ở khối 🟪 04/09 của `ROADMAP.md` v3.15 — **không trích số từ đây đi nơi khác**.
+> **Vẫn CODE DARK, đừng đọc là feature:** `resolveCapability()` **vẫn 0 caller production** ⇒ hard-dep (a) của DD-114 còn mở, và đó là lý do lane `capability-wiring-auto-reconcile` bị hoãn có chủ ý chứ không phải bỏ quên.
+> **Không đổi:** **0 màn FE** · FE PENDING (DD-116) · Chat 0 migration/API/UI · `OUTBOX_DISPATCH_SCHEDULE_ENABLED` OFF · không contract kỹ thuật nào đổi. Hai slice thêm **bề mặt API**, không thêm surface người dùng chạm được.
+>
+> 🔴 **As-built boundary — đo lại `main@2cd52ce` (06/08/2026). Đọc mục này TRƯỚC đoạn `784bc8d` ngay dưới; đoạn đó đã mục ở phần migration và test.**
+> **30 migrations (`0000`–`0029`)**, không phải 25: thêm `0025`/`0026` (rename CHECK, RENAME-only, zero predicate change), `0027` (`resolve_tenant_status_locked` — SECURITY DEFINER read-only), `0028`/`0029` (**DD-29 capability registry**, expand→contract: `plans.plan_key` về 2-tier `free|host_pro`, `entitlements` sang shape `{"capabilities": {...}}`, repoint `tenant_provision()`).
+> **Trục Tests `STALE`:** canonical runner chưa chạy lại kể từ `3d75c90` (561 workspace + 13 validator, 29/07). Static tại `2cd52ce` = **655** (core 132 · db 346 · web 137 · bot 40), 33 file — static là **tín hiệu drift**, không phải số test; đừng cộng `655 + 9` rồi khai.
+> **Đã merge nhưng CODE DARK, đừng đọc là feature:** `authorizeTenantAction` (`ddb69a9`) — 0 production caller; DD-29 registry — **0 TypeScript đọc `entitlements`/`capabilities`**, nên chưa entitlement nào được thực thi dù `tenant_provision()` đã repoint; role `chat_definer` provision bằng bootstrap script (`infra/postgres-init/02-chat-definer.sql`), không phải migration.
+> **Không đổi:** 10 API route (8 auth + 2 onboarding), 0 route nghiệp vụ, **0 màn FE**, Chat 0 migration/API/UI. 12 FE **design spec** đã commit tại `docs/channels/web/FE/` nhưng là spec Draft, không phải màn đã build — FE vẫn HOLD.
+>
+> **As-built boundary — `main@784bc8d` (28/07), historical:** 25 migrations (`0000`–`0024`); `0022`/`0023` + `apps/bot` đã có narrow worker claim/ack, dispatcher, queue provision/preflight và recovery schedule, nhưng `OUTBOX_DISPATCH_SCHEDULE_ENABLED` mặc định OFF và chưa có producer/projector nghiệp vụ thật. `0024` chỉ enforce `sessions_public_capacity_chk`. Last canonical aggregate: **32 test files / 537 workspace PASS** (core 132 · db 219 · web 146 · bot 40) + **13 validator PASS**; static cross-check **528 + 9 generated = 537**. Safari macOS/iOS M3 measurement đã pass, Google login vẫn OFF. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed; primary Chat plan v1.8 = `PLAN_READY` tại authority `90d292d`, nhưng từng slice còn strict `CODE_READY`. Không có chat/payment product runtime, migration, API hoặc UI.
+
+</details>
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/09/2026 | **3.2** | **Thêm §📍 Đọc nhanh + §📜; KHÔNG đổi contract kỹ thuật, KHÔNG re-pin số.** (1) **§📍**: bảng surface kỹ thuật (launch → phase-1 Messenger → **phase-2 native với 6 technical gate ĐO ĐƯỢC của DD-69**, chưa mục nào đóng) + **bảng 13 lớp thiết kế-vs-as-built @ `main@e235ea4`** (multi-tenant/RLS · data model + runner · auth web · session command · API surface · choke-point DD-56 · job runtime · fence · capability · identity/link code · i18n · liveness · deployment). (2) **§📜** gom nguyên văn ba khối as-built cũ (`0aff7ad` · `2cd52ce` · `784bc8d`). (3) Pointer `BRD.md` v3.10 · `PRD.md` v2.9; số đo trỏ `ROADMAP.md` §📍. (4) **Ghi lại một lệch phải owner xử:** **7** route đi qua choke-point tạm trong khi **DD-56 amendment #2 pin NĂM** — hai route guest-note chưa có decision riêng. |
 | 25/08/2026 | v3.1k | **Live-truth refresh header tại `1215a6a` (docs-only, phiên reconcile 25/08 — không đổi contract):** dòng Phiên bản hết mang note 06/08 đã stale 3 chỗ — (1) 30 → **34 migrations**, tail **`0033`** (`public_projection_fences` + guarded view + REVOKE base SELECT `public_sessions` khỏi `readonly`/`app` — DD-12 8a đã land `9da3021`); (2) `authorizeTenantAction` hết code-dark (caller: publish/announce); (3) DD-29 registry hết "0 TS đọc" — reader đầu tiên `resolveCapability()` `f2af39d` (chính nó vẫn 0 caller, wiring AWAIT slice auto-reconcile DD-114 D2.3). Trục Tests: authority 854+30 @ `93f1e93` (15/08), suite sau merge informal 919+30 — chưa re-pin. |
 | 25/08/2026 | v3.1j | **Mirror DD-115 (owner 25/08) — Membership; D1–D5 ✅, D6–D8 ⬜.** §11 thêm **Q16/Q17/Q18** cho đúng ba nhánh còn mở, vì cả ba là **ngoại lệ với luật đang active** chứ không phải chi tiết chưa viết: Q16 quyền vượt `slots_max` nghịch BL-SES-2/BL-CBF-3 (Tier C; kèm gap `court` **không tồn tại** trong `packages/db`, kèo chỉ có `slots_max`) · Q17 bind CK nghịch BL-PAY-5 FIFO · Q18 chặn ngoài bởi DD-82. Phần **đã chốt không tạo Open Question mới** vì nó không đụng bất biến nào: N-charge model **tái dùng nguyên** `charges`/`payment_allocations` (0 thay đổi schema tiền — quan hệ nhiều-allocation-một-`bank_transaction` vốn đã có), config gói là bảng mới có version, `memberships` **0 thay đổi cột**. Docs-only; không đổi contract, không migration, không runtime. |
 | 06/08/2026 | v3.1i | **Live-truth reconcile tại `main@2cd52ce` (docs-only, không đổi contract kỹ thuật):** as-built boundary §Scope và §6.4 đều thêm block đo lại — 25→**30 migrations** (`0025`/`0026` rename CHECK, `0027` definer read-only, `0028`/`0029` DD-29 registry expand→contract); trục Tests đánh dấu **`STALE`** vì canonical runner chưa chạy lại kể từ `3d75c90` (561+13), static tại `2cd52ce` = 655 chỉ là tín hiệu drift và **không được cộng `655 + 9`** rồi khai. Ghi rõ hai thứ đã merge nhưng **code dark**: `authorizeTenantAction` 0 production caller, DD-29 registry 0 TypeScript đọc `entitlements`/`capabilities`. 12 FE design spec đã commit nhưng **0 màn FE** và FE vẫn HOLD — spec ≠ màn đã build. Đoạn `784bc8d` cũ giữ verbatim, gắn nhãn historical. |

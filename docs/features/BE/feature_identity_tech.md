@@ -3,7 +3,7 @@
 > **Canonical phase:** P3.5
 > **Version:** 1.15 · 2026-08-25
 > **Status:** Identity implementation contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped schema/code pending identity/channel build slices
-> **Implementation:** Not started — bảng `link_codes`/`merge_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** In progress (code dark) — bảng `link_codes`/`merge_*` có sẵn; **`0034`** person-account resolver (SECURITY DEFINER, REVOKE khỏi app/app_worker/readonly) và **`0043`** `link_code_issue`/`link_code_salt`/`link_code_consume` + `_link_code_retention` 30 ngày **đã merge**, kèm wrapper `packages/db/src/identity.ts` (mã 18 ký tự Crockford **tách đôi**: 8 ký tự lookup HMAC, verifier scrypt **async** phủ toàn bộ ⇒ attempt cap mới có hiệu lực thật). **0 caller production**, env `LINK_CODE_LOOKUP_HMAC_KEY` chưa đặt vì 0 reader; merge service/route `/link` chưa build (đo 2026-09-15 tại `e235ea4`) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_identity.md`
 > **References:** `../../product/TDD.md` §3.2–3.4/§4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-13/DD-37/DD-50/DD-53/**DD-65..68** · `feature_player_messenger_tech.md`
 

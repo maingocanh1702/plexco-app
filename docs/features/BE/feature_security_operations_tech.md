@@ -3,7 +3,7 @@
 > **Canonical phase:** Cross-cutting / P6
 > **Version:** 2.7 · 2026-08-10
 > **Status:** Reviewed
-> **Implementation:** In progress — RLS/HR1, tenant-integrity and `0022`/`0023` narrow audited job controls đã thực thi; remaining production/ops gates chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
+> **Implementation:** In progress — RLS/HR1, tenant-integrity và `0022`/`0023` narrow audited job controls đã thực thi; **bundle hardening audit 06–07/09 đã merge** (đo 2026-09-15 tại `e235ea4`): `0037` tenant_provision tự scope RLS · `0038` subscriptions qua definer · `0039` definer `search_path`/tenant assert + ledger FK + link_codes DD-50 · `0040` idle TTL web session · `0041` `job_worker_heartbeats` + HEALTHCHECK theo tuổi file · `0042` DROP `auth_login_telegram` + trigger; phía web: cookie `__Host-`/`__Secure-` (xoá bằng **SET rỗng**, không `delete()`), CSRF constant-time, RS256 pin, DB-role assert chặn pool tới khi verify xong, discovery route guard, CSP nonce **sau flag `CSP_SCRIPT_NONCE_ENABLED` (OFF)**; `entrypoint.sh` đối chiếu `DB_EXPECTED_ROLE` (**opt-in**). Remaining production/ops gates (pen-test, PITR drill, observability) chưa · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_security_operations.md`
 > **References:** `../../product/TDD.md` §4/6/7/10 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37/DD-65
 

@@ -3,25 +3,68 @@
 
 ---
 
+## 📍 Đọc nhanh (cập nhật 15/09/2026 · `main@e235ea4`)
+
+**Plexco là gì, ba câu:** platform **2 phía** cho thể thao phong trào đa môn — **host** quản lý kèo/tiền, **player** tìm và tham gia kèo. Host làm việc ngay trong **Zalo/Messenger** *và* trên **web app**, hai chiều đồng bộ. Plexco **không cầm tiền của player**: CLB thu tiền, Plexco ghi nhận + đối soát.
+
+**Surface — thứ tự đã chốt, không được sắp xếp lại:**
+
+| Mốc | Surface | Căn cứ |
+|---|---|---|
+| **Launch** | **Web app (installable/offline) + Zalo bot ra mắt SONG SONG** — web hết vai "fallback" | DD-113 (owner 22/08) |
+| **Phase-1** | + **Facebook Messenger** (chặn bởi App Review Meta) | DD-114 · DD-37 |
+| **Phase-2** | **App native iOS (App Store) + Android (CH Play)** — tái dùng API/contract, **không phải bản sao màn web**; mở bằng gate có ngưỡng **đo được** ở §14 | DD-69 (direction ✅, build TBD) |
+
+> ⚠️ Chữ **"PWA"** chỉ được dùng khi manifest + service worker đã land (DD-113); tới lúc đó viết **"web app installable/offline"**.
+
+**Phạm vi đọc ở HAI LỚP, đừng gộp (DD-114):**
+
+- **§5.1 = MVP scope** — sản phẩm cuối cùng, *có* kể marketplace/cross-club join + in-app Chat.
+- **Phase-1 = 7 nhóm feature** (signin Google · create club · link club ⇄ Zalo bot · link account ⇄ Zalo · sync + owner config public/private · session management/detail + nhắc nợ/confirm/gạch nợ · settings/privacy). **Discovery/search và in-app Chat NGOÀI phase-1.**
+- **Launch (DD-113) là SUBSET của phase-1 — đúng 5 khối:** signin/signup · link Zalo bot · session management · session detail · settings.
+- **Hai hard dependency của phase-1, cả hai owner-final và cả hai đắt:** (a) vế tiền chỉ mở cho `host_pro` ⇒ **billing lifecycle (P5) vào phase-1**; (b) **DD-29 capability wiring** phải thật (hôm nay `resolveCapability()` vẫn **0 caller production**).
+- **Gate A3 legal (PII data-class matrix) là BLOCKER của phase-1**, không còn là lead-time item.
+
+**Module ↔ phase-1 ↔ launch ↔ as-built** — as-built đo tại `main@e235ea4` (15/09), nguồn là `ROADMAP.md` §📍/§📊. Ô 🟡 ở cột phase-1/launch là **suy từ DD-113/DD-114**, chưa có DD nói thẳng — owner có thể sửa ô.
+
+| Module (§7) | Phase-1 | Launch | As-built @ `e235ea4` |
+|---|---|---|---|
+| **M0** Nền tảng đa tenant & 3 tầng | ✅ nền | ✅ nền | ✅ RLS + `0000`–`0014` + fence `0033`/`0036` |
+| **M1** Onboarding & Tenant (host) | ✅ | ✅ | 🟡 `POST /api/onboarding/start` + `GET /readiness`; `PATCH /club` ⬜ |
+| **M2** Quản lý kèo (host) | ✅ | ✅ | 🟡 **8 command + 7 route BE**; **0 màn FE** |
+| **M3** Discovery & Join (marketplace) | ❌ ngoài | ❌ | ⬜ |
+| **M4** Sync Engine | ✅ | 🟡 | 🟡 infra `0022`/`0023`; **schedule OFF**, projector còn stub |
+| **M5** Tiền, đối soát & gạch nợ | ✅ | 🟡 | ⬜ |
+| **M6** Nhắc & Xác nhận | ✅ | 🟡 | ⬜ |
+| **M7** Định danh & Gộp người chơi | ✅ | 🟡 | 🟡 `0034` + `0043` merged nhưng **code dark** (0 caller) |
+| **M8** Player View (person-self) | 🟡 | 🟡 | ⬜ |
+| **M9** Billing (host) | ✅ *(hard-dep a)* | ❌ | 🟡 `0027`–`0029` nền authz; entitlement nửa dark |
+| **M10** In-app Chat | ❌ ngoài | ❌ | 🟢 DB root `0030`–`0032`, **0 service** |
+| **M11** Tài khoản & Cài đặt | ✅ | ✅ | ⬜ |
+
+**Bốn bất biến của sản phẩm (không DD nào dưới đây được phá):**
+
+1. **Không cầm tiền player** — CLB thu, Plexco ghi nhận + đối soát (áp cho cả Membership, DD-115).
+2. **Đa tenant cô lập fail-closed** — RLS là nền, không phải lớp phụ.
+3. **Đa môn từ schema**, không hard-code cầu lông.
+4. **Chat-first + web sync hai chiều** — web không phải bản sao read-only của bot.
+
+**Ngoài phạm vi (§5.2, rút gọn):** thanh toán in-app/ví/thẻ · đặt sân/quản lý lịch sân · **app native trong phase-1** · Telegram (DD-37) · Membership (ngoài phase-1, DD-114 D7).
+
+> 📌 **Tiến độ/build KHÔNG đọc ở đây.** BRD giữ *scope*; số đo thật ở `ROADMAP.md` **§📍** (`main@e235ea4`, 15/09): 45 migration · 15 API route (**7 nghiệp vụ**) · 1490 test workspace + 128 readiness/kit · **0 màn FE** · FE **PENDING** (DD-116; carve-out DD-119 chưa ratify).
+
+
 ## 0. Document Control
 
 | | |
 |---|---|
 | **Sản phẩm** | **Plexco** — platform quản lý hoạt động thể thao cho **host** và khám phá/tham gia kèo cho **player**, đa môn (cầu lông, pickleball, tennis, bóng đá…), hoạt động ngay trong Zalo/Facebook Messenger + web app đồng bộ |
-| **Phiên bản** | v3.9r — audit 06/09 (chữ "PWA"→"web app" theo DD-113; OQ public/private §5.2 đã CHỐT (b) 26/08) · v3.9q — mirror **DD-115** (Membership gói hội viên 30 ngày: D1–D5 ✅ chốt hình dạng dữ liệu/đường tiền/cách tính; D6–D8 ⬜ blocker — thêm FR-5.6, §5.2 callout, §9.3 phân định doanh thu, OD-23) · v3.9p — mirror DD-113 (launch = PWA + Zalo bot song song, native ngoài launch; §14 gate native có ngưỡng đo được) + **DD-114** (phase-1 = 7 nhóm feature, launch là subset; §5.1 phân lớp *MVP scope* vs *phase-1*). Runtime/code vẫn absent; DD-32 Option D giữ nguyên. |
-| **Ngày** | 06/09/2026 *(dòng ngày từng đứng ở 28/07 qua nhiều bản; đính chính cùng v3.9r)* |
+| **Phiên bản** | **v3.10** — 15/09: thêm **§📍 Đọc nhanh** (bản dựng 08/09 chưa bao giờ được commit) + **§📜** gom khối lịch sử; re-pin as-built về `main@e235ea4`; pointer `PRD.md` v2.9 · `TDD.md` v3.2. **Không đổi scope, không đổi DD nào** · v3.9r — audit 06/09 (chữ "PWA"→"web app" theo DD-113; OQ public/private §5.2 đã CHỐT (b) 26/08) · v3.9q — mirror **DD-115** (Membership gói hội viên 30 ngày: D1–D5 ✅ chốt hình dạng dữ liệu/đường tiền/cách tính; D6–D8 ⬜ blocker — thêm FR-5.6, §5.2 callout, §9.3 phân định doanh thu, OD-23) · v3.9p — mirror DD-113 (launch = PWA + Zalo bot song song, native ngoài launch; §14 gate native có ngưỡng đo được) + **DD-114** (phase-1 = 7 nhóm feature, launch là subset; §5.1 phân lớp *MVP scope* vs *phase-1*). Runtime/code vẫn absent; DD-32 Option D giữ nguyên. |
+| **Ngày** | 15/09/2026 *(dòng ngày từng đứng ở 28/07 qua nhiều bản; đính chính ở v3.9r)* |
 | **Người soạn** | Ngoc-Anh |
 | **Người duyệt (approvers)** | Ngoc-Anh (solo founder, self-approved) |
 | **Trạng thái** | Draft để review |
-| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.8m · `TDD.md` v3.1h · `../standards/decisions.md` **v2.11 current mirror** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 chỉ là broader `DEFERRED_PROPOSAL`; decision không phải plan/runtime) · `../features/FE/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8 · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` |
-
-> BRD là nguồn sự thật cho **product scope & business rules**; PRD cho hành vi/user flow; TDD cho implementation contract; ROADMAP cho thứ tự và tiến độ. Security constraints đã chốt trong AUDIT là bắt buộc. Khi có conflict cùng một chủ đề: **BRD → PRD → TDD → ROADMAP**; riêng security: quy tắc nghiêm ngặt hơn giữa BRD và AUDIT thắng.
->
-> ⚠️ **v3.4 là pivot scope lớn.** Các doc downstream đã sync: `PRD.md` (bỏ Telegram flow, thêm chat/settings/gender-pricing), `TDD.md` (bỏ Telegram adapter, thêm Messenger projector vào MVP, chat model, gender price model), `../standards/decisions.md` (đã ghi: **DD-37** channel pivot ✅, **DD-38** chat ✅ và **DD-39** giá theo giới tính ✅ trong scope phase-1 nhưng schema/code còn pending, **DD-40** mark-paid thủ công ✅; cập nhật **DD-13** Google auth ✅, **DD-33** Facebook link phase-1, **DD-09** thay bằng DD-37). Xem §16.
->
-> **Ranh giới hiện hành (28/07, `main@784bc8d`):** current decision mirror v2.11 phản ánh owner-final authority đã chốt DD-86/DD-91–95: **in-app Chat là primary daily player surface mục tiêu**, còn Zalo/Messenger là acquisition, external touchpoint và fallback; exact `/pay` là requester-only deterministic overlay. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed. Primary plan **v1.8** đạt `PLAN_READY` tại authority `90d292d` với closure 12/12; đây không phải `CODE_READY`, không authorize worktree, và từng slice vẫn nợ strict verdict riêng. Repo vẫn chưa có chat/payment product runtime, migration, API hoặc UI. Shared job core + dispatcher + scheduler đã merge, song schedule mặc định **OFF**, chưa có producer/projector nghiệp vụ; migration `0024` mới chỉ khóa bất biến public-session capacity. Safari macOS/iOS M3 đã đo pass, nhưng Google login vẫn **chưa enable**. Docs/research/infra này không được dùng để claim `IMPLEMENTED` hay `ENABLE_READY`.
->
-> **DD-32 Option D (28/07, docs target):** Zalo/Messenger cho browse session mà chưa link Account; final confirm mới áp link-or-pay. Free/full/approval giữ timing riêng; paid+qualified Account link được pay later; paid+unlinked chỉ active sau verified full payment trong hold 15 phút. Intent/hold/finalizer chưa có runtime.
+| **Tài liệu liên quan** | `../strategy/saas-implementation-plan.md` (kiến trúc) · `PRD.md` v2.9 · `TDD.md` v3.2 · `../standards/decisions.md` **v2.11 current mirror** (DD-32/DD-86/DD-91–95 `DECISION_FINAL`; DD-88 chỉ là broader `DEFERRED_PROPOSAL`; decision không phải plan/runtime) · `../features/FE/feature_channel_booking_funnel.md` · `../features/BE/feature_channel_booking_funnel_tech.md` · `../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8 · `../research/auto-debt-reconciliation-regional-availability-2026-07-27.md` |
 
 ---
 
@@ -462,10 +505,31 @@ Player-side premium (lọc/nhắc kèo nâng cao), promote kèo trên marketplac
 
 ---
 
+## 📜 Lịch sử & ranh giới trước đó
+
+> Dời nguyên văn từ đầu file ở v3.10 (15/09/2026) — **không đổi một chữ nào**; đọc §📍 trước, mục này chỉ để tra ngược.
+
+<details>
+<summary><b>Ranh giới 28/07 (<code>main@784bc8d</code>), pivot v3.4, DD-32 Option D — nguyên văn</b></summary>
+
+> BRD là nguồn sự thật cho **product scope & business rules**; PRD cho hành vi/user flow; TDD cho implementation contract; ROADMAP cho thứ tự và tiến độ. Security constraints đã chốt trong AUDIT là bắt buộc. Khi có conflict cùng một chủ đề: **BRD → PRD → TDD → ROADMAP**; riêng security: quy tắc nghiêm ngặt hơn giữa BRD và AUDIT thắng.
+>
+> ⚠️ **v3.4 là pivot scope lớn.** Các doc downstream đã sync: `PRD.md` (bỏ Telegram flow, thêm chat/settings/gender-pricing), `TDD.md` (bỏ Telegram adapter, thêm Messenger projector vào MVP, chat model, gender price model), `../standards/decisions.md` (đã ghi: **DD-37** channel pivot ✅, **DD-38** chat ✅ và **DD-39** giá theo giới tính ✅ trong scope phase-1 nhưng schema/code còn pending, **DD-40** mark-paid thủ công ✅; cập nhật **DD-13** Google auth ✅, **DD-33** Facebook link phase-1, **DD-09** thay bằng DD-37). Xem §16.
+>
+> **Ranh giới hiện hành (28/07, `main@784bc8d`):** current decision mirror v2.11 phản ánh owner-final authority đã chốt DD-86/DD-91–95: **in-app Chat là primary daily player surface mục tiêu**, còn Zalo/Messenger là acquisition, external touchpoint và fallback; exact `/pay` là requester-only deterministic overlay. Assistant Product/BE v0.18, Chat Product/BE v0.15/v0.23 và Notifications Product/BE v3.11 đều Reviewed. Primary plan **v1.8** đạt `PLAN_READY` tại authority `90d292d` với closure 12/12; đây không phải `CODE_READY`, không authorize worktree, và từng slice vẫn nợ strict verdict riêng. Repo vẫn chưa có chat/payment product runtime, migration, API hoặc UI. Shared job core + dispatcher + scheduler đã merge, song schedule mặc định **OFF**, chưa có producer/projector nghiệp vụ; migration `0024` mới chỉ khóa bất biến public-session capacity. Safari macOS/iOS M3 đã đo pass, nhưng Google login vẫn **chưa enable**. Docs/research/infra này không được dùng để claim `IMPLEMENTED` hay `ENABLE_READY`.
+>
+> **DD-32 Option D (28/07, docs target):** Zalo/Messenger cho browse session mà chưa link Account; final confirm mới áp link-or-pay. Free/full/approval giữ timing riêng; paid+qualified Account link được pay later; paid+unlinked chỉ active sau verified full payment trong hold 15 phút. Intent/hold/finalizer chưa có runtime.
+
+
+</details>
+
+---
+
 ## Changelog
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/09/2026 | **v3.10** | **Thêm §📍 Đọc nhanh + §📜, re-pin as-built `0aff7ad` → `main@e235ea4`. KHÔNG đổi scope, KHÔNG đổi trạng thái DD nào.** (1) **§📍** ngay dưới header: sản phẩm 3 câu · bảng surface (launch = web app + Zalo bot song song → phase-1 +Messenger → phase-2 native, DD-113/DD-114/DD-69) · hai lớp phạm vi MVP vs phase-1 vs launch + 2 hard dependency + blocker A3 · **bảng M0–M11 ↔ phase-1 ↔ launch ↔ as-built** · 4 bất biến · ngoài phạm vi · con trỏ tiến độ về `ROADMAP.md` §📍. Ô 🟡 cột phase-1/launch là **suy** từ DD-113/DD-114, owner có thể sửa. (2) **§📜** cuối file gom 4 khối ranh giới 28/07 (`main@784bc8d`) + pivot v3.4 + DD-32 Option D — **dời nguyên văn**, không sửa chữ. (3) Pointer `PRD.md` v2.9 · `TDD.md` v3.2. (4) Bản §📍 dựng ngày 08/09 **chưa bao giờ được commit** (đo 15/09: `grep -c '📍' BRD.md` = 0) — đây là lần dựng lại. |
 | 06/09/2026 | v3.9r | **Audit code ↔ docs 06/09 (`../sessions/2026-09-06-repo-audit.md`) — hai đính chính, không đổi scope/FR/BR.** (1) **Chữ "PWA"→"web app"** ở §1 lộ trình, §5.2 out-of-scope, FR-8 Home hub, §14 (phase-2 + gate), §16 OD-20 và §5.2 callout DD-113 — theo đúng lệnh DD-113 ("chưa có installable shell thì cấm dùng chữ PWA"; `apps/web` chưa có manifest/SW). **Giữ** ở tên metric gate native ("PWA install rate") và ở changelog (lịch sử). (2) §5.2 callout: OQ public/private **đã chốt (b) 26/08** (DD-114 D3) — câu "⬜ chưa chốt … AWAIT" đứng sai 11 ngày. Row backlog `web-pwa-manifest-and-service-worker` là điều kiện để dùng lại chữ PWA. |
 | 25/08/2026 | v3.9q | **Mirror DD-115 (owner 25/08) — Membership gói hội viên 30 ngày; D1–D5 ✅, D6–D8 ⬜.** Thêm **FR-5.6** vào MODULE 5 kèm bốn ràng buộc thuộc *yêu cầu* chứ không phải triển khai: thu-một-lần hiện thực bằng **N charge + 1 CK phân bổ** nên **FR-5.3 giữ nguyên** (không có charge tổng — `charges` bị khoá theo kèo bởi NOT NULL + UNIQUE `(tenant,session,player)` + composite FK `0019`); số buổi **đếm từ kèo thật** vì cửa sổ 30 ngày không chia hết cho 7 (đo trên chính ví dụ requirement: start 23/08/2026 ⇒ T3+T5 = 8 nhưng T7+CN = **9**, cả tháng = **17** chứ không phải 16); config có **version** và chu kỳ **đóng băng giá** (BL-SES-3 không hồi tố); quyền lợi **fail-closed**. Thêm callout §5.2 pin rõ membership **không phá** ranh giới *platform không cầm tiền player* (tiền chảy player → CLB) và **nằm ngoài phase-1** (DD-114 D7) / ngoài launch (DD-113 D3). Thêm callout §9.3 phân định: membership **không phải dòng doanh thu của Plexco** mà là feature làm `host_pro` đáng tiền hơn; muốn thu phí trên gói là **DD mới**. Thêm **OD-23** vào §16. ⬜ **Ghi rõ hai ngoại lệ chưa chốt vì chúng đụng luật đang active, không được để mâu thuẫn ngầm:** D7 vs FR-5.4 FIFO (CK trả gói của người đang nợ cũ bị hút vào nợ cũ) · D6 vs luật capacity một-nguồn (kèm gap: khái niệm "sân" chưa tồn tại, kèo chỉ có tổng số chỗ). D8 chặn ngoài bởi DD-82 (Tournament v1 không đụng tiền). **Không authorize** code/migration/slice/enablement; D6+D7 chưa chốt thì FR-5.6 chưa chạy được đầu-cuối. |
 | 22/08/2026 | v3.9p | **Mirror DD-114 ✅ (owner 22/08) — phase-1 = 7 nhóm feature, launch (DD-113) là subset.** §5.1 thêm khối ⚙️ phân lớp rõ **MVP scope (§5.1, có discovery + in-app Chat)** vs **phase-1 (DD-114, không có hai thứ đó)** — khác lớp chứ không mâu thuẫn, và khi xung đột thì DD-114 thắng cho slice phase-1. Ghi hai hard dependency: **(a)** vế tiền chỉ `host_pro` ⇒ **billing P5 vào phase-1** + **reader đầu tiên của DD-29 entitlement registry** (vẫn 0 TS đọc tại `a151b15`), auto-reconcile cần đủ chuỗi gate và cấm quảng bá như capability toàn cầu; **(b)** toggle public/private chỉ mở **sau `public_projection_fences`** (nợ DD-12) vì private/cancel hiện còn lộ tới khi projector async chạy. Thêm: **A3 legal thành blocker phase-1**; ⬜ OQ public-khi-chưa-có-discovery. ⚠️ **Không đổi:** FR/BR, §5.2, canonical P-number, DD-32 Option D, runtime vẫn 0. |

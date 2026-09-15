@@ -12,13 +12,13 @@
 > **Runtime status:** SessionService và các command routes đã có (BE Implementation header); route đọc session, projector thật và web UI chưa build. Occupancy helper hiện tại đếm active + guest notes; pending/payment holds chưa build. FE design vẫn Draft/PENDING, không authorize render.
 > **Negative scope:** Không tự build payment widget; không rewrite charge history; tuân theo guard capacity của `UpdateSession` hiện tại, không tự tính capacity ở client
 
-> 📍 **Đọc nhanh (2026-09-08 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_session_management.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@0aff7ad`, 04/09).
+> 📍 **Đọc nhanh (cập nhật 2026-09-15 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_session_management.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@e235ea4`, 15/09).
 >
 > **Phase-1 (DD-114):** ✅ nhóm 6 · **Launch (DD-113):** ✅ **khối 3/5 session management + 4/5 session detail**
 >
 > **Surface:** Web app **PWA** (Next.js App Router, installable/offline — DD-113 launch = PWA + Zalo bot song song) — `/dashboard/sessions*` là màn lõi launch; **app native iOS (App Store) + Android (CH Play) là phase-2** (DD-69): tái dùng API/contract, màn native thiết kế lại theo platform sau gate, **không phải bản sao màn này**.
 >
-> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@0aff7ad`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: 🟢 6/6 command + 5/6 route đã có — FE chỉ còn chờ gỡ PENDING.
+> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@e235ea4`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: 🟢 **8 command + 7 route** đã có (thêm `createGuestNote`/`deleteGuestNote` + 2 route guest-note, `0044`) — FE chỉ còn chờ gỡ PENDING.
 
 ---
 
@@ -524,4 +524,7 @@ tắt `Ready → Success` bỏ qua Submitting.
 _FE Design Spec v0.2 · 2026-07-31 · Source: feature_session_management.md v2.17 + feature_payment_reconcile.md v1.10_
 _FE Design Spec v0.3 · 2026-08-07 · Δ v0.2→v0.3 (chỉ thêm, không sửa nội dung cũ): Draft Submitting + Success surface (§3 form tạo) và 4 section Draft cuối file (Analytics · State Machine · AC · Testing) · Source: Sporta FE porting analysis 2026-08-07_
 _FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `0aff7ad`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._
+
+_Re-pin 2026-09-15 (cấu trúc, không bump version): as-built @ `e235ea4` theo `ROADMAP.md` v3.17 §📍 — 8 command session · 7 route nghiệp vụ · **0 màn FE**; FE PENDING (DD-116) không đổi, DD-119 vẫn 🟡 chưa ratify. Nội dung thiết kế không đổi._
+
 _FE Design Spec — 2026-09-16: mirror the landed `UpdateSession` capacity guard and exact route error pairs; correct the current runtime header and preserve Draft/PENDING plus UNPINNED omission. No future occupancy policy or runtime change._

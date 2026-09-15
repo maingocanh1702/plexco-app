@@ -3,7 +3,7 @@
 > **Canonical phase:** P0–P1
 > **Version:** 1.7 · 2026-08-10
 > **Status:** Implementation contract reconciled to TDD v3.1 / decisions v1.45; P0–P1 live schema/migrations/tests remain the reality baseline, DD-15/DD-65..68 migration pending
-> **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations 0000–0013 trên `main` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
+> **Implementation:** Implemented (foundation) — RLS + tenantRepo + migrations `0000`–`0013` trên `main`; từ đó thêm `0037` (`tenant_provision`/`tenant_ids_for_person` tự scope RLS context) và `ensureTenantContext` **set-or-assert** fail-closed (D-15: không im lặng re-scope sang tenant khác). Tail hiện hành **`0044`**, tổng 45 migration (đo 2026-09-15 tại `e235ea4`) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_multi_tenant.md`
 > **References:** `../../product/TDD.md` §3.1–3.4 · `../../research/player-side-saas-AUDIT.md` · `../../standards/decisions.md` DD-37/**DD-65..68** · `feature_identity_tech.md` · `feature_tenant_routing_authz_tech.md`
 

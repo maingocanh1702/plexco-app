@@ -12,13 +12,13 @@
 > **Negative scope:** Không suy money state client-side; auto-reconcile chỉ hiện khi entitlement và availability đều PASS
 > **Liên quan (2026-08-07, decisions v2.18):** Statement/export sao kê = surface riêng thuộc **DD-97** (per-session view free · kỳ + export `host_pro`) — KHÔNG thuộc file này. Mark-paid/`cash|waiver` surface (SourceBadge §4 hiện dead enum) = **DD-99 P4**, prioritized sau P2; refund-on-cancel tách chờ refund policy. **DD-98** NP-1/NP-4 chặn custom split per player + auto-archive nợ theo tuổi.
 
-> 📍 **Đọc nhanh (2026-09-08 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_payment_reconcile.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@0aff7ad`, 04/09).
+> 📍 **Đọc nhanh (cập nhật 2026-09-15 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_payment_reconcile.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@e235ea4`, 15/09).
 >
 > **Phase-1 (DD-114):** ✅ nhóm 6 gạch nợ (thủ công) · **Launch (DD-113):** 🟡 mark-paid thủ công trong session management; auto-reconcile ⬜
 >
 > **Surface:** Web app **PWA** (Next.js App Router, installable/offline — DD-113 launch = PWA + Zalo bot song song) — `/dashboard/payments`; **app native iOS (App Store) + Android (CH Play) là phase-2** (DD-69): tái dùng API/contract, màn native thiết kế lại theo platform sau gate, **không phải bản sao màn này**.
 >
-> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@0aff7ad`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: ledger `0019`/`0020`; route mark-paid ⬜.
+> **Trạng thái:** FE design Draft · 🔴 **FE PENDING (DD-116)** — không mở page/component, không track `.pen` tới khi đủ cả ba vế (chọn đúng một `.pen` canonical · tracked trên `main` · owner ký gate DD-81) · as-built @ `main@e235ea4`: **0 màn FE nối API** (đúng 1 `apps/web/app/page.tsx`); BE: ledger `0019`/`0020`; route mark-paid ⬜.
 
 ---
 
@@ -477,4 +477,6 @@ Không tồn tại state `reversed` cho bank transaction (§6 · §7) — revers
 _FE Design Spec v0.5 · 2026-08-10 · Source: feature_payment_reconcile.md v1.10_
 _Changelog v0.5: A-grade upgrade — bổ sung 4-state cụ thể cho Ledger (Loading skeleton/Ready/Empty mới dùng/Empty đã khớp/Error), thêm edge cases 10→12, dark mode tokens, tab empty sub-state._
 _Changelog v0.3 → v0.4 (2026-08-07): Thêm happy empty state + 4 section Draft — nguồn: Sporta FE porting analysis 2026-08-07_
-_FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `0aff7ad`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._
+_FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `e235ea4`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._
+
+_Re-pin 2026-09-15 (cấu trúc, không bump version): as-built @ `e235ea4` theo `ROADMAP.md` v3.17 §📍 — 8 command session · 7 route nghiệp vụ · **0 màn FE**; FE PENDING (DD-116) không đổi, DD-119 vẫn 🟡 chưa ratify. Nội dung thiết kế không đổi._
