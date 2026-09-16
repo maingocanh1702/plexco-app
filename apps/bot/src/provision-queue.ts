@@ -20,18 +20,26 @@ export async function provisionQueue(migrationUrl: string): Promise<void> {
     throw new Error("provisionQueue: DATABASE_URL_MIGRATION is required (DDL-owner role)");
   }
 
-  // 1+2. Let pg-boss construct/upgrade its schema and queues under the DDL role.
-  const boss = new PgBoss({ connectionString: migrationUrl, schema: QUEUE_SCHEMA });
-  await boss.start();
-  for (const queue of QUEUES) {
-    await boss.createQueue(queue);
-  }
-  await boss.stop({ graceful: true, wait: true });
-
-  // 3. Runtime grants: app_worker gets DML only — no CREATE, no ownership.
+  // Own the connection even if pg-boss startup fails before stop() can close its pool.
   const client = new pg.Client({ connectionString: migrationUrl });
-  await client.connect();
   try {
+    await client.connect();
+    const boss = new PgBoss({
+      db: { executeSql: (text, values) => client.query(text, values) },
+      schema: QUEUE_SCHEMA,
+      schedule: false,
+      supervise: false,
+    });
+    try {
+      await boss.start();
+      for (const queue of QUEUES) {
+        await boss.createQueue(queue);
+      }
+    } finally {
+      await boss.stop({ graceful: true, wait: true });
+    }
+
+    // Runtime grants: app_worker gets DML only — no CREATE, no ownership.
     await client.query(`GRANT USAGE ON SCHEMA ${QUEUE_SCHEMA} TO app_worker`);
     await client.query(
       `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ${QUEUE_SCHEMA} TO app_worker`,
