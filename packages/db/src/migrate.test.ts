@@ -4434,8 +4434,35 @@ describe("0045 guest-note tenant context", () => {
             [tenantA, person],
           );
         });
-        await ctx.superuser.query("ALTER ROLE app WITH PASSWORD 'plexco_test_app'");
-        await ctx.superuser.query("ALTER ROLE readonly WITH PASSWORD 'plexco_test_readonly'");
+        // Exercise a shared-role catalog conflict without racing another suite by timing.
+        const passwordSetter = vi
+          .spyOn(ctx.superuser, "query")
+          .mockRejectedValueOnce(new Error("tuple concurrently updated"));
+        try {
+          for (const [role, password] of [
+            ["app", "plexco_test_app"],
+            ["readonly", "plexco_test_readonly"],
+          ] as const) {
+            for (let attempt = 0; ; attempt++) {
+              try {
+                await ctx.superuser.query(`ALTER ROLE ${role} WITH PASSWORD '${password}'`);
+                break;
+              } catch (error) {
+                if (String(error).includes("tuple concurrently updated") && attempt < 10) {
+                  await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+                  continue;
+                }
+                throw error;
+              }
+            }
+          }
+          expect(passwordSetter).toHaveBeenNthCalledWith(
+            2,
+            "ALTER ROLE app WITH PASSWORD 'plexco_test_app'",
+          );
+        } finally {
+          passwordSetter.mockRestore();
+        }
         const app = await connect(url(ctx.dbName, "app", "plexco_test_app"));
         clients.push(app);
         const readonly = await connect(url(ctx.dbName, "readonly", "plexco_test_readonly"));
