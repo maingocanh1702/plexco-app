@@ -373,7 +373,11 @@ export function boundRawErrorCode(raw: unknown): string {
   } else if (raw === null) {
     text = "[null]";
   } else {
-    text = `[${Array.isArray(raw) ? "array" : typeof raw}]`;
+    try {
+      text = `[${Array.isArray(raw) ? "array" : typeof raw}]`;
+    } catch {
+      text = `[${typeof raw}]`; // Array.isArray throws on revoked proxies.
+    }
   }
   return text.length <= RAW_ERROR_CODE_LOG_MAX
     ? text
@@ -391,52 +395,77 @@ export function normalizeErrorCode(raw: unknown): string {
 }
 
 export function completionArgs(
-  outcome: DeliveryOutcome,
+  outcome: unknown,
   now: () => Date = () => new Date(),
 ): {
   result: "delivered" | "retry" | "dlq";
   nextAttemptAt: Date | null;
   providerRef: string | null;
   errorCode: string | null;
-  rawErrorCode: string | null;
+  rawErrorCode: unknown;
 } {
-  switch (outcome.result) {
-    case "delivered":
-      return {
-        result: "delivered",
-        nextAttemptAt: null,
-        providerRef: outcome.providerRef ?? null,
-        errorCode: null,
-        rawErrorCode: null,
-      };
-    case "retry": {
-      const at = outcome.nextAttemptAt;
-      const future =
-        at instanceof Date && !Number.isNaN(at.getTime()) && at.getTime() > now().getTime();
-      if (!future) {
+  const malformed = {
+    result: "dlq" as const,
+    nextAttemptAt: null,
+    providerRef: null,
+    errorCode: "malformed_outcome",
+    rawErrorCode: null,
+  };
+  try {
+    if (typeof outcome !== "object" || outcome === null || Array.isArray(outcome)) {
+      return malformed;
+    }
+    const value = outcome as Record<string, unknown>;
+    switch (value.result) {
+      case "delivered": {
+        const providerRef = value.providerRef;
+        if (providerRef != null && (typeof providerRef !== "string" || providerRef.includes("\0")))
+          return malformed;
+        return {
+          result: "delivered",
+          nextAttemptAt: null,
+          providerRef: providerRef ?? null,
+          errorCode: null,
+          rawErrorCode: null,
+        };
+      }
+      case "retry": {
+        const rawAt = value.nextAttemptAt;
+        // Keep projector-owned Date methods out of pg's later parameter serialization.
+        const at = rawAt instanceof Date ? new Date(Date.prototype.getTime.call(rawAt)) : null;
+        const future = at !== null && !Number.isNaN(at.getTime()) && at.getTime() > now().getTime();
+        const rawErrorCode = value.errorCode;
+        if (!future) {
+          return {
+            result: "dlq",
+            nextAttemptAt: null,
+            providerRef: null,
+            errorCode: "malformed_next_attempt",
+            rawErrorCode: typeof rawErrorCode === "string" ? rawErrorCode : null,
+          };
+        }
+        return {
+          result: "retry",
+          nextAttemptAt: at,
+          providerRef: null,
+          errorCode: normalizeErrorCode(rawErrorCode),
+          rawErrorCode,
+        };
+      }
+      case "dlq": {
+        const rawErrorCode = value.errorCode;
         return {
           result: "dlq",
           nextAttemptAt: null,
           providerRef: null,
-          errorCode: "malformed_next_attempt",
-          rawErrorCode: typeof outcome.errorCode === "string" ? outcome.errorCode : null,
+          errorCode: normalizeErrorCode(rawErrorCode),
+          rawErrorCode,
         };
       }
-      return {
-        result: "retry",
-        nextAttemptAt: at,
-        providerRef: null,
-        errorCode: normalizeErrorCode(outcome.errorCode),
-        rawErrorCode: outcome.errorCode,
-      };
+      default:
+        return malformed;
     }
-    case "dlq":
-      return {
-        result: "dlq",
-        nextAttemptAt: null,
-        providerRef: null,
-        errorCode: normalizeErrorCode(outcome.errorCode),
-        rawErrorCode: outcome.errorCode,
-      };
+  } catch {
+    return malformed;
   }
 }
