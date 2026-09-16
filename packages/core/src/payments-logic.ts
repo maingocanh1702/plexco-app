@@ -13,6 +13,14 @@
 import { parseMoney } from "./dates.js";
 import type { PlayerId } from "./matching.js";
 
+/** Reject malformed operands and unsafe arithmetic before proposing payment decisions. */
+function safeNonnegativeInteger(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("Payment amounts and counts must be nonnegative safe integers");
+  }
+  return value;
+}
+
 /** One open (not fully settled) debt of a member, oldest-first per BL-PAY-5. */
 export interface OpenDebt {
   /** ISO session date "YYYY-MM-DD" — FIFO/today ordering key */
@@ -115,11 +123,14 @@ export function orderManualSettlementDebts<T extends OpenDebt>(debts: T[], today
  * 220k with two 110k sessions -> 2; 110k -> 1; 150k -> 0 (no clean split).
  */
 export function coverDebts(debts: OpenDebt[], amount: number): number {
+  safeNonnegativeInteger(amount);
   let acc = 0;
   let count = 0;
   for (const d of debts) {
-    if (!d.fee) return 0; // can't price a session without a fee
-    acc += d.fee;
+    if (d.fee == null) return 0; // can't price a session without a fee
+    const fee = safeNonnegativeInteger(d.fee);
+    if (fee === 0) return 0;
+    acc = safeNonnegativeInteger(acc + fee);
     count++;
     if (acc === amount) return count;
     if (acc > amount) return 0;
@@ -146,8 +157,11 @@ export function planBuddyExpansion(opts: {
   buddyPlayerIds: PlayerId[];
 }): { expected: number; preselected: PlayerId[] } | null {
   const { fee, amount, ownCovered, payerPlayerId, buddyPlayerIds } = opts;
+  safeNonnegativeInteger(amount);
+  safeNonnegativeInteger(ownCovered);
   if (ownCovered > 0) return null; // own debts already account for the money exactly
   if (payerPlayerId == null) return null; // payer isn't an unpaid player here
+  if (fee != null) safeNonnegativeInteger(fee);
   if (!fee || amount <= 0 || amount % fee !== 0) return null;
   const expected = amount / fee;
   if (expected < 2) return null; // only the multi-person case
@@ -175,6 +189,7 @@ export function inferBuddyGroupByAmount(opts: {
   hosts: { hostMemberId: PlayerId; buddyMemberIds: PlayerId[] }[];
 }): PlayerId[] | null {
   const { expected, unpaidMemberIds, hosts } = opts;
+  safeNonnegativeInteger(expected);
   if (expected < 2) return null;
 
   const groups: PlayerId[][] = [];
@@ -230,6 +245,9 @@ export function classifyAmount(
   amount: number,
   matchCount: number,
 ): AmountDecision {
+  safeNonnegativeInteger(amount);
+  safeNonnegativeInteger(matchCount);
+  if (fee != null) safeNonnegativeInteger(fee);
   const cleanCount = fee && amount > 0 && amount % fee === 0 ? amount / fee : 0;
   if (matchCount === 0) return { kind: "no-match", expected: cleanCount };
 
@@ -239,7 +257,7 @@ export function classifyAmount(
 
   // The money can't cover everyone the names matched -> never auto-mark.
   // (210k for 2×110k, or 100k for 1×110k.)
-  if (amount < fee * matchCount) {
+  if (amount < safeNonnegativeInteger(fee * matchCount)) {
     return { kind: "too-few-money", expected: Math.floor(amount / fee) };
   }
   // a clean multiple bigger than the names found -> someone paid for others too.
@@ -257,7 +275,9 @@ export function classifyAmount(
  */
 export function effectiveFee(d: OpenDebt): number | null {
   if (d.fee === null || d.fee === undefined) return null;
-  return Math.max(0, d.fee - (d.paid_amount ?? 0));
+  const fee = safeNonnegativeInteger(d.fee);
+  const paid = safeNonnegativeInteger(d.paid_amount ?? 0);
+  return Math.max(0, fee - paid);
 }
 
 /**
@@ -266,12 +286,13 @@ export function effectiveFee(d: OpenDebt): number | null {
  * remaining balances. Debts with remaining=0 are skipped (already settled).
  */
 export function coverRemaining(debts: OpenDebt[], amount: number): number {
+  safeNonnegativeInteger(amount);
   let acc = 0;
   for (let i = 0; i < debts.length; i++) {
     const rem = effectiveFee(debts[i]!);
     if (rem === null) return 0;
     if (rem === 0) continue;
-    acc += rem;
+    acc = safeNonnegativeInteger(acc + rem);
     if (acc === amount) return i + 1; // original-array prefix (includes skipped zero-rem rows)
     if (acc > amount) return 0;
   }
@@ -288,6 +309,7 @@ export function coverRemaining(debts: OpenDebt[], amount: number): number {
 export type DepositClassification = "exact" | "partial" | "over" | "unknown-fee";
 
 export function classifyDeposit(d: OpenDebt, amount: number): DepositClassification {
+  safeNonnegativeInteger(amount);
   const rem = effectiveFee(d);
   if (rem === null) return "unknown-fee";
   if (amount === rem) return "exact";
@@ -324,7 +346,10 @@ export function classifyIncoming(debts: OpenDebt[], amount: number): IncomingCla
   if (prefix > 0) return { kind: "exact", settleCount: prefix };
   // No exact prefix → classify by total remaining; a still-unknown fee means we can't total it.
   if (debts.some((d) => effectiveFee(d) === null)) return { kind: "unknown-fee" };
-  const totalRemaining = debts.reduce((sum, d) => sum + effectiveFee(d)!, 0);
+  const totalRemaining = debts.reduce(
+    (sum, d) => safeNonnegativeInteger(sum + effectiveFee(d)!),
+    0,
+  );
   if (totalRemaining <= 0) return { kind: "already-paid", overpay: Math.max(0, amount) };
   if (amount > totalRemaining) return { kind: "over", overpay: amount - totalRemaining };
   return { kind: "under" };
@@ -348,10 +373,14 @@ export type CoverageClass =
   | { kind: "under"; totalRemaining: number };
 
 export function classifyCoverage(debts: OpenDebt[], amount: number): CoverageClass {
+  safeNonnegativeInteger(amount);
   if (debts.length === 0 || debts.some((d) => effectiveFee(d) === null)) {
     return { kind: "unknown-fee" };
   }
-  const totalRemaining = debts.reduce((sum, d) => sum + effectiveFee(d)!, 0);
+  const totalRemaining = debts.reduce(
+    (sum, d) => safeNonnegativeInteger(sum + effectiveFee(d)!),
+    0,
+  );
   if (amount === totalRemaining) return { kind: "exact", totalRemaining };
   if (amount > totalRemaining)
     return { kind: "over", totalRemaining, overpay: amount - totalRemaining };
