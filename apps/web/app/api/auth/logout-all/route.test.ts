@@ -63,6 +63,7 @@ beforeAll(async () => {
   // at the throwaway db AS the app role BEFORE the route first calls appDb().
   originalDatabaseUrl = process.env.DATABASE_URL;
   process.env.DATABASE_URL = testUrl(base, { db: DB_NAME, user: "app", password: APP_PW });
+  vi.stubEnv("DB_EXPECTED_ROLE", "app");
 }, 120_000);
 
 afterAll(async () => {
@@ -73,6 +74,74 @@ afterAll(async () => {
   await admin?.close();
   if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
   else process.env.DATABASE_URL = originalDatabaseUrl;
+  vi.unstubAllEnvs();
+});
+
+describe("appDb role gate — real pg Pool and Drizzle", () => {
+  const roleSql = "SELECT current_user AS u, session_user AS s";
+  const appRoles = [{ u: "app", s: "app" }];
+
+  it("allows native Promise query and checkout as app", async () => {
+    const pool = appDb().pool;
+    expect((await pool.query(roleSql)).rows).toEqual(appRoles);
+    const client = await pool.connect();
+    try {
+      expect((await client.query(roleSql)).rows).toEqual(appRoles);
+    } finally {
+      client.release();
+    }
+  });
+
+  it("preserves parameterized callback query and callback checkout/release", async () => {
+    const pool = appDb().pool;
+    const queryCallback = vi.fn();
+    const rows = await new Promise<unknown[]>((resolve, reject) => {
+      const returned = pool.query("SELECT $1::int AS n", [7], (error, result) => {
+        queryCallback();
+        if (error) reject(error);
+        else resolve(result.rows);
+      });
+      expect(returned).toBeUndefined();
+    });
+    expect(rows).toEqual([{ n: 7 }]);
+    expect(queryCallback).toHaveBeenCalledOnce();
+    const checkoutCallback = vi.fn();
+    const roles = await new Promise<unknown[]>((resolve, reject) => {
+      const returned = pool.connect((error, client, release) => {
+        checkoutCallback();
+        if (error) return reject(error);
+        if (!client) return reject(new Error("pool returned no client"));
+        client.query(roleSql).then(
+          (result) => {
+            release();
+            resolve(result.rows);
+          },
+          (failure) => {
+            release(failure);
+            reject(failure);
+          },
+        );
+      });
+      expect(returned).toBeUndefined();
+    });
+    expect(roles).toEqual(appRoles);
+    expect(checkoutCallback).toHaveBeenCalledOnce();
+  });
+
+  it("releases Drizzle commits/rollbacks and preserves native SQL errors", async () => {
+    const db = appDb();
+    const committed = await db.db.transaction((tx) => tx.execute(roleSql));
+    expect(committed.rows).toEqual(appRoles);
+    await expect(
+      db.db.transaction(async (tx) => {
+        expect((await tx.execute(roleSql)).rows).toEqual(appRoles);
+        throw new Error("intentional rollback");
+      }),
+    ).rejects.toThrow("intentional rollback");
+    await expect(db.pool.query("SELECT 1 / 0")).rejects.toMatchObject({ code: "22012" });
+    expect((await db.pool.query(roleSql)).rows).toEqual(appRoles);
+    expect(db.pool.idleCount).toBe(db.pool.totalCount);
+  });
 });
 
 async function seedAccountWithSession(

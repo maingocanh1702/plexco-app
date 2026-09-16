@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
+import { callbackify } from "node:util";
 import { getLang, t } from "@plexco/core/i18n";
 import { cookies } from "next/headers";
 import { createDb, resolveWebSession, type DbHandle, type ResolvedSession } from "@plexco/db";
@@ -63,38 +64,44 @@ export function appDb(): DbHandle {
 }
 
 /**
- * Make every pool.query / pool.connect await the role check first. The check itself is handed the
- * ORIGINAL, ungated query function, or it would wait on its own promise forever. Drizzle runs
- * through this same pool, so gating the two entry points covers `handle.db` as well.
- * Promise form only — nothing in this repo passes node-pg's callback argument, and a callback
- * caller would bypass the gate, so it is rejected outright rather than silently let through.
+ * Native pool.query uses callback-style pool.connect internally. Gate checkout only, preserving
+ * both APIs. The probe uses the original checkout and client.query to avoid waiting on itself.
+ * Only a verified mismatch poisons the handle; an unavailable probe can retry on the next request.
  */
 function gateHandleOnRoleAssert(db: DbHandle, expected: string): void {
-  const pool = db.pool as unknown as {
-    query: (...a: unknown[]) => unknown;
-    connect: (...a: unknown[]) => unknown;
+  const rawConnect = db.pool.connect.bind(db.pool);
+  let ready: Promise<void> | null = null;
+  const ensureReady = (): Promise<void> => {
+    if (!ready) {
+      const attempt = assertRuntimeDbRole(db, expected, async (sql) => {
+        const client = await rawConnect();
+        let failed = true;
+        try {
+          const result = await client.query(sql as string);
+          failed = false;
+          return result;
+        } finally {
+          client.release(failed);
+        }
+      }).then((ok) => {
+        if (!ok)
+          throw new Error(dbRoleViolation ?? "DATABASE_URL role check failed — refusing to serve");
+      });
+      ready = attempt;
+      void attempt.catch(() => {
+        if (!dbRoleViolation && ready === attempt) ready = null;
+      });
+    }
+    return ready;
   };
-  const rawQuery = pool.query.bind(db.pool) as (...a: unknown[]) => Promise<unknown>;
-  const rawConnect = pool.connect.bind(db.pool) as (...a: unknown[]) => Promise<unknown>;
-  const ready = assertRuntimeDbRole(db, expected, rawQuery).then((ok) => {
-    if (!ok)
-      throw new Error(dbRoleViolation ?? "DATABASE_URL role check failed — refusing to serve");
-  });
-  ready.catch(() => {}); // the rejection is re-thrown to every gated caller below; don't warn twice
-  const gate =
-    (raw: (...a: unknown[]) => Promise<unknown>) =>
-    (...args: unknown[]) => {
-      if (typeof args[args.length - 1] === "function") {
-        return Promise.reject(
-          new Error(
-            "appDb(): callback-style pool access is not supported while the role gate is armed",
-          ),
-        );
-      }
-      return ready.then(() => raw(...args));
-    };
-  pool.query = gate(rawQuery);
-  pool.connect = gate(rawConnect);
+  const checkWithCallback = callbackify(ensureReady);
+  db.pool.connect = ((callback?: Parameters<typeof rawConnect>[0]) => {
+    if (!callback) return ensureReady().then(() => rawConnect());
+    checkWithCallback((error) => {
+      if (error) Reflect.apply(callback, undefined, [error]);
+      else rawConnect(callback);
+    });
+  }) as typeof db.pool.connect;
 }
 
 /** Exported for tests; production reaches it only through appDb(). */
@@ -118,9 +125,8 @@ export async function assertRuntimeDbRole(
     }
     return true;
   } catch (error) {
-    dbRoleViolation = "DATABASE_URL role check failed — refusing to serve";
     log.error("db.role.check_failed", { error });
-    return false;
+    throw new Error("DATABASE_URL role check failed — refusing to serve", { cause: error });
   }
 }
 
