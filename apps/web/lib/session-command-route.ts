@@ -468,6 +468,7 @@ const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   // roster is present (DD-117 / edge #5), and the client's remedy is a review workflow that does
   // not exist yet, so nothing about it is retryable.
   ["CANCEL_REQUIRES_REVIEW", 400],
+  ["CAPACITY_BELOW_OCCUPANCY", 409],
   ["CAPACITY_BELOW_ROSTER", 409],
   ["COMMAND_ID_CONFLICT", 409],
   ["INVALID_TIME_RANGE", 400],
@@ -520,6 +521,10 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "Kèo này cần được xem xét trước khi đóng hoặc huỷ.",
       "This session needs review before it can be closed or cancelled.",
     ],
+  ],
+  [
+    "CAPACITY_BELOW_OCCUPANCY",
+    ["Sức chứa nhỏ hơn số chỗ đang được sử dụng.", "Capacity is below the occupied slots."],
   ],
   [
     "CAPACITY_BELOW_ROSTER",

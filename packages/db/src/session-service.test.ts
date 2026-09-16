@@ -1800,6 +1800,36 @@ describe("updateSession", () => {
       [sessionId],
     );
 
+  async function addGuest(
+    tenantId: string,
+    sessionId: string,
+    playerId: string,
+    commandId = cmdId(),
+  ) {
+    const actor = await row(
+      `SELECT m.person_id FROM players p JOIN memberships m ON m.id = p.membership_id WHERE p.id = $1`,
+      [playerId],
+    );
+    return createGuestNote(ctx.appDb.db, {
+      tenantId,
+      commandId,
+      actorPersonId: actor.person_id as string,
+      input: { sessionId, guestName: "Guest" },
+    });
+  }
+
+  const capacityState = async (tenantId: string, sessionId: string) => ({
+    session: await sessionState(sessionId),
+    notes: await rows(`SELECT * FROM session_guest_notes WHERE session_id = $1 ORDER BY id`, [
+      sessionId,
+    ]),
+    events: await updatedEvents(sessionId),
+    commands: await rows(
+      `SELECT command_id, command_type, result_ref FROM processed_commands WHERE tenant_id = $1 ORDER BY command_id`,
+      [tenantId],
+    ),
+  });
+
   // Project a session into the public read model as the async projector would, so the guarded
   // view public_session_share_v serves it (a live, non-expired row). DD-12 fence test scaffolding.
   async function projectToPublic(sessionId: string, tenantId: string): Promise<void> {
@@ -2003,6 +2033,134 @@ describe("updateSession", () => {
     expect(await sessionState(sessionId)).toMatchObject({ version, slots_max: 8 });
     expect(await updatedEvents(sessionId)).toHaveLength(0);
   });
+
+  it.each([
+    { active: 1, cap: 1, code: "CAPACITY_BELOW_OCCUPANCY" },
+    { active: 1, cap: 2, code: "CAPACITY_BELOW_OCCUPANCY" },
+    { active: 2, cap: 1, code: "CAPACITY_BELOW_ROSTER" },
+  ])(
+    "U-CAPACITY: $active active players and two guests refuse cap $cap with $code, zero mutation",
+    async ({ active, cap, code }) => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId, { slotsMax: active + 2 });
+      const playerId = await seedActivePlayer(tenantId, sessionId);
+      if (active === 2) await seedActivePlayer(tenantId, sessionId);
+      await addGuest(tenantId, sessionId, playerId);
+      await addGuest(tenantId, sessionId, playerId);
+      const before = await capacityState(tenantId, sessionId);
+      await expectUpdateReject(
+        () =>
+          update(tenantId, { sessionId, expectedVersion: version, slotsMax: cap, area: "Changed" }),
+        code,
+      );
+      expect(await capacityState(tenantId, sessionId)).toEqual(before);
+    },
+  );
+
+  it.each([3, null])(
+    "U-CAPACITY: private cap %s accepts the exact occupied floor or unlimited; left/waitlisted players do not consume slots",
+    async (slotsMax) => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId);
+      const playerId = await seedActivePlayer(tenantId, sessionId);
+      await addGuest(tenantId, sessionId, playerId);
+      await addGuest(tenantId, sessionId, playerId);
+      for (const status of ["left", "waitlisted"]) {
+        const otherPlayer = await seedActivePlayer(tenantId, sessionId);
+        await ctx.owner.query(
+          `UPDATE players SET status = $2, waitlist_position = $3 WHERE id = $1`,
+          [otherPlayer, status, status === "waitlisted" ? 1 : null],
+        );
+      }
+      const before = await capacityState(tenantId, sessionId);
+      const result = await update(tenantId, { sessionId, expectedVersion: version, slotsMax });
+      expect(result).toMatchObject({ version: version + 1, replayed: false });
+      const after = await capacityState(tenantId, sessionId);
+      expect(after.session).toEqual({
+        ...before.session,
+        slots_max: slotsMax,
+        version: version + 1,
+      });
+      expect(after.notes).toEqual(before.notes);
+      expect(after.events).toHaveLength(before.events.length + 1);
+      expect(after.events.at(-1)).toMatchObject({
+        type: "session.updated",
+        sequence: 3,
+        payload: { changed_fields: ["slots_max"] },
+      });
+      expect(after.commands).toHaveLength(before.commands.length + 1);
+    },
+  );
+
+  it("U-CAPACITY: public unlimited still refuses with MISSING_DISCOVERY_FIELDS and preserves guests", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { visibility: "public" });
+    const playerId = await seedActivePlayer(tenantId, sessionId);
+    await addGuest(tenantId, sessionId, playerId);
+    const before = await capacityState(tenantId, sessionId);
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, slotsMax: null }),
+      "MISSING_DISCOVERY_FIELDS",
+    );
+    expect(await capacityState(tenantId, sessionId)).toEqual(before);
+  });
+
+  it.each(["guest", "decrease"] as const)(
+    "U-CAPACITY-RACE: %s locks first; the competing guest/decrease command sees committed capacity",
+    async (first) => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId, { slotsMax: 2 });
+      const playerId = await seedActivePlayer(tenantId, sessionId);
+      const noteCommand = cmdId();
+      const updateCommand = cmdId();
+      const runGuest = () => addGuest(tenantId, sessionId, playerId, noteCommand);
+      const runDecrease = () =>
+        update(tenantId, { sessionId, expectedVersion: version, slotsMax: 1 }, updateCommand);
+      const holder = await ctx.appPool.connect();
+      const pending: Promise<unknown>[] = [];
+      try {
+        await holder.query("BEGIN");
+        await holder.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+        await holder.query(`SELECT id FROM sessions WHERE id = $1 FOR UPDATE`, [sessionId]);
+        const holderPid = Number(
+          (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows[0].pid,
+        );
+        const ordered = first === "guest" ? [runGuest, runDecrease] : [runDecrease, runGuest];
+        pending.push(ordered[0]!().catch((error: unknown) => error));
+        await waitUntilSomeoneBlockedByHolder(holderPid);
+        pending.push(ordered[1]!().catch((error: unknown) => error));
+        await waitUntilSomeoneBlockedByHolder(holderPid, 2);
+        await holder.query("COMMIT");
+        const [winner, loser] = await Promise.all(pending);
+        expect(winner).not.toBeInstanceOf(Error);
+        expect(loser).toBeInstanceOf(
+          first === "guest" ? SessionUpdateError : SessionGuestNoteError,
+        );
+        expect((loser as SessionUpdateError | SessionGuestNoteError).code).toBe(
+          first === "guest" ? "CAPACITY_BELOW_OCCUPANCY" : "SESSION_FULL",
+        );
+        const after = await capacityState(tenantId, sessionId);
+        expect(after.session).toMatchObject({
+          slots_max: first === "guest" ? 2 : 1,
+          version: first === "guest" ? version : version + 1,
+        });
+        expect(after.notes).toHaveLength(first === "guest" ? 1 : 0);
+        expect(after.events).toHaveLength(1);
+        expect(after.events[0]).toMatchObject({
+          type: first === "guest" ? "guest_note.created" : "session.updated",
+          sequence: 1,
+        });
+        expect(after.commands).toHaveLength(1);
+        expect(after.commands[0]).toMatchObject({
+          command_id: first === "guest" ? noteCommand : updateCommand,
+        });
+      } finally {
+        await holder.query("ROLLBACK").catch(() => undefined);
+        await Promise.all(pending);
+        holder.release();
+      }
+    },
+  );
 
   it("U4: PRICE_CHANGE_REQUIRES_POLICY when price changes with an existing charge, zero mutation (fail-closed, DD-117)", async () => {
     const tenantId = await seedTenant("active", "active");

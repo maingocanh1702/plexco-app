@@ -40,6 +40,7 @@ describe("API_ERROR_CODES registry", () => {
     // would silently downgrade a spec-pinned response to a generic error.
     for (const code of [
       "CANCEL_REQUIRES_REVIEW",
+      "CAPACITY_BELOW_OCCUPANCY",
       "CAPACITY_BELOW_ROSTER",
       "COMMAND_ID_CONFLICT",
       "INVALID_TIME_RANGE",

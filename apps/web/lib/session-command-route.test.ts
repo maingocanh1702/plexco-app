@@ -646,6 +646,11 @@ describe("mapSessionCommandError", () => {
     ],
     [new SessionUpdateError("CAPACITY_BELOW_ROSTER", "internal"), "CAPACITY_BELOW_ROSTER", 409],
     [
+      new SessionUpdateError("CAPACITY_BELOW_OCCUPANCY", "internal"),
+      "CAPACITY_BELOW_OCCUPANCY",
+      409,
+    ],
+    [
       new SessionUpdateError("PRICE_CHANGE_REQUIRES_POLICY", "internal"),
       "PRICE_CHANGE_REQUIRES_POLICY",
       400,
@@ -788,6 +793,26 @@ describe("mapSessionCommandError", () => {
     expect(en).toBe("Session not found.");
     expect(vi).not.toBe(en);
   });
+
+  it.each([
+    ["vi", "Sức chứa nhỏ hơn số chỗ đang được sử dụng."],
+    ["en", "Capacity is below the occupied slots."],
+  ] as const)(
+    "returns the occupied-slot refusal in %s without internal details",
+    async (lang, message) => {
+      await runWithLang(lang, async () => {
+        const response = mapSessionCommandError(
+          new SessionUpdateError("CAPACITY_BELOW_OCCUPANCY", "internal guest count: 2"),
+        );
+        expect(response!.status).toBe(409);
+        expect((await envelope(response!)).error).toEqual({
+          code: "CAPACITY_BELOW_OCCUPANCY",
+          statusCode: 409,
+          message,
+        });
+      });
+    },
+  );
 
   it("resolves the INVALID_BODY collapse message per request too", async () => {
     const en = await runWithLang("en", async () => {

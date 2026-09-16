@@ -968,12 +968,10 @@ export async function announceSession(
  * edge #4 "existing charges" + DD-117 D3 fail-closed) is REFUSED with
  * PRICE_CHANGE_REQUIRES_POLICY (edge #4/#5) rather than resolved — applying an
  * impact_policy resolution is the payments/review_policy subsystem, which does not
- * exist on base. Capacity is
- * guarded by CAPACITY_BELOW_ROSTER only (DD-112 is OPEN — NO impact_policy
- * coupling, NO edge #4 edit); CAPACITY_BELOW_OCCUPANCY (live holds) and waitlist
- * promotion on a capacity increase (edge #15) are deferred — those subsystems do
- * not exist on base, so occupancy == the active roster and a capacity change
- * mutates only sessions.slots_max. The active-roster count and the charge-existence
+ * exist on base. Capacity first preserves the active-roster refusal, then checks
+ * shared occupancy, which includes guest notes. Live holds and waitlist promotion
+ * on a capacity increase (edge #15) remain unbuilt; a capacity change mutates only
+ * sessions.slots_max. The active-roster count and the charge-existence
  * probe read `players` / `charges` (both Drizzle-declared) under the tenant GUC (RLS
  * choke-point). An `open` session past its starts_at is a privileged correction, not
  * a normal update (edge #11 realized for update, the same past-boundary cancel uses
@@ -992,6 +990,7 @@ export type UpdateSessionErrorCode =
   | "SESSION_NOT_OPEN"
   | "STALE_VERSION"
   | "CAPACITY_BELOW_ROSTER"
+  | "CAPACITY_BELOW_OCCUPANCY"
   | "PRICE_CHANGE_REQUIRES_POLICY"
   | "MISSING_DISCOVERY_FIELDS"
   | "INVALID_TIME_RANGE"
@@ -1434,18 +1433,16 @@ export async function updateSession(
     }
 
     // Capacity guard (edge #16, DD-112): only when slots_max is being CHANGED to a
-    // FINITE value — reject if it would fall below the active roster. Reads the active
-    // roster through the SINGLE canonical helper `sessionActiveRosterCount` (the one
-    // source for the active-roster aggregate — also consumed by cancelSession's gate-#3
-    // refuse and its event), so capacity and cancellation can never drift on two formulas.
-    // Under the tenant GUC (RLS): players is tenant-scoped, and the session row is already
-    // locked in this tenant, so the count is this session's active roster only.
-    // CAPACITY_BELOW_OCCUPANCY (active + live holds) is NOT implemented: no booking-hold
-    // table exists on base, so occupancy == active roster.
+    // FINITE value. Preserve the active-only refusal first; then use the same occupancy
+    // helper as guest-note creation so existing guests also keep their slots. Both reads
+    // run under the tenant GUC and the session lock shared with guest-note mutations.
     if (changes.slotsMax !== undefined && changes.slotsMax !== null) {
       const activeCount = await sessionActiveRosterCount(tx, sessionId);
       if (changes.slotsMax < activeCount) {
         failUpdate("CAPACITY_BELOW_ROSTER", "slots_max cannot be below the active roster");
+      }
+      if (changes.slotsMax < (await sessionOccupancy(tx, sessionId))) {
+        failUpdate("CAPACITY_BELOW_OCCUPANCY", "slots_max cannot be below occupied slots");
       }
     }
 
