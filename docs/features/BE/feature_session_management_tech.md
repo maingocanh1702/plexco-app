@@ -364,7 +364,7 @@ CREATE INDEX idx_session_guest_notes_session ON session_guest_notes(session_id, 
 **PUT `/api/sessions/:id`** — `409` giảm capacity dưới active roster:
 
 ```json
-{ "data": null, "error": { "code": "CAPACITY_BELOW_ROSTER", "message": "Số chỗ không thể thấp hơn active roster", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
+{ "data": null, "error": { "code": "CAPACITY_BELOW_ROSTER", "message": "Sức chứa nhỏ hơn số người đã tham gia.", "statusCode": 409 }, "meta": { "requestId": "req_…" } }
 ```
 
 **PUT `/api/sessions/:id`** — Success (HTTP 200 — mutation áp dụng, `version` bump):
