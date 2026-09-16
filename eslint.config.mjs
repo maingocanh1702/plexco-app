@@ -15,6 +15,7 @@ export default tseslint.config(
       "*.mjs",
       "!eslint.config.mjs",
       ".autopilot/**",
+      "ap3/state/**",
       ".gitnexus/**",
       // Local throwaway probe harness: git-ignored via .probe/.gitignore, but ESLint does not read
       // nested .gitignore files, and the "*.mjs" entry above only matches the repo root. Without
