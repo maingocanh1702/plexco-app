@@ -41,7 +41,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 45; // 0000..0044 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema)
+const MIGRATION_COUNT = 46; // 0000..0045 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -732,7 +732,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0044_session_guest_notes.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0045_guest_note_tenant_context.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
@@ -4312,4 +4312,419 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
       await ctx.teardown();
     }
   }, 90_000);
+});
+
+describe("0045 guest-note tenant context", () => {
+  const migrationFile = "0045_guest_note_tenant_context.sql";
+  const signature = "public.guest_note_tenant_for_person(uuid,uuid,uuid)";
+  const proofSql = "SELECT public.guest_note_tenant_for_person($1, $2, $3) AS tenant";
+
+  it("fresh non-bypass owner migration installs the app-only proof and replays zero files", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0045_fresh");
+    try {
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        await ctx.bootstrapChatDefinerForOwner();
+        const first = await ctx.runMigration();
+        expect(first.applied).toHaveLength(MIGRATION_COUNT);
+        expect(first.applied.at(-1)).toBe(migrationFile);
+        expect(
+          (await ctx.ownerPool.query(`SELECT to_regprocedure($1)::text AS name`, [signature]))
+            .rows[0].name,
+        ).toBeTruthy();
+        expect((await ctx.runMigration()).applied).toEqual([]);
+      });
+    } finally {
+      await ctx.teardown();
+    }
+  }, 120_000);
+
+  it("upgrades retained data under FORCE RLS, preserves grants and restores caller scope on every path", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0045_upgrade");
+    const clients: pg.Client[] = [];
+    let ownerClient: pg.PoolClient | undefined;
+    try {
+      // Hold job outer/chat inner across both migration passes; reacquiring job while
+      // this fixture retains chat could deadlock another file waiting for chat.
+      await withJobDefinerLock(BASE!, async () => {
+        await ctx.bootstrapJobDefinerForOwner();
+        await ctx.bootstrapChatDefinerForOwner();
+        const originalReaddir = readdirImpl;
+        try {
+          readdirImpl = async (dir) =>
+            (await originalReaddir(dir)).filter((file) => file !== migrationFile);
+          const previous = await ctx.runMigration();
+          expect(previous.applied).toHaveLength(MIGRATION_COUNT - 1);
+          expect(previous.applied.at(-1)).toBe("0044_session_guest_notes.sql");
+        } finally {
+          readdirImpl = originalReaddir;
+        }
+        ownerClient = await ctx.ownerPool.connect();
+        const owner = ownerClient;
+        const scoped = async <T>(tenant: string, operation: () => Promise<T>): Promise<T> => {
+          await owner.query("BEGIN");
+          try {
+            await owner.query("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+            const result = await operation();
+            await owner.query("COMMIT");
+            return result;
+          } catch (error) {
+            await owner.query("ROLLBACK");
+            throw error;
+          }
+        };
+        const person = randomUUID();
+        const stranger = randomUUID();
+        const tenantA = randomUUID();
+        const tenantB = randomUUID();
+        const sessionA = randomUUID();
+        const sessionB = randomUUID();
+        await owner.query("INSERT INTO persons(id) VALUES ($1), ($2)", [person, stranger]);
+        await owner.query(
+          `INSERT INTO tenants(id, name, slug, status) VALUES
+           ($1, 'Context A', 'context-0045-a', 'active'), ($2, 'Context B', 'context-0045-b', 'active')`,
+          [tenantA, tenantB],
+        );
+        const sport = (await owner.query("SELECT id FROM sports WHERE key = 'badminton'")).rows[0]
+          .id;
+        for (const [tenant, session] of [
+          [tenantA, sessionA],
+          [tenantB, sessionB],
+        ] as const) {
+          await scoped(tenant, () =>
+            owner.query(
+              `INSERT INTO sessions(id, tenant_id, sport_id, starts_at, ends_at, timezone, status)
+             VALUES ($1, $2, $3, now() + interval '1 hour', now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')`,
+              [session, tenant, sport],
+            ),
+          );
+        }
+        await scoped(tenantA, async () => {
+          const member = (
+            await owner.query(
+              "INSERT INTO memberships(tenant_id, person_id) VALUES ($1, $2) RETURNING id",
+              [tenantA, person],
+            )
+          ).rows[0].id;
+          await owner.query(
+            "INSERT INTO players(tenant_id, session_id, membership_id) VALUES ($1, $2, $3)",
+            [tenantA, sessionA, member],
+          );
+          await owner.query(
+            `INSERT INTO session_guest_notes(tenant_id, session_id, created_by_person_id, guest_name)
+             VALUES ($1, $2, $3, 'Retained guest')`,
+            [tenantA, sessionA, person],
+          );
+          await owner.query(
+            `INSERT INTO processed_commands(tenant_id, command_id, command_type, result_ref)
+             VALUES ($1, 'retained-0045', 'CreateGuestNote', $2)`,
+            [
+              tenantA,
+              {
+                actorPersonId: person,
+                sessionId: sessionA,
+                noteId: randomUUID(),
+                remainingNotes: 2,
+              },
+            ],
+          );
+          await owner.query(
+            `INSERT INTO tenant_admins(tenant_id, platform, platform_user_lookup_hash, role)
+             VALUES ($1, 'web', $2, 'owner')`,
+            [tenantA, person],
+          );
+        });
+        await ctx.superuser.query("ALTER ROLE app WITH PASSWORD 'plexco_test_app'");
+        await ctx.superuser.query("ALTER ROLE readonly WITH PASSWORD 'plexco_test_readonly'");
+        const app = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+        clients.push(app);
+        const readonly = await connect(url(ctx.dbName, "readonly", "plexco_test_readonly"));
+        clients.push(readonly);
+        const worker = await ctx.connectAsWorker();
+        const adminBefore = (await app.query("SELECT * FROM tenant_ids_for_person($1)", [person]))
+          .rows;
+        expect(adminBefore).toEqual([{ tenant_id: tenantA, role: "owner" }]);
+        const retainedRows = () =>
+          scoped(tenantA, async () => ({
+            notes: (await owner.query("SELECT * FROM session_guest_notes ORDER BY id")).rows,
+            players: (await owner.query("SELECT * FROM players ORDER BY id")).rows,
+            commands: (await owner.query("SELECT * FROM processed_commands ORDER BY id")).rows,
+          }));
+        const dataBefore = await retainedRows();
+        // Restrict cluster catalog reads to this migration's principals. Unrelated
+        // test files may create their own fixture owner roles concurrently.
+        const principals = [
+          ctx.ownerRole,
+          "app",
+          "readonly",
+          "app_worker",
+          "job_definer",
+          "chat_definer",
+        ];
+        const catalog = async () => ({
+          ledgerIndexes: (
+            await owner.query(`SELECT indexname, indexdef FROM pg_indexes
+              WHERE schemaname = 'public' AND tablename = 'processed_commands' ORDER BY indexname`)
+          ).rows,
+          relations: (
+            await owner.query(`SELECT relname, relowner, relacl::text, relrowsecurity, relforcerowsecurity
+            FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r','p','S','v') ORDER BY relname`)
+          ).rows,
+          policies: (
+            await owner.query(
+              "SELECT * FROM pg_policies WHERE schemaname = 'public' ORDER BY tablename, policyname",
+            )
+          ).rows,
+          functions: (
+            await owner.query(`SELECT oid, proowner, proacl::text, prosecdef, provolatile, proconfig
+            FROM pg_proc WHERE pronamespace = 'public'::regnamespace AND proname <> 'guest_note_tenant_for_person' ORDER BY oid`)
+          ).rows,
+          roles: (
+            await owner.query(
+              "SELECT rolname, rolsuper, rolbypassrls, rolcreaterole, rolcanlogin FROM pg_roles WHERE rolname = ANY($1) ORDER BY rolname",
+              [principals],
+            )
+          ).rows,
+          memberships: (
+            await owner.query(
+              `SELECT roleid, member, grantor, admin_option, inherit_option, set_option FROM pg_auth_members
+            WHERE roleid IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1))
+               OR member IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1)) ORDER BY roleid, member, grantor`,
+              [principals],
+            )
+          ).rows,
+        });
+        const before = await catalog();
+        expect(before.ledgerIndexes).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ indexname: "processed_commands_tenant_id_command_id_key" }),
+          ]),
+        );
+        expect(
+          (await owner.query("SELECT to_regprocedure($1) AS proof", [signature])).rows[0].proof,
+        ).toBeNull();
+        // Keep a real ledger writer open during the upgrade. An ordinary CREATE INDEX
+        // would conflict with its RowExclusiveLock and fail the native lock timeout.
+        const writeLockSql = `SELECT EXISTS (SELECT 1 FROM pg_locks
+          WHERE pid = pg_backend_pid() AND relation = 'public.processed_commands'::regclass
+            AND mode = 'RowExclusiveLock' AND granted) AS held`;
+        const migrationUrl = new URL(ctx.ownerPool.options.connectionString!);
+        migrationUrl.searchParams.set(
+          "options",
+          [
+            migrationUrl.searchParams.get("options"),
+            "-c lock_timeout=500ms -c statement_timeout=15000ms",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+        await app.query("BEGIN");
+        try {
+          await app.query("SELECT set_config('app.tenant_id', $1, true)", [tenantA]);
+          await app.query(
+            `INSERT INTO processed_commands(tenant_id, command_id, command_type, result_ref)
+             VALUES ($1, $2, 'CreateGuestNote', '{}'::jsonb)`,
+            [tenantA, randomUUID()],
+          );
+          expect((await app.query(writeLockSql)).rows[0].held).toBe(true);
+          expect((await migrate(migrationUrl.toString())).applied).toEqual([migrationFile]);
+          expect((await app.query(writeLockSql)).rows[0].held).toBe(true);
+        } finally {
+          await app.query("ROLLBACK");
+        }
+        expect((await ctx.runMigration()).applied).toEqual([]);
+        expect(await catalog()).toEqual(before);
+        expect(await retainedRows()).toEqual(dataBefore);
+        expect((await app.query("SELECT * FROM tenant_ids_for_person($1)", [person])).rows).toEqual(
+          adminBefore,
+        );
+
+        for (const [connection, role] of [
+          [owner, ctx.ownerRole],
+          [app, "app"],
+        ] as const) {
+          expect(
+            (
+              await connection.query(`SELECT current_user, session_user, rolsuper, rolbypassrls
+            FROM pg_roles WHERE rolname = current_user`)
+            ).rows,
+          ).toEqual([
+            { current_user: role, session_user: role, rolsuper: false, rolbypassrls: false },
+          ]);
+          expect(
+            (await connection.query("SELECT count(*)::int AS count FROM players")).rows[0].count,
+          ).toBe(0);
+          expect(
+            (await connection.query(proofSql, [person, tenantA, sessionA])).rows[0].tenant,
+          ).toBe(tenantA);
+          expect(
+            (await connection.query("SELECT count(*)::int AS count FROM players")).rows[0].count,
+          ).toBe(0);
+        }
+        expect(
+          (
+            await owner.query(
+              `SELECT relname, relowner::regrole::text AS owner, relrowsecurity, relforcerowsecurity
+          FROM pg_class WHERE oid = ANY($1::regclass[]) ORDER BY relname`,
+              [["memberships", "players", "session_guest_notes", "processed_commands"]],
+            )
+          ).rows,
+        ).toEqual(
+          ["memberships", "players", "processed_commands", "session_guest_notes"].map(
+            (relname) => ({
+              relname,
+              owner: ctx.ownerRole,
+              relrowsecurity: true,
+              relforcerowsecurity: true,
+            }),
+          ),
+        );
+        expect(
+          (
+            await owner.query(
+              `SELECT proowner::regrole::text AS owner, prosecdef, provolatile, proconfig
+          FROM pg_proc WHERE oid = $1::regprocedure`,
+              [signature],
+            )
+          ).rows,
+        ).toEqual([
+          {
+            owner: ctx.ownerRole,
+            prosecdef: true,
+            provolatile: "v",
+            proconfig: ["search_path=public, pg_temp"],
+          },
+        ]);
+        const acl = (
+          await owner.query(
+            `SELECT a.grantee::regrole::text AS grantee, a.privilege_type, a.is_grantable
+          FROM pg_proc p, LATERAL aclexplode(p.proacl) a WHERE p.oid = $1::regprocedure ORDER BY grantee`,
+            [signature],
+          )
+        ).rows;
+        expect(acl).toEqual([
+          { grantee: "app", privilege_type: "EXECUTE", is_grantable: false },
+          { grantee: ctx.ownerRole, privilege_type: "EXECUTE", is_grantable: false },
+        ]);
+        await expect(app.query("SELECT * FROM persons LIMIT 1")).rejects.toMatchObject({
+          code: "42501",
+        });
+        for (const [connection, role] of [
+          [readonly, "readonly"],
+          [worker, "app_worker"],
+        ] as const) {
+          expect((await connection.query("SELECT current_user, session_user")).rows).toEqual([
+            { current_user: role, session_user: role },
+          ]);
+          await expect(
+            connection.query(proofSql, [person, tenantA, sessionA]),
+          ).rejects.toMatchObject({ code: "42501" });
+        }
+        await app.query("BEGIN");
+        try {
+          await app.query("SELECT set_config('app.tenant_id', $1, true)", [tenantB]);
+          for (let i = 0; i < 3; i++) {
+            const values: (string | null)[] = [person, tenantA, sessionA];
+            values[i] = null;
+            expect((await app.query(proofSql, values)).rows[0].tenant).toBeNull();
+            expect(
+              (await app.query("SELECT current_setting('app.tenant_id') AS tenant")).rows[0].tenant,
+            ).toBe(tenantB);
+          }
+        } finally {
+          await app.query("ROLLBACK");
+        }
+
+        const gucCase = async (prior: string | undefined, outcome: "match" | "deny" | "error") => {
+          const client = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+          try {
+            await client.query("BEGIN");
+            if (prior !== undefined)
+              await client.query("SELECT set_config('app.tenant_id', $1, true)", [prior]);
+            const previous = (
+              await client.query("SELECT current_setting('app.tenant_id', true) AS value")
+            ).rows[0].value;
+            if (outcome === "error") {
+              expect(
+                (
+                  await client.query("SELECT public.guest_context_test_catch($1,$2,$3) AS code", [
+                    person,
+                    tenantA,
+                    sessionA,
+                  ])
+                ).rows[0].code,
+              ).toBe("P0044");
+            } else {
+              expect(
+                (
+                  await client.query(proofSql, [
+                    outcome === "match" ? person : stranger,
+                    tenantA,
+                    sessionA,
+                  ])
+                ).rows[0].tenant,
+              ).toBe(outcome === "match" ? tenantA : null);
+            }
+            const after = (
+              await client.query("SELECT current_setting('app.tenant_id', true) AS value")
+            ).rows[0].value;
+            expect(after || null).toBe(previous || null);
+            if (previous !== null) expect(after).toBe(previous);
+            expect(
+              (
+                await client.query(
+                  "SELECT DISTINCT tenant_id::text AS tenant FROM sessions ORDER BY tenant",
+                )
+              ).rows,
+            ).toEqual(prior ? [{ tenant: prior }] : []);
+          } finally {
+            try {
+              await client.query("ROLLBACK");
+            } finally {
+              await client.end();
+            }
+          }
+        };
+        const priorValues = [undefined, "", tenantA, tenantB];
+        for (const prior of priorValues) {
+          await gucCase(prior, "match");
+          await gucCase(prior, "deny");
+        }
+        expect(
+          await Promise.allSettled([gucCase(tenantA, "match"), gucCase(tenantB, "match")]),
+        ).toEqual([
+          { status: "fulfilled", value: undefined },
+          { status: "fulfilled", value: undefined },
+        ]);
+        await owner.query(`CREATE FUNCTION public.guest_context_test_raise() RETURNS boolean LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'synthetic proof failure' USING ERRCODE='P0044'; END $$;
+          CREATE POLICY guest_context_test_fault ON public.players AS RESTRICTIVE FOR SELECT TO ${ctx.ownerRole}
+            USING (public.guest_context_test_raise());
+          CREATE FUNCTION public.guest_context_test_catch(p uuid, t uuid, s uuid) RETURNS text LANGUAGE plpgsql AS $$
+          DECLARE code text; BEGIN
+            BEGIN PERFORM public.guest_note_tenant_for_person(p,t,s);
+            EXCEPTION WHEN OTHERS THEN GET STACKED DIAGNOSTICS code = RETURNED_SQLSTATE; END;
+            RETURN code; END $$;
+          REVOKE ALL ON FUNCTION public.guest_context_test_catch(uuid,uuid,uuid) FROM PUBLIC;
+          GRANT EXECUTE ON FUNCTION public.guest_context_test_catch(uuid,uuid,uuid) TO app;`);
+        try {
+          await expect(app.query(proofSql, [person, tenantA, sessionA])).rejects.toMatchObject({
+            code: "P0044",
+          });
+          for (const prior of priorValues) await gucCase(prior, "error");
+        } finally {
+          await owner.query(`DROP POLICY guest_context_test_fault ON public.players;
+            DROP FUNCTION public.guest_context_test_raise(); DROP FUNCTION public.guest_context_test_catch(uuid,uuid,uuid);`);
+        }
+        expect(await catalog()).toEqual(before);
+      });
+    } finally {
+      try {
+        await Promise.all(clients.map((client) => client.end()));
+      } finally {
+        ownerClient?.release();
+        await ctx.teardown();
+      }
+    }
+  }, 120_000);
 });

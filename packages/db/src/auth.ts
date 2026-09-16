@@ -279,6 +279,37 @@ export async function tenantsForPerson(
   }));
 }
 
+/** Routing association for an authenticated server-side person; commands own permissions. */
+export async function guestNoteTenantForPerson(
+  pool: pg.Pool,
+  personId: string,
+  candidateTenantId: string,
+  sessionId: string,
+): Promise<string | null> {
+  if (
+    [personId, candidateTenantId, sessionId].some(
+      (id) => typeof id !== "string" || !UUID_RE.test(id),
+    )
+  ) {
+    return null;
+  }
+  const { rows } = await pool.query<{ tenant_id: unknown }>(
+    "SELECT public.guest_note_tenant_for_person($1::uuid, $2::uuid, $3::uuid) AS tenant_id",
+    [personId, candidateTenantId, sessionId],
+  );
+  const tenantId = rows[0]?.tenant_id;
+  if (rows.length === 1 && tenantId === null) return null;
+  if (
+    rows.length !== 1 ||
+    typeof tenantId !== "string" ||
+    !UUID_RE.test(tenantId) ||
+    tenantId !== candidateTenantId.toLowerCase()
+  ) {
+    throw new Error("Invalid guest-note tenant context result");
+  }
+  return tenantId;
+}
+
 /** Shared sliding-window limiter (all replicas hit one store). true = allowed. */
 export async function rateLimitCheck(
   pool: pg.Pool,

@@ -1,6 +1,6 @@
 import { createCipheriv, createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   armOauthCompletionHandoff,
   consumeOauthCompletionHandoff,
@@ -14,6 +14,7 @@ import {
   deriveProviderIdempotencyKey,
   InvalidEmailError,
   issueLoginState,
+  guestNoteTenantForPerson,
   normalizeEmail,
   provisionTenant,
   resolveWebSession,
@@ -23,6 +24,7 @@ import {
   tenantsForPerson,
 } from "./auth.js";
 import { setupRlsTestContext, type RlsTestContext, seedPersonAccount } from "./test-harness.js";
+import { createGuestNote, deleteGuestNote } from "./session-service.js";
 
 /** S4 auth invariants — run as the REAL `app` role via the 0012 fns. */
 
@@ -4278,4 +4280,346 @@ describe("auth-s4-d1b completion rotate × logout-all barrier (D1B-8)", () => {
       connB.release();
     }
   });
+});
+
+describe("guest-note tenant context: association is not mutation permission", () => {
+  const sessionA = randomUUID();
+  const sessionA2 = randomUUID();
+  const sessionB = randomUUID();
+  const people = {
+    active: randomUUID(),
+    left: randomUUID(),
+    waitlisted: randomUUID(),
+    creator: randomUUID(),
+    createReplay: randomUUID(),
+    deleteReplay: randomUUID(),
+    member: randomUUID(),
+    adminOnly: randomUUID(),
+    foreign: randomUUID(),
+    otherCommand: randomUUID(),
+    malformed: randomUUID(),
+  };
+  let creatorNote: string;
+  let deleteReplayNote: string;
+
+  beforeAll(async () => {
+    await ctx.owner.query(
+      `INSERT INTO persons(id, display_name) SELECT id, 'Guest context test' FROM unnest($1::uuid[]) AS id`,
+      [Object.values(people)],
+    );
+    for (const [session, tenant] of [
+      [sessionA, ctx.tenantA],
+      [sessionA2, ctx.tenantA],
+      [sessionB, ctx.tenantB],
+    ]) {
+      await ctx.owner.query(
+        `INSERT INTO sessions(id, tenant_id, sport_id, starts_at, ends_at, timezone, status)
+         VALUES ($1, $2, $3, now() + interval '1 hour', now() + interval '2 hours', 'Asia/Ho_Chi_Minh', 'open')`,
+        [session, tenant, ctx.badmintonSportId],
+      );
+    }
+    for (const [name, status, membershipStatus] of [
+      ["active", "active", "active"],
+      ["left", "left", "left"],
+      ["waitlisted", "waitlisted", "guest"],
+      ["createReplay", "active", "active"],
+      ["deleteReplay", "active", "active"],
+      ["foreign", "active", "active"],
+    ] as const) {
+      const tenant = name === "foreign" ? ctx.tenantB : ctx.tenantA;
+      const { rows } = await ctx.owner.query(
+        `INSERT INTO memberships(tenant_id, person_id, status) VALUES ($1, $2, $3) RETURNING id`,
+        [tenant, people[name], membershipStatus],
+      );
+      await ctx.owner.query(
+        `INSERT INTO players(tenant_id, session_id, membership_id, status, waitlist_position)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          tenant,
+          name === "foreign" ? sessionB : sessionA,
+          rows[0].id,
+          status,
+          status === "waitlisted" ? 1 : null,
+        ],
+      );
+    }
+    await ctx.owner.query(`INSERT INTO memberships(tenant_id, person_id) VALUES ($1, $2)`, [
+      ctx.tenantA,
+      people.member,
+    ]);
+    await ctx.owner.query(
+      `INSERT INTO tenant_admins(tenant_id, platform, platform_user_lookup_hash, role)
+       VALUES ($1, 'web', $2, 'owner')`,
+      [ctx.tenantA, people.adminOnly],
+    );
+    for (const person of [people.creator, people.deleteReplay]) {
+      const { rows } = await ctx.owner.query(
+        `INSERT INTO session_guest_notes(tenant_id, session_id, created_by_person_id, guest_name)
+         VALUES ($1, $2, $3, 'Synthetic guest') RETURNING id`,
+        [ctx.tenantA, sessionA, person],
+      );
+      if (person === people.creator) creatorNote = rows[0].id;
+      else deleteReplayNote = rows[0].id;
+    }
+  });
+
+  it.each(["active", "left", "waitlisted"] as const)(
+    "resolves a %s player without making them a tenant admin",
+    async (status) => {
+      await expect(tenantsForPerson(ctx.appPool, people[status])).resolves.toEqual([]);
+      await expect(
+        guestNoteTenantForPerson(ctx.appPool, people[status], ctx.tenantA, sessionA),
+      ).resolves.toBe(ctx.tenantA);
+      if (status !== "active") {
+        await expect(
+          createGuestNote(ctx.appDb.db, {
+            tenantId: ctx.tenantA,
+            commandId: randomUUID(),
+            actorPersonId: people[status],
+            input: { sessionId: sessionA, guestName: "Synthetic guest" },
+          }),
+        ).rejects.toMatchObject({ code: "PLAYER_NOT_ACTIVE" });
+      }
+    },
+  );
+
+  it("allows the creator to delete their note after their player row is absent", async () => {
+    await expect(
+      guestNoteTenantForPerson(ctx.appPool, people.creator, ctx.tenantA, sessionA),
+    ).resolves.toBe(ctx.tenantA);
+    const result = await deleteGuestNote(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      commandId: randomUUID(),
+      actorPersonId: people.creator,
+      input: { sessionId: sessionA, noteId: creatorNote },
+    });
+    expect(result).toMatchObject({ noteId: creatorNote, replayed: false });
+  });
+
+  it("does not substitute a generic tenant-admin grant for a session association", async () => {
+    await expect(tenantsForPerson(ctx.appPool, people.adminOnly)).resolves.toEqual([
+      { tenantId: ctx.tenantA, role: "owner" },
+    ]);
+    await expect(
+      guestNoteTenantForPerson(ctx.appPool, people.adminOnly, ctx.tenantA, sessionA),
+    ).resolves.toBeNull();
+  });
+
+  it("denies a non-UUID session candidate without a PostgreSQL cast failure", async () => {
+    await expect(
+      guestNoteTenantForPerson(ctx.appPool, people.active, ctx.tenantA, "not-a-uuid"),
+    ).resolves.toBeNull();
+  });
+
+  it("denies membership-only, foreign tenant/session/actor and unknown routing candidates", async () => {
+    for (const [actor, tenant, session] of [
+      [people.member, ctx.tenantA, sessionA],
+      [people.active, ctx.tenantB, sessionA],
+      [people.active, ctx.tenantA, sessionB],
+      [people.active, ctx.tenantA, sessionA2],
+      [people.foreign, ctx.tenantA, sessionA],
+      [people.active, randomUUID(), sessionA],
+      [people.active, ctx.tenantA, randomUUID()],
+      [randomUUID(), ctx.tenantA, sessionA],
+    ] as const) {
+      await expect(
+        guestNoteTenantForPerson(ctx.appPool, actor, tenant, session),
+      ).resolves.toBeNull();
+    }
+    await expect(
+      guestNoteTenantForPerson(ctx.appPool, people.active, ctx.tenantA.toUpperCase(), sessionA),
+    ).resolves.toBe(ctx.tenantA);
+  });
+
+  it("preserves actor-bound CREATE and DELETE retries when both note and player rows are gone", async () => {
+    const create = {
+      tenantId: ctx.tenantA,
+      commandId: randomUUID(),
+      actorPersonId: people.createReplay,
+      input: { sessionId: sessionA, guestName: "Synthetic replay guest" },
+    };
+    const remove = {
+      tenantId: ctx.tenantA,
+      commandId: randomUUID(),
+      actorPersonId: people.deleteReplay,
+      input: { sessionId: sessionA, noteId: deleteReplayNote },
+    };
+    const created = await createGuestNote(ctx.appDb.db, create);
+    const deleted = await deleteGuestNote(ctx.appDb.db, remove);
+    await ctx.owner.query(`DELETE FROM session_guest_notes WHERE id = $1`, [created.noteId]);
+    await ctx.owner.query(
+      `DELETE FROM players WHERE tenant_id = $1 AND membership_id IN
+       (SELECT id FROM memberships WHERE person_id = ANY($2::uuid[]))`,
+      [ctx.tenantA, [people.createReplay, people.deleteReplay]],
+    );
+    for (const actor of [people.createReplay, people.deleteReplay]) {
+      await expect(
+        guestNoteTenantForPerson(ctx.appPool, actor, ctx.tenantA, sessionA),
+      ).resolves.toBe(ctx.tenantA);
+      await expect(
+        guestNoteTenantForPerson(ctx.appPool, actor, ctx.tenantA, sessionA2),
+      ).resolves.toBeNull();
+    }
+    await expect(
+      guestNoteTenantForPerson(ctx.appPool, people.member, ctx.tenantA, sessionA),
+    ).resolves.toBeNull();
+    const counts = async () =>
+      (
+        await ctx.owner.query(
+          `SELECT (SELECT count(*) FROM session_guest_notes WHERE session_id = $1) AS notes,
+       (SELECT count(*) FROM processed_commands WHERE tenant_id = $2) AS commands,
+       (SELECT count(*) FROM outbox_events WHERE tenant_id = $2) AS events`,
+          [sessionA, ctx.tenantA],
+        )
+      ).rows;
+    const before = await counts();
+    await expect(
+      createGuestNote(ctx.appDb.db, {
+        ...create,
+        input: { ...create.input, guestName: "Different retry payload" },
+      }),
+    ).resolves.toEqual({ ...created, replayed: true });
+    await expect(deleteGuestNote(ctx.appDb.db, remove)).resolves.toEqual({
+      ...deleted,
+      replayed: true,
+    });
+    expect(await counts()).toEqual(before);
+    await expect(
+      guestNoteTenantForPerson(ctx.appPool, people.active, ctx.tenantA, sessionA),
+    ).resolves.toBe(ctx.tenantA);
+    await expect(
+      createGuestNote(ctx.appDb.db, { ...create, actorPersonId: people.active }),
+    ).rejects.toMatchObject({ code: "COMMAND_ID_CONFLICT" });
+    expect(await counts()).toEqual(before);
+  });
+
+  it("rejects other command families and malformed ledger fields without casting arbitrary JSON to UUID", async () => {
+    await ctx.owner.query(
+      `INSERT INTO processed_commands(tenant_id, command_id, command_type, result_ref) VALUES ($1, $2, 'PublishSession', $3)`,
+      [ctx.tenantA, randomUUID(), { actorPersonId: people.otherCommand, sessionId: sessionA }],
+    );
+    for (const value of [
+      null,
+      {},
+      { sessionId: sessionA },
+      { actorPersonId: people.malformed },
+      { actorPersonId: [people.malformed], sessionId: sessionA },
+      { actorPersonId: people.malformed, sessionId: { value: sessionA } },
+      { actorPersonId: "not-a-uuid", sessionId: sessionA },
+      { actorPersonId: people.malformed, sessionId: "not-a-uuid" },
+    ]) {
+      await ctx.owner.query(
+        `INSERT INTO processed_commands(tenant_id, command_id, command_type, result_ref) VALUES ($1, $2, 'CreateGuestNote', $3)`,
+        [ctx.tenantA, randomUUID(), value],
+      );
+    }
+    for (const actor of [people.otherCommand, people.malformed]) {
+      await expect(
+        guestNoteTenantForPerson(ctx.appPool, actor, ctx.tenantA, sessionA),
+      ).resolves.toBeNull();
+    }
+  });
+});
+
+describe("guestNoteTenantForPerson input and result boundary", () => {
+  const tenant = "aaaaaaaa-1111-0000-0000-000000000000";
+  const person = randomUUID();
+  const session = randomUUID();
+
+  it("exports the wrapper from the public package entrypoint", async () => {
+    expect((await import("./index.js")).guestNoteTenantForPerson).toBe(guestNoteTenantForPerson);
+  });
+
+  it.each([0, 1, 2])(
+    "rejects malformed routing identifier %i before querying",
+    async (position) => {
+      for (const invalid of [
+        "",
+        "not-a-uuid",
+        ` ${tenant}`,
+        `${tenant} `,
+        `{${tenant}}`,
+        tenant.replaceAll("-", ""),
+        `${tenant}\n`,
+        `${tenant}\0`,
+        null,
+        undefined,
+        42,
+        true,
+        [tenant],
+        { toString: () => tenant },
+      ]) {
+        const query = vi.fn().mockRejectedValue(new Error("invalid candidate must not reach SQL"));
+        const ids: [string, string, string] = [person, tenant, session];
+        ids[position] = invalid as string;
+        await expect(
+          guestNoteTenantForPerson({ query } as unknown as pg.Pool, ...ids),
+        ).resolves.toBeNull();
+        expect(query).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each([tenant, tenant.toUpperCase()])(
+    "parameterizes the query and returns canonical authority for candidate %s",
+    async (candidate) => {
+      const query = vi.fn().mockResolvedValue({ rows: [{ tenant_id: tenant }] });
+      await expect(
+        guestNoteTenantForPerson({ query } as unknown as pg.Pool, person, candidate, session),
+      ).resolves.toBe(tenant);
+      expect(query).toHaveBeenCalledExactlyOnceWith(
+        "SELECT public.guest_note_tenant_for_person($1::uuid, $2::uuid, $3::uuid) AS tenant_id",
+        [person, candidate, session],
+      );
+    },
+  );
+
+  it("preserves uppercase person and session arguments without adding UUID version restrictions", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ tenant_id: tenant }] });
+    const ids: [string, string, string] = [person.toUpperCase(), tenant, session.toUpperCase()];
+    await expect(guestNoteTenantForPerson({ query } as unknown as pg.Pool, ...ids)).resolves.toBe(
+      tenant,
+    );
+    expect(query).toHaveBeenCalledExactlyOnceWith(
+      "SELECT public.guest_note_tenant_for_person($1::uuid, $2::uuid, $3::uuid) AS tenant_id",
+      ids,
+    );
+  });
+
+  it("returns SQL NULL as the absence of an association for valid identifiers", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ tenant_id: null }] });
+    await expect(
+      guestNoteTenantForPerson({ query } as unknown as pg.Pool, person, tenant, session),
+    ).resolves.toBeNull();
+  });
+
+  it.each([
+    [],
+    [{ tenant_id: tenant }, { tenant_id: tenant }],
+    [{ tenant_id: null }, { tenant_id: null }],
+    [{}],
+    [null],
+    [{ tenant_id: undefined }],
+    [{ tenant_id: 1 }],
+    [{ tenant_id: true }],
+    [{ tenant_id: "not-a-uuid" }],
+    [{ tenant_id: randomUUID() }],
+    [{ tenant_id: tenant.toUpperCase() }],
+  ])("fails closed for malformed scalar rows %#", async (...rows) => {
+    const query = vi.fn().mockResolvedValue({ rows });
+    await expect(
+      guestNoteTenantForPerson({ query } as unknown as pg.Pool, person, tenant, session),
+    ).rejects.toThrow("Invalid guest-note tenant context result");
+  });
+
+  it.each(["08006", "22P02"])(
+    "propagates native database error %s for valid inputs unchanged",
+    async (code) => {
+      const fault = Object.assign(new Error("synthetic DB failure"), { code });
+      const query = vi.fn().mockRejectedValue(fault);
+      await expect(
+        guestNoteTenantForPerson({ query } as unknown as pg.Pool, person, tenant, session),
+      ).rejects.toBe(fault);
+    },
+  );
 });
