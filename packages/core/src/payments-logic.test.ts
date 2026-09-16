@@ -24,6 +24,126 @@ function debt(fee: number | null, paid_amount: number | null = null): OpenDebt {
   return { date: "2026-06-13", fee, paid_amount };
 }
 
+describe("payment numeric boundaries", () => {
+  const max = Number.MAX_SAFE_INTEGER;
+  const invalid = [NaN, Infinity, -Infinity, -1, 0.5, max + 1, "110000" as unknown as number];
+  const buddyOptions = {
+    fee: 110000,
+    amount: 220000,
+    ownCovered: 0,
+    payerPlayerId: 7,
+    buddyPlayerIds: [8, 9],
+  };
+
+  it.each([...invalid, null, undefined])("rejects malformed incoming amounts: %s", (value) => {
+    const amount = value as number;
+    expect(() => coverDebts([debt(110000)], amount)).toThrow(RangeError);
+    expect(() => coverRemaining([debt(110000)], amount)).toThrow(RangeError);
+    expect(() => classifyDeposit(debt(110000), amount)).toThrow(RangeError);
+    expect(() => classifyIncoming([], amount)).toThrow(RangeError);
+    expect(() => classifyCoverage([], amount)).toThrow(RangeError);
+    expect(() => classifyAmount(null, amount, 0)).toThrow(RangeError);
+    expect(() => planBuddyExpansion({ ...buddyOptions, amount })).toThrow(RangeError);
+  });
+
+  it.each(invalid)("rejects malformed priced fees before a payment decision: %s", (fee) => {
+    const d = debt(fee);
+    expect(() => effectiveFee(d)).toThrow(RangeError);
+    expect(() => coverDebts([d], 110000)).toThrow(RangeError);
+    expect(() => coverRemaining([d], 110000)).toThrow(RangeError);
+    expect(() => classifyDeposit(d, 110000)).toThrow(RangeError);
+    expect(() => classifyIncoming([d], 110000)).toThrow(RangeError);
+    expect(() => classifyCoverage([d], 110000)).toThrow(RangeError);
+    expect(() => classifyAmount(fee, 110000, 0)).toThrow(RangeError);
+    expect(() => planBuddyExpansion({ ...buddyOptions, fee })).toThrow(RangeError);
+  });
+
+  it.each(invalid)("rejects malformed deposits instead of declaring a debt paid: %s", (paid) => {
+    const d = debt(110000, paid);
+    expect(() => effectiveFee(d)).toThrow(RangeError);
+    expect(() => coverRemaining([d], 110000)).toThrow(RangeError);
+    expect(() => classifyDeposit(d, 110000)).toThrow(RangeError);
+    expect(() => classifyIncoming([d], 110000)).toThrow(RangeError);
+    expect(() => classifyCoverage([d], 110000)).toThrow(RangeError);
+  });
+
+  it.each(invalid)("rejects malformed matched, covered, and expected counts: %s", (count) => {
+    expect(() => classifyAmount(110000, 220000, count)).toThrow(RangeError);
+    expect(() => planBuddyExpansion({ ...buddyOptions, ownCovered: count })).toThrow(RangeError);
+    expect(() =>
+      inferBuddyGroupByAmount({ expected: count, unpaidMemberIds: new Set(), hosts: [] }),
+    ).toThrow(RangeError);
+  });
+
+  it("refuses cumulative debt totals that exceed the safe integer range", () => {
+    expect(() => coverDebts([debt(max - 1), debt(2)], max)).toThrow(RangeError);
+    expect(() => coverRemaining([debt(max - 1), debt(2)], max)).toThrow(RangeError);
+    // The first debt overshoots, so incoming classification reaches its separate total pass.
+    expect(() => classifyIncoming([debt(2), debt(max)], 1)).toThrow(RangeError);
+    expect(() => classifyCoverage([debt(max), debt(1)], max)).toThrow(RangeError);
+    expect(() => classifyAmount(max, max, 2)).toThrow(RangeError);
+  });
+
+  it("accepts a maximum safe total without imposing the parsed-text amount cap", () => {
+    const debts = [debt(max - 1), debt(1)];
+    expect(coverDebts(debts, max)).toBe(2);
+    expect(coverRemaining(debts, max)).toBe(2);
+    expect(classifyIncoming(debts, max)).toEqual({ kind: "exact", settleCount: 2 });
+    expect(classifyCoverage(debts, max)).toEqual({ kind: "exact", totalRemaining: max });
+    expect(classifyAmount(max, max, 1)).toEqual({ kind: "mark-all", expected: 1 });
+    expect(classifyCoverage([debt(600000000000), debt(600000000000)], 1200000000000)).toEqual({
+      kind: "exact",
+      totalRemaining: 1200000000000,
+    });
+    expect(planBuddyExpansion({ ...buddyOptions, fee: 1, amount: max })).toEqual({
+      expected: max,
+      preselected: [7, 8, 9],
+    });
+  });
+
+  it("retains unknown fees without consuming irrelevant deposits", () => {
+    for (const fee of [null, undefined]) {
+      const d = debt(fee as number | null, Infinity);
+      expect(effectiveFee(d)).toBeNull();
+      expect(coverDebts([d], 110000)).toBe(0);
+      expect(coverRemaining([d], 110000)).toBe(0);
+      expect(classifyDeposit(d, 110000)).toBe("unknown-fee");
+      expect(classifyIncoming([d], 110000)).toEqual({ kind: "unknown-fee" });
+      expect(classifyCoverage([d], 110000)).toEqual({ kind: "unknown-fee" });
+    }
+    expect(effectiveFee({ date: "2026-06-13", fee: 110000 })).toBe(110000);
+    expect(effectiveFee(debt(1, max))).toBe(0);
+    expect(coverDebts([debt(110000, 50000)], 110000)).toBe(1);
+    expect(coverDebts([debt(110000, Infinity)], 110000)).toBe(1);
+    expect(planBuddyExpansion({ ...buddyOptions, fee: NaN, ownCovered: 1 })).toBeNull();
+    expect(planBuddyExpansion({ ...buddyOptions, fee: NaN, payerPlayerId: null })).toBeNull();
+  });
+
+  it.each([0, -0])("retains zero amount, fee, and count decisions: %s", (zero) => {
+    expect(effectiveFee(debt(zero, zero))).toBe(0);
+    expect(coverDebts([debt(zero)], zero)).toBe(0);
+    expect(coverRemaining([debt(zero)], zero)).toBe(0);
+    expect(classifyDeposit(debt(zero), zero)).toBe("exact");
+    expect(classifyIncoming([debt(zero)], zero)).toEqual({ kind: "already-paid", overpay: 0 });
+    expect(classifyCoverage([debt(zero)], zero)).toEqual({ kind: "exact", totalRemaining: 0 });
+    expect(classifyAmount(zero, zero, 1)).toEqual({ kind: "unknown-fee", expected: 0 });
+    expect(classifyAmount(zero, zero, zero)).toEqual({ kind: "no-match", expected: 0 });
+    expect(planBuddyExpansion({ ...buddyOptions, amount: zero, ownCovered: zero })).toBeNull();
+    expect(
+      inferBuddyGroupByAmount({ expected: zero, unpaidMemberIds: new Set(), hosts: [] }),
+    ).toBeNull();
+  });
+
+  it("settles a valid exact prefix before later unknown, invalid, or overflowing debt", () => {
+    for (const later of [debt(null), debt(NaN), debt(1, Infinity), debt(1)]) {
+      expect(coverDebts([debt(max), later], max)).toBe(1);
+      expect(coverRemaining([debt(max), later], max)).toBe(1);
+      expect(classifyIncoming([debt(max), later], max)).toEqual({ kind: "exact", settleCount: 1 });
+    }
+    expect(coverRemaining([debt(110000, 110000), debt(110000)], 110000)).toBe(2);
+  });
+});
+
 describe("effectiveFee", () => {
   it("remaining = fee − deposit, clamped at 0; unknown fee → null", () => {
     expect(effectiveFee(debt(110000, null))).toBe(110000);
