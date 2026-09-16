@@ -411,13 +411,11 @@ describe("buildCompletionLanding — language (audit W-4)", () => {
   });
 });
 
-/**
- * Audit 2026-09-06 W-10 — the runtime database role is asserted once when DB_EXPECTED_ROLE is set;
- * a mismatch poisons the handle so every later appDb() fails closed. Exercised through the
- * exported check with a fake pool (the real pool needs Postgres).
- */
-describe("assertRuntimeDbRole (audit W-10)", () => {
-  afterEach(() => resetDbRoleViolationForTests());
+describe("runtime DB role checkout gate", () => {
+  afterEach(() => {
+    resetDbRoleViolationForTests();
+    vi.unstubAllEnvs();
+  });
 
   const fakePool = (row: { u: string; s: string } | Error) => ({
     pool: {
@@ -428,67 +426,109 @@ describe("assertRuntimeDbRole (audit W-10)", () => {
     },
   });
 
+  function gatedPool() {
+    const client = {
+      query: vi.fn(async () => ({ rows: [{ u: "app", s: "app" }] })),
+      release: vi.fn(),
+    };
+    const connect = vi.fn(
+      (callback?: (error: Error | null, value: typeof client, release: () => void) => void) => {
+        if (callback) callback(null, client, client.release);
+        else return Promise.resolve(client);
+      },
+    );
+    const pool = { query: vi.fn(), connect };
+    vi.mocked(createDb).mockReturnValueOnce({ pool } as never);
+    vi.stubEnv("DATABASE_URL", "postgres://app@localhost/plexco");
+    vi.stubEnv("DB_EXPECTED_ROLE", "app");
+    return { client, connect, query: pool.query, db: appDb() };
+  }
+
   it("passes when both current_user and session_user are the expected role", async () => {
     expect(await assertRuntimeDbRole(fakePool({ u: "app", s: "app" }) as never, "app")).toBe(true);
   });
 
-  it("fails when the connection is the superuser/owner, or a SET ROLE from another login", async () => {
-    expect(await assertRuntimeDbRole(fakePool({ u: "plexco", s: "plexco" }) as never, "app")).toBe(
-      false,
-    );
-    expect(await assertRuntimeDbRole(fakePool({ u: "app", s: "plexco" }) as never, "app")).toBe(
-      false,
-    );
+  it("rejects a probe outage without permanently poisoning appDb", async () => {
+    await expect(
+      assertRuntimeDbRole(fakePool(new Error("pg down")) as never, "app"),
+    ).rejects.toThrow("DATABASE_URL role check failed");
+    expect(() => appDb()).not.toThrow();
   });
 
-  it("fails closed when the check itself cannot run", async () => {
-    expect(await assertRuntimeDbRole(fakePool(new Error("pg down")) as never, "app")).toBe(false);
+  it("shares one probe and withholds both checkout APIs until the role is verified", async () => {
+    const { client, connect, query, db } = gatedPool();
+    let answer!: (result: { rows: { u: string; s: string }[] }) => void;
+    client.query.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const first = db.pool.connect();
+    const callback = vi.fn();
+    expect(db.pool.connect(callback)).toBeUndefined();
+    await vi.waitFor(() => expect(client.query).toHaveBeenCalledOnce());
+    expect(connect).toHaveBeenCalledOnce();
+    expect(callback).not.toHaveBeenCalled();
+    expect(db.pool.query).toBe(query);
+
+    answer({ rows: [{ u: "app", s: "app" }] });
+    expect(await first).toBe(client);
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+    expect(callback).toHaveBeenCalledWith(null, client, client.release);
+    expect(connect).toHaveBeenCalledTimes(3);
+    expect(client.query).toHaveBeenCalledOnce();
+    expect(client.release).toHaveBeenCalledWith(false);
   });
 
-  /**
-   * The check is worth nothing if traffic can outrun it. Before the gate, appDb() fired the
-   * assertion with `void` and handed back a live 10-connection pool in the same tick, so the
-   * first business queries could run on other connections and return unscoped rows while the
-   * check was still in flight — against exactly the misconfiguration (owner/superuser URL, every
-   * RLS policy off) it exists to catch. This drives appDb() with a pool whose role answer is
-   * deferred, and proves no business query reaches the database before the verdict does.
-   */
-  it("appDb GATES every query on the role check: nothing reaches the database before the verdict, and a mismatch rejects", async () => {
-    const reached: string[] = [];
-    let answerRole!: (row: { u: string; s: string }) => void;
-    const roleAnswer = new Promise<{ u: string; s: string }>((resolve) => {
-      answerRole = resolve;
-    });
-    const poolQuery = vi.fn(async (sql: unknown) => {
-      if (String(sql).includes("current_user")) {
-        reached.push("role-check");
-        return { rows: [await roleAnswer] };
-      }
-      reached.push("business-query");
-      return { rows: [{ secret: "unscoped tenant data" }] };
-    });
-    vi.mocked(createDb).mockReturnValueOnce({
-      pool: { query: poolQuery, connect: vi.fn() },
-      db: {},
-      close: vi.fn(),
-    } as never);
-    const prevUrl = process.env.DATABASE_URL;
-    const prevRole = process.env.DB_EXPECTED_ROLE;
-    process.env.DATABASE_URL = "postgres://app@localhost/plexco";
-    process.env.DB_EXPECTED_ROLE = "app";
-    try {
-      const handle = appDb();
-      const business = handle.pool.query("SELECT * FROM sessions");
-      await new Promise((r) => setTimeout(r, 20));
-      expect(reached).toEqual(["role-check"]); // the business query has NOT hit the database
+  it.each([[{ u: "plexco", s: "plexco" }], [{ u: "app", s: "plexco" }], [], [{}]])(
+    "keeps an observed identity mismatch sticky: %j",
+    async (...rows) => {
+      const { client, connect, db } = gatedPool();
+      client.query.mockResolvedValueOnce({ rows } as never);
+      const rejection = expect(db.pool.connect()).rejects.toThrow(/wrong database role/);
+      const callback = vi.fn();
+      expect(db.pool.connect(callback)).toBeUndefined();
+      await rejection;
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+      expect(callback.mock.calls[0]).toEqual([expect.any(Error)]);
+      await expect(db.pool.connect()).rejects.toThrow(/wrong database role/);
+      expect(() => appDb()).toThrow(/wrong database role/);
+      expect(connect).toHaveBeenCalledOnce();
+    },
+  );
 
-      answerRole({ u: "plexco", s: "plexco" }); // owner role — the misconfiguration W-10 is about
-      await expect(business).rejects.toThrow(/refusing to serve with the wrong database role/);
-      expect(reached).toEqual(["role-check"]); // and it never hit the database at all
-      expect(() => appDb()).toThrow(/refusing to serve/);
-    } finally {
-      process.env.DATABASE_URL = prevUrl;
-      process.env.DB_EXPECTED_ROLE = prevRole;
-    }
+  it.each(["connect", "query"] as const)(
+    "retries after a temporary probe %s failure",
+    async (stage) => {
+      const { client, connect, db } = gatedPool();
+      const temporary = new Error("temporary database outage");
+      if (stage === "connect") connect.mockRejectedValueOnce(temporary);
+      else client.query.mockRejectedValueOnce(temporary);
+      const rejection = expect(db.pool.connect()).rejects.toThrow(/role check failed/);
+      const callback = vi.fn();
+      db.pool.connect(callback);
+      await rejection;
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledOnce());
+      expect(callback.mock.calls[0]).toEqual([expect.any(Error)]);
+      expect(connect).toHaveBeenCalledOnce();
+      if (stage === "query") expect(client.release).toHaveBeenCalledWith(true);
+      else expect(client.release).not.toHaveBeenCalled();
+
+      expect(appDb()).toBe(db);
+      expect(await db.pool.connect()).toBe(client);
+      expect(connect).toHaveBeenCalledTimes(3);
+      expect(client.query).toHaveBeenLastCalledWith("SELECT current_user AS u, session_user AS s");
+    },
+  );
+
+  it("leaves the native pool untouched when no expected role is configured", () => {
+    vi.stubEnv("DB_EXPECTED_ROLE", undefined);
+    const query = vi.fn(),
+      connect = vi.fn();
+    vi.mocked(createDb).mockReturnValueOnce({ pool: { query, connect } } as never);
+    const db = appDb();
+    expect(db.pool.query).toBe(query);
+    expect(db.pool.connect).toBe(connect);
+    expect(connect).not.toHaveBeenCalled();
   });
 });
