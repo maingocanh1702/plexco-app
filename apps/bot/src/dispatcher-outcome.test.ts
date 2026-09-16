@@ -86,6 +86,12 @@ describe("completionArgs runtime boundary", () => {
     for (const providerRef of [0, false, 1n, Symbol("ref"), [], {}, { toPostgres: throwing }])
       expect(completionArgs({ result: "delivered", providerRef })).toEqual(malformed);
   });
+  it.each(["\0", "\0provider", "provider\0ref", "provider\0"])(
+    "rejects NUL-containing provider reference %j without changing the ID",
+    (providerRef) => {
+      expect(completionArgs({ result: "delivered", providerRef })).toEqual(malformed);
+    },
+  );
   it("keeps invalid retry precedence and snapshots a valid future instant", () => {
     const now = () => new Date(1_000_000);
     for (const nextAttemptAt of [undefined, null, "future", new Date(NaN), now(), new Date(0)])
@@ -208,6 +214,12 @@ describe("runDispatchCycle malformed completion containment", () => {
     ["null", () => null, "dlq", "malformed_outcome"],
     ["unknown result", () => ({ result: "unknown" }), "dlq", "malformed_outcome"],
     [
+      "NUL provider reference",
+      () => ({ result: "delivered", providerRef: "provider\0ref" }),
+      "dlq",
+      "malformed_outcome",
+    ],
+    [
       "provider object",
       () => ({ result: "delivered", providerRef: { toPostgres: throwing } }),
       "dlq",
@@ -252,6 +264,7 @@ describe("runDispatchCycle malformed completion containment", () => {
       expect(fixture.deliver).toHaveBeenCalledTimes(2);
       expect(fixture.completions).toHaveLength(2);
       expect(fixture.completions[0]![3]).toBe(result);
+      expect(fixture.completions[0]![5]).toBeNull();
       expect(fixture.completions[0]![6]).toBe(code);
       expect(fixture.completions[1]!.slice(3)).toEqual(["delivered", null, "healthy", null]);
       expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining(privateError));

@@ -419,7 +419,8 @@ export function completionArgs(
     switch (value.result) {
       case "delivered": {
         const providerRef = value.providerRef;
-        if (providerRef != null && typeof providerRef !== "string") return malformed;
+        if (providerRef != null && (typeof providerRef !== "string" || providerRef.includes("\0")))
+          return malformed;
         return {
           result: "delivered",
           nextAttemptAt: null,
