@@ -144,15 +144,13 @@ BEGIN
       'job_definer bootstrap: refusing to grant job_definer to runtime role % — this would let it bypass the narrow function/audit boundary',
       v_grant_to;
   END IF;
-  -- codex round-09 [P1]: pg_has_role raises "role ... does not exist" for an absent role name,
-  -- it does NOT return false — so an unconditional pg_has_role('app', ...) aborts this bootstrap
-  -- on the documented fresh-cluster path (this file runs BEFORE migration 0000 creates app/
-  -- app_worker/readonly). Filter through pg_roles first: pg_has_role is then only evaluated for
-  -- rolname values that already exist, so an absent runtime role is simply not a member yet.
+  -- A fresh cluster may not have runtime roles yet, so scan pg_roles. Use its snapshot-derived
+  -- oid: a concurrent DROP can invalidate a scanned name before pg_has_role resolves it, even
+  -- before the runtime-name filter is evaluated.
   SELECT rolname INTO v_existing_runtime_member
     FROM pg_roles
    WHERE rolname IN ('app', 'app_worker', 'readonly')
-     AND pg_has_role(rolname, 'job_definer', 'MEMBER')
+     AND pg_has_role(oid, 'job_definer', 'MEMBER')
    LIMIT 1;
   IF v_existing_runtime_member IS NOT NULL THEN
     RAISE EXCEPTION
@@ -169,7 +167,7 @@ BEGIN
   SELECT rolname INTO v_existing_runtime_member
     FROM pg_roles
    WHERE rolname IN ('app', 'app_worker', 'readonly')
-     AND pg_has_role(rolname, 'job_definer', 'MEMBER')
+     AND pg_has_role(oid, 'job_definer', 'MEMBER')
    LIMIT 1;
   IF v_existing_runtime_member IS NOT NULL THEN
     RAISE EXCEPTION
