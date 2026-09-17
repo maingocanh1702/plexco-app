@@ -468,6 +468,304 @@ describe("web sessions", () => {
 });
 
 describe("rate_limit_check (shared store)", () => {
+  const check = async (client: pg.PoolClient, bucket: string, limit: number, seconds: number) =>
+    (
+      await client.query<{ allowed: boolean }>(
+        "SELECT rate_limit_check($1, $2, make_interval(secs => $3)) AS allowed",
+        [bucket, limit, seconds],
+      )
+    ).rows[0]!.allowed;
+
+  it.each(["unrelated", "current"])(
+    "expired %s bucket does not block another bucket while cleanup is uncommitted",
+    async (location) => {
+      const prefix = `bounded:${randomUUID()}`;
+      const buckets = [`${prefix}:holder`, `${prefix}:waiter`, `${prefix}:abandoned`];
+      const holder = await ctx.appPool.connect();
+      const waiter = await ctx.appPool.connect();
+      try {
+        expect(
+          (
+            await ctx.owner.query(
+              "SELECT hashtext($1) <> hashtext($2) AS distinct",
+              buckets.slice(0, 2),
+            )
+          ).rows[0].distinct,
+        ).toBe(true);
+        await ctx.owner.query(
+          "INSERT INTO rate_limit_hits(bucket, at) VALUES ($1, now() - interval '2 days')",
+          [location === "current" ? buckets[1] : buckets[2]],
+        );
+        await holder.query("BEGIN");
+        expect(await check(holder, buckets[0]!, 10, 60)).toBe(true);
+        await waiter.query("BEGIN; SET LOCAL lock_timeout = '250ms'");
+        await expect(check(waiter, buckets[1]!, 10, 60)).resolves.toBe(true);
+        expect(
+          (
+            await ctx.owner.query("SELECT state FROM pg_stat_activity WHERE pid = $1", [
+              await backendPid(holder),
+            ])
+          ).rows[0].state,
+        ).toBe("idle in transaction");
+      } finally {
+        const rollbacks = await Promise.allSettled([
+          waiter.query("ROLLBACK"),
+          holder.query("ROLLBACK"),
+        ]);
+        waiter.release();
+        holder.release();
+        await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = ANY($1::text[])", [
+          buckets,
+        ]);
+        for (const rollback of rollbacks) expect(rollback.status).toBe("fulfilled");
+      }
+    },
+  );
+
+  it.each([
+    { name: "locked short expiry", seconds: 60, offsets: ["-90 seconds"], limit: 1 },
+    {
+      name: "inclusive minute boundary",
+      seconds: 60,
+      offsets: ["-1 minute -0.000001 seconds", "-1 minute", "-10 seconds"],
+      limit: 3,
+    },
+    {
+      name: "inclusive day ceiling for a 48-hour window",
+      seconds: 172800,
+      offsets: ["-24 hours -0.000001 seconds", "-24 hours", "-23 hours"],
+      limit: 3,
+    },
+  ])(
+    "$name ignores locked expiry, then prunes it after unlock",
+    async ({ seconds, offsets, limit }) => {
+      const bucket = `bounded:${randomUUID()}`;
+      const client = await ctx.appPool.connect();
+      try {
+        await client.query("BEGIN; SET LOCAL lock_timeout = '250ms'");
+        const anchor = (await client.query("SELECT now()::text AS anchor")).rows[0].anchor;
+        await ctx.owner.query(
+          "INSERT INTO rate_limit_hits(bucket, at) SELECT $1, $2::timestamptz + delta::interval FROM unnest($3::text[]) AS seed(delta)",
+          [bucket, anchor, offsets],
+        );
+        await ctx.owner.query("BEGIN");
+        await ctx.owner.query(
+          "SELECT * FROM rate_limit_hits WHERE bucket = $1 AND at = $2::timestamptz + $3::interval FOR UPDATE",
+          [bucket, anchor, offsets[0]],
+        );
+        expect(await check(client, bucket, limit, seconds)).toBe(true);
+        expect(await check(client, bucket, limit, seconds)).toBe(false);
+        expect(
+          (
+            await ctx.owner.query(
+              "SELECT count(*)::int AS n FROM rate_limit_hits WHERE bucket = $1 AND at = $2::timestamptz + $3::interval",
+              [bucket, anchor, offsets[0]],
+            )
+          ).rows[0].n,
+        ).toBe(1);
+        await ctx.owner.query("COMMIT");
+        expect(await check(client, bucket, limit, seconds)).toBe(false);
+        await client.query("COMMIT");
+        expect(
+          (
+            await ctx.owner.query(
+              "SELECT count(*)::int AS n FROM rate_limit_hits WHERE bucket = $1",
+              [bucket],
+            )
+          ).rows[0].n,
+        ).toBe(limit);
+      } finally {
+        const rollbacks = await Promise.allSettled([
+          client.query("ROLLBACK"),
+          ctx.owner.query("ROLLBACK"),
+        ]);
+        client.release();
+        await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = $1", [bucket]);
+        for (const rollback of rollbacks) expect(rollback.status).toBe("fulfilled");
+      }
+    },
+  );
+
+  it("32 same-bucket requests admit five while clearing expired global backlog", async () => {
+    const buckets = [`bounded:${randomUUID()}:active`, `bounded:${randomUUID()}:expired`];
+    try {
+      await ctx.owner.query(
+        "INSERT INTO rate_limit_hits(bucket, at) SELECT $1, now() - interval '2 days' FROM generate_series(1, 257)",
+        [buckets[1]],
+      );
+      const results = await Promise.allSettled(
+        Array.from({ length: 32 }, () => rateLimitCheck(ctx.appPool, buckets[0]!, 5, 60)),
+      );
+      expect(results.filter((result) => result.status === "rejected")).toEqual([]);
+      expect(
+        results.filter((result) => result.status === "fulfilled" && result.value),
+      ).toHaveLength(5);
+      expect(
+        (
+          await ctx.owner.query(
+            "SELECT bucket, count(*)::int AS n FROM rate_limit_hits WHERE bucket = ANY($1::text[]) GROUP BY bucket",
+            [buckets],
+          )
+        ).rows,
+      ).toEqual([{ bucket: buckets[0], n: 5 }]);
+    } finally {
+      await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = ANY($1::text[])", [
+        buckets,
+      ]);
+    }
+  });
+
+  it("same-bucket waiter observes the committed hit before refusing the next request", async () => {
+    const bucket = `bounded:${randomUUID()}`;
+    const holder = await ctx.appPool.connect();
+    const waiter = await ctx.appPool.connect();
+    let pending: Promise<{ allowed: boolean } | { error: unknown }> | undefined;
+    try {
+      await holder.query("BEGIN");
+      await waiter.query("BEGIN; SET LOCAL statement_timeout = '10s'");
+      const holderPid = await backendPid(holder);
+      const waiterPid = await backendPid(waiter);
+      expect(await check(holder, bucket, 1, 60)).toBe(true);
+      pending = check(waiter, bucket, 1, 60).then(
+        (allowed) => ({ allowed }),
+        (error: unknown) => ({ error }),
+      );
+      await waitUntilBlockedByHolder(ctx.owner, holderPid, waiterPid);
+      await holder.query("COMMIT");
+      expect(await pending).toEqual({ allowed: false });
+    } finally {
+      try {
+        await holder.query("ROLLBACK");
+      } finally {
+        holder.release();
+        await pending;
+        try {
+          await waiter.query("ROLLBACK");
+        } finally {
+          waiter.release();
+          await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = $1", [bucket]);
+        }
+      }
+    }
+  });
+
+  it("denied calls prune at most 100 global and 100 own expirations, preserving live controls", async () => {
+    const prefix = `bounded:${randomUUID()}`;
+    const buckets = [`${prefix}:global`, `${prefix}:own`, `${prefix}:live`];
+    try {
+      await ctx.owner.query(
+        "INSERT INTO rate_limit_hits(bucket, at) SELECT $1, now() - interval '2 days' FROM generate_series(1, 257)",
+        [buckets[0]],
+      );
+      await ctx.owner.query(
+        "INSERT INTO rate_limit_hits(bucket, at) SELECT $1, now() - interval '90 seconds' FROM generate_series(1, 257)",
+        [buckets[1]],
+      );
+      await ctx.owner.query(
+        "INSERT INTO rate_limit_hits(bucket, at) VALUES ($1, now() - interval '30 minutes')",
+        [buckets[2]],
+      );
+      for (const remaining of [157, 57, 0]) {
+        expect(await rateLimitCheck(ctx.appPool, buckets[1]!, 0, 60)).toBe(false);
+        expect(
+          (
+            await ctx.owner.query(
+              `SELECT count(*) FILTER (WHERE bucket = $1)::int AS global,
+             count(*) FILTER (WHERE bucket = $2)::int AS own,
+             count(*) FILTER (WHERE bucket = $3)::int AS live
+           FROM rate_limit_hits WHERE bucket = ANY($4::text[])`,
+              [...buckets, buckets],
+            )
+          ).rows[0],
+        ).toEqual({ global: remaining, own: remaining, live: 1 });
+      }
+    } finally {
+      await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = ANY($1::text[])", [
+        buckets,
+      ]);
+    }
+  });
+
+  it("own short-window cleanup progresses despite a larger unrelated global backlog", async () => {
+    const buckets = [`bounded:${randomUUID()}:global`, `bounded:${randomUUID()}:own`];
+    try {
+      await ctx.owner.query(
+        "INSERT INTO rate_limit_hits(bucket, at) SELECT $1, now() - interval '2 days' FROM generate_series(1, 500)",
+        [buckets[0]],
+      );
+      await ctx.owner.query(
+        "INSERT INTO rate_limit_hits(bucket, at) SELECT $1, now() - interval '90 seconds' FROM generate_series(1, 20)",
+        [buckets[1]],
+      );
+      expect(await rateLimitCheck(ctx.appPool, buckets[1]!, 0, 60)).toBe(false);
+      expect(
+        (
+          await ctx.owner.query(
+            "SELECT bucket, count(*)::int AS n FROM rate_limit_hits WHERE bucket = ANY($1::text[]) GROUP BY bucket",
+            [buckets],
+          )
+        ).rows,
+      ).toEqual([{ bucket: buckets[0], n: 400 }]);
+    } finally {
+      await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = ANY($1::text[])", [
+        buckets,
+      ]);
+    }
+  });
+
+  it("twenty short-window bursts retain only the current twenty hits", async () => {
+    const bucket = `bounded:${randomUUID()}`;
+    try {
+      for (let cycle = 0; cycle < 20; cycle++) {
+        await ctx.owner.query(
+          "UPDATE rate_limit_hits SET at = at - interval '2 minutes' WHERE bucket = $1",
+          [bucket],
+        );
+        const results = await Promise.allSettled(
+          Array.from({ length: 20 }, () => rateLimitCheck(ctx.appPool, bucket, 20, 60)),
+        );
+        expect(results.filter((result) => result.status === "rejected")).toEqual([]);
+        expect(
+          results.filter((result) => result.status === "fulfilled" && result.value),
+        ).toHaveLength(20);
+        expect(await rateLimitCheck(ctx.appPool, bucket, 20, 60)).toBe(false);
+        expect(
+          (
+            await ctx.owner.query(
+              "SELECT count(*)::int AS n FROM rate_limit_hits WHERE bucket = $1",
+              [bucket],
+            )
+          ).rows[0].n,
+        ).toBe(20);
+      }
+    } finally {
+      await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = $1", [bucket]);
+    }
+  });
+
+  it("preserves zero-limit refusal, runtime-role denial and native storage errors", async () => {
+    const bucket = `bounded:${randomUUID()}`;
+    try {
+      expect(await rateLimitCheck(ctx.appPool, bucket, 0, 60)).toBe(false);
+      expect(
+        (
+          await ctx.owner.query(
+            "SELECT count(*)::int AS n FROM rate_limit_hits WHERE bucket = $1",
+            [bucket],
+          )
+        ).rows[0].n,
+      ).toBe(0);
+      for (const pool of [ctx.readonlyPool, ctx.workerPool]) {
+        await expect(rateLimitCheck(pool, bucket, 1, 60)).rejects.toMatchObject({ code: "42501" });
+      }
+      await expect(
+        ctx.appPool.query("SELECT rate_limit_check(NULL, 1, interval '1 minute')"),
+      ).rejects.toMatchObject({ code: "23502" });
+    } finally {
+      await ctx.owner.query("DELETE FROM rate_limit_hits WHERE bucket = $1", [bucket]);
+    }
+  });
+
   it("has a standalone index on `at` so the global sweep never full-scans as buckets grow (codex round-01)", async () => {
     const { rows } = await ctx.owner.query(
       `SELECT indexdef FROM pg_indexes WHERE tablename = 'rate_limit_hits' AND indexname = 'idx_rate_limit_at'`,
