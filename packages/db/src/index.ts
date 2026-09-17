@@ -96,6 +96,7 @@ export {
   revokeWebSession,
   rotateWebSession,
   tenantsForPerson,
+  guestNoteTenantForPerson,
   type OnboardingSnapshot,
   type ResolvedSession,
   // Email credential-lifecycle app-boundary helpers (D1, migration 0016) — the
