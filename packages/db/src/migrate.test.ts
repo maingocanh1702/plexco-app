@@ -41,7 +41,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 46; // 0000..0045 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context)
+const MIGRATION_COUNT = 47; // 0000..0046 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -732,7 +732,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0045_guest_note_tenant_context.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0046_rate_limit_bounded_cleanup.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
@@ -4388,12 +4388,15 @@ describe("0045 guest-note tenant context", () => {
 
   it("fresh non-bypass owner migration installs the app-only proof and replays zero files", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0045_fresh");
+    const originalReaddir = readdirImpl;
     try {
+      readdirImpl = async (dir) =>
+        (await originalReaddir(dir)).filter((file) => file <= migrationFile);
       await withJobDefinerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
         await ctx.bootstrapChatDefinerForOwner();
         const first = await ctx.runMigration();
-        expect(first.applied).toHaveLength(MIGRATION_COUNT);
+        expect(first.applied).toHaveLength(46);
         expect(first.applied.at(-1)).toBe(migrationFile);
         expect(
           (await ctx.ownerPool.query(`SELECT to_regprocedure($1)::text AS name`, [signature]))
@@ -4402,6 +4405,7 @@ describe("0045 guest-note tenant context", () => {
         expect((await ctx.runMigration()).applied).toEqual([]);
       });
     } finally {
+      readdirImpl = originalReaddir;
       await ctx.teardown();
     }
   }, 120_000);
@@ -4410,7 +4414,10 @@ describe("0045 guest-note tenant context", () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0045_upgrade");
     const clients: pg.Client[] = [];
     let ownerClient: pg.PoolClient | undefined;
+    const originalDirectory = readdirImpl;
     try {
+      readdirImpl = async (dir) =>
+        (await originalDirectory(dir)).filter((file) => file <= migrationFile);
       // Hold job outer/chat inner across both migration passes; reacquiring job while
       // this fixture retains chat could deadlock another file waiting for chat.
       await withJobDefinerLock(BASE!, async () => {
@@ -4421,7 +4428,7 @@ describe("0045 guest-note tenant context", () => {
           readdirImpl = async (dir) =>
             (await originalReaddir(dir)).filter((file) => file !== migrationFile);
           const previous = await ctx.runMigration();
-          expect(previous.applied).toHaveLength(MIGRATION_COUNT - 1);
+          expect(previous.applied).toHaveLength(45);
           expect(previous.applied.at(-1)).toBe("0044_session_guest_notes.sql");
         } finally {
           readdirImpl = originalReaddir;
@@ -4813,6 +4820,7 @@ describe("0045 guest-note tenant context", () => {
         expect(await catalog()).toEqual(before);
       });
     } finally {
+      readdirImpl = originalDirectory;
       try {
         await Promise.all(clients.map((client) => client.end()));
       } finally {
@@ -4821,4 +4829,141 @@ describe("0045 guest-note tenant context", () => {
       }
     }
   }, 120_000);
+});
+
+describe("0046 bounded rate-limit cleanup", () => {
+  const migrationFile = "0046_rate_limit_bounded_cleanup.sql";
+  const signature = "public.rate_limit_check(text,integer,interval)";
+
+  it.each(["fresh", "upgrade"])(
+    "%s non-bypass owner migration preserves limiter storage and authority, then replays zero files",
+    async (mode) => {
+      const ctx = await setupNonSuperuserOwnerContext(`plexco_migrate_0046_${mode}`);
+      const originalReaddir = readdirImpl;
+      const through0046 = async (dir: string) =>
+        (await originalReaddir(dir)).filter((file) => file <= migrationFile);
+      try {
+        readdirImpl = through0046;
+        await withJobDefinerLock(BASE!, async () => {
+          await ctx.bootstrapJobDefinerForOwner();
+          await ctx.bootstrapChatDefinerForOwner();
+          expect(
+            (
+              await ctx.ownerPool.query(
+                "SELECT current_user AS name, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user",
+              )
+            ).rows,
+          ).toEqual([{ name: ctx.ownerRole, rolsuper: false, rolbypassrls: false }]);
+          if (mode === "upgrade") {
+            readdirImpl = async (dir) =>
+              (await originalReaddir(dir)).filter((file) => file < migrationFile);
+            const previous = await ctx.runMigration();
+            expect(previous.applied).toHaveLength(46);
+            expect(previous.applied.at(-1)).toBe("0045_guest_note_tenant_context.sql");
+            readdirImpl = through0046;
+            await ctx.ownerPool.query(`INSERT INTO rate_limit_hits(bucket, at)
+              VALUES ('migration:expired', now() - interval '2 days'), ('migration:live', now())`);
+          }
+          const catalog = async () => ({
+            function: (
+              await ctx.ownerPool.query(
+                `SELECT p.oid, p.proowner::regrole::text AS owner,
+                pg_get_function_identity_arguments(p.oid) AS arguments,
+                p.prorettype::regtype::text AS returns, p.provolatile, p.prosecdef,
+                p.proconfig, p.proacl::text AS acl, l.lanname AS language
+               FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+               WHERE p.oid = $1::regprocedure`,
+                [signature],
+              )
+            ).rows[0],
+            table: (
+              await ctx.ownerPool.query(
+                `SELECT oid, relowner::regrole::text AS owner, relpersistence,
+                relrowsecurity, relforcerowsecurity, relacl::text AS acl
+               FROM pg_class WHERE oid = 'public.rate_limit_hits'::regclass`,
+              )
+            ).rows[0],
+            indexes: (
+              await ctx.ownerPool.query(
+                "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'rate_limit_hits' ORDER BY indexname",
+              )
+            ).rows,
+          });
+          const before = mode === "upgrade" ? await catalog() : undefined;
+          const dataBefore =
+            mode === "upgrade"
+              ? (
+                  await ctx.ownerPool.query(
+                    "SELECT bucket, at::text FROM rate_limit_hits ORDER BY bucket, at",
+                  )
+                ).rows
+              : [];
+          const result = await ctx.runMigration();
+          if (mode === "upgrade") expect(result.applied).toEqual([migrationFile]);
+          else {
+            expect(result.applied).toHaveLength(47);
+            expect(result.applied.at(-1)).toBe(migrationFile);
+          }
+          const after = await catalog();
+          if (before) expect(after).toEqual(before);
+          expect(after.function).toMatchObject({
+            owner: ctx.ownerRole,
+            arguments: "p_bucket text, p_limit integer, p_window interval",
+            returns: "boolean",
+            provolatile: "v",
+            prosecdef: true,
+            proconfig: ["search_path=public, pg_temp"],
+            language: "plpgsql",
+          });
+          expect(after.table).toMatchObject({
+            owner: ctx.ownerRole,
+            relpersistence: "u",
+            relrowsecurity: false,
+            relforcerowsecurity: false,
+            acl: null,
+          });
+          expect(after.indexes.map((index: { indexname: string }) => index.indexname)).toEqual([
+            "idx_rate_limit_at",
+            "idx_rate_limit_bucket_at",
+          ]);
+          expect(
+            (
+              await ctx.ownerPool.query(
+                `SELECT has_function_privilege('app', $1, 'EXECUTE') AS app,
+              has_function_privilege('chat_definer', $1, 'EXECUTE') AS chat,
+              has_function_privilege('app_worker', $1, 'EXECUTE') AS worker,
+              has_function_privilege('readonly', $1, 'EXECUTE') AS readonly,
+              EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) a
+                WHERE p.oid = $1::regprocedure AND a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS public,
+              has_table_privilege('app', 'public.rate_limit_hits', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') AS app_table,
+              has_table_privilege('chat_definer', 'public.rate_limit_hits', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') AS chat_table`,
+                [signature],
+              )
+            ).rows[0],
+          ).toEqual({
+            app: true,
+            chat: true,
+            worker: false,
+            readonly: false,
+            public: false,
+            app_table: false,
+            chat_table: false,
+          });
+          expect(
+            (
+              await ctx.ownerPool.query(
+                "SELECT bucket, at::text FROM rate_limit_hits ORDER BY bucket, at",
+              )
+            ).rows,
+          ).toEqual(dataBefore);
+          expect((await ctx.runMigration()).applied).toEqual([]);
+          expect(await catalog()).toEqual(after);
+        });
+      } finally {
+        readdirImpl = originalReaddir;
+        await ctx.teardown();
+      }
+    },
+    120_000,
+  );
 });
