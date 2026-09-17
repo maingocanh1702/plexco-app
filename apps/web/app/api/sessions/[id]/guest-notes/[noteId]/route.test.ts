@@ -1,4 +1,9 @@
-import { deleteGuestNote, SessionGuestNoteError, tenantsForPerson } from "@plexco/db";
+import {
+  deleteGuestNote,
+  guestNoteTenantForPerson,
+  SessionGuestNoteError,
+  tenantsForPerson,
+} from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../../../../lib/session-cookies";
 import { DELETE } from "./route";
@@ -13,6 +18,7 @@ vi.mock("@plexco/db", async (importOriginal) => {
     })),
     deleteGuestNote: vi.fn(),
     tenantsForPerson: vi.fn(),
+    guestNoteTenantForPerson: vi.fn(),
   };
 });
 
@@ -70,6 +76,7 @@ beforeEach(() => {
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
   vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(guestNoteTenantForPerson).mockResolvedValue(null);
   vi.mocked(deleteGuestNote).mockResolvedValue({
     noteId: NOTE_ID,
     sessionId: SESSION_ID,
@@ -117,11 +124,54 @@ describe("DELETE /api/sessions/:id/guest-notes/:noteId", () => {
     expect(params.input.noteId).toBe("not-a-uuid");
   });
 
-  it("denies a caller with no session-managing role and never reaches the command", async () => {
+  it("denies a caller without an admin role or guest-note association", async () => {
     vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
     const response = await DELETE(req({ commandId: "cmd_1" }), ctx());
     expect(response.status).toBe(403);
     expect(deleteGuestNote).not.toHaveBeenCalled();
+  });
+
+  it("opts a non-admin into guest context using the same path ids forwarded to deletion", async () => {
+    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
+    const response = await DELETE(
+      req({
+        commandId: "guest",
+        actorPersonId: "forged",
+        sessionId: OTHER_SESSION_ID,
+        noteId: "forged",
+      }),
+      { params: Promise.resolve({ id: SESSION_ID, noteId: NOTE_ID }) },
+    );
+    expect(response.status).toBe(200);
+    expect(guestNoteTenantForPerson).toHaveBeenCalledWith({}, PERSON_ID, TENANT, SESSION_ID);
+    expect(deleteGuestNote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorPersonId: PERSON_ID,
+        input: { sessionId: SESSION_ID, noteId: NOTE_ID },
+      }),
+    );
+  });
+
+  it("keeps the global delete ceiling after guest proof and before the command", async () => {
+    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
+    vi.mocked(rateLimited).mockImplementation(async (key) =>
+      key.startsWith("session-guest-note-delete-global:"),
+    );
+    const response = await DELETE(req({ commandId: "guest" }), {
+      params: Promise.resolve({ id: SESSION_ID, noteId: NOTE_ID }),
+    });
+    expect(response.status).toBe(429);
+    expect(guestNoteTenantForPerson).toHaveBeenCalledOnce();
+    expect(deleteGuestNote).not.toHaveBeenCalled();
+    const globalIndex = vi
+      .mocked(rateLimited)
+      .mock.calls.findIndex(([key]) => key.startsWith("session-guest-note-delete-global:"));
+    expect(vi.mocked(guestNoteTenantForPerson).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(rateLimited).mock.invocationCallOrder[globalIndex]!,
+    );
   });
 
   it("denies a caller from a DIFFERENT tenant with the same 403, never a 404", async () => {

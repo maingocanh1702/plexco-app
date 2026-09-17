@@ -47,6 +47,7 @@ export async function DELETE(
   // OWN currentSession() check immediately after and gets AUTH_REQUIRED before this bucket is
   // ever consumed, so the placeholder below is never live.
   const bucketActor = (await currentSession())?.personId ?? "unauthenticated";
+  const { id, noteId } = await params;
   return handleSessionCommand(
     request,
     { bucket: `session-guest-note-delete:${bucketActor}`, limit: 10 },
@@ -69,7 +70,6 @@ export async function DELETE(
           );
         }
 
-        const { id, noteId } = await params;
         const result = await deleteGuestNote(appDb().db, {
           tenantId: context.tenantId,
           commandId: context.commandId,
@@ -82,5 +82,6 @@ export async function DELETE(
           guestNote: { id: result.noteId, sessionId: result.sessionId, deleted: true },
         });
       }),
+    { guestNoteSessionId: id },
   );
 }

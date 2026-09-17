@@ -1,4 +1,9 @@
-import { createGuestNote, SessionGuestNoteError, tenantsForPerson } from "@plexco/db";
+import {
+  createGuestNote,
+  guestNoteTenantForPerson,
+  SessionGuestNoteError,
+  tenantsForPerson,
+} from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
 import { POST } from "./route";
@@ -16,6 +21,7 @@ vi.mock("@plexco/db", async (importOriginal) => {
     })),
     createGuestNote: vi.fn(),
     tenantsForPerson: vi.fn(),
+    guestNoteTenantForPerson: vi.fn(),
   };
 });
 
@@ -74,6 +80,7 @@ beforeEach(() => {
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
   vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(guestNoteTenantForPerson).mockResolvedValue(null);
   vi.mocked(createGuestNote).mockResolvedValue({
     noteId: NOTE_ID,
     sessionId: SESSION_ID,
@@ -156,11 +163,36 @@ describe("POST /api/sessions/:id/guest-notes", () => {
     expect(vi.mocked(createGuestNote).mock.calls[1]![1].input.note).toBeNull();
   });
 
-  it("denies a caller with no session-managing role and never reaches the command", async () => {
+  it("denies a caller without an admin role or guest-note association", async () => {
     vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
     const response = await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
     expect(response.status).toBe(403);
     expect(createGuestNote).not.toHaveBeenCalled();
+  });
+
+  it("opts a non-admin into guest context using the path and authenticated actor only", async () => {
+    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
+    const response = await POST(
+      req({
+        commandId: "guest",
+        guestName: "Guest",
+        actorPersonId: "forged",
+        tenantId: OTHER_TENANT,
+        sessionId: "forged",
+      }),
+      { params: Promise.resolve({ id: SESSION_ID }) },
+    );
+    expect(response.status).toBe(200);
+    expect(guestNoteTenantForPerson).toHaveBeenCalledWith({}, PERSON_ID, TENANT, SESSION_ID);
+    expect(createGuestNote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: TENANT,
+        actorPersonId: PERSON_ID,
+        input: { sessionId: SESSION_ID, guestName: "Guest" },
+      }),
+    );
   });
 
   it("denies a caller who belongs to a DIFFERENT tenant with the same 403, never a 404", async () => {
