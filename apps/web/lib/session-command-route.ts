@@ -10,6 +10,7 @@ import {
   SessionPublishError,
   SessionUpdateAuthorizationError,
   SessionUpdateError,
+  guestNoteTenantForPerson,
   tenantsForPerson,
 } from "@plexco/db";
 import { err } from "./api-envelope";
@@ -17,8 +18,8 @@ import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
 import { resolveTenantLang } from "./tenant-lang";
 
 /**
- * Shared entry gate + error mapper for the FIVE session-command routes: create, publish, update,
- * close and cancel. Announce is NOT among them — its only observable effect is delivery and
+ * Shared entry gate + error mapper for host commands and explicitly opted-in guest-note routes.
+ * Announce is NOT among them — its only observable effect is delivery and
  * nothing can deliver yet, so it returns with the slice that provides a real projector (DD-56
  * amendment, clause 1).
  *
@@ -33,7 +34,7 @@ import { resolveTenantLang } from "./tenant-lang";
  *
  * WHAT THIS GATE DEFENDS AGAINST. An AUTHENTICATED caller acting outside their authority, and a
  * client being told the wrong thing about a mutation. Concretely: a signed-in account driving a
- * command against a tenant it does not belong to, or holding a role without `session.manage`
+ * host command without an allowed admin role, or a guest-note command without proven association
  * (both answer with one indistinguishable 403, never a 404, so this is not a tenant-existence
  * oracle); a cross-tenant denial of service by spending a victim tenant's rate-limit bucket
  * before proving membership (closed by ordering the actor ceiling ahead of the per-tenant
@@ -188,6 +189,7 @@ export interface SessionCommandContext {
 export async function resolveSessionCommandContext(
   request: Request,
   rateLimit: { bucket: string; limit: number },
+  options: { guestNoteSessionId?: string } = {},
 ): Promise<Response | SessionCommandContext> {
   const session = await currentSession();
   if (!session) return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
@@ -206,7 +208,7 @@ export async function resolveSessionCommandContext(
   // against tenantsForPerson() output denied a legitimate member with a 403 — and would also
   // have split the rate-limit bucket and the tenant routing context by letter case.
   // codex round-02 [P2].
-  const tenantId = rawTenantId.toLowerCase();
+  let tenantId = rawTenantId.toLowerCase();
 
   // ORDER MATTERS, and an earlier revision had it backwards. The per-tenant bucket must be
   // consumed ONLY by callers already proven to belong to that tenant: because the counter is
@@ -230,13 +232,25 @@ export async function resolveSessionCommandContext(
   const mine = await tenantsForPerson(appDb().pool, session.personId);
   const membership = mine.find((m) => m.tenantId === tenantId);
   if (!membership || !ALLOWED_ROLES.has(membership.role)) {
-    // Same 403 whether the tenant does not exist, the caller is not a member, or the caller is a
-    // member without the role: a distinct 404 would turn this into a tenant-existence oracle.
-    return err(
-      "FORBIDDEN",
-      t("Bạn không có quyền với CLB này.", "Not permitted for this club."),
-      403,
-    );
+    // Only adapters opt in. This proves association; commands own permissions and actor-bound replay.
+    const guestTenant =
+      options.guestNoteSessionId === undefined
+        ? null
+        : await guestNoteTenantForPerson(
+            appDb().pool,
+            session.personId,
+            tenantId,
+            options.guestNoteSessionId,
+          );
+    if (guestTenant === null) {
+      // Same 403 for missing, foreign or unrelated targets; no tenant-existence oracle.
+      return err(
+        "FORBIDDEN",
+        t("Bạn không có quyền với CLB này.", "Not permitted for this club."),
+        403,
+      );
+    }
+    tenantId = guestTenant;
   }
 
   // Language is resolvable HERE, and this line must stay ABOVE the per-tenant 429 below. The
@@ -261,7 +275,7 @@ export async function resolveSessionCommandContext(
   const lang: Lang = await resolveTenantLang(appDb().db, tenantId);
 
   // Per-tenant limit (BE tech spec §3 "Rate Limits" scopes these per tenant), now reached only by
-  // an authorized member of THAT tenant. Answered in the tenant's language, unlike v1.
+  // an authorized actor for THAT tenant. Answered in the tenant's language, unlike v1.
   if (await rateLimited(`${rateLimit.bucket}:${tenantId}`, rateLimit.limit, 60)) {
     return runWithLang(lang, async () =>
       err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429),
@@ -643,8 +657,9 @@ export async function handleSessionCommand(
   request: Request,
   rateLimit: { bucket: string; limit: number },
   handler: (context: SessionCommandContext) => Promise<Response>,
+  options: { guestNoteSessionId?: string } = {},
 ): Promise<Response> {
-  const context = await resolveSessionCommandContext(request, rateLimit);
+  const context = await resolveSessionCommandContext(request, rateLimit, options);
   if (context instanceof Response) return context;
 
   return runWithLang(context.lang, async () => {

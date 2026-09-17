@@ -86,5 +86,6 @@ export async function POST(
           },
         });
       }),
+    { guestNoteSessionId: id },
   );
 }

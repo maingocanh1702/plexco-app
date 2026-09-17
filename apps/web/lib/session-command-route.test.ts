@@ -9,6 +9,7 @@ import {
   SessionUpdateAuthorizationError,
   SessionUpdateError,
   createSession,
+  guestNoteTenantForPerson,
   tenantLocale,
   tenantsForPerson,
 } from "@plexco/db";
@@ -16,10 +17,11 @@ import { readdirSync, readFileSync } from "node:fs";
 import ts from "typescript";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runWithLang } from "@plexco/core/i18n";
+import { runWithLang, t } from "@plexco/core/i18n";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mapSessionCommandError,
+  handleSessionCommand,
   readExpectedVersion,
   resolveSessionCommandContext,
   shapeCreateFields,
@@ -36,6 +38,7 @@ vi.mock("@plexco/db", async (importOriginal) => {
     ...actual,
     createDb: vi.fn(() => ({ pool: {}, db: {} })),
     tenantsForPerson: vi.fn(),
+    guestNoteTenantForPerson: vi.fn(),
     createSession: vi.fn(),
     tenantLocale: vi.fn(),
   };
@@ -96,6 +99,7 @@ beforeEach(() => {
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
   vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(guestNoteTenantForPerson).mockResolvedValue(null);
   vi.mocked(tenantLocale).mockResolvedValue(null); // default: unresolvable tenant falls back to vi
 });
 
@@ -256,6 +260,148 @@ describe("resolveSessionCommandContext — entry gate", () => {
     expect(error).toMatchObject({ code: "RATE_LIMITED", statusCode: 429 });
     expect(error?.message).toBe("Quá nhiều yêu cầu — đợi.");
   });
+});
+
+describe("explicit guest-note context", () => {
+  const sessionId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const options = { guestNoteSessionId: sessionId };
+
+  it("proves the path association after actor quota and admin lookup, before locale and target quota", async () => {
+    const order: string[] = [];
+    vi.mocked(rateLimited).mockImplementation(async (bucket) => {
+      order.push(bucket.startsWith("session-actor:") ? "actor" : "target");
+      return false;
+    });
+    vi.mocked(tenantsForPerson).mockImplementation(async () => {
+      order.push("admin");
+      return [];
+    });
+    vi.mocked(guestNoteTenantForPerson).mockImplementation(async () => {
+      order.push("proof");
+      return TENANT;
+    });
+    vi.mocked(tenantLocale).mockImplementation(async () => {
+      order.push("locale");
+      return "en";
+    });
+    const response = await handleSessionCommand(
+      req({ commandId: "same key ", guestNoteSessionId: "forged" }, TENANT.toUpperCase()),
+      LIMIT,
+      async (context) => {
+        order.push("handler");
+        expect(context).toMatchObject({ tenantId: TENANT, commandId: "same key ", lang: "en" });
+        return new Response(t("vi", "en"));
+      },
+      options,
+    );
+    expect(await response.text()).toBe("en");
+    expect(order).toEqual(["actor", "admin", "proof", "locale", "target", "handler"]);
+    expect(guestNoteTenantForPerson).toHaveBeenCalledWith(
+      {},
+      liveSession.personId,
+      TENANT,
+      sessionId,
+    );
+  });
+
+  it.each(["owner", "admin", "co_admin"])(
+    "keeps %s on the existing admin path even if guest proof would fail",
+    async (role) => {
+      vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role }]);
+      vi.mocked(guestNoteTenantForPerson).mockRejectedValue(new Error("must not run"));
+      const result = await resolveSessionCommandContext(req({ commandId: "c" }), LIMIT, {
+        guestNoteSessionId: "bad-id",
+      });
+      expect(result).toMatchObject({ tenantId: TENANT });
+      expect(guestNoteTenantForPerson).not.toHaveBeenCalled();
+    },
+  );
+
+  it("never infers guest mode from a body, URL or bucket", async () => {
+    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
+    const request = new Request(
+      `https://plexco.app/api/sessions/${sessionId}/guest-notes?tenant=${TENANT}`,
+      req({ commandId: "c", guestNoteSessionId: sessionId }),
+    );
+    const result = await resolveSessionCommandContext(request, {
+      bucket: "session-guest-note-create",
+      limit: 10,
+    });
+    expect((result as Response).status).toBe(403);
+    expect(guestNoteTenantForPerson).not.toHaveBeenCalled();
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it.each(["auth", "csrf", "tenant", "actor"] as const)(
+    "refuses %s before either tenant resolver in guest mode",
+    async (kind) => {
+      if (kind === "auth") vi.mocked(currentSession).mockResolvedValue(null);
+      if (kind === "csrf") vi.mocked(csrfOk).mockReturnValue(false);
+      if (kind === "actor") vi.mocked(rateLimited).mockResolvedValue(true);
+      const request = req({ commandId: "c" }, kind === "tenant" ? "invalid" : TENANT);
+      const result = await resolveSessionCommandContext(request, LIMIT, options);
+      expect((result as Response).status).toBe(
+        { auth: 401, csrf: 403, tenant: 400, actor: 429 }[kind],
+      );
+      expect(tenantsForPerson).not.toHaveBeenCalled();
+      expect(guestNoteTenantForPerson).not.toHaveBeenCalled();
+      expect(tenantLocale).not.toHaveBeenCalled();
+      expect(request.bodyUsed).toBe(false);
+    },
+  );
+
+  it("keeps absent association indistinguishable and does not consume target quota or body", async () => {
+    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+    const request = req({ commandId: "c" });
+    const result = await resolveSessionCommandContext(request, LIMIT, options);
+    expect((await envelope(result as Response)).error).toMatchObject({
+      code: "FORBIDDEN",
+      message: "Bạn không có quyền với CLB này.",
+    });
+    expect(tenantLocale).not.toHaveBeenCalled();
+    expect(rateLimited).toHaveBeenCalledTimes(1);
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it.each(["database unavailable", "Invalid guest-note tenant context result"])(
+    "propagates %s without entering tenant context",
+    async (message) => {
+      vi.mocked(tenantsForPerson).mockResolvedValue([]);
+      const failure = new Error(message);
+      vi.mocked(guestNoteTenantForPerson).mockRejectedValue(failure);
+      const request = req({ commandId: "c" });
+      await expect(resolveSessionCommandContext(request, LIMIT, options)).rejects.toBe(failure);
+      expect(tenantLocale).not.toHaveBeenCalled();
+      expect(rateLimited).toHaveBeenCalledTimes(1);
+      expect(request.bodyUsed).toBe(false);
+    },
+  );
+
+  it.each(["quota", "json", "commandId"] as const)(
+    "uses tenant language for %s failure after proof",
+    async (kind) => {
+      vi.mocked(tenantsForPerson).mockResolvedValue([]);
+      vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
+      vi.mocked(tenantLocale).mockResolvedValue("en");
+      vi.mocked(rateLimited).mockImplementation(
+        async (bucket) => kind === "quota" && !bucket.startsWith("session-actor:"),
+      );
+      const result = await resolveSessionCommandContext(
+        req({}, TENANT, kind === "json" ? "{" : undefined),
+        LIMIT,
+        options,
+      );
+      expect((await envelope(result as Response)).error?.message).toBe(
+        {
+          quota: "Too many requests — wait.",
+          json: "Invalid payload.",
+          commandId: "Missing commandId.",
+        }[kind],
+      );
+    },
+  );
 });
 
 describe("resolveSessionCommandContext — body size ceiling", () => {
