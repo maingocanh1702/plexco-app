@@ -9,8 +9,8 @@
 > **Capability/availability:** Exact session action grants/availability must come from server response; no client role inference
 > **Priority:** 4 — designer-kickoff.md §3B
 > **FE design status:** Draft
-> **Runtime status:** Partial schema only — SessionService/routes/projector/web UI chưa build
-> **Negative scope:** Không tự build payment widget; không rewrite charge history; không exceed active+live-hold capacity
+> **Runtime status:** SessionService và các command routes đã có (BE Implementation header); route đọc session, projector thật và web UI chưa build. Occupancy helper hiện tại đếm active + guest notes; pending/payment holds chưa build. FE design vẫn Draft/PENDING, không authorize render.
+> **Negative scope:** Không tự build payment widget; không rewrite charge history; tuân theo guard capacity của `UpdateSession` hiện tại, không tự tính capacity ở client
 
 > 📍 **Đọc nhanh (2026-09-08 — chỉ mục, không phải authority):** feature nguồn `../../../features/FE/feature_session_management.md`; scope/phase đọc ở `BRD.md` v3.10 §📍 · hành vi `PRD.md` v2.9 §📍 · contract `TDD.md` v3.2 §📍 · **tiến độ thật `ROADMAP.md` v3.17 §📍** (mốc `main@0aff7ad`, 04/09).
 >
@@ -350,8 +350,8 @@ Quản lý buổi chơi thể thao của CLB: tạo mới, xem danh sách, xem c
 |---|---|---|---|
 | 409 | `STALE_VERSION` | Dialog "dữ liệu đã đổi" + CTA tải lại; không retry ngầm, không apply optimistic | `t("Dữ liệu đã thay đổi. Tải lại?", "This session changed. Reload?")` |
 | 409 | `SESSION_NOT_OPEN` | Toast lỗi + refetch; action bar dựng lại theo status server trả, FE không tự đổi badge | `t("Buổi chơi không còn ở trạng thái mở", "This session is no longer open")` |
-| 409 | `CAPACITY_BELOW_ROSTER` | Inline error ở field số chỗ trong form Sửa; không lưu | `t("Số chỗ không thể thấp hơn số người đang tham gia", "Slots can't be fewer than the active roster")` |
-| 409 | `CAPACITY_BELOW_OCCUPANCY` | Inline error ở field số chỗ; không huỷ hold để lách giới hạn | `t("Số chỗ không thể thấp hơn số người tham gia và chỗ đang giữ thanh toán", "Slots can't be fewer than the active roster plus held seats")` |
+| 409 | `CAPACITY_BELOW_ROSTER` | Inline error ở field số chỗ trong form Sửa; không lưu | `t("Sức chứa nhỏ hơn số người đã tham gia.", "Capacity is below the current roster.")` |
+| 409 | `CAPACITY_BELOW_OCCUPANCY` | Inline error ở field số chỗ trong form Sửa; không lưu hoặc tự giải phóng chỗ để lách giới hạn | `t("Sức chứa nhỏ hơn số chỗ đang được sử dụng.", "Capacity is below the occupied slots.")` |
 | 400 | `MISSING_DISCOVERY_FIELDS` | Đăng kèo bị chặn; inline error liệt kê field thiếu, status giữ `draft` | `t("Kèo công khai cần: môn, khu vực, thời gian, số chỗ", "Public sessions need sport, area, time and a slot count")` |
 | 400 | `PRICE_CHANGE_REQUIRES_POLICY` | Save ở form Sửa bị block; chỉ trình bày hai policy target, không tự chọn hộ | `t("Cần chọn chính sách áp dụng cho các khoản đã phát sinh", "Choose how existing charges are handled")` |
 | 400 | `CANCEL_REQUIRES_REVIEW` | Dừng tại chỗ: error generic + request ref; không invent review route/CTA | `t("Cần xác nhận huỷ — buổi chơi này phải được kiểm tra lại", "Cancellation needs review before it can proceed")` |
@@ -399,7 +399,7 @@ Quản lý buổi chơi thể thao của CLB: tạo mới, xem danh sách, xem c
 |---|---|---|
 | 1 | Tạo kèo public thiếu discovery fields | Inline error: "Kèo công khai cần: môn, khu vực, thời gian, số chỗ" |
 | 2 | Giờ kết thúc ≤ giờ bắt đầu | Inline error dưới giờ KT: "Giờ kết thúc phải sau giờ bắt đầu" |
-| 3 | Giảm slot dưới `confirmed + active holds` | Error toast theo server: "Không thể giảm — số chỗ đang được dùng hoặc giữ chỗ vượt giới hạn mới" |
+| 3 | `UpdateSession`: đổi số chỗ hữu hạn xuống dưới occupancy do server kiểm | Inline error theo server tại field số chỗ (§3 Error mapping); `CAPACITY_BELOW_ROSTER` giữ ưu tiên nếu dưới active roster, còn lại là `CAPACITY_BELOW_OCCUPANCY`; không lưu, FE không tự sum |
 | 4 | Host publish draft quá giờ | Error: "Buổi chơi đã quá giờ bắt đầu" |
 | 5 | Roster player name dài | Truncate + tooltip full name |
 | 6 | Session bị concurrent sửa | Error "Dữ liệu đã thay đổi. Tải lại?" + CTA reload |
@@ -407,7 +407,7 @@ Quản lý buổi chơi thể thao của CLB: tạo mới, xem danh sách, xem c
 | 8 | Left player | Hiện grayed trong roster, không selectable |
 | 9 | Price change khi đã có charges | Chỉ trình bày hai policy target: "Giữ obligation hiện tại" hoặc "Áp chênh lệch bằng append-only signed adjustment". Exact request enum/preview DTO chưa được pin, nên Save bị block; không rewrite charge/history và không tự invent `impact_policy` |
 | 10 | Offline khi submit | Toast "Không có kết nối" + form giữ data |
-| 11 | Capacity guard với live holds | Khi capacity hữu hạn, server trả canonical occupancy/max và từ chối nếu full. Private unlimited không render denominator; FE không tự sum |
+| 11 | Guard capacity hiện tại của `UpdateSession` | Server kiểm dưới session lock bằng active + guest notes; pending/payment holds chưa build. FE chỉ dùng capacity DTO đã pin; khi còn `UNPINNED` thì omit active UI (§6), không tự sum. Private unlimited không render denominator |
 
 ---
 
@@ -524,3 +524,4 @@ tắt `Ready → Success` bỏ qua Submitting.
 _FE Design Spec v0.2 · 2026-07-31 · Source: feature_session_management.md v2.17 + feature_payment_reconcile.md v1.10_
 _FE Design Spec v0.3 · 2026-08-07 · Δ v0.2→v0.3 (chỉ thêm, không sửa nội dung cũ): Draft Submitting + Success surface (§3 form tạo) và 4 section Draft cuối file (Analytics · State Machine · AC · Testing) · Source: Sporta FE porting analysis 2026-08-07_
 _FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `0aff7ad`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._
+_FE Design Spec — 2026-09-16: mirror the landed `UpdateSession` capacity guard and exact route error pairs; correct the current runtime header and preserve Draft/PENDING plus UNPINNED omission. No future occupancy policy or runtime change._
