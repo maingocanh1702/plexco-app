@@ -121,6 +121,93 @@ test("rejects wildcard target paths", () => {
   assert.ok(errors.some((error) => error.code === "TARGET_FILES_GLOB"));
 });
 
+test("accepts existing Next.js guest-note targets with default authority and path checks", () => {
+  const targets = [
+    "apps/web/app/api/sessions/[id]/guest-notes/route.ts",
+    "apps/web/app/api/sessions/[id]/guest-notes/route.test.ts",
+    "apps/web/app/api/sessions/[id]/guest-notes/[noteId]/route.ts",
+    "apps/web/app/api/sessions/[id]/guest-notes/[noteId]/route.test.ts",
+  ];
+  const { errors } = validateReviewDocument({
+    file: "docs/guest-note-readiness.md",
+    content: document(block({
+      ...CODE_READY_OVERRIDES,
+      AUTHORITY_SHA: git(process.cwd(), "rev-parse", resolveMainRef(process.cwd())),
+      TARGET_FILES: "\n" + targets.map((target) => "  - " + target).join("\n"),
+    }), "code-ready"),
+  });
+  assert.deepEqual(errors, []);
+});
+
+test("target paths remain literal while malformed paths fail closed", async (t) => {
+  const { dir, sha } = makeRepoWithOneCommit();
+  try {
+    const literalPaths = [
+      "synthetic/plain.ts", "synthetic/[id]/route.ts", "synthetic/[user-id]/route.ts",
+      "synthetic/[...slug]/route.ts", "synthetic/[[...slug]]/route.ts",
+      "synthetic/[a-z]/route.ts", "synthetic/[!x]/route.ts",
+      "synthetic/[...]/route.ts", "synthetic/[..slug]/route.ts", "synthetic/[a$z]/route.ts",
+    ];
+    // The sibling a is present, but the literal [a] must still be missing.
+    for (const target of [...literalPaths, "synthetic/a/route.ts"]) {
+      mkdirSync(dirname(join(dir, target)), { recursive: true });
+      writeFileSync(join(dir, target), "fixture\n");
+    }
+    const validate = (target, overrides = {}) => validateReviewDocument({
+      file: "docs/example-readiness.md",
+      content: document(block({
+        AUTHORITY_SHA: sha,
+        TARGET_FILES: "\n  - " + target,
+        ...overrides,
+      })),
+      repoRoot: dir,
+    }).errors;
+    const cases = literalPaths.map((target) => [target, []]);
+    cases.push(
+      ["`synthetic/[id]/route.ts` (existing)", []],
+      ["synthetic/plain.ts (existing)", []],
+      ["./synthetic/plain.ts", []],
+    );
+    for (const target of [
+      "synthetic/*.ts", "synthetic/**/route.ts", "synthetic/file?.ts",
+      "synthetic/[id/route.ts", "synthetic/id]/route.ts", "synthetic/[]/route.ts",
+      "synthetic/[[id]]/route.ts", "synthetic/[a[b]]/route.ts",
+      "synthetic/pre[id]/route.ts", "synthetic/[id]suffix/route.ts",
+      "synthetic/[id].ts", "synthetic/[[...]]/route.ts",
+      "synthetic/[my id]/route.ts", "synthetic/plain.ts [annotation]",
+      "synthetic/plain.ts (all *)", "synthetic/plain.ts (which?)",
+    ]) cases.push([target, ["TARGET_FILES_GLOB"]]);
+    for (const target of [
+      "../outside.ts", "synthetic/../synthetic/plain.ts", "synthetic/..",
+      "/tmp/outside.ts", "C:\\outside.ts", "synthetic/plain.ts:12",
+      "synthetic/{a,b}/route.ts", "synthetic/plain!.ts",
+    ]) cases.push([target, ["TARGET_FILES_PATH"]]);
+    for (const target of [
+      "synthetic/[missing]/route.ts", "synthetic/[a]/route.ts", "synthetic/missing.ts",
+    ]) cases.push([target, ["TARGET_FILES_MISSING"]]);
+
+    for (const [target, codes] of cases) {
+      await t.test(target, () => {
+        assert.deepEqual(validate(target).map((error) => error.code), codes);
+      });
+    }
+    await t.test("literal target acceptance cannot mask a failed readiness gate", () => {
+      const errors = validate("synthetic/[id]/route.ts", {
+        ...CODE_READY_OVERRIDES,
+        G4_TEST: "FAIL",
+      });
+      assert.deepEqual(errors.map((error) => error.code), ["CODE_READY_GATE"]);
+    });
+    await t.test("literal target acceptance still checks actual git authority", () => {
+      const errors = validate("synthetic/[id]/route.ts", { AUTHORITY_SHA: FULL_SHA });
+      assert.deepEqual(errors.map((error) => error.code), ["AUTHORITY_SHA_UNKNOWN"]);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 test("rejects stale policy versions", () => {
   const errors = errorsFor(
     document(block({ REVIEW_POLICY_VERSION: "1.1" })),
@@ -332,9 +419,9 @@ test("leaves SECURITY_AND_MIGRATION_GATE PASS/PARTIAL/FAIL unchanged on every ve
 // AUTHORITY_NOT_MAIN off-main. These tests build throwaway repos with node built-ins only.
 // ---------------------------------------------------------------------------
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { resolveMainRef } from "./check-review-readiness.mjs";
 

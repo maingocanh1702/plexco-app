@@ -145,9 +145,12 @@ function targetEntries(sections) {
     .filter(Boolean);
 }
 
+// Same whole-segment grammar as the v33 scope gate; fs.existsSync checks these literally.
+const DYNAMIC_SEGMENT = /^(?:\[\[\.\.\.[^[\]]+\]\]|\[\.\.\.[^[\]]+\]|\[[^[\]]+\])$/;
+
 function normalizeTargetPath(entry) {
   const clean = entry.replaceAll("`", "").trim();
-  const match = clean.match(/^([A-Za-z0-9_./-]+)(?:\s|$)/);
+  const match = clean.match(/^(\S+)(?:\s|$)/);
   return match?.[1] ?? null;
 }
 
@@ -243,7 +246,11 @@ function validateTargets({ errors, file, line, sections, repoRoot, checkPaths })
   }
 
   for (const entry of entries) {
-    if (/[*?[\]]/.test(entry)) {
+    const target = normalizeTargetPath(entry);
+    const segments = target?.split("/") ?? [];
+    const suffix = target ? entry.replaceAll("`", "").trim().slice(target.length) : "";
+    const bracketAbuse = segments.some((segment) => /[[\]]/.test(segment) && !DYNAMIC_SEGMENT.test(segment));
+    if (/[*?]/.test(entry) || bracketAbuse || /[[\]]/.test(suffix)) {
       addError(
         errors,
         file,
@@ -254,8 +261,12 @@ function validateTargets({ errors, file, line, sections, repoRoot, checkPaths })
       continue;
     }
 
-    const target = normalizeTargetPath(entry);
-    if (!target || path.isAbsolute(target) || target.startsWith("../")) {
+    if (
+      !target ||
+      path.isAbsolute(target) ||
+      segments.includes("..") ||
+      segments.some((segment) => !DYNAMIC_SEGMENT.test(segment) && !/^[A-Za-z0-9_.-]*$/.test(segment))
+    ) {
       addError(
         errors,
         file,
