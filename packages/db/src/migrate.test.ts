@@ -2801,6 +2801,26 @@ async function withManagedPostgresAdminRole<T>(
 }
 
 describe("job_definer bootstrap script itself fails closed on runtime-role targets", () => {
+  it("refuses a nonexistent configured migration target with the native missing-role error", async () => {
+    await withJobDefinerLock(BASE!, async () => {
+      const client = await connect(BASE!);
+      const missing = `zz_missing_job_target_${randomUUID().replaceAll("-", "")}`;
+      try {
+        await client.query(`SET job_definer_bootstrap.migration_role = '${missing}'`);
+        await expect(bootstrapJobDefiner(client)).rejects.toMatchObject({
+          code: "42704",
+          message: `role "${missing}" does not exist`,
+        });
+      } finally {
+        try {
+          await client.query("RESET job_definer_bootstrap.migration_role");
+        } finally {
+          await client.end();
+        }
+      }
+    });
+  }, 30_000);
+
   it("refuses to grant job_definer to a runtime role passed as the migration_role target", async () => {
     await withJobDefinerLock(BASE!, async () => {
       const admin = await connect(BASE!);
@@ -3055,6 +3075,53 @@ async function chatDefinerMembers(client: pg.Client): Promise<string[]> {
   );
   return (result.rows as { rolname: string }[]).map((r) => r.rolname).sort();
 }
+
+describe.each([
+  { name: "job_definer", sqlPath: JOB_DEFINER_BOOTSTRAP_SQL_PATH },
+  { name: "chat_definer", sqlPath: CHAT_DEFINER_BOOTSTRAP_SQL_PATH },
+])("$name catalog snapshot guards", ({ sqlPath }) => {
+  it.each([
+    { index: 0, phase: "pre-grant" },
+    { index: 1, phase: "post-grant" },
+  ])("$phase guard tolerates an unrelated role dropped after its snapshot", async ({ index }) => {
+    await withJobDefinerLock(BASE!, () =>
+      withChatDefinerLock(BASE!, () =>
+        hideRealChatDefiner(admin, async () => {
+          await bootstrapChatDefiner(admin);
+          const source = await readFile(sqlPath, "utf8");
+          const guards =
+            source.match(
+              /SELECT rolname INTO v_existing_runtime_member\s+FROM pg_roles\s+WHERE rolname IN \('app', 'app_worker', 'readonly'\)\s+AND pg_has_role\((?:rolname|oid), '(?:job_definer|chat_definer)', 'MEMBER'\)\s+LIMIT 1;/g,
+            ) ?? [];
+          expect(guards).toHaveLength(2);
+          // Execute the shipped predicate, changing only PL/pgSQL's destination clause.
+          const query = guards[index]!.replace(" INTO v_existing_runtime_member", "");
+          const scratchRole = `plexco_catalog_snapshot_${randomUUID().replaceAll("-", "")}`;
+          const reader = await connect(BASE!);
+          try {
+            await admin.query(`CREATE ROLE ${scratchRole} NOLOGIN`);
+            await reader.query("BEGIN");
+            // DECLARE fixes the statement snapshot before the other connection commits DROP.
+            await reader.query(`DECLARE bootstrap_guard NO SCROLL CURSOR FOR ${query}`);
+            await admin.query(`DROP ROLE ${scratchRole}`);
+            const result = await reader.query("FETCH ALL FROM bootstrap_guard");
+            expect(result.rows).toEqual([]);
+          } finally {
+            try {
+              await reader.query("ROLLBACK");
+            } finally {
+              try {
+                await reader.end();
+              } finally {
+                await admin.query(`DROP ROLE IF EXISTS ${scratchRole}`);
+              }
+            }
+          }
+        }),
+      ),
+    );
+  });
+});
 
 describe("chat_definer bootstrap script bootstraps idempotently and fails closed on invalid grant targets", () => {
   it("first bootstrap with no migration role set grants membership to CURRENT_USER", async () => {

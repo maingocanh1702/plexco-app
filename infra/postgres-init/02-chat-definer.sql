@@ -194,13 +194,13 @@ BEGIN
       'chat_definer bootstrap: refusing to grant chat_definer to runtime role % — this would let it bypass the narrow function/audit boundary',
       v_target;
   END IF;
-  -- pg_has_role raises "role ... does not exist" for an absent role name rather than
-  -- returning false (the exact hazard 01-job-definer.sql documents) — filter through
-  -- pg_roles first so an absent runtime role is simply not a member yet.
+  -- A fresh cluster may not have runtime roles yet, so scan pg_roles. Use its snapshot-derived
+  -- oid: a concurrent DROP can invalidate a scanned name before pg_has_role resolves it, even
+  -- before the runtime-name filter is evaluated.
   SELECT rolname INTO v_existing_runtime_member
     FROM pg_roles
    WHERE rolname IN ('app', 'app_worker', 'readonly')
-     AND pg_has_role(rolname, 'chat_definer', 'MEMBER')
+     AND pg_has_role(oid, 'chat_definer', 'MEMBER')
    LIMIT 1;
   IF v_existing_runtime_member IS NOT NULL THEN
     RAISE EXCEPTION
@@ -264,7 +264,7 @@ BEGIN
   SELECT rolname INTO v_existing_runtime_member
     FROM pg_roles
    WHERE rolname IN ('app', 'app_worker', 'readonly')
-     AND pg_has_role(rolname, 'chat_definer', 'MEMBER')
+     AND pg_has_role(oid, 'chat_definer', 'MEMBER')
    LIMIT 1;
   IF v_existing_runtime_member IS NOT NULL THEN
     RAISE EXCEPTION
