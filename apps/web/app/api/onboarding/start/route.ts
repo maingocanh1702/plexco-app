@@ -1,6 +1,7 @@
 import { t } from "@plexco/core/i18n";
 import { provisionTenant, SlugTakenError } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
+import { readBoundedBody } from "../../../../lib/read-bounded-body";
 import {
   appDb,
   csrfOk,
@@ -35,17 +36,15 @@ export async function POST(request: Request): Promise<Response> {
   if (!contentType.toLowerCase().startsWith("application/json")) {
     return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
   }
-  const declared = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_START_BODY_BYTES) {
-    return err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413);
-  }
   let body: { slug?: unknown; name?: unknown; timezone?: unknown; locale?: unknown };
   try {
-    const text = await request.text();
-    if (Buffer.byteLength(text, "utf8") > MAX_START_BODY_BYTES) {
-      return err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413);
+    const bodyRead = await readBoundedBody(request, MAX_START_BODY_BYTES);
+    if (!bodyRead.ok) {
+      return bodyRead.reason === "too_large"
+        ? err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413)
+        : err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
     }
-    const raw: unknown = JSON.parse(text);
+    const raw: unknown = JSON.parse(bodyRead.text);
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
       return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
     }

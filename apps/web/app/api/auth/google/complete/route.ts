@@ -2,6 +2,7 @@ import { t } from "@plexco/core/i18n";
 import { consumeOauthCompletionHandoff } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
 import { log } from "../../../../../lib/log";
+import { readBoundedBody } from "../../../../../lib/read-bounded-body";
 import { noReferrer, redirect } from "../../../../../lib/request-policy";
 import {
   appDb,
@@ -103,15 +104,14 @@ async function handleComplete(request: Request): Promise<Response> {
   if (!contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
     return fail();
   }
-  const declared = Number(request.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > MAX_COMPLETE_BODY_BYTES) return fail();
   let text: string;
   try {
-    text = await request.text();
+    const body = await readBoundedBody(request, MAX_COMPLETE_BODY_BYTES);
+    if (!body.ok) return fail();
+    text = body.text;
   } catch {
     return fail(); // malformed body
   }
-  if (Buffer.byteLength(text, "utf8") > MAX_COMPLETE_BODY_BYTES) return fail();
   const raw = new URLSearchParams(text).get(HANDOFF_FIELD);
   if (typeof raw !== "string" || raw.length === 0) return fail();
 

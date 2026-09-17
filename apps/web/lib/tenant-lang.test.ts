@@ -158,6 +158,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // grep -rlP '(?<![A-Za-z0-9_.$])t\(' apps/web/lib). A file with no translatable output cannot
   // render in the wrong language, so it needs no language context.
   "lib/api-envelope.ts": "c",
+  "lib/read-bounded-body.ts": "c",
   "lib/tenant-lang.ts": "c",
   "lib/auth-secrets.ts": "c",
   "lib/google-oidc.ts": "c",

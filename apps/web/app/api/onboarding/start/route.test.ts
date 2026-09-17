@@ -1,4 +1,4 @@
-import { provisionTenant } from "@plexco/db";
+import { provisionTenant, SlugTakenError } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   csrfOk,
@@ -221,5 +221,223 @@ describe("POST /api/onboarding/start — bounded body + name length (audit W-8)"
     const res120 = await POST(req({ slug: "club-a", name: "x".repeat(120) }));
     expect(res120.status).toBe(200);
     expect(provisionTenant).toHaveBeenCalledOnce();
+  });
+});
+
+describe("bounded native request stream", () => {
+  beforeEach(() => {
+    vi.mocked(currentSession).mockReset().mockResolvedValue(liveSession);
+    vi.mocked(csrfOk).mockReset().mockReturnValue(true);
+    vi.mocked(rateLimited).mockReset().mockResolvedValue(false);
+    vi.mocked(provisionTenant).mockReset().mockResolvedValue("tenant-1");
+    vi.mocked(issueSession).mockReset().mockResolvedValue({ csrfToken: "new-csrf" });
+  });
+
+  it.each([undefined, "1", "4096"])(
+    "cancels an over-cap open producer before EOF with Content-Length=%s",
+    async (declared) => {
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      let signal!: (event: string) => void;
+      let release!: () => void;
+      const boundary = new Promise<string>((resolve) => {
+        signal = resolve;
+      });
+      const cancelled = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let pulls = 0;
+      const cancel = vi.fn(() => {
+        signal("cancel");
+        return cancelled;
+      });
+      const request = streamRequest(
+        {
+          start(value) {
+            controller = value;
+          },
+          pull(value) {
+            pulls += 1;
+            if (pulls <= 3) value.enqueue(new Uint8Array(pulls === 3 ? 1 : 2048));
+            else signal("read-after-limit");
+          },
+          cancel,
+        },
+        declared === undefined ? {} : { "content-length": declared },
+      );
+      let settled = false;
+      const pending = POST(request).then((value) => {
+        settled = true;
+        return value;
+      });
+      try {
+        expect(await Promise.race([boundary, pending.then(() => "response")])).toBe("cancel");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        expect(pulls).toBe(3);
+        expect(cancel).toHaveBeenCalledOnce();
+      } finally {
+        release();
+        if (cancel.mock.calls.length === 0) controller.close();
+        await pending;
+      }
+      const response = await pending;
+      expect(response.status).toBe(413);
+      expect((await response.json()).error).toMatchObject({
+        code: "INVALID_BODY",
+        message: "Dữ liệu quá lớn.",
+      });
+      expect(provisionTenant).not.toHaveBeenCalled();
+      expect(issueSession).not.toHaveBeenCalled();
+    },
+  );
+
+  function streamRequest(
+    source: UnderlyingDefaultSource<Uint8Array>,
+    headers: Record<string, string> = {},
+  ) {
+    return new Request("https://plexco.app/api/onboarding/start", {
+      method: "POST",
+      duplex: "half",
+      headers: { "content-type": "application/json", "x-csrf-token": "secret", ...headers },
+      body: new ReadableStream(source, { highWaterMark: 0 }),
+    } as RequestInit);
+  }
+
+  it.each([undefined, "1", "invalid", "4096"])(
+    "preserves split UTF-8 and provision-before-issue at the cap (%s)",
+    async (declared) => {
+      const payload = { slug: "club-new", name: "Đà🏸", locale: "en", pad: "" };
+      payload.pad = "x".repeat(4096 - Buffer.byteLength(JSON.stringify(payload)));
+      const bytes = new TextEncoder().encode(JSON.stringify(payload));
+      const split = Buffer.byteLength('{"slug":"club-new","name":"') + 1;
+      const chunks = [
+        bytes.subarray(0, split),
+        bytes.subarray(split, split + 4),
+        bytes.subarray(split + 4),
+      ];
+      const order: string[] = [];
+      vi.mocked(currentSession).mockImplementation(async () => {
+        order.push("auth");
+        return liveSession;
+      });
+      vi.mocked(csrfOk).mockImplementation(() => {
+        order.push("csrf");
+        return true;
+      });
+      vi.mocked(rateLimited).mockImplementation(async () => {
+        order.push("rate");
+        return false;
+      });
+      vi.mocked(provisionTenant).mockImplementation(async () => {
+        order.push("provision");
+        return "tenant-1";
+      });
+      vi.mocked(issueSession).mockImplementation(async () => {
+        order.push("issue");
+        return { csrfToken: "new-csrf" };
+      });
+      let index = 0;
+      const request = streamRequest(
+        {
+          pull(controller) {
+            if (index === 0) order.push("body");
+            if (index < chunks.length) controller.enqueue(chunks[index++]);
+            else controller.close();
+          },
+        },
+        declared === undefined ? {} : { "content-length": declared },
+      );
+      const response = await POST(request);
+      expect(response.status).toBe(200);
+      expect(provisionTenant).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ name: "Đà🏸", locale: "en", personId: "person-1" }),
+      );
+      expect(rateLimited).toHaveBeenCalledWith("tenant-create:acc-1", 3, 3600);
+      expect(order).toEqual(["auth", "csrf", "rate", "body", "provision", "issue"]);
+    },
+  );
+
+  it.each(["invalid", "truncated", "empty", "read", "locked", "cancel"])(
+    "maps %s body failures to the existing Vietnamese 400",
+    async (kind) => {
+      const failure = new Error("source failed");
+      const bytes =
+        kind === "empty"
+          ? new Uint8Array()
+          : Uint8Array.from([
+              ...new TextEncoder().encode('{"slug":"club-new","name":"'),
+              ...(kind === "truncated" ? [0xe2, 0x82] : [0x80, 0x22, 0x7d]),
+            ]);
+      const request = streamRequest({
+        pull(controller) {
+          if (kind === "read") throw failure;
+          controller.enqueue(kind === "cancel" ? new Uint8Array(4097) : bytes);
+          if (kind !== "cancel") controller.close();
+        },
+        cancel() {
+          throw failure;
+        },
+      });
+      const lock = kind === "locked" ? request.body!.getReader() : undefined;
+      try {
+        const response = await POST(request);
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toMatchObject({
+          code: "INVALID_BODY",
+          message: "Dữ liệu không hợp lệ.",
+        });
+        expect(provisionTenant).not.toHaveBeenCalled();
+        expect(issueSession).not.toHaveBeenCalled();
+      } finally {
+        lock?.releaseLock();
+      }
+    },
+  );
+
+  it.each(["auth", "csrf", "quota", "type", "declared"] as const)(
+    "does not pull or mutate after the %s gate refuses",
+    async (gate) => {
+      if (gate === "auth") vi.mocked(currentSession).mockResolvedValue(null);
+      if (gate === "csrf") vi.mocked(csrfOk).mockReturnValue(false);
+      if (gate === "quota") vi.mocked(rateLimited).mockResolvedValue(true);
+      const pull = vi.fn();
+      const request = streamRequest({ pull });
+      if (gate === "type") request.headers.set("content-type", "text/plain");
+      if (gate === "declared") request.headers.set("content-length", "4097");
+      const response = await POST(request);
+      expect(response.status).toBe(
+        { auth: 401, csrf: 403, quota: 429, type: 400, declared: 413 }[gate],
+      );
+      if (gate === "declared")
+        expect((await response.json()).error).toMatchObject({
+          code: "INVALID_BODY",
+          message: "Dữ liệu quá lớn.",
+        });
+      expect(pull).not.toHaveBeenCalled();
+      expect(request.bodyUsed).toBe(false);
+      expect(provisionTenant).not.toHaveBeenCalled();
+      expect(issueSession).not.toHaveBeenCalled();
+      expect(rateLimited).toHaveBeenCalledTimes(gate === "auth" || gate === "csrf" ? 0 : 1);
+    },
+  );
+
+  it.each(["quota", "provision"])(
+    "keeps unrelated %s faults outside the body catch",
+    async (step) => {
+      const failure = new Error("dependency failed");
+      if (step === "quota") vi.mocked(rateLimited).mockRejectedValue(failure);
+      else vi.mocked(provisionTenant).mockRejectedValue(failure);
+      await expect(POST(req({ slug: "club-new", name: "New" }))).rejects.toBe(failure);
+      expect(issueSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains the existing slug-conflict mapping after a valid body", async () => {
+    vi.mocked(provisionTenant).mockRejectedValue(new SlugTakenError());
+    const response = await POST(req({ slug: "club-new", name: "New" }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("SLUG_TAKEN");
+    expect(issueSession).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,7 @@ import {
   tenantsForPerson,
 } from "@plexco/db";
 import { err } from "./api-envelope";
+import { readBoundedBody } from "./read-bounded-body";
 import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
 import { resolveTenantLang } from "./tenant-lang";
 
@@ -123,60 +124,6 @@ export function isUnsafeCommandKey(value: string): boolean {
  */
 const MAX_BODY_BYTES = 64 * 1024;
 
-/**
- * Reads the body with a hard byte ceiling, returning null when the ceiling is crossed.
- *
- * `request.json()` buffers whatever arrives, so a single authenticated tenant admin could hold the
- * process to ransom with one very large or chunked body — the request-COUNT limiter above does not
- * bound request SIZE (codex round-02/2 [P2]). Next.js App Router route handlers have no built-in
- * body limit, unlike the old Pages API `bodyParser.sizeLimit`.
- *
- * The stream is CANCELLED as soon as the ceiling is crossed rather than drained, so an oversized
- * chunked body is abandoned mid-flight instead of being read to completion and then rejected. The
- * declared Content-Length is checked first as a cheap reject, but it is only a hint — a chunked
- * request may omit or understate it, so the running total is what actually enforces the bound.
- */
-type BoundedBody =
-  { ok: true; text: string } | { ok: false; reason: "too_large" | "malformed_encoding" };
-
-async function readBoundedBody(request: Request): Promise<BoundedBody> {
-  const declared = Number(request.headers.get("content-length") ?? Number.NaN);
-  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-    return { ok: false, reason: "too_large" };
-  }
-
-  const reader = request.body?.getReader();
-  if (!reader) return { ok: true, text: "" }; // no stream = no body
-
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
-      await reader.cancel();
-      return { ok: false, reason: "too_large" };
-    }
-    chunks.push(value);
-  }
-
-  try {
-    // FATAL decoding is load-bearing, not defensive tidiness. A non-fatal TextDecoder maps EVERY
-    // invalid byte to U+FFFD, so raw 0x80 and 0x81 both become "\uFFFD" — two distinct client
-    // commandIds collapsing onto one processed_commands row, where the second caller replays the
-    // first caller's session. That is the same key-collision class the lone-surrogate guard above
-    // closes, one layer lower, and it was introduced by replacing request.json() with a manual
-    // decode in the body-size fix. codex round-02/2 -> round-03/1 [P1].
-    return {
-      ok: true,
-      text: new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
-    };
-  } catch {
-    return { ok: false, reason: "malformed_encoding" };
-  }
-}
-
 export interface SessionCommandContext {
   tenantId: string;
   commandId: string;
@@ -283,7 +230,7 @@ export async function resolveSessionCommandContext(
   }
 
   return runWithLang(lang, async (): Promise<Response | SessionCommandContext> => {
-    const bodyRead = await readBoundedBody(request);
+    const bodyRead = await readBoundedBody(request, MAX_BODY_BYTES);
     if (!bodyRead.ok) {
       return bodyRead.reason === "too_large"
         ? err("INVALID_BODY", t("Dữ liệu quá lớn.", "Payload too large."), 413)
