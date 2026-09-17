@@ -1343,3 +1343,170 @@ describe("DD-56 amendment clause 2 — the role predicate has exactly one home",
     expect(scanned.length).toBeGreaterThan(8);
   });
 });
+
+describe.each(["admin", "guest"])("extracted body reader for %s session commands", (actor) => {
+  const options =
+    actor === "guest" ? { guestNoteSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } : {};
+  beforeEach(() => {
+    if (actor === "guest") vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+  });
+  function streamRequest(source: UnderlyingDefaultSource<Uint8Array>) {
+    return new Request(`https://plexco.app/api/sessions?tenant=${TENANT}`, {
+      method: "POST",
+      body: new ReadableStream(source, { highWaterMark: 0 }),
+      duplex: "half",
+    } as RequestInit);
+  }
+
+  it("cancels cumulative overflow before EOF and waits for cancellation before its English 413", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let signal!: (event: string) => void;
+    let release!: () => void;
+    const boundary = new Promise<string>((resolve) => {
+      signal = resolve;
+    });
+    const cancelled = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let pulls = 0;
+    const cancel = vi.fn(() => {
+      signal("cancel");
+      return cancelled;
+    });
+    const request = streamRequest({
+      start(value) {
+        controller = value;
+      },
+      pull(value) {
+        pulls += 1;
+        if (pulls <= 3) value.enqueue(new Uint8Array(pulls === 3 ? 1 : 32768));
+        else signal("read-after-limit");
+      },
+      cancel,
+    });
+    const handler = vi.fn(async () => new Response("should not run"));
+    let settled = false;
+    const pending = handleSessionCommand(request, LIMIT, handler, options).then((value) => {
+      settled = true;
+      return value;
+    });
+    try {
+      expect(await Promise.race([boundary, pending.then(() => "response")])).toBe("cancel");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(pulls).toBe(3);
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      if (cancel.mock.calls.length === 0) controller.close();
+      await pending;
+    }
+    expect((await pending).status).toBe(413);
+    expect((await envelope(await pending)).error?.message).toBe("Payload too large.");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each(["read", "cancel", "locked"])(
+    "propagates %s faults without invoking the command",
+    async (kind) => {
+      const failure = new Error("source failed");
+      const request = streamRequest({
+        pull(controller) {
+          if (kind === "read") throw failure;
+          controller.enqueue(new Uint8Array(65537));
+        },
+        cancel() {
+          throw failure;
+        },
+      });
+      const lock = kind === "locked" ? request.body!.getReader() : undefined;
+      const handler = vi.fn(async () => new Response());
+      try {
+        const assertion = expect(handleSessionCommand(request, LIMIT, handler, options)).rejects;
+        if (kind === "locked") await assertion.toBeInstanceOf(TypeError);
+        else await assertion.toBe(failure);
+        expect(handler).not.toHaveBeenCalled();
+      } finally {
+        lock?.releaseLock();
+      }
+    },
+  );
+
+  it("keeps malformed UTF-8 distinct from a command key and returns tenant-language 400", async () => {
+    const request = streamRequest({
+      pull(controller) {
+        controller.enqueue(Uint8Array.of(0x80));
+        controller.close();
+      },
+    });
+    const handler = vi.fn(async () => new Response());
+    const response = await handleSessionCommand(request, LIMIT, handler, options);
+    expect(response.status).toBe(400);
+    expect((await envelope(response)).error?.message).toBe("Invalid payload.");
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("retains the exact command key at 64 KiB and pulls only after proven tenant quota and locale", async () => {
+    const body = { commandId: " key-Đ🏸 ", pad: "" };
+    body.pad = "x".repeat(65536 - Buffer.byteLength(JSON.stringify(body)));
+    const request = streamRequest({
+      pull(controller) {
+        expect(rateLimited).toHaveBeenNthCalledWith(2, `session-test:${TENANT}`, 10, 60);
+        expect(tenantLocale).toHaveBeenCalled();
+        expect(guestNoteTenantForPerson).toHaveBeenCalledTimes(actor === "guest" ? 1 : 0);
+        controller.enqueue(new TextEncoder().encode(JSON.stringify(body)));
+        controller.close();
+      },
+    });
+    const response = await handleSessionCommand(
+      request,
+      LIMIT,
+      async (context) => {
+        expect(context).toMatchObject({
+          commandId: body.commandId,
+          tenantId: TENANT,
+          lang: "en",
+          body,
+        });
+        return new Response(t("vi", "en"));
+      },
+      options,
+    );
+    expect(await response.text()).toBe("en");
+  });
+});
+
+it.each(["auth", "csrf", "tenant", "actor", "association", "quota"] as const)(
+  "guest body stays untouched after %s refusal",
+  async (gate) => {
+    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(guestNoteTenantForPerson).mockResolvedValue(gate === "association" ? null : TENANT);
+    if (gate === "auth") vi.mocked(currentSession).mockResolvedValue(null);
+    if (gate === "csrf") vi.mocked(csrfOk).mockReturnValue(false);
+    vi.mocked(rateLimited).mockImplementation(
+      async (bucket) =>
+        gate === "actor" || (gate === "quota" && bucket.startsWith("session-test:")),
+    );
+    const pull = vi.fn();
+    const request = new Request(
+      `https://plexco.app/api/sessions?tenant=${gate === "tenant" ? "bad" : TENANT}`,
+      {
+        method: "POST",
+        duplex: "half",
+        body: new ReadableStream({ pull }, { highWaterMark: 0 }),
+      } as RequestInit,
+    );
+    const handler = vi.fn(async () => new Response());
+    const response = await handleSessionCommand(request, LIMIT, handler, {
+      guestNoteSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    });
+    expect(response.status).toBe(
+      { auth: 401, csrf: 403, tenant: 400, actor: 429, association: 403, quota: 429 }[gate],
+    );
+    expect(pull).not.toHaveBeenCalled();
+    expect(request.bodyUsed).toBe(false);
+    expect(handler).not.toHaveBeenCalled();
+  },
+);

@@ -275,3 +275,203 @@ describe("POST /api/auth/google/complete — rate limit + bounded body (audit W-
     );
   });
 });
+
+describe("bounded native request stream", () => {
+  it.each([undefined, "1", "1024"])(
+    "cancels an over-cap open producer before EOF with Content-Length=%s",
+    async (declared) => {
+      let controller!: ReadableStreamDefaultController<Uint8Array>;
+      let signal!: (event: string) => void;
+      let release!: () => void;
+      const boundary = new Promise<string>((resolve) => {
+        signal = resolve;
+      });
+      const cancelled = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let pulls = 0;
+      const cancel = vi.fn(() => {
+        signal("cancel");
+        return cancelled;
+      });
+      const request = streamRequest(
+        {
+          start(value) {
+            controller = value;
+          },
+          pull(value) {
+            pulls += 1;
+            if (pulls <= 3) value.enqueue(new Uint8Array(pulls === 3 ? 1 : 512));
+            else signal("read-after-limit");
+          },
+          cancel,
+        },
+        declared === undefined ? {} : { "content-length": declared },
+      );
+      let settled = false;
+      const pending = POST(request).then((value) => {
+        settled = true;
+        return value;
+      });
+      try {
+        expect(await Promise.race([boundary, pending.then(() => "response")])).toBe("cancel");
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        expect(pulls).toBe(3);
+        expect(cancel).toHaveBeenCalledOnce();
+      } finally {
+        release();
+        if (cancel.mock.calls.length === 0) controller.close();
+        await pending;
+      }
+      const response = await pending;
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("https://plexco.app/?auth_error=AUTH_INVALID");
+      expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+      expect(session.issueSession).not.toHaveBeenCalled();
+    },
+  );
+
+  function streamRequest(
+    source: UnderlyingDefaultSource<Uint8Array>,
+    headers: Record<string, string> = {},
+  ) {
+    return new Request("https://plexco.app/api/auth/google/complete", {
+      method: "POST",
+      duplex: "half",
+      headers: {
+        host: "plexco.app",
+        origin: "https://plexco.app",
+        "do-connecting-ip": "1.2.3.4",
+        "content-type": "application/x-www-form-urlencoded",
+        ...headers,
+      },
+      body: new ReadableStream(source, { highWaterMark: 0 }),
+    } as RequestInit);
+  }
+
+  it.each([undefined, "1", "invalid", "1024"])(
+    "preserves split UTF-8 and consume-before-issue at the cap (%s)",
+    async (declared) => {
+      const prefix = "handoff=đ🏸&pad=";
+      const bytes = new TextEncoder().encode(prefix + "x".repeat(1024 - Buffer.byteLength(prefix)));
+      const split = 9;
+      const chunks = [
+        bytes.subarray(0, split),
+        bytes.subarray(split, split + 4),
+        bytes.subarray(split + 4),
+      ];
+      const order: string[] = [];
+      vi.mocked(rateLimitCheck).mockImplementation(async () => {
+        order.push("rate");
+        return true;
+      });
+      vi.mocked(consumeOauthCompletionHandoff).mockImplementation(async () => {
+        order.push("consume");
+        return "acc-9";
+      });
+      vi.mocked(session.issueSession).mockImplementation(async () => {
+        order.push("issue");
+        return { csrfToken: "csrf" };
+      });
+      let index = 0;
+      const request = streamRequest(
+        {
+          pull(controller) {
+            if (index === 0) order.push("body");
+            if (index < chunks.length) controller.enqueue(chunks[index++]);
+            else controller.close();
+          },
+        },
+        declared === undefined ? {} : { "content-length": declared },
+      );
+      const response = await POST(request);
+      expect(response.headers.get("location")).toBe("https://plexco.app/");
+      expect(consumeOauthCompletionHandoff).toHaveBeenCalledWith(
+        expect.anything(),
+        hashToken("đ🏸"),
+      );
+      expect(order).toEqual(["rate", "body", "consume", "issue"]);
+    },
+  );
+
+  it.each(["invalid", "truncated", "empty", "read", "locked", "cancel"])(
+    "maps %s body failures to the generic invalid redirect",
+    async (kind) => {
+      const failure = new Error("source failed");
+      const bytes =
+        kind === "empty"
+          ? new Uint8Array()
+          : Uint8Array.from([
+              ...new TextEncoder().encode("handoff="),
+              ...(kind === "truncated" ? [0xe2, 0x82] : [0x80]),
+            ]);
+      const request = streamRequest({
+        pull(controller) {
+          if (kind === "read") throw failure;
+          controller.enqueue(kind === "cancel" ? new Uint8Array(1025) : bytes);
+          if (kind !== "cancel") controller.close();
+        },
+        cancel() {
+          throw failure;
+        },
+      });
+      const lock = kind === "locked" ? request.body!.getReader() : undefined;
+      try {
+        const response = await POST(request);
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe(
+          "https://plexco.app/?auth_error=AUTH_INVALID",
+        );
+        expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+        expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+        expect(session.issueSession).not.toHaveBeenCalled();
+      } finally {
+        lock?.releaseLock();
+      }
+    },
+  );
+
+  it.each(["config", "quota", "quota-fault", "origin", "type", "declared"])(
+    "does not pull or mutate after the %s gate refuses",
+    async (gate) => {
+      const previousSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+      if (gate === "config") delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+      if (gate === "quota") vi.mocked(rateLimitCheck).mockResolvedValue(false);
+      if (gate === "quota-fault")
+        vi.mocked(rateLimitCheck).mockRejectedValue(new Error("store failed"));
+      const pull = vi.fn();
+      const request = streamRequest({ pull });
+      if (gate === "origin") request.headers.set("origin", "https://evil.example");
+      if (gate === "type") request.headers.set("content-type", "application/json");
+      if (gate === "declared") request.headers.set("content-length", "1025");
+      try {
+        const response = await POST(request);
+        expect(response.status).toBe(
+          gate === "config" ? 503 : gate.startsWith("quota") ? 429 : 302,
+        );
+        expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+        expect(pull).not.toHaveBeenCalled();
+        expect(request.bodyUsed).toBe(false);
+        expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+        expect(session.issueSession).not.toHaveBeenCalled();
+        expect(rateLimitCheck).toHaveBeenCalledTimes(gate === "config" ? 0 : 1);
+      } finally {
+        process.env.GOOGLE_OAUTH_CLIENT_SECRET = previousSecret;
+      }
+    },
+  );
+
+  it.each(["consume", "issue"])("retains AUTH_UNAVAILABLE for a later %s failure", async (step) => {
+    vi.mocked(consumeOauthCompletionHandoff).mockResolvedValue("acc-9");
+    const failure = new Error("dependency failed");
+    if (step === "consume") vi.mocked(consumeOauthCompletionHandoff).mockRejectedValue(failure);
+    else vi.mocked(session.issueSession).mockRejectedValue(failure);
+    const response = await POST(completeReq());
+    expect(response.headers.get("location")).toBe(
+      "https://plexco.app/?auth_error=AUTH_UNAVAILABLE",
+    );
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(session.issueSession).toHaveBeenCalledTimes(step === "consume" ? 0 : 1);
+  });
+});
