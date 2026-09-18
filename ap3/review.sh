@@ -11,7 +11,14 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR/.." && pwd)"
-PIN="${AP3_CODEX_PIN:-$REPO/scripts/codex-review-pin.sh}"
+# K30 (W5.2.6): the reviewer pin is ap3's own file, installed beside this script; the legacy
+# <target>/scripts/codex-review-pin.sh (old kit's mirror, never hardened by K25 on its canonical
+# side) is only a fallback for a target installed before the kit copy existed.
+PIN="${AP3_CODEX_PIN:-}"
+if [ -z "$PIN" ]; then
+  if [ -x "$DIR/codex-review-pin.sh" ]; then PIN="$DIR/codex-review-pin.sh"
+  else PIN="$REPO/scripts/codex-review-pin.sh"; fi
+fi
 
 MODE="${1:-}"; shift || true
 BASE="${AP3_BASE_SHA:-}"

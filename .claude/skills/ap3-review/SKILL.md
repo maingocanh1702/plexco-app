@@ -6,7 +6,7 @@ description: How ap3 reads a Codex review verdict — the exact marker contract,
 # ap3-review — the verdict contract
 
 The independent reviewer is the pinned, read-only, ephemeral Codex wrapper
-`scripts/codex-review-pin.sh`, invoked by `ap3/review.sh` **in the dispatcher** (unsandboxed —
+`ap3/codex-review-pin.sh` (K30; the legacy `scripts/codex-review-pin.sh` mirror is only a fallback), invoked by `ap3/review.sh` **in the dispatcher** (unsandboxed —
 codex cannot initialize inside the writer's Seatbelt sandbox; see `W1-DECISION-codex-sandbox.md`).
 It reviews exactly `git diff <base>...HEAD` against the task spec.
 

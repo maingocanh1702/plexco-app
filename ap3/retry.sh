@@ -30,19 +30,29 @@ REPO="$(cd "$DIR/.." && pwd)"; cd "$REPO"
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 REVIEW_ONLY=0
+ANSWER=0
 EXTEND_ROUNDS=""
 EXTEND_BUDGET=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --review-only) REVIEW_ONLY=1; shift ;;
+    --answer) ANSWER=1; shift ;;
     --extend-rounds) EXTEND_ROUNDS="${2:?--extend-rounds requires an integer}"; shift 2 ;;
     --extend-budget) EXTEND_BUDGET="${2:?--extend-budget requires a USD amount}"; shift 2 ;;
     *) break ;;
   esac
 done
-SLUG="${1:?usage: retry.sh [--review-only] [--extend-rounds N] [--extend-budget USD] <slug>}"
+SLUG="${1:?usage: retry.sh [--review-only] [--answer] [--extend-rounds N] [--extend-budget USD] <slug>}"
 if [ "$REVIEW_ONLY" = 1 ] && { [ -n "$EXTEND_ROUNDS" ] || [ -n "$EXTEND_BUDGET" ]; }; then
   echo "retry: refusing $SLUG -- --review-only cannot be combined with --extend-rounds/--extend-budget (different recovery modes)" >&2
+  exit 1
+fi
+# W5.2.3 (K23): --answer is its own recovery mode -- it re-dispatches the WRITER, where the other
+# three deliberately never do. Combining it with a mode that resumes review (or raises a ceiling
+# for a review that is not about to run) can only express owner confusion, so refuse rather than
+# silently letting one win.
+if [ "$ANSWER" = 1 ] && { [ "$REVIEW_ONLY" = 1 ] || [ -n "$EXTEND_ROUNDS" ] || [ -n "$EXTEND_BUDGET" ]; }; then
+  echo "retry: refusing $SLUG -- --answer cannot be combined with --review-only/--extend-rounds/--extend-budget (different recovery modes)" >&2
   exit 1
 fi
 # the same slug shape enforced everywhere else (aplib.py, dispatch.sh) -- reject BEFORE any
@@ -94,12 +104,146 @@ recreate_pinned_db() { # <label for error text, e.g. "--review-only"> -> exits 1
   fi
 }
 
+# W5.2.4 (K24): shared by every resume mode that can relaunch or re-review a writer session --
+# copies the PINNED ap3/state/runs/<slug>/task.md (the copy the owner amends and the reviewer
+# reads -- run_review's own `task="$RUNS/$slug/task.md"`) to <worktree>/.ap3-run/TASK.md, the copy
+# launch_writer prefers whenever present (K23 + follow-up df7686e). Before this, only --answer
+# staged the file: an owner amendment made alongside --extend-rounds/--extend-budget/--review-only
+# reached the reviewer (which reads the pinned copy directly) but never a writer relaunched out of
+# a later FINDINGS round (which reads whatever launch_writer finds staged -- the stale committed
+# queue copy, or a stale .ap3-run/TASK.md left over from an earlier --answer). Fails closed on
+# either side missing -- never silently leaves an amendment unseen. Must NEVER write the
+# git-TRACKED <worktree>/ap3/queue/<slug>.md instead: the writer commits with `git add -A`, so
+# that would put an undeclared file in the diff and halt the run SCOPE_DRIFT (measured -- see
+# K23's own comment on this exact trap).
+#
+# W5.2.4 review round-1 finding 1 (K24 follow-up): `.ap3-run/` is writable by the SANDBOXED
+# writer, and this `cp` runs UNSANDBOXED on the owner's machine. A writer that left
+# `.ap3-run/TASK.md` as a symlink would make this `cp` (which follows a destination symlink by
+# default) overwrite whatever that symlink points at with task content -- a file-clobber outside
+# the worktree entirely, on the owner's own filesystem. `rm -f` the destination first: it removes
+# the directory entry (never follows/deletes the symlink's TARGET), so the following `cp` always
+# creates a fresh regular file, no matter what a prior writer session left there.
+#
+# W5.2.4 review round-1 finding 4 (K24 follow-up): also sets STAGE_PINNED_TASK_CHANGED (0 or 1) --
+# whether the content just staged actually differs from what the writer would otherwise have seen
+# (the previously-staged .ap3-run/TASK.md if one exists, else the tracked ap3/queue/<slug>.md).
+# --review-only is the one caller that does not already mark owner_extended unconditionally (a
+# pure infra-outage retry with no task change is correctly NOT human-assisted); this flag lets it
+# mark owner_extended only when a real owner amendment rode along.
+stage_pinned_task() { # <label for error text> -- copies the pinned task.md into the worktree, or exits 1
+  local label="$1" rec_task="ap3/state/runs/$SLUG/task.md" baseline
+  [ -f "$rec_task" ] \
+    || { echo "retry: refusing $label $SLUG -- no pinned task at $rec_task to stage" >&2; exit 1; }
+  [ -d "$WT/.ap3-run" ] \
+    || { echo "retry: refusing $label $SLUG -- no $WT/.ap3-run to stage the task in" >&2; exit 1; }
+  if [ -f "$WT/.ap3-run/TASK.md" ]; then
+    baseline="$WT/.ap3-run/TASK.md"
+  else
+    baseline="$WT/ap3/queue/$SLUG.md"
+  fi
+  STAGE_PINNED_TASK_CHANGED=1
+  [ -f "$baseline" ] && cmp -s "$rec_task" "$baseline" && STAGE_PINNED_TASK_CHANGED=0
+  # both steps guarded by the SAME if -- a bare `rm -f` that fails (e.g. an immutable/locked
+  # destination) would otherwise trip `set -e` and crash the whole script instead of the clean,
+  # explanatory exit 1 every other refusal in this script gives.
+  if ! rm -f "$WT/.ap3-run/TASK.md" || ! cp "$rec_task" "$WT/.ap3-run/TASK.md"; then
+    echo "retry: refusing $label $SLUG -- could not place $rec_task at $WT/.ap3-run/TASK.md" >&2
+    exit 1
+  fi
+}
+
+if [ "$ANSWER" = 1 ]; then
+  # W5.2.3 (K23): MISSING_CONTEXT is the one terminal that means the writer STOPPED ON PURPOSE to
+  # ask an owner-level question -- the skill's own contradiction-handling rule tells it to halt
+  # rather than guess, and every other recovery mode is wrong for it. --review-only refuses it
+  # (not an outage) and would resume review over a diff the writer never finished; --extend-*
+  # refuses it (no ceiling was hit) and likewise never relaunches a writer. That left only a full
+  # `retry.sh <slug>`, which WIPES the worktree and branch -- so a writer that asked a GOOD
+  # question cost the owner every dollar of committed work on the run, and the incentive it
+  # created (guess rather than ask) is the exact failure the halt exists to prevent. This mode
+  # keeps the run intact and re-dispatches the writer, which reads the owner's answer from the
+  # pinned ap3/state/runs/<slug>/task.md the owner edits before calling this.
+  terminal="$(python3 "$DIR/rec.py" get "$REC" terminal unknown)"
+  # W5.2.5 review (code 2): the answer relaunch itself can halt TASK_REFRESH_FAILED (the staged
+  # .ap3-run/TASK.md could not be refreshed from the pinned task) BEFORE any writer ran. dispatch.sh
+  # raises that halt before it consumes answer_pending, so the record still carries the owner's
+  # intent; that one combination -- an outage terminal AND a still-pending answer -- is answerable
+  # again here once the owner has fixed the stage, without the worktree-wiping full retry. Any
+  # other terminal is still refused: only a writer's own question is answerable.
+  REANSWER=0
+  if [ "$terminal" = TASK_REFRESH_FAILED ] && [ "$(python3 "$DIR/rec.py" get "$REC" answer_pending false)" = true ]; then
+    REANSWER=1
+  elif [ "$terminal" != MISSING_CONTEXT ]; then
+    echo "retry: refusing --answer $SLUG -- terminal '$terminal' is not MISSING_CONTEXT (only a writer's own question is answerable; use a full 'retry.sh $SLUG' instead)" >&2
+    exit 1
+  fi
+  [ -d "$WT" ] || { echo "retry: refusing --answer $SLUG -- no worktree at $WT (use a full 'retry.sh $SLUG' instead)" >&2; exit 1; }
+  # the question itself. Its absence means this record's MISSING_CONTEXT did not come from a
+  # writer that actually asked one -- fail closed rather than relaunch a writer into an unknown
+  # state (and never silently answer a question nobody can read). A re-answer after a failed
+  # relaunch has already consumed HALT.md (the first --answer removed it), so the check is skipped
+  # there -- the pending flag on the record is the proof a question was answered.
+  if [ "$REANSWER" = 0 ]; then
+    [ -f "$WT/.ap3-run/HALT.md" ] \
+      || { echo "retry: refusing --answer $SLUG -- $WT/.ap3-run/HALT.md is missing (nothing to answer)" >&2; exit 1; }
+  fi
+  # same guard the full-rewrite path uses below: a pushed branch means a PR exists, and what
+  # happens to a PR is a human decision, never this script's.
+  remote_out="$(git ls-remote --heads origin "ap3/$SLUG" 2>&1)" || {
+    echo "retry: refusing --answer $SLUG -- could not query origin for branch ap3/$SLUG ($remote_out)" >&2
+    exit 1
+  }
+  if [ -n "$remote_out" ]; then
+    echo "retry: refusing --answer $SLUG -- origin already has branch ap3/$SLUG (a pushed branch means a PR exists -- human decision)" >&2
+    exit 1
+  fi
+  # W5.2.4 review round-1 finding 2 (K24 follow-up): halt() drops the per-run database on EVERY
+  # halt, including MISSING_CONTEXT -- --review-only and --extend-* both recreate it before
+  # resuming, but --answer never did (a gap that predates K24; --answer never called this at all).
+  # A `needs_db` run relaunched without it would get DATABASE_URL_TEST rewritten to a database that
+  # no longer exists, and the relaunched writer's own verify would fail against a dead connection --
+  # wasting a full writer session on a run doomed from the start.
+  recreate_pinned_db --answer
+  # K23 follow-up (K24): the two task copies are NOT the same file, and only one of them reaches
+  # the writer -- see stage_pinned_task above for the full story. An owner who writes the answer
+  # into the pinned copy -- the natural place, and what this script's own success message points
+  # at -- reaches the REVIEWER but never the WRITER unless staged here too. Measured on a real
+  # run: three owner amendments landed in the pinned copy, the writer saw none of them, and the
+  # loop only broke because the reviewer happened to quote one back through REVIEW-FINDINGS.md.
+  stage_pinned_task --answer
+  # Removed BEFORE the record is published: reconcile_running halts on HALT.md's mere presence, so
+  # leaving it would re-halt this run on the very next tick no matter what the owner wrote.
+  rm -f "$WT/.ap3-run/HALT.md"
+  # NOT resume_review: there is nothing new to review -- the writer never finished this attempt.
+  # dispatch.sh's reconcile_running consumes answer_pending by re-dispatching the WRITER instead.
+  # The asking attempt's telemetry was already accumulated (reconcile_running sums it strictly
+  # before it reads HALT.md), and the relaunched writer produces a NEW result.json, so there is no
+  # double-count to suppress here the way --review-only has to.
+  python3 "$DIR/rec.py" setjson "$REC" terminal null
+  python3 "$DIR/rec.py" setjson "$REC" halt_cause null
+  python3 "$DIR/rec.py" setjson "$REC" terminal_kind null
+  python3 "$DIR/rec.py" setjson "$REC" pid 0
+  python3 "$DIR/rec.py" setjson "$REC" answer_pending true
+  # Read by reconcile_ready: a run that only got unstuck because a human answered its question is
+  # a human-ASSISTED outcome, not evidence of hands-off reliability -- an unchanged merge must not
+  # bump the class's clean_runs. Same flag (and same reason) as the --extend-* modes.
+  python3 "$DIR/rec.py" setjson "$REC" owner_extended true
+  python3 "$DIR/rec.py" set "$REC" owner_extended_at "$(now)"
+  python3 "$DIR/rec.py" set "$REC" owner_extended_flags answer
+  # published LAST, for the same reason spelled out on the --review-only path below
+  python3 "$DIR/rec.py" set "$REC" status running
+  echo "retry: $SLUG resumed after an owner answer (was HALT $terminal) -- next dispatcher tick re-dispatches the writer, which reads your answer from ap3/state/runs/$SLUG/task.md"
+  echo "retry: the class is still paused -- run 'ap3/unpause.sh <class>' yourself when ready (not chained here)"
+  exit 0
+fi
+
 if [ "$REVIEW_ONLY" = 1 ]; then
   # kept in sync BY HAND with dispatch.sh's OUTAGE_TERMINALS -- this script never sources
   # dispatch.sh (it unconditionally runs main() at the bottom, so it cannot be sourced for its
   # functions without also dispatching a tick).
   terminal="$(python3 "$DIR/rec.py" get "$REC" terminal unknown)"
-  case " REVIEW_UNAVAILABLE PUSH_FAILED PR_FAILED REMOTE_TIP_MISMATCH EVIDENCE_FAILED FS_ISOLATION_UNSAFE NO_WRITER_SETTINGS DB_ISOLATION_LOST TELEMETRY_FAILED " in
+  case " REVIEW_UNAVAILABLE PUSH_FAILED PR_FAILED REMOTE_TIP_MISMATCH EVIDENCE_FAILED FS_ISOLATION_UNSAFE NO_WRITER_SETTINGS DB_ISOLATION_LOST TELEMETRY_FAILED TASK_REFRESH_FAILED " in
     *" $terminal "*) : ;;
     *) echo "retry: refusing --review-only $SLUG -- terminal '$terminal' is not an outage terminal (use a full 'retry.sh $SLUG' instead)" >&2; exit 1 ;;
   esac
@@ -113,6 +257,21 @@ if [ "$REVIEW_ONLY" = 1 ]; then
     exit 1
   fi
   recreate_pinned_db --review-only
+  # K24: stage the pinned task now too -- if this resumed review still returns FINDINGS,
+  # run_review relaunches a fix writer that reads whatever is staged here (see stage_pinned_task
+  # above), and that must reflect any amendment the owner made to the pinned copy before retrying.
+  stage_pinned_task --review-only
+  # W5.2.4 review round-1 finding 4 (K24 follow-up): --review-only exists for pure infra-outage
+  # recovery (nothing about the task/code needed a human judgment call), so unlike --answer/
+  # --extend-* it does NOT mark owner_extended unconditionally -- a plain outage retry still counts
+  # toward clean_runs, correctly. But K24 also lets an owner ride a task amendment along with a
+  # --review-only resume, and THAT is exactly as human-assisted as --answer/--extend-*: only mark
+  # it when stage_pinned_task actually found the staged content changed.
+  if [ "$STAGE_PINNED_TASK_CHANGED" = 1 ]; then
+    python3 "$DIR/rec.py" setjson "$REC" owner_extended true
+    python3 "$DIR/rec.py" set "$REC" owner_extended_at "$(now)"
+    python3 "$DIR/rec.py" set "$REC" owner_extended_flags review-only-amendment
+  fi
   # security review round 1 finding 5: status is published LAST, once every other field this
   # resumed run depends on is already in place -- reconcile_running/reconcile_all key off `status`
   # alone to decide whether to touch this record at all, and each `rec.py set` below is its own
@@ -287,6 +446,10 @@ sys.exit(1) if not math.isfinite(v) else print(v)')"; then
     FLAGS_USED="${FLAGS_USED:+$FLAGS_USED,}extend-budget"
   fi
   recreate_pinned_db extend
+  # K24: stage the pinned task now too -- see stage_pinned_task above. If this resumed review
+  # still returns FINDINGS, run_review relaunches a fix writer that reads whatever is staged
+  # here, and that must reflect any amendment the owner made to the pinned copy before extending.
+  stage_pinned_task extend
 
   # Every check above passed -- now apply. security review round 1 finding 5: `status` is
   # published LAST, once every other field this resumed run depends on is already in place -- see

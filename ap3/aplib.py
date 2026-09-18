@@ -13,12 +13,14 @@ Subcommands (all read cwd = the repo being operated on):
   intake-score <rubric.md> <evidence.json>   print {status, hard_gaps, supervised_gaps, gaps}
   plan-emit <plan.json>        write ap3/queue/<slug>.md per dispatchable slice; see plan_emit()
   findings <transcript.txt>    print the reviewer's real verdict block; exit 1 if none exists
-  budget-remaining <budget_usd> <spent_usd>   print the rounded remaining budget; exit 1 if <= 0.5
+  budget-remaining <budget_usd> <spent_usd> [floor]   print the rounded remaining budget;
+                                             exit 1 if <= floor (default 0.5), 2 if floor is malformed
 
 The git/network-dependent lint checks (run record, origin branch) live in lint-task.sh;
 this file only does what it can decide from files in the working tree.
 """
 import json
+import shlex
 import math
 import os
 import re
@@ -80,6 +82,116 @@ def _unquote(s):
 
 
 # ---------------------------------------------------------------- glob
+# ---------------------------------------------------------------- K27: socket-binding tests
+# The writer's sandbox refuses every listen() (`listen EPERM`, measured on Trum Bia Hoi
+# agent-verification-m03-dev-port-wire, 2026-09-18), so a test that binds a real port can only
+# ever pass on the host, i.e. through the task's `verify_host` (dispatcher-side, unsandboxed,
+# after review is CLEAN). Nothing said so before a $9 writer round found out. This is the
+# intake-time half of the K27 fix: a cheap static scan of the TEST files the scope already
+# contains. Its limits are deliberate and documented -- it reads the working tree at lint time,
+# so a binding test the writer CREATES during the run is invisible here (that case still ends
+# as a VERIFY_FAIL halt, now with the README pointing at verify_host); and it cannot know what
+# `npm test` runs, so only a `verify` that names a flagged file EXPLICITLY is rejected.
+# W5.2.6 review (code 2): constructing a server is not binding one -- `net.createServer()` touches
+# no port until `.listen()`, so the constructor is NOT in this list. What IS: the calls that bind
+# (`.listen(`, Python's `.bind((`), and Python's `HTTPServer(` / `serve_forever(` (TCPServer binds
+# in its constructor). A conservative textual heuristic -- a `.listen(` in a comment or a string
+# still trips it -- documented as such; the task author routes that file through verify_host or
+# rewords it.
+_SOCKET_BIND_RE = re.compile(
+    r"(\.listen\s*\(|\.bind\s*\(\s*\(|\bserve_forever\s*\(|\bHTTPServer\s*\()"
+)
+_SOCKET_SCAN_MAX_BYTES = 256 * 1024
+_TEST_FILE_RE = re.compile(
+    r"(\.(test|spec)\.[a-z]+$|(^|/)(test|tests|__tests__|spec)/|(^|/)test_[^/]+\.py$|_test\.(py|go|rb)$)"
+)
+_SCAN_SKIP_DIRS = {".git", "node_modules", ".ap3-run", "ap3", ".claude", "dist", "build", "coverage", ".next"}
+
+
+def _inside_repo(path):
+    """True iff `path` is a NON-symlink regular file whose resolved location is under cwd.
+    W5.2.6 review (code 1): this scan runs unsandboxed (lint-task.sh on the owner's shell, and the
+    dispatcher on every candidate), so a tracked scoped symlink must never lead it to /dev/zero,
+    an owner file, or anything outside the worktree -- skip symlinks outright, and refuse a path
+    that resolves elsewhere even without a symlink in its last component."""
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False
+    root = os.path.realpath(os.getcwd())
+    real = os.path.realpath(path)
+    return real == root or real.startswith(root + os.sep)
+
+
+def _scope_files(scope):
+    """Existing regular, in-repo, non-symlink files matched by the scope globs (cwd = repo root)."""
+    found = []
+    seen = set()
+    for entry in scope:
+        if not isinstance(entry, str):
+            continue
+        if not any(ch in entry for ch in "*?"):
+            if entry not in seen and _inside_repo(entry):
+                seen.add(entry); found.append(entry)
+            continue
+        # walk only the static prefix of the glob, never the whole repo; os.walk never follows
+        # directory symlinks (followlinks=False) and symlinked directories are pruned explicitly
+        cut = min([i for i in (entry.find("*"), entry.find("?")) if i >= 0])
+        root = entry[:cut].rsplit("/", 1)[0] if "/" in entry[:cut] else "."
+        if os.path.islink(root) or not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            dirnames[:] = [d for d in dirnames
+                           if d not in _SCAN_SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d))]
+            for fn in filenames:
+                rel = os.path.normpath(os.path.join(dirpath, fn))
+                if rel.startswith("./"):
+                    rel = rel[2:]
+                if rel not in seen and gmatch(entry, rel) and _inside_repo(rel):
+                    seen.add(rel); found.append(rel)
+    return found
+
+
+
+def _verify_names_file(verify, path):
+    """True iff a token of the `verify` command selects `path` -- by full path, by a ./-prefixed or
+    otherwise-spelled path to the same file, or by bare basename (test runners such as
+    `npm test -- port.test.ts` / `vitest port` select by basename; W5.2.6 review, security 3).
+    Tokenised with shlex so quoting cannot hide the name; a substring test alone was bypassable."""
+    try:
+        tokens = shlex.split(verify)
+    except ValueError:
+        tokens = verify.split()
+    npath = os.path.normpath(path)
+    base = os.path.basename(npath)
+    stem = base.split(".")[0]
+    for tok in tokens:
+        t = tok.strip("'\"")
+        if not t or t.startswith("-"):
+            continue
+        # a runner filter can be a bare "port" for port.test.ts; a 3+ char stem match counts
+        if t == npath or os.path.normpath(t) == npath or t == base or t.endswith("/" + base) \
+                or npath.endswith("/" + os.path.normpath(t)) or (len(stem) >= 3 and t == stem):
+            return True
+    return False
+
+def socket_binding_tests(scope):
+    """[(path, matched_call), ...] for scope TEST files that bind a socket (K27).
+    Reads at most _SOCKET_SCAN_MAX_BYTES of each file: a test file larger than that is not a test
+    file this heuristic can judge, and an unbounded read is how a scan hangs."""
+    hits = []
+    for path in _scope_files(scope):
+        if not _TEST_FILE_RE.search(path):
+            continue
+        try:
+            with open(path, "rb") as fh:
+                text = fh.read(_SOCKET_SCAN_MAX_BYTES).decode("utf-8", "replace")
+        except OSError:
+            continue
+        m = _SOCKET_BIND_RE.search(text)
+        if m:
+            hits.append((path, m.group(1).strip()))
+    return hits
+
+
 def glob_to_regex(glob):
     """Translate a path glob to an anchored regex. '**' spans '/', '*' does not."""
     out = ["^"]
@@ -424,6 +536,16 @@ def lint(taskfile):
         return bad("class %r max_runs_per_day must be a positive integer" % cls)
     if cdef.get("security_review") not in ("auto", "always", "none"):
         return bad("class %r security_review must be one of auto|always|none" % cls)
+    # K26: optional per-class override of the fix-writer budget floor. Validated here, at lint
+    # time, for the same reason max_parallel is: dispatch.sh reads it with a python default and a
+    # malformed value would otherwise fail OPEN into "use the default" -- silently restoring the
+    # very behaviour this key exists to change.
+    if "writer_min_budget_usd" in cdef:
+        wmb = cdef["writer_min_budget_usd"]
+        if isinstance(wmb, bool) or not isinstance(wmb, (int, float)):
+            return bad("class %r writer_min_budget_usd must be a number" % cls)
+        if not math.isfinite(float(wmb)) or float(wmb) <= 0:
+            return bad("class %r writer_min_budget_usd must be a finite number > 0" % cls)
     # review round-2 finding 2: a malformed max_parallel (e.g. a string) slips past dispatch.sh's
     # bash integer comparisons and fails OPEN into the parallel-admission branch -- catch it here,
     # at lint time, before any candidate of this class is ever dispatched under it.
@@ -534,6 +656,16 @@ def lint(taskfile):
     for tok in _context_paths(_section(body, "Context")):
         if not os.path.exists(tok):
             return bad("Context names %r which does not exist in the working tree" % tok)
+
+    # K27: a scope test file that binds a socket can only pass on the host -> verify_host is
+    # required, and `verify` (always sandboxed) must not run that file by name.
+    for path, call in socket_binding_tests(scope):
+        if not verify_host:
+            return bad("scope test file %r binds a socket (%s) which the writer sandbox refuses "
+                       "(listen EPERM, K27) -- route that check through verify_host" % (path, call))
+        if _verify_names_file(verify, path):
+            return bad("verify %r names %r, which binds a socket (%s) and so cannot pass inside the "
+                       "sandbox (K27) -- run it from verify_host only" % (verify, path, call))
 
     # D1: after: <slug> (optional, one slug or a list) -- shape + existence only here. Whether a
     # named predecessor has actually RUN and succeeded is a dispatch-time (run-state) concern,
@@ -1053,6 +1185,13 @@ def extract_findings(text):
 # "fundable" through one path and "not fundable" through another -- violating I4's own "gated on
 # the SAME round/budget ceilings" contract. One canonical implementation, called from all three,
 # closes the class instead of patching each site's copy individually.
+# K26: two different questions, two different floors, one implementation. ROUND_MIN_BUDGET_USD is
+# "is another review round worth attempting?"; WRITER_MIN_BUDGET_USD is "is there enough left for a
+# fix writer to reach a commit?". A class may raise the writer floor via writer_min_budget_usd.
+ROUND_MIN_BUDGET_USD = 0.5
+WRITER_MIN_BUDGET_USD = 2.0
+
+
 def budget_remaining(budget_usd, spent_usd):
     """-> the remaining budget, rounded to the same 4-decimal precision budget_usd/spent_usd are
     already stored at -- so '> 0.5' means what it says everywhere this is checked, not whatever
@@ -1092,8 +1231,27 @@ def main(argv):
         return 0
     if cmd == "budget-remaining":
         remaining = budget_remaining(argv[2], argv[3])
+        # K26: the floor is a parameter of this ONE canonical check, not a second copy of it. The
+        # default stays $0.50 -- the "is another REVIEW round worth attempting?" threshold every
+        # existing caller asks about. A caller deciding whether to relaunch a fix WRITER passes a
+        # larger floor (WRITER_MIN_BUDGET_USD, or the class's writer_min_budget_usd), because a
+        # writer session that cannot reach a commit produces nothing reviewable and leaves the run
+        # in the one state retry.sh has no recovery mode for.
+        floor = ROUND_MIN_BUDGET_USD
+        if len(argv) > 4:
+            try:
+                floor = float(argv[4])
+            except (TypeError, ValueError):
+                sys.stderr.write("budget-remaining: floor %r is not a number\n" % (argv[4],))
+                return 2
+            # fail closed: a malformed floor must never silently fall back to the review default,
+            # which would re-open exactly the gap this parameter exists to close.
+            if not math.isfinite(floor) or floor < 0:
+                sys.stderr.write(
+                    "budget-remaining: floor %r must be a finite number >= 0\n" % (argv[4],))
+                return 2
         print(remaining)
-        return 0 if remaining > 0.5 else 1
+        return 0 if remaining > floor else 1
     if cmd == "lint":
         err = lint(argv[2])
         if err:

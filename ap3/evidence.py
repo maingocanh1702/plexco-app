@@ -52,11 +52,17 @@ def main(argv):
         "total_cost_usd": cost,
         "permission_denials": dens,
         "verify": rec.get("verify", "unavailable"),
-        "review_rounds": rec.get("review_round", 0),
+        # K28: null when the record carries no review_round at all (never a fabricated 0); a real
+        # 0 -- a run halted before its first review -- is emitted as 0.
+        "review_rounds": rec.get("review_round"),
         "review_verdict": rec.get("review_verdict", "unavailable"),
         "security_review": rec.get("security_review", "not_required"),
         "terminal": rec.get("terminal", "unavailable"),
         "terminal_kind": rec.get("terminal_kind"),
+        # K28: the machine-readable sub-reason halt() records (today only for VERIFY_HOST_FAIL:
+        # verify_host_rounds | verify_host_budget | verify_host_mutated); null on every other halt
+        # and on READY, so the ledger can separate an exhausted ceiling from a mutated worktree.
+        "halt_cause": rec.get("halt_cause"),
         "verify_host": rec.get("verify_host", "n/a"),
         "feature": rec.get("feature"),
         "escalated_model": rec.get("escalated_model"),
