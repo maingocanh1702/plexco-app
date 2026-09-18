@@ -153,6 +153,25 @@ stage_pinned_task() { # <label for error text> -- copies the pinned task.md into
   fi
 }
 
+# W6 (I2/I3): the dispatcher's auto-resolver calls this script with AP3_RESOLVER=1. The resume
+# mechanics are identical; what differs is WHO assisted. An owner-assisted run is owner_extended
+# (human_interventions 1 at merge); an agent-assisted run is agent_resolved (human_interventions 0
+# at merge, but clean_runs still NOT bumped -- a run that needed a decision, from anyone, is not
+# evidence of hands-off reliability). Both flags can be true on one run; each is set only by its
+# own actor.
+mark_assisted() { # <flags>
+  if [ "${AP3_RESOLVER:-0}" = 1 ]; then
+    python3 "$DIR/rec.py" setjson "$REC" agent_resolved true
+    python3 "$DIR/rec.py" set "$REC" agent_resolved_at "$(now)"
+    prev="$(python3 "$DIR/rec.py" get "$REC" agent_resolved_flags "")"
+    python3 "$DIR/rec.py" set "$REC" agent_resolved_flags "${prev:+$prev,}$1"
+  else
+    python3 "$DIR/rec.py" setjson "$REC" owner_extended true
+    python3 "$DIR/rec.py" set "$REC" owner_extended_at "$(now)"
+    python3 "$DIR/rec.py" set "$REC" owner_extended_flags "$1"
+  fi
+}
+
 if [ "$ANSWER" = 1 ]; then
   # W5.2.3 (K23): MISSING_CONTEXT is the one terminal that means the writer STOPPED ON PURPOSE to
   # ask an owner-level question -- the skill's own contradiction-handling rule tells it to halt
@@ -173,6 +192,13 @@ if [ "$ANSWER" = 1 ]; then
   # other terminal is still refused: only a writer's own question is answerable.
   REANSWER=0
   if [ "$terminal" = TASK_REFRESH_FAILED ] && [ "$(python3 "$DIR/rec.py" get "$REC" answer_pending false)" = true ]; then
+    REANSWER=1
+  elif [ "$terminal" = SCOPE_DRIFT ] && [ "${AP3_RESOLVER:-0}" = 1 ]; then
+    # W6 (I2): the dispatcher's scope-widen resolution -- the pinned task's scope was just widened
+    # (aplib.py widen-scope, inside the class ceiling) and the writer is relaunched to re-run its
+    # own scope-check against it. Only the resolver may take this path: an owner who wants to
+    # widen scope edits the queue task and re-queues. No HALT.md is required (the dispatcher's
+    # independent re-check halts SCOPE_DRIFT without one).
     REANSWER=1
   elif [ "$terminal" != MISSING_CONTEXT ]; then
     echo "retry: refusing --answer $SLUG -- terminal '$terminal' is not MISSING_CONTEXT (only a writer's own question is answerable; use a full 'retry.sh $SLUG' instead)" >&2
@@ -228,9 +254,7 @@ if [ "$ANSWER" = 1 ]; then
   # Read by reconcile_ready: a run that only got unstuck because a human answered its question is
   # a human-ASSISTED outcome, not evidence of hands-off reliability -- an unchanged merge must not
   # bump the class's clean_runs. Same flag (and same reason) as the --extend-* modes.
-  python3 "$DIR/rec.py" setjson "$REC" owner_extended true
-  python3 "$DIR/rec.py" set "$REC" owner_extended_at "$(now)"
-  python3 "$DIR/rec.py" set "$REC" owner_extended_flags answer
+  mark_assisted answer
   # published LAST, for the same reason spelled out on the --review-only path below
   python3 "$DIR/rec.py" set "$REC" status running
   echo "retry: $SLUG resumed after an owner answer (was HALT $terminal) -- next dispatcher tick re-dispatches the writer, which reads your answer from ap3/state/runs/$SLUG/task.md"
@@ -268,9 +292,7 @@ if [ "$REVIEW_ONLY" = 1 ]; then
   # --review-only resume, and THAT is exactly as human-assisted as --answer/--extend-*: only mark
   # it when stage_pinned_task actually found the staged content changed.
   if [ "$STAGE_PINNED_TASK_CHANGED" = 1 ]; then
-    python3 "$DIR/rec.py" setjson "$REC" owner_extended true
-    python3 "$DIR/rec.py" set "$REC" owner_extended_at "$(now)"
-    python3 "$DIR/rec.py" set "$REC" owner_extended_flags review-only-amendment
+    mark_assisted review-only-amendment
   fi
   # security review round 1 finding 5: status is published LAST, once every other field this
   # resumed run depends on is already in place -- reconcile_running/reconcile_all key off `status`
@@ -468,11 +490,10 @@ sys.exit(1) if not math.isfinite(v) else print(v)')"; then
   # Read by reconcile_ready: a run that only reached READY because the owner raised a ceiling
   # mid-flight is a human-ASSISTED outcome, not evidence of hands-off reliability -- an unchanged
   # merge must not bump the class's clean_runs the way a genuinely unattended run does.
-  python3 "$DIR/rec.py" setjson "$REC" owner_extended true
-  python3 "$DIR/rec.py" set "$REC" owner_extended_at "$(now)"
-  python3 "$DIR/rec.py" set "$REC" owner_extended_flags "$FLAGS_USED"
+  mark_assisted "$FLAGS_USED"
   python3 "$DIR/rec.py" set "$REC" status running
-  echo "retry: $SLUG resumed with an owner-extended ceiling ($FLAGS_USED, was HALT $terminal) -- next dispatcher tick re-enters review at the same head, no writer relaunch"
+  WHO=owner; [ "${AP3_RESOLVER:-0}" = 1 ] && WHO=agent
+  echo "retry: $SLUG resumed with an $WHO-extended ceiling ($FLAGS_USED, was HALT $terminal) -- next dispatcher tick re-enters review at the same head, no writer relaunch"
   echo "retry: the class is still paused -- run 'ap3/unpause.sh <class>' yourself when ready (not chained here)"
   exit 0
 fi

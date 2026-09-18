@@ -7,11 +7,24 @@
       "status": "enabled",
       "risk": "P2",
       "description": "Small, behaviour-preserving fixes with a test that pins the acceptance criterion. No schema/migration, no auth/permission/money logic.",
-      "allowed_scope": ["src/**", "test/**"],
+      "allowed_scope": [
+        "src/**",
+        "test/**"
+      ],
       "budget_usd_max": 10,
       "max_runs_per_day": 1,
       "review": "codex",
-      "security_review": "auto"
+      "security_review": "auto",
+      "preflight": true,
+      "auto_resolve": {
+        "outage_retries": 2,
+        "extend": "to-cap",
+        "missing_context": "evidence-only",
+        "scope_widen": true,
+        "resolve_budget_usd": 1.0,
+        "max_resolutions": 2
+      }
     }
-  }
+  },
+  "_w6_policy": "Optional per-class W6 policy. preflight (default true): before a run starts, a read-only session checks the task carries enough context; a QUESTIONS verdict holds the task NEEDS_CONTEXT and writes ap3/state/questions/<slug>.md until the owner adds a '## Owner context' section and pushes. auto_resolve governs how a HALT is handled without the owner: outage_retries (infra retry, default 2), extend ('to-cap'|'none', raise a MAX_ROUNDS/BUDGET ceiling once up to budget_usd_max), missing_context ('evidence-only'|'never', let a read-only resolver answer a writer question ONLY when repo/spec facts refute the alternative), scope_widen (default OFF: a SCOPE_DRIFT whose files are all inside allowed_scope widens the pinned scope; opt in per class -- auto-widening from the writer's own drift weakens the per-task boundary under a broad ceiling, so the default is to ESCALATE). Any resolution marks the run agent_resolved and NEVER bumps clean_runs."
 }

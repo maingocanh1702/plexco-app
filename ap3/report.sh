@@ -87,6 +87,12 @@ print("  review_rounds mean=%s max=%s" % (mean(rounds), max(rounds) if rounds el
 print("  human_interventions=%d  permission_denials=%d" % (inter, den))
 print("  terminals=" + json.dumps(term))
 print("  terminal_kinds=" + json.dumps(tkind))
+# W6: runs the resolver decided on (never counted toward clean_runs) and the read-only session
+# spend that the writer total_cost_usd does not include (no apostrophes here: bash 3.2 heredoc-in-subst)
+agent = sum(1 for r in rows if r.get("agent_resolved") is True)
+pf = sum(r["preflight_cost_usd"] for r in rows if isinstance(r.get("preflight_cost_usd"), (int, float)))
+rs = sum(r["resolver_cost_usd"] for r in rows if isinstance(r.get("resolver_cost_usd"), (int, float)))
+print("  agent_resolved_runs=%d  preflight_cost_usd=%.4f  resolver_cost_usd=%.4f" % (agent, pf, rs))
 PY
 )"
 printf '%s\n' "$OUT"

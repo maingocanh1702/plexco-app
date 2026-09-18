@@ -9,6 +9,8 @@ Subcommands (all read cwd = the repo being operated on):
   frontmatter <taskfile>       print the parsed frontmatter as JSON
   classify <taskfile> <path>   print one of: scratch | forbidden | in | out
   lint <taskfile>              print 'OK' or 'INVALID_TASK <slug>: <reason>' (exit 1)
+  resolve-policy <routines.json> <class>   W6: the class's preflight/auto_resolve policy, defaults applied
+  widen-scope <pinned-task.md> <file>...   W6: add files to a pinned task's scope (refused outside allowed_scope)
   rubric <rubric.md>           print a feature-readiness rubric as {readiness_version, items} JSON
   intake-score <rubric.md> <evidence.json>   print {status, hard_gaps, supervised_gaps, gaps}
   plan-emit <plan.json>        write ap3/queue/<slug>.md per dispatchable slice; see plan_emit()
@@ -82,6 +84,95 @@ def _unquote(s):
 
 
 # ---------------------------------------------------------------- glob
+# ---------------------------------------------------------------- W6: preflight + auto_resolve policy
+# Owner decisions 2026-09-18: (I1) the dispatcher asks the owner BEFORE starting a task that
+# lacks context (preflight, default on, Telegram + ap3/state/questions/<slug>.md, the owner
+# answers by editing the task and pushing); (I2) policy halts resolve themselves -- outage
+# terminals retry, MAX_ROUNDS/BUDGET extend up to the class cap once, an in-ceiling SCOPE_DRIFT
+# widens the pinned scope; (I3) a MISSING_CONTEXT halt is handed to an evidence-only resolver that
+# may pick an option ONLY when repo/spec facts refute the alternative, else it escalates. Every
+# resolution marks the run agent_resolved: it never bumps clean_runs. The resolved policy is
+# pinned into record.json at START (like security_policy / writer_model / writer_min_budget_usd).
+PREFLIGHT_DEFAULT = True
+PREFLIGHT_BUDGET_USD = 0.5
+AUTO_RESOLVE_DEFAULTS = {
+    "outage_retries": 2,            # --review-only resumes per run for outage terminals
+    "extend": "to-cap",             # "to-cap" | "none": MAX_ROUNDS/BUDGET raised once, to the ceiling
+    "missing_context": "evidence-only",   # "evidence-only" | "never"
+    "scope_widen": False,           # SCOPE_DRIFT inside allowed_scope -> widen the pinned scope.
+                                    # Default OFF (W6 review, security 3): auto-widening the pinned
+                                    # scope from the writer's OWN drift lets a writer under a broad
+                                    # ceiling (e.g. src/**) retroactively bless its own scope creep,
+                                    # weakening the per-task boundary. A class opts in deliberately;
+                                    # the default is to ESCALATE a drift for the owner.
+    "resolve_budget_usd": 1.0,      # cap for one evidence-only resolver session
+    "max_resolutions": 2,           # resolver decisions per run before escalating
+}
+ROUND_HARD_MAX = 5                  # lint's own max_review_rounds ceiling; extend never exceeds it
+
+
+def policy_error(cdef, cls):
+    """None when the class's W6 policy keys are well-formed, else the lint reason."""
+    if "preflight" in cdef and not isinstance(cdef["preflight"], bool):
+        return "class %r preflight must be a boolean" % cls
+    if "preflight_budget_usd" in cdef:
+        v = cdef["preflight_budget_usd"]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)) or float(v) <= 0:
+            return "class %r preflight_budget_usd must be a finite number > 0" % cls
+    ar = cdef.get("auto_resolve")
+    if ar is None:
+        return None
+    if not isinstance(ar, dict):
+        return "class %r auto_resolve must be an object" % cls
+    for k in ar:
+        if k not in AUTO_RESOLVE_DEFAULTS:
+            return "class %r auto_resolve has unknown key %r" % (cls, k)
+    v = ar.get("outage_retries", 0)
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        return "class %r auto_resolve.outage_retries must be an integer >= 0" % cls
+    if ar.get("extend", "to-cap") not in ("to-cap", "none"):
+        return "class %r auto_resolve.extend must be one of to-cap|none" % cls
+    if ar.get("missing_context", "never") not in ("evidence-only", "never"):
+        return "class %r auto_resolve.missing_context must be one of evidence-only|never" % cls
+    if "scope_widen" in ar and not isinstance(ar["scope_widen"], bool):
+        return "class %r auto_resolve.scope_widen must be a boolean" % cls
+    v = ar.get("resolve_budget_usd", 1.0)
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)) or float(v) <= 0:
+        return "class %r auto_resolve.resolve_budget_usd must be a finite number > 0" % cls
+    v = ar.get("max_resolutions", 1)
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        return "class %r auto_resolve.max_resolutions must be an integer >= 0" % cls
+    return None
+
+
+def resolved_policy(routines, cls):
+    """The class's W6 policy with defaults applied -- what dispatch.sh pins into the record."""
+    cdef = (routines.get("classes") or {}).get(cls) or {}
+    ar = dict(AUTO_RESOLVE_DEFAULTS)
+    ar.update(cdef.get("auto_resolve") or {})
+    return {
+        "preflight": cdef.get("preflight", PREFLIGHT_DEFAULT),
+        "preflight_budget_usd": float(cdef.get("preflight_budget_usd", PREFLIGHT_BUDGET_USD)),
+        "auto_resolve": ar,
+    }
+
+
+def widen_scope(taskfile, new_entries):
+    """Append scope entries to a task file's frontmatter, preserving the body. Returns the list
+    actually added (entries already present are skipped). Used by the SCOPE_DRIFT resolver on
+    the PINNED copy only -- never on a tracked queue file."""
+    fm, body = parse_frontmatter(taskfile)
+    scope = list(fm.get("scope") or [])
+    added = []
+    for e in new_entries:
+        if e and e not in scope:
+            scope.append(e); added.append(e)
+    fm["scope"] = scope
+    with open(taskfile, "w", encoding="utf-8") as fh:
+        fh.write(_format_frontmatter(fm) + "\n" + body)
+    return added
+
+
 # ---------------------------------------------------------------- K27: socket-binding tests
 # The writer's sandbox refuses every listen() (`listen EPERM`, measured on Trum Bia Hoi
 # agent-verification-m03-dev-port-wire, 2026-09-18), so a test that binds a real port can only
@@ -546,6 +637,13 @@ def lint(taskfile):
             return bad("class %r writer_min_budget_usd must be a number" % cls)
         if not math.isfinite(float(wmb)) or float(wmb) <= 0:
             return bad("class %r writer_min_budget_usd must be a finite number > 0" % cls)
+    # W6 (I1/I2/I3): preflight + auto_resolve policy, validated at lint time for the same
+    # fail-open reason as writer_min_budget_usd -- dispatch.sh pins the RESOLVED policy into the
+    # run record at START and reads only that, so a malformed value must be refused here, not
+    # silently defaulted mid-run.
+    perr = policy_error(cdef, cls)
+    if perr:
+        return bad(perr)
     # review round-2 finding 2: a malformed max_parallel (e.g. a string) slips past dispatch.sh's
     # bash integer comparisons and fails OPEN into the parallel-admission branch -- catch it here,
     # at lint time, before any candidate of this class is ever dispatched under it.
@@ -1252,6 +1350,28 @@ def main(argv):
                 return 2
         print(remaining)
         return 0 if remaining > floor else 1
+    if cmd == "resolve-policy":
+        # W6: print the class's resolved policy JSON (defaults applied) from a routines.json path
+        with open(argv[2], encoding="utf-8") as fh:
+            print(json.dumps(resolved_policy(json.load(fh), argv[3])))
+        return 0
+    if cmd == "widen-scope":
+        # W6 (I2): argv[2] = pinned task.md, argv[3:] = repo-relative files to add to its scope.
+        # Refuses (exit 1, nothing written) unless EVERY file is contained by the class's
+        # allowed_scope and is not a forbidden prefix -- the class ceiling is never widened.
+        fm, _ = parse_frontmatter(argv[2])
+        cls = fm.get("class")
+        with open(os.environ.get("AP3_ROUTINES", "ap3/routines.json"), encoding="utf-8") as fh:
+            allowed = ((json.load(fh).get("classes") or {}).get(cls) or {}).get("allowed_scope") or []
+        files = [f for f in argv[3:] if f]
+        for f in files:
+            if ".." in f.split("/") or f.startswith("/") or classify([f], f) == "forbidden":
+                print("REFUSED %s: forbidden or unsafe path" % f); return 1
+            if not any(_contained(f, a) for a in allowed):
+                print("REFUSED %s: outside the class allowed_scope (the ceiling is never widened)" % f); return 1
+        for a in widen_scope(argv[2], files):
+            print("WIDENED %s" % a)
+        return 0
     if cmd == "lint":
         err = lint(argv[2])
         if err:

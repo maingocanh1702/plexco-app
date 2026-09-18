@@ -72,6 +72,13 @@ def main(argv):
         # W5.2 I3 (K16/K19): absence is a known fact (this run was never owner-extended), not an
         # unknown one -- False, not null, matching report.sh/the trust ladder's own reading of it.
         "owner_extended": rec.get("owner_extended", False),
+        # W6: a run the resolver decided on mid-run (never counted toward clean_runs), the flags
+        # naming what it did, and the two read-only session costs that are NOT in total_cost_usd
+        # (the writer's own metering) -- null when the run predates W6 or never needed them.
+        "agent_resolved": rec.get("agent_resolved", False),
+        "agent_resolved_flags": rec.get("agent_resolved_flags"),
+        "preflight_cost_usd": rec.get("preflight_cost_usd"),
+        "resolver_cost_usd": rec.get("resolver_cost_usd"),
     }
     print(json.dumps(row))
     return 0

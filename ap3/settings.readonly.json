@@ -1,0 +1,22 @@
+{
+  "_purpose": "W6 review round finding (security 1): the read-only preflight/resolver sessions (ap3/agent-readonly.sh) read the repo AND untrusted task/source content, so prompt-injected content could try to Read a secret. This contract, passed via `claude --settings`, keeps the same sandbox + denyRead the writer runs under, and grants only Read/Glob/Grep. It is validated and installed per target like writer-settings.json.",
+  "permissions": {
+    "allow": ["Read", "Glob", "Grep"],
+    "deny": [
+      "Edit", "Write", "Bash", "Agent",
+      "Read(./.env*)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.gnupg/**)",
+      "Read(~/.codex/**)", "Read(~/.ap-watch.env)",
+      "WebFetch", "WebSearch"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "network": { "allowedDomains": [] },
+    "filesystem": {
+      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.ap-watch.env", "~/.codex", "**/.env", "**/.env.*", "**/.envrc"],
+      "allowWrite": []
+    }
+  }
+}
