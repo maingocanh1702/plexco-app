@@ -13,7 +13,7 @@
 > **(4) Provenance — CHẠY LẠI THẬT, không carry.** Mac, `git worktree` tách rời tại `12f5191`, `pnpm install --frozen-lockfile`, `NODE_ENV=test`, Postgres `docker plexco-postgres-1`, `DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test`; `pnpm test` exit 0 (94 s) · typecheck · lint · format:check · review:check · build đều exit 0 · tree sạch sau suite. **Cluster phải dọn TRƯỚC VÀ SAU khi đo** — 14 db `plexco_*` sót đã làm hỏng lần đo 15/09 và suite vẫn để lại 15 db sau mỗi lần chạy.
 > **(5) 🔴 Luật 4 KHÔNG còn đóng ở lớp nào.** Static tại `12f5191` = **1376** (core 161 · db 780 · web 353 · bot 82); readiness static **110**. Core và bot từng đóng ở `e235ea4` nay đã có generator mới chưa kiểm kê. Phần dư **không được viết như hiệu**.
 > **(6) Code-dark còn lại, không đổi:** `resolveCapability()` 0 caller production ⇒ hard-dep (a) của DD-114 vẫn mở · `identity.ts` (`0043`) 0 caller production · `chat_*` 0 service · projector vẫn là `productionStubDeliver` ⇒ schedule OFF.
-> **(7) 🔴 Decision còn thiếu (owner quyết), chưa ký từ 15/09:** cổng tạm DD-56 phủ **BẢY** route trong khi amendment #2 pin **NĂM**. OPEN NOTE ở `decisions.md` v2.49.
+> **(7) ✅ Decision đã ký 19/09 — DD-56 amendment #3 (`decisions.md` v2.51):** cổng tạm phủ **BẢY** route, hai route guest-note được liệt kê tường minh; bề mặt cưỡng chế không rộng thêm (đo tại `4d275f7`). Void cùng amendment #1/#2 khi `tenant-capability-authority-core` land.
 > **(8) 🔴 Hàng đợi ap3 rỗng — 0 task dispatchable.** `feature-session-p2` `clean_runs 0`. Nạp lại cần owner sửa `ap3/routines.json`.
 > **(9) 🔧 `pnpm progress`** (`tools/progress.mjs`) đo lại mọi số cấu trúc ở block này tại một ref có tên và kiểm điều kiện carry của pin — dùng nó trước khi trích số đi đâu khác.
 >

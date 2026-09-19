@@ -81,7 +81,7 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 **Blocker / chờ owner (mỗi mục một dòng ✅ là xong):**
 
 - 🔴 **FE PENDING (DD-116 Option B)** — gỡ chỉ khi đủ ba vế (canonical `.pen` · tracked trên `main` · owner ký gate DD-81). Owner **hoãn có chủ đích từ 03/09**; ghi ở đây một dòng, không hỏi lại.
-- 🔴 **DD-56 — hai route guest-note chưa có chữ ký.** OPEN NOTE đã vào `../standards/decisions.md` v2.49 (15/09) nhưng **vẫn chưa ký**: choke-point tạm `apps/web/lib/session-command-route.ts` nay phủ **BẢY** route trong khi amendment #2 pin **NĂM** và điều khoản 1 của amendment #1 đòi decision riêng cho mỗi route. Không phải lỗi code — là **decision còn thiếu**.
+- ✅ **DD-56 — hai route guest-note ĐÃ KÝ (amendment #3, owner 2026-09-19, `decisions.md` v2.51).** Cổng tạm nay phủ **BẢY** route, liệt kê tường minh. Bề mặt cưỡng chế không rộng thêm (ESLint rule không phải sửa). Điều khoản 5 — void khi `tenant-capability-authority-core` land — áp cho cả bảy.
 - 🟡 **DD-119 chưa ratify** (carve-out designer dựng `plexco.pen` untracked).
 - 🟡 **DD-120 chưa ratify** (làn ap3 proactive cho class `code-quality-p2`).
 - ⬜ **DD-56 amendment #3** (route ĐỌC session) — draft, chưa ký ⇒ row `session-read-routes-list-detail` vẫn `blocked`, và Milestone 2 của `ap3/features/session-management/PLAN.md` (supervised) chưa chạy được.
