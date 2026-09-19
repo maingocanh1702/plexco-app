@@ -57,4 +57,5 @@ publish-suspend-gate — session `PublishSession` billing-suspension authorizati
 session-lock-ordering — session command transaction/row-lock ordering discipline (`FOR UPDATE` + re-check-under-lock, feature_session_management §4)
 session-command — SessionService command family sharing `packages/db/src/session-service.ts` (create/publish/update/close/cancel/announce); one writer at a time across the file, distinct from `session-lock-ordering` (in-transaction discipline) and `publish-suspend-gate` (one specific gate)
 billing-authz — billing/authorization suspension contract: the `ActionClass` enum + recognised-set in `packages/db/src/authorization.ts` × Suspended Action Matrix rows in feature_billing_lifecycle §3 (DD-110 owns the current four session literals)
+actor-recheck-under-lock — tenant-capability-authority's authorize() actor/grant row FOR SHARE lock inside the caller's own command transaction (DD-56 amendment #1 clause 4, feature_tenant_routing_authz_tech §4); acquires before session-lock-ordering's FOR UPDATE in the same transaction once the seven session routes switch to authorize()
 <!-- catalog:end -->
