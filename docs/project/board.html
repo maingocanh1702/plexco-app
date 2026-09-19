@@ -35,7 +35,7 @@ footer{border-top:1px solid var(--line);padding-top:16px;font-size:12.5px;color:
 <header>
   <p class="eyebrow">sinh bởi node tools/progress.mjs --render · không chép tay</p>
   <h1>Plexco — bảng theo dõi giao hàng</h1>
-  <p class="stamp">2026-09-19 · <b>HEAD@d8b7a12</b> · ROADMAP <b>v3.18</b> pin <b>12f5191</b> · modules.json pin <b>d8b7a12</b></p>
+  <p class="stamp">2026-09-19 · <b>HEAD@ae374b8</b> · ROADMAP <b>v3.18</b> pin <b>12f5191</b> · modules.json pin <b>d8b7a12</b></p>
   <div class="verdict ok"><span class="tag">PIN CÒN HIỆU LỰC</span><p><code>git diff --name-only 12f5191..HEAD -- packages apps scripts</code> trả rỗng ⇒ số cấu trúc còn đúng. Trục Tests có authority riêng (canonical runner).</p></div>
 </header>
 
@@ -190,7 +190,18 @@ footer{border-top:1px solid var(--line);padding-top:16px;font-size:12.5px;color:
 <section class="panel">
   <header><h2>Inbox quyết định của owner</h2><span class="note">docs/project/decisions-inbox.json<br>đỏ = có mặc định và quá 21 ngày</span></header>
   <div class="scroll"><table><thead><tr><th>ID</th><th>Câu hỏi</th><th>Chặn gì</th><th>Mặc định</th><th class="n">Tuổi</th></tr></thead><tbody>
-<tr><td colspan="5" style="color:var(--faint)">chưa có docs/project/decisions-inbox.json</td></tr>
+<tr class=""><td class="mono">O1</td><td>Gỡ FE PENDING (DD-116)? Chọn 1 .pen canonical · track trên main · ký gate DD-81</td><td>5/5 khối launch · module 8, 10, 10c · thanh Launch readiness</td><td>paused có chủ ý (owner 03/09) — không hỏi lại</td><td class="n">18d</td></tr>
+<tr class=""><td class="mono">DD-56-read-routes</td><td>Route ĐỌC session: cho sửa choke-point thêm đường GET body-less (amendment #4), hay chờ tenant-capability-authority-core?</td><td>M2 · GET /guest-notes · row session-read-routes-list-detail (blocked)</td><td>chờ capability core (khuyến nghị 19/09)</td><td class="n">14d</td></tr>
+<tr class=""><td class="mono">DD-119</td><td>Ratify carve-out: designer dựng plexco.pen untracked làm canonical?</td><td>designer handoff · điều kiện (a) của DD-116</td><td>—</td><td class="n">12d</td></tr>
+<tr class=""><td class="mono">DD-120</td><td>Ratify làn ap3 proactive cho class code-quality-p2?</td><td>tính chính danh của 4 PR ap3 đã merge</td><td>đang chạy de facto</td><td class="n">11d</td></tr>
+<tr class=""><td class="mono">DD-114-D6</td><td>Launch dùng self-serve provisioning (POST /api/onboarding/start) hay provision tay tenant #1?</td><td>module 10 · row onboarding-club-config-route</td><td>(a) self-serve — audit 06/09 khuyến nghị</td><td class="n">14d</td></tr>
+<tr class=""><td class="mono">ap3-routines</td><td>Mở class ap3 cho 6 row audit-2026-09-06-* (hoặc nới allowed_scope từ evidence)?</td><td>hàng đợi ap3 đang RỖNG — làn tự động không sản xuất</td><td>—</td><td class="n">1d</td></tr>
+<tr class=""><td class="mono">O4</td><td>Zalo secret: D1 chung khoá KMS hay khoá riêng + ai decrypt; D2 audit mỗi lần đọc credential?</td><td>module 4 · zalo-webhook-adapter-core · launch block 2</td><td>authorize trace read-only trước</td><td class="n">18d</td></tr>
+<tr class=""><td class="mono">O2</td><td>Uỷ quyền thường trực autonomous_to_ready cho lane P1/P2?</td><td>mỗi lane BE ngắt owner 3–5 lần thay vì 1</td><td>uỷ quyền</td><td class="n">18d</td></tr>
+<tr class=""><td class="mono">C4</td><td>Bật Google OAuth prod (GOOGLE_OAUTH_* + CTA)?</td><td>module 3b go-live · launch block 1</td><td>chưa — đợi màn signin E2E staging (O6)</td><td class="n">18d</td></tr>
+<tr class=""><td class="mono">DB_EXPECTED_ROLE</td><td>DB_EXPECTED_ROLE bắt buộc hay opt-in?</td><td>entrypoint.sh posture</td><td>opt-in (giữ như B3/A7)</td><td class="n">14d</td></tr>
+<tr class="over"><td class="mono">A3-legal</td><td>Gửi starter packet A3 cho luật sư VN</td><td>blocker phase-1 (DD-114)</td><td>gửi tuần này (O7)</td><td class="n">27d</td></tr>
+<tr class="over"><td class="mono">meta-app-review</td><td>Nộp Meta App Review cho Messenger</td><td>module 17, 14 · P2.5</td><td>nộp sớm; degrade sang web + Zalo nếu chậm (DD-37)</td><td class="n">65d</td></tr>
   </tbody></table></div>
 </section>
 <div style="display:flex;flex-direction:column;gap:24px;min-width:0">
@@ -199,8 +210,8 @@ footer{border-top:1px solid var(--line);padding-top:16px;font-size:12.5px;color:
   <div class="lanes">
     <div class="lane"><b>level3 · supervised</b>6 worktree ngoài root</div>
     <div class="lane"><b>ap3 · headless</b>queue 0 · done 4 <span class="warn">— hàng đợi rỗng</span><br>code-quality-p2: clean_runs 4<br>feature-session-p2: clean_runs 0</div>
-    <div class="lane"><b>owner · việc tay</b>0 quyết định trong inbox</div>
-    <div class="lane"><b>external</b>0 mục chờ ngoài repo</div>
+    <div class="lane"><b>owner · việc tay</b>10 quyết định trong inbox</div>
+    <div class="lane"><b>external</b>2 mục chờ ngoài repo</div>
   </div>
 </section>
 <section class="panel">
@@ -211,7 +222,7 @@ footer{border-top:1px solid var(--line);padding-top:16px;font-size:12.5px;color:
 <tr><td>API route nghiệp vụ</td><td class="n">7</td><td class="n">7</td><td class="n flat">0</td></tr>
 <tr><td>Màn FE nối API thật</td><td class="n">0</td><td class="n">0</td><td class="n flat">0</td></tr>
   </tbody></table></div>
-  <p style="font-size:12px;color:var(--faint);margin:10px 0 0">7 ngày: 38 commit · 13 PR merge</p>
+  <p style="font-size:12px;color:var(--faint);margin:10px 0 0">7 ngày: 39 commit · 13 PR merge</p>
 </section>
 </div>
 </div>

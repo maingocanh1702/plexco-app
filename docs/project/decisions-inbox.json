@@ -1,6 +1,6 @@
 {
   "_schema": "plexco-decisions-inbox-v1",
-  "_authority": "Owner-edited. Every decision the owner has not yet made, in one place, gathered from decisions.md (⬜/\U0001f7e1/OPEN NOTE), the completion program (O1–O9), the audit RUN (Tier C) and lane findings. Rule: an item that has a `default` and is older than 21 days gets the default applied in the next weekly update unless the owner changes it to a named pause. Seeded 2026-09-19; `opened` is the date the question first appeared in a doc, measured, not guessed.",
+  "_authority": "Owner-edited. Every decision the owner has not yet made, in one place, gathered from decisions.md (⬜/🟡/OPEN NOTE), the completion program (O1–O9), the audit RUN (Tier C) and lane findings. Rule: an item that has a `default` and is older than 21 days gets the default applied in the next weekly update unless the owner changes it to a named pause. Seeded 2026-09-19; `opened` is the date the question first appeared in a doc, measured, not guessed.",
   "_review": "seed 2026-09-19 — owner confirms/edits; remove this key when reviewed",
   "items": [
     { "id": "O1", "question": "Gỡ FE PENDING (DD-116)? Chọn 1 .pen canonical · track trên main · ký gate DD-81", "blocks": "5/5 khối launch · module 8, 10, 10c · thanh Launch readiness", "default": "paused có chủ ý (owner 03/09) — không hỏi lại", "opened": "2026-09-02", "lane": "owner", "source": "docs/autopilot-templates/completion-program-2026-09-02-RUN.md", "status": "paused" },

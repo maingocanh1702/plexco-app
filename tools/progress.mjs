@@ -302,9 +302,15 @@ function weakest(axes) {
   return min;
 }
 
-function loadModulesJson(ref) {
+// preferWorkingTree: --render is a working-tree operation -- the owner edits these files and then
+// renders, so the edited copy must win over whatever the ref holds (a committed-but-stale or even
+// committed-but-invalid copy would otherwise silently shadow the edit).
+function loadModulesJson(ref, preferWorkingTree = false) {
   const path = "docs/project/modules.json";
-  let raw = gitSafe("show", `${ref}:${path}`);
+  let raw =
+    preferWorkingTree && existsSync(path)
+      ? readFileSync(path, "utf8")
+      : gitSafe("show", `${ref}:${path}`);
   if (raw === null) {
     // First render of a not-yet-committed JSON: only when the ref IS the working tree's HEAD.
     const head = gitSafe("rev-parse", "HEAD");
@@ -354,15 +360,19 @@ function headlineBars(rows) {
   };
 }
 
-function loadInbox(ref) {
+function loadInbox(ref, preferWorkingTree = false) {
   const path = "docs/project/decisions-inbox.json";
-  let raw = gitSafe("show", `${ref}:${path}`);
+  let raw =
+    preferWorkingTree && existsSync(path)
+      ? readFileSync(path, "utf8")
+      : gitSafe("show", `${ref}:${path}`);
   if (raw === null && existsSync(path)) raw = readFileSync(path, "utf8");
   if (raw === null) return null;
   try {
     const doc = JSON.parse(raw);
     return Array.isArray(doc?.items) ? doc.items : null;
-  } catch {
+  } catch (e) {
+    process.stderr.write(`decisions-inbox.json: ${e.message}\n`);
     return null;
   }
 }
@@ -469,10 +479,10 @@ function main() {
       )
     : [];
   const matrix = parseMatrix(roadmap.text);
-  const loaded = loadModulesJson(ref);
+  const loaded = loadModulesJson(ref, doRender);
   const modules = loaded ? loaded.rows : parseModules(roadmap.text);
   const headlineBarsOut = loaded ? headlineBars(modules) : null;
-  const inbox = loadInbox(ref);
+  const inbox = loadInbox(ref, doRender);
   const headline =
     roadmap.text?.match(/T\u1ed4NG \(code[^\n]*?(~\s*\d+\s*%)/)?.[1]?.replace(/\s+/g, "") ?? null;
   const ap3 = ap3State();
