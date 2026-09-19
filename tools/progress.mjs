@@ -164,6 +164,128 @@ function parseMatrix(text) {
   return { rows, total };
 }
 
+// ---------------------------------------------------------------- module progress (feature x phase)
+
+// The Module Progress table is the ROADMAP's own feature-to-phase mapping. Its code axes are
+// Migration, BE, FE, Tests -- there is no Invariant column here -- and Spec is excluded for the
+// same reason as in the delivery matrix (rule 1: a spec is not progress).
+const MODULE_AXES = ["Migration", "BE", "FE", "Tests"];
+
+// Canonical phase order. A cell naming several phases (e.g. "P2.5/P4.3/P4.7") is filed under the
+// first one and flagged, rather than counted several times -- counting it twice would inflate
+// every phase it touches.
+const PHASE_ORDER = [
+  "P0",
+  "P0-P1",
+  "P1",
+  "P2",
+  "P2.5",
+  "P3",
+  "P3.5",
+  "P4",
+  "P4.3",
+  "P4.5",
+  "P4.5-P4.7",
+  "P4.7",
+  "P5",
+  "P6",
+];
+
+function normalizePhase(raw) {
+  return raw
+    .replace(/\*\*/g, "")
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/`/g, "")
+    .trim();
+}
+
+function parseModules(text) {
+  if (!text) return null;
+  const all = text.split("\n");
+  const anchor = all.findIndex((l) => l.startsWith("### Module Progress"));
+  if (anchor === -1) return null;
+
+  const table = [];
+  for (let i = anchor; i < all.length; i += 1) {
+    const line = all[i];
+    if (line.startsWith("|")) table.push(line);
+    else if (table.length) break;
+  }
+  if (table.length < 3) return null;
+
+  const header = table[0]
+    .split("|")
+    .slice(1, -1)
+    .map((c) => c.trim());
+  const col = (name) => header.findIndex((h) => h === name);
+  const iId = col("#");
+  const iName = col("Module");
+  const iTrack = col("Track");
+  const iPhase = col("Phase");
+  const axisIndex = MODULE_AXES.map(col);
+  if ([iId, iName, iTrack, iPhase, ...axisIndex].some((i) => i === -1)) return null;
+
+  const rows = [];
+  for (const line of table.slice(2)) {
+    const cells = line.split("|").slice(1, -1);
+    if (cells.length < header.length) continue;
+    let sum = 0;
+    let counted = 0;
+    axisIndex.forEach((idx) => {
+      const sym = cellSymbol(cells[idx] ?? "");
+      if (sym === null || sym === NA) return;
+      sum += SCORE[sym];
+      counted += 1;
+    });
+    if (!counted) continue;
+    const phases = normalizePhase(cells[iPhase] ?? "").split("/");
+    rows.push({
+      id: cells[iId].trim(),
+      name: cells[iName]
+        .replace(/\*\*/g, "")
+        .replace(/\s*\(.*$/, "")
+        .trim(),
+      tracks: cells[iTrack].match(/\p{Extended_Pictographic}/gu) ?? [],
+      phase: phases[0],
+      phasesAll: phases,
+      multiPhase: phases.length > 1,
+      counted,
+      pct: Math.round((sum / counted) * 100),
+    });
+  }
+  return rows.length ? rows : null;
+}
+
+function byPhase(modules) {
+  const seen = [...new Set(modules.map((m) => m.phase))];
+  seen.sort((a, b) => {
+    const ia = PHASE_ORDER.indexOf(a);
+    const ib = PHASE_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+  return seen.map((phase) => ({
+    phase,
+    modules: modules.filter((m) => m.phase === phase),
+  }));
+}
+
+// Track rollup is the one aggregate the ROADMAP defines: "Track = trung binh module". A module
+// listed under two tracks counts for both, exactly as the rule says.
+function byTrack(modules) {
+  const map = new Map();
+  for (const m of modules) {
+    for (const t of m.tracks) {
+      if (!map.has(t)) map.set(t, []);
+      map.get(t).push(m);
+    }
+  }
+  return [...map.entries()].map(([track, ms]) => ({
+    track,
+    modules: ms,
+    pct: Math.round(ms.reduce((a, m) => a + m.pct, 0) / ms.length),
+  }));
+}
+
 // ---------------------------------------------------------------- ap3 lane state
 
 function ap3State() {
@@ -197,9 +319,17 @@ function ap3State() {
 function main() {
   const argv = process.argv.slice(2);
   const asJson = argv.includes("--json");
+  const onlyPhases = argv.includes("--phases");
   const refArg = argv.indexOf("--ref");
+  // Default ref: HEAD whenever the local branch already contains origin/main. The ROADMAP pin is an
+  // authority statement that lives on the branch until it is pushed, so reading origin/main there
+  // would report a pin the working branch has already superseded -- which is exactly the kind of
+  // stale number this tool exists to catch.
+  const hasOrigin = Boolean(gitSafe("rev-parse", "origin/main"));
+  const headContainsOrigin =
+    hasOrigin && gitSafe("merge-base", "--is-ancestor", "origin/main", "HEAD") !== null;
   const ref =
-    refArg !== -1 ? argv[refArg + 1] : gitSafe("rev-parse", "origin/main") ? "origin/main" : "HEAD";
+    refArg !== -1 ? argv[refArg + 1] : !hasOrigin || headContainsOrigin ? "HEAD" : "origin/main";
 
   const head = gitSafe("rev-parse", "HEAD");
   const headSubject = gitSafe("log", "-1", "--pretty=%s", "HEAD");
@@ -227,6 +357,7 @@ function main() {
       )
     : [];
   const matrix = parseMatrix(roadmap.text);
+  const modules = parseModules(roadmap.text);
   const headline =
     roadmap.text?.match(/T\u1ed4NG \(code[^\n]*?(~\s*\d+\s*%)/)?.[1]?.replace(/\s+/g, "") ?? null;
   const ap3 = ap3State();
@@ -247,6 +378,9 @@ function main() {
           counts: now,
           countsAtPin: atPin,
           matrix,
+          modules,
+          phases: modules && byPhase(modules),
+          tracks: modules && byTrack(modules),
           ap3,
           recent: { commits: recent.length, merges: recentMerges },
         },
@@ -266,6 +400,48 @@ function main() {
     `PLEXCO PROGRESS  \u2014  measured ${new Date().toISOString().slice(0, 10)} at ${ref} (${short(now.sha)})`,
   );
   out("");
+
+  // PHASES -- the question "which feature is done in which phase" is answered by the ROADMAP's own
+  // Module Progress table, not by the delivery-group matrix: only that table carries a Phase column.
+  // Each module gets its own bar from the documented rule. No phase-level aggregate is invented --
+  // the ROADMAP defines a mean for tracks and says nothing about phases, so phases get counts.
+  const renderPhases = () => {
+    out("PHASES \u2014 which module is done in which phase (ROADMAP \u00a7Module Progress)");
+    if (!modules) {
+      out(
+        "  Module Progress table not parseable at this ref \u2014 fix the table or the parser, never guess",
+      );
+      out("");
+      return;
+    }
+    for (const g of byPhase(modules)) {
+      const done = g.modules.filter((m) => m.pct === 100).length;
+      const zero = g.modules.filter((m) => m.pct === 0).length;
+      const partial = g.modules.length - done - zero;
+      out(
+        `  ${g.phase.padEnd(10)} ${String(g.modules.length).padStart(2)} module${g.modules.length === 1 ? " " : "s"}: ${done} done \u00b7 ${partial} partial \u00b7 ${zero} not started`,
+      );
+      for (const m of g.modules) {
+        const also = m.multiPhase ? `  (also ${m.phasesAll.slice(1).join(", ")})` : "";
+        out(
+          `    ${bar(m.pct, 10)} ${String(m.pct).padStart(3)}%  #${m.id.padEnd(4)} ${m.name}${also}`,
+        );
+      }
+      out("");
+    }
+    out("  TRACKS (the one aggregate the ROADMAP defines: track = mean of its modules)");
+    for (const t of byTrack(modules)) {
+      out(
+        `    ${bar(t.pct, 10)} ${String(t.pct).padStart(3)}%  ${t.track}  ${t.modules.length} module${t.modules.length === 1 ? "" : "s"}`,
+      );
+    }
+    out("");
+  };
+
+  if (onlyPhases) {
+    renderPhases();
+    return;
+  }
 
   out("GIT");
   out(`  HEAD          ${short(head)}  ${headSubject ?? ""}`);
@@ -335,6 +511,8 @@ function main() {
     }
   }
   out("");
+
+  renderPhases();
 
   out("AP3 LANE");
   out(
