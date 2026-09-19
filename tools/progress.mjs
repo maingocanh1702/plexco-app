@@ -22,7 +22,8 @@
 
 import process from "node:process";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { renderBoardHtml, renderMarkdownTable } from "./render.mjs";
 
 const out = (line = "") => process.stdout.write(`${line}\n`);
 
@@ -40,6 +41,7 @@ function git(...args) {
   return execFileSync("git", ["--no-optional-locks", ...args], {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "ignore"],
   }).trim();
 }
 
@@ -256,6 +258,115 @@ function parseModules(text) {
   return rows.length ? rows : null;
 }
 
+// docs/project/modules.json is the Project tier's source of truth once it exists (2026-09-19).
+// The markdown table is rendered FROM it, so at any ref that has the JSON we read the JSON and
+// ignore the table; older refs fall back to parsing the table. Scores use the same rule either
+// way: done=1, merged/partial=0.5, not_started/blocked=0, n/a dropped from the denominator.
+const JSON_SCORE = {
+  done: 1,
+  merged_not_enabled: 0.5,
+  merged_dark: 0.5,
+  partial: 0.5,
+  not_started: 0,
+  blocked_external: 0,
+};
+const TRACK_EMOJI = {
+  core: "\u{1F3E2}",
+  payment: "\u{1F4B0}",
+  identity: "\u{1F194}",
+  "web-sync": "\u{1F310}",
+  marketplace: "\u{1F50E}",
+  "player-channels": "\u{1F3AF}",
+  security: "\u{1F512}",
+};
+
+function pctOver(axes, keys) {
+  let sum = 0;
+  let counted = 0;
+  for (const k of keys) {
+    const st = axes[k];
+    if (st === undefined || st === "n/a") continue;
+    if (!(st in JSON_SCORE)) return null;
+    sum += JSON_SCORE[st];
+    counted += 1;
+  }
+  return counted ? { pct: Math.round((sum / counted) * 100), counted } : null;
+}
+
+function weakest(axes) {
+  let min = null;
+  for (const st of Object.values(axes)) {
+    if (st === "n/a" || !(st in JSON_SCORE)) continue;
+    min = min === null ? JSON_SCORE[st] : Math.min(min, JSON_SCORE[st]);
+  }
+  return min;
+}
+
+function loadModulesJson(ref) {
+  const path = "docs/project/modules.json";
+  let raw = gitSafe("show", `${ref}:${path}`);
+  if (raw === null) {
+    // First render of a not-yet-committed JSON: only when the ref IS the working tree's HEAD.
+    const head = gitSafe("rev-parse", "HEAD");
+    if (gitSafe("rev-parse", ref) === head && existsSync(path)) raw = readFileSync(path, "utf8");
+  }
+  if (raw === null) return null;
+  let doc;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (doc?._schema !== "plexco-modules-v1" || !Array.isArray(doc.modules)) return null;
+  const rows = [];
+  for (const m of doc.modules) {
+    const s = pctOver(m.axes, ["migration", "be", "fe", "tests"]);
+    if (!s) continue;
+    rows.push({
+      ...m,
+      tracks: (m.track ?? []).map((t) => TRACK_EMOJI[t] ?? t),
+      phasesAll: m.phases_all ?? [m.phase],
+      multiPhase: (m.phases_all ?? []).length > 1,
+      counted: s.counted,
+      pct: s.pct,
+      source: "json",
+    });
+  }
+  return { doc, rows };
+}
+
+// Two headline bars, both derived. The ROADMAP's own ~33% is a third, hand-kept scale that is
+// quoted verbatim elsewhere and never recomputed here.
+function headlineBars(rows) {
+  const p1 = rows.filter((m) => m.phase1);
+  const be = p1.map((m) => pctOver(m.axes, ["migration", "be", "tests"])).filter(Boolean);
+  const launch = rows
+    .filter((m) => m.launch_block)
+    .map((m) => weakest(m.axes))
+    .filter((v) => v !== null);
+  return {
+    be: be.length ? Math.round(be.reduce((a, x) => a + x.pct, 0) / be.length) : null,
+    beModules: be.length,
+    launch: launch.length
+      ? Math.round((launch.reduce((a, x) => a + x, 0) / launch.length) * 100)
+      : null,
+    launchModules: launch.length,
+  };
+}
+
+function loadInbox(ref) {
+  const path = "docs/project/decisions-inbox.json";
+  let raw = gitSafe("show", `${ref}:${path}`);
+  if (raw === null && existsSync(path)) raw = readFileSync(path, "utf8");
+  if (raw === null) return null;
+  try {
+    const doc = JSON.parse(raw);
+    return Array.isArray(doc?.items) ? doc.items : null;
+  } catch {
+    return null;
+  }
+}
+
 function byPhase(modules) {
   const seen = [...new Set(modules.map((m) => m.phase))];
   seen.sort((a, b) => {
@@ -320,6 +431,7 @@ function main() {
   const argv = process.argv.slice(2);
   const asJson = argv.includes("--json");
   const onlyPhases = argv.includes("--phases");
+  const doRender = argv.includes("--render");
   const refArg = argv.indexOf("--ref");
   // Default ref: HEAD whenever the local branch already contains origin/main. The ROADMAP pin is an
   // authority statement that lives on the branch until it is pushed, so reading origin/main there
@@ -357,7 +469,10 @@ function main() {
       )
     : [];
   const matrix = parseMatrix(roadmap.text);
-  const modules = parseModules(roadmap.text);
+  const loaded = loadModulesJson(ref);
+  const modules = loaded ? loaded.rows : parseModules(roadmap.text);
+  const headlineBarsOut = loaded ? headlineBars(modules) : null;
+  const inbox = loadInbox(ref);
   const headline =
     roadmap.text?.match(/T\u1ed4NG \(code[^\n]*?(~\s*\d+\s*%)/)?.[1]?.replace(/\s+/g, "") ?? null;
   const ap3 = ap3State();
@@ -379,6 +494,8 @@ function main() {
           countsAtPin: atPin,
           matrix,
           modules,
+          headline: headlineBarsOut,
+          inbox,
           phases: modules && byPhase(modules),
           tracks: modules && byTrack(modules),
           ap3,
@@ -435,11 +552,89 @@ function main() {
         `    ${bar(t.pct, 10)} ${String(t.pct).padStart(3)}%  ${t.track}  ${t.modules.length} module${t.modules.length === 1 ? "" : "s"}`,
       );
     }
+    if (headlineBarsOut) {
+      out("");
+      out(`  HEADLINE (derived from modules.json)`);
+      out(
+        `    ${bar(headlineBarsOut.be, 10)} ${String(headlineBarsOut.be).padStart(3)}%  BE readiness for phase-1 (migration+be+tests over ${headlineBarsOut.beModules} phase-1 modules)`,
+      );
+      out(
+        `    ${bar(headlineBarsOut.launch, 10)} ${String(headlineBarsOut.launch).padStart(3)}%  Launch readiness (weakest axis over ${headlineBarsOut.launchModules} launch-block modules)`,
+      );
+    }
     out("");
   };
 
   if (onlyPhases) {
     renderPhases();
+    return;
+  }
+
+  if (doRender) {
+    if (!loaded) {
+      out("--render needs docs/project/modules.json at this ref (or in the working tree at HEAD)");
+      process.exitCode = 1;
+      return;
+    }
+    // 1. ROADMAP Module Progress table, between markers. Refuse rather than guess if absent.
+    const rp = "docs/product/ROADMAP.md";
+    const md = readFileSync(rp, "utf8");
+    const B = "<!-- modules:begin -->";
+    const E = "<!-- modules:end -->";
+    const bi = md.indexOf(B);
+    const ei = md.indexOf(E);
+    if (bi === -1 || ei === -1 || ei < bi) {
+      out(
+        `ROADMAP.md has no ${B} / ${E} markers around the Module Progress table -- add them once, then re-run`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const table = renderMarkdownTable(loaded.doc.modules);
+    const next = md.slice(0, bi + B.length) + "\n" + table + "\n" + md.slice(ei);
+    const changed = next !== md;
+    if (changed) writeFileSync(rp, next);
+    out(
+      `ROADMAP Module Progress table: ${changed ? "rewritten" : "unchanged"} (${loaded.doc.modules.length} rows)`,
+    );
+
+    // 2. board.html
+    const wt =
+      lines(gitSafe("worktree", "list", "--porcelain") ?? "").filter((l) =>
+        l.startsWith("worktree "),
+      ).length - 1;
+    const html = renderBoardHtml({
+      generatedAt: new Date().toISOString(),
+      ref,
+      sha: short(now.sha),
+      pin: roadmap.pin ? short(roadmap.pin) : null,
+      modulesPin: loaded.doc.pin ?? null,
+      roadmapVersion: roadmap.version,
+      roadmapHeadline: headline,
+      carryFiles: carry.length,
+      headline: headlineBarsOut,
+      counts: now,
+      countsAtPin: atPin,
+      phases: byPhase(modules),
+      tracks: byTrack(modules).map((t) => ({
+        ...t,
+        track: Object.keys(TRACK_EMOJI).find((k) => TRACK_EMOJI[k] === t.track) ?? t.track,
+      })),
+      inbox: inbox ?? [],
+      lanes: {
+        level3: `${Math.max(wt, 0)} worktree ngo\u00e0i root`,
+        ap3: `queue ${ap3.queued.length} \u00b7 done ${ap3.done}${ap3.queued.length === 0 ? ' <span class="warn">\u2014 h\u00e0ng \u0111\u1ee3i r\u1ed7ng</span>' : ""}<br>${ap3.classes.map((c) => `${c.name}: clean_runs ${c.cleanRuns ?? "?"}`).join("<br>")}${ap3.paused ? '<br><span class="warn">PAUSED</span>' : ""}`,
+        owner:
+          (inbox ?? []).filter((i) => i.lane === "owner").length +
+          " quy\u1ebft \u0111\u1ecbnh trong inbox",
+        external:
+          (inbox ?? []).filter((i) => i.lane === "external").length +
+          " m\u1ee5c ch\u1edd ngo\u00e0i repo",
+      },
+      recent: { commits: recent.length, merges: recentMerges },
+    });
+    writeFileSync("docs/project/board.html", html);
+    out("docs/project/board.html: written");
     return;
   }
 

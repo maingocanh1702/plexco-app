@@ -33,7 +33,7 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 ```
 
 **LUẬT THANH (ghi ở đây, không đổi lặng lẽ):** thanh của mỗi delivery group tính **máy móc** từ ma trận §📊 — chỉ **trục code** Migration · BE · FE/UI · Tests · Invariant, **không tính Spec** (luật 1); `✅` = 1 · `🟢`/`🟡` = ½ · `⬜`/`⛔` = 0; ô `—` bỏ qua, không tính vào mẫu số. `%` = tổng ÷ số trục có tính. **Sửa một ô ma trận ⇒ phải tính lại thanh ở MỌI chỗ.** Thanh `~33%`/`90`/`80`/`5` ở khối trên là **thang khác** (slice roadmap), giữ riêng, không trộn.
-> 🔧 **Từ 19/09 luật này chạy được bằng máy:** `pnpm progress` (`tools/progress.mjs`) đọc thẳng ma trận §📊 và in lại thanh của từng group theo đúng công thức trên, kèm số cấu trúc đo tại một ref có tên và điều kiện carry ở trên. Nó **không** sửa ô ma trận (đó vẫn là phán đoán của người) và **không** chạy suite (số test có authority riêng). Dùng nó để phát hiện pin đã mục trước khi trích số đi đâu khác.
+> 🔧 **Từ 19/09 luật này chạy được bằng máy, và tầng module có nguồn sự thật riêng (`../project/modules.json`, xem `../project/README.md`):** `pnpm progress` (`tools/progress.mjs`) đọc thẳng ma trận §📊 và in lại thanh của từng group theo đúng công thức trên, kèm số cấu trúc đo tại một ref có tên và điều kiện carry ở trên. Nó **không** sửa ô ma trận (đó vẫn là phán đoán của người) và **không** chạy suite (số test có authority riêng). Dùng nó để phát hiện pin đã mục trước khi trích số đi đâu khác.
 
 | Delivery group | Thanh @ `12f5191` | Δ so `e235ea4` | Trục yếu nhất (= trạng thái thật) |
 |---|---|---|---|
@@ -443,33 +443,37 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 
 > Cột **Rev?** = module này có nằm trên đường tới đồng doanh thu đầu tiên không (xem §Critical Path to Revenue). 🔴 = chặn revenue · 🟡 = tăng giá trị gói trả phí · ⬜ = không chặn revenue.
 
+> ⚙️ **Bảng dưới đây được SINH từ `../project/modules.json`** (`node tools/progress.mjs --render`, từ 19/09/2026). Sửa ô ⇒ sửa JSON rồi render lại; sửa tay ở đây sẽ bị ghi đè ở lần render kế. Health/next/blocked_by của từng module không nằm trong bảng này — xem `../project/board.html`.
+
+<!-- modules:begin -->
 | # | Module | Track | Phase | Spec | Migration | BE | FE | Tests | Rev? | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | Monorepo + lift `core` (+ `sports`) | 🏢 | P0 | ✅ | — | ✅ | — | ✅ runner 132 | 🔴 | ✅ (S1/S2 merged) · +fix DD-87 `splitNameAmount` |
-| 2 | Postgres + Drizzle + RLS + **public read model skeleton** | 🏢 | P0 | ✅ | ✅ `0000`–`0013` *(+`0019`–`0032` integrity/job/registry/chat tail)* | ✅ | — | ✅ real-PG 219 tại `0024` | 🔴 | ✅ (S3 merged); `0024` invariant-only |
+| 2 | Postgres + Drizzle + RLS + public read model skeleton | 🏢 | P0 | ✅ | ✅ `0000`–`0013` *(+`0019`–`0032` integrity/job/registry/chat tail)* | ✅ | — | ✅ real-PG 219 tại `0024` | 🔴 | ✅ (S3 merged); `0024` invariant-only |
 | 3 | Tenant schema (đa môn, session.visibility/slot/join_policy) + repo choke-point | 🏢 | P0–P1 | ✅ | ✅ | ✅ | — | ✅ | 🔴 | ✅ (S3 merged) |
-| 3b | **Google login / tài khoản web (email)** (DD-13/DD-80) | 🏢 | P0–P1 | ✅ | ✅ `0015`–`0018` | ✅ **6 route** *(8 → 6, A3 gỡ 2 route Telegram)* | 🟡 | ✅ runner web **468** | 🔴 | 🟢 **merged · Safari measurement closed · ⛔ chưa bật** |
-| 3c | Email/password bundle (order-4, flag OFF) + gỡ Telegram | 🏢 | P0–P1 | ✅ | 🟡 `0042` DROP `auth_login_telegram` + trigger — **nửa "gỡ Telegram" đã land** | 🟡 route + lib Telegram đã gỡ (A3); email/password chưa build | ⬜ | 🟡 | 🟡 | 🟡 **nửa gỡ-Telegram xong (`0042` + A3); order-4 email/password vẫn ⬜** |
-| 4 | **Chat-channel tenant middleware** (Zalo P2 → Messenger P2.5) | 🏢 | P2/P2.5 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
-| 4b | **Mark-paid thủ công (tiền mặt/CK, tap/multi-select)** (DD-40) | 💰 | P2 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
+| 3b | Google login / tài khoản web (email) (DD-13/DD-80) | 🏢 | P0–P1 | ✅ | ✅ `0015`–`0018` | ✅ 6 route *(8 → 6, A3 gỡ 2 route Telegram)* | 🟡 | ✅ runner web 468 | 🔴 | 🟢 **merged · Safari measurement closed · ⛔ chưa bật** |
+| 3c | Email/password bundle (order-4, flag OFF) + gỡ Telegram | 🏢 | P0–P1 | ✅ | 🟡 `0042` DROP `auth_login_telegram` + trigger — nửa "gỡ Telegram" đã land | 🟡 route + lib Telegram đã gỡ (A3); email/password chưa build | ⬜ | 🟡 | 🟡 | 🟡 **nửa gỡ-Telegram xong (`0042` + A3); order-4 email/password vẫn ⬜** |
+| 4 | Chat-channel tenant middleware (Zalo P2 → Messenger P2.5) | 🏢 | P2/P2.5 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
+| 4b | Mark-paid thủ công (tiền mặt/CK, tap/multi-select) (DD-40) | 💰 | P2 | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | 🔴 | ⬜ |
 | 5 | Durable webhook + ledger/allocation + /unmatched (auto gated) | 💰 | P3 | ✅ + regional research | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ manual global; auto cần entitlement + market/provider/bank/currency/consent |
-| 17 | **Messenger central+optional Page; host/player shared core; 24h/App Review** | 🏢🎯 | **P2.5** | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ · 🔗 App Review |
+| 17 | Messenger central+optional Page; host/player shared core; 24h/App Review | 🏢🎯 | P2.5 | ✅ Reviewed contract | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ · 🔗 App Review |
 | 6 | Migrate data bot cũ → tenant #1 | 🏢 | P3 | ✅ covered | ⬜ | ⬜ | — | ⬜ | ⬜ | ⬜ |
-| 7 | Identity directory + merge (**link Facebook/Zalo**) | 🆔 | P3.5 | ✅ | 🟡 `0043` link_code issue/consume | 🟡 `identity.ts` wrapper — **0 caller production** | ⬜ | 🟡 `identity-link-code.test.ts` | ⬜ | 🟡 **primitive link_code merged · code dark**; merge service ⬜ |
-| 8 | **Web app surface + canonical backend** | 🌐 | P4 | ✅ Reviewed | 🟢 `0044` guest note | 🟢 **8 command** merged (create `b48625c` · publish `1ccbe5d` · announce · update · close · cancel · createGuestNote · deleteGuestNote `9a1c422`) + **7 route** | ⬜ | ✅ per-slice real-PG | 🔴 | 🟢 **BE đủ họ lệnh · 7/8 có route · chưa runnable** — 0 màn FE gọi được |
-| 9 | **Sync engine** (command/outbox/projection + realtime) | 🌐 | P4 | ✅ Reviewed | 🟡 shared `0022`/`0023` | 🟡 dispatcher/queue/scheduler | ⬜ | ✅ infra tests only | ⬜ | 🟡 **infra-only** — schedule OFF; producer đầu tiên đang ở lane module 8, **chưa merge** |
-| 10 | Onboarding self-serve; Messenger central default + optional Page riêng | 🌐 | P4 | 🟡 Draft | ⬜ | 🟡 `POST /api/onboarding/start` → `provisionTenant` → `tenant_provision` (`0028`) + `GET /readiness` **đã có** (audit 06/09 #4 — DD-114 D6 nói launch provision *thủ công*; xem OPEN NOTE dưới D6); `PATCH /club` chưa | ⬜ | ⬜ | 🟡 | ⬜ |
-| 10b | **In-app Chat primary player target** (DD-38/DD-86/DD-91–95) | 🌐 | P4 | Reviewed; primary plan v1.8 = `PLAN_READY` at `90d292d`; owns mechanism slices 1–47 + API A1–A21 + FE F0–F15; first handoff §9.2, each slice still strict `CODE_READY` | 🟢 **`0030`/`0031`/`0032` merged** | ⬜ **0 service** | ⬜ | ✅ 2 file invariant (`chat-dm-safety` · `chat-schema`) | ⬜ | 🟢 **DB root merged · code dark** — 0 API/UI; slice 7 authored (untracked packet), slice 8 chưa; DD-103 debt `NOT_CODE_READY` |
-| 10c | **Cài đặt hồ sơ + giá theo giới tính** (DD-39 ✅) | 🌐 | P4 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 11 | **Publish kèo → public_sessions projection** | 🔎 | P4.3 | ✅ Reviewed — contract publish/draft lifecycle đóng | ✅ `0024` capacity invariant only | ⬜ producer/projector/service/route | ⬜ | ✅ PVC invariant only | ⬜ | ⬜ **chưa runnable** — shared job infra đã merge nhưng schedule OFF/placeholder |
-| 12 | **Discovery / tìm kèo** | 🔎 | P4.3 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 13 | **Join cross-club** | 🔎 | P4.3 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| 13a | **Channel booking decision → intent/hold → occupancy → verified-payment finalizer (DD-32)** | 🔎🎯 | P2.5/P4.3/P4.7 | ✅ Reviewed contract; readiness owned by its implementation plan | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ no runtime |
+| 7 | Identity directory + merge (link Facebook/Zalo) | 🆔 | P3.5 | ✅ | 🟡 `0043` link_code issue/consume | 🟡 `identity.ts` wrapper — 0 caller production | ⬜ | 🟡 `identity-link-code.test.ts` | ⬜ | 🟡 **primitive link_code merged · code dark**; merge service ⬜ |
+| 8 | Web app surface + canonical backend | 🌐 | P4 | ✅ Reviewed | 🟢 `0044` guest note | 🟢 8 command merged (create `b48625c` · publish `1ccbe5d` · announce · update · close · cancel · createGuestNote · deleteGuestNote `9a1c422`) + 7 route | ⬜ | ✅ per-slice real-PG | 🔴 | 🟢 **BE đủ họ lệnh · 7/8 có route · chưa runnable** — 0 màn FE gọi được |
+| 9 | Sync engine (command/outbox/projection + realtime) | 🌐 | P4 | ✅ Reviewed | 🟡 shared `0022`/`0023` | 🟡 dispatcher/queue/scheduler | ⬜ | ✅ infra tests only | ⬜ | 🟡 **infra-only** — schedule OFF; producer đầu tiên đang ở lane module 8, **chưa merge** |
+| 10 | Onboarding self-serve; Messenger central default + optional Page riêng | 🌐 | P4 | 🟡 Draft | ⬜ | 🟡 `POST /api/onboarding/start` → `provisionTenant` → `tenant_provision` (`0028`) + `GET /readiness` đã có (audit 06/09 #4 — DD-114 D6 nói launch provision *thủ công*; xem OPEN NOTE dưới D6); `PATCH /club` chưa | ⬜ | ⬜ | 🟡 | ⬜ |
+| 10b | In-app Chat primary player target (DD-38/DD-86/DD-91–95) | 🌐 | P4 | Reviewed; primary plan v1.8 = `PLAN_READY` at `90d292d`; owns mechanism slices 1–47 + API A1–A21 + FE F0–F15; first handoff §9.2, each slice still strict `CODE_READY` | 🟢 `0030`/`0031`/`0032` merged | ⬜ 0 service | ⬜ | ✅ 2 file invariant (`chat-dm-safety` · `chat-schema`) | ⬜ | 🟢 **DB root merged · code dark** — 0 API/UI; slice 7 authored (untracked packet), slice 8 chưa; DD-103 debt `NOT_CODE_READY` |
+| 10c | Cài đặt hồ sơ + giá theo giới tính (DD-39 ✅) | 🌐 | P4 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 11 | Publish kèo → public_sessions projection | 🔎 | P4.3 | ✅ Reviewed — contract publish/draft lifecycle đóng | ✅ `0024` capacity invariant only | ⬜ producer/projector/service/route | ⬜ | ✅ PVC invariant only | ⬜ | ⬜ **chưa runnable** — shared job infra đã merge nhưng schedule OFF/placeholder |
+| 12 | Discovery / tìm kèo | 🔎 | P4.3 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 13 | Join cross-club | 🔎 | P4.3 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| 13a | Channel booking decision → intent/hold → occupancy → verified-payment finalizer (DD-32) | 🔎🎯 | P2.5/P4.3/P4.7 | ✅ Reviewed contract; readiness owned by its implementation plan | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ no runtime |
 | 14 | Player join Messenger (quick-reply; base enablement P2.5) | 🎯 | P4.5 | 🟡 draft | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 15 | Player join Zalo (number-reply) | 🎯 | P4.7 | ✅ Reviewed | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | 16 | Reminder + notifyPlayersPaid (+ sync) — web + Zalo chính, Messenger 24h | 🎯 | P4.5–P4.7 | 🟡 Draft | ⬜ | ⬜ | ⬜ | ⬜ | 🟡 | ⬜ |
-| 18 | Billing + lifecycle | 💰 | P5 | ✅ Reviewed | 🟢 `0027`–`0029` (DD-29 registry + tenant status read) | 🟡 `authorizeTenantAction` merged, **6 call site** (`session-service.ts:438,621,814,1316,1720,2024` — publish ×2/announce/update/close/cancel); `resolveCapability()` vẫn 0 caller | ⬜ | ✅ per-slice | 🔴 | 🟢 **nền authz merged · entitlement nửa dark** — chưa TS đọc `capabilities`, chưa charge gì |
-| 19 | Hardening (pen/load/obs + **public pen-test**) | 🔒 | P6 | ✅ Reviewed | — | ⬜ | — | ⬜ | ⬜ | ⬜ |
+| 18 | Billing + lifecycle | 💰 | P5 | ✅ Reviewed | 🟢 `0027`–`0029` (DD-29 registry + tenant status read) | 🟡 `authorizeTenantAction` merged, 6 call site (`session-service.ts:438,621,814,1316,1720,2024` — publish ×2/announce/update/close/cancel); `resolveCapability()` vẫn 0 caller | ⬜ | ✅ per-slice | 🔴 | 🟢 **nền authz merged · entitlement nửa dark** — chưa TS đọc `capabilities`, chưa charge gì |
+| 19 | Hardening (pen/load/obs + public pen-test) | 🔒 | P6 | ✅ Reviewed | — | ⬜ | — | ⬜ | ⬜ | ⬜ |
+<!-- modules:end -->
 
 > Module 17 (Messenger) **phase-1** nhưng chặn bởi **App Review Meta** — nộp sớm; degrade sang web + Zalo nếu App Review chậm (BRD OD-9/DD-37 · `../channels/messenger/messenger-channel-design.md`).
 >

@@ -1,0 +1,1005 @@
+{
+  "_schema": "plexco-modules-v1",
+  "_authority": "Source of truth for the Project tier (ROADMAP §Module Progress is RENDERED from this file by `node tools/progress.mjs --render`; never hand-edit that table). `axes` are machine-scored by LUAT THANH and only change when code lands on main. `health`, `health_note`, `blocked_by`, `next`, `lane`, `last_moved` are OWNER judgement, set weekly. Proposed 2026-09-19 from measured facts; every row is pending owner review until `_review` is removed.",
+  "_enums": {
+    "axis": [
+      "done",
+      "merged_not_enabled",
+      "merged_dark",
+      "partial",
+      "not_started",
+      "blocked_external",
+      "n/a"
+    ],
+    "health": [
+      "on_track",
+      "at_risk",
+      "blocked",
+      "paused"
+    ],
+    "lane": [
+      "level3",
+      "ap3",
+      "owner",
+      "external"
+    ],
+    "score": {
+      "done": 1,
+      "merged_not_enabled": 0.5,
+      "merged_dark": 0.5,
+      "partial": 0.5,
+      "not_started": 0,
+      "blocked_external": 0
+    }
+  },
+  "measured_at": "2026-09-19",
+  "pin": "d8b7a12",
+  "_review": "health/next/blocked_by/lane/last_moved/launch_block/spec are PROPOSALS (2026-09-19) awaiting owner review",
+  "modules": [
+    {
+      "id": "1",
+      "name": "Monorepo + lift `core` (+ `sports`)",
+      "track": [
+        "core"
+      ],
+      "phase": "P0",
+      "phases_all": [
+        "P0"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "n/a",
+        "be": "done",
+        "fe": "n/a",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "tests": "runner 132"
+      },
+      "spec_note": "✅",
+      "rev": "🔴",
+      "status_note": "✅ (S1/S2 merged) · +fix DD-87 `splitNameAmount`",
+      "health": "on_track",
+      "health_note": "đóng; chỉ còn fix nhỏ theo DD",
+      "next": null,
+      "blocked_by": [],
+      "lane": "owner",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_multi_tenant.md",
+        "be": "docs/features/BE/feature_multi_tenant_tech.md",
+        "also": []
+      },
+      "phase_label": "P0"
+    },
+    {
+      "id": "2",
+      "name": "Postgres + Drizzle + RLS + public read model skeleton",
+      "track": [
+        "core"
+      ],
+      "phase": "P0",
+      "phases_all": [
+        "P0"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "done",
+        "be": "done",
+        "fe": "n/a",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "migration": "`0000`–`0013` *(+`0019`–`0032` integrity/job/registry/chat tail)*",
+        "tests": "real-PG 219 tại `0024`"
+      },
+      "spec_note": "✅",
+      "rev": "🔴",
+      "status_note": "✅ (S3 merged); `0024` invariant-only",
+      "health": "on_track",
+      "health_note": "đóng; migration tail 0046 vẫn build trên nền này",
+      "next": null,
+      "blocked_by": [],
+      "lane": "level3",
+      "last_moved": "2026-09-17",
+      "spec": {
+        "fe": "docs/features/FE/feature_multi_tenant.md",
+        "be": "docs/features/BE/feature_multi_tenant_tech.md",
+        "also": []
+      },
+      "phase_label": "P0"
+    },
+    {
+      "id": "3",
+      "name": "Tenant schema (đa môn, session.visibility/slot/join_policy) + repo choke-point",
+      "track": [
+        "core"
+      ],
+      "phase": "P0-P1",
+      "phases_all": [
+        "P0-P1"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "done",
+        "be": "done",
+        "fe": "n/a",
+        "tests": "done"
+      },
+      "axis_notes": {},
+      "spec_note": "✅",
+      "rev": "🔴",
+      "status_note": "✅ (S3 merged)",
+      "health": "on_track",
+      "health_note": "đóng",
+      "next": null,
+      "blocked_by": [],
+      "lane": "level3",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_multi_tenant.md",
+        "be": "docs/features/BE/feature_multi_tenant_tech.md",
+        "also": []
+      },
+      "phase_label": "P0–P1"
+    },
+    {
+      "id": "3b",
+      "name": "Google login / tài khoản web (email) (DD-13/DD-80)",
+      "track": [
+        "core"
+      ],
+      "phase": "P0-P1",
+      "phases_all": [
+        "P0-P1"
+      ],
+      "phase1": true,
+      "launch_block": [
+        1
+      ],
+      "axes": {
+        "migration": "done",
+        "be": "done",
+        "fe": "partial",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "migration": "`0015`–`0018`",
+        "be": "6 route *(8 → 6, A3 gỡ 2 route Telegram)*",
+        "tests": "runner web 468"
+      },
+      "spec_note": "✅",
+      "rev": "🔴",
+      "status_note": "🟢 **merged · Safari measurement closed · ⛔ chưa bật**",
+      "health": "paused",
+      "health_note": "merged · Safari đo PASS 26/07 · chưa bật vì GOOGLE_OAUTH_* là go-live decision (C4)",
+      "next": "owner set GOOGLE_OAUTH_* + CTA khi quyết go-live",
+      "blocked_by": [
+        "C4"
+      ],
+      "lane": "owner",
+      "last_moved": "2026-09-07",
+      "spec": {
+        "fe": "docs/features/FE/feature_web_auth_onboarding.md",
+        "be": "docs/features/BE/feature_web_auth_onboarding_tech.md",
+        "also": []
+      },
+      "phase_label": "P0–P1"
+    },
+    {
+      "id": "3c",
+      "name": "Email/password bundle (order-4, flag OFF) + gỡ Telegram",
+      "track": [
+        "core"
+      ],
+      "phase": "P0-P1",
+      "phases_all": [
+        "P0-P1"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "partial",
+        "be": "partial",
+        "fe": "not_started",
+        "tests": "partial"
+      },
+      "axis_notes": {
+        "migration": "`0042` DROP `auth_login_telegram` + trigger — nửa \"gỡ Telegram\" đã land",
+        "be": "route + lib Telegram đã gỡ (A3); email/password chưa build"
+      },
+      "spec_note": "✅",
+      "rev": "🟡",
+      "status_note": "🟡 **nửa gỡ-Telegram xong (`0042` + A3); order-4 email/password vẫn ⬜**",
+      "health": "paused",
+      "health_note": "O5: phase-1 login = Google only; email/password giữ blocked, Telegram đã gỡ (A3/0042)",
+      "next": "không mở tới khi O5 đổi",
+      "blocked_by": [
+        "O5"
+      ],
+      "lane": "owner",
+      "last_moved": "2026-09-07",
+      "spec": {
+        "fe": "docs/features/FE/feature_web_auth_onboarding.md",
+        "be": "docs/features/BE/feature_web_auth_onboarding_tech.md",
+        "also": []
+      },
+      "phase_label": "P0–P1"
+    },
+    {
+      "id": "4",
+      "name": "Chat-channel tenant middleware (Zalo P2 → Messenger P2.5)",
+      "track": [
+        "core"
+      ],
+      "phase": "P2",
+      "phases_all": [
+        "P2",
+        "P2.5"
+      ],
+      "phase1": true,
+      "launch_block": [
+        2
+      ],
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅",
+      "rev": "🔴",
+      "status_note": "⬜",
+      "health": "blocked",
+      "health_note": "0 code; hard-dep của launch block 2 (Link Zalo bot); zalo-webhook-adapter-core còn planned",
+      "next": "zalo-webhook-adapter-core (planned) — cần O4 D1/D2 cho secret",
+      "blocked_by": [
+        "O4"
+      ],
+      "lane": "level3",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_tenant_routing_authz.md",
+        "be": "docs/features/BE/feature_tenant_routing_authz_tech.md",
+        "also": [
+          "zalo_channel"
+        ]
+      },
+      "phase_label": "P2/P2.5"
+    },
+    {
+      "id": "4b",
+      "name": "Mark-paid thủ công (tiền mặt/CK, tap/multi-select) (DD-40)",
+      "track": [
+        "payment"
+      ],
+      "phase": "P2",
+      "phases_all": [
+        "P2"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅",
+      "rev": "🔴",
+      "status_note": "⬜",
+      "health": "on_track",
+      "health_note": "0 code; row session-mark-paid-manual planned, không chờ ai",
+      "next": "session-mark-paid-manual",
+      "blocked_by": [],
+      "lane": "level3",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_payment_reconcile.md",
+        "be": "docs/features/BE/feature_payment_reconcile_tech.md",
+        "also": []
+      },
+      "phase_label": "P2"
+    },
+    {
+      "id": "5",
+      "name": "Durable webhook + ledger/allocation + /unmatched (auto gated)",
+      "track": [
+        "payment"
+      ],
+      "phase": "P3",
+      "phases_all": [
+        "P3"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ + regional research",
+      "rev": "🟡",
+      "status_note": "⬜ manual global; auto cần entitlement + market/provider/bank/currency/consent",
+      "health": "blocked",
+      "health_note": "manual global đi trước; auto cần entitlement + provider evidence (blocked rows apipay/email-provider)",
+      "next": "chờ 4b land; apipay-signed-body-reconciliation blocked ngoài repo",
+      "blocked_by": [
+        "apipay-signed-body-reconciliation"
+      ],
+      "lane": "external",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_payment_reconcile.md",
+        "be": "docs/features/BE/feature_payment_reconcile_tech.md",
+        "also": []
+      },
+      "phase_label": "P3"
+    },
+    {
+      "id": "17",
+      "name": "Messenger central+optional Page; host/player shared core; 24h/App Review",
+      "track": [
+        "core",
+        "player-channels"
+      ],
+      "phase": "P2.5",
+      "phases_all": [
+        "P2.5"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ Reviewed contract",
+      "rev": "⬜",
+      "status_note": "⬜ · 🔗 App Review",
+      "health": "blocked",
+      "health_note": "chặn Meta App Review (ngoài repo)",
+      "next": "nộp App Review sớm; degrade sang web + Zalo nếu chậm (DD-37)",
+      "blocked_by": [
+        "meta-app-review"
+      ],
+      "lane": "external",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_player_messenger.md",
+        "be": "docs/features/BE/feature_player_messenger_tech.md",
+        "also": []
+      },
+      "phase_label": "P2.5"
+    },
+    {
+      "id": "6",
+      "name": "Migrate data bot cũ → tenant #1",
+      "track": [
+        "core"
+      ],
+      "phase": "P3",
+      "phases_all": [
+        "P3"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "n/a",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ covered",
+      "rev": "⬜",
+      "status_note": "⬜",
+      "health": "paused",
+      "health_note": "phụ thuộc bot cũ; chưa có row planned",
+      "next": null,
+      "blocked_by": [],
+      "lane": "owner",
+      "last_moved": null,
+      "spec": null,
+      "phase_label": "P3"
+    },
+    {
+      "id": "7",
+      "name": "Identity directory + merge (link Facebook/Zalo)",
+      "track": [
+        "identity"
+      ],
+      "phase": "P3.5",
+      "phases_all": [
+        "P3.5"
+      ],
+      "phase1": true,
+      "launch_block": [
+        2
+      ],
+      "axes": {
+        "migration": "partial",
+        "be": "partial",
+        "fe": "not_started",
+        "tests": "partial"
+      },
+      "axis_notes": {
+        "migration": "`0043` link_code issue/consume",
+        "be": "`identity.ts` wrapper — 0 caller production",
+        "tests": "`identity-link-code.test.ts`"
+      },
+      "spec_note": "✅",
+      "rev": "⬜",
+      "status_note": "🟡 **primitive link_code merged · code dark**; merge service ⬜",
+      "health": "on_track",
+      "health_note": "0034 + 0043 merged nhưng code dark; 0 caller vì chưa có port Zalo/Messenger gọi",
+      "next": "caller đầu tiên đến từ module 4 (Zalo link)",
+      "blocked_by": [
+        "4"
+      ],
+      "lane": "level3",
+      "last_moved": "2026-09-07",
+      "spec": {
+        "fe": "docs/features/FE/feature_identity.md",
+        "be": "docs/features/BE/feature_identity_tech.md",
+        "also": []
+      },
+      "phase_label": "P3.5"
+    },
+    {
+      "id": "8",
+      "name": "Web app surface + canonical backend",
+      "track": [
+        "web-sync"
+      ],
+      "phase": "P4",
+      "phases_all": [
+        "P4"
+      ],
+      "phase1": true,
+      "launch_block": [
+        3,
+        4
+      ],
+      "axes": {
+        "migration": "merged_not_enabled",
+        "be": "merged_not_enabled",
+        "fe": "not_started",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "migration": "`0044` guest note",
+        "be": "8 command merged (create `b48625c` · publish `1ccbe5d` · announce · update · close · cancel · createGuestNote · deleteGuestNote `9a1c422`) + 7 route",
+        "tests": "per-slice real-PG"
+      },
+      "spec_note": "✅ Reviewed",
+      "rev": "🔴",
+      "status_note": "🟢 **BE đủ họ lệnh · 7/8 có route · chưa runnable** — 0 màn FE gọi được",
+      "health": "blocked",
+      "health_note": "8 command · 7 route đã có; 0 màn FE — launch block 3+4 chờ O1",
+      "next": "M2 read routes (supervised) sau tenant-capability-authority-core; FE chờ O1",
+      "blocked_by": [
+        "O1",
+        "tenant-capability-authority-core"
+      ],
+      "lane": "level3",
+      "last_moved": "2026-09-17",
+      "spec": {
+        "fe": "docs/features/FE/feature_session_management.md",
+        "be": "docs/features/BE/feature_session_management_tech.md",
+        "also": []
+      },
+      "phase_label": "P4"
+    },
+    {
+      "id": "9",
+      "name": "Sync engine (command/outbox/projection + realtime)",
+      "track": [
+        "web-sync"
+      ],
+      "phase": "P4",
+      "phases_all": [
+        "P4"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "partial",
+        "be": "partial",
+        "fe": "not_started",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "migration": "shared `0022`/`0023`",
+        "be": "dispatcher/queue/scheduler",
+        "tests": "infra tests only"
+      },
+      "spec_note": "✅ Reviewed",
+      "rev": "⬜",
+      "status_note": "🟡 **infra-only** — schedule OFF; producer đầu tiên đang ở lane module 8, **chưa merge**",
+      "health": "at_risk",
+      "health_note": "infra merged, schedule OFF vì projector là productionStubDeliver (DLQ mọi delivery) — announce route cũng chờ cái này",
+      "next": "projector-real-replace-stub (planned)",
+      "blocked_by": [],
+      "lane": "level3",
+      "last_moved": "2026-09-06",
+      "spec": {
+        "fe": "docs/features/FE/feature_sync_engine.md",
+        "be": "docs/features/BE/feature_sync_engine_tech.md",
+        "also": []
+      },
+      "phase_label": "P4"
+    },
+    {
+      "id": "10",
+      "name": "Onboarding self-serve; Messenger central default + optional Page riêng",
+      "track": [
+        "web-sync"
+      ],
+      "phase": "P4",
+      "phases_all": [
+        "P4"
+      ],
+      "phase1": true,
+      "launch_block": [
+        1
+      ],
+      "axes": {
+        "migration": "not_started",
+        "be": "partial",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {
+        "be": "`POST /api/onboarding/start` → `provisionTenant` → `tenant_provision` (`0028`) + `GET /readiness` đã có (audit 06/09 #4 — DD-114 D6 nói launch provision *thủ công*; xem OPEN NOTE dưới D6); `PATCH /club` chưa"
+      },
+      "spec_note": "🟡 Draft",
+      "rev": "🟡",
+      "status_note": "⬜",
+      "health": "blocked",
+      "health_note": "start + readiness có; PATCH /club chưa; OPEN NOTE DD-114 D6 (self-serve hay provision tay) chưa ký",
+      "next": "onboarding-club-config-route (planned) sau khi ký D6",
+      "blocked_by": [
+        "DD-114-D6"
+      ],
+      "lane": "level3",
+      "last_moved": "2026-09-06",
+      "spec": {
+        "fe": "docs/features/FE/feature_connector_onboarding.md",
+        "be": "docs/features/BE/feature_connector_onboarding_tech.md",
+        "also": []
+      },
+      "phase_label": "P4"
+    },
+    {
+      "id": "10b",
+      "name": "In-app Chat primary player target (DD-38/DD-86/DD-91–95)",
+      "track": [
+        "web-sync"
+      ],
+      "phase": "P4",
+      "phases_all": [
+        "P4"
+      ],
+      "phase1": false,
+      "launch_block": null,
+      "axes": {
+        "migration": "merged_not_enabled",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "migration": "`0030`/`0031`/`0032` merged",
+        "be": "0 service",
+        "tests": "2 file invariant (`chat-dm-safety` · `chat-schema`)"
+      },
+      "spec_note": "Reviewed; primary plan v1.8 = `PLAN_READY` at `90d292d`; owns mechanism slices 1–47 + API A1–A21 + FE F0–F15; first handoff §9.2, each slice still strict `CODE_READY`",
+      "rev": "⬜",
+      "status_note": "🟢 **DB root merged · code dark** — 0 API/UI; slice 7 authored (untracked packet), slice 8 chưa; DD-103 debt `NOT_CODE_READY`",
+      "health": "blocked",
+      "health_note": "DB root 0030–0032 merged, 0 service — HOLD tới khi tenant-capability-authority-core land (DD-56)",
+      "next": "chờ capability core; sau đó chat-club-channel-lifecycle-core",
+      "blocked_by": [
+        "tenant-capability-authority-core"
+      ],
+      "lane": "level3",
+      "last_moved": "2026-08-13",
+      "spec": {
+        "fe": "docs/features/FE/feature_inapp_chat.md",
+        "be": "docs/features/BE/feature_inapp_chat_tech.md",
+        "also": []
+      },
+      "phase_label": "P4"
+    },
+    {
+      "id": "10c",
+      "name": "Cài đặt hồ sơ + giá theo giới tính (DD-39 ✅)",
+      "track": [
+        "web-sync"
+      ],
+      "phase": "P4",
+      "phases_all": [
+        "P4"
+      ],
+      "phase1": true,
+      "launch_block": [
+        5
+      ],
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "🟡 draft",
+      "rev": "⬜",
+      "status_note": "⬜",
+      "health": "blocked",
+      "health_note": "launch block 5 (Settings); row user-settings-route-and-schema blocked; FE 0",
+      "next": "gỡ block row user-settings-route-and-schema",
+      "blocked_by": [
+        "O1",
+        "user-settings-route-and-schema"
+      ],
+      "lane": "level3",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_user_settings.md",
+        "be": "docs/features/BE/feature_user_settings_tech.md",
+        "also": []
+      },
+      "phase_label": "P4"
+    },
+    {
+      "id": "11",
+      "name": "Publish kèo → public_sessions projection",
+      "track": [
+        "marketplace"
+      ],
+      "phase": "P4.3",
+      "phases_all": [
+        "P4.3"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "done",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "migration": "`0024` capacity invariant only",
+        "be": "producer/projector/service/route",
+        "tests": "PVC invariant only"
+      },
+      "spec_note": "✅ Reviewed — contract publish/draft lifecycle đóng",
+      "rev": "⬜",
+      "status_note": "⬜ **chưa runnable** — shared job infra đã merge nhưng schedule OFF/placeholder",
+      "health": "paused",
+      "health_note": "DD-114 D3 (b): phase-1 không chiếu public_sessions; projector là epic phase sau với 4 tiền đề",
+      "next": "không mở trong phase-1",
+      "blocked_by": [
+        "DD-114-D3"
+      ],
+      "lane": "owner",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_session_management.md",
+        "be": "docs/features/BE/feature_session_management_tech.md",
+        "also": []
+      },
+      "phase_label": "P4.3"
+    },
+    {
+      "id": "12",
+      "name": "Discovery / tìm kèo",
+      "track": [
+        "marketplace"
+      ],
+      "phase": "P4.3",
+      "phases_all": [
+        "P4.3"
+      ],
+      "phase1": false,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ Reviewed",
+      "rev": "⬜",
+      "status_note": "⬜",
+      "health": "paused",
+      "health_note": "ngoài phase-1 (M3), park sau launch (O8)",
+      "next": null,
+      "blocked_by": [
+        "O8"
+      ],
+      "lane": "owner",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_marketplace_discovery.md",
+        "be": "docs/features/BE/feature_marketplace_discovery_tech.md",
+        "also": []
+      },
+      "phase_label": "P4.3"
+    },
+    {
+      "id": "13",
+      "name": "Join cross-club",
+      "track": [
+        "marketplace"
+      ],
+      "phase": "P4.3",
+      "phases_all": [
+        "P4.3"
+      ],
+      "phase1": false,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ Reviewed",
+      "rev": "⬜",
+      "status_note": "⬜",
+      "health": "paused",
+      "health_note": "ngoài phase-1 (M3), park sau launch (O8)",
+      "next": null,
+      "blocked_by": [
+        "O8"
+      ],
+      "lane": "owner",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_cross_club_join.md",
+        "be": "docs/features/BE/feature_cross_club_join_tech.md",
+        "also": []
+      },
+      "phase_label": "P4.3"
+    },
+    {
+      "id": "13a",
+      "name": "Channel booking decision → intent/hold → occupancy → verified-payment finalizer (DD-32)",
+      "track": [
+        "marketplace",
+        "player-channels"
+      ],
+      "phase": "P2.5",
+      "phases_all": [
+        "P2.5",
+        "P4.3",
+        "P4.7"
+      ],
+      "phase1": false,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ Reviewed contract; readiness owned by its implementation plan",
+      "rev": "⬜",
+      "status_note": "⬜ no runtime",
+      "health": "paused",
+      "health_note": "readiness thuộc implementation plan riêng; DD-32 Option D; chưa runtime",
+      "next": null,
+      "blocked_by": [
+        "O8"
+      ],
+      "lane": "owner",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_channel_booking_funnel.md",
+        "be": "docs/features/BE/feature_channel_booking_funnel_tech.md",
+        "also": []
+      },
+      "phase_label": "P2.5/P4.3/P4.7"
+    },
+    {
+      "id": "14",
+      "name": "Player join Messenger (quick-reply; base enablement P2.5)",
+      "track": [
+        "player-channels"
+      ],
+      "phase": "P4.5",
+      "phases_all": [
+        "P4.5"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "🟡 draft",
+      "rev": "⬜",
+      "status_note": "⬜",
+      "health": "blocked",
+      "health_note": "base enablement P2.5 chặn App Review",
+      "next": null,
+      "blocked_by": [
+        "17"
+      ],
+      "lane": "external",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_player_messenger.md",
+        "be": "docs/features/BE/feature_player_messenger_tech.md",
+        "also": []
+      },
+      "phase_label": "P4.5"
+    },
+    {
+      "id": "15",
+      "name": "Player join Zalo (number-reply)",
+      "track": [
+        "player-channels"
+      ],
+      "phase": "P4.7",
+      "phases_all": [
+        "P4.7"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ Reviewed",
+      "rev": "⬜",
+      "status_note": "⬜",
+      "health": "on_track",
+      "health_note": "Reviewed; chưa có row planned; đi sau module 4",
+      "next": "mở row sau khi 4 land",
+      "blocked_by": [
+        "4"
+      ],
+      "lane": "level3",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_zalo_channel.md",
+        "be": "docs/features/BE/feature_zalo_channel_tech.md",
+        "also": []
+      },
+      "phase_label": "P4.7"
+    },
+    {
+      "id": "16",
+      "name": "Reminder + notifyPlayersPaid (+ sync) — web + Zalo chính, Messenger 24h",
+      "track": [
+        "player-channels"
+      ],
+      "phase": "P4.5-P4.7",
+      "phases_all": [
+        "P4.5-P4.7"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "not_started",
+        "be": "not_started",
+        "fe": "not_started",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "🟡 Draft",
+      "rev": "🟡",
+      "status_note": "⬜",
+      "health": "on_track",
+      "health_note": "row reminder-cron-and-confirm-paid planned; cần schedule ON (module 9)",
+      "next": "sau projector thật",
+      "blocked_by": [
+        "9"
+      ],
+      "lane": "level3",
+      "last_moved": null,
+      "spec": {
+        "fe": "docs/features/FE/feature_notifications_reminders.md",
+        "be": "docs/features/BE/feature_notifications_reminders_tech.md",
+        "also": []
+      },
+      "phase_label": "P4.5–P4.7"
+    },
+    {
+      "id": "18",
+      "name": "Billing + lifecycle",
+      "track": [
+        "payment"
+      ],
+      "phase": "P5",
+      "phases_all": [
+        "P5"
+      ],
+      "phase1": true,
+      "launch_block": null,
+      "axes": {
+        "migration": "merged_not_enabled",
+        "be": "partial",
+        "fe": "not_started",
+        "tests": "done"
+      },
+      "axis_notes": {
+        "migration": "`0027`–`0029` (DD-29 registry + tenant status read)",
+        "be": "`authorizeTenantAction` merged, 6 call site (`session-service.ts:438,621,814,1316,1720,2024` — publish ×2/announce/update/close/cancel); `resolveCapability()` vẫn 0 caller",
+        "tests": "per-slice"
+      },
+      "spec_note": "✅ Reviewed",
+      "rev": "🔴",
+      "status_note": "🟢 **nền authz merged · entitlement nửa dark** — chưa TS đọc `capabilities`, chưa charge gì",
+      "health": "at_risk",
+      "health_note": "authz nền merged; resolveCapability 0 caller ⇒ hard-dep (a) phase-1 vẫn mở (capability-wiring-auto-reconcile hoãn vì 0 caller)",
+      "next": "capability-wiring-auto-reconcile — caller production đầu tiên",
+      "blocked_by": [],
+      "lane": "level3",
+      "last_moved": "2026-08-25",
+      "spec": {
+        "fe": "docs/features/FE/feature_billing_lifecycle.md",
+        "be": "docs/features/BE/feature_billing_lifecycle_tech.md",
+        "also": []
+      },
+      "phase_label": "P5"
+    },
+    {
+      "id": "19",
+      "name": "Hardening (pen/load/obs + public pen-test)",
+      "track": [
+        "security"
+      ],
+      "phase": "P6",
+      "phases_all": [
+        "P6"
+      ],
+      "phase1": false,
+      "launch_block": null,
+      "axes": {
+        "migration": "n/a",
+        "be": "not_started",
+        "fe": "n/a",
+        "tests": "not_started"
+      },
+      "axis_notes": {},
+      "spec_note": "✅ Reviewed",
+      "rev": "⬜",
+      "status_note": "⬜",
+      "health": "paused",
+      "health_note": "P6, xuyên suốt; audit 06/09 đã đóng hardening 0037–0042",
+      "next": "backup-pitr-drill · observability rows planned",
+      "blocked_by": [],
+      "lane": "level3",
+      "last_moved": "2026-09-07",
+      "spec": {
+        "fe": "docs/features/FE/feature_security_operations.md",
+        "be": "docs/features/BE/feature_security_operations_tech.md",
+        "also": []
+      },
+      "phase_label": "P6"
+    }
+  ]
+}
