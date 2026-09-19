@@ -2,8 +2,8 @@
 
 > **Canonical phase:** P2
 > **Track:** 🔐 Routing & AuthZ
-> **Version:** 2.8 · 2026-08-10
-> **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
+> **Version:** 2.9 · 2026-09-19
+> **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86, amendments #1–#3
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P0–P1 foundation stable
 > **Tài liệu liên quan:** `../../product/BRD.md` BR-1/BR-3/BR-12 · `../../product/PRD.md` §2 + §4.2/4.3 · `../../product/TDD.md` §3.3–3.5 · `../../standards/decisions.md` DD-27/DD-56/**DD-65..68** · `../BE/feature_tenant_routing_authz_tech.md`
@@ -82,6 +82,9 @@ Route mọi Zalo/Messenger/admin interaction tới **đúng tenant/resource** r�
 | 14 | Security | Sensitive grant hết hạn/thiếu reason/audit hoặc actor cố grant `role.manage` | Deny fail-closed; owner-only role management không delegable |
 | 15 | Security | Co-admin cố remove/demote owner/admin hoặc gọi DD-51/DD-53 global action | Deny; global override/split/relink chỉ PlatformAdmin theo dedicated path |
 | 16 | Privacy | Host/admin có Chat capability cố đọc hoặc moderation human DM | ❌ NEVER — capability chỉ có hiệu lực trên target `kind='club'`; person-self DM denial giữ nguyên |
+| 17 | Concurrency | Role revoked between route-layer early deny and command transaction commit | In-transaction `authorize()` re-check (`actor-recheck-under-lock`) denies; command aborts, no partial mutation |
+| 18 | Concurrency | Grant expires while command waits on the actor/grant row lock | `authorize()` evaluates `expires_at`/`revoked_at` với `clock_timestamp()` sau khi có lock — deny nếu hết hạn ngay lúc đó |
+| 19 | Security | Route vẫn dùng cổng tạm sau route-migration milestone (DD-56 amendment #1 clause 5) | ESLint `no-restricted-imports`/`no-restricted-syntax` guard đã gỡ; guard duy nhất còn lại là registry `tenant_capability_actions` — action key thiếu trong registry → deny |
 
 ---
 
@@ -191,8 +194,8 @@ stateDiagram-v2
 - [ ] Multi-club DM picker và stale-context invalidation hoạt động
 - [ ] Suspended behavior khớp billing contract
 - [ ] Tenant A/B routing/authz isolation tests pass
-- [ ] One canonical action→capability registry drives API/UI/adapters; unknown action and missing/expired grants deny
-- [ ] `admin` và `co_admin` cho cùng least-privilege preset; không label nào nhận owner-only action
+- [ ] **[RED anchor]** One canonical action→capability registry drives API/UI/adapters; unknown action and missing/expired grants deny — first writer test: `authorize({ action: "no.such.key", actor, target })` denies; RED at base because `authorize` does not exist yet (ap3-intake A2, 2026-09-19)
+- [ ] **[RED #2]** `admin` và `co_admin` cho cùng least-privilege preset; không label nào nhận owner-only action — also documents that the interim gate over-grants today: `apps/web/lib/session-command-route.ts`'s `ALLOWED_ROLES` treats `owner`/`admin`/`co_admin` identically (ap3-intake A2, 2026-09-19)
 - [ ] Every DD-56 sensitive action has allow-with-valid-grant and deny-without/expired-grant tests
 - [ ] Grant/revoke writes are tenant-private and append exactly one immutable audit event; revoked grants deny and audit rows cannot update/delete
 - [ ] `role.manage`, DD-51 override and DD-53 split/relink cannot be delegated to co-admin
@@ -214,6 +217,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-19 | v2.9 | **ap3-intake readiness pass (A1–A3):** R1.2 waived N/A (cross-cutting authz primitive has no PRD FLOW; §4.2 Identity & Routing covers the routing predicate) — no PRD edit. §6 criteria #10/#11 named as the RED anchor pair. §2 gains edge cases #17–19: actor-recheck-under-lock consume-time deny, grant expiry mid-lock-wait, post-migration-milestone registry-only guard (DD-56 amendments #1–#3). No contract/capability model change. |
 | 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (8 entries); bump version. Không đổi contract/capability model. |
 | 2026-07-28 | v2.7 | Mirror DD-86 final: add exact Chat capability keys for channel lifecycle, restricted post, soft moderation and timed mute; pin `admin|co_admin` to one least-privilege preset, cross-feature `tenant-capability-authority-core`, consume-time re-check, fail-closed unknown key and explicit human-DM denial. Reviewed/not implemented unchanged. |
 | 2026-07-19 | v2.6a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

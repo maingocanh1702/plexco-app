@@ -1,8 +1,8 @@
 # Feature: Tenant Routing & Admin Authorization — Backend Tech Spec
 
 > **Canonical phase:** P2
-> **Version:** 2.8 · 2026-08-10
-> **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86
+> **Version:** 2.9 · 2026-09-19
+> **Status:** Reviewed · reconciled to TDD v3.1 / decisions DD-56/DD-86, amendments #1–#3
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_tenant_routing_authz.md`
 > **References:** `../../product/TDD.md` §3.3–3.5 · `../../standards/business-rules.md` BL-SEC-2/BL-SEC-5 · `../../standards/decisions.md` DD-27 · DD-51 · DD-53 · DD-56 · **DD-65..68**
@@ -110,6 +110,70 @@ All tenant-scoped tables: `ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURIT
 
 `tenant_link_codes` is the canonical table for **tenant-admin onboarding** in this feature. It is not the DD-50 identity `link_codes` table; do not merge their purposes or schemas. Current lifecycle fields are `consumed_at`/`revoked_at`/`attempts`, never the Product alias `used_at`.
 
+### Target DDL — `tenant-capability-authority-core` (new migration, next open monotonic number)
+
+```sql
+-- tenant_capability_actions: migration-owned closed registry (DD-56). No app/app_worker/readonly
+-- DML — seeded by the migration itself with the exact DD-56 matrix (§4 AuthZ Action Matrix) plus
+-- the four DD-86 Chat keys.
+CREATE TABLE tenant_capability_actions (
+  action_key text PRIMARY KEY,
+  co_admin_default boolean NOT NULL,
+  delegable boolean NOT NULL,
+  authority_class text NOT NULL CHECK (authority_class IN ('preset', 'owner_grantable', 'owner_only', 'platform_admin_only'))
+);
+REVOKE ALL ON tenant_capability_actions FROM PUBLIC, app, app_worker, readonly;
+
+-- tenant_capability_grants: tenant-private, expiring/revocable delegation of a non-preset action to
+-- a specific person. No direct app DML — the writer command belongs to the follow-up task
+-- `tenant-sensitive-capability-grant-lifecycle`; this core owns storage + read only.
+CREATE TABLE tenant_capability_grants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  grantee_person_id uuid NOT NULL REFERENCES persons(id),
+  action_key text NOT NULL REFERENCES tenant_capability_actions(action_key),
+  reason text NOT NULL,
+  granted_by_person_id uuid NOT NULL REFERENCES persons(id),
+  granted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  CHECK (expires_at > granted_at)
+);
+CREATE UNIQUE INDEX idx_tenant_capability_grants_active
+  ON tenant_capability_grants(tenant_id, grantee_person_id, action_key)
+  WHERE revoked_at IS NULL;
+ALTER TABLE tenant_capability_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_capability_grants FORCE ROW LEVEL SECURITY;
+REVOKE INSERT, UPDATE, DELETE ON tenant_capability_grants FROM app;
+
+-- tenant_capability_grant_audit: append-only history of every grant/revoke. Immutability enforced
+-- by trigger, matching the `job_audit_events` precedent (0022_job_claim_lease_core.sql:146-157).
+CREATE TABLE tenant_capability_grant_audit (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  grant_id uuid NOT NULL REFERENCES tenant_capability_grants(id),
+  action text NOT NULL CHECK (action IN ('grant', 'revoke')),
+  actor_person_id uuid NOT NULL REFERENCES persons(id),
+  reason text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+ALTER TABLE tenant_capability_grant_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_capability_grant_audit FORCE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION forbid_tenant_capability_grant_audit_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION 'tenant_capability_grant_audit is append-only (% blocked)', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+CREATE TRIGGER trg_tenant_capability_grant_audit_immutable
+  BEFORE UPDATE OR DELETE ON tenant_capability_grant_audit
+  FOR EACH ROW EXECUTE FUNCTION forbid_tenant_capability_grant_audit_mutation();
+```
+
 ### Indexes
 
 ```sql
@@ -170,12 +234,25 @@ WHERE m.tenant_id = current_setting('app.tenant_id', true)::uuid
   AND m.status = 'active';
 
 -- getSessionGrants (session-scoped capabilities)
+-- Forward-reference to DD-64 (post-P4): session-scoped grants are an ADDITIVE extension of
+-- `tenant_capability_grants` — a DD-64 migration adds nullable `resource_type`/`resource_id` to
+-- the same table; they are not a second grant table. This task ships tenant-wide grants only
+-- (both columns absent).
 SELECT g.action, g.resource_id, g.expires_at
 FROM grants g
 WHERE g.grantee_person_id = $1
   AND g.resource_type = 'session'
   AND g.resource_id = $2
   AND g.expires_at > now();
+
+-- resolveActorCapabilityGrant (used inside authorize() — current, tenant-wide grant only)
+SELECT g.action_key, g.expires_at
+FROM tenant_capability_grants g
+WHERE g.tenant_id = current_setting('app.tenant_id', true)::uuid
+  AND g.grantee_person_id = $1
+  AND g.action_key = $2
+  AND g.revoked_at IS NULL
+  AND g.expires_at > clock_timestamp();
 ```
 
 ## 3. API Contract
@@ -207,7 +284,7 @@ WHERE g.grantee_person_id = $1
 | 409 | `CHAT_ALREADY_BOUND` | Nhóm đã liên kết club khác | Rebind without owner confirmation |
 | 400 | `STALE_CALLBACK` | Yêu cầu đã hết hạn — thử lại | Old callback data |
 | 403 | `TENANT_SUSPENDED` | Club đang tạm ngưng | Suspended tenant mutation |
-| 403 | `CAPABILITY_DENIED` | Bạn không có quyền thực hiện thao tác này | Missing/default-denied/expired capability; no tenant internals exposed |
+| 403 | `CAPABILITY_DENIED` | Bạn không có quyền thực hiện thao tác này | Unknown action, missing grant, expired grant, revoked grant, or wrong tenant — one outward code for all five; caller never learns which. Reason class is recorded in `tenant_capability_grant_audit`/`routing_audit`, not in the response |
 
 ### Rate Limits
 
@@ -260,18 +337,52 @@ WHERE g.grantee_person_id = $1
 | POST | `/api/tenants/:tid/members/invite` | TenantAdmin | Invite member to tenant |
 | PUT | `/api/tenants/:tid/members/:mid/role` | TenantOwner | Change member role |
 | DELETE | `/api/tenants/:tid/members/:mid` | TenantAdmin | Remove member |
-| GET | `/api/tenants/:tid/grants` | TenantAdmin | List session-scoped grants |
-| POST | `/api/tenants/:tid/grants` | TenantAdmin | Create session-scoped grant |
-| DELETE | `/api/tenants/:tid/grants/:gid` | TenantAdmin | Revoke grant |
+| GET | `/api/tenants/:tid/grants` | TenantAdmin | *(follow-up: `tenant-sensitive-capability-grant-lifecycle`)* List tenant capability grants |
+| POST | `/api/tenants/:tid/grants` | TenantAdmin | *(follow-up: `tenant-sensitive-capability-grant-lifecycle`)* Create tenant capability grant |
+| DELETE | `/api/tenants/:tid/grants/:gid` | TenantAdmin | *(follow-up: `tenant-sensitive-capability-grant-lifecycle`)* Revoke grant |
 
 > Envelope DD-60.
+
+### Migration of the seven interim-gated routes (DD-56 amendments #1–#3)
+
+`apps/web/lib/session-command-route.ts`'s `resolveSessionCommandContext` is an **interim**
+choke-point (DD-56 amendment #1, ratified 2026-08-26; extended by amendment #2, 2026-09-04, and
+amendment #3, 2026-09-19). It currently gates seven routes on
+`ALLOWED_ROLES.has(membership.role)` (`session-command-route.ts:181`) instead of a capability
+decision. This task's slice that lands `authorize()` also switches every one of the seven routes to
+it — amendment #1 clause 5 assigns this obligation to `tenant-capability-authority-core` by
+construction, not as a discovery.
+
+| Route | File | Registry action key |
+|---|---|---|
+| `POST /api/sessions` | `apps/web/app/api/sessions/route.ts` | `session.manage` |
+| `PUT /api/sessions/:id` | `apps/web/app/api/sessions/[id]/route.ts` | `session.manage` |
+| `POST /api/sessions/:id/publish` | `apps/web/app/api/sessions/[id]/publish/route.ts` | `session.manage` |
+| `POST /api/sessions/:id/close` | `apps/web/app/api/sessions/[id]/close/route.ts` | `session.manage` |
+| `POST /api/sessions/:id/cancel` | `apps/web/app/api/sessions/[id]/cancel/route.ts` | `session.manage` |
+| `POST /api/sessions/:id/guest-notes` | `apps/web/app/api/sessions/[id]/guest-notes/route.ts` | `session.manage` |
+| `DELETE /api/sessions/:id/guest-notes/:noteId` | `apps/web/app/api/sessions/[id]/guest-notes/[noteId]/route.ts` | `session.manage` |
+
+The switch and the guard retirement land in the **same** change: once every route above calls
+`authorize("session.manage", actor, target)` instead of `resolveSessionCommandContext`'s role
+check, the ESLint `no-restricted-imports`/`no-restricted-syntax` rules for `tenantsForPerson`
+(`eslint.config.mjs`, DD-56 clause 2) and the AST tests in `session-command-route.test.ts` are
+retired in that same change — not before, and not left for a later slice.
+
+**What "land" means for amendment #1 clause 5:** the amendments (#1/#2/#3) stay in force until ALL
+SEVEN routes above call `authorize()` — not merely when the `tenant_capability_actions` /
+`tenant_capability_grants` tables exist. `/ap3-plan` is expected to split this task into at least
+three milestones (schema + registry seed; `authorize()` primitive + tests; the seven-route switch +
+guard retirement); the amendments remain active reference through the first two milestones and are
+deleted from `decisions.md` only when the third lands.
+
 ---
 
 ## 4. Chi tiết triển khai
 
 ### AuthZ Action Matrix
 
-Every route declares one exact action key. `authorize(action, actor, tenant, now)` resolves the key through one registry and returns a capability decision; no handler repeats formulas or role checks. `owner` gets tenant-owner actions; both legacy `admin` and `co_admin` get exactly the co-admin preset plus a current explicit delegable grant.
+Every route declares one exact action key. `authorize(action, actor, target)` resolves the key through one registry and returns a capability decision; no handler repeats formulas or role checks. `tenant` is derived from `target`, and time is read inside the locked SECURITY DEFINER call (see `actor-recheck-under-lock` below) rather than passed by the caller, so a caller cannot supply a stale or forged clock. `owner` gets tenant-owner actions; both legacy `admin` and `co_admin` get exactly the co-admin preset plus a current explicit delegable grant.
 
 | Action key / class | Co-admin preset | Delegable by owner? | Authority rule |
 |---|:---:|:---:|---|
@@ -307,6 +418,36 @@ Every route declares one exact action key. `authorize(action, actor, tenant, now
 The core lands only after the serialized DB lane `chat-definer-role-provisioning → chat-dm-safety-authority-core → dd38-dd86-chat-schema-core → tenant-capability-authority-core`, then precedes `chat-club-channel-lifecycle-core → chat-authorized-member-target-read-core → chat-club-moderation-core → chat-shared-message-command-core`. Stable catalog ID 9 runs before 6/7/8 because the explicit dependency graph, not the ID, controls execution. The execution dependency on slice 3 is collision control, not a semantic dependency on Chat schema. It does not own any feature mutation. `tenant-sensitive-capability-grant-lifecycle` later owns actor-scoped grant/revoke commands + management UI if that work exceeds the core slice; the four Chat keys are default preset actions and do not depend on that lifecycle.
 
 Before authoring the capability migration, design-probe legacy `tenant_admins` web-person resolution and every grant/revoke path. If the target cannot fit the pinned slice ceiling without cutting RLS/grants/audit tests, halt and split; do not create a Chat-local registry. `role.manage` and PlatformAdmin-only keys are rejected before persistence.
+
+### Actor-recheck-under-lock (invariant `actor-recheck-under-lock`)
+
+`authorize(action, actor, target)` runs **inside** the caller's own command transaction, never one
+of its own — the same discipline `authorizeTenantAction` already uses
+(`packages/db/src/authorization.ts:107-119`: locks must persist until the caller's own commit, or a
+decision made before the caller's mutation can be invalidated by a concurrent writer between the
+decision and the mutation). Concretely, `authorize()` takes a locking `SELECT ... FOR SHARE` on the
+actor's `tenant_admins` row and, when the action is delegable, on the matching
+`tenant_capability_grants` row, through a SECURITY DEFINER function — the same shape as
+`resolve_subscription_locked` (`packages/db/migrations/0038_subscriptions_read_via_definer.sql:41`,
+SECURITY DEFINER, `FOR SHARE`, precedent migration `0027`). A concurrent revoke of that actor's role
+or grant blocks on the lock until the calling command commits or aborts, instead of racing it.
+
+Every time predicate the function evaluates (`expires_at`, `revoked_at`) uses `clock_timestamp()`,
+never `now()` — `now()` is fixed at transaction start and would not advance while `authorize()`
+waits on the lock (2026-09-06 repo audit, lesson C1; the same convention `authorizeTenantAction`,
+`resolve_subscription_locked` and `session-service.ts`'s own lock-then-check sites already use).
+
+The pre-transaction membership read at the route/middleware layer (§1 pipeline) remains only a
+cheap early deny for the common case — it is not the authority and is never sufficient on its own;
+`authorize()`'s in-transaction, locked re-check is what FE spec edge cases #17–19 and unit test #28
+(mid-request expiry/revoke) exercise.
+
+**Relationship to `session-lock-ordering` (catalog token):** once the seven routes above switch to
+`authorize()`, a session command transaction acquires both a `FOR UPDATE` lock on the session row
+(`session-lock-ordering`) and a `FOR SHARE` lock on the actor's `tenant_admins`/grant row
+(`actor-recheck-under-lock`) in the same transaction. `authorize()` runs first — it gates whether
+the mutation proceeds at all — so the acquisition order is always actor/grant lock before
+session-row lock; callers must not reorder this.
 
 ### Suspended Tenant Gating
 
@@ -399,6 +540,21 @@ Before authoring the capability migration, design-probe legacy `tenant_admins` w
 | 6 | Hybrid endpoint matrix | central + tenant Page; host/player/dual-role in 2 tenants | Correct context, isolation and capability across all combinations |
 | 7 | Chat capability parity | Same club-channel action via web/app command surfaces after consumer slices land | Same exact capability, target re-check and audit class; adapters contain no role formula |
 
+### Verify
+
+| Layer | Command | Runs where |
+|-------|---------|-----------|
+| `@plexco/db` sandbox verify | `pnpm --filter @plexco/db run typecheck` | Writer sandbox |
+| `@plexco/db` test (cần DB) | `pnpm --filter @plexco/db exec vitest run src/capability.test.ts src/authorization.test.ts` (hoặc file test của slice) | `verify_host` — máy có `DATABASE_URL_TEST` |
+| `@plexco/web` sandbox verify | `pnpm --filter @plexco/web run typecheck` | Writer sandbox |
+| `@plexco/web` route test | `pnpm --filter @plexco/web exec vitest run app/api/sessions` | Writer sandbox — route test mock DB, KHÔNG cần `DATABASE_URL_TEST` |
+| Full suite + build (gate cuối) | `pnpm -w typecheck` → `pnpm -w format:check` → `pnpm -w review:check` → `pnpm -w lint` → `pnpm -w build` → `pnpm -w test` (cần Postgres) | CI (`.github/workflows/ci.yml`) — cổng cuối trước merge |
+
+Task này P1 + schema-migration, chạy **Level 3 supervised** (không qua ap3 dispatcher — ngoài hai
+class `enabled` của `ap3/routines.json`). `verify_host` ở đây nghĩa là **supervising session** chạy
+trực tiếp trên máy có Postgres thật, giống cách readiness gate của round `ap3-intake` này
+(2026-09-19) đã chạy.
+
 ---
 
 ## 6. Rollout Plan + Changelog
@@ -424,6 +580,7 @@ Before authoring the capability migration, design-probe legacy `tenant_admins` w
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-09-19 | v2.9 | **ap3-intake readiness pass (A3–A6):** add target DDL for `tenant_capability_actions`/`tenant_capability_grants`/`tenant_capability_grant_audit` + a corrected query example; mark grants endpoints as `tenant-sensitive-capability-grant-lifecycle` follow-up; add §3 seven-route migration + guard-retirement plan (DD-56 amendments #1–#3); add §4 `actor-recheck-under-lock` invariant and fix `authorize()`'s 3-arg signature; add §5 Verify. No contract/capability model change. |
 | 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/authz model. |
 | 2026-07-28 | v2.7 | Mirror DD-86 final into the canonical action registry: add four exact Chat capability keys, map `admin|co_admin` to one least-privilege preset, pin `tenant-capability-authority-core` as the shared runtime owner before Chat consumers, and retain club-only target/consume-time guards plus human-DM denial tests. Reviewed/not implemented unchanged. |
 | 2026-07-19 | v2.6 | **Template v2.30/v2.33 uplift:** thêm §2 Migration & Rollback (baseline `0002`/`0004`/`0009` LIVE — reuse, không recreate; DROP baseline = ❌ NEVER; delta DD-65..68 = migration mới), §3 Request/Response Examples (DD-60 envelope) + Idempotency, §4 Caching Strategy + Security Checklist. Derivative/editorial — không đổi contract. |
