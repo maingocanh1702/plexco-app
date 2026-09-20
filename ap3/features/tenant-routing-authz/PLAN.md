@@ -235,3 +235,16 @@ urgent enough to hold up this plan.
    current mocks first, not a design question for the owner, but noted here so M3 doesn't silently
    skip it.
 3. **D4's naming cleanup** — low priority, mentioned for completeness.
+
+## Owner answers (2026-09-20)
+
+1. **M1 seed set — confirmed: seed exactly the 17 tenant-scoped keys.** The DD-51 override and
+   DD-53 freeze/split/relink rows are `authority_class: platform_admin_only` and resolve through
+   their own PlatformAdmin services (DD-51 `decisions.md:695`, DD-53 `:709`); they are NOT rows in
+   `tenant_capability_actions`. M1's seed test asserts the 17-key set exactly; no synthetic key
+   strings for the two PlatformAdmin rows.
+2. **M3 per-route mocks** — accepted as an implementer check (read current mocks first). Not an
+   owner design question.
+3. **D4 naming** — `hasCapability` is superseded by `authorize(action, actor, target)`; the backlog
+   title cleanup rides along with the `idea → planned` status flip in a separate docs commit after
+   this PR merges (outside plan scope by design).
