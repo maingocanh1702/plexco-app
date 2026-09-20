@@ -1,0 +1,126 @@
+{
+  "_role": "AUTHORED CONTRACT (tracked). Not the runtime manifest — deliberately carries NO manifest_schema_version; adding it makes register HALT CONTRACT_INVALID. The runtime manifest is generated at register time into .autopilot/state/tenant-capability-authority-core--m01-capability-schema-migration/manifest.json from docs/autopilot-manifests/_TEMPLATE.json.",
+  "_provenance": "Milestone 1 of ap3/features/tenant-routing-authz/PLAN.md (merged PR #30, planned_at 2026-09-20, plan slug tenant-routing-authz-m01-capability-schema-migration). The plan is the ap3 artifact; THIS file is the Level-3 slice contract. Feature id follows level3-workflow.md §7 (<task-slug>--<slice-slug>) so backlog reconcile maps it to task tenant-capability-authority-core. plan-emit wrote 0 queue files for this milestone by design (supervised, P1 schema-migration): it runs through Level 3, never through ap3 routines.",
+  "task_id": "plexco:tenant-capability-authority-core",
+  "feature": "tenant-capability-authority-core--m01-capability-schema-migration",
+  "branch": "feat/tenant-capability-authority-core--m01-capability-schema-migration",
+  "base_ref": "origin/main",
+  "risk": "P1",
+  "autonomy_mode": "supervised",
+  "writer_processes_max": 1,
+  "depends_on": [],
+  "dep_checks": [],
+  "_dependency_note": "No unmerged dependency. Everything this migration references already exists on origin/main: tenants(id), persons(id) (0000-0009), the runtime roles app/app_worker/readonly (0000_roles_extensions.sql), the tenant_isolation policy idiom (0009_rls_policies_grants.sql:52-54) and the append-only trigger idiom (0022_job_claim_lease_core.sql:146-157). Dependency on the DD-38/DD-86 chat tree was satisfied long ago (backlog update_2026-09-19). M2 (authorize) and M3 (route switch) depend on THIS slice, not the reverse.",
+  "invariants": [
+    "schema"
+  ],
+  "_invariant_note": "schema only. This slice creates tables, triggers, RLS policies and seed rows; it creates NO authorization decision, so actor-recheck-under-lock (M2's token) and auth are deliberately not claimed — claiming them here would serialize M1 against unrelated auth lanes for no protection gained. The new tables are tenant-scoped (RLS) except tenant_capability_actions, a global closed registry with zero app/app_worker/readonly DML (spec DDL line 125).",
+  "scope": [
+    "packages/db/migrations/0047_tenant_capability_authority_core.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/tenant-capability-schema.test.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/README.md",
+    "docs/autopilot-manifests/tenant-capability-authority-core--m01-capability-schema-migration.json"
+  ],
+  "_scope_note": "PLAN.md M1 listed only the migration, schema.ts and one new test file. Measured at origin/main@049a6e3 (2026-09-20): packages/db/src/migrate.test.ts:44 pins MIGRATION_COUNT = 47 and packages/db/src/rls-invariants.test.ts pins 47 / '0046_rate_limit_bounded_cleanup.sql' at :70, :73, :1755, :1760, :2038, :4517-4520 — every new migration forces those literal bumps, exactly as chat-dm-safety-authority-core's contract recorded. packages/db/README.md follows the repo's per-migration doc convention. Nothing else in those three files may change (see negative_scope).",
+  "_migration_number_note": "0047 is the next open monotonic number at authoring (tail 0046_rate_limit_bounded_cleanup.sql at 049a6e3). PROVISIONAL: re-derive with `ls packages/db/migrations/*.sql | sort | tail -3` before creating the file; if another migration landed, correct scope + this note and re-register rather than taking whatever is free (migrate.ts refuses a file numbered below an already-applied one — audit 2026-09-06 D-11).",
+  "_design_decision_non_delegable_storage_rejection": "BE spec §5 'Test ownership' (:527) assigns M1 the STORAGE half of test #25: the database itself must reject a tenant_capability_grants row whose action_key is not delegable (role.manage, every preset key). The pinned DDL (:119-171) has only a plain FK to tenant_capability_actions, which cannot express that. Owner-ranked option (Tier A, decided here, do not AWAIT): add a BEFORE INSERT OR UPDATE trigger forbid_non_delegable_capability_grant() on tenant_capability_grants raising ERRCODE check_violation when (SELECT delegable FROM tenant_capability_actions WHERE action_key = NEW.action_key) IS DISTINCT FROM true. A CHECK constraint cannot reference another table; a generated column would duplicate registry state. This is additive to the pinned DDL, not a deviation from it — record it in the migration header and in the README entry.",
+  "negative_scope": [
+    "NO authorize(action, actor, target) function, no SECURITY DEFINER read function, no TS wrapper, no barrel export from packages/db/src/index.ts — Milestone 2 (tenant-capability-authority-core--m02-authorize-primitive)",
+    "NO edit to apps/** — apps/web/lib/session-command-route.ts:181 ALLOWED_ROLES stays exactly as is; the seven-route switch, eslint.config.mjs:121-186 guard retirement and decisions.md DD-56 amendment removal are Milestone 3",
+    "NO edit to packages/db/src/authorization.ts (DD-110 billing-status axis) or packages/db/src/capability.ts (DD-29 entitlement axis) — different mechanisms that merely share the word capability",
+    "NO grants-issuing command, API route, DTO or UI (GET/POST/DELETE /api/tenants/:tid/grants) — follow-up task tenant-sensitive-capability-grant-lifecycle (BE spec :340-342, FE spec :138)",
+    "NO INSERT/UPDATE/DELETE grant to app on tenant_capability_grants; NO DML grant of any kind to app/app_worker/readonly on tenant_capability_actions (spec DDL :125, :143)",
+    "NO seed rows for the two PlatformAdmin-only matrix rows (DD-51 global billing override, DD-53 freeze/split/relink) — owner-confirmed 2026-09-20 in PLAN.md §Owner answers: exactly the 17 tenant-scoped keys; do not invent action_key strings",
+    "NO authorization-decision tests (#21-#24, #26-#28, #32 evaluator rows) — this slice asserts schema/constraint/seed/RLS/immutability only; decision tests are M2's",
+    "NO changes to existing migrations (never edit an applied migration — migrate.ts sha256 guard)",
+    "packages/db/src/migrate.test.ts and packages/db/src/rls-invariants.test.ts: NARROWED to the migration-count/tail literals a new migration mechanically forces, plus (rls-invariants only) whatever generic per-table RLS/constraint-naming guard the new tables must satisfy — no broader refactor, no new helpers",
+    "NO edit to docs/autopilot-backlog.md, docs/product/ROADMAP.md, docs/project/modules.json — cadence-owned; the owner re-pins after merge",
+    "NO rollback/reverse migration (forward-only; every object is fresh/additive)"
+  ],
+  "context_sources": [
+    "docs/autopilot-templates/level3-workflow.md",
+    "ap3/features/tenant-routing-authz/PLAN.md",
+    "ap3/features/tenant-routing-authz/INTAKE.md",
+    "docs/features/BE/feature_tenant_routing_authz_tech.md",
+    "docs/features/FE/feature_tenant_routing_authz.md",
+    "docs/standards/decisions.md",
+    "docs/autopilot-invariant-catalog.md",
+    "packages/db/migrations/0009_rls_policies_grants.sql",
+    "packages/db/migrations/0022_job_claim_lease_core.sql",
+    "packages/db/migrations/0038_subscriptions_read_via_definer.sql",
+    "packages/db/schema.ts",
+    "packages/db/src/migrate.ts",
+    "packages/db/src/migrate.test.ts",
+    "packages/db/src/rls-invariants.test.ts",
+    "packages/db/src/test-harness.ts",
+    "packages/db/src/authorization.test.ts",
+    "packages/db/src/capability.test.ts",
+    "packages/db/README.md",
+    "docs/autopilot-manifests/chat-dm-safety-authority-core.json"
+  ],
+  "applicable_skills": [],
+  "model_policy": {
+    "planner": "primary-agent",
+    "worker": "assigned-agent",
+    "independent_reviewer": "scripts/codex-review-pin.sh",
+    "fallback": "HALT_TOOL_UNAVAILABLE"
+  },
+  "sandbox_and_permissions": {
+    "network": "restricted",
+    "secrets": "none",
+    "external_side_effects": "none",
+    "_note": "Real Postgres only: docker container plexco-postgres-1, NODE_ENV=test, DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test. Drop leftover plexco_* scratch databases before and after the canonical run. Tests run natively on the owner's Mac, never from a Cowork VM."
+  },
+  "verification": {
+    "focused": [
+      "f=$(ls packages/db/migrations/*_tenant_capability_authority_core.sql) && test $(echo \"$f\" | wc -l) -eq 1 && grep -q 'CREATE TABLE tenant_capability_actions' \"$f\" && grep -q 'CREATE TABLE tenant_capability_grants' \"$f\" && grep -q 'CREATE TABLE tenant_capability_grant_audit' \"$f\" && grep -q 'forbid_tenant_capability_grant_audit_mutation' \"$f\" && grep -q 'BEFORE UPDATE OR DELETE ON tenant_capability_grant_audit' \"$f\" && grep -q 'forbid_non_delegable_capability_grant' \"$f\"",
+      "f=$(ls packages/db/migrations/*_tenant_capability_authority_core.sql) && grep -q 'CREATE POLICY tenant_isolation ON tenant_capability_grants' \"$f\" && grep -q 'CREATE POLICY tenant_isolation ON tenant_capability_grant_audit' \"$f\" && grep -q 'FORCE ROW LEVEL SECURITY' \"$f\" && grep -qE 'REVOKE ALL ON tenant_capability_actions FROM PUBLIC, app, app_worker, readonly' \"$f\" && grep -qE 'REVOKE INSERT, UPDATE, DELETE ON tenant_capability_grants FROM app' \"$f\"",
+      "f=$(ls packages/db/migrations/*_tenant_capability_authority_core.sql) && for k in session.manage content.manage member.manage_routine member.ban money.read money.mark_paid money.correct money.refund money.waive_or_void bank_account.manage connector.secret_manage billing.manage chat.channel.manage chat.channel.post_restricted chat.message.moderate chat.member.mute role.manage; do grep -qF \"'$k'\" \"$f\" || { echo \"missing seed: $k\"; exit 1; }; done && ! grep -qiE \"dd[-_ ]?5[13]\" \"$f\"",
+      "f=$(ls packages/db/migrations/*_tenant_capability_authority_core.sql) && grep -q 'idx_tenant_capability_grants_active' \"$f\" && grep -q 'WHERE revoked_at IS NULL' \"$f\" && grep -q 'CHECK (expires_at > granted_at)' \"$f\" && grep -qE \"CHECK \\(action IN \\('grant', 'revoke'\\)\\)\" \"$f\"",
+      "grep -q 'tenantCapabilityActions' packages/db/schema.ts && grep -q 'tenantCapabilityGrants' packages/db/schema.ts && grep -q 'tenantCapabilityGrantAudit' packages/db/schema.ts",
+      "for c in 'append-only' 'revoked_at IS NULL' 'expires_at > granted_at' 'exactly 17' 'app_worker' 'readonly' 'tenant_isolation' 'non-delegable'; do grep -qF \"$c\" packages/db/src/tenant-capability-schema.test.ts || { echo \"missing coverage marker: $c\"; exit 1; }; done",
+      "git diff --quiet $(jq -r .base_sha .autopilot/state/tenant-capability-authority-core--m01-capability-schema-migration/manifest.json) -- apps packages/db/src/authorization.ts packages/db/src/capability.ts packages/db/src/index.ts eslint.config.mjs docs/standards/decisions.md docs/autopilot-backlog.md",
+      "NODE_ENV=test DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm --filter @plexco/db test -- src/tenant-capability-schema.test.ts src/migrate.test.ts"
+    ],
+    "canonical": [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm format:check",
+      "pnpm review:check:changed",
+      "pnpm build",
+      "NODE_ENV=test DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test pnpm test"
+    ],
+    "e2e": []
+  },
+  "_verification_note": "Every entry asserts a property, not a literal (template _verification_rule); the seed check enumerates the 17 owner-confirmed keys because the KEY SET is the contract, not a count. `@plexco/db` is the measured package name (packages/db/package.json). The rls-invariants literal bumps are exercised by the canonical `pnpm test`, not re-asserted here.",
+  "code_review": {
+    "required": true,
+    "tool": "scripts/codex-review-pin.sh",
+    "clean_rounds": 2
+  },
+  "security_review": {
+    "required": true,
+    "reason": "trust-boundary storage: the registry every later authorization decision (M2 authorize, seven DD-56 routes, Chat consumers) reads; RLS policies, grant posture, non-delegable rejection and append-only audit must be exactly right or M2 inherits a hole",
+    "tool": "scripts/codex-review-pin.sh"
+  },
+  "budgets": {
+    "wall_time_minutes": 180,
+    "fix_rounds_max": 5,
+    "token_budget": null,
+    "cost_budget": null
+  },
+  "stop_conditions": [
+    "MAX_ROUNDS",
+    "REGION_THRASH",
+    "SCOPE_OR_BASE_DRIFT",
+    "MATERIAL_CONTEXT_OR_DECISION_MISSING",
+    "REQUIRED_TOOL_UNAVAILABLE",
+    "MIGRATION_NUMBER_TAKEN — another migration landed on origin/main at the number in scope: correct scope, re-register; never renumber below an applied file",
+    "ANY grant of INSERT/UPDATE/DELETE to app on tenant_capability_grants, or any DML grant to app/app_worker/readonly on tenant_capability_actions, appearing in the diff",
+    "ANY row for DD-51/DD-53 appearing in the seed"
+  ],
+  "readiness_evidence_path": ".autopilot/state/tenant-capability-authority-core--m01-capability-schema-migration/readiness.json"
+}
