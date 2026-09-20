@@ -2,8 +2,8 @@
 feature: tenant-routing-authz
 readiness_version: null
 status: READY_WITH_SUPERVISED_SLICES
-measured_at: 2026-09-19T16:52:00Z
-base_sha: 41b36d322ad2e53bc9e3dd7bf81918150543dd29
+measured_at: 2026-09-20T09:45:10Z
+base_sha: a99b1ffc097706b8965487ea0004d61199f27c22
 sources:
   - docs/features/FE/feature_tenant_routing_authz.md
   - docs/features/BE/feature_tenant_routing_authz_tech.md
@@ -47,11 +47,41 @@ lines 2884, 2920, 1707). `docs/autopilot-backlog.md:1671-1704`'s own task block 
 idea` deliberately per its `update_2026-09-19` note — moving to `planned` is `/ap3-plan`'s job, not
 this round's.
 
+## Re-pin 2026-09-20 (base_sha → `a99b1ff`)
+
+`/ap3-plan` refused on its sources-scoped staleness diff: between the scored `41b36d3` and
+`origin/main` exactly one of the 22 `sources:` paths differed — `docs/product/ROADMAP.md` — because
+the Project-tier commits `ae374b8` + `065390d` landed on `main` while this intake was in flight, and
+PR #28 merged the two histories at `a99b1ff` without a rebase. The gate was right to refuse: a
+whole-file diff is the contract, and "looks like render churn" is not something the planner may
+judge for itself.
+
+Re-verified here instead, against `origin/main@a99b1ff`:
+
+- `git diff 41b36d3 origin/main -- <all 22 sources>` names only `docs/product/ROADMAP.md`.
+- That diff, outside the Module Progress table, is one reworded note line under LUẬT THANH, one new
+  note line above the table, and the two `<!-- modules:begin/end -->` markers. Inside the table the
+  rows are re-rendered from `docs/project/modules.json` with identical `#`, track, phase, spec, axis
+  symbols and rev (round-trip checked at `ae374b8`). No phase, status or axis the R1.1 citation
+  relies on changed.
+- R1.1's citations shift by the four inserted lines: §"P2–P3: TENANT ENGINE" `:510-522` → `:514-526`
+  (item 4.3 now at `:526`), and the Next Actions mention `:846` → `:850`; the blocker-list mention
+  at `:84` is unchanged. The rubric row above carries the corrected line numbers.
+
+No other rubric row cites `ROADMAP.md`. Status stays `READY_WITH_SUPERVISED_SLICES`; the
+`intake-score` result is unchanged because no verdict changed. This commit touches `INTAKE.md` only,
+so once it merges the sources diff between the new `base_sha` and `origin/main` is empty by
+construction.
+
+Lesson recorded for the next intake: when `sources:` lists a file that another lane re-pins or
+renders on a cadence (`ROADMAP.md`, `BUILD-STATUS.md`, `HANDOFF.md`), rebase the intake branch onto
+`origin/main` immediately before opening its PR, and re-stamp `base_sha` if any source moved.
+
 ## Rubric
 
 | id | gate | verdict | decided by | note |
 |----|------|---------|------------|------|
-| R1.1 | hard | PASS | `docs/features/FE/feature_tenant_routing_authz.md:3` ("Canonical phase: P2") + `docs/product/ROADMAP.md:510-522` (§"P2–P3: TENANT ENGINE" → R1 "Zalo biết tenant" item 4.3: "Authz 2 lớp... qua DD-56 registry") + `:84,846` (`tenant-capability-authority-core` named in the live blocker list and Next Actions) | Feature/task both have roadmap presence with a matching phase label; FE spec doesn't literally cite "ROADMAP.md" as its source but the phase numbers agree. |
+| R1.1 | hard | PASS | `docs/features/FE/feature_tenant_routing_authz.md:3` ("Canonical phase: P2") + `docs/product/ROADMAP.md:514-526` (§"P2–P3: TENANT ENGINE" → R1 "Zalo biết tenant" item 4.3: "Authz 2 lớp... qua DD-56 registry") + `:84,850` (`tenant-capability-authority-core` named in the live blocker list and Next Actions) | Feature/task both have roadmap presence with a matching phase label; FE spec doesn't literally cite "ROADMAP.md" as its source but the phase numbers agree. |
 | R1.2 | hard | N/A | Owner ruling, this doc's § Answers A1 (2026-09-19) | "PRD's FLOW model describes user journeys; `tenant-capability-authority-core` is a cross-cutting authorization primitive with no journey of its own. PRD §4.2 Identity & Routing / §4.3 Tenant / Bảo mật already cover the routing-then-authorize predicate this task serves." No PRD edit — a PRD version bump would churn 71 feature specs' 📍 pointer blocks. |
 | R1.3 | hard | PASS | `docs/features/FE/feature_tenant_routing_authz.md:6` ("Status: Reviewed") | v2.9 as of `base_sha`. |
 | R2.1 | hard | PASS | `docs/features/FE/feature_tenant_routing_authz.md:186-203` (§6 Acceptance Criteria, 16 bullets, line numbers as of `base_sha`) | Scanned for "hợp lý"/"phù hợp"/"tốt" — zero hits. |
