@@ -6,12 +6,14 @@
     "code-quality-p2": {
       "status": "enabled",
       "risk": "P2",
-      "description": "Behaviour-preserving cleanups measured by the 2026-09-08 slop audit (docs/backlog-rows-pending-plexco-2026-09-08.md): dead exports, duplicated helpers, duplicated type aliases. No schema, no migration, no auth/permission/money logic, no i18n strings.",
+      "description": "Behaviour-preserving cleanups measured by the 2026-09-08 slop audit (docs/backlog-rows-pending-plexco-2026-09-08.md): dead exports, duplicated helpers, duplicated type aliases. No schema, no migration, no auth/permission/money logic, no i18n strings. Scope widened 2026-09-23 (owner decision): test-only DB helpers in apps/bot -- apps/bot/src/*.test.ts plus the shared apps/bot/src/test-db.ts; no bot production code.",
       "allowed_scope": [
         "packages/core/src/**",
         "packages/db/src/**",
         "apps/web/lib/**",
-        "apps/web/app/api/auth/google/**"
+        "apps/web/app/api/auth/google/**",
+        "apps/bot/src/*.test.ts",
+        "apps/bot/src/test-db.ts"
       ],
       "budget_usd_max": 10,
       "max_runs_per_day": 2,
