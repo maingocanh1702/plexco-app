@@ -15,12 +15,15 @@
         "apps/bot/src/*.test.ts",
         "apps/bot/src/test-db.ts"
       ],
-      "budget_usd_max": 10,
+      "budget_usd_max": 25,
       "max_runs_per_day": 2,
       "review": "codex",
       "security_review": "auto",
       "evidence": "3/3 READY runs merged unchanged, human_interventions=0 (2026-09-10): PR #2 core-package-const-has-no-consumer, PR #6 core-todayiso-has-no-callers, PR #8 db-tx-type-alias-duplicated-six-files. All touched only packages/core/src or packages/db/src — already inside allowed_scope, so scope was not widened. clean_runs=3.",
-      "preflight_budget_usd": 1.0
+      "preflight_budget_usd": 3.0,
+      "auto_resolve": {
+        "resolve_budget_usd": 3.0
+      }
     },
     "feature-session-p2": {
       "status": "enabled",
@@ -34,7 +37,7 @@
         "packages/core/src/api-contract.test.ts",
         "packages/db/src/index.ts"
       ],
-      "budget_usd_max": 15,
+      "budget_usd_max": 50,
       "max_runs_per_day": 2,
       "max_parallel": 1,
       "writer_model": "claude-sonnet-5",
@@ -48,7 +51,12 @@
       "needs_db": true,
       "db_per_run": false,
       "description": "Session-management feature (DESIGN-v2 pilot): P2 slices only, emitted by /ap3-plan; P1 slices are supervised and never queued. Class added 2026-09-11, clean_runs 0.",
-      "evidence": "M3b guest-note commands: 3 dispatches (SCOPE_DRIFT x2 on missing registration points, then a full implementation that reached review round 3) -> HALT MAX_ROUNDS with 1 security P2 left; finished SUPERVISED and merged as PR #13 (b024e07). human_interventions=1, clean_runs stays 0 - this class has not yet produced an unattended READY run. allowed_scope widened 2026-09-11 with the exact registration points a new command/route needs: packages/core/src/api-contract.ts(+test), packages/db/src/index.ts."
+      "evidence": "M3b guest-note commands: 3 dispatches (SCOPE_DRIFT x2 on missing registration points, then a full implementation that reached review round 3) -> HALT MAX_ROUNDS with 1 security P2 left; finished SUPERVISED and merged as PR #13 (b024e07). human_interventions=1, clean_runs stays 0 - this class has not yet produced an unattended READY run. allowed_scope widened 2026-09-11 with the exact registration points a new command/route needs: packages/core/src/api-contract.ts(+test), packages/db/src/index.ts.",
+      "preflight_budget_usd": 3.0,
+      "auto_resolve": {
+        "resolve_budget_usd": 3.0
+      }
     }
-  }
+  },
+  "_budget_mode": "MEASUREMENT since 2026-09-24 (owner): budget ceilings (budget_usd_max, preflight_budget_usd, auto_resolve.resolve_budget_usd) are deliberately generous so no run is cut off by a cap while real costs are collected -- writer cost in ap3/state/evidence.local.jsonl (total_cost_usd, resolver_cost_usd), pre-flight cost in ap3/state/preflight/<slug>.json (cost_total). Queue tasks with budget_usd = the class budget_usd_max. Revisit once each class has ~10 runs and set each cap from the observed distribution. max_runs_per_day still bounds daily spend."
 }
