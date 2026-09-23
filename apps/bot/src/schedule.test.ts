@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -8,6 +7,12 @@ import PgBoss from "pg-boss";
 import { migrate } from "@plexco/db";
 import { describe, expect, it, vi } from "vitest";
 import { withTestContext } from "./test-harness.js";
+import {
+  bootstrapJobDefiner,
+  setAppWorkerPasswordRaceSafe,
+  testUrl,
+  withJobDefinerLock,
+} from "./test-db.js";
 import {
   isOutboxDispatchScheduleEnabled,
   registerOutboxDispatchSchedule,
@@ -34,68 +39,9 @@ const APP_WORKER_PASSWORD = "plexco_test_worker_jrd";
 // here would race with those files' own setup, whichever runs last would silently break the
 // others' already-open connections.
 
-// --- DB test setup, duplicated from preflight.test.ts/dispatcher.test.ts's identical pattern
-// (itself mirroring packages/db/src/test-harness.ts) rather than factored into a shared helper
-// — see preflight.test.ts's header comment for why: test-harness.ts is not part of @plexco/db's
-// public exports map. Only the joined test-operation wrapper is shared.
-
-const JOB_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
-  HERE,
-  "..",
-  "..",
-  "..",
-  "infra",
-  "postgres-init",
-  "01-job-definer.sql",
-);
-const JOB_DEFINER_LOCK_KEY = 0x6a6f6264; // "jobd" — must match packages/db/src/test-harness.ts's key.
-
-async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
-  const sql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
-  try {
-    await client.query(sql);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  }
-}
-
-async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  const lockClient = new pg.Client({ connectionString: base });
-  try {
-    await lockClient.connect();
-    await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
-    return await fn();
-  } finally {
-    // Closing the session releases its advisory lock, including on failed setup.
-    await lockClient.end();
-  }
-}
-
-async function setAppWorkerPasswordRaceSafe(client: pg.Client, password: string): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await client.query(`ALTER ROLE app_worker WITH LOGIN PASSWORD '${password}'`);
-      return;
-    } catch (error) {
-      if (String(error).includes("tuple concurrently updated") && attempt < 10) {
-        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-        continue;
-      }
-      throw error;
-    }
-  }
-}
-
-function testUrl(base: string, opts: { db?: string; user?: string; password?: string }): string {
-  const url = new URL(base);
-  if (opts.db) url.pathname = `/${opts.db}`;
-  if (opts.user) {
-    url.username = opts.user;
-    url.password = opts.password ?? "";
-  }
-  return url.toString();
-}
+// --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
+// (shared with dispatcher.test.ts and preflight.test.ts); this file still owns its
+// own DB fixtures below.
 
 interface ScheduleTestContext {
   migrationUrl: string;
