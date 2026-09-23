@@ -7,6 +7,12 @@ import pg from "pg";
 import { migrate } from "@plexco/db";
 import { describe, expect, it, vi } from "vitest";
 import { withTestContext } from "./test-harness.js";
+import {
+  bootstrapJobDefiner,
+  setAppWorkerPasswordRaceSafe,
+  testUrl,
+  withJobDefinerLock,
+} from "./test-db.js";
 import { runPreflightChecks } from "./preflight.js";
 import { provisionQueue } from "./provision-queue.js";
 import { PGBOSS_INTERNAL_SEND_IT_QUEUE, QUEUES } from "./queues.js";
@@ -31,73 +37,9 @@ const APP_WORKER_PASSWORD = "plexco_test_worker_jrd";
 // instead, matching how packages/db's own tests already leave app_worker on
 // a test password with no restore, unrelated to this slice.
 
-// --- DB test setup, deliberately duplicated from packages/db/src/test-harness.ts's
-// pattern rather than imported: test-harness.ts is not part of @plexco/db's public
-// `exports` map (packages/db/package.json). DB fixture ownership stays local;
-// the shared wrapper below only joins each test's original operation.
-
-const JOB_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
-  HERE,
-  "..",
-  "..",
-  "..",
-  "infra",
-  "postgres-init",
-  "01-job-definer.sql",
-);
-// SAME key as packages/db/src/test-harness.ts's JOB_DEFINER_LOCK_KEY ("jobd") — this
-// lock only protects job_definer (cluster-global) if every caller that bootstraps or
-// migrates against it shares the identical advisory-lock key. A different key here
-// would silently not coordinate with packages/db's own JCL-2/3 tests, which
-// deliberately put job_definer into a broken state mid-run under this same lock.
-const JOB_DEFINER_LOCK_KEY = 0x6a6f6264;
-
-async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
-  const sql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
-  try {
-    await client.query(sql);
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  }
-}
-
-async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  const lockClient = new pg.Client({ connectionString: base });
-  try {
-    await lockClient.connect();
-    await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
-    return await fn();
-  } finally {
-    // Closing the session releases its advisory lock, including on failed setup.
-    await lockClient.end();
-  }
-}
-
-async function setAppWorkerPasswordRaceSafe(client: pg.Client, password: string): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await client.query(`ALTER ROLE app_worker WITH LOGIN PASSWORD '${password}'`);
-      return;
-    } catch (error) {
-      if (String(error).includes("tuple concurrently updated") && attempt < 10) {
-        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-        continue;
-      }
-      throw error;
-    }
-  }
-}
-
-function testUrl(base: string, opts: { db?: string; user?: string; password?: string }): string {
-  const url = new URL(base);
-  if (opts.db) url.pathname = `/${opts.db}`;
-  if (opts.user) {
-    url.username = opts.user;
-    url.password = opts.password ?? "";
-  }
-  return url.toString();
-}
+// --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
+// (shared with dispatcher.test.ts and schedule.test.ts); this file still owns its
+// own DB fixtures below.
 
 interface WorkerContext {
   migrationUrl: string;
