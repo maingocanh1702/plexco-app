@@ -1773,3 +1773,58 @@ export const onboardingSteps = pgTable("onboarding_steps", {
   statusChk: check("onboarding_steps_status_chk",
     sql`${t.status} IN ('not_configured','pending','verified','error','skipped')`),
 }));
+
+// ---------------------------------------------------------------------------
+// DD-56 tenant capability authority — storage (migration 0047). The SQL is
+// authoritative for the registry seed, grants/REVOKEs, RLS policies and the
+// two triggers (non-delegable grant rejection, append-only audit).
+// ---------------------------------------------------------------------------
+
+/** Migration-owned closed registry; no runtime role has any privilege on it. */
+export const tenantCapabilityActions = pgTable("tenant_capability_actions", {
+  actionKey: text("action_key").primaryKey(),
+  coAdminDefault: boolean("co_admin_default").notNull(),
+  delegable: boolean("delegable").notNull(),
+  authorityClass: text("authority_class").notNull(),
+}, (t) => ({
+  authorityClassChk: check("tenant_capability_actions_authority_class_chk",
+    sql`${t.authorityClass} IN ('preset', 'owner_grantable', 'owner_only', 'platform_admin_only')`),
+}));
+
+/** Tenant-private expiring/revocable delegation; app is SELECT-only. */
+export const tenantCapabilityGrants = pgTable("tenant_capability_grants", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  granteePersonId: uuid("grantee_person_id").notNull().references(() => persons.id),
+  actionKey: text("action_key").notNull().references(() => tenantCapabilityActions.actionKey),
+  reason: text("reason").notNull(),
+  grantedByPersonId: uuid("granted_by_person_id").notNull().references(() => persons.id),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (t) => ({
+  expiryChk: check("tenant_capability_grants_expiry_chk", sql`${t.expiresAt} > ${t.grantedAt}`),
+  tenantIdCandidateKey: unique("tenant_capability_grants_tenant_id_candidate_key").on(t.tenantId, t.id),
+  activeUq: uniqueIndex("idx_tenant_capability_grants_active")
+    .on(t.tenantId, t.granteePersonId, t.actionKey)
+    .where(sql`${t.revokedAt} IS NULL`),
+}));
+
+/** Append-only grant/revoke history (immutability by trigger); app is SELECT-only. */
+export const tenantCapabilityGrantAudit = pgTable("tenant_capability_grant_audit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  grantId: uuid("grant_id").notNull().references(() => tenantCapabilityGrants.id),
+  action: text("action").notNull(),
+  actorPersonId: uuid("actor_person_id").notNull().references(() => persons.id),
+  reason: text("reason").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+}, (t) => ({
+  actionChk: check("tenant_capability_grant_audit_action_chk", sql`${t.action} IN ('grant', 'revoke')`),
+  grantIdx: index("idx_tenant_capability_grant_audit_grant").on(t.grantId),
+  tenantGrantFk: foreignKey({
+    columns: [t.tenantId, t.grantId],
+    foreignColumns: [tenantCapabilityGrants.tenantId, tenantCapabilityGrants.id],
+    name: "tenant_capability_grant_audit_tenant_grant_fk",
+  }),
+}));
