@@ -2,6 +2,7 @@ import pg from "pg";
 import type PgBoss from "pg-boss";
 import { isDirectRun } from "./direct-run.js";
 import { startHeartbeat } from "./heartbeat.js";
+import { holdProcessOpen } from "./keep-alive.js";
 import { createQueue } from "./queue.js";
 import { preflightOrExit } from "./preflight.js";
 import { OUTBOX_DISPATCH_CRON, OUTBOX_DISPATCH_QUEUE } from "./queues.js";
@@ -165,6 +166,11 @@ async function main(): Promise<void> {
     console.log("[worker] outbox dispatch worker not registered (schedule disabled)");
   }
 
+  // Nothing above is guaranteed to keep the loop alive (see keep-alive.ts), so hold it open
+  // explicitly until a signal arrives.
+  const releaseProcess = holdProcessOpen();
+  console.log("[worker] running until SIGTERM/SIGINT");
+
   // Audit 2026-09-06 B-3: the previous stop() neither WAITED for in-flight work nor bounded it —
   // `graceful: true` without `wait: true` resolves before active jobs finish, so pool.end() and
   // process.exit(0) ran while a deliver() could still be mid-flight, and a hung deliver could
@@ -175,6 +181,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     if (stopping) return;
     stopping = true;
+    releaseProcess();
     console.log(`[worker] ${signal} received — stopping (grace ${SHUTDOWN_GRACE_MS}ms)`);
     const deadline = setTimeout(() => {
       console.error(`[worker] shutdown exceeded ${SHUTDOWN_DEADLINE_MS}ms — exiting hard`);
