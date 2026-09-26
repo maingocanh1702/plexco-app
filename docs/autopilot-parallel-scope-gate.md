@@ -76,8 +76,10 @@ scripts/autopilot-scope-gate ready \
 
 The script requires an active registration, rechecks collisions and invokes
 `scripts/autopilot-review-readiness.mjs`. A Level 3 manifest fails closed when the validator is
-missing. READY requires a real commit/non-empty in-scope diff, clean worktree, matching minimal
-`readiness.json`, an unchanged registered-manifest hash and clear breakers. The validator directly
+missing. READY requires a real commit/non-empty diff (kit v34: the diff is certified as whatever it
+actually is, no longer required to equal declared `scope` — see that version's note in
+`autopilot-scope-gate`), clean worktree, matching minimal `readiness.json`, an unchanged
+registered-manifest hash and clear breakers. The validator directly
 executes every declared verification command and required pinned-Codex/security round, binds the
 generated logs to HEAD/base/diff, and writes `gate-result.json`. Only then does the scope gate write
 `READY.txt` and move the registry row.

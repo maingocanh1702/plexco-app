@@ -1,0 +1,129 @@
+# Non-blocking backlog-drift audit (kit v35). Runs autopilot-backlog-reconcile against THIS repo's
+# own docs/autopilot-backlog.md on a schedule, independent of push/PR activity -- that independence is
+# the point: work that bypasses the normal Level 3 lifecycle (a squash-merged mega-commit, a
+# founder-approved direct push) never invokes ap-finish.sh and may not always trigger a PR-shaped push
+# event either, so a scheduled sweep is the only one of the three invocation sites this kit wires up
+# (this workflow, the push trigger below, and ap-finish.sh's own post-finish audit) whose re-check is
+# NOT tied to how a change landed. "Not tied to landing path" is not the same claim as "guaranteed to
+# run": round 5 review correctly noted GitHub documents scheduled runs as best-effort (can be delayed
+# under load) and disables a schedule on a public repo after 60 days with no repository activity at
+# all. Neither weakens the actual argument for this trigger -- it is still the only one of the three
+# that does not depend on a push happening -- but "guaranteed" overstated it. See
+# docs/backlog-reconcile-drift-measurement.md for the measurement this is based on.
+#
+# Deliberately non-blocking, always, for both triggers. `--audit` never edits the backlog file, never
+# commits and never pushes -- that is what "non-blocking"/"report-only" means throughout this kit's
+# docs for this change. It is NOT claiming zero side effects: autopilot-backlog-reconcile
+# unconditionally runs `git fetch origin` (updates local remote-tracking refs/objects/FETCH_HEAD, same
+# as every invocation of it always has) and its early preconditions (backlog file missing, default
+# branch unresolvable) exit 2 regardless of mode. `|| true` on the final pipeline is there PRECISELY so
+# those exit-2 cases cannot turn this step red -- not redundant defense-in-depth, load-bearing today.
+# False `planned` (says todo, is done) is the SAFE drift direction -- loud, cheap, self-correcting --
+# and a CI job that fails a build over it teaches people to route around the check, which is how
+# backlogs stop being trusted in the first place. False `merged` (says done, is not) is the dangerous
+# direction and is a separate, already-guarded concern (`is_symbol_probe`, the ap-93 discriminator
+# rule) that this workflow does not touch.
+#
+# Branch resolution went through three rounds of Codex review on this same line before converging,
+# and the history is worth keeping so nobody "simplifies" it back to a guess:
+#   REJECTED (round 1 draft): hard-coded AUTOPILOT_DEFAULT_BRANCH: main. Silent no-op on any other
+#   default branch name -- the push filter never matches, and a scheduled/manual run HALTs
+#   DEFAULT_BRANCH_MISSING, which `|| true` turns into a green step. Exactly the "confident empty
+#   answer that reads as evidence" failure this kit's own DEFAULT_BRANCH-resolution comment warns
+#   about, just introduced fresh by a template default.
+#   REJECTED (round 2 draft): github.event.repository.default_branch, falling through to the
+#   reconcile script's own name-guessing fallback if empty. If that field were ever empty, the
+#   fallback scans for exactly one of main/master/trunk resolvable as a remote-tracking ref --
+#   fetch-depth: 0 fetches every branch, not just the checked-out one, so a repo whose real default is
+#   `develop` but which also carries an unrelated branch literally named `main` would be silently
+#   audited against `main`. A wrong answer, not just an empty one, still green throughout.
+#   REJECTED (round 3 draft): chaining `|| github.ref_name` onto the above instead of ever reaching
+#   the script's guess. Closes the accidental-stray-branch case, but github.ref_name is whatever ref
+#   this run is actually associated with, not necessarily the default -- a workflow_dispatch run a
+#   human explicitly launched against a feature branch would then audit that branch, believing it
+#   covered the default. Better than a guess, still not authoritative.
+#   FIXED: ask GitHub's REST API directly via the CLI already preinstalled on every hosted runner,
+#   authenticated with the automatic job token -- no event-payload field, no ref-association
+#   inference, no fallback chain. This is the one source that cannot be wrong about a repo's own
+#   default branch, so there is nothing further to converge on here.
+#
+# Round 4 found the round-3 fix's failure path silently swallowed: `echo "name=$(gh api ...)"`
+# exits 0 regardless of whether the command substitution inside it failed, so a failing `gh api`
+# call wrote an EMPTY `name=` output rather than failing the step -- `continue-on-error: true` never
+# even triggered, because nothing failed from the shell's point of view. Fixed then: check `gh api`'s
+# own exit status explicitly and emit a visible `::warning::` annotation before falling through --
+# which round 5 then correctly pointed out was still "falling through to a guess", the exact shape
+# rounds 2 and 3 had already been rejected for. TERMINAL FIX, and this is the last round on this
+# line: on failure, print the warning and SKIP THE AUDIT ENTIRELY for this run rather than ever
+# falling through to the reconcile script's own less-precise name-guessing fallback. There is no
+# weaker-but-still-something behavior left to fall back to -- either the authoritative lookup
+# succeeds, or nothing runs this time and the next scheduled/push/manual trigger tries again. A
+# skipped audit is a missed data point on an otherwise-recurring check; a wrongly-targeted one is a
+# false negative that looks like a clean pass.
+#
+# checkout (above) uses whatever ref the trigger naturally implies and is NOT re-pointed at the
+# resolved default branch: for `schedule` that ref already IS the default branch's tip by GitHub's
+# own documented semantics, and for `workflow_dispatch` a human may deliberately run this against a
+# feature branch to preview its backlog against the code that has actually landed on the default
+# branch -- checking out that branch's files while resolving the TRUE origin default separately is
+# the intended behavior for that case, not a bug to fix by forcing checkout onto the resolved branch.
+#
+# actions/checkout is pinned to a full commit SHA, not the mutable `v4` tag, per GitHub's own
+# supply-chain guidance (a tag can be moved by the action's maintainer or, if their account were
+# compromised, by an attacker; a SHA cannot). Verified directly against the action's own repo, not
+# guessed: `gh api repos/actions/checkout/git/refs/tags/v4` resolved to this SHA, which
+# `gh api repos/actions/checkout/tags` confirms is also tagged v4.4.0, on 2026-09-02. Re-verify the
+# same way before bumping it -- never hand-type a SHA for a third-party action.
+name: Autopilot backlog audit
+
+on:
+  schedule:
+    - cron: '17 3 * * 1' # weekly, Monday 03:17 UTC; off-the-hour to avoid the shared GH Actions spike
+  push:
+    branches: [main, master, trunk]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read # least privilege: this workflow only ever reads repo metadata and files; it never
+    # writes, regardless of what an org/enterprise default might otherwise grant the job token.
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the repository's actual default branch
+        id: default_branch
+        continue-on-error: true # belt-and-suspenders: the run step below already skips cleanly on
+          # its own when the output is empty, so this is defense against a future edit reintroducing
+          # a hard failure here, not something the current script body relies on.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if name="$(gh api "repos/${{ github.repository }}" --jq .default_branch)"; then
+            echo "name=$name" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::could not resolve the repository default branch via gh api; skipping this run's audit rather than guessing"
+          fi
+
+      - name: Backlog reconcile audit (report-only; cannot fail this job)
+        env:
+          AUTOPILOT_DEFAULT_BRANCH: ${{ steps.default_branch.outputs.name }}
+        run: |
+          if [ -z "$AUTOPILOT_DEFAULT_BRANCH" ]; then
+            echo "default branch could not be authoritatively resolved this run (see the warning above) -- skipping rather than guessing."
+            exit 0
+          fi
+          if [ ! -x scripts/autopilot-backlog-reconcile ] || [ ! -f docs/autopilot-backlog.md ]; then
+            echo "no scripts/autopilot-backlog-reconcile or docs/autopilot-backlog.md here yet -- nothing to audit."
+            exit 0
+          fi
+          {
+            echo '## Autopilot backlog audit'
+            echo '```'
+            ./scripts/autopilot-backlog-reconcile --audit
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" 2>&1 || true

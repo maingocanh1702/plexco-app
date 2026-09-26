@@ -15,7 +15,7 @@ trước khi lane viết được dòng nào.** Đo tại `scripts/autopilot-rev
 ```
 
 1. **`autonomous_to_ready` chưa bao giờ được validator chấp nhận.** DD-107 chốt mode này (owner
-   14/08), `level3-workflow.md` §6.1 mô tả nó dài 205 dòng, và **không dòng code nào implement nó**.
+   14/08), `plexco-level3-autonomy.md` §6.1 mô tả nó dài 205 dòng, và **không dòng code nào implement nó**.
    Đây không phải lệch canonical — đây là **khoảng cách decision→code nằm ngay trong consumer**, đúng
    lớp lỗi mà DD-106 tồn tại để bắt. ⇒ Trường `autonomy_mode` trong manifest phải ghi **`supervised`**.
    Ý định của DD-107 (quyết Tier A/B tại chỗ, giữ ledger, owner review một lượt ở READY) **vẫn áp dụng**
@@ -177,7 +177,7 @@ REPO CONTEXT — read before acting, do not skip
     docs/00-start-here/HANDOFF.md              (live-truth block only)
     docs/standards/decisions.md                ("| DD-nn |" summary table only, not bodies)
     docs/standards/review-code-readiness-gate.md
-    docs/autopilot-templates/level3-workflow.md  (sections 6.1, 7, 8, 9)
+    docs/autopilot-templates/level3-workflow.md  (sections 7, 8, 9; docs/standards/plexco-level3-autonomy.md section 6.1)
     docs/product/ROADMAP.md                    (block dated 2026-09-02 only)
   Do NOT attempt to load the whole docs/ corpus: it is ~2M tokens. Coverage is
   guaranteed by search-and-log, not by loading. Before trusting a null grep,
@@ -194,7 +194,7 @@ REPO CONTEXT — read before acting, do not skip
   CONTRACT_INVALID at register. See section 00. The batch-the-owner INTENT of
   DD-107 still governs how you work — decide Tier A/B in flight, keep the ledger,
   bring the owner one review at READY — it just cannot be spelled in that field yet.
-  Tier A/B/C ladder per level3-workflow section 6.1, verbatim. Tier C is exactly
+  Tier A/B/C ladder per plexco-level3-autonomy.md section 6.1, verbatim. Tier C is exactly
   its 8-item list; nothing added, nothing removed. Stopping on a Tier A item is a
   defect — log it in the ledger as one. Append every Tier A/B decision to
   .autopilot/state/<feature>/DECISIONS.md as it is made, with the mandatory
@@ -625,7 +625,7 @@ OUTCOME
   showing the task contains more than one mechanism — or a single AWAIT_OWNER with
   one recommendation and a binary trigger.
   The most valuable single output is the Tier C COUNT with each item named. Per
-  level3-workflow section 6.1, that number predicts whether the implementation lane
+  plexco-level3-autonomy.md section 6.1, that number predicts whether the implementation lane
   reaches READY untouched. Report it even if everything else ends AWAIT.
 
 READ, and record what each one settles
@@ -977,6 +977,9 @@ NEGATIVE SCOPE
 
 ## L11-v2 · infra/kit · Dạy kit cái mode mà owner đã chốt — **thay thế L11 cũ**
 
+> Update 2026-09-26: DD-107 policy now lives in `docs/standards/plexco-level3-autonomy.md`; its former location in the mirrored workflow is historical. Any future canonical port in this lane must read that repository-owned source. This kit sync does not implement a new runtime mode or close the decision-to-code gap.
+
+
 > 🔴 **L11 CŨ ĐÃ CHẾT — ĐỪNG CHẠY.** Lane L12 đo được: **nợ `DYNAMIC_SEGMENT` đã trả rồi** — canonical
 > `188e756` port nó **một ngày sau** `0af75a2`, consumer và canonical **byte-identical**. Tiền đề của L11
 > cũ mục hoàn toàn. Đây đúng là lý do prompt L11 mở đầu bằng "VERIFY THE PREMISE FIRST … If any
@@ -998,14 +1001,15 @@ WHY THIS LANE REPLACED THE OLD L11
   Lane L12 measured that the DYNAMIC_SEGMENT debt is already repaid: canonical 188e756
   ported it one day after 0af75a2, and consumer and canonical are byte-identical.
   Verify that yourself before anything else; if it is false, stop and report.
-  The real divergence is level3-workflow.md: 205 lines, the whole section 6.1, present
-  in the Plexco consumer and absent from canonical. The next successful sync deletes
-  the operating contract that sixteen queued lanes cite.
+  Historically, the Plexco level3-workflow.md mirror embedded 205 lines of section 6.1
+  absent from canonical. Those rules now live in the repository-owned
+  docs/standards/plexco-level3-autonomy.md, outside the sync pack. Sync no longer deletes
+  them; teaching the canonical validator the ratified mode remains separate work.
 
 THE THREE EDITS, and why they are one lane
   1. Port section 6.1 (autonomous_to_ready, the Tier A/B/C ladder, the authority
      precedence table, the Decision Ledger format) from the Plexco copy of
-     level3-workflow.md into canonical.
+     docs/standards/plexco-level3-autonomy.md into canonical.
   2. Teach the validator the mode. In canonical's autopilot-review-readiness.mjs the
      accept list at line ~366 is ["supervised","proactive_routine"]. A doc describing
      a mode no validator accepts is what produced L12's first CONTRACT_INVALID halt,

@@ -100,7 +100,7 @@ policy and skipped the source. The writer caught all four at register time; none
 |---|---|---|
 | `invariants` | the catalog's `<!-- catalog:start -->` block | Plausible-sounding tokens that do not exist → `HALT INVARIANT_UNKNOWN` |
 | `verification.*` | `runVerificationGroup()` in the readiness script | Each string is SPAWNED as a shell command. Prose fails every attempt |
-| `scope` | the gate's out-of-scope check | Directories are rejected; a missing path becomes `SCOPE_DRIFT` mid-run |
+| `scope` | the gate's shape validation | Directories and malformed paths are rejected at register time (`CONTRACT_INVALID`); the diff is no longer checked against this declaration (kit v34) — `scope` still communicates intended boundary to a human/reviewer, but the certified file list is the diff itself |
 | `code_review.clean_rounds` | your own risk tier | `1` on an authorization or money boundary is a review budget, not a gate |
 
 The unifying failure is not carelessness about any one field. It is writing a **declaration** without
@@ -296,11 +296,15 @@ expired when the scope moved.
    every command declared in the manifest again and capture its own exit status/output.
 6. Fetch/read the declared base ref without rebasing the active run. If it no longer equals
    `BASE_SHA`, HALT for a fresh successor; otherwise inspect `git diff <BASE_SHA>...HEAD` and reject
-   empty or out-of-scope diffs.
+   an empty diff. Declared `scope` is intended boundary, not a diff-enforced ceiling (kit v34) — the
+   gate certifies whatever the diff actually is.
 7. For final certification, do not manufacture verification/review files or self-assert a clean
-   status. Resolve `readiness.json` from
-   `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json`; it records only identity,
-   acceptance and breaker state.
+   status. Generate `readiness.json` mechanically: `node scripts/autopilot-review-readiness.mjs
+   evidence --manifest "<MANIFEST_PATH>" --acceptance satisfied --breakers clear` reads identity
+   (task_id/feature/base_sha/head_sha) from the same manifest/live-git-state register/ready already
+   trust (kit v34) — you supply only the two judgment calls git cannot make. A hand-written file from
+   `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json` recording only identity, acceptance
+   and breaker state is still accepted if correct; the generated form just cannot be malformed.
 8. Call `scripts/autopilot-scope-gate ready --manifest "<MANIFEST_PATH>"`. The gate executes every
    focused/canonical/e2e command from the unchanged registered manifest, runs the required pinned
    Codex code rounds and any security round, captures command/exit/HEAD/base/diff evidence, and
@@ -332,8 +336,9 @@ Only when:
 - required code/security reviews are clean;
 - no writer or dependency issue remains.
 
-Write the minimal identity + `acceptance.status=satisfied` + `breakers.status=clear`
-`readiness.json` from the installed template, then run:
+Generate `readiness.json` (kit v34: `node scripts/autopilot-review-readiness.mjs evidence --manifest
+"<MANIFEST_PATH>" --acceptance satisfied --breakers clear`, or hand-write the minimal identity +
+`acceptance.status=satisfied` + `breakers.status=clear` from the installed template), then run:
 
 ```bash
 scripts/autopilot-scope-gate ready --manifest "<MANIFEST_PATH>"

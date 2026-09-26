@@ -4849,7 +4849,7 @@ notes: |
   **Mâu thuẫn có thật, đã đo 2026-09-04.** Mục L1 của RUN packet hướng dẫn lane dựng route theo một
   shape mà **điều khoản 2 của DD-56 amendment #1 cấm** (mọi phân giải role phải đi qua đúng một
   choke-point; cấm `role === …` ở bất kỳ chỗ nào khác).
-  **Ai thắng đã có luật:** `docs/autopilot-templates/level3-workflow.md §6.1` xếp `decisions.md` (#3)
+  **Ai thắng đã có luật:** `docs/standards/plexco-level3-autonomy.md §6.1` xếp `decisions.md` (#3)
   **trên** RUN packet (#5) ⇒ **packet là thứ phải sửa**, không phải decision. Điều này đã được ghi
   thành **điều khoản 8 của DD-56 amendment #2** (`decisions.md`, 04/09) nên lane nào đọc packet cũng
   đã bị chặn đúng hướng; row này chỉ theo dõi chính cái edit vào packet.

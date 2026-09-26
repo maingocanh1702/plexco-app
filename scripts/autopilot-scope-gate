@@ -1,5 +1,121 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 33
+# KIT_VERSION: 37
+# v37 (2026-09-25) — pack behaviour change, no behaviour change in THIS file (master counter bump, same
+# reasoning as v35/v36). level3-upgrade review round 6, findings 1 and 2 (autopilot-backlog.md).
+#   BEHAVIOUR: ap-evidence.sh (AP_EVIDENCE_VERSION 3) counts a review round as clean only on equality
+#   with its kind-specific marker -- `"CLEAN" in verdict` accepted UNCLEAN and NOT CLEAN -- and never
+#   files a landing whose head is its base, or whose base...head window is empty, as eligible.
+#   BEHAVIOUR: ap-finish.sh writes diff_base_sha and diff_sha256 into every landing record (null on a
+#   close), so ap-dispatch.sh can re-derive a squash proof instead of trusting the record's mode.
+#   CONTENT: level3-workflow.md §8 (docs/autopilot-templates/level3-workflow.md in consumers) now says the
+#   reviewer --base is the live base_ref tip (diff_base_sha, kit v26) and base_sha is the legitimacy
+#   field; it still said "the pinned base_sha, the same value every round" (review round 6, code 7).
+# v36 (2026-09-08) — pack content change, no behaviour change in THIS file (master counter bump, same
+# reasoning as v35: this is the number the installers read to decide whether a consumer has anything
+# to sync). level3-upgrade wave 0, slice B (docs/level3-upgrade-EXECUTE-PROMPT.md §2 W0-B).
+#   BEHAVIOUR: ap-finish.sh now files one routine-evidence row and bumps the auto-merge maturity
+#   counter after every landed (ancestor|squash) finish, through the new pack script ap-evidence.sh
+#   (scripts/ap-evidence.sh in consumers). Never for --authorized-close; never commits or pushes;
+#   never touches a ledger `status` (promotion is owner authority). Non-fatal: a failure prints WARN
+#   and the landing stands. Ledger dir: $AP_EVIDENCE_LEDGER_DIR, else <repo>/autopilot/.autopilot, else
+#   a loud SKIPPED_NO_LEDGER_DIR. Adds `manual_start_count` -- the field the artifact ladder's
+#   step-3 re-measure reads. It is 0 only when .autopilot/triggers/<slug>.json CROSS-BINDS to the
+#   landing: issuer ap-dispatch, matching feature, base and class, a well-formed nonce, the hash of
+#   the authored manifest at that base, the hash of this machine's routine registry, and a manifest
+#   that is P2 + proactive_routine. An issuer line alone is not evidence of an automatic start
+#   (review rounds 3-4).
+#   CONTENT: ap-evidence.sh added to pack_pairs in autopilot-init.sh and autopilot-update.sh;
+#   commands/ap-new.md's required-pack list gains scripts/ap-evidence.sh; e2e.sh section ap-evidence.
+#   CONTENT (docs, same landing): level3-workflow.md §3 names the default Skill set (slice A) and §6
+#   names the routine registry (slice D) -- both reach consumers as docs/autopilot-templates/
+#   level3-workflow.md, which is why they ride this bump (review round 2 on slice A caught the pack
+#   edit without a bump).
+# v35 (2026-09-02) — master counter bump only; no change to this file's gate logic. Four
+# pack/mechanism changes land in this same kit-maintenance pass and none of them touch scope-gate
+# itself, but this is the number autopilot-update.sh and autopilot-init.sh actually read to decide
+# whether a consumer has anything new to sync (see autopilot-update.sh:23-24) -- a private counter on
+# a changed file would not have triggered any consumer to pick it up, same reasoning as kit v31's
+# ap-finish.sh archive feature. What changed: autopilot-backlog-reconcile itself (KIT_VERSION 9, see
+# that file's own header), autopilot-init.sh's pack_pairs brought to parity with autopilot-update.sh's
+# (was missing autopilot-backlog-reconcile and two docs/autopilot-templates/*.md entries since v19 --
+# docs/kit-design-debt.md §12), a new templates/autopilot-backlog-audit.yml pack entry, and a new
+# post-finish `--audit` hook in ap-finish.sh (report-only, `|| true`). Full rationale:
+# docs/backlog-reconcile-drift-measurement.md. (This list itself went stale once already -- round 2
+# review on this branch caught it omitting the ap-finish.sh hook; re-derive from the live diff before
+# trusting a count in prose again, here or anywhere else in this pass's docs.)
+# v34 (2026-08-31) — three derive-don't-declare fixes in `autopilot-review-readiness.mjs`, one
+# collision-check fix in THIS file to close a gap review round 1 found in the first of the three, and
+# one item attempted and dropped. Closes docs/kit-derive-dont-declare-EXECUTE-PROMPT.md. Each landed
+# change is test-first (RED then GREEN) in test/e2e.sh's derive1-derive3 sections.
+# (1) scope is no longer validated against the diff. SCOPE_DRIFT could not distinguish a real
+# violation from a stale declaration and, measured 2026-08-31 across two product repos, caught neither
+# in a period a direct reviewer round found four real bugs. The certified file list is now the diff
+# itself -- already what gate-result.json recorded regardless. Declared `scope` is unchanged for its
+# other job: the register-time staleness pre-check in assertBaseUsable() and human/reviewer intent.
+# Consequence found by review round 1 and fixed in THIS file, same version: the `ready`-time collision
+# recheck below compared DECLARED scope against other active features, which was safe only because
+# SCOPE_DRIFT used to guarantee declared scope equalled the diff. With that guarantee gone, an
+# undeclared-but-actually-touched file could collide with another slice undetected. Fixed by reading
+# the CERTIFIED file list from gate-result.json's diff_files (written moments earlier by the `node
+# ... ready` call on the line above) instead of $SCOPE, fail-closed if that file cannot be read.
+# Review round 2 found the round-1 fix incomplete in two more ways, exhaustively enumerated by
+# grepping every consumer of declared scope in both files rather than patching per-round: (a)
+# assertBaseUsable() in autopilot-review-readiness.mjs still only protects DECLARED scope from base-
+# branch staleness -- an undeclared-but-actually-touched file could collide with an independent base-
+# branch change unnoticed. Fixed there with a second, additive staleness check against the certified
+# file list. (b) this file's `ready` case wrote DECLARED $SCOPE into the feature's INFLIGHT.md entry,
+# so a LATER feature's collision check (against THIS feature, once active) still saw a possibly-
+# narrower list than what was actually touched -- fixed by overwriting $SCOPE with the certified file
+# list before append_block ready runs.
+# Rounds 3 through 5 then converged on the collision recheck's OWN trust model, each round fixing one
+# part of the same property and a later round finding the remaining gap:
+#   round 2 trusted gate-result.json's diff_files outright;
+#   round 3 found that unbound (a tampered field would forge the check) and switched to recomputing
+#     the file list from a FRESH `git rev-parse HEAD` instead;
+#   round 4 found THAT reopened a different gap (a fresh HEAD is not bound to what the validator
+#     actually reviewed -- a commit or reset in the window between the validator's exit and this
+#     recheck would certify an unreviewed HEAD, and bypass SELF_CERTIFYING_GATE_CHANGE for it) --
+#     fixed by verifying gate-result.json's head_sha/manifest_sha256 against the live worktree first,
+#     then reading diff_base_sha from the now-identity-verified file;
+#   round 5 found THAT still left diff_base_sha itself unbound -- identity-verifying head_sha does not
+#     prove diff_base_sha was not independently changed (to head_sha itself, forcing an empty
+#     recomputed diff that silently bypasses collision detection and certifies an empty scope).
+# The recheck below resolves this by depending on gate-result.json for identity ONLY (verifies
+# head_sha/manifest_sha256 match the live worktree, `READY_HEAD_DRIFT` if not) and never reads any
+# diff-shaped field from it at all: diff_base_sha is resolved fresh from `$BASE_REF`, the same live-ref
+# resolution liveDiffState() itself performs, with no writer-mutable file in between to tamper. Also
+# review round 4: scope expansion beyond declaration is now structured, auditable data in
+# gate-result.json (scope_expanded/scope_expanded_files/declared_scope), not silent pass-through -- a
+# direct answer to level3-workflow.md's "scope is a ceiling" contract raised every round from round 1
+# on, from a different consumer's angle each time; see docs/kit-design-debt.md §11 for why full
+# re-enforcement was not built instead.
+# (2) a new `evidence` mode writes readiness.json's identity fields (task_id/feature/base_sha/head_sha)
+# from the same manifest/live-git-state register/ready already trust, instead of requiring an agent to
+# hand-type them. `ready`'s own validation of the file -- identity match, unknown-key whitelist,
+# freshness -- is unchanged; a hand-written file is still accepted if correct.
+# (3) verification.focused/canonical commands now receive AUTOPILOT_BASE_SHA and
+# AUTOPILOT_DIFF_BASE_SHA in their environment (additive -- process.env is spread first). A command
+# proving negative_scope compliance had no live base to reference and so had to hardcode one, the same
+# base_sha diff-window trap v25/v26 already closed for the reviewer's own --base flag. negative_scope
+# itself has no executable command surface anywhere in the kit today (confirmed absent from this file,
+# ap-finish.sh, and every runtime check in autopilot-review-readiness.mjs beyond a type-only presence
+# check) -- this closes the gap before anyone hits it, rather than fixing a live call site.
+# (4) DROPPED, exactly as the EXECUTE PROMPT authorized doing first if the slice hit trust-boundary
+# complexity. Attempted: register accepting HEAD anywhere at or ahead of the pinned base (an ancestor
+# check) instead of demanding exact equality, to recover a branch that implemented before registering.
+# Review round 1: register's collision check (below, the register case) runs against declared scope
+# regardless of commit timing, so accepting pre-existing commits lets an agent sink real implementation
+# work before discovering a collision that register-before-commit catches at zero cost. Reverted; HEAD
+# === baseSha stays exact equality in autopilot-review-readiness.mjs.
+# None of the three landed changes touch TRUSTED_GATE_FILES, SELF_CERTIFYING_GATE_CHANGE, or the
+# pinned-diff binding (diffHash/GATE_INPUT_DRIFT/trustedReviewEnvironment) -- verified by `git diff`
+# against the pinned base showing zero +/- lines on any of those symbols. test/e2e.sh gains a fourth
+# new section, trust-boundary-verify, proving the property empirically: a slice whose own diff touches
+# a TRUSTED_GATE_FILES entry still halts SELF_CERTIFYING_GATE_CHANGE exactly as before this version --
+# no prior test exercised that halt at all. This version was reviewed via the pinned reviewer invoked
+# DIRECTLY (autopilot/parallel/codex-review-pin.sh review --base <sha> <prompt>), not through
+# autopilot-scope-gate ready, because a slice touching its own trust gate cannot certify itself through
+# that gate by design -- see the gate-attempt-* artifacts under this branch's own review for the rounds.
 # v33 (2026-08-27) — pack content change, plus one helper added here but not yet called here; no
 # behaviour change in THIS file. Two things, one reason.
 # `autopilot-review-readiness.mjs` gains the dynamic-segment scope guard already reviewed in Plexco:
@@ -767,12 +883,61 @@ case "$cmd" in
       halt_gate READY_LIFECYCLE_CHANGED "'$FEATURE' changed to '${me_status:-absent}' while readiness was running; gate result is non-authoritative"
     fi
     # Re-check collisions: another feature may have registered between our register and ready calls.
-    cf="$(comm -12 <(printf '%s\n' "$SCOPE" | sort -u) <(active_others scope))"
+    # kit v34 review round 1 finding 1: declared $SCOPE is no longer guaranteed to equal the diff
+    # (autopilot-review-readiness.mjs's derive1 change removed that enforcement) -- comparing only
+    # declared scope here could miss a genuine collision on a file the slice actually touched but
+    # never declared, while collision detection for OTHER active features still only sees what THEY
+    # declared. Compare the CERTIFIED file list instead.
+    # kit v34 review rounds 2-5 converged on one property, each round closing one half and reopening
+    # the other, until this shape: trust NOTHING diff-related from gate-result.json (a gitignored,
+    # writer-mutable file), only two independently-obtainable coordinates -- and verify one of them
+    # against it rather than reading it.
+    #   Round 2: reading gate-result.json's diff_files trusted a writer-mutable field outright.
+    #   Round 3: verifying head_sha/manifest_sha256 first still left diff_files itself unbound --
+    #     switched to recomputing the file list from a FRESH `git rev-parse HEAD`.
+    #   Round 4: that fresh HEAD re-read was not bound to what the validator actually reviewed -- a
+    #     commit or reset between the validator's exit and this line would certify an unreviewed HEAD
+    #     (and bypass SELF_CERTIFYING_GATE_CHANGE for it). Switched to verifying gate-result.json's
+    #     head_sha against live HEAD before trusting anything, then reading diff_base_sha from the
+    #     now-identity-verified file.
+    #   Round 5: identity-verifying head_sha/manifest_sha256 does not bind diff_base_sha -- an attacker
+    #     could change ONLY that field (to head_sha itself) to force an empty recomputed diff, silently
+    #     bypassing collision detection and writing an empty certified scope into the registry.
+    # The fix is not a fourth patch to gate-result.json trust, but removing the dependency: base_ref
+    # resolves to a live SHA the same way liveDiffState() itself does, with no file in between to
+    # tamper. Safe even if base_ref legitimately advanced since the validator ran -- three-dot diff
+    # notation resolves through merge-base, so the window is still exactly this slice's own commits as
+    # long as HEAD (verified against gate-result.json below) has not moved; the same reasoning the
+    # v25/v26 fix already established for why the live base ref, not a frozen pin, is correct here.
+    GATE_RESULT="$WORKTREE_ROOT/.autopilot/state/$FEATURE/gate-result.json"
+    LIVE_HEAD_SHA="$(git rev-parse HEAD)"
+    REGISTERED_MANIFEST_SHA256="$(cat "$WORKTREE_ROOT/.autopilot/state/$FEATURE/registered-manifest.sha256" 2>/dev/null || true)"
+    node -e '
+      const fs = require("fs");
+      const [gateResultPath, expectedHeadSha, expectedManifestSha256] = process.argv.slice(1);
+      const data = JSON.parse(fs.readFileSync(gateResultPath, "utf8"));
+      if (data.head_sha !== expectedHeadSha) {
+        throw new Error(`gate-result head_sha ${data.head_sha} does not match live HEAD ${expectedHeadSha} -- HEAD moved after the validator exited`);
+      }
+      if (!expectedManifestSha256 || data.manifest_sha256 !== expectedManifestSha256) {
+        throw new Error("gate-result manifest_sha256 does not match this registration'"'"'s hash-lock");
+      }
+    ' "$GATE_RESULT" "$LIVE_HEAD_SHA" "$REGISTERED_MANIFEST_SHA256" \
+      || halt_gate READY_HEAD_DRIFT "worktree HEAD or manifest changed between the validator's exit and the post-readiness collision recheck"
+    COLLISION_DIFF_BASE_SHA="$(git rev-parse "$BASE_REF^{commit}")"
+    ACTUAL_FILES="$(git diff --name-only --no-renames "$COLLISION_DIFF_BASE_SHA...$LIVE_HEAD_SHA")"
+    cf="$(comm -12 <(printf '%s\n' "$ACTUAL_FILES" | sort -u) <(active_others scope))"
     ci="$(comm -12 <(printf '%s\n' "$INVARIANTS" | sort -u) <(active_others invariants))"
     if [ -n "$cf$ci" ]; then
       halt_gate SCOPE_COLLISION "'$FEATURE' acquired a collision while readiness ran; files=$(printf '%s' "$cf" | tr '\n' ',') invariants=$(printf '%s' "$ci" | tr '\n' ',')"
     fi
     drop_my_block
+    # kit v34 review round 2 finding 1b: append_block reads $SCOPE, which is DECLARED intent -- once
+    # this feature reaches ready, its registry entry should reflect what it actually CERTIFIED, so a
+    # future feature's collision check (which compares against active_others scope, i.e. this entry)
+    # sees the real file list rather than a possibly-narrower declaration. Not used again after this
+    # block: safe to overwrite here rather than threading a second variable through append_block.
+    SCOPE="$ACTUAL_FILES"
     append_block ready
     TASK_STATE="$WORKTREE_ROOT/.autopilot/state/$FEATURE"
     mkdir -p "$TASK_STATE"

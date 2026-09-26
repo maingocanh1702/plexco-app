@@ -199,18 +199,40 @@ function tryRun(command, args, cwd) {
 function parseArguments(argv) {
   const mode = argv[2];
   let manifest;
+  let acceptance;
+  let breakers;
   for (let index = 3; index < argv.length; index += 1) {
     if (argv[index] === "--manifest") {
       manifest = argv[index + 1];
+      index += 1;
+    } else if (argv[index] === "--acceptance") {
+      acceptance = argv[index + 1];
+      index += 1;
+    } else if (argv[index] === "--breakers") {
+      breakers = argv[index + 1];
       index += 1;
     } else {
       halt("READINESS_USAGE", `unknown argument: ${argv[index]}`);
     }
   }
-  if (!["register", "ready"].includes(mode) || !manifest) {
-    halt("READINESS_USAGE", "use: autopilot-review-readiness.mjs <register|ready> --manifest <path>");
+  if (!["register", "ready", "evidence"].includes(mode) || !manifest) {
+    halt(
+      "READINESS_USAGE",
+      "use: autopilot-review-readiness.mjs <register|ready> --manifest <path>"
+        + " | evidence --manifest <path> --acceptance <status> --breakers <status>",
+    );
   }
-  return { mode, manifest };
+  // kit v34 review round 3 finding 3: a non-empty check accepted a typo like "satisfed" and wrote it
+  // verbatim -- LEVEL3_EVIDENCE_WRITTEN reported success for a file `ready` would then reject. `ready`
+  // only ever passes on the exact strings "satisfied"/"clear" (see its own checks below); there is no
+  // legitimate reason for `evidence` to write anything else, so require the exact values up front.
+  if (mode === "evidence" && (acceptance !== "satisfied" || breakers !== "clear")) {
+    halt(
+      "READINESS_USAGE",
+      `evidence mode requires exactly --acceptance satisfied --breakers clear (got --acceptance ${acceptance || "<missing>"} --breakers ${breakers || "<missing>"})`,
+    );
+  }
+  return { mode, manifest, acceptance, breakers };
 }
 
 function readJson(file, label) {
@@ -308,7 +330,12 @@ function trustedReviewEnvironment() {
   return environment;
 }
 
-const { mode, manifest: manifestArgument } = parseArguments(process.argv);
+const {
+  mode,
+  manifest: manifestArgument,
+  acceptance: acceptanceArgument,
+  breakers: breakersArgument,
+} = parseArguments(process.argv);
 const repo = run("git", ["rev-parse", "--show-toplevel"], process.cwd());
 const manifestCandidate = path.resolve(process.cwd(), manifestArgument);
 deriveDurableStateDir(repo, manifestCandidate);
@@ -355,6 +382,28 @@ if (mode === "ready") {
     if (existsSync(stalePath)) {
       unlinkSync(stalePath);
     }
+  }
+}
+
+// One definition, two callers: `evidence` mode WRITES here, `ready` mode READS here. Both must agree
+// on the exact path or a generated file would not be where `ready` looks for it.
+function evidenceFilePath() {
+  const evidenceRelative = requireString(manifest.readiness_evidence_path, "readiness_evidence_path");
+  const expectedEvidenceRelative = path.join(".autopilot", "state", feature, "readiness.json");
+  if (evidenceRelative !== expectedEvidenceRelative) {
+    halt("CONTRACT_INVALID", `readiness_evidence_path must equal ${expectedEvidenceRelative}`);
+  }
+  return path.join(repo, evidenceRelative);
+}
+
+// kit v34 review round 3 finding 3: `evidence` used to write before this check ran at all, so an
+// unregistered or drifted manifest still reported LEVEL3_EVIDENCE_WRITTEN success, only to fail
+// `ready` moments later on the exact same manifest. One definition, called from both modes, so
+// neither can drift from what `ready` actually requires.
+function verifyManifestHashLock() {
+  const registeredHashPath = path.join(stateDir, "registered-manifest.sha256");
+  if (!existsSync(registeredHashPath) || readFileSync(registeredHashPath, "utf8").trim() !== manifestHash) {
+    halt("MANIFEST_DRIFT", "manifest changed after registration; HALT and create a successor task");
   }
 }
 
@@ -600,17 +649,47 @@ if (!existsSync(reviewerPath) || !statSync(reviewerPath).isFile() || (statSync(r
 
 const headSha = run("git", ["rev-parse", "HEAD"], repo);
 if (mode === "register") {
+  // item 4 of docs/kit-derive-dont-declare-EXECUTE-PROMPT.md (deriving this to an ancestor check, so
+  // register would accept HEAD already ahead of baseSha) was ATTEMPTED and DROPPED: kit v34 review
+  // round 1 found that register's collision check (autopilot-scope-gate) runs against DECLARED scope
+  // regardless of commit timing, so allowing commits before registration lets an agent sink real
+  // implementation work before discovering a scope/invariant collision that register-before-commit
+  // catches with zero cost. The prompt's own section 1 named this the item to drop first if the slice
+  // hit exactly this kind of trust-boundary complexity; it did. HEAD === baseSha stays exact equality.
   if (headSha !== baseSha) {
     halt("BASE_MISMATCH", `worktree HEAD=${headSha} expected=${baseSha}`);
   }
   process.stdout.write(`LEVEL3_REGISTER_VALID task=${taskId} feature=${feature} base=${baseSha}\n`);
   process.exit(0);
 }
-
-const registeredHashPath = path.join(stateDir, "registered-manifest.sha256");
-if (!existsSync(registeredHashPath) || readFileSync(registeredHashPath, "utf8").trim() !== manifestHash) {
-  halt("MANIFEST_DRIFT", "manifest changed after registration; HALT and create a successor task");
+if (mode === "evidence") {
+  // derive2 (kit v34, docs/kit-derive-dont-declare-EXECUTE-PROMPT.md section 1 item 2): task_id,
+  // feature, base_sha and head_sha are read from the SAME manifest/live-git-state `register`/`ready`
+  // already trust -- never re-typed by the caller. Only the two judgment calls git cannot make
+  // (acceptance/breakers) come from the caller. `ready`'s validation of the resulting file (identity
+  // match, unknown-key whitelist, freshness) is unchanged; this only replaces hand-typing with a
+  // mechanical writer that cannot mistype or malform what it writes.
+  // kit v34 review round 3 finding 3: verify the hash-lock BEFORE writing, not after -- otherwise an
+  // unregistered/drifted manifest still reports LEVEL3_EVIDENCE_WRITTEN success for a file `ready`
+  // will reject moments later on the exact same manifest.
+  verifyManifestHashLock();
+  writeFileSync(
+    evidenceFilePath(),
+    `${JSON.stringify({
+      evidence_schema_version: VERSION,
+      task_id: taskId,
+      feature,
+      base_sha: baseSha,
+      head_sha: headSha,
+      acceptance: { status: acceptanceArgument },
+      breakers: { status: breakersArgument },
+    }, null, 2)}\n`,
+  );
+  process.stdout.write(`LEVEL3_EVIDENCE_WRITTEN feature=${feature} head=${headSha}\n`);
+  process.exit(0);
 }
+
+verifyManifestHashLock();
 function liveDiffState() {
   const liveHead = run("git", ["rev-parse", "HEAD"], repo);
   const liveBaseRefSha = run("git", ["rev-parse", `${baseRef}^{commit}`], repo);
@@ -644,10 +723,30 @@ function liveDiffState() {
   if (files.length === 0) {
     halt("EMPTY_DIFF", "no tracked files differ from the pinned base");
   }
-  const outOfScope = files.filter((file) => !scope.includes(file));
-  if (outOfScope.length) {
-    halt("SCOPE_DRIFT", `out-of-scope files: ${outOfScope.join(", ")}`);
+  // kit v34 review round 2 finding 1: assertBaseUsable() above still only protects DECLARED scope --
+  // with SCOPE_DRIFT gone, a file this diff ACTUALLY touches but never declared is invisible to it. If
+  // the base branch independently changed that same undeclared file since baseSha, this diff would
+  // certify over a real conflict. Layered on top of assertBaseUsable(), not a replacement for it --
+  // `files` is guaranteed non-empty here (EMPTY_DIFF already halted above), so spreading it as a
+  // pathspec is safe (an empty array would mean "no restriction" to git, not "match nothing"; see
+  // SCOPE_PATHSPECS's own comment for why that distinction matters).
+  const actualFilesTouchedSinceBase = run(
+    "git",
+    ["diff", "--name-only", `${baseSha}..${diffBase}`, "--", ...files],
+    repo,
+  );
+  if (actualFilesTouchedSinceBase) {
+    halt(
+      "BASE_STALE",
+      `files this diff actually touches changed on ${baseRef} since ${baseSha}: ${actualFilesTouchedSinceBase.split("\n").join(", ")}`,
+    );
   }
+  // derive1 (kit v34, docs/kit-derive-dont-declare-EXECUTE-PROMPT.md section 1 item 1): scope used to
+  // be VALIDATED against this diff -- any file outside the declared `scope` array halted SCOPE_DRIFT.
+  // git already computes `files` above; there is nothing left to declare correctly, only something to
+  // mistype. The certified file list IS this diff (already what diff_files below records) -- declared
+  // `scope` keeps doing its other job untouched: the register-time staleness pre-check in
+  // assertBaseUsable() above, and human/reviewer-readable intent.
   const selfCertifying = files.filter((file) => TRUSTED_GATE_FILES.has(file));
   if (selfCertifying.length) {
     halt(
@@ -666,12 +765,7 @@ function liveDiffState() {
 }
 
 const initialState = liveDiffState();
-const evidenceRelative = requireString(manifest.readiness_evidence_path, "readiness_evidence_path");
-const expectedEvidenceRelative = path.join(".autopilot", "state", feature, "readiness.json");
-if (evidenceRelative !== expectedEvidenceRelative) {
-  halt("CONTRACT_INVALID", `readiness_evidence_path must equal ${expectedEvidenceRelative}`);
-}
-const evidencePath = path.join(repo, evidenceRelative);
+const evidencePath = evidenceFilePath();
 const evidence = readJson(evidencePath, "readiness evidence");
 // Fail closed on any key the whitelist does not name — at the top level AND inside acceptance/breakers.
 // A readiness.json is a precondition INPUT (identity + the writer's attestation that its work is done
@@ -800,12 +894,25 @@ function runVerificationGroup(group, commands) {
       stateDir,
       `gate-attempt-${attemptLabel}-verify-${group}-${String(index + 1).padStart(2, "0")}.txt`,
     );
+    // derive3 (kit v34, docs/kit-derive-dont-declare-EXECUTE-PROMPT.md section 1 item 3): a command
+    // proving negative_scope compliance (e.g. "nothing under forbidden/ changed since I began") had no
+    // live base to reference and so had to hardcode one -- exactly the base_sha diff-window trap
+    // v25/v26 already closed for the reviewer's own --base flag (see liveDiffState() above). Both
+    // values are exported so a command can derive whichever job it needs: the live diff-window base
+    // (robust to a legitimate rebase, same value the gate itself certifies against) and the frozen
+    // registration pin (legitimacy). Spread process.env first -- this must stay additive, never a
+    // narrower replacement of what a verification command already inherits.
     const result = spawnSync("/bin/bash", ["-lc", command], {
       cwd: repo,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: remainingMs(),
       maxBuffer: MAX_BUFFER,
+      env: {
+        ...process.env,
+        AUTOPILOT_BASE_SHA: baseSha,
+        AUTOPILOT_DIFF_BASE_SHA: initialState.diffBase,
+      },
     });
     writeProcessLog(file, {
       kind: "verification",
@@ -927,6 +1034,25 @@ try {
   halt("REVIEW_WORKTREE_UNAVAILABLE", `could not create the isolated review worktree: ${String((error && error.message) || error)}`);
 }
 
+// kit v34 review round 3 finding 1: risk/security_review.required are derived only from the
+// manifest as authored, and nothing has ever mechanically re-validated them against what the diff
+// actually touches (true before this version too -- SCOPE_DRIFT only ever checked declared-vs-diff
+// file identity, never file identity against declared risk). Removing the requirement that files be
+// pre-declared (derive1) makes that pre-existing gap less visible: an undeclared file no longer even
+// shows up in the manifest for a human to notice. Building automatic risk/security reclassification
+// is a real, separate feature requiring owner design authority -- see level3-workflow.md's own
+// documented gap #1 ("the reviewer receives no scope") and docs/kit-design-debt.md's entry on this.
+// Cheap mitigation landed here instead: tell the reviewer explicitly which files were not declared,
+// so the one review round every slice always gets is pointed at exactly the files this gap concerns.
+const outOfDeclaredScope = initialState.files.filter((file) => !scope.includes(file));
+const scopeNote = outOfDeclaredScope.length
+  ? [
+      `${outOfDeclaredScope.length} of ${initialState.files.length} changed file(s) were NOT in the manifest's declared scope: ${outOfDeclaredScope.join(", ")}.`,
+      `Declared risk is ${risk}, security_review.required is ${securityReview.required}.`,
+      "Scrutinize the undeclared files specifically: if any touches auth, money, secrets, permissions or external input in a way the declared risk/security posture does not cover, that is an actionable finding regardless of scope.",
+    ].join("\n")
+  : null;
+
 const codePrompt = [
   `Review the exact non-empty diff against base ${initialState.diffBase} for correctness, regressions, tests and scope.`,
   "Report every actionable finding before the verdict.",
@@ -934,6 +1060,7 @@ const codePrompt = [
   "AUTOPILOT_CODE_VERDICT: CLEAN",
   "AUTOPILOT_CODE_VERDICT: FINDINGS",
   "Use CLEAN only when there are zero actionable findings.",
+  ...(scopeNote ? ["", scopeNote] : []),
 ].join("\n");
 for (let round = 1; round <= codeReview.clean_rounds; round += 1) {
   runReview(
@@ -954,6 +1081,7 @@ if (securityReview.required) {
     "AUTOPILOT_SECURITY_VERDICT: CLEAN",
     "AUTOPILOT_SECURITY_VERDICT: FINDINGS",
     "Use CLEAN only when there are zero actionable security findings.",
+    ...(scopeNote ? ["", scopeNote] : []),
   ].join("\n");
   runReview(
     "security-review",
@@ -979,6 +1107,12 @@ if (existsSync(pendingFindingPath)) {
   unlinkSync(pendingFindingPath);
 }
 
+// kit v34 review round 4 finding 2 (the same objection rounds 1-3 each raised from a different
+// consumer's angle): removing SCOPE_DRIFT's halt must not turn "the diff exceeded declared scope"
+// into silent, unrecorded prose. GATE_INPUT_DRIFT just above proves finalState.files here is
+// byte-identical to the outOfDeclaredScope computed from initialState.files earlier -- reused, not
+// recomputed. Every consumer of gate-result.json (ap-finish, a human reading the artifact, a future
+// audit) can now see EXACTLY what was and was not declared, structurally, without re-deriving it.
 const gateResultPath = path.join(stateDir, "gate-result.json");
 writeFileSync(
   gateResultPath,
@@ -992,12 +1126,41 @@ writeFileSync(
     head_sha: finalState.headSha,
     diff_sha256: finalState.diffHash,
     diff_files: finalState.files,
+    declared_scope: scope,
+    scope_expanded: outOfDeclaredScope.length > 0,
+    scope_expanded_files: outOfDeclaredScope,
     manifest_sha256: manifestHash,
     attempt,
     generated_artifacts: generatedArtifacts.map((file) => artifactRecord(repo, file)),
     result: "pass",
   }, null, 2)}\n`,
 );
+
+// kit v34, founder review of item 1 (2026-08-31): scope_expanded in gate-result.json answers "is the
+// fact recorded", not "does it reach the founder at merge time" -- gate-result.json lives under
+// .autopilot/state/, which is gitignored (confirmed: `git check-ignore` matches it, and it never
+// appears in `git log`/`git show` for the commits that carry the actual expansion). A founder reading
+// a PR diff on GitHub would see the expanded files as ordinary changed files and nothing else. This
+// kit has no pre-merge CI gate to enforce disclosure mechanically (no CI in this repo at all), so the
+// achievable fix is making the fact impossible to miss at the one moment the kit still controls:
+// `ready`'s own terminal output, printed loudly enough that copying it verbatim into a PR description
+// is the path of least resistance, not an extra step someone has to remember.
+if (outOfDeclaredScope.length) {
+  process.stdout.write(
+    [
+      "",
+      "################################################################################",
+      "# SCOPE EXPANDED BEYOND DECLARATION -- paste this block into the PR description #",
+      "################################################################################",
+      `declared scope (${scope.length}): ${scope.join(", ")}`,
+      `also touched, never declared (${outOfDeclaredScope.length}): ${outOfDeclaredScope.join(", ")}`,
+      "This diff was certified as-is (kit v34: scope is no longer a fail-closed ceiling). The files",
+      "above were NOT in this slice's declared scope and were not classified for risk/security tier.",
+      "################################################################################",
+      "",
+    ].join("\n"),
+  );
+}
 
 process.stdout.write(
   `LEVEL3_READINESS_PASS task=${taskId} feature=${feature} base=${baseSha} head=${finalState.headSha} files=${finalState.files.length}\n`,
