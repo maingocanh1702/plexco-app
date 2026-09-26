@@ -156,7 +156,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/autopilot-onboard.sh`** — No canonical copy.
 - **`scripts/autopilot-review-readiness.mjs`** — THE HEADER COUNTER-EXAMPLE. No KIT_VERSION header, and it IS a pack member. Also the most-patched kit file in this repo's history. Trusting the header would mark it safe to edit and a sync would erase the edit.
 - **`scripts/autopilot-root-lock`** — No canonical copy.
-- **`scripts/autopilot-scope-gate`** — Matches the pinned canonical pack after this explicit sync. Session-hook wiring remains the separately dated external snapshot above.
+- **`scripts/autopilot-scope-gate`** — The dormant session-hook would copy only this file if wired. Historical equality at KIT_VERSION 33 followed manual sync 8e737fe (2026-08-27). It now matches the explicit KIT_VERSION 42 sync from canonical 9e1e79043804767097f859ca201d42245cd9c50c. Read equality as the result of those manual syncs, NOT as evidence that no drift pressure exists; session-hook wiring remains the separately dated external snapshot above.
 - **`scripts/check-kit-pack-membership.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-kit-pack-membership.test.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-review-readiness.mjs`** — No canonical copy.

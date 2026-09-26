@@ -86,7 +86,7 @@
     {
       "path": "scripts/autopilot-scope-gate",
       "overwrite_path": "kit-sync",
-      "note": "Matches the pinned canonical pack after this explicit sync. Session-hook wiring remains the separately dated external snapshot above."
+      "note": "The dormant session-hook would copy only this file if wired. Historical equality at KIT_VERSION 33 followed manual sync 8e737fe (2026-08-27). It now matches the explicit KIT_VERSION 42 sync from canonical 9e1e79043804767097f859ca201d42245cd9c50c. Read equality as the result of those manual syncs, NOT as evidence that no drift pressure exists; session-hook wiring remains the separately dated external snapshot above."
     },
     {
       "path": "scripts/check-kit-pack-membership.mjs",
