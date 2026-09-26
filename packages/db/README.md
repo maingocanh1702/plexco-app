@@ -569,6 +569,35 @@ checks both ownership (`has_privs_of_role`, INHERIT-sensitive in PG16) and `CREA
 same idiom `0022`/`0023` use so a NOINHERIT migration role can apply it. Forward-only (P17); `0030` is
 applied and hash-locked and is **not** edited.
 
+## Tenant capability authority storage (DD-56, `0047` — CODE DARK)
+
+Milestone 1 of `tenant-capability-authority-core` (`ap3/features/tenant-routing-authz/PLAN.md`): the
+storage half of DD-56's single authorization source. Pinned DDL: `docs/features/BE/feature_tenant_routing_authz_tech.md`
+§2 "Target DDL"; seed = §4 AuthZ Action Matrix. No reader or writer exists yet: `authorize(action, actor, target)`
+is Milestone 2, the seven-route switch is Milestone 3, and grant/revoke commands are the follow-up task
+`tenant-sensitive-capability-grant-lifecycle`.
+
+- `tenant_capability_actions` — migration-owned closed registry, seeded with exactly the 17 tenant-scoped
+  keys: 10 `preset` (co-admin default, not delegable, including the four DD-86 `chat.*` keys), 6
+  `owner_grantable` (delegable by explicit grant) and `role.manage` as `owner_only`. The DD-51/DD-53
+  PlatformAdmin rows are not seeded (owner answer 2026-09-20). `tenant_capability_actions_class_flags_chk`
+  derives `delegable` and `co_admin_default` from `authority_class`, so the two can never disagree.
+  `app`, `app_worker` and `readonly` hold
+  **no** privilege on it.
+- `tenant_capability_grants` — tenant-private, expiring (`expires_at > granted_at`, both finite — `infinity` rejected by `tenant_capability_grants_finite_chk`), revocable delegation;
+  one non-revoked grant per `(tenant, grantee, action)` via the partial unique index
+  `idx_tenant_capability_grants_active … WHERE revoked_at IS NULL`. ENABLE + FORCE RLS with the `0009`
+  `tenant_isolation` policy; `app` is SELECT-only.
+- `tenant_capability_grant_audit` — append-only grant/revoke history (`0022` `job_audit_events` trigger
+  idiom), same RLS and SELECT-only posture, and a same-tenant composite FK
+  `(tenant_id, grant_id) → tenant_capability_grants(tenant_id, id)` (DD-68 / `0019` pattern).
+
+Additive to the pinned DDL (authored contract design decision, BE spec §5 test #25 storage half): the
+BEFORE INSERT OR UPDATE trigger `forbid_non_delegable_capability_grant()` raises `check_violation` when
+the registry row's `delegable` is not `true`, so `role.manage` and every preset key are rejected at storage,
+and an unknown key (no registry row) fails closed before the FK check runs. Covered by
+`src/tenant-capability-schema.test.ts`. Forward-only; every object is new.
+
 ## Open items inherited from docs (not blockers)
 
 - `messenger_*` is post-MVP (P4.8, DD-09) — included for forward compatibility.
