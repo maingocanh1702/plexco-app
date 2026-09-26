@@ -3,22 +3,22 @@
   "_freezing_rule": "Record every value WITH its provenance and measurement date, and mark anything measured outside this repository as stale-by-construction. Otherwise we freeze an unmeasured premise into the authority file — which is precisely what this file exists to prevent.",
   "_wiring_rule": "A mechanism may be described as ACTIVE only when its wiring point is measured: who invokes it, where, and an observed run or failure. Reading its code is not enough. A document describing it is not enough. This repository already runs that measurement on product code (resolveCapability with zero callers, authorizeTenantAction dark for eight days, chat_* tables with no reader) and had never run it on its own tooling.",
   "provenance": {
-    "authority_file": "autopilot/parallel/autopilot-update.sh, function pack_pairs() (line 32)",
-    "canonical_repo": "~/Projects/Claude template (branch main)",
-    "canonical_commit_read_at": "a2ba3ba95ea7b5d2e3f65d2ca3868153d9b23f34",
-    "also_verified_identical_at": "c672eaf60cd77534a9c6ef3289163b032de74028",
-    "measured_on": "2026-09-02",
-    "reverify_command": "cd \"$HOME/Projects/Claude template\" && git rev-parse HEAD && sed -n '/^pack_pairs() {/,/^EOF$/p' autopilot/parallel/autopilot-update.sh",
-    "note": "Canonical moved between those two commits while this was being written and pack_pairs() was byte-identical across the move. Two independent reads agreeing is stronger than one. If git rev-parse HEAD no longer prints the pinned commit, every row below is a claim about the past."
+    "authority_file": "autopilot/parallel/autopilot-update.sh, function pack_pairs()",
+    "canonical_repo": "~/Projects/Claude template (origin/main)",
+    "canonical_commit_read_at": "9e1e79043804767097f859ca201d42245cd9c50c",
+    "also_verified_identical_at": "782d714534d50f391850a02331c935a60d1e1cad",
+    "measured_on": "2026-09-27",
+    "reverify_command": "git -C \"$HOME/Projects/Claude template\" show 9e1e79043804767097f859ca201d42245cd9c50c:autopilot/parallel/autopilot-update.sh",
+    "note": "Read from the merged immutable commit exported via git archive; its tree matches the independently reviewed HEAD recorded above. The dirty local feat/ap3 checkout was not a copy source. Source Git modes and destination pack modes are verified separately."
   },
   "overwrite_mechanisms": {
     "kit-sync": {
       "status": "active",
-      "invoked_by": "a human running autopilot-update.sh",
+      "invoked_by": "autopilot-update.sh in an isolated consumer worktree",
       "latency": "next successful autopilot-update.sh run",
-      "scope": "all 13 pack_pairs targets",
-      "wiring_evidence": "autopilot-update.sh:174-178 — a single cp loop over pack_pairs(); there is no second copy path in that script",
-      "measured_on": "2026-09-02"
+      "scope": "all 15 pack_pairs targets",
+      "wiring_evidence": "autopilot-update.sh copy_pack(): one cp loop over pack_pairs, after the canonical unit/e2e publish gate",
+      "measured_on": "2026-09-27"
     },
     "session-hook": {
       "status": "dormant",
@@ -86,7 +86,7 @@
     {
       "path": "scripts/autopilot-scope-gate",
       "overwrite_path": "kit-sync",
-      "note": "The ONLY file the dormant session-hook would copy if it were ever wired. Measured 2026-09-03: identical to canonical, same KIT_VERSION on both sides. Read that as the result of the MANUAL sync 8e737fe (2026-08-27, 'sync the mechanism pack to KIT_VERSION 33') — NOT as evidence that no drift pressure exists. There is no safety net here today, only the discipline of whoever runs the sync."
+      "note": "Matches the pinned canonical pack after this explicit sync. Session-hook wiring remains the separately dated external snapshot above."
     },
     {
       "path": "scripts/check-kit-pack-membership.mjs",
@@ -146,7 +146,7 @@
     {
       "path": "docs/autopilot-templates/level3-workflow.md",
       "overwrite_path": "kit-sync",
-      "note": "The ONE target measured as diverged: 205 consumer-only lines, 2 canonical-only. It carries section 6.1 autonomous_to_ready, which canonical does not define. That is a decision->code gap inside the consumer (DD-107 ratified the mode; no code implements it), NOT consumer drift — framing it as drift aims the fix at the wrong target."
+      "note": "Canonical mirror matches the pinned source. Plexco DD-107 policy is preserved in consumer-owned docs/standards/plexco-level3-autonomy.md; synchronization does not implement a new validator mode."
     },
     {
       "path": "scripts/generate-pwa-icons.mjs",
@@ -177,6 +177,14 @@
       "path": "scripts/public-alias-moderate.mjs",
       "overwrite_path": "none",
       "note": "No canonical copy. Repo-owned owner CLI (L10a): public alias moderation (list pending, approve, reject) through the 0060 owner-only definers."
+    },
+    {
+      "path": "scripts/ap-evidence.sh",
+      "overwrite_path": "kit-sync"
+    },
+    {
+      "path": ".github/workflows/autopilot-backlog-audit.yml",
+      "overwrite_path": "kit-sync"
     }
   ],
   "pack_pairs_verbatim": [
@@ -190,7 +198,9 @@
     "manifests/_TEMPLATE.json:docs/autopilot-manifests/_TEMPLATE.json:100644",
     "readiness-evidence.TEMPLATE.json:docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json:100644",
     "ap-finish.sh:scripts/ap-finish.sh:100755",
+    "ap-evidence.sh:scripts/ap-evidence.sh:100755",
     "ap-housekeep.sh:scripts/ap-housekeep.sh:100755",
+    "templates/autopilot-backlog-audit.yml:.github/workflows/autopilot-backlog-audit.yml:100644",
     "../autopilot-prompt-GENERIC.md:docs/autopilot-templates/autopilot-prompt-GENERIC.md:100644",
     "../level3-workflow.md:docs/autopilot-templates/level3-workflow.md:100644"
   ],

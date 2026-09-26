@@ -1,5 +1,40 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 8
+# KIT_VERSION: 9
+# v9 (2026-09-02) — two independent, narrowly-scoped fixes, both found while measuring real backlog
+# drift across two consumer repos for a canonical-first fix pass (see
+# docs/backlog-reconcile-drift-measurement.md). Neither changes a bucket, an exit code, or adds a new
+# probe type.
+#
+# (1) The no-probe and WEAK-PROBE nags always said "add: merged_probe: <file> :: <symbol>", even for a
+# task whose entire scope is docs/config and can never carry a symbol. v5 already built the correct
+# escape hatch for exactly this shape (close_by: hand) — but the nag never mentioned it, so an author
+# staring at impossible advice had no way to discover the field that fixes it short of reading this
+# file's own header. Measured live in one consumer (pinned-SHA snapshot, see
+# docs/backlog-reconcile-drift-measurement.md — this repo is under active concurrent development and
+# the exact count will already have moved again): 27 of 33 planned/ready/blocked tasks had NO
+# merged_probe at all, two of them scoped entirely to docs/*.md, and none had a well-formed close_by
+# (one had attempted a malformed one). This is
+# deliberately NOT a new evidence kind: a second probe TYPE for "looks docs-only" would have to sniff
+# scope or content to decide when it applies, which is exactly the discriminating-vs-literal judgment
+# call that produced the ap-93 false-flip this file already guards against elsewhere. Instead this
+# reuses scope_can_carry_symbol() — the same fail-closed, non-heuristic, already-audited predicate the
+# close_by ABUSE guard already trusts — to print an actionable hint pointing at the field that already
+# solves this, gated on should_suggest_close_by(): only when no close_by is declared AND the scope
+# structurally cannot carry a symbol. Advisory text only. Does not fix the larger gap it was measured
+# against: ~80% of tasks carrying neither a probe nor a close_by is an authoring-discipline problem, not
+# a detection problem, and no nag wording fixes a field nobody looked at — filed open, not attempted
+# here (docs/kit-design-debt.md §12).
+#
+# (2) is_wellformed_close_by()'s single MALFORMED path conflated two different defects behind one
+# message ("the reason is missing or empty"). Observed for real the same day: a consumer's close_by
+# value was "fix/dkb-reprice-race @ <sha> (pushed, NOT merged — founder decision...)" — a detailed,
+# present reason that simply never started with the required literal "hand" — and the message told its
+# author their reason was missing, which is visibly false in their own file. Split into two exit codes
+# (1: no "hand" keyword at all; 2: "hand" present, nothing follows it) so each message is true of what
+# it describes. Behavior unchanged either way: both still fall through to the strict rules and exempt
+# nothing. (That value is also a close_by use this field was never designed for — an intentional
+# non-merge decision, not a no-symbol-possible docs slice. Real and legitimate-looking, but a different
+# question than either fix here; filed separately, docs/kit-design-debt.md §12.)
 # v8 (2026-08-05) — a `ready` task carrying close_by:hand ages out. Measured in a consumer repo: three
 # close_by:hand tasks were simultaneously wrong (all three had already merged, contradicting their own
 # "ready" status) while this script reported "No stale entries" — the manual-close bucket is excluded
@@ -268,15 +303,38 @@ while IFS= read -r line; do ROWS+=("$line"); done < <(awk -v S="$SEP" '
 # The `·` in the documented form is CONVENTION, not syntax: a rule that hinges on one hard-to-type
 # character invents a fresh class of authoring error while protecting nothing. Any separator is accepted;
 # an absent reason is not.
+#
+# Two DISTINCT exit codes for the two DISTINCT ways this can be wrong (kit v9) — 0 well-formed; 1 the
+# value never starts with the required `hand` keyword at all; 2 `hand` is present but nothing (or only
+# separator characters) follows it. Before v9 both collapsed into one "MALFORMED ... the reason is
+# missing or empty" message, which is simply false for case 1: a value like
+# "fix/dkb-reprice-race @ <sha> (pushed, NOT merged — founder decision...)" carries a very real,
+# detailed reason, it just never opens with "hand". Telling that author their reason is missing, when
+# it is sitting right there in their own file, points them at the wrong defect. The caller below picks
+# the message from the code; behavior is unchanged for both — either way the field grants nothing and
+# the strict rules run.
 is_wellformed_close_by() {
   case "$1" in
-    hand) return 1 ;;
+    hand) return 2 ;;
     hand[[:space:]]*) ;;
     *) return 1 ;;
   esac
   _r="${1#hand}"
   _r="$(printf '%s' "$_r" | tr -d '[:space:]·:-')"
-  [ -n "$_r" ]
+  [ -n "$_r" ] && return 0
+  return 2
+}
+
+# should_suggest_close_by <close_by_value> <scope> — 0 iff no close_by is already declared AND the
+# scope structurally cannot carry a symbol (kit v9). Reuses scope_can_carry_symbol() as-is: same
+# fail-closed rule, same false-positive profile, already audited by the ABUSE guard above — this adds
+# no new heuristic surface, it only asks the existing predicate one more time from a different call
+# site. Deliberately silent (returns 1, no suggestion) once a task already grants nothing to check.
+should_suggest_close_by() {
+  _sscb_cb="$1" _sscb_sc="$2"
+  [ -z "$_sscb_cb" ] || return 1
+  scope_can_carry_symbol "$_sscb_sc" && return 1
+  return 0
 }
 
 # A scope entry that could carry a greppable symbol disqualifies close_by: write a real probe instead.
@@ -338,9 +396,15 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
   IFS="$SEP" read -r slug st pf pr cb sc stln <<< "$row"
 
   if [ -n "$cb" ]; then
-    if ! is_wellformed_close_by "$cb"; then
+    is_wellformed_close_by "$cb"; _wf_code=$?
+    if [ "$_wf_code" -ne 0 ]; then
       # Fall through to the strict rules below — declaring the field badly must exempt nothing.
-      echo "  ✗ MALFORMED close_by: $slug ($st) — declared but the reason is missing or empty."
+      if [ "$_wf_code" -eq 1 ]; then
+        echo "  ✗ MALFORMED close_by: $slug ($st) — does not start with the required 'hand' keyword."
+        echo "       Value: $cb"
+      else
+        echo "  ✗ MALFORMED close_by: $slug ($st) — 'hand' is present but no reason follows it."
+      fi
       echo "       Treated as UNDECLARED; the strict probe rules still apply, nothing was exempted."
       echo "       Fix: 'close_by: hand <one-line reason>' — the reason is the whole point of the field."
       echo "       Any separator works; the · in the docs is convention, not syntax."
@@ -373,6 +437,10 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
 
   if [ -z "$pf" ] || [ -z "$pr" ]; then
     echo "  ?  $slug ($st) — no merged_probe (can't auto-verify; add: merged_probe: <file> :: <symbol>)"
+    if should_suggest_close_by "$cb" "$sc"; then
+      echo "       hint: scope is docs/config-only — no code symbol can ever exist here. If that's"
+      echo "       actually true, use 'close_by: hand <reason>' instead (see v5 header above)."
+    fi
     continue
   fi
   if git -C "$REPO" grep -qE "$pr" "origin/$DEFAULT_BRANCH" -- "$pf" 2>/dev/null; then
@@ -383,6 +451,10 @@ for row in ${ROWS[@]+"${ROWS[@]}"}; do
       echo "  ✗ WEAK-PROBE: $slug ($st) — probe '$pr' matched but is NOT a slice-unique symbol"
       echo "       (shared literal → collides with unrelated origin/$DEFAULT_BRANCH content). REFUSING to auto-flip;"
       echo "       replace merged_probe with a code symbol this slice introduces."
+      if should_suggest_close_by "$cb" "$sc"; then
+        echo "       hint: scope is docs/config-only — if no code symbol can ever exist here, use"
+        echo "       'close_by: hand <reason>' instead (see v5 header above)."
+      fi
       weak+=("$slug")
     fi
   else

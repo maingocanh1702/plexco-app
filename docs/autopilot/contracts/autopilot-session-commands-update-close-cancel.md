@@ -113,7 +113,7 @@ implement.
 
 So the first production caller of `authorizeTenantAction` cannot be written until the owner mints the
 per-op action-class value(s) in the billing contract + `authorizeTenantAction`. Per the demotion rule
-(level3-workflow.md §6.1:289-294), a change a DD authorizes **by name (artifact AND change)** is Tier
+(plexco-level3-autonomy.md §6.1), a change a DD authorizes **by name (artifact AND change)** is Tier
 A; "a DD that says 'we should improve X' authorizes nothing." DD-105 approves the direction only →
 this is **not** demoted → it stays **Tier C item #1** (new/changed money/billing contract). This is a
 correct `NOT_CODE_READY`, not a failure of authoring.
@@ -239,7 +239,7 @@ Rows **U5 / CL3 / CA5** (the suspension re-checks) cannot be authored to a PASS 
 `<per-op-class>` literal they call does not exist (B1). That is why G4 is `PARTIAL` and the verdict is
 `NOT_CODE_READY`.
 
-## 6. Tier classification of every open question (level3-workflow §6.1)
+## 6. Tier classification of every open question (plexco-level3-autonomy.md §6.1)
 
 | Question | Tier | Disposition |
 |---|---|---|

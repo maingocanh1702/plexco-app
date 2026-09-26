@@ -63,7 +63,7 @@ niệm đã có (`persons` / `accounts` / `channel_identities` / `memberships`).
 ## 2. Thang authority — ai thắng ai khi hai doc mâu thuẫn
 
 Docs trong repo này **có** mâu thuẫn nhau (audit 2026-08-13 tìm thấy xung đột đồng thời ở spec,
-playbook, template và index). Nên có thang viết sẵn — `level3-workflow.md` §6.1. Bậc trên thắng:
+playbook, template và index). Nên có thang viết sẵn — `plexco-level3-autonomy.md` §6.1. Bậc trên thắng:
 
 | # | Authority | Vì sao trên bậc dưới |
 |---|---|---|
@@ -1070,7 +1070,7 @@ Kết quả verify được trên đĩa:
 Thứ tự trong `ap-finish.sh` đáng nhớ: **archive state dir → remove worktree → ghi disposition →
 `cleanup`**. Archive đứng trước xoá là toàn bộ lý do v31 tồn tại (§6 bước 9).
 
-Successor **được pre-authorize** theo `level3-workflow.md` §6.1 — design cause gọi tên được (packet
+Successor **được pre-authorize** theo `plexco-level3-autonomy.md` §6.1 — design cause gọi tên được (packet
 reconcile manifest tích tụ 3 lớp thay vì author một manifest price-only sạch; reviewer attempt-01 đã
 đề nghị đúng cách kia) và finding đã accept — nhưng phải **register mới từ `main` sạch**.
 

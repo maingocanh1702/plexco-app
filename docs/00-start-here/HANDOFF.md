@@ -180,7 +180,7 @@
 > đã `cleanup`, **branch `feat/…--price-only` giữ lại** để tra cứu.
 > HALT này **có design cause gọi tên được** (packet reconcile manifest tích tụ 3 lớp thay vì author một
 > manifest price-only sạch — 5/6 vòng là cái đuôi tự gây ra; reviewer attempt-01 đã đề nghị đúng cách
-> kia) **và finding đã được accept** ⇒ successor **được pre-authorize** theo `level3-workflow.md` §6.1,
+> kia) **và finding đã được accept** ⇒ successor **được pre-authorize** theo `plexco-level3-autonomy.md` §6.1,
 > **register mới từ `main` sạch**. Nợ còn lại: `ap-finish` cố ý **không** commit backlog — chạy
 > `scripts/autopilot-backlog-reconcile --check` rồi `--fix` qua đường commit có root-lock.
 >

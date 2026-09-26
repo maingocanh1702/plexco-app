@@ -62,18 +62,18 @@ awk '/^# KIT_VERSION:/{print $3; exit}' scripts/autopilot-scope-gate
 
 | Field | Value |
 |---|---|
-| Canonical repository | ~/Projects/Claude template (branch main) |
-| **Canonical commit read at** | `a2ba3ba95ea7b5d2e3f65d2ca3868153d9b23f34` |
-| Also verified identical at | `c672eaf60cd77534a9c6ef3289163b032de74028` |
-| Authority file | autopilot/parallel/autopilot-update.sh, function pack_pairs() (line 32) |
-| Measured on | 2026-09-02 |
+| Canonical repository | ~/Projects/Claude template (origin/main) |
+| **Canonical commit read at** | `9e1e79043804767097f859ca201d42245cd9c50c` |
+| Also verified identical at | `782d714534d50f391850a02331c935a60d1e1cad` |
+| Authority file | autopilot/parallel/autopilot-update.sh, function pack_pairs() |
+| Measured on | 2026-09-27 |
 
-Canonical moved between those two commits while this was being written and pack_pairs() was byte-identical across the move. Two independent reads agreeing is stronger than one. If git rev-parse HEAD no longer prints the pinned commit, every row below is a claim about the past.
+Read from the merged immutable commit exported via git archive; its tree matches the independently reviewed HEAD recorded above. The dirty local feat/ap3 checkout was not a copy source. Source Git modes and destination pack modes are verified separately.
 
 Re-verify with:
 
 ```bash
-cd "$HOME/Projects/Claude template" && git rev-parse HEAD && sed -n '/^pack_pairs() {/,/^EOF$/p' autopilot/parallel/autopilot-update.sh
+git -C "$HOME/Projects/Claude template" show 9e1e79043804767097f859ca201d42245cd9c50c:autopilot/parallel/autopilot-update.sh
 ```
 
 ### `pack_pairs()`, verbatim and unreordered
@@ -89,7 +89,9 @@ parallel-scope-gate.md:docs/autopilot-parallel-scope-gate.md:100644
 manifests/_TEMPLATE.json:docs/autopilot-manifests/_TEMPLATE.json:100644
 readiness-evidence.TEMPLATE.json:docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json:100644
 ap-finish.sh:scripts/ap-finish.sh:100755
+ap-evidence.sh:scripts/ap-evidence.sh:100755
 ap-housekeep.sh:scripts/ap-housekeep.sh:100755
+templates/autopilot-backlog-audit.yml:.github/workflows/autopilot-backlog-audit.yml:100644
 ../autopilot-prompt-GENERIC.md:docs/autopilot-templates/autopilot-prompt-GENERIC.md:100644
 ../level3-workflow.md:docs/autopilot-templates/level3-workflow.md:100644
 ```
@@ -103,10 +105,10 @@ an observed run or failure. Reading its code is not enough; a document describin
 
 | Mechanism | Status | Invoked by | Latency | Measured |
 |---|---|---|---|---|
-| `kit-sync` | **active** | a human running autopilot-update.sh | next successful autopilot-update.sh run | 2026-09-02 |
+| `kit-sync` | **active** | autopilot-update.sh in an isolated consumer worktree | next successful autopilot-update.sh run | 2026-09-27 |
 | `session-hook` | **dormant** | NOTHING — the file exists but is registered nowhere | n/a while dormant | 2026-09-03 |
 
-**`kit-sync`** — autopilot-update.sh:174-178 — a single cp loop over pack_pairs(); there is no second copy path in that script
+**`kit-sync`** — autopilot-update.sh copy_pack(): one cp loop over pack_pairs, after the canonical unit/e2e publish gate
 
 **`session-hook`** — ~/.claude/hooks/autopilot-sync.cjs exists (mtime 2026-06-23) and its code would copy autopilot-scope-gate. But ~/.claude/settings.json registers exactly two hooks — Notification -> claude-notify-hook.sh and PostToolUse -> claude-heartbeat-hook.sh. There is NO SessionStart hook. `grep -rn autopilot-sync ~/.claude/settings*.json` returns nothing, and nothing in the canonical kit invokes it.
 
@@ -146,6 +148,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/check-dev-login-exclusion.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/outbox-dlq-replay.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/public-alias-moderate.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/ap-evidence.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
 - **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69.
 - **`scripts/autopilot-ephemeral-review-worktree.test.mjs`** — No canonical copy.
@@ -153,7 +156,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/autopilot-onboard.sh`** — No canonical copy.
 - **`scripts/autopilot-review-readiness.mjs`** — THE HEADER COUNTER-EXAMPLE. No KIT_VERSION header, and it IS a pack member. Also the most-patched kit file in this repo's history. Trusting the header would mark it safe to edit and a sync would erase the edit.
 - **`scripts/autopilot-root-lock`** — No canonical copy.
-- **`scripts/autopilot-scope-gate`** — The ONLY file the dormant session-hook would copy if it were ever wired. Measured 2026-09-03: identical to canonical, same KIT_VERSION on both sides. Read that as the result of the MANUAL sync 8e737fe (2026-08-27, 'sync the mechanism pack to KIT_VERSION 33') — NOT as evidence that no drift pressure exists. There is no safety net here today, only the discipline of whoever runs the sync.
+- **`scripts/autopilot-scope-gate`** — Matches the pinned canonical pack after this explicit sync. Session-hook wiring remains the separately dated external snapshot above.
 - **`scripts/check-kit-pack-membership.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-kit-pack-membership.test.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-review-readiness.mjs`** — No canonical copy.
@@ -182,8 +185,9 @@ file happens to sit in.
 | `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `docs/autopilot-templates/autopilot-prompt-GENERIC.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `docs/autopilot-templates/level3-workflow.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `.github/workflows/autopilot-backlog-audit.yml` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
-- **`docs/autopilot-templates/level3-workflow.md`** — The ONE target measured as diverged: 205 consumer-only lines, 2 canonical-only. It carries section 6.1 autonomous_to_ready, which canonical does not define. That is a decision->code gap inside the consumer (DD-107 ratified the mode; no code implements it), NOT consumer drift — framing it as drift aims the fix at the wrong target.
+- **`docs/autopilot-templates/level3-workflow.md`** — Canonical mirror matches the pinned source. Plexco DD-107 policy is preserved in consumer-owned docs/standards/plexco-level3-autonomy.md; synchronization does not implement a new validator mode.
 
 ---
 
