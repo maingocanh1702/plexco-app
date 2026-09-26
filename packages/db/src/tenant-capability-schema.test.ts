@@ -302,6 +302,25 @@ describe("tenant_capability_grants — storage constraints", () => {
     }
   });
 
+  it("CHECK isfinite rejects an 'infinity' expiry or a '-infinity' start (a grant must actually expire)", async () => {
+    const cases: Array<[string, string]> = [
+      ["2026-01-01T00:00:00Z", "infinity"],
+      ["-infinity", "2026-06-01T00:00:00Z"],
+      ["-infinity", "infinity"],
+    ];
+    for (const [grantedAt, expiresAt] of cases) {
+      await expectErrorChainToMatch(
+        ctx.owner.query(
+          `INSERT INTO tenant_capability_grants
+             (tenant_id, grantee_person_id, action_key, reason, granted_by_person_id, granted_at, expires_at)
+           VALUES ($1, $2, 'billing.manage', 'r', $3, $4, $5)`,
+          [ctx.tenantA, granteeA, ownerA, grantedAt, expiresAt],
+        ),
+        /tenant_capability_grants_finite_chk/,
+      );
+    }
+  });
+
   it("allows one active grant per (tenant, grantee, action) — the index is WHERE revoked_at IS NULL", async () => {
     const first = await insertGrant({
       tenantId: ctx.tenantA,

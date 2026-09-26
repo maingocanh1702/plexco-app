@@ -107,6 +107,9 @@ CREATE TABLE tenant_capability_grants (
   expires_at timestamptz NOT NULL,
   revoked_at timestamptz,
   CONSTRAINT tenant_capability_grants_expiry_chk CHECK (expires_at > granted_at),
+  -- timestamptz accepts 'infinity' / '-infinity', and 'infinity' > any finite granted_at, so the
+  -- ordering CHECK alone lets an "expiring" grant never expire. Both ends must be real instants.
+  CONSTRAINT tenant_capability_grants_finite_chk CHECK (isfinite(granted_at) AND isfinite(expires_at)),
   -- target of the audit table's same-tenant composite FK (DD-68 / 0019 pattern)
   CONSTRAINT tenant_capability_grants_tenant_id_candidate_key UNIQUE (tenant_id, id)
 );

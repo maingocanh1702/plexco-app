@@ -584,7 +584,7 @@ is Milestone 2, the seven-route switch is Milestone 3, and grant/revoke commands
   derives `delegable` and `co_admin_default` from `authority_class`, so the two can never disagree.
   `app`, `app_worker` and `readonly` hold
   **no** privilege on it.
-- `tenant_capability_grants` — tenant-private, expiring (`expires_at > granted_at`), revocable delegation;
+- `tenant_capability_grants` — tenant-private, expiring (`expires_at > granted_at`, both finite — `infinity` rejected by `tenant_capability_grants_finite_chk`), revocable delegation;
   one non-revoked grant per `(tenant, grantee, action)` via the partial unique index
   `idx_tenant_capability_grants_active … WHERE revoked_at IS NULL`. ENABLE + FORCE RLS with the `0009`
   `tenant_isolation` policy; `app` is SELECT-only.

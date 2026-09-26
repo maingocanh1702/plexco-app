@@ -1806,6 +1806,7 @@ export const tenantCapabilityGrants = pgTable("tenant_capability_grants", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 }, (t) => ({
   expiryChk: check("tenant_capability_grants_expiry_chk", sql`${t.expiresAt} > ${t.grantedAt}`),
+  finiteChk: check("tenant_capability_grants_finite_chk", sql`isfinite(${t.grantedAt}) AND isfinite(${t.expiresAt})`),
   tenantIdCandidateKey: unique("tenant_capability_grants_tenant_id_candidate_key").on(t.tenantId, t.id),
   activeUq: uniqueIndex("idx_tenant_capability_grants_active")
     .on(t.tenantId, t.granteePersonId, t.actionKey)
