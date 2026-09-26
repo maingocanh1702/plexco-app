@@ -413,23 +413,63 @@ async function spawnWorkerBriefly(
   directUrl: string,
   extraEnv: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string }> {
+  return runUntilTimeout(
+    TSX_BIN,
+    [WORKER_ENTRYPOINT],
+    { ...process.env, DATABASE_URL_DIRECT: directUrl, ...extraEnv },
+    3000,
+  );
+}
+
+/**
+ * Run a long-lived process for `timeoutMs`, then return what it printed. The timeout's SIGTERM is
+ * the expected ending. A process that handles SIGTERM and exits 0 (worker.ts's shutdown does)
+ * RESOLVES execFile's promise instead of rejecting it, so "resolved" alone does not mean the
+ * process quit early: `child.killed` tells the two apart. Reading "resolved" as an early exit made
+ * both spawned-worker tests fail on macOS, where the graceful shutdown finishes inside the window.
+ */
+async function runUntilTimeout(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
+  const run = execFileAsync(file, args, { env, timeout: timeoutMs });
   let exited: { stdout: string; stderr: string };
   try {
-    exited = await execFileAsync(TSX_BIN, [WORKER_ENTRYPOINT], {
-      env: { ...process.env, DATABASE_URL_DIRECT: directUrl, ...extraEnv },
-      timeout: 3000,
-    });
+    exited = await run;
   } catch (error) {
     const e = error as { stdout?: string; stderr?: string };
     return { stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
   }
+  if (run.child.killed) return exited;
   // Thrown outside the try: inside it, the catch above swallowed this error and returned empty
   // output, so an early exit surfaced as "expected '' to contain ..." with the real output lost.
   throw new Error(
-    "worker exited on its own — expected a timeout-triggered SIGTERM instead\n" +
+    "process exited on its own — expected a timeout-triggered SIGTERM instead\n" +
       `stdout:\n${exited.stdout}\nstderr:\n${exited.stderr}`,
   );
 }
+
+describe("runUntilTimeout", () => {
+  it("returns the output when the timeout's SIGTERM ends a process that exits 0 on SIGTERM", async () => {
+    const script = [
+      'console.log("up");',
+      "setInterval(() => {}, 60_000);",
+      'process.on("SIGTERM", () => process.exit(0));',
+    ].join(" ");
+    const { stdout } = await runUntilTimeout(process.execPath, ["-e", script], process.env, 500);
+    // execFile destroys the pipes when the timeout fires, so the SIGTERM handler's own line is
+    // never captured; what matters is that this resolves instead of throwing "exited on its own".
+    expect(stdout).toBe("up\n");
+  });
+
+  it("throws, with the output, when the process exits before the timeout", async () => {
+    await expect(
+      runUntilTimeout(process.execPath, ["-e", 'console.log("bye")'], process.env, 5_000),
+    ).rejects.toThrow(/exited on its own[\s\S]*bye/);
+  });
+});
 
 describe("main() — boss.work() registration (spawned process)", () => {
   it(
