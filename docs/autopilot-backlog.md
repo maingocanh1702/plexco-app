@@ -21,6 +21,8 @@ Ghi rõ trong `notes`: **ai** đóng được, **bằng gì**, và điều kiệ
 Lý do có trạng thái này: AP-22 từng mang `ready` dù đã HALT fail-closed đúng và output đã merge, nên nó bị
 launch lại và lặp y nguyên kết luận cũ.
 
+> **📌 Backlog reconcile 2026-09-26 (correction only).** 35 rows flipped `in-flight` → `merged` by hand: the 06/09 audit rows A1–A7, B3, B4, C1–C3, D5, D7–D9, D11–D13, D15, W4, W6–W11, W13, W14, X5, `identity-link-code-issue-consume`, `web-csp-script-src-nonce`, `db-channel-identities-platform-chk-drop-telegram`, `test-harness-job-definer-lock-client-leak` and `audit-2026-09-06-codex-review-rounds-closeout`. All had landed on `origin/main` on 2026-09-06/07; each row now carries `note_merged` with the landing commit and how it was verified (two probes, A3 and A5, were WEAK and were checked by commit instead). `scripts/autopilot-backlog-reconcile` never saw them because it only parses `planned|ready|blocked` -- same blind spot as the 2026-09-03 `idea` case.
+
 > **📌 Backlog reconcile 2026-08-11 (correction only — không phải full queue re-audit).** Sau `0e8d252`
 > (AP-51 `deps-osv-transitive-floors`, merged): ba task đóng **`status: superseded`** (không phải
 > `merged` — none từng vào lane riêng/register/in-flight, deliverable đi qua lane KHÁC là AP-51, xem
@@ -4879,7 +4881,8 @@ notes: |
 
 ## task: audit-2026-09-06-a1-ci-origin-main
 title: CI/readiness so `main` bằng `origin/main` thay vì `refs/heads/main` (audit X-1 — 50 AUTHORITY_NOT_MAIN giả trên checkout PR-shaped)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `837097f` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 trên branch `fix/a1-ci-origin-main` (phiên cloud, KHÔNG register lane) — merge là việc owner; flip `merged` bằng tay khi land (in-flight không nằm trong tập reconcile quét).
 risk: P2
 change_class: tooling
@@ -4896,7 +4899,8 @@ notes: |
 
 ## task: audit-2026-09-06-a2-tenant-provision-rls
 title: `tenant_provision` + `tenant_ids_for_person` chạy được dưới role owner NOBYPASSRLS — migration `0037` (audit D-2)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5754065` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 trên branch `fix/a2-tenant-provision-rls` (`0037_tenant_provision_rls_self_scope.sql` + test trong migrate.test.ts). Verify bằng psql replay 37 migration dưới owner NOBYPASSRLS; vitest CHƯA chạy (môi trường cloud không có node_modules). Flip `merged` bằng tay khi land.
 risk: P2
 change_class: schema-migration
@@ -4911,7 +4915,8 @@ notes: |
 
 ## task: audit-2026-09-06-a3-readiness-telegram
 title: Readiness predicate theo spec (club_config + bank_connect + first_session; zalo optional) và gỡ đường login Telegram sống (audit W-5, W-1)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `8225e0d` on origin/main; probe `OPTIONAL_STEPS` is WEAK (identifier existed since 2026-07-06), so verified by the fix commit on this row's scope instead. Was: in-flight
 _readiness: AUTHORED 2026-09-06 trên branch `fix/a3-readiness-telegram`. Giữ lại tầng db `loginTelegram` + SQL `auth_login_telegram` (60 call site test) — phần đó là row `db-channel-identities-platform-chk-drop-telegram`.
 risk: P2
 change_class: code
@@ -4926,7 +4931,8 @@ notes: |
 
 ## task: audit-2026-09-06-a4-subscriptions-definer
 title: `app` mất INSERT/UPDATE/DELETE trên `subscriptions`; `authorizeTenantAction`/`resolveCapability` đọc qua `resolve_subscription_locked()` SECURITY DEFINER — migration `0038` (audit D-1)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `c17198c` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 trên branch `fix/a4-subscriptions-definer` (trên A2). Definer assert `p_tenant_id = app.tenant_id` (khuôn 0033), khác 0027. Flip `merged` bằng tay khi land.
 risk: P2
 change_class: schema-migration
@@ -4941,7 +4947,8 @@ notes: |
 
 ## task: audit-2026-09-06-a5-dispatcher-completion-grammar
 title: Dispatcher completion grammar: chuẩn hoá error_code, next_attempt_at quá khứ/NaN → dlq `malformed_next_attempt`, SQLSTATE 22023 → dlq `malformed_outcome`; worker từ chối bật schedule khi deliver là stub (audit B-1)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `84fbb26 (follow-up a11088d, 2026-09-16)` on origin/main; probe `completionArgs` is WEAK (identifier existed since 2026-07-27), so verified by the fix commit on this row's scope instead. Was: in-flight
 _readiness: AUTHORED 2026-09-06 trên branch `fix/a5-dispatcher`. Test PG + pure thêm vào dispatcher.test.ts / schedule.test.ts — CHƯA chạy vitest trong cloud. Flip `merged` bằng tay khi land.
 risk: P2
 change_class: code
@@ -4956,7 +4963,8 @@ notes: |
 
 ## task: audit-2026-09-06-a6-headers-ratelimit
 title: Baseline security headers toàn cục (HSTS/XFO/nosniff/Referrer/Permissions/CSP không script-src) + rate-limit và bounded body cho `POST /api/auth/google/complete` (audit W-2, W-3)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `35ae4b3` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 trên branch `fix/a6-headers-ratelimit` (trên A3). Route được thực thi thật dưới tsx với stub @plexco/db (10 hành vi pass); vitest/tsc/next build CHƯA chạy. Flip `merged` bằng tay khi land.
 risk: P2
 change_class: security-posture
@@ -4971,7 +4979,8 @@ notes: |
 
 ## task: audit-2026-09-06-a7-compose-loopback-app-role
 title: Dev compose bind loopback (5432/3000/3001); web chạy role `app`, discovery `readonly`; worker bỏ `env_file` (audit X-2, X-4)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `8b91b9c` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 trên branch `fix/a7-compose`. `docker compose config` render `host_ip: 127.0.0.1`; RLS đo sống bằng psql (app không GUC → 0 row). `compose up` thật chưa chạy. Flip `merged` bằng tay khi land — SAU A2 (web role app làm D-2 lộ ở dev).
 risk: P2
 change_class: infra-tooling
@@ -5093,7 +5102,8 @@ notes: |
 
 ## task: identity-link-code-issue-consume
 title: Identity link_code issue/consume (khối 2 launch DD-113) — schema DD-50 (0039) đủ cột; merge tách sang `chat-identity-merge-reparent-enablement`
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `93016b2` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane C4 `fix/c4-identity-link-code`, CHƯA merge — flip `merged` bằng tay khi land). 0043: `link_code_issue` (issuer XOR channel/account, derive person server-side, supersede code cũ của cùng person, TTL ≤ 1h) · `link_code_salt` (read-only) · `link_code_consume` (spec §4 bước 1–5: candidate read-only → lock accounts→persons→channel_identities→row → re-derive issuer+target → terminal check TRƯỚC accounting → wrong verifier = 1 UPDATE có điều kiện + cooldown → right = 1 claim có điều kiện; outcome consumed|same_person|wrong_code|invalid) — EXECUTE `app` only. `packages/db/src/identity.ts`: code **18 ký tự Crockford (90 bit) TÁCH ĐÔI** — 8 ký tự đầu (40 bit) là lookup component được HMAC, verifier scrypt phủ TOÀN BỘ code; plaintext không bao giờ vào SQL. Sửa 07/09: bản đầu derive cả hai hash từ nguyên code ⇒ trúng lookup là chắc chắn trúng verifier, `wrong_code` không bao giờ xảy ra, và `failed_attempts`/`locked_until`/`max_attempts` (3 cột DD-50 của 0039) là code chết — tầng DB không bound gì cho việc đoán mã. Tách code làm nhánh đó chạm tới được và test giờ đi qua wrapper thật thay vì gọi thẳng definer bằng random bytes. Cũng đổi scrypt sang async (bản sync chặn event loop ~70–160 ms MỖI lần consume, kể cả mã không tồn tại) và thêm `_link_code_retention` 30 ngày (khuôn 0016/DD-80, không grant cho ai). HÀNG RÀO: KHÔNG merge plan table (consume TRẢ merge intent; merge lane mở rộng bằng CREATE OR REPLACE), KHÔNG endpoint-scope (DD-65..68 chưa có cột), KHÔNG route/bot command, KHÔNG env (`LINK_CODE_LOOKUP_HMAC_KEY` do lane surface thêm khi có reader). Owner có thể chọn posture 0034 (REVOKE app tới khi merge lane land) — 1 dòng.
 risk: P2
 change_class: identity-feature
@@ -5120,7 +5130,8 @@ notes: |
 
 ## task: web-csp-script-src-nonce
 title: CSP `script-src 'nonce-…'` per-request qua middleware Next (App Router inline bootstrap) — hoàn thiện header A6
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Middleware nonce sau flag `CSP_SCRIPT_NONCE_ENABLED="true"` (OFF mặc định — không chạy được `next start` ở cloud). Row chỉ đóng khi owner bật flag sau khi verify trên trình duyệt thật; merge branch KHÔNG tự đóng row này.
 risk: P3
 change_class: security-posture
@@ -5186,7 +5197,8 @@ notes: |
 
 ## task: test-harness-job-definer-lock-client-leak
 title: `withJobDefinerLock` leaks its pg.Client if connect()/pg_advisory_lock rejects — cùng lớp với chat-definer leak đã sửa (`491a334`)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; no merged_probe on this row, so verified by reading the code: `withJobDefinerLock` in packages/db/src/test-harness.ts now wraps connect()+lock in try/catch and end()s the client before rethrowing. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). withJobDefinerLock: connect()+lock trong try/catch, end() rồi rethrow. Test đơn vị cho helper CHƯA thêm (mock pg.Client) — thêm khi chạy được vitest.
 risk: P2
 change_class: test-infra
@@ -5202,7 +5214,8 @@ notes: |
 
 ## task: db-channel-identities-platform-chk-drop-telegram
 title: Gỡ tầng db của Telegram: DROP `auth_login_telegram()`, trigger chặn mọi row TRỞ THÀNH `telegram`, thay factory test `loginTelegram` (54 call site) — follow-up của A3
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `e121dbb` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06, sửa 07/09 (phiên cloud, lane C3 `fix/c3-telegram-db-tail`, CHƯA merge — flip `merged` bằng tay khi land). 0042: DROP FUNCTION `auth_login_telegram`; luật platform là TRIGGER `trg_channel_identities_no_new_telegram` + `..._no_become_telegram`, KHÔNG phải CHECK. Lý do đổi (đo 07/09): `NOT VALID` chỉ bỏ qua lần quét ĐẦU, sau đó vẫn enforce trên MỌI UPDATE của row — nên trên row telegram cũ thì `SET status='inactive'`, re-parent khi merge, và cả no-op update đều 23514, chỉ còn DELETE. Tức là CHECK ĐÓNG BĂNG đúng những row mà nó tự nhận là "khoan dung". Trigger diễn đạt đúng luật (không có row nào được TẠO hay TRỞ THÀNH telegram) và giữ mọi cột khác ghi được. `channel_identities_platform_chk` vẫn nguyên (CND-3 pin byte-for-byte). Hệ quả: KHÔNG còn bước `VALIDATE` nào; đếm row telegram vẫn nên làm nhưng là kiểm kê cho quyết định archive DD-37, không phải cổng cho migration này.
 risk: P2
 change_class: schema-migration
@@ -5244,7 +5257,8 @@ notes: |
 
 ## task: audit-2026-09-06-d5-cancel-draft-anomaly-no-processed-command
 title: `cancelSession` nhánh draft-anomaly commit event nhưng không ghi `processed_commands` ⇒ retry cùng `commandId` sinh event mới mỗi lần (INV-6)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Nhánh anomaly ghi processed_commands `{refusal}` cùng tx với event; retry cùng commandId replay refusal, 0 event mới (test XC-DRAFT-ANOMALY-RETRY).
 risk: P3
 change_class: code
@@ -5273,7 +5287,8 @@ notes: |
 
 ## task: audit-2026-09-06-d7-oauth-txn-definers-missing-pg-temp
 title: `create_oauth_transaction`/`consume_oauth_transaction` (`0010`) `SET search_path = public` thiếu `pg_temp`
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `815d417` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Migration 0039: CREATE OR REPLACE cả hai với `public, pg_temp`; psql replay + proconfig assert.
 risk: P3
 change_class: schema-migration
@@ -5288,7 +5303,8 @@ notes: |
 
 ## task: audit-2026-09-06-d8-definers-unbound-target-identity
 title: Definer `app` gọi được nhận identity đích không ràng buộc: `auth_create_web_session`, `auth_oauth_handoff_arm`, `create_oauth_transaction(p_tenant_id)` không kiểm `app.tenant_id`
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `815d417` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). PHẦN LÀM ĐƯỢC: `create_oauth_transaction` assert `p_tenant_id = app.tenant_id` (0039). Hai definer LOGIN-path (`auth_create_web_session`, `auth_oauth_handoff_arm`) KHÔNG có context để assert trước khi login xong — trusted-server design, ghi lại không đổi; row đóng khi 0039 merge.
 risk: P3
 change_class: schema-migration
@@ -5303,7 +5319,8 @@ notes: |
 
 ## task: audit-2026-09-06-d9-link-codes-dd50-columns
 title: `link_codes` thiếu cột DD-50 (XOR issuer, max_attempts, locked_until, revoked_at); `tenant_link_codes.code_hash` bare text
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `815d417` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). 0039: source_channel_identity_id nullable + source_account_id + max_attempts/locked_until/revoked_at + XOR CHECK, mirror schema.ts. `tenant_link_codes.code_hash` bare text KHÔNG đổi (bảng khác, data migration) — ghi ở đây, không mở row.
 risk: P3
 change_class: schema-migration
@@ -5318,7 +5335,8 @@ notes: |
 
 ## task: audit-2026-09-06-d11-rls-catalog-test-and-runner-ordering
 title: Không có catalog test "mọi bảng có `tenant_id` phải ENABLE+FORCE RLS" (hand-list 13/33); post-apply check chỉ `count(*) > 0`; runner không từ chối file số thấp hơn đã apply
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `815d417` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Catalog test trong rls-invariants (37 bảng tenant_id: FORCE-RLS hoặc allowlist definer-only 6 bảng có kiểm zero-grant sống) + runner guard ordinal/duplicate. Post-apply `count(*) > 0` giữ nguyên (catalog test mạnh hơn).
 risk: P3
 change_class: test-infra
@@ -5333,7 +5351,8 @@ notes: |
 
 ## task: audit-2026-09-06-d12-ledger-fk-not-aggregate-bound
 title: `charges(tenant_id, player_id)` không ràng `session_id`; `payment_allocations.reverses_allocation_id` không ràng cùng `charge_id`
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `815d417` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B2 `fix/b2-db-hardening`, CHƯA merge — flip `merged` bằng tay khi land). 0039: hai composite FK + candidate key; cross-session charge bị từ chối (đo psql).
 risk: P3
 change_class: schema-migration
@@ -5348,7 +5367,8 @@ notes: |
 
 ## task: audit-2026-09-06-d13-sync-engine-spec-claims-aggregate-ordering
 title: `feature_sync_engine_tech.md:38,139,270` claim partition theo aggregate ordering key; runtime chỉ `ORDER BY created_at` + `SKIP LOCKED` — KHÔNG có thứ tự per-aggregate
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; docs-only, no probe: verified `feature_sync_engine_tech.md` is at v2.9 (2026-09-06) with the D-13 as-built changelog row. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Docs-only; runtime partition vẫn là decision riêng nếu owner muốn.
 risk: P3
 change_class: docs-reconcile
@@ -5378,7 +5398,8 @@ notes: |
 
 ## task: audit-2026-09-06-d15-dead-repo-create-and-guc-reset-instead-of-assert
 title: `tenantRepo().sessions.create` nhận `status:'open'` bỏ qua cả họ command (0 caller); `authorizeTenantAction`/`resolveCapability` re-set GUC theo tham số thay vì assert bằng
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). ensureTenantContext set-or-assert (TenantContextMismatchError) dùng ở authorizeTenantAction/resolveCapability; `tenantRepo().sessions.create` GIỮ làm fixture seam + guard test 0 caller ngoài test.
 risk: P3
 change_class: code
@@ -5393,7 +5414,8 @@ notes: |
 
 ## task: audit-2026-09-06-w4-oauth-landing-english-only-hr5
 title: HR5: landing OAuth `<html lang="en">`, title/button English-only ngoài `t()`; test DD-118 suy "0 `t()` ⇒ 0 chuỗi user-facing"
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Landing qua t() + `<html lang=getLang()>`; tenant-lang.test reclassify session-cookies.ts (c)→(b).
 risk: P3
 change_class: code
@@ -5408,7 +5430,8 @@ notes: |
 
 ## task: audit-2026-09-06-w6-cookie-host-prefix-secure-idle-ttl
 title: Cookie không `__Host-`; `Secure` chỉ theo `NODE_ENV`; TTL 30 ngày tuyệt đối không idle; sibling-subdomain cookie-toss ⇒ login CSRF qua `plx_oauth_google`
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening` + lane C1 `fix/c1-session-idle-ttl`, CHƯA merge — flip `merged` bằng tay khi land). B3: `__Host-plx_session` (prod) + `__Secure-plx_oauth_*`; cookieSecure() chung. C1: 0040 `web_sessions.last_seen_at` + idle window TRONG CẢ `auth_resolve_web_session` LẪN `auth_rotate_web_session` (cả hai overload cũ DROP), touch throttle 1 phút. Sửa 07/09: bản đầu chỉ vá resolve ⇒ TTL idle là thuộc tính của một hàm chứ không phải của session — `issueSession` (session-cookies.ts:150) đưa thẳng cookie thô cho rotate mà không resolve, nên cookie im 20 ngày vẫn hồi sinh thành session 30 ngày mới, `last_seen_at` reset (đo được). Revoke/logout-all cố ý KHÔNG gắn window. Cả hai nửa đã author — đóng row khi cả B3 lẫn C1 merge.
 risk: P3
 change_class: security-posture
@@ -5423,7 +5446,8 @@ notes: |
 
 ## task: audit-2026-09-06-w7-csrf-compare-and-logout-origin
 title: CSRF secret so bằng `===` (không timing-safe); `POST /api/auth/logout` không `csrfOk`/`sameOriginRequest` — spec vs SI-4 đã reconcile docs, code còn nguyên
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). csrfOk timingSafeEqual + length check. Logout: KHÔNG thêm Origin gate (SI-4 LIVE đã fail-closed; spec đã ghi ngoại lệ có tên ở A8).
 risk: P3
 change_class: security-posture
@@ -5438,7 +5462,8 @@ notes: |
 
 ## task: audit-2026-09-06-w8-onboarding-start-unbounded-json-and-name
 title: `onboarding/start` `request.json()` không trần; `tenants.name` không max length
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Route: content-type JSON, 4 KiB cap (declared + đọc), name ≤ 120; DB: `tenants_name_len_chk` (0039, B2).
 risk: P3
 change_class: code
@@ -5453,7 +5478,8 @@ notes: |
 
 ## task: audit-2026-09-06-w9-oauth-state-get-side-effect-img-src
 title: `GET /api/auth/google/state` có side effect cross-site (ghi transaction + đè cookie); `<img src>` ×10 đốt bucket IP nạn nhân
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). Sec-Fetch-Dest ≠ document ⇒ 403 trước limiter/row/cookie; header vắng thì qua (defence in depth).
 risk: P3
 change_class: security-posture
@@ -5468,7 +5494,8 @@ notes: |
 
 ## task: audit-2026-09-06-w10-no-runtime-role-assert-and-discovery-serves-all-routes
 title: Không gì assert runtime DB role ở web; predicate session-service chỉ `eq(sessions.id)` (tenant 100% dựa GUC); `start:discovery` = `next start` thường ⇒ ingress discovery phục vụ toàn bộ route
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). appDb() assert role khi DB_EXPECTED_ROLE set (compose: app/readonly; fly: opt-in có ghi chú); middleware.ts + lib/request-policy.ts: discovery chỉ /healthz + /discover*. Predicate `eq(sessions.id)` trong session-service KHÔNG đổi (GUC + RLS là backstop; SI-3 áp cho query mới).
 risk: P3
 change_class: security-posture
@@ -5483,7 +5510,8 @@ notes: |
 
 ## task: audit-2026-09-06-w11-oauth-catch-swallows-no-log
 title: Callback/complete `catch {}` nuốt hết, 0 log; cả app 1 `console.*` runtime — outage KMS/JWKS không phân biệt với input sai
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). lib/log.ts (LOG_LEVEL reader, redact theo tên key) + catch ở callback/complete log theo class lỗi. Sentry transport vẫn là `observability-sentry-loglevel-readers`.
 risk: P3
 change_class: code
@@ -5498,7 +5526,8 @@ notes: |
 
 ## task: audit-2026-09-06-w13-jwt-verify-pin-rs256
 title: `jwtVerify` không pin `algorithms: ["RS256"]` (`google-oidc.ts:66-72`)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). jwtVerify `algorithms: ["RS256"]` + test PS256 header bị từ chối.
 risk: P3
 change_class: security-posture
@@ -5513,7 +5542,8 @@ notes: |
 
 ## task: audit-2026-09-06-w14-session-route-no-store
 title: `GET /api/auth/session` trả CSRF secret, không set `Cache-Control: no-store` tường minh (PLAUSIBLE)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `0f92f35` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B3 `fix/b3-web-hardening`, CHƯA merge — flip `merged` bằng tay khi land). ok()/err() mặc định `Cache-Control: no-store` (caller override được).
 risk: P3
 change_class: code
@@ -5542,7 +5572,8 @@ notes: |
 
 ## task: audit-2026-09-06-b3-worker-shutdown-not-graceful
 title: Worker shutdown không graceful cho `deliver()` đang bay, không timeout (`worker.ts:122-129`)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). stop({graceful, wait, timeout}) + hard deadline + chống double-shutdown.
 risk: P3
 change_class: code
@@ -5557,7 +5588,8 @@ notes: |
 
 ## task: audit-2026-09-06-b4-entrypoint-guard-endswith-ts
 title: Entrypoint guard `endsWith("worker.ts")` — compile sang JS ⇒ worker start rồi exit 0 im lặng
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). So URL module với entry script; worker.ts + provision-queue.ts dùng.
 risk: P3
 change_class: code
@@ -5572,7 +5604,8 @@ notes: |
 
 ## task: audit-2026-09-06-x5-stale-infra-comments-healthcheck
 title: `fly.toml:15` "0000→0013" (tail thật cao hơn); `Dockerfile:42` "healthcheck-ready" nhưng không `HEALTHCHECK`; worker không có liveness
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service` + lane C2 `fix/c2-worker-heartbeat`, CHƯA merge — flip `merged` bằng tay khi land). B4: Dockerfile HEALTHCHECK role-aware, fly.toml comment. C2: 0041 `job_worker_heartbeats` (job_definer-owned, 0 grant, tự prune 30 ngày) + `job_worker_heartbeat()`/`job_worker_liveness()` EXECUTE app_worker; `apps/bot/src/heartbeat.ts` tick 30s (DB + file `/tmp/plexco-worker-heartbeat`); HEALTHCHECK nhánh worker đo tuổi file ≤ 90s thay vì exit 0. Sửa 07/09: (a) hai danh sách hard-code hàm `job_definer` trong `rls-invariants.test.ts` phải thêm 2 tên mới — thiếu là `pnpm -w test` ĐỎ (đúng lỗi kiểu A2/A4 quên `MIGRATION_COUNT`); (b) tick có overlap guard + `SET LOCAL statement_timeout` — DB nhận connection nhưng treo query làm 12 tick chồng nhau ăn hết pool của chính dispatcher (đo được) và làm `pool.end()` lúc shutdown trượt deadline ⇒ exit 1; (c) `stop()` chặn tick đang bay ghi file health. Đóng row khi cả B4 lẫn C2 merge.
 risk: P3
 change_class: infra-tooling
@@ -5602,7 +5635,8 @@ notes: |
 
 ## task: audit-2026-09-06-c1-parse-money-unbounded
 title: `parseMoney` không bound safe-integer (`"1.5k" → 15000` ×10; 400 chữ số → `Infinity`); `splitNameAmount` cho `Infinity` thành candidate — 0 caller ngoài core
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Grammar mới: decimal-k, grouping 3 chữ số, trần 1e12, input ≤ 40 ký tự.
 risk: P3
 change_class: core-logic
@@ -5617,7 +5651,8 @@ notes: |
 
 ## task: audit-2026-09-06-c2-vietqr-url-no-encode-no-validate
 title: `buildVietQrUrl` interpolate `bin`/`account` không encode, `amount` không validate
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Validate bin/account/amount + encode; throw VietQrInputError.
 risk: P3
 change_class: core-logic
@@ -5632,7 +5667,8 @@ notes: |
 
 ## task: audit-2026-09-06-c3-parse-plus-one-suffix-quadratic-regex
 title: `parsePlusOneSuffix` regex quadratic trên input crafted (`matching.ts:96`) — chỉ OCR-label
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Landed in `5510054` on origin/main; slice-unique merged_probe resolves on origin/main. Was: in-flight
 _readiness: AUTHORED 2026-09-06 (phiên cloud, lane B4 `fix/b4-bot-core-service`, CHƯA merge — flip `merged` bằng tay khi land). Cap 200 ký tự + precheck kết thúc "+1".
 risk: P3
 change_class: core-logic
@@ -5647,7 +5683,8 @@ notes: |
 
 ## task: audit-2026-09-06-codex-review-rounds-closeout
 title: Review độc lập 7 vòng cho toàn bộ A+B+C của audit 06/09 — 12 finding, gate bắt buộc đóng ở vòng 5 CLEAN (bằng chứng, không phải luật mới)
-status: in-flight
+status: merged
+note_merged: reconciled BY HAND (2026-09-26), not by --check -- the reconcile script parses only planned|ready|blocked, so these `in-flight` rows were never examined. Deliverable landed across the audit lanes on origin/main; process-evidence, no probe (by design): the 7-round review ran 2026-09-07 and gated CLEAN at round 5, recorded in f6d87e1 / b5f1d10; every lane it covered is on origin/main. Was: in-flight
 _readiness: ĐÃ CHẠY 2026-09-07 trên `~/Projects/plexco-review` @ `--base 30a3e902d87b1c44fca761685e28c63e9975128c`. **Gate bắt buộc đóng ở vòng 5 (`REVIEW_VERDICT: CLEAN`).** Vòng 6–7 là 2 vòng tự nguyện thêm cho defect 11 (tôi tự tìm ra sau vòng 5, khi chạy validator trên máy thật) — chúng chỉ chạm comment/docs, và bản sửa cuối sau vòng 7 được xác minh bằng cách đọc thẳng `autopilot-review-readiness.mjs:658` + `autopilot-scope-gate:748` chứ KHÔNG chạy vòng 8. Row này đóng bằng tay khi A+B+C land — nó ghi lại một lần chạy, không có symbol để probe.
 risk: P2
 change_class: process-evidence
