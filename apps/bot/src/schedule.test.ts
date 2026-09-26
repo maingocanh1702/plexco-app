@@ -413,16 +413,22 @@ async function spawnWorkerBriefly(
   directUrl: string,
   extraEnv: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string }> {
+  let exited: { stdout: string; stderr: string };
   try {
-    await execFileAsync(TSX_BIN, [WORKER_ENTRYPOINT], {
+    exited = await execFileAsync(TSX_BIN, [WORKER_ENTRYPOINT], {
       env: { ...process.env, DATABASE_URL_DIRECT: directUrl, ...extraEnv },
       timeout: 3000,
     });
-    throw new Error("worker exited on its own — expected a timeout-triggered SIGTERM instead");
   } catch (error) {
     const e = error as { stdout?: string; stderr?: string };
     return { stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
   }
+  // Thrown outside the try: inside it, the catch above swallowed this error and returned empty
+  // output, so an early exit surfaced as "expected '' to contain ..." with the real output lost.
+  throw new Error(
+    "worker exited on its own — expected a timeout-triggered SIGTERM instead\n" +
+      `stdout:\n${exited.stdout}\nstderr:\n${exited.stderr}`,
+  );
 }
 
 describe("main() — boss.work() registration (spawned process)", () => {
@@ -443,6 +449,7 @@ describe("main() — boss.work() registration (spawned process)", () => {
         });
 
         expect(stdout).toContain("[worker] pg-boss started");
+        expect(stdout).toContain("[worker] running until SIGTERM/SIGINT");
         expect(stdout).toContain(
           "[worker] outbox dispatch worker not registered (schedule disabled)",
         );
@@ -474,6 +481,7 @@ describe("main() — boss.work() registration (spawned process)", () => {
         });
 
         expect(stdout).toContain("[worker] pg-boss started");
+        expect(stdout).toContain("[worker] running until SIGTERM/SIGINT");
         expect(stdout).toContain("[worker] outbox dispatch schedule OFF — ");
         expect(stdout).toContain("productionStubDeliver");
         expect(stdout).not.toContain("outbox dispatch schedule registered");
@@ -512,6 +520,24 @@ describe("resolveOutboxDispatchEnablement (audit 2026-09-06 X-3)", () => {
  * instead of `argv[1].endsWith("worker.ts")`, which was false for any compiled path (the worker
  * would import, do nothing, and exit 0).
  */
+describe("holdProcessOpen (worker keep-alive)", () => {
+  it("holds a REFERENCED handle until released, so the worker cannot exit 0 on an idle loop", async () => {
+    const { holdProcessOpen } = await import("./keep-alive.js");
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    try {
+      const release = holdProcessOpen(1_000);
+      const timer = setIntervalSpy.mock.results[0]!.value as NodeJS.Timeout;
+      expect(timer.hasRef()).toBe(true);
+      release();
+      expect(clearIntervalSpy).toHaveBeenCalledWith(timer);
+    } finally {
+      setIntervalSpy.mockRestore();
+      clearIntervalSpy.mockRestore();
+    }
+  });
+});
+
 describe("isDirectRun (audit B-4)", () => {
   it("is true only when the entry script IS this module, for .ts and compiled .js alike", async () => {
     const { isDirectRun } = await import("./direct-run.js");
