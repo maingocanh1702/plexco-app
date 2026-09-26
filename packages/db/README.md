@@ -598,6 +598,14 @@ the registry row's `delegable` is not `true`, so `role.manage` and every preset 
 and an unknown key (no registry row) fails closed before the FK check runs. Covered by
 `src/tenant-capability-schema.test.ts`. Forward-only; every object is new.
 
+`0048` re-creates that trigger function with `SET search_path = pg_catalog, public, pg_temp` and a
+schema-qualified `public.tenant_capability_actions` lookup. `0047` shipped it without a pinned search_path,
+and Postgres searches the session's temp schema first for relations unless `pg_temp` is listed, so a
+same-named temp table with `('role.manage', true)` let a non-delegable grant through (post-merge Codex
+code round, P1). Not reachable at runtime yet (`app` is SELECT-only on grants; only the migration owner
+writes), fixed before Milestone 2 adds a writer. Regression test: "rejects a non-delegable action even when
+a temp table shadows the registry" in `src/tenant-capability-schema.test.ts`.
+
 ## Open items inherited from docs (not blockers)
 
 - `messenger_*` is post-MVP (P4.8, DD-09) — included for forward compatibility.

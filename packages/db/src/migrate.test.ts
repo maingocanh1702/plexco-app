@@ -41,7 +41,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 48; // 0000..0047 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core)
+const MIGRATION_COUNT = 49; // 0000..0048 (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core · 0048 capability grant trigger search_path)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -732,7 +732,9 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0047_tenant_capability_authority_core.sql");
+      expect(res.applied[res.applied.length - 1]).toBe(
+        "0048_capability_grant_trigger_search_path.sql",
+      );
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
