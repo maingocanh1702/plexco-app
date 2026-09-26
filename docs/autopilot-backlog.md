@@ -5715,3 +5715,54 @@ notes: |
   KHÔNG viết thêm luật mới vào workflow doc từ row này — `level3-workflow.md` đã yêu cầu đúng điều đó ở bước 4;
   cái thiếu là thực thi, không phải câu chữ.
   source: `docs/sessions/2026-09-06-repo-audit.md` · `docs/autopilot-templates/audit-fix-lanes-2026-09-06-RUN.md`
+
+
+## task: canonical-kit-v37-scope-and-evidence-write-boundaries
+title: Canonical readiness gate: restore a fail-closed scope boundary and contain evidence writes
+task_kind: implementation
+status: idea
+risk: P1
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity, review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Deferred canonical-first work, NOT a runnable Plexco slice. Author exact bounded scopes and
+  slice-unique probes against current canonical origin before dispatch. Never patch a consumer copy.
+  Independent pinned code/security review of Plexco PR #40 at f987bc32287933a2e0ec7dfe7449956c3c02d25b
+  identified two P1 issues in canonical b1cf0c97525006e5dc47b9638bbe94a3a8a388fd (v37):
+  (1) autopilot-review-readiness.mjs liveDiffState no longer rejects undeclared files, while
+  security_review.required remains manifest-derived. An undeclared sensitive file can pass without
+  its required security round. The owner session still requires scope as a ceiling. Resolve this
+  in canonical with fail-closed enforcement and a behavioral regression; a warning is insufficient.
+  (2) evidence mode writes readiness.json with writeFileSync after only pathname validation, so
+  a writer-controlled symlink can overwrite a file outside state. Contain the actual write, with
+  a symlink-escape regression using disposable targets. Split the two mechanisms if needed.
+  Owner: canonical kit maintainer; closure requires merged canonical fixes, tests and independent
+  code/security review, then a freshly pinned consumer sync. No implementation/READY claim here.
+  Evidence: https://github.com/maingocanh1702/plexco-app/pull/40 . The separate canonical format-only
+  PR https://github.com/maingocanh1702/claude-template/pull/8 does not close either finding.
+
+## task: canonical-kit-ap-evidence-review-retry-order
+title: Canonical ap-evidence: select the successful retry and count logical review rounds
+task_kind: implementation
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity, review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Deferred canonical-first work, NOT a runnable Plexco slice; author the canonical scope and an
+  absent slice-unique probe before dispatch. Do not change only scripts/ap-evidence.sh here.
+  Code review of PR #40 at f987bc32287933a2e0ec7dfe7449956c3c02d25b found that lexical sorting places
+  round-01-retry-01.txt before round-01.txt, then the helper chooses the last entry as the verdict.
+  A failed initial attempt followed by a gate-approved CLEAN retry becomes falsely ineligible;
+  retry invocations are also counted as extra rounds. Pin parsing to actual gate filename/receipt
+  semantics and add the failed-original/clean-retry regression in the canonical suite.
+  Owner: canonical kit maintainer; closure is a merged canonical correction plus a verified fresh
+  consumer sync. Source: b1cf0c97525006e5dc47b9638bbe94a3a8a388fd, ap-evidence.sh lines 356-385.

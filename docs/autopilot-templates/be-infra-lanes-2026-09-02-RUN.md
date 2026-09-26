@@ -985,10 +985,10 @@ NEGATIVE SCOPE
 > cũ mục hoàn toàn. Đây đúng là lý do prompt L11 mở đầu bằng "VERIFY THE PREMISE FIRST … If any
 > expectation fails, STOP and report" — cơ chế đó đã làm đúng việc của nó.
 >
-> **Nợ pack thật, và chỉ có một:** `level3-workflow.md` — file pack **duy nhất** còn lệch, **205 dòng =
-> trọn §6.1 `autonomous_to_ready`**, khái niệm canonical không có. Sync kế tiếp **xoá operating contract
-> mà cả 16 lane đang trích dẫn**. Cộng với §00: validator cũng chưa từng biết mode đó. Nên lane này là
-> **một việc, ba edit, land cùng nhau**.
+> **Historical premise (2026-09-02):** the `level3-workflow.md` mirror then contained 205
+> consumer-only lines of §6.1, so a sync would have deleted the operating contract cited by 16 lanes.
+> The 2026-09-26 relocation above removes that overwrite risk. Canonical support for the mode and
+> the validator inconsistency described in §00 remain separate work; this sync does not close them.
 
 ```text
 TASK: kit-teach-autonomous-to-ready  (folds DD-100 D4 -- same accept list, same file)
