@@ -63,7 +63,12 @@ CREATE TABLE tenant_capability_actions (
   delegable boolean NOT NULL,
   authority_class text NOT NULL
     CONSTRAINT tenant_capability_actions_authority_class_chk
-    CHECK (authority_class IN ('preset', 'owner_grantable', 'owner_only', 'platform_admin_only'))
+    CHECK (authority_class IN ('preset', 'owner_grantable', 'owner_only', 'platform_admin_only')),
+  -- The two flags are derived from the class, so the non-delegable trigger (reads delegable) and a
+  -- future reader of authority_class can never disagree about whether a key is grantable.
+  CONSTRAINT tenant_capability_actions_class_flags_chk
+    CHECK (delegable = (authority_class = 'owner_grantable')
+           AND co_admin_default = (authority_class = 'preset'))
 );
 REVOKE ALL ON tenant_capability_actions FROM PUBLIC, app, app_worker, readonly;
 

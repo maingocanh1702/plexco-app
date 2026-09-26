@@ -1789,6 +1789,8 @@ export const tenantCapabilityActions = pgTable("tenant_capability_actions", {
 }, (t) => ({
   authorityClassChk: check("tenant_capability_actions_authority_class_chk",
     sql`${t.authorityClass} IN ('preset', 'owner_grantable', 'owner_only', 'platform_admin_only')`),
+  classFlagsChk: check("tenant_capability_actions_class_flags_chk",
+    sql`${t.delegable} = (${t.authorityClass} = 'owner_grantable') AND ${t.coAdminDefault} = (${t.authorityClass} = 'preset')`),
 }));
 
 /** Tenant-private expiring/revocable delegation; app is SELECT-only. */

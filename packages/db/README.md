@@ -580,7 +580,9 @@ is Milestone 2, the seven-route switch is Milestone 3, and grant/revoke commands
 - `tenant_capability_actions` — migration-owned closed registry, seeded with exactly the 17 tenant-scoped
   keys: 10 `preset` (co-admin default, not delegable, including the four DD-86 `chat.*` keys), 6
   `owner_grantable` (delegable by explicit grant) and `role.manage` as `owner_only`. The DD-51/DD-53
-  PlatformAdmin rows are not seeded (owner answer 2026-09-20). `app`, `app_worker` and `readonly` hold
+  PlatformAdmin rows are not seeded (owner answer 2026-09-20). `tenant_capability_actions_class_flags_chk`
+  derives `delegable` and `co_admin_default` from `authority_class`, so the two can never disagree.
+  `app`, `app_worker` and `readonly` hold
   **no** privilege on it.
 - `tenant_capability_grants` — tenant-private, expiring (`expires_at > granted_at`), revocable delegation;
   one non-revoked grant per `(tenant, grantee, action)` via the partial unique index

@@ -183,6 +183,24 @@ describe("tenant_capability_actions — closed registry seed", () => {
     );
   });
 
+  it("rejects a row whose delegable / co_admin_default flags disagree with its class", async () => {
+    for (const [coAdmin, delegable, cls] of [
+      [true, true, "preset"],
+      [false, true, "owner_only"],
+      [true, false, "owner_grantable"],
+      [false, false, "preset"],
+    ] as const) {
+      await expectErrorChainToMatch(
+        ctx.owner.query(
+          `INSERT INTO tenant_capability_actions (action_key, co_admin_default, delegable, authority_class)
+           VALUES ('bogus.flags', $1, $2, $3)`,
+          [coAdmin, delegable, cls],
+        ),
+        /tenant_capability_actions_class_flags_chk/,
+      );
+    }
+  });
+
   it("grants no privilege of any kind to app, app_worker or readonly", async () => {
     for (const role of ["app", "app_worker", "readonly"]) {
       expect(await tablePrivileges(role, "tenant_capability_actions"), role).toEqual(NONE);
