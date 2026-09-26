@@ -273,6 +273,31 @@ describe("tenant_capability_grants — storage constraints", () => {
     );
   });
 
+  // 0048: without pg_temp pinned last in the trigger function's search_path, Postgres searches
+  // the session's temp schema FIRST for relations, so an unqualified tenant_capability_actions
+  // lookup resolved to a same-named temp table and a non-delegable key slipped through.
+  it("rejects a non-delegable action even when a temp table shadows the registry", async () => {
+    await ctx.owner.query("BEGIN");
+    try {
+      await ctx.owner.query(
+        `CREATE TEMP TABLE tenant_capability_actions (action_key text, delegable boolean)
+           ON COMMIT DROP`,
+      );
+      await ctx.owner.query(`INSERT INTO tenant_capability_actions VALUES ('role.manage', true)`);
+      await expectErrorChainToMatch(
+        ctx.owner.query(
+          `INSERT INTO public.tenant_capability_grants
+             (tenant_id, grantee_person_id, action_key, reason, granted_by_person_id, expires_at)
+           VALUES ($1, $2, 'role.manage', 'shadow', $3, clock_timestamp() + interval '7 days')`,
+          [ctx.tenantA, granteeA, ownerA],
+        ),
+        /non-delegable/,
+      );
+    } finally {
+      await ctx.owner.query("ROLLBACK");
+    }
+  });
+
   // The BEFORE trigger fires ahead of the FK check, so an unknown key (NULL delegable) is
   // rejected by the non-delegable guard first; the FK is the second line of defense.
   it("rejects an action_key that is not in the registry", async () => {
