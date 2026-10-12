@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
-import { describeSessionError, errorField } from "./session-error-ui";
+import { describeSessionError, errorField, isDefiniteFailure } from "./session-error-ui";
 
 const en = (_vi: string, e: string) => e;
 const err = (code: string, message = "server text", status = 400) =>
@@ -82,5 +82,19 @@ describe("describeSessionError", () => {
     expect(errorField("CAPACITY_BELOW_ROSTER")).toBe("slotsMax");
     expect(errorField("PRICE_CHANGE_REQUIRES_POLICY")).toBe("priceAmount");
     expect(errorField("STALE_VERSION")).toBeNull();
+  });
+});
+
+describe("isDefiniteFailure (when may a commandId be discarded)", () => {
+  it("4xx envelope errors are definite", () => {
+    expect(isDefiniteFailure(err("STALE_VERSION", "x", 409))).toBe(true);
+    expect(isDefiniteFailure(err("INVALID_BODY", "x", 400))).toBe(true);
+    expect(isDefiniteFailure(err("RATE_LIMITED", "x", 429))).toBe(true);
+  });
+  it("network loss, bad responses, 5xx and non-API errors are uncertain: keep the key", () => {
+    expect(isDefiniteFailure(new ApiClientError(CLIENT_NETWORK_ERROR, "x", 0))).toBe(false);
+    expect(isDefiniteFailure(new ApiClientError(CLIENT_BAD_RESPONSE, "x", 400))).toBe(false);
+    expect(isDefiniteFailure(err("INTERNAL_ERROR", "x", 500))).toBe(false);
+    expect(isDefiniteFailure(new TypeError("boom"))).toBe(false);
   });
 });

@@ -186,12 +186,16 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/session-dto.ts": "c",
   "lib/theme-colors.ts": "c",
   "lib/use-online-status.ts": "c",
+  "lib/use-sessions-data.ts": "c",
+  "lib/use-tenant-context.ts": "c",
   // (c) — browser-side session screens (M2b). Pure formatters/builders; any user-facing text is
   // produced with the `t` the caller passes from useT() (tenant language), never a server response.
   "lib/money.ts": "c",
   "lib/session-actions.ts": "c",
   "lib/session-error-ui.ts": "c",
   "lib/session-form-model.ts": "c",
+  "lib/session-list-streams.ts": "c",
+  "lib/session-snapshot.ts": "c",
   "lib/session-time.ts": "c",
   "lib/sessions-api.ts": "c",
   // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation

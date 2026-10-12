@@ -154,9 +154,10 @@ describe("listSessions activeCount", () => {
     const emptyId = await seedSession(tenant, { startsAt: "2034-01-02T10:00:00Z" });
     for (const [i, status] of (["active", "active", "waitlisted", "left"] as const).entries()) {
       const person = (
-        await ctx.owner.query<{ id: string }>(`INSERT INTO persons (display_name) VALUES ($1) RETURNING id`, [
-          `P${i}`,
-        ])
+        await ctx.owner.query<{ id: string }>(
+          `INSERT INTO persons (display_name) VALUES ($1) RETURNING id`,
+          [`P${i}`],
+        )
       ).rows[0]!.id;
       const membership = (
         await ctx.owner.query<{ id: string }>(

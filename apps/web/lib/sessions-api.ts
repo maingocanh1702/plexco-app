@@ -29,8 +29,13 @@ export interface SessionScalarsDto {
   updatedAt: string;
 }
 
+/** List row = scalars + active roster count (no roster, no money). */
+export interface SessionListItemDto extends SessionScalarsDto {
+  activeCount: number;
+}
+
 export interface SessionListDto {
-  sessions: SessionScalarsDto[];
+  sessions: SessionListItemDto[];
   pageInfo: { hasMore: boolean; nextCursor: string | null };
 }
 
@@ -125,7 +130,7 @@ async function command(
   ctx: SessionApiContext,
   path: string,
   method: "POST" | "PUT",
-  body: Record<string, unknown>,
+  body: object,
 ): Promise<CommandResultDto> {
   const data = await apiFetch<{ session: CommandResultDto }>(
     `${path}?${tenantQuery(ctx.tenantId)}`,

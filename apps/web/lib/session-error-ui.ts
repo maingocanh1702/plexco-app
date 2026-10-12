@@ -1,4 +1,4 @@
-import { ApiClientError, CLIENT_NETWORK_ERROR } from "./api-client";
+import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
 import type { TFn } from "./i18n-client";
 
 /**
@@ -136,4 +136,16 @@ export function describeSessionError(error: unknown, t: TFn): ErrorView {
     "retry",
     false,
   );
+}
+
+/**
+ * True only when the server DEFINITELY did not apply the command (a 4xx envelope: validation,
+ * stale version, authz, rate limit). Then the idempotency key may be discarded and a fresh one
+ * used for the next attempt. Network loss, a non-envelope reply, 5xx or anything unrecognised may
+ * have committed server-side, so the SAME commandId must be reused on retry (DD-117 D5).
+ */
+export function isDefiniteFailure(error: unknown): boolean {
+  if (!(error instanceof ApiClientError)) return false;
+  if (error.code === CLIENT_NETWORK_ERROR || error.code === CLIENT_BAD_RESPONSE) return false;
+  return error.statusCode >= 400 && error.statusCode < 500;
 }
