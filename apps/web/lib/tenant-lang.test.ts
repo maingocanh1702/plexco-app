@@ -113,6 +113,10 @@ describe("resolveTenantLang — the single DD-118 derivation", () => {
 const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (a) — wired. Authorization for THIS tenant is proven before the seam.
   "app/api/onboarding/readiness/route.ts": "a",
+  // (a) — club configuration (M1b): both delegate to resolveClubGate, which proves authorize()
+  // before it resolves language; the PATCH body runs inside runWithLang.
+  "app/api/onboarding/club/route.ts": "a",
+  "lib/club-config-route.ts": "a",
   // (a) — already wired upstream: all five delegate to handleSessionCommand, whose handler body
   // runs inside runWithLang. They emit only ok(...).
   "app/api/sessions/route.ts": "a",
