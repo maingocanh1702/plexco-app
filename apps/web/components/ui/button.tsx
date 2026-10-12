@@ -3,7 +3,7 @@ import { cx } from "./cx";
 import styles from "./button.module.css";
 
 type Common = {
-  variant?: "primary" | "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "ghost" | "danger";
   block?: boolean;
   children: ReactNode;
 };

@@ -1,0 +1,27 @@
+.list {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.tab {
+  min-height: var(--touch-target);
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-bottom: var(--border-width-2) solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--primary-text);
+  border-bottom-color: var(--primary);
+}
+
+.panel {
+  padding-top: var(--space-4);
+}

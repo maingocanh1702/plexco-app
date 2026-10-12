@@ -46,6 +46,11 @@
   background: var(--bg-input);
 }
 
+.danger {
+  background: var(--error);
+  color: var(--text-inverse);
+}
+
 .ghost {
   background: transparent;
   color: var(--text-primary);

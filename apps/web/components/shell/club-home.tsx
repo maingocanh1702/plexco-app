@@ -26,7 +26,12 @@ export function ClubHome({ tenantId }: { tenantId: string }) {
           <p className={styles.lead}>
             {t("Xem và tạo các buổi chơi của câu lạc bộ.", "View and create your club's sessions.")}
           </p>
-          <Button href={`${base}/sessions`}>{t("Mở buổi chơi", "Open sessions")}</Button>
+          <div className={styles.row}>
+            <Button href={`${base}/sessions`}>{t("Mở buổi chơi", "Open sessions")}</Button>
+            <Button href={`${base}/sessions/new`} variant="secondary">
+              {t("+ Tạo buổi mới", "+ New session")}
+            </Button>
+          </div>
         </Card>
         <Card>
           <h2>{t("Cài đặt", "Settings")}</h2>
