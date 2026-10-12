@@ -1,11 +1,13 @@
-import { updateSession } from "@plexco/db";
-import { ok } from "../../../../lib/api-envelope";
+import { t } from "@plexco/core/i18n";
+import { getSessionDetail, updateSession } from "@plexco/db";
+import { err, ok } from "../../../../lib/api-envelope";
 import {
   handleSessionCommand,
   readExpectedVersion,
   shapeSessionFields,
 } from "../../../../lib/session-command-route";
 import { appDb } from "../../../../lib/session-cookies";
+import { handleSessionRead } from "../../../../lib/session-read-route";
 
 /**
  * PUT /api/sessions/:id — edit a session (BE tech spec §3, 20/min per tenant). PUT, not PATCH:
@@ -40,5 +42,27 @@ export async function PUT(
     return ok({
       session: { id: result.sessionId, status: result.status, version: result.version },
     });
+  });
+}
+
+/**
+ * GET /api/sessions/:id — host detail (BE tech spec §3, 60/min per tenant): session fields,
+ * roster with charge summary, guest notes, counts. 404 SESSION_NOT_FOUND when the id does not
+ * exist in the caller's tenant (RLS makes another tenant's id indistinguishable from a missing one).
+ */
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  return handleSessionRead(request, { bucket: "session-read", limit: 60 }, async (context) => {
+    const { id } = await params;
+    const session = await getSessionDetail(appDb().db, {
+      tenantId: context.tenantId,
+      sessionId: id,
+    });
+    if (!session) {
+      return err("SESSION_NOT_FOUND", t("Buổi chơi không tồn tại.", "Session not found."), 404);
+    }
+    return ok({ session });
   });
 }
