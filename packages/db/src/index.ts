@@ -40,6 +40,7 @@ export {
   type SessionListPage,
   type SessionScalars,
 } from "./session-read.js";
+export { listActiveSports, type ActiveSport } from "./sports-read.js";
 export { resolveCapability, type Capability, type CapabilityDecision } from "./capability.js";
 export {
   createSession,
