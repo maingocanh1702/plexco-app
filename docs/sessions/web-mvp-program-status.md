@@ -10,7 +10,7 @@
 
 | Mốc | Đợt | Nội dung | Trạng thái | PR | Blocker / chờ ai |
 |---|---|---|---|---|---|
-| M0 | A | Ghi DD-122, commit RUN + BACKEND-HANDOFF, ledger này, baseline | 🟡 PR mở (docs-only), review vòng 1: 1 blocking + 4 should-fix đã sửa | [#42](https://github.com/maingocanh1702/plexco-app/pull/42) | owner merge = ký DD-122 |
+| M0 | A | Ghi DD-122, commit RUN + BACKEND-HANDOFF, ledger này, baseline | 🟡 PR mở (docs-only), 3 vòng review Claude độc lập: vòng 3 READY (0 blocking); CI `verify` xanh | [#42](https://github.com/maingocanh1702/plexco-app/pull/42) | owner merge = ký DD-122 |
 | M1 | A | Shell PWA (manifest · SW · offline · icons) + tokens DD-81 target C + Google sign-in UI + tạo CLB | ⬜ chưa bắt đầu | — | `GOOGLE_OAUTH_*` staging (default C4) |
 | M2a | A | `authorize()` DD-56 M2/M3 thay cổng tạm + route GET session (list/detail) | ⬜ | — | — |
 | M2b | A | Host workspace UI: list/detail/create/edit/publish/close/cancel | ⬜ | — | M2a |

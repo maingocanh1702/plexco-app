@@ -24,7 +24,7 @@
 | 2 | Scope = **full MVP** (BRD §5.1) | Ship 3 đợt lồng nhau: Launch (DD-113) ⊂ Phase-1 (DD-114) ⊂ MVP |
 | 3 | Áp default khuyến nghị cho quyết định đang treo | Bảng `DEFAULTS` trong Shared contract; mỗi default thành một entry chờ ký, **owner merge PR = ký** |
 | 4 | 1 prompt điều phối + prompt từng mốc | File này |
-| 5 | **Review của chương trình = Claude subagent độc lập, không Codex, không scope-gate lifecycle** (prompt owner paste 12/10, mục REVIEW) | `decisions.md` **DD-122 D4** thắng đoạn WORKFLOW của Shared contract bên dưới và §7.2/§7.4 của `BACKEND-HANDOFF`, chỉ trong phạm vi chương trình |
+| 5 | **Review của chương trình = Claude subagent độc lập, không Codex, không scope-gate lifecycle** (prompt owner paste 12/10, mục REVIEW) | `decisions.md` **DD-122 D4** thắng đoạn WORKFLOW của Shared contract bên dưới và §2 mục 2 · §7.2 · §7.4 · §7.6 của `BACKEND-HANDOFF`, chỉ trong phạm vi chương trình |
 
 > Cho tới khi PR của M0 merge, năm quyết định trên chỉ sống trong file này — đúng thứ DD-111 D4 cấm làm
 > nguồn bền. Vì vậy prompt điều phối **chỉ chạy M0** khi M0 chưa có trên `origin/main`.

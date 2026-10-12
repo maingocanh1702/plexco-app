@@ -14,16 +14,16 @@ runs in CI only; local verification = typecheck · lint · format · build · no
 
 ## Waves and milestones
 
-| M | Outcome | Status | Phase file |
+| M | Outcome | Status | Notes |
 |---|---|---|---|
-| M0 | Record owner decisions (DD-122), commit RUN + BACKEND-HANDOFF, program ledger | ⬜ | phase-00 |
-| M1 | PWA shell + tokens + Google sign-in UI + create club | ⬜ | phase-01 |
-| M2a | `authorize()` (DD-56 M2/M3) replacing the temporary gate + session READ routes | ⬜ | phase-02 |
-| M2b | Host workspace UI: session list/detail/create/edit/publish/close/cancel | ⬜ | phase-02 |
-| M2c | Roster host-add + manual mark-paid (money, security review) | ⬜ | phase-02 |
-| M3 | Zalo webhook + club⇄bot link + account⇄Zalo link (link_code first caller) | ⬜ | phase-03 |
-| M4 | Settings minimum (profile, linked channels, club locale) | ⬜ | phase-04 |
-| M5 | Staging infra (DO App Platform), logs, E2E, runbook, go/no-go | ⬜ | phase-05 |
+| M0 | Record owner decisions (DD-122), commit RUN + BACKEND-HANDOFF, program ledger | 🟡 PR #42 | briefs live in the lane prompts; research under `research/` |
+| M1 | PWA shell + tokens + Google sign-in UI + create club | ⬜ | briefs live in the lane prompts; research under `research/` |
+| M2a | `authorize()` (DD-56 M2/M3) replacing the temporary gate + session READ routes | 🟡 PR #43 | briefs live in the lane prompts; research under `research/` |
+| M2b | Host workspace UI: session list/detail/create/edit/publish/close/cancel | ⬜ | briefs live in the lane prompts; research under `research/` |
+| M2c | Roster host-add + manual mark-paid (money, security review) | ⬜ | briefs live in the lane prompts; research under `research/` |
+| M3 | Zalo webhook + club⇄bot link + account⇄Zalo link (link_code first caller) | ⬜ | briefs live in the lane prompts; research under `research/` |
+| M4 | Settings minimum (profile, linked channels, club locale) | ⬜ | briefs live in the lane prompts; research under `research/` |
+| M5 | Staging infra (DO App Platform), logs, E2E, runbook, go/no-go | ⬜ | briefs live in the lane prompts; research under `research/` |
 | M6–M8 | Wave B: projector/sync, public toggle, host_pro money, privacy | ⬜ | later |
 | M9–M13 | Wave C: player side, chat, Messenger, email login, hardening | ⬜ | later |
 
