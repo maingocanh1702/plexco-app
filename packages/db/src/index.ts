@@ -37,6 +37,7 @@ export {
   SESSION_STATUSES,
   type ListSessionsParams,
   type SessionDetail,
+  type SessionListItem,
   type SessionListPage,
   type SessionScalars,
 } from "./session-read.js";

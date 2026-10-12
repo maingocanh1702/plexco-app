@@ -121,6 +121,7 @@ describe("listSessions", () => {
     const page = await listSessions(ctx.appDb.db, { tenantId: ctx.tenantA, limit: 1 });
     expect(Object.keys(page.sessions[0]!).sort()).toEqual(
       [
+        "activeCount",
         "allowPlayerInvite",
         "area",
         "createdAt",
@@ -143,6 +144,35 @@ describe("listSessions", () => {
         "visibility",
       ].sort(),
     );
+  });
+});
+
+describe("listSessions activeCount", () => {
+  it("counts ACTIVE players only (not waitlisted/left), per session, within the tenant", async () => {
+    const tenant = ctx.tenantA;
+    const sessionId = await seedSession(tenant, { startsAt: "2034-01-01T10:00:00Z" });
+    const emptyId = await seedSession(tenant, { startsAt: "2034-01-02T10:00:00Z" });
+    for (const [i, status] of (["active", "active", "waitlisted", "left"] as const).entries()) {
+      const person = (
+        await ctx.owner.query<{ id: string }>(`INSERT INTO persons (display_name) VALUES ($1) RETURNING id`, [
+          `P${i}`,
+        ])
+      ).rows[0]!.id;
+      const membership = (
+        await ctx.owner.query<{ id: string }>(
+          `INSERT INTO memberships (tenant_id, person_id, display_name, status) VALUES ($1, $2, $3, 'active') RETURNING id`,
+          [tenant, person, `P${i}`],
+        )
+      ).rows[0]!.id;
+      await ctx.owner.query(
+        `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenant, sessionId, membership, status, status === "waitlisted" ? 1 : null],
+      );
+    }
+    const page = await listSessions(ctx.appDb.db, { tenantId: tenant, limit: 50 });
+    expect(page.sessions.find((s) => s.id === sessionId)!.activeCount).toBe(2);
+    expect(page.sessions.find((s) => s.id === emptyId)!.activeCount).toBe(0);
   });
 });
 

@@ -83,8 +83,13 @@ export interface SessionScalars {
   updatedAt: Date;
 }
 
+/** List row = scalars + the active roster count (additive, M2b: the list card shows "active/slotsMax"). */
+export interface SessionListItem extends SessionScalars {
+  activeCount: number;
+}
+
 export interface SessionListPage {
-  sessions: SessionScalars[];
+  sessions: SessionListItem[];
   pageInfo: { hasMore: boolean; nextCursor: string | null };
 }
 
@@ -157,6 +162,9 @@ export async function listSessions(db: Db, params: ListSessionsParams): Promise<
     tx
       .select({
         ...scalarColumns,
+        // Correlated count under the same tenant GUC + explicit tenant filter (least disclosure:
+        // a number, never the roster). Active only: waitlisted/left rows do not occupy a slot.
+        activeCount: sql<number>`(select count(*)::int from ${players} where ${players.sessionId} = ${sessions.id} and ${players.tenantId} = ${tenantId} and ${players.status} = 'active')`,
         cursorStartsAt: sql<string>`to_char(${sessions.startsAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
       .from(sessions)
