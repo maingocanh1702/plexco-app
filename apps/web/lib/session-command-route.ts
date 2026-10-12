@@ -55,7 +55,8 @@ import { resolveTenantLang } from "./tenant-lang";
  * between is not seen by the command: the in-command actor re-check under the command's own row
  * locks (the `actor-recheck-under-lock` invariant) is NOT implemented here -- it is the
  * backlog slice `session-commands-actor-recheck-under-lock`, which changes the commands'
- * signatures. Until then the window is one request long. Every domain rule -- status transitions, version races, roster and money guards --
+ * signatures. Until then the window is one request long. Every domain rule -- status transitions,
+ * version races, roster and money guards --
  * belongs to the command, under its own row locks. It does not defend against a compromised
  * session cookie, nor against a malicious tenant admin acting WITHIN their own tenant (that is
  * what the commands' fail-closed money guards and the outbox audit trail are for), nor against

@@ -14,7 +14,8 @@
 --   p_action NULL or not a tenant_capability_actions row         -> no      | unknown_action
 --   p_actor_person_id NULL, or no ACTIVE web tenant_admins row
 --     for (tenant, actor) -- cross-tenant actor, inactive admin  -> no      | not_a_member
---   role owner            x any registry action class            -> yes     | (null)
+--   any role              x platform_admin_only (DD-51/DD-53)    -> no      | not_permitted
+--   role owner            x preset | owner_grantable | owner_only -> yes     | (null)
 --   role admin|co_admin   x preset                               -> yes     | (null)   (admin == co_admin)
 --   role admin|co_admin   x owner_grantable + current grant      -> yes     | (null)
 --   role admin|co_admin   x owner_grantable, no/expired/revoked  -> no      | grant_required
@@ -91,7 +92,11 @@ BEGIN
     RETURN;
   END IF;
 
-  -- 4. Decision table.
+  -- 4. Decision table. PlatformAdmin-only actions (DD-51/DD-53) are never tenant-grantable, owner included.
+  IF v_class = 'platform_admin_only' THEN
+    RETURN QUERY SELECT false, NULL::text, 'not_permitted'::text;
+    RETURN;
+  END IF;
   IF v_role = 'owner' THEN
     RETURN QUERY SELECT true, v_role, NULL::text;
     RETURN;

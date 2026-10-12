@@ -54,6 +54,7 @@ export function decodeSessionCursor(cursor: string): { startsAt: string; id: str
     if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 23) !== startsAt.slice(0, 23)) {
       return null;
     }
+    if (d.getUTCFullYear() < 1) return null; // Postgres has no year 0 (22008 -> 5xx)
     if (typeof id !== "string" || !UUID_RE.test(id)) return null;
     return { startsAt, id: id.toLowerCase() };
   } catch {

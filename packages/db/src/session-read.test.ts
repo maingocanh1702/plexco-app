@@ -232,6 +232,7 @@ describe("cursor codec", () => {
       "2031-02-29T00:00:00.000000Z",
       "2031-04-31T00:00:00.000000Z",
       "2031-01-01T24:00:00.000000Z",
+      "0000-01-01T00:00:00.000000Z",
     ].map((x) => encodeSessionCursor(x, id));
     for (const bad of [
       ...forged,

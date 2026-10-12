@@ -98,7 +98,7 @@ describe.each([
     });
     const response = await GET_LIST(mutation);
     expect(response.status).toBe(405);
-    expect(response.headers.get("allow")).toBe("GET");
+    expect(response.headers.get("allow")).toBe("GET, HEAD");
     expect(currentSession).not.toHaveBeenCalled();
     expect(authorize).not.toHaveBeenCalled();
     const detail = await GET_DETAIL(
@@ -109,6 +109,15 @@ describe.each([
     );
     expect(detail.status).toBe(405);
     expect(authorize).not.toHaveBeenCalled();
+  });
+
+  it("accepts HEAD (Next serves it through GET): it reaches auth and is not a 405", async () => {
+    const head = new Request(`https://plexco.app/api/sessions?tenant=${TENANT}`, {
+      method: "HEAD",
+    });
+    const response = await GET_LIST(head);
+    expect(response.status).not.toBe(405);
+    expect(currentSession).toHaveBeenCalled();
   });
 
   it("does NOT require a CSRF token (body-less read)", async () => {

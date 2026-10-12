@@ -259,6 +259,26 @@ describe("authorize(): closed registry (#26, #27, #32)", () => {
   });
 });
 
+describe("authorize(): platform_admin_only is never tenant-allowed (DD-51/DD-53)", () => {
+  it("denies even an owner for a platform_admin_only registry row", async () => {
+    const owner = await admin(ctx.tenantA, "owner");
+    const key = `platform.test.${randomUUID().slice(0, 8)}`;
+    await ctx.owner.query(
+      `INSERT INTO tenant_capability_actions (action_key, co_admin_default, delegable, authority_class)
+       VALUES ($1, false, false, 'platform_admin_only')`,
+      [key],
+    );
+    try {
+      expect(await run(ctx.tenantA, key, owner)).toEqual({
+        allowed: false,
+        reason: "not_permitted",
+      });
+    } finally {
+      await ctx.owner.query(`DELETE FROM tenant_capability_actions WHERE action_key = $1`, [key]);
+    }
+  });
+});
+
 describe("authorize(): actor and tenant binding", () => {
   it("a cross-tenant actor is denied (admin of A only, asked about B)", async () => {
     const onlyA = await admin(ctx.tenantA, "owner");

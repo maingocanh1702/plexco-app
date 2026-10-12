@@ -7,6 +7,10 @@ import { describe, expect, it } from "vitest";
  * DD-56 property kept after the interim gate was retired: no file in apps/web decides on a
  * membership role. `authorize()` exports `role` on its decision, so a future route could branch on
  * it; this whole-tree pin fails any non-test source that reads a `.role` property or `["role"]`.
+ * Residual, stated rather than hidden: a key assembled at runtime (`d["ro" + "le"]`), `Reflect.get`,
+ * and whole-object serialisation (`JSON.stringify(decision)`) are beyond a static text scan. The
+ * lint rule keeps `tenantsForPerson` out of every other file, which bounds where a role can come
+ * from; this pin covers the syntactic reads of `authorize()`'s `role`.
  * The two surfaces that legitimately OBTAIN roles (and, for readiness, still check owner) are the
  * only exemptions.
  */
@@ -28,11 +32,15 @@ function sources(dir: string): string[] {
 }
 
 const BRACKET_READ = /\[\s*["'`]role["'`]\s*\]/;
+// `const { role } = d`, `{ role: r } = d`, and `({ role }) =>` parameters.
+const DESTRUCTURE_READ = /\{[^}]*\brole\b[^}]*\}\s*(?:=(?!=)|\)\s*=>)/;
 const DOT_READ = /\.role\b/;
-// Single-line string literals are blanked before the dot test so a log key such as "db.role.mismatch"
-// is not mistaken for a property read; the bracket form is tested on the raw text first.
-const blankStrings = (src: string) => src.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '""');
-const readsRole = (src: string) => BRACKET_READ.test(src) || DOT_READ.test(blankStrings(src));
+// Single/double-quoted literals are blanked before the dot test so a log key such as
+// "db.role.mismatch" is not mistaken for a property read. Backtick templates are NOT blanked, so
+// `${m.role}` interpolation is still caught; the bracket and destructuring forms run on raw text.
+const blankStrings = (src: string) => src.replace(/(["'])(?:\\.|(?!\1).)*\1/g, '""');
+const readsRole = (src: string) =>
+  BRACKET_READ.test(src) || DESTRUCTURE_READ.test(src) || DOT_READ.test(blankStrings(src));
 
 describe("DD-56: no apps/web source reads a role property", () => {
   const rel = (f: string) => path.relative(WEB_ROOT, f).split(path.sep).join("/");
@@ -57,5 +65,10 @@ describe("DD-56: no apps/web source reads a role property", () => {
     }
     expect(readsRole("const roleName = 1; // enrole")).toBe(false);
     expect(readsRole('log.error("db.role.mismatch", {})')).toBe(false);
+    expect(readsRole("const s = `r=${m.role}`;")).toBe(true);
+    expect(readsRole("const { role } = decision;")).toBe(true);
+    expect(readsRole("const { id, role: r } = decision;")).toBe(true);
+    expect(readsRole("const f = ({ role }) => role;")).toBe(true);
+    expect(readsRole("const { id } = decision;")).toBe(false);
   });
 });

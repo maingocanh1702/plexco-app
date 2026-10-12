@@ -87,7 +87,7 @@ export async function handleSessionRead(
       t("Phương thức không được hỗ trợ.", "Method not supported."),
       405,
     );
-    response.headers.set("allow", "GET");
+    response.headers.set("allow", "GET, HEAD");
     return response;
   }
   const context = await resolveSessionReadContext(request, rateLimit);
