@@ -51,6 +51,27 @@ describe("tokens-only (FE-INV-2)", () => {
   });
 });
 
+describe("design-tokens.md and globals.css name the same tokens", () => {
+  const doc = readFileSync(join(WEB_ROOT, "../../docs/standards/design-tokens.md"), "utf8");
+  const declared = (text: string) =>
+    new Set([...text.matchAll(/(?<![\w-])(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]!));
+  const docTokens = declared(doc);
+  const cssTokens = declared(globals);
+
+  it("every documented token is defined in globals.css", () => {
+    expect([...docTokens].filter((name) => !cssTokens.has(name))).toEqual([]);
+  });
+
+  it("every token in globals.css is documented", () => {
+    expect([...cssTokens].filter((name) => !docTokens.has(name))).toEqual([]);
+  });
+
+  it("--tracking-tight agrees", () => {
+    const value = (text: string) => /--tracking-tight:\s*([^;\s]+)/.exec(text)?.[1];
+    expect(value(doc)).toBe(value(globals));
+  });
+});
+
 describe("theme-colors mirror globals.css", () => {
   it("--primary and light --bg-page match", () => {
     expect(globals).toContain(`--primary: ${THEME_PRIMARY};`);

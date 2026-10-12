@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authErrorMessage } from "./auth-error-message";
+import { authErrorMessage, normalizeAuthErrorParam } from "./auth-error-message";
 import { makeT } from "./i18n-client";
 
 describe("authErrorMessage", () => {
@@ -24,5 +24,15 @@ describe("authErrorMessage", () => {
     const message = authErrorMessage(hostile, t);
     expect(message).toBe(authErrorMessage("AUTH_INVALID", t));
     expect(message).not.toContain("script");
+  });
+});
+
+describe("normalizeAuthErrorParam", () => {
+  it("passes only members of the closed set; anything else becomes the generic marker", () => {
+    expect(normalizeAuthErrorParam("AUTH_STALE")).toBe("AUTH_STALE");
+    expect(normalizeAuthErrorParam("<script>alert(1)</script>")).toBe("AUTH_INVALID");
+    expect(normalizeAuthErrorParam(undefined)).toBeNull();
+    expect(normalizeAuthErrorParam("")).toBeNull();
+    expect(normalizeAuthErrorParam(["AUTH_STALE"])).toBeNull();
   });
 });

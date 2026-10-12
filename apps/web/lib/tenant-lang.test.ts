@@ -181,6 +181,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/session-dto.ts": "c",
   "lib/theme-colors.ts": "c",
   "lib/use-online-status.ts": "c",
+  "lib/lang-storage.ts": "c",
   // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation
   // screens (landing `?auth_error`, create-club form), which render Vietnamese by DD-118 bucket b.
   "lib/auth-error-message.ts": "b",

@@ -63,10 +63,11 @@ export function validateNewClub(values: NewClubValues, t: TFn): NewClubErrors {
   return errors;
 }
 
-/** Maps an API error code from POST /api/onboarding/start; `null` means "redirect to sign-in". */
+/** Maps an API error code from POST /api/onboarding/start; `null` means "redirect to sign-in" (no/invalid session). */
 export function onboardingErrorMessage(code: string, t: TFn): string | null {
   switch (code) {
     case "AUTH_REQUIRED":
+    case "AUTH_INVALID":
       return null;
     case "SLUG_TAKEN":
       return t(

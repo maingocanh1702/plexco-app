@@ -114,13 +114,13 @@
 
 ```css
 :root {
-  --font-heading: var(--font-sora), 'Sora', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-heading: var(--font-sora), 'Sora', var(--font-inter), system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-sans: var(--font-inter), 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 }
 ```
 
-> Fonts qua `next/font/google` (tự host lúc build, `display: swap`): Sora (subsets `latin`, `latin-ext` — Sora không có subset `vietnamese`; range latin-ext phủ U+1EA0–1EF9) cho heading, Inter (`latin`, `vietnamese`) cho body. `--font-sora` / `--font-inter` do `next/font` gắn trên `<html>`.
+> Fonts qua `next/font/google` (tự host lúc build, `display: swap`): Sora (subsets `latin`, `latin-ext` — Sora KHÔNG có subset `vietnamese`, latin-ext thiếu U+1EA0–1EF1 nên các nguyên âm xếp dấu của tiếng Việt rơi về Inter qua `--font-heading`; đề xuất đổi heading font có subset vietnamese = DD của owner) cho heading, Inter (`latin`, `vietnamese`) cho body. `--font-sora` / `--font-inter` do `next/font` gắn trên `<html>`.
 
 ### Type Scale
 
@@ -148,7 +148,7 @@
   --leading-relaxed: 1.625;
 
   /* -- Letter Spacing -- */
-  --tracking-tight: -0.025em;
+  --tracking-tight: -0.02em;
   --tracking-normal: 0;
   --tracking-wide: 0.025em;
 }

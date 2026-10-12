@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { AppShell } from "../../../components/shell/app-shell";
+import { log } from "../../../lib/log";
 import { currentSession } from "../../../lib/session-cookies";
 
 /**
@@ -15,6 +16,13 @@ export default async function ClubLayout({
   params: Promise<{ tenantId: string }>;
 }) {
   const { tenantId } = await params;
-  if (!(await currentSession())) redirect("/");
+  let signedIn = false;
+  try {
+    signedIn = (await currentSession()) !== null;
+  } catch (error) {
+    // Fail closed to the landing page rather than a default-language 500 on a DB blip.
+    log.error("club_layout.session_resolve_failed", { error });
+  }
+  if (!signedIn) redirect("/");
   return <AppShell tenantId={tenantId}>{children}</AppShell>;
 }

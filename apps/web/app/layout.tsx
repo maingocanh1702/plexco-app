@@ -5,7 +5,8 @@ import { THEME_BG_DARK, THEME_BG_LIGHT } from "../lib/theme-colors";
 import { RegisterSw } from "../components/pwa/register-sw";
 import "./globals.css";
 
-// Sora ships no "vietnamese" subset; its latin-ext range covers U+1EA0-1EF9 (Vietnamese).
+// Sora has NO "vietnamese" subset and latin-ext lacks U+1EA0-1EF1 (most stacked Vietnamese
+// vowels), so --font-heading falls back to Inter (which has it) for those glyphs.
 // Self-hosted at build time by next/font; display swap + system fallbacks (see --font-* tokens).
 const sora = Sora({
   subsets: ["latin", "latin-ext"],

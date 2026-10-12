@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { apiFetch } from "../../lib/api-client";
 import { useT } from "../../lib/i18n-client";
+import { clearStoredLang } from "../../lib/lang-storage";
 import { Button } from "../ui/button";
 import { Toast } from "../ui/toast";
 
@@ -17,6 +18,7 @@ export function SignOutButton({ csrfToken }: { csrfToken: string }) {
     setFailed(false);
     try {
       await apiFetch("/api/auth/logout", { method: "POST", csrfToken });
+      clearStoredLang();
       window.location.assign("/");
     } catch {
       setFailed(true);

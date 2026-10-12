@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 import { cx } from "./cx";
 import styles from "./button.module.css";
@@ -19,9 +20,27 @@ export function Button(props: ButtonProps | LinkProps) {
   const { variant = "primary", block, children, ...rest } = props;
   const className = cx(styles.button, styles[variant], block && styles.block);
   if (props.href !== undefined) {
-    const { href, ...anchor } = rest as AnchorHTMLAttributes<HTMLAnchorElement> & { href: string };
+    const { href, target, rel, ...anchor } = rest as AnchorHTMLAttributes<HTMLAnchorElement> & {
+      href: string;
+    };
+    // Client-side navigation only for in-app pages. /api/* (the Google start redirect) and
+    // external URLs must be real top-level navigations, so they stay a plain <a>.
+    const internal = href.startsWith("/") && !href.startsWith("//") && !href.startsWith("/api/");
+    if (internal && target !== "_blank") {
+      return (
+        <Link href={href} className={className} {...anchor}>
+          {children}
+        </Link>
+      );
+    }
     return (
-      <a href={href} className={className} {...anchor}>
+      <a
+        href={href}
+        className={className}
+        target={target}
+        rel={target === "_blank" ? "noopener noreferrer" : rel}
+        {...anchor}
+      >
         {children}
       </a>
     );
