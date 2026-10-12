@@ -5725,7 +5725,7 @@ depends_on: []
 invariants: [auth]
 scope: [packages/db/src/session-service.ts, apps/web/lib/session-command-route.ts]
 manifest: null
-merged_probe: actorRecheckUnderLock
+merged_probe: packages/db/src/session-service.ts :: actorRecheckUnderLock
 notes: |
   Follow-up of lane M2a-1 (PR #43), which replaced the interim role gate with authorize(session.manage) but left the decision in a SEPARATE transaction before the command. This row closes that window.
   Contract: the 8 session commands (create, publish, announce, update, close, cancel, createGuestNote, deleteGuestNote) take `actorPersonId` and call `authorize(tx, ...)` as the FIRST statement of their own `withTenant` transaction, BEFORE the session-row `FOR UPDATE` (lock order actor/grant lock first, session lock second). Spec: `docs/features/BE/feature_tenant_routing_authz_tech.md:426-433` ("Actor-recheck-under-lock"); PLAN.md M3 #1. The route gate becomes the cheap early deny only.

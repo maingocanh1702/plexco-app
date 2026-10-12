@@ -353,7 +353,7 @@ describe("authorize(): re-check under lock (#28)", () => {
   it("a grant that expires mid-transaction passes the first call and denies the second", async () => {
     const owner = await admin(ctx.tenantA, "owner");
     const co = await admin(ctx.tenantA, "co_admin");
-    await grant(ctx.tenantA, co, owner, "money.refund", { expiresIn: "700 milliseconds" });
+    await grant(ctx.tenantA, co, owner, "money.refund", { expiresIn: "2 seconds" });
     await withTenant(ctx.appDb.db, ctx.tenantA, async (tx) => {
       const first = await authorize(tx, {
         tenantId: ctx.tenantA,
@@ -361,7 +361,7 @@ describe("authorize(): re-check under lock (#28)", () => {
         actorPersonId: co,
       });
       expect(first.allowed).toBe(true);
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 2500));
       const second = await authorize(tx, {
         tenantId: ctx.tenantA,
         action: "money.refund",

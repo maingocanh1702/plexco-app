@@ -227,9 +227,14 @@ describe("cursor codec", () => {
     const id = "00000000-0000-4000-8000-0000000000a1";
     const ts = "2031-01-01T10:00:00.000001Z";
     expect(decodeSessionCursor(encodeSessionCursor(ts, id))).toEqual({ startsAt: ts, id });
-    const notAnInstant = encodeSessionCursor("2031-13-45T10:00:00.000001Z", id);
+    const forged = [
+      "2031-13-45T10:00:00.000001Z",
+      "2031-02-29T00:00:00.000000Z",
+      "2031-04-31T00:00:00.000000Z",
+      "2031-01-01T24:00:00.000000Z",
+    ].map((x) => encodeSessionCursor(x, id));
     for (const bad of [
-      notAnInstant,
+      ...forged,
       "",
       "%%%",
       Buffer.from("[]").toString("base64url"),

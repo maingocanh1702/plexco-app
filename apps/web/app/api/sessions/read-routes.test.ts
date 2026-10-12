@@ -98,7 +98,16 @@ describe.each([
     });
     const response = await GET_LIST(mutation);
     expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET");
     expect(currentSession).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+    const detail = await GET_DETAIL(
+      new Request(`https://plexco.app/api/sessions/${SESSION_ID}?tenant=${TENANT}`, {
+        method: "DELETE",
+      }),
+      ctx(),
+    );
+    expect(detail.status).toBe(405);
     expect(authorize).not.toHaveBeenCalled();
   });
 

@@ -79,9 +79,16 @@ export async function handleSessionRead(
   rateLimit: { bucket: string; limit: number },
   handler: (context: SessionReadContext) => Promise<Response>,
 ): Promise<Response> {
-  // The read gate skips CSRF on purpose, so it must never serve a non-GET method.
-  if (request.method !== "GET") {
-    return err("INVALID_BODY", t("Phương thức không được hỗ trợ.", "Method not supported."), 405);
+  // The read gate skips CSRF on purpose, so it must never serve a mutation. HEAD is allowed:
+  // Next serves it through GET.
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const response = err(
+      "INVALID_BODY",
+      t("Phương thức không được hỗ trợ.", "Method not supported."),
+      405,
+    );
+    response.headers.set("allow", "GET");
+    return response;
   }
   const context = await resolveSessionReadContext(request, rateLimit);
   if (context instanceof Response) return context;
