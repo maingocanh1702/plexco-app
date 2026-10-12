@@ -27,7 +27,9 @@ describe("editBlockedReason", () => {
     );
   });
   it("never blocks a draft (past-guard is open-only) or a future open session", () => {
-    expect(editBlockedReason({ status: "draft", startsAt: "2026-10-20T11:00:00Z" }, now)).toBeNull();
+    expect(
+      editBlockedReason({ status: "draft", startsAt: "2026-10-20T11:00:00Z" }, now),
+    ).toBeNull();
     expect(editBlockedReason({ status: "open", startsAt: "2026-10-21T11:00:00Z" }, now)).toBeNull();
   });
 });
