@@ -1751,7 +1751,7 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
   **không** là authority).
 - **Agent triển khai sở hữu UI design.** Input: direction DD-81 (Energetic Orange `#FF5A1F` · Sora heading ·
   Inter body · `--on-primary #22100A`) và cấu trúc token SoT `design-tokens.md`. Agent **được activate** bộ
-  giá trị target C vào `apps/web` (và cập nhật `design-tokens.md` theo bước 2 §6 `theme-direction-2026-07.md`)
+  giá trị target C vào `apps/web` (và cập nhật `design-tokens.md` theo bước 2 §6 `../channels/web/theme-direction-2026-07.md`; các bước còn hiệu lực của §6: 2 · 3 · 4 · 6 và vế WCAG của 7 — bước 5 và vế drift-audit-với-file-design của 7 **bỏ**)
   trong PR FE đầu tiên — tức "authority flip" DD-59 §8 mà DD-81 để ngỏ nay là quyết định này, không cần DD
   riêng, không cần exporter `.pen`.
 - **Các gate `.pen` KHÔNG còn áp dụng:** DD-81 "file chỉ thành authority sau khi tracked + owner-approved;
@@ -1810,12 +1810,20 @@ mở · A3 luật sư · vendor email C7): lane viết **proposal** kèm khuyế
 > blocking finding, then re-review with a fresh subagent. At most 3 review rounds per PR. The PR body states
 > 'Codex waived by owner 2026-10-12; reviewed by independent Claude subagent'."*
 >
-> **D4 THẮNG, trong phạm vi chương trình, mọi văn bản sau đây và chúng được annotate trỏ về đây:** đoạn
-> WORKFLOW của Shared contract trong `../autopilot-templates/web-mvp-2026-10-12-RUN.md` (register manifest ·
-> `codex-review-pin.sh` · `HALT TOOL_UNAVAILABLE`), `../BACKEND-HANDOFF-2026-09-26.md` §7.2 (scope-gate
-> lifecycle) + §7.4 (Codex), mục "Review / Plan Readiness" và "Workflow mặc định — Level 3" bước 4 của
-> `CLAUDE.md`, và quy tắc "Cross-model review = Codex ONLY" trong invariants toàn cục. **Ngoài chương trình
-> này, tất cả giữ nguyên hiệu lực.**
+> **D4 THẮNG, trong phạm vi chương trình, các văn bản sau (mỗi chỗ có một dòng annotate trỏ về đây, trừ
+> chỗ ghi rõ):** đoạn WORKFLOW của Shared contract trong `../autopilot-templates/web-mvp-2026-10-12-RUN.md`
+> (register manifest · `codex-review-pin.sh` · `HALT TOOL_UNAVAILABLE`) · `../BACKEND-HANDOFF-2026-09-26.md`
+> §2 mục 2 ("Codex review sạch"), §7.2 (scope-gate lifecycle), §7.4 (Codex), §7.6 (prompt mẫu) · câu
+> Codex/`HALT TOOL_UNAVAILABLE` ở bước 4 mục "Workflow mặc định — Level 3" của `CLAUDE.md` (annotate một dòng
+> tại chỗ) · quy tắc "Cross-model review = Codex ONLY" trong invariants toàn cục (**ngoài repo, KHÔNG
+> annotate** — agent tới D4 qua Shared contract của RUN doc hoặc index DD-122). **KHÔNG override** mục
+> "Review / Plan Readiness" của `CLAUDE.md` (validator `pnpm review:check` và readiness gate cho docs/plan/spec
+> giữ nguyên — xem mục 6 dưới). **Ngoài chương trình này, tất cả giữ nguyên hiệu lực.**
+>
+> **Mở rộng so với nguồn, cần owner xác nhận (cùng cơ chế merge = ký):** nguồn ghi *"owner rule for **this
+> session**"*; D4 áp cho **mọi PR của chương trình M0–M13** (nhiều phiên), vì chương trình được chạy bởi
+> cùng một prompt điều phối và cùng một ràng buộc môi trường (Codex không có trong phiên). Không đồng ý →
+> sửa dòng này trước khi M1 chạy.
 
 Áp cho mọi PR của chương trình này:
 

@@ -240,7 +240,7 @@ git --no-optional-locks log --oneline -1    # xác nhận HEAD đã nhúc nhích
 | Mục | Chặn cái gì |
 |---|---|
 | **DD-116 FE PENDING** | 100% scope launch. Gỡ chỉ khi đủ ba vế: chọn 1 `.pen` canonical · tracked trên `main` · owner ký gate DD-81 → ⚠️ **12/10: GỠ bởi DD-122**, không qua trigger `.pen` |
-| **DD-119** 🟡 | Carve-out cho designer dựng `plexco.pen` untracked — chưa ratify ⇒ designer vẫn chưa được vẽ |
+| **DD-119** 🟡 | Carve-out cho designer dựng `plexco.pen` untracked — chưa ratify ⇒ designer vẫn chưa được vẽ → ⚠️ **12/10: superseded bởi DD-122** (không cần `.pen`) |
 | **DD-120** 🟡 | Làn ap3 proactive |
 | **DD-56 amendment #3** (draft) | Route ĐỌC session |
 | **OPEN NOTE DD-56** (15/09) | Cổng tạm nay phủ **BẢY** route (2 route guest-note) trong khi amendment #2 pin **NĂM**. Cần chữ ký, không phải sửa code |

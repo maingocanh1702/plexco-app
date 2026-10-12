@@ -5,7 +5,7 @@
 > **Đọc kèm, không lặp lại ở đây:** `docs/00-start-here/DEV-ONBOARDING.md`. File đó hướng dẫn dựng máy, nêu 5 HARD RULES, commit root lock và các bẫy đã trả giá. File này trả lời bốn câu: **làm gì tiếp, input là gì, output nộp ra là gì, chạy bằng quy trình nào để agent làm được phần lớn.**
 > **Hết hạn khi** `git diff --name-only dd5375f..origin/main -- packages apps scripts docs/autopilot-backlog.md` không còn rỗng. Khi đó, trước khi nhận một task, chạy lại lệnh kiểm của chính task đó.
 > **Ngoài phạm vi:** mọi thứ trong `apps/web` là màn hình/UI, design, `.pen`, FE spec (`docs/channels/web/FE/*`). FE đang **PENDING theo lệnh owner** (DD-116), nên không mở lane FE.
-> ⚠️ **12/10/2026 — DD-122 đã gỡ FE PENDING** cho full MVP; lane FE mở theo `autopilot-templates/web-mvp-2026-10-12-RUN.md` (M0–M13). Phần backend của file này vẫn là input cho M2 (track A, C1–C3) · M3 (track D) · M5 (track E) · M6 (track B) · M7 (C4–C7). Bảng §6 "Quyết định owner đang chặn": các dòng có default nay **áp theo DD-122 D3**. **§7.2 (scope-gate lifecycle) và §7.4 (Codex reviewer) KHÔNG áp cho PR của chương trình Web MVP** — DD-122 D4 thay bằng Claude subagent review độc lập; mọi task ngoài chương trình giữ nguyên §7.
+> ⚠️ **12/10/2026 — DD-122 đã gỡ FE PENDING** cho full MVP; lane FE mở theo `autopilot-templates/web-mvp-2026-10-12-RUN.md` (M0–M13). Phần backend của file này vẫn là input cho M2 (track A, C1–C3) · M3 (track D) · M5 (track E) · M6 (track B) · M7 (C4–C7). Bảng §6 "Quyết định owner đang chặn": các dòng có default nay **áp theo DD-122 D3**. **§2 mục 2 ("Codex review sạch"), §7.2 (scope-gate lifecycle), §7.4 (Codex reviewer) và §7.6 (prompt mẫu) KHÔNG áp cho PR của chương trình Web MVP** — DD-122 D4 thay bằng Claude subagent review độc lập; mọi task ngoài chương trình giữ nguyên §7.
 
 ---
 
@@ -383,7 +383,7 @@ E. INFRA             E1 deploy DO (P0, tay) ──▶ E2 PITR drill
 | **DD-120** | Ratify làn ap3 cho `code-quality-p2` | đang chạy de facto | tính hợp lệ của làn ap3 | 30/09 |
 | **ap3-routines** | Mở class ap3 cho các row audit | — | nạp queue ap3 | — |
 | Occupancy authority | Nguồn sự thật cho occupancy / `confirmed_count` | — | B7 public projector | — |
-| Tier C #2 | Ngôn ngữ per-user | — | user settings | — |
+| Tier C #2 | Ngôn ngữ per-user | — → ⚠️ 12/10: DD-122 D3 áp **per-club** qua `tenants.locale` (không locale cấp member trong MVP) | user settings | — |
 | Bên ngoài | ApiPay signed body · egress DD-04 · vendor email C7 · Meta App Review · spike Zalo OA DD-14/15 · luật sư A3 | — | C6, E1, G, D5, D1, go-live | — |
 
 **Đề xuất cho senior dev:** tuần đầu gom 5 dòng in đậm thành một lượt hỏi owner. Mỗi câu một dòng, kèm khuyến nghị (theo khuôn `docs/project/decisions-inbox.json`).

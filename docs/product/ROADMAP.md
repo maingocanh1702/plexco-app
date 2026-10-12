@@ -82,7 +82,7 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 
 - 🔴 **FE PENDING (DD-116 Option B)** — gỡ chỉ khi đủ ba vế (canonical `.pen` · tracked trên `main` · owner ký gate DD-81). Owner **hoãn có chủ đích từ 03/09**; ghi ở đây một dòng, không hỏi lại. → ⚠️ **12/10/2026: GỠ bởi DD-122** (full MVP; DD-119 superseded; chương trình `../autopilot-templates/web-mvp-2026-10-12-RUN.md` M0–M13; agent sở hữu UI design).
 - ✅ **DD-56 — hai route guest-note ĐÃ KÝ (amendment #3, owner 2026-09-19, `decisions.md` v2.51).** Cổng tạm nay phủ **BẢY** route, liệt kê tường minh. Bề mặt cưỡng chế không rộng thêm (ESLint rule không phải sửa). Điều khoản 5 — void khi `tenant-capability-authority-core` land — áp cho cả bảy.
-- 🟡 **DD-119 chưa ratify** (carve-out designer dựng `plexco.pen` untracked).
+- 🟡 **DD-119 chưa ratify** (carve-out designer dựng `plexco.pen` untracked) → ⚠️ **12/10: superseded bởi DD-122 D1**.
 - 🟡 **DD-120 chưa ratify** (làn ap3 proactive cho class `code-quality-p2`).
 - ⬜ **DD-56 amendment #3** (route ĐỌC session) — draft, chưa ký ⇒ row `session-read-routes-list-detail` vẫn `blocked`, và Milestone 2 của `ap3/features/session-management/PLAN.md` (supervised) chưa chạy được.
 - 🟡 **`main` đang trước `origin/main` 3 commit, chưa push** (`0601229` · `c2132b5` · `12f5191`) — push là việc tay owner.
