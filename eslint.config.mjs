@@ -80,6 +80,21 @@ export default tseslint.config(
     },
   },
   {
+    // Hand-written service worker (apps/web/public/sw.js): it runs in ServiceWorkerGlobalScope,
+    // not Node and not a window, so the browser worker globals are declared here by name.
+    files: ["apps/web/public/sw.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: {
+        self: "readonly",
+        caches: "readonly",
+        fetch: "readonly",
+        Response: "readonly",
+        URL: "readonly",
+      },
+    },
+  },
+  {
     // HR1 choke-point: apps never touch tenant tables directly — every
     // tenant-scoped query goes through tenantRepo/withTenant (@plexco/db).
     files: ["apps/**/*.{ts,tsx}"],
