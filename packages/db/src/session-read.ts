@@ -48,6 +48,8 @@ export function decodeSessionCursor(cursor: string): { startsAt: string; id: str
     if (!Array.isArray(parsed) || parsed.length !== 2) return null;
     const [startsAt, id] = parsed as unknown[];
     if (typeof startsAt !== "string" || !TS_RE.test(startsAt)) return null;
+    // Shape alone is not enough: "2031-13-45T..." matches TS_RE but is not an instant (22008 -> 5xx).
+    if (Number.isNaN(Date.parse(startsAt))) return null;
     if (typeof id !== "string" || !UUID_RE.test(id)) return null;
     return { startsAt, id: id.toLowerCase() };
   } catch {

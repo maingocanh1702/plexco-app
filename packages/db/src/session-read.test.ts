@@ -227,7 +227,9 @@ describe("cursor codec", () => {
     const id = "00000000-0000-4000-8000-0000000000a1";
     const ts = "2031-01-01T10:00:00.000001Z";
     expect(decodeSessionCursor(encodeSessionCursor(ts, id))).toEqual({ startsAt: ts, id });
+    const notAnInstant = encodeSessionCursor("2031-13-45T10:00:00.000001Z", id);
     for (const bad of [
+      notAnInstant,
       "",
       "%%%",
       Buffer.from("[]").toString("base64url"),

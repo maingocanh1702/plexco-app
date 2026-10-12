@@ -1,4 +1,10 @@
-import { SessionReadError, authorize, getSessionDetail, listSessions } from "@plexco/db";
+import {
+  SessionReadError,
+  authorize,
+  getSessionDetail,
+  listSessions,
+  withTenant,
+} from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../lib/session-cookies";
 import { GET as GET_DETAIL } from "./[id]/route";
@@ -85,6 +91,17 @@ describe.each([
     expect(authorize).not.toHaveBeenCalled();
   });
 
+  it("refuses any non-GET method with 405 before touching auth (the gate has no CSRF)", async () => {
+    const mutation = new Request(`https://plexco.app/api/sessions?tenant=${TENANT}`, {
+      method: "POST",
+      body: "{}",
+    });
+    const response = await GET_LIST(mutation);
+    expect(response.status).toBe(405);
+    expect(currentSession).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
+  });
+
   it("does NOT require a CSRF token (body-less read)", async () => {
     vi.mocked(csrfOk).mockReturnValue(false);
     await call();
@@ -106,6 +123,7 @@ describe.each([
     const response = await call();
     expect(response.status).toBe(403);
     expect((await envelope(response)).error?.code).toBe("FORBIDDEN");
+    expect(withTenant).toHaveBeenCalledWith(expect.anything(), TENANT, expect.any(Function));
     expect(authorize).toHaveBeenCalledWith(expect.anything(), {
       tenantId: TENANT,
       action: "session.manage",
@@ -187,7 +205,9 @@ describe("GET /api/sessions/:id", () => {
   it("404 SESSION_NOT_FOUND when the id is not in the caller's tenant", async () => {
     const response = await GET_DETAIL(get(`/api/sessions/${SESSION_ID}`), ctx());
     expect(response.status).toBe(404);
-    expect((await envelope(response)).error?.code).toBe("SESSION_NOT_FOUND");
+    const body = await envelope(response);
+    expect(body.error?.code).toBe("SESSION_NOT_FOUND");
+    expect(body.error?.message).toBe("Không tìm thấy kèo.");
     expect(getSessionDetail).toHaveBeenCalledWith(expect.anything(), {
       tenantId: TENANT,
       sessionId: SESSION_ID,

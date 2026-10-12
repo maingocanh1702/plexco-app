@@ -3,7 +3,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { authorize } from "./tenant-capability-authority.js";
 import { withTenant } from "./tenant.js";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import pg from "pg";
+import {
+  setupNonSuperuserOwnerContext,
+  setupRlsTestContext,
+  withJobDefinerLock,
+  type RlsTestContext,
+} from "./test-harness.js";
 
 /**
  * authorize() (0049) -- BE spec feature_tenant_routing_authz_tech.md §5 rows #21-#28 and #32, plus
@@ -392,6 +398,97 @@ describe("authorize(): re-check under lock (#28)", () => {
       }
     });
   });
+});
+
+describe("authorize(): grant row lock (#28, lock half)", () => {
+  it("holds FOR SHARE on the matching grant row until the caller commits", async () => {
+    const owner = await admin(ctx.tenantA, "owner");
+    const co = await admin(ctx.tenantA, "co_admin");
+    const grantId = await grant(ctx.tenantA, co, owner, "money.refund");
+    await withTenant(ctx.appDb.db, ctx.tenantA, async (tx) => {
+      const d = await authorize(tx, {
+        tenantId: ctx.tenantA,
+        action: "money.refund",
+        actorPersonId: co,
+      });
+      expect(d.allowed).toBe(true);
+      await ctx.owner.query("BEGIN");
+      try {
+        await ctx.owner.query(`SET LOCAL lock_timeout = '300ms'`);
+        await expect(
+          ctx.owner.query(
+            `UPDATE tenant_capability_grants SET revoked_at = clock_timestamp() WHERE id = $1`,
+            [grantId],
+          ),
+        ).rejects.toMatchObject({ code: "55P03" });
+      } finally {
+        await ctx.owner.query("ROLLBACK");
+      }
+    });
+  });
+});
+
+describe("authorize(): under a NOSUPERUSER NOBYPASSRLS migration owner (0037 D-2 incident class)", () => {
+  it("an owner is allowed and a stranger is denied when the definer's owner is subject to FORCE RLS", async () => {
+    const nsCtx = await setupNonSuperuserOwnerContext("plexco_authorize_nonsuper");
+    let appPool: pg.Pool | undefined;
+    try {
+      await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
+        await nsCtx.bootstrapJobDefinerForOwner();
+        await nsCtx.bootstrapChatDefinerForOwner();
+        await nsCtx.runMigration();
+      });
+      await nsCtx.superuser.query(`ALTER ROLE app WITH LOGIN PASSWORD 'plexco_test_app'`);
+      const url = new URL(process.env.DATABASE_URL_TEST!);
+      url.pathname = `/${nsCtx.dbName}`;
+      url.username = "app";
+      url.password = "plexco_test_app";
+      appPool = new pg.Pool({ connectionString: url.toString(), max: 2 });
+
+      // Fixtures the production way: a person (owner connection; persons has no runtime grant)
+      // and tenant_provision() as `app`, which creates the owner tenant_admins row under FORCE RLS.
+      const personRow = await nsCtx.ownerPool.query<{ id: string }>(
+        `INSERT INTO persons (display_name) VALUES ('NS Owner') RETURNING id`,
+      );
+      const stranger = (
+        await nsCtx.ownerPool.query<{ id: string }>(
+          `INSERT INTO persons (display_name) VALUES ('NS Stranger') RETURNING id`,
+        )
+      ).rows[0]!.id;
+      const ownerPerson = personRow.rows[0]!.id;
+      const tenant = (
+        await appPool.query<{ id: string }>(
+          `SELECT tenant_provision($1, 'NS Club', 'Asia/Ho_Chi_Minh', 'vi', $2::uuid) AS id`,
+          [`ns-club-${randomUUID().slice(0, 8)}`, ownerPerson],
+        )
+      ).rows[0]!.id;
+
+      const decide = async (person: string) => {
+        const c = await appPool!.connect();
+        try {
+          await c.query("BEGIN");
+          await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenant]);
+          const { rows } = await c.query(
+            `SELECT allowed, role, reason FROM tenant_capability_authorize($1::uuid, 'session.manage', $2::uuid)`,
+            [tenant, person],
+          );
+          await c.query("ROLLBACK");
+          return rows[0] as { allowed: boolean; role: string | null; reason: string | null };
+        } finally {
+          c.release();
+        }
+      };
+      expect(await decide(ownerPerson)).toEqual({ allowed: true, role: "owner", reason: null });
+      expect(await decide(stranger)).toEqual({
+        allowed: false,
+        role: null,
+        reason: "not_a_member",
+      });
+    } finally {
+      await appPool?.end();
+      await nsCtx.teardown();
+    }
+  }, 120_000);
 });
 
 describe("authorize(): infrastructure errors are rethrown, never allow", () => {
