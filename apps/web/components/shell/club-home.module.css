@@ -1,0 +1,20 @@
+.home {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.lead {
+  color: var(--text-secondary);
+}
+
+.actions {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 768px) {
+  .actions {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
