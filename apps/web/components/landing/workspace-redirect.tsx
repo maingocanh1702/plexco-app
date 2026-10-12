@@ -51,7 +51,7 @@ export function WorkspaceRedirect() {
             <li key={tenant.tenantId}>
               <Card>
                 <Button href={`/c/${tenant.tenantId}`} variant="secondary" block>
-                  {t(`Câu lạc bộ ${index + 1}`, `Club ${index + 1}`)}
+                  {tenant.name ?? t(`Câu lạc bộ ${index + 1}`, `Club ${index + 1}`)}
                 </Button>
               </Card>
             </li>

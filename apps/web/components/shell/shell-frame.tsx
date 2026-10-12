@@ -42,6 +42,7 @@ export function ShellFrame({
       <header className={styles.header}>
         <div className={styles.brand}>
           <Link href={`/c/${tenant.tenantId}`}>Plexco</Link>
+          <span className={styles.club}>{tenant.name ?? t("CLB của bạn", "Your club")}</span>
         </div>
         <div className={styles.actions}>
           <TenantSwitcher tenants={session.tenants} currentId={tenant.tenantId} />

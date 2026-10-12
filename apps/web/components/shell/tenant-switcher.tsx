@@ -22,7 +22,7 @@ export function TenantSwitcher({
       value={currentId}
       options={tenants.map((tenant, index) => ({
         value: tenant.tenantId,
-        label: t(`Câu lạc bộ ${index + 1}`, `Club ${index + 1}`),
+        label: tenant.name ?? t(`Câu lạc bộ ${index + 1}`, `Club ${index + 1}`),
       }))}
       onChange={(e) => router.push(`/c/${e.target.value}`)}
     />
