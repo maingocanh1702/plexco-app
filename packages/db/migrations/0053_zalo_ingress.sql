@@ -255,20 +255,23 @@ BEGIN
   END IF;
 
   RETURN QUERY
-    INSERT INTO public.zalo_bots AS z
-      (id, tenant_id, bot_token_enc, webhook_token, webhook_secret_enc, key_version, status)
-      VALUES (p_bot_id, p_tenant_id, p_bot_token_enc, p_webhook_token, p_webhook_secret_enc,
-              p_key_version, 'connecting')
-    ON CONFLICT (tenant_id) DO UPDATE
-      SET bot_token_enc = EXCLUDED.bot_token_enc,
-          webhook_token = EXCLUDED.webhook_token,
-          webhook_secret_enc = EXCLUDED.webhook_secret_enc,
-          key_version = EXCLUDED.key_version,
-          status = 'connecting',
-          verified_at = NULL,
-          rotation_pending = false
-      WHERE z.id = EXCLUDED.id
-    RETURNING z.id, z.webhook_token, z.status;
+    WITH ins AS (
+      INSERT INTO public.zalo_bots AS z
+        (id, tenant_id, bot_token_enc, webhook_token, webhook_secret_enc, key_version, status)
+        VALUES (p_bot_id, p_tenant_id, p_bot_token_enc, p_webhook_token, p_webhook_secret_enc,
+                p_key_version, 'connecting')
+      ON CONFLICT (tenant_id) DO UPDATE
+        SET bot_token_enc = EXCLUDED.bot_token_enc,
+            webhook_token = EXCLUDED.webhook_token,
+            webhook_secret_enc = EXCLUDED.webhook_secret_enc,
+            key_version = EXCLUDED.key_version,
+            status = 'connecting',
+            verified_at = NULL,
+            rotation_pending = false
+        WHERE z.id = EXCLUDED.id
+      RETURNING z.id AS r_id, z.webhook_token AS r_token, z.status AS r_status
+    )
+    SELECT ins.r_id, ins.r_token, ins.r_status FROM ins;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'zalo_bot_upsert_for_tenant: concurrent bot change'
       USING ERRCODE = 'serialization_failure';
@@ -314,14 +317,18 @@ BEGIN
     RAISE EXCEPTION 'zalo_bot_set_status: bot is revoked' USING ERRCODE = 'invalid_parameter_value';
   END IF;
   RETURN QUERY
-    UPDATE public.zalo_bots b
-       SET status = p_status,
-           verified_at = CASE WHEN p_verified IS TRUE THEN coalesce(b.verified_at, clock_timestamp())
-                              ELSE b.verified_at END,
-           last_setwebhook_at = CASE WHEN p_touch_setwebhook IS TRUE THEN clock_timestamp()
-                                     ELSE b.last_setwebhook_at END
-     WHERE b.id = p_bot_id AND b.tenant_id = p_tenant_id
-    RETURNING b.id, b.status, b.verified_at, b.last_setwebhook_at;
+    WITH upd AS (
+      UPDATE public.zalo_bots b
+         SET status = p_status,
+             verified_at = CASE WHEN p_verified IS TRUE THEN coalesce(b.verified_at, clock_timestamp())
+                                ELSE b.verified_at END,
+             last_setwebhook_at = CASE WHEN p_touch_setwebhook IS TRUE THEN clock_timestamp()
+                                       ELSE b.last_setwebhook_at END
+       WHERE b.id = p_bot_id AND b.tenant_id = p_tenant_id
+      RETURNING b.id AS r_id, b.status AS r_status, b.verified_at AS r_verified,
+                b.last_setwebhook_at AS r_hook
+    )
+    SELECT upd.r_id, upd.r_status, upd.r_verified, upd.r_hook FROM upd;
 END;
 $$;
 REVOKE ALL ON FUNCTION zalo_bot_set_status(uuid, uuid, text, boolean, boolean) FROM PUBLIC;
