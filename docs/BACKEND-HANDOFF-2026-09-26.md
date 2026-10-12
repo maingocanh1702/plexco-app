@@ -5,7 +5,7 @@
 > **Đọc kèm, không lặp lại ở đây:** `docs/00-start-here/DEV-ONBOARDING.md`. File đó hướng dẫn dựng máy, nêu 5 HARD RULES, commit root lock và các bẫy đã trả giá. File này trả lời bốn câu: **làm gì tiếp, input là gì, output nộp ra là gì, chạy bằng quy trình nào để agent làm được phần lớn.**
 > **Hết hạn khi** `git diff --name-only dd5375f..origin/main -- packages apps scripts docs/autopilot-backlog.md` không còn rỗng. Khi đó, trước khi nhận một task, chạy lại lệnh kiểm của chính task đó.
 > **Ngoài phạm vi:** mọi thứ trong `apps/web` là màn hình/UI, design, `.pen`, FE spec (`docs/channels/web/FE/*`). FE đang **PENDING theo lệnh owner** (DD-116), nên không mở lane FE.
-> ⚠️ **12/10/2026 — DD-122 đã gỡ FE PENDING** cho full MVP; lane FE mở theo `autopilot-templates/web-mvp-2026-10-12-RUN.md` (M0–M13). Phần backend của file này vẫn là input cho M2 (track A, C1–C3) · M3 (track D) · M5 (track E) · M6 (track B) · M7 (C4–C7). Bảng §6 "Quyết định owner đang chặn": các dòng có default nay **áp theo DD-122 D3**.
+> ⚠️ **12/10/2026 — DD-122 đã gỡ FE PENDING** cho full MVP; lane FE mở theo `autopilot-templates/web-mvp-2026-10-12-RUN.md` (M0–M13). Phần backend của file này vẫn là input cho M2 (track A, C1–C3) · M3 (track D) · M5 (track E) · M6 (track B) · M7 (C4–C7). Bảng §6 "Quyết định owner đang chặn": các dòng có default nay **áp theo DD-122 D3**. **§7.2 (scope-gate lifecycle) và §7.4 (Codex reviewer) KHÔNG áp cho PR của chương trình Web MVP** — DD-122 D4 thay bằng Claude subagent review độc lập; mọi task ngoài chương trình giữ nguyên §7.
 
 ---
 

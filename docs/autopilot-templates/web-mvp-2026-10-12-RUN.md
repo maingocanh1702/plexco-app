@@ -13,8 +13,8 @@
 > đổi tới 12/10): 49 migration · 15 API route (0 route đọc session) · 0 màn FE · BE readiness phase-1
 > 39% · launch readiness 8%. Mỗi prompt tự đo lại.
 >
-> ⚠️ **File này chưa được commit.** Agent trong worktree sẽ không thấy nó, nên mọi prompt trỏ đường dẫn
-> tuyệt đối vào root checkout. M0 commit nó lên `main`.
+> ✅ **File này được commit trong PR M0 (DD-122).** Các prompt vẫn trỏ đường dẫn tuyệt đối vào root checkout để
+> chạy được từ worktree chưa rebase; sau khi M0 merge, đường dẫn tương đối trong repo là tương đương.
 
 ## Owner chốt 12/10 (phiên Cowork) — M0 ghi vào `decisions.md`
 
@@ -24,6 +24,7 @@
 | 2 | Scope = **full MVP** (BRD §5.1) | Ship 3 đợt lồng nhau: Launch (DD-113) ⊂ Phase-1 (DD-114) ⊂ MVP |
 | 3 | Áp default khuyến nghị cho quyết định đang treo | Bảng `DEFAULTS` trong Shared contract; mỗi default thành một entry chờ ký, **owner merge PR = ký** |
 | 4 | 1 prompt điều phối + prompt từng mốc | File này |
+| 5 | **Review của chương trình = Claude subagent độc lập, không Codex, không scope-gate lifecycle** (prompt owner paste 12/10, mục REVIEW) | `decisions.md` **DD-122 D4** thắng đoạn WORKFLOW của Shared contract bên dưới và §7.2/§7.4 của `BACKEND-HANDOFF`, chỉ trong phạm vi chương trình |
 
 > Cho tới khi PR của M0 merge, bốn quyết định trên chỉ sống trong file này — đúng thứ DD-111 D4 cấm làm
 > nguồn bền. Vì vậy prompt điều phối **chỉ chạy M0** khi M0 chưa có trên `origin/main`.
@@ -82,7 +83,7 @@ SOURCE OF AUTHORITY FOR THIS PROGRAM
 READ FIRST
 - docs/00-start-here/HANDOFF.md (newest LIVE TRUTH block only) and docs/00-start-here/DEV-ONBOARDING.md.
 - docs/BACKEND-HANDOFF-2026-09-26.md: backend task map (tracks A-H) and the owner-decision table.
-  It may be untracked; if your worktree lacks it, read it from "$HOME/Projects/Plexco app".
+  Committed by the M0 PR (DD-122); a worktree based before that merge reads it from "$HOME/Projects/Plexco app".
 - Behaviour authority: docs/features/FE/feature_<x>.md (Product/UX) + docs/features/BE/feature_<x>_tech.md,
   then docs/standards/decisions.md. Schema truth: packages/db/schema.ts + packages/db/migrations/*.sql.
   Identity: reuse persons / accounts / channel_identities / memberships; never add a parallel concept.
@@ -149,6 +150,13 @@ OWNER-ONLY (prepare, never execute)
   one exact ask, and continue on unblocked work.
 
 WORKFLOW
+- PROGRAM OVERRIDE (owner 2026-10-12, recorded as decisions.md DD-122 D4): for every PR of this program
+  the review gate is an independent Claude reviewer subagent (not the author; diff + specs + HARD RULES;
+  findings blocking/should-fix/nit with file:line; at most 3 rounds; a second security-focused reviewer for
+  auth, permissions, secrets, money, external input or deployment). Do NOT run scripts/codex-review-pin.sh,
+  do NOT use scripts/autopilot-scope-gate register/ready or ap-finish, and do NOT HALT TOOL_UNAVAILABLE over
+  a missing reviewer. Work on ordinary branches, one PR per coherent change. The quality gates and CI below
+  are unchanged. The scope-gate / Codex sentences in the next bullet are kept for history and do not apply.
 - Level 3 supervised autonomy per docs/autopilot-templates/level3-workflow.md: resolve the task
   contract (section 3); one writing slice = one branch + one worktree + at most one writer; register
   the runtime manifest and confirm .autopilot/state/<feature>/registered-manifest.sha256 exists before

@@ -1735,8 +1735,8 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 > vận hành. **Owner merge PR M0 = chữ ký.** Tới lúc đó mọi dòng dưới là "quyết định đã nói, chưa ký".
 
 - **Bối cảnh — đo tại `main@0db92b9` (12/10):** 49 migration (tail `0048`) · 15 API route (**0** route ĐỌC
-  session) · **0** màn FE · 8 session command · `pnpm typecheck`/`lint`/`format:check`/`review:check` đều
-  exit 0. FE PENDING (DD-116 Option B) chặn 100% launch scope DD-113 từ 13/08; carve-out DD-119 (08/09)
+  session) · **0** màn FE · 8 session command · `pnpm typecheck`/`lint`/`format:check`/`review:check`/`build` đều
+  exit 0; `pnpm -w test` không chạy local (Docker tắt) — CI của PR M0 là bằng chứng suite. FE PENDING (DD-116 Option B) chặn 100% launch scope DD-113 từ 13/08; carve-out DD-119 (08/09)
   chưa ratify; `design.pen` + `fe.pen` vẫn untracked. BE readiness phase-1 39%, launch readiness 8%
   (`pnpm progress`). Trục yếu nhất của sản phẩm là **không có surface người dùng chạm được**.
 
@@ -1783,14 +1783,14 @@ chạy; đã chạy rồi thì đổi là một DD mới.
 | ID | Câu hỏi | Default áp dụng | Trạng thái |
 |---|---|---|---|
 | **Tier C #1** | Writer roster đầu tiên: host-add hay bot-join? | **Host-add trên web** (audit 06/09 khuyến nghị). Bot self-join vào M9 (DD-32 Option D) | default applied 2026-10-12, pending owner sign-off |
-| **DD-56-read-routes** | Route ĐỌC session qua cổng tạm (amendment #4) hay chờ capability core? | **Chờ capability core**: `authorize()` thay cổng tạm trước (M2a = BACKEND-HANDOFF A1–A2), route GET đi sau `authorize()`. **Không** có amendment #4 | default applied 2026-10-12, pending owner sign-off |
+| **DD-56-read-routes** | Route ĐỌC session qua cổng tạm (amendment #4) hay chờ capability core? | **Chờ capability core**: `authorize()` thay cổng tạm trước rồi route GET đi sau `authorize()` (M2a = BACKEND-HANDOFF A1 + A2 + A3). **Không** có amendment #4 | default applied 2026-10-12, pending owner sign-off |
 | **O4** (Zalo secret) | KMS chung hay riêng; ai giải mã; audit mỗi lần đọc? | Trace read-only reader/writer thật trước; rồi chọn phương án **chặt nhất**: khoá riêng, chỉ process gọi Zalo giải mã, audit mọi lần giải mã | default applied 2026-10-12, pending owner sign-off — **owner lưu ý:** vế "chặt nhất" là mở rộng so với inbox (chỉ ghi "trace trước") |
 | **DD-114-D6** | Launch self-serve hay provision tay tenant #1? | **Self-serve** (`POST /api/onboarding/start`), kể cả tenant #1 — đóng OPEN NOTE v2.48 | default applied 2026-10-12, pending owner sign-off |
 | **DB_EXPECTED_ROLE** | Bắt buộc hay opt-in? | **Opt-in** (giữ như B3/A7) | default applied 2026-10-12, pending owner sign-off |
 | **C4** (Google OAuth) | Bật `GOOGLE_OAUTH_*` production? | **Bật trên staging** cho E2E; production **chỉ owner** bật | default applied 2026-10-12, pending owner sign-off |
-| **O2** (autonomy) | Uỷ quyền thường trực `autonomous_to_ready`? | **Có** cho slice P1/P2 của chương trình này; P0 vẫn prepare-only | default applied 2026-10-12, pending owner sign-off |
+| **O2** (autonomy) | Uỷ quyền thường trực `autonomous_to_ready`? | **Có** cho slice P1/P2 của chương trình này — nghĩa vận hành dưới D4 (không còn manifest scope-gate): primary agent đưa slice tới **PR mở + gate xanh + review sạch** mà không dừng hỏi owner giữa chừng; P0 vẫn prepare-only | default applied 2026-10-12, pending owner sign-off |
 | **Tier C #2** (ngôn ngữ) | Ngôn ngữ per-user? | **Per club** qua `tenants.locale` (DD-118). **Không** có locale cấp member trong MVP | default applied 2026-10-12, pending owner sign-off |
-| **DD-119** | Ratify carve-out `plexco.pen`? | **Superseded** bởi D1; `plexco.pen` là input tuỳ chọn nếu tồn tại | đóng bởi DD-122 |
+| **DD-119** | Ratify carve-out `plexco.pen`? | **Superseded** bởi D1; `plexco.pen` là input tuỳ chọn nếu tồn tại | default applied 2026-10-12, pending owner sign-off (hệ quả của D1) |
 
 Quyết định **không có default** (Tier C #6 giới hạn lần thử outbox · Occupancy authority · mọi luật tiền còn
 mở · A3 luật sư · vendor email C7): lane viết **proposal** kèm khuyến nghị, làm hết phần không phụ thuộc, và
@@ -1798,8 +1798,26 @@ mở · A3 luật sư · vendor email C7): lane viết **proposal** kèm khuyế
 
 ### D4 — Quy trình review cho **chương trình Web MVP 2026-10-12** (owner override, phạm vi hẹp)
 
-Owner ra lệnh 12/10, áp cho mọi PR của chương trình này (thay mục "Review / Plan Readiness" + review Codex
-của `CLAUDE.md` **chỉ trong phạm vi chương trình**; mọi task khác giữ nguyên):
+> **Nguồn riêng của D4 (khác với D1–D3):** prompt điều phối owner **paste vào Claude Code ngày 12/10**, mục
+> "REVIEW — owner rule for this session (overrides the review requirement in CLAUDE.md)". Trích nguyên văn
+> (English, agent-facing) để bản ghi này không phụ thuộc hội thoại: *"No Codex: do not run
+> scripts/codex-review-pin.sh or any Codex reviewer, and do not HALT TOOL_UNAVAILABLE over a missing reviewer.
+> Do not use the scripts/autopilot-scope-gate register / ready / ap-finish lifecycle: its ready step runs the
+> Codex gate. Work on ordinary branches, one pull request per coherent change. Every PR gets an independent
+> Claude review before you call it ready: a separate subagent that did not write the code, given only the
+> diff, the specs it implements and the MUST HOLD rules. PRs that touch auth, permissions, secrets, money,
+> external input (webhooks) or deployment also get a second, security-focused reviewer subagent. Fix every
+> blocking finding, then re-review with a fresh subagent. At most 3 review rounds per PR. The PR body states
+> 'Codex waived by owner 2026-10-12; reviewed by independent Claude subagent'."*
+>
+> **D4 THẮNG, trong phạm vi chương trình, mọi văn bản sau đây và chúng được annotate trỏ về đây:** đoạn
+> WORKFLOW của Shared contract trong `../autopilot-templates/web-mvp-2026-10-12-RUN.md` (register manifest ·
+> `codex-review-pin.sh` · `HALT TOOL_UNAVAILABLE`), `../BACKEND-HANDOFF-2026-09-26.md` §7.2 (scope-gate
+> lifecycle) + §7.4 (Codex), mục "Review / Plan Readiness" và "Workflow mặc định — Level 3" bước 4 của
+> `CLAUDE.md`, và quy tắc "Cross-model review = Codex ONLY" trong invariants toàn cục. **Ngoài chương trình
+> này, tất cả giữ nguyên hiệu lực.**
+
+Áp cho mọi PR của chương trình này:
 
 1. **Không Codex.** Không chạy `scripts/codex-review-pin.sh`; không `HALT TOOL_UNAVAILABLE` vì thiếu reviewer.
 2. **Không dùng lifecycle `scripts/autopilot-scope-gate register/ready` và `ap-finish`** (bước `ready` gọi
@@ -2368,6 +2386,8 @@ settings/privacy và có đường tiền (bank memo) ⇒ A3 không còn là vi�
 Làn B và làn C **không** chạy song song bừa: mọi slice dùng chung migration tail / state / generated
 artifact phải tuần tự (luật §3 `CLAUDE.md`).
 
+> ✅ **2026-10-12 — ĐÓNG bởi DD-122 D3 (default DD-114-D6 = self-serve, kể cả tenant #1; pending owner sign-off = merge PR M0).** Giữ nguyên văn bên dưới làm lịch sử.
+>
 > ⬜ **OPEN NOTE (audit 2026-09-06, KHÔNG phải amendment — owner quyết, Tier C #3):** làn A ghi "tenant provision **thủ công**", nhưng đường self-serve của làn B **đã có trên `main`** — `POST /api/onboarding/start` (`apps/web/app/api/onboarding/start/route.ts`) → `provisionTenant` (`packages/db/src/auth.ts`) → `tenant_provision()` (`0028`), kèm `GET /api/onboarding/readiness`. Hai cách đọc, chưa doc nào chọn: (a) launch **dùng** self-serve (ranh giới A/B ở bảng trên dời: mục 2 sang làn A) — hoặc (b) route bị **tắt/gate** lúc launch và tenant #1 provision tay đúng như D6 viết. Khuyến nghị của audit: (a), vì code đã qua review và RLS fix (`0037`, lane A2) làm nó chạy được dưới role `app`; điều kiện resume = owner viết một dòng ✅ ở đây. Nguồn: `../sessions/2026-09-06-repo-audit.md` §3 #4 · §5 #8.
 
 ### D7 — Vẫn NGOÀI phase-1

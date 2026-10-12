@@ -1,7 +1,8 @@
 # Web MVP — architecture & conventions (agent-owned design, 2026-10-12)
 
 Decisions below are the primary agent's calls under the owner's "HOW is your call" mandate. Each new
-dependency/pattern is also recorded as a proposal in `docs/standards/decisions.md` (DD-122 §proposals).
+dependency/pattern is reported by its lane in the PR body and filed by the primary as a 🟡 proposal in
+`docs/standards/decisions.md` through the ledger PR (not inside slice PRs, to avoid conflicts with M0).
 
 ## 1. Stack (reuse what exists)
 

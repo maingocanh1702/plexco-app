@@ -10,7 +10,7 @@
 
 | Mốc | Đợt | Nội dung | Trạng thái | PR | Blocker / chờ ai |
 |---|---|---|---|---|---|
-| M0 | A | Ghi DD-122, commit RUN + BACKEND-HANDOFF, ledger này, baseline | 🟡 PR mở (docs-only) | PR M0 | owner merge = ký DD-122 |
+| M0 | A | Ghi DD-122, commit RUN + BACKEND-HANDOFF, ledger này, baseline | 🟡 PR mở (docs-only), review vòng 1: 1 blocking + 4 should-fix đã sửa | [#42](https://github.com/maingocanh1702/plexco-app/pull/42) | owner merge = ký DD-122 |
 | M1 | A | Shell PWA (manifest · SW · offline · icons) + tokens DD-81 target C + Google sign-in UI + tạo CLB | ⬜ chưa bắt đầu | — | `GOOGLE_OAUTH_*` staging (default C4) |
 | M2a | A | `authorize()` DD-56 M2/M3 thay cổng tạm + route GET session (list/detail) | ⬜ | — | — |
 | M2b | A | Host workspace UI: list/detail/create/edit/publish/close/cancel | ⬜ | — | M2a |
@@ -31,8 +31,8 @@
 
 - `pnpm progress`: 49 migration (tail `0048`) · 15 API route (7 nghiệp vụ, **0** GET session) · 0 màn FE ·
   ROADMAP pin `12f5191` stale (14 file).
-- `pnpm -w typecheck` · `lint` · `format:check` · `review:check` → exit 0.
-- `pnpm -w test`: **không chạy local** (Docker daemon tắt trên máy phiên) — CI là authority cho suite DB.
+- `pnpm -w typecheck` · `lint` · `format:check` · `review:check` · `build` → exit 0.
+- `pnpm -w test`: **không chạy local** (Docker daemon tắt trên máy phiên) — CI trên PR #42 là authority cho suite DB.
 
 ## Default đã áp (DD-122 D3) — chờ owner ký bằng merge M0
 
