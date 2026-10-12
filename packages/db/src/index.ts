@@ -40,6 +40,31 @@ export {
   type SessionListPage,
   type SessionScalars,
 } from "./session-read.js";
+// Web MVP lane M2c: host roster writer + manual mark-paid (DD-40) + reversal.
+export {
+  addMemberToSession,
+  removePlayerFromSession,
+  type AddMemberParams,
+  type AddMemberResult,
+  type RemovePlayerParams,
+  type RemovePlayerResult,
+} from "./roster-service.js";
+export {
+  chargeStatusFor,
+  markPaid,
+  type ChargeStatus,
+  type ManualPaymentMethod,
+  type MarkPaidItemInput,
+  type MarkPaidLine,
+  type MarkPaidParams,
+  type MarkPaidResult,
+} from "./payment-manual.js";
+export {
+  reversePaymentAllocation,
+  type ReversePaymentParams,
+  type ReversePaymentResult,
+} from "./payment-reversal.js";
+export { RosterMoneyError, type RosterMoneyErrorCode } from "./roster-money-shared.js";
 export { resolveCapability, type Capability, type CapabilityDecision } from "./capability.js";
 export {
   createSession,
