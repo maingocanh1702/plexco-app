@@ -41,7 +41,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 51; // 0000..0049 + 0051 (0050 = M2c payment allocations, lands from the sibling branch; 0051 tenant profile definers) (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core · 0048 capability grant trigger search_path · 0049 tenant capability authorize)
+const MIGRATION_COUNT = 52; // 0000..0049 + 0051 + 0053 (0050 = M2c payment allocations, lands from the sibling branch; 0051 tenant profile definers, renumbered 0052 on rebase; 0053 zalo ingress) (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core · 0048 capability grant trigger search_path · 0049 tenant capability authorize)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -732,7 +732,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe("0051_tenant_profile_definers.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0053_zalo_ingress.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);

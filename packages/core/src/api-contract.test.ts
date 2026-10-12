@@ -82,6 +82,20 @@ describe("API_ERROR_CODES registry", () => {
   });
 });
 
+describe("Zalo ingress codes (M3a)", () => {
+  it("registers the five literals the connect and webhook routes emit", () => {
+    for (const code of [
+      "INVALID_WEBHOOK_SECRET",
+      "WEBHOOK_PAYLOAD_MALFORMED",
+      "WEBHOOK_RATE_LIMITED",
+      "ZALO_TOKEN_INVALID",
+      "RATE_LIMITED",
+    ]) {
+      expect(isApiErrorCode(code)).toBe(true);
+    }
+  });
+});
+
 describe("isApiErrorCode", () => {
   it("accepts every registered code", () => {
     for (const code of API_ERROR_CODES) {

@@ -46,6 +46,10 @@
  * "you are not a member", and "this note is not yours" (403) is not "there is no such note" (404).
  * createGuestNote also raises a narrow INVALID_INPUT, which the route collapses onto INVALID_BODY
  * exactly like the other commands' validation variants.
+ *
+ * INVALID_WEBHOOK_SECRET, WEBHOOK_PAYLOAD_MALFORMED, WEBHOOK_RATE_LIMITED and ZALO_TOKEN_INVALID
+ * arrived with the Zalo connect and webhook routes (M3a), transcribed from
+ * feature_connector_onboarding_tech.md section 3 / feature_zalo_channel_tech.md, not chosen here.
  */
 export const API_ERROR_CODES = [
   "AUTH_INVALID",
@@ -62,6 +66,7 @@ export const API_ERROR_CODES = [
   "GUEST_NOTE_NOT_FOUND",
   "INVALID_BODY",
   "INVALID_TIME_RANGE",
+  "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
   "LOGIN_RATE_LIMITED",
   "MISSING_DISCOVERY_FIELDS",
@@ -77,6 +82,9 @@ export const API_ERROR_CODES = [
   "SPORT_INACTIVE",
   "STALE_VERSION",
   "TENANT_SUSPENDED",
+  "WEBHOOK_PAYLOAD_MALFORMED",
+  "WEBHOOK_RATE_LIMITED",
+  "ZALO_TOKEN_INVALID",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
