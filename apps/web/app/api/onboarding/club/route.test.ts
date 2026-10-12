@@ -31,6 +31,7 @@ vi.mock("../../../../lib/session-cookies", async (importOriginal) => {
 process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const club = {
+  slug: "clb",
   name: "CLB",
   timezone: "Asia/Bangkok",
   locale: "vi",

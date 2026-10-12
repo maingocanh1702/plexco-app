@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { tenantsForPersonWithProfile } from "./auth.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   ClubConfigError,
@@ -126,18 +127,36 @@ describe("updateClubConfig", () => {
     await expectCode(update({ defaultPriceAmount: 5 }, { commandId }), "COMMAND_ID_CONFLICT");
   });
 
-  it("partial profile patch keeps the other profile fields (atomic jsonb merge)", async () => {
-    await update({ name: "Keep", timezone: "Asia/Tokyo" });
-    const { club } = await update({ name: "Renamed" });
-    expect(club).toMatchObject({ name: "Renamed", timezone: "Asia/Tokyo" });
+  it("writes tenants itself (one authority): partial patch keeps the other columns, locale drives tenant_locale", async () => {
+    await update({ name: "Keep", timezone: "Asia/Tokyo", locale: "vi" });
+    const { club } = await update({ name: "Renamed", locale: "en" });
+    expect(club).toMatchObject({ name: "Renamed", timezone: "Asia/Tokyo", locale: "en" });
+    const t = (
+      await ctx.owner.query(`SELECT name, timezone, locale, slug FROM tenants WHERE id=$1`, [
+        ctx.tenantA,
+      ])
+    ).rows[0];
+    expect(t).toMatchObject({ name: "Renamed", timezone: "Asia/Tokyo", locale: "en" });
+    expect(club.slug).toBe(t.slug);
+    expect((await ctx.owner.query(`SELECT tenant_locale($1) AS l`, [ctx.tenantA])).rows[0].l).toBe(
+      "en",
+    );
+    // No shadow copy of the profile in settings.
     expect(
-      (
-        await ctx.owner.query(
-          `SELECT count(*)::int n FROM settings WHERE tenant_id=$1 AND key='club.profile'`,
-          [ctx.tenantA],
-        )
-      ).rows[0].n,
-    ).toBe(1);
+      (await ctx.owner.query(`SELECT count(*)::int n FROM settings WHERE key='club.profile'`))
+        .rows[0].n,
+    ).toBe(0);
+    await update({ locale: "vi" });
+  });
+
+  it("tenantsForPersonWithProfile lists the club with its profile and keeps the legacy fields", async () => {
+    await update({ name: "Listed" });
+    const mine = await tenantsForPersonWithProfile(ctx.appDb, ownerA);
+    const a = mine.find((m) => m.tenantId === ctx.tenantA);
+    expect(a).toMatchObject({ role: "owner", name: "Listed" });
+    expect(typeof a?.slug).toBe("string");
+    expect(typeof a?.timezone).toBe("string");
+    expect(typeof a?.locale).toBe("string");
   });
 
   it("admin and co_admin (content.manage preset) are allowed", async () => {

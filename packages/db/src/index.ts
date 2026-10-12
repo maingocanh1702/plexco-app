@@ -124,6 +124,8 @@ export {
   revokeWebSession,
   rotateWebSession,
   tenantsForPerson,
+  tenantsForPersonWithProfile,
+  type TenantWithProfile,
   guestNoteTenantForPerson,
   type OnboardingSnapshot,
   type ResolvedSession,

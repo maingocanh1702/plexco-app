@@ -2,26 +2,23 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db, Tx } from "./client.js";
 import { onboardingRuns, onboardingSteps, processedCommands, settings, sports } from "../schema.js";
 import { authorize } from "./tenant-capability-authority.js";
-import { tenantLocale, withTenant } from "./tenant.js";
+import { withTenant } from "./tenant.js";
 
 /**
  * Club configuration (WAO club step): name, timezone, language, default sport / price / visibility.
  *
- * STORAGE (measured, migration 0035): role `app` holds ZERO privileges on `tenants`, so
- * name/timezone/locale cannot be UPDATEd from here. They are stored in `settings`
- * key `club.profile` until an owner-approved definer (new migration, out of this lane) writes
- * `tenants`. NOTE: `tenants.locale` stays the DD-118 language source, so changing `locale` here
- * does not yet change response language.
+ * STORAGE: name/timezone/locale live ONLY in `tenants` (one authority per fact) and are reached
+ * through the 0051 SECURITY DEFINER pair `tenant_profile_read/update` -- role `app` has no
+ * privilege on the table itself (0035). The three defaults live in `settings` (`club.default_*`).
  *
  * Authority: `authorize(content.manage)` (DD-56 matrix: tenant content/settings excluding
- * secrets/billing). Authorization runs BEFORE the dedup read so a replay never answers a caller
- * who no longer holds the capability.
+ * secrets/billing); the definer re-checks it under the same transaction. Authorization runs
+ * BEFORE the dedup read so a replay never answers a caller who no longer holds the capability.
  */
 export const CLUB_ACTION = "content.manage";
 const COMMAND_TYPE = "UpdateClubConfig";
 const STEP = "club_config";
 const INT4_MAX = 2_147_483_647;
-const KEY_PROFILE = "club.profile";
 const KEY_SPORT = "club.default_sport";
 const KEY_PRICE = "club.default_price";
 const KEY_VISIBILITY = "club.default_visibility";
@@ -49,6 +46,8 @@ export interface ClubConfigPatch {
 }
 
 export interface ClubConfig {
+  /** Read-only identity; never patchable here. */
+  slug: string | null;
   name: string | null;
   timezone: string | null;
   locale: string | null;
@@ -128,34 +127,34 @@ function validatePatch(patch: ClubConfigPatch): ClubConfigPatch {
   return out;
 }
 
-async function upsertSetting(tx: Tx, tenantId: string, key: string, value: unknown, merge = false) {
+async function upsertSetting(tx: Tx, tenantId: string, key: string, value: unknown) {
   await tx
     .insert(settings)
     .values({ tenantId, key, value })
     .onConflictDoUpdate({
       target: [settings.tenantId, settings.key],
-      // merge: atomic jsonb concat so a partial profile patch keeps the other fields.
-      set: {
-        value: merge ? sql`${settings.value} || excluded.value` : sql`excluded.value`,
-        updatedAt: sql`now()`,
-      },
+      set: { value: sql`excluded.value`, updatedAt: sql`now()` },
     });
 }
 
-/** Reads the club config inside an open tenant tx (settings rows only; `tenants` is unreadable by app). */
+/** Reads the club config inside an open tenant tx: tenants via the 0051 definer, defaults via settings. */
 async function readConfig(tx: Tx, tenantId: string): Promise<ClubConfig> {
+  const profile = await tx.execute(
+    sql`SELECT slug, name, timezone, locale FROM tenant_profile_read(${tenantId}::uuid)`,
+  );
+  const p = (profile.rows[0] ?? {}) as Record<string, unknown>;
   const rows = await tx
     .select({ key: settings.key, value: settings.value })
     .from(settings)
     .where(eq(settings.tenantId, tenantId));
   const byKey = new Map(rows.map((r) => [r.key, r.value as unknown]));
-  const profile = (byKey.get(KEY_PROFILE) ?? {}) as Record<string, unknown>;
   const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
   const price = byKey.get(KEY_PRICE);
   return {
-    name: str(profile.name),
-    timezone: str(profile.timezone),
-    locale: str(profile.locale),
+    slug: str(p.slug),
+    name: str(p.name),
+    timezone: str(p.timezone),
+    locale: str(p.locale),
     defaultSportKey: str(byKey.get(KEY_SPORT)),
     defaultPriceAmount: typeof price === "number" ? price : null,
     defaultVisibility: str(byKey.get(KEY_VISIBILITY)),
@@ -212,12 +211,15 @@ export async function updateClubConfig(
       .limit(1);
     if (!run) throw new ClubConfigError("NO_ONBOARDING_RUN", "no onboarding run");
 
-    const profile: Record<string, string> = {};
-    if (patch.name !== undefined) profile.name = patch.name;
-    if (patch.timezone !== undefined) profile.timezone = patch.timezone;
-    if (patch.locale !== undefined) profile.locale = patch.locale;
-    if (Object.keys(profile).length > 0)
-      await upsertSetting(tx, tenantId, KEY_PROFILE, profile, true);
+    if (patch.name !== undefined || patch.timezone !== undefined || patch.locale !== undefined) {
+      // NULL = leave unchanged inside the definer; it re-authorizes content.manage under the GUC.
+      const updated = await tx.execute(
+        sql`SELECT id FROM tenant_profile_update(${tenantId}::uuid, ${actorPersonId}::uuid, ${patch.name ?? null}, ${patch.timezone ?? null}, ${patch.locale ?? null})`,
+      );
+      if (updated.rows.length !== 1) {
+        throw new ClubConfigError("NO_ONBOARDING_RUN", "tenant not found");
+      }
+    }
     if (patch.defaultSportKey !== undefined)
       await upsertSetting(tx, tenantId, KEY_SPORT, patch.defaultSportKey);
     if (patch.defaultPriceAmount !== undefined)
@@ -245,8 +247,5 @@ export async function updateClubConfig(
 
 /** Current club config for the UI. Authorization is the CALLER's job (route runs authorize first). */
 export async function getClubConfig(db: Db, params: { tenantId: string }): Promise<ClubConfig> {
-  const club = await withTenant(db, params.tenantId, (tx) => readConfig(tx, params.tenantId));
-  // Provisioned locale lives in `tenants` (definer-only); fall back to it until a club.profile exists.
-  if (club.locale === null) club.locale = await tenantLocale(db, params.tenantId);
-  return club;
+  return withTenant(db, params.tenantId, (tx) => readConfig(tx, params.tenantId));
 }

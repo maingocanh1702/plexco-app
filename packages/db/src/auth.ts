@@ -279,6 +279,48 @@ export async function tenantsForPerson(
   }));
 }
 
+export interface TenantWithProfile {
+  tenantId: string;
+  role: string;
+  name: string | null;
+  slug: string | null;
+  locale: string | null;
+  timezone: string | null;
+}
+
+/**
+ * `tenantsForPerson` plus each club's profile (0051 `tenant_profile_read`, which needs the tenant
+ * GUC, hence one short withTenant per tenant). Sibling rather than a change to the original so
+ * its callers and exact-shape tests are untouched. A profile that cannot be read yields nulls:
+ * the tenant stays listed (membership is the fact), the UI falls back to a generic label.
+ */
+export async function tenantsForPersonWithProfile(
+  handle: { pool: pg.Pool; db: import("./client.js").Db },
+  personId: string,
+): Promise<TenantWithProfile[]> {
+  const { withTenant } = await import("./tenant.js");
+  const { sql } = await import("drizzle-orm");
+  const mine = await tenantsForPerson(handle.pool, personId);
+  return Promise.all(
+    mine.map(async (m) => {
+      const rows = await withTenant(handle.db, m.tenantId, async (tx) => {
+        const r = await tx.execute(
+          sql`SELECT name, slug, locale, timezone FROM tenant_profile_read(${m.tenantId}::uuid)`,
+        );
+        return r.rows as { name: string; slug: string; locale: string; timezone: string }[];
+      });
+      const p = rows[0];
+      return {
+        ...m,
+        name: p?.name ?? null,
+        slug: p?.slug ?? null,
+        locale: p?.locale ?? null,
+        timezone: p?.timezone ?? null,
+      };
+    }),
+  );
+}
+
 /** Routing association for an authenticated server-side person; commands own permissions. */
 export async function guestNoteTenantForPerson(
   pool: pg.Pool,

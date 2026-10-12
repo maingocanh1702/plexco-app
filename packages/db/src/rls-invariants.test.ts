@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(50); // 0000..0049 (0049 = tenant capability authorize)
+    expect(ctx.migrateResult.applied.length).toBe(51); // 0000..0049 + 0051 (0050 = M2c, sibling branch; 0051 = tenant profile definers)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(50);
+    expect(second.skipped.length).toBe(51);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1752,12 +1752,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
           return migrate(url(dbName));
         }),
       );
-      expect(res.applied.length).toBe(50); // 0000..0049
+      expect(res.applied.length).toBe(51); // 0000..0049 + 0051
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(50);
+        expect(rows.length).toBe(51);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2035,7 +2035,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0049_tenant_capability_authorize.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0051_tenant_profile_definers.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4514,10 +4514,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (50) matches the actual migrations/ directory listing, and the tail is 0049", async () => {
+    it("UCC-8: MIGRATION_COUNT (51) matches the actual migrations/ directory listing, and the tail is 0051", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(50);
-      expect(files[files.length - 1]).toBe("0049_tenant_capability_authorize.sql");
+      expect(files.length).toBe(51);
+      expect(files[files.length - 1]).toBe("0051_tenant_profile_definers.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
@@ -4675,5 +4675,74 @@ describe("0049 tenant_capability_authorize definer ACL (DD-56 authorize primitiv
     );
     expect(rows[0].prosecdef).toBe(true);
     expect(rows[0].proconfig).toContain("search_path=pg_catalog, public, pg_temp");
+  });
+});
+
+describe("0051 tenant profile definers ACL (M1b club configuration)", () => {
+  const FNS = [
+    "public.tenant_profile_read(uuid)",
+    "public.tenant_profile_update(uuid, uuid, text, text, text)",
+  ];
+
+  it("EXECUTE: app only -- PUBLIC, app_worker and readonly are refused", async () => {
+    for (const fn of FNS) {
+      const can = async (role: string) =>
+        (
+          await ctx.owner.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [
+            role,
+            fn,
+          ])
+        ).rows[0].ok as boolean;
+      expect(await can("app"), fn).toBe(true);
+      expect(await can("app_worker"), fn).toBe(false);
+      expect(await can("readonly"), fn).toBe(false);
+      const { rows } = await ctx.owner.query(
+        `SELECT p.proacl::text AS acl FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+        [fn],
+      );
+      expect(rows[0].acl, fn).not.toBeNull();
+      expect(rows[0].acl, fn).not.toMatch(/(^|[{,])=X/);
+    }
+  });
+
+  it("both are SECURITY DEFINER with search_path pinned (pg_temp last); app still has no privilege on tenants", async () => {
+    for (const fn of FNS) {
+      const { rows } = await ctx.owner.query(
+        `SELECT p.prosecdef, p.proconfig FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+        [fn],
+      );
+      expect(rows[0].prosecdef, fn).toBe(true);
+      expect(rows[0].proconfig, fn).toContain("search_path=pg_catalog, public, pg_temp");
+    }
+    const priv = await ctx.owner.query(
+      `SELECT has_table_privilege('app','tenants','SELECT') s, has_table_privilege('app','tenants','UPDATE') u`,
+    );
+    expect(priv.rows[0]).toEqual({ s: false, u: false });
+  });
+
+  it("read/update refuse a caller whose GUC is not the requested tenant; update refuses a non-member", async () => {
+    const stranger = await ctx.owner.query(
+      `INSERT INTO persons (display_name) VALUES ('x') RETURNING id`,
+    );
+    const c = await ctx.appPool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      await expect(c.query(`SELECT * FROM tenant_profile_read($1)`, [ctx.tenantB])).rejects.toThrow(
+        /context mismatch/,
+      );
+      await c.query("ROLLBACK");
+      await c.query("BEGIN");
+      await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      await expect(
+        c.query(`SELECT * FROM tenant_profile_update($1, $2, 'n', NULL, NULL)`, [
+          ctx.tenantA,
+          stranger.rows[0].id,
+        ]),
+      ).rejects.toThrow(/not permitted/);
+      await c.query("ROLLBACK");
+    } finally {
+      c.release();
+    }
   });
 });
