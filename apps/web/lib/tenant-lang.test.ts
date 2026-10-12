@@ -174,6 +174,17 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/log.ts": "c",
   // (c) — pure routing/CSP policy consumed by middleware.ts; no response body of its own.
   "lib/request-policy.ts": "c",
+  // Browser-side modules (M1a web shell). None renders a server response, so the ALS seam does not
+  // apply to them: client strings come from `useT()` under <LangProvider> (lib/i18n-client.tsx).
+  // (c) — no translatable output of their own.
+  "lib/api-client.ts": "c",
+  "lib/session-dto.ts": "c",
+  "lib/theme-colors.ts": "c",
+  "lib/use-online-status.ts": "c",
+  // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation
+  // screens (landing `?auth_error`, create-club form), which render Vietnamese by DD-118 bucket b.
+  "lib/auth-error-message.ts": "b",
+  "lib/new-club-form.ts": "b",
 };
 
 function discoverRouteFiles(dir: string, prefix: string): string[] {
