@@ -93,7 +93,13 @@ describe("updateClubConfig", () => {
       { commandId },
     );
     expect(result).toMatchObject({ step: "verified", replayed: false });
+    const slugA = (
+      await ctx.owner.query<{ slug: string }>(`SELECT slug FROM tenants WHERE id = $1`, [
+        ctx.tenantA,
+      ])
+    ).rows[0]!.slug;
     expect(result.club).toEqual({
+      slug: slugA,
       name: "CLB Cau Long",
       timezone: "Asia/Bangkok",
       locale: "en",
@@ -190,11 +196,44 @@ describe("updateClubConfig", () => {
     );
   });
 
-  it("RLS isolation: tenant A config does not appear in tenant B", async () => {
-    await update({ name: "Only A", defaultPriceAmount: 123 });
+  it("RLS isolation: tenant A data is invisible under tenant B", async () => {
+    await update({ name: "Only A", defaultPriceAmount: 123, defaultVisibility: "public" });
+    // (a) A's club.default_* settings are not visible under B (B never wrote any).
     const b = await getClubConfig(ctx.appDb.db, { tenantId: ctx.tenantB });
-    expect(b.name).toBeNull();
     expect(b.defaultPriceAmount).toBeNull();
+    expect(b.defaultSportKey).toBeNull();
+    expect(b.defaultVisibility).toBeNull();
+    // (c) B's profile is B's own tenants row, never A's.
+    const bRow = (
+      await ctx.owner.query(`SELECT name, slug FROM tenants WHERE id = $1`, [ctx.tenantB])
+    ).rows[0];
+    expect(b.name).toBe(bRow.name);
+    expect(b.slug).toBe(bRow.slug);
+    expect(b.name).not.toBe("Only A");
+    // (b) Under B's GUC the 0051 definer refuses to read or write A's profile.
+    const c = await ctx.appPool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantB]);
+      await expect(c.query(`SELECT * FROM tenant_profile_read($1)`, [ctx.tenantA])).rejects.toThrow(
+        /context mismatch/,
+      );
+      await c.query("ROLLBACK");
+      await c.query("BEGIN");
+      await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantB]);
+      await expect(
+        c.query(`SELECT * FROM tenant_profile_update($1, $2, 'Hijack', NULL, NULL)`, [
+          ctx.tenantA,
+          ownerA,
+        ]),
+      ).rejects.toThrow(/context mismatch/);
+      await c.query("ROLLBACK");
+    } finally {
+      c.release();
+    }
+    expect(
+      (await ctx.owner.query(`SELECT name FROM tenants WHERE id = $1`, [ctx.tenantA])).rows[0].name,
+    ).toBe("Only A");
   });
 
   it("no onboarding run -> NO_ONBOARDING_RUN and nothing written", async () => {
