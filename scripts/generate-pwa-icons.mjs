@@ -1,13 +1,10 @@
 // Renders the Plexco "P" monogram into the PWA icon set under apps/web/public/icons/.
-// Run: node scripts/generate-pwa-icons.mjs   (sharp is a devDependency of @plexco/web)
+// Run: node scripts/generate-pwa-icons.mjs   (sharp is a root devDependency)
 // The output is committed; re-run only when the mark changes. Colours are the DD-81 target C
 // values from docs/standards/design-tokens.md (this file is not a component stylesheet).
-import { createRequire } from "node:module";
+import sharp from "sharp";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-
-const require = createRequire(new URL("../apps/web/package.json", import.meta.url));
-const sharp = require("sharp");
 
 const outDir = fileURLToPath(new URL("../apps/web/public/icons/", import.meta.url));
 const BRAND = "#FF5A1F";

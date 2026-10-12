@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node ../../scripts/stamp-sw.mjs && next build",
     "start:web": "next start -p ${PORT:-3000}",
     "start:discovery": "next start -p ${PORT:-3000}",
     "typecheck": "next typegen && tsc --noEmit",
@@ -25,7 +25,6 @@
     "@types/node": "^22.10.7",
     "@types/react": "^19.0.7",
     "@types/react-dom": "^19.0.3",
-    "sharp": "0.35.4",
     "typescript": "^5.7.3",
     "vitest": "^4.1.11"
   }
