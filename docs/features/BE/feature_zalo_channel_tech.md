@@ -149,6 +149,8 @@ WHERE zb.tenant_id = current_setting('app.tenant_id', true)::uuid;
 |--------|------|------|-------|
 | POST | `/webhook/zalo` | Signed (Zalo webhook signature) | Inbound OA events → resolver → AuthZ → service |
 
+> **Đề xuất chương trình web-MVP M3a (chờ owner ký, cơ chế DD-122 D3 — chưa phải quyết định):** shape webhook được chốt là `POST /api/webhooks/zalo/:token` + header `X-Bot-Api-Secret-Token` (so sánh timing-safe với `zalo_bots.webhook_secret_enc` đã giải mã; xem `feature_connector_onboarding_tech.md` :289). Shape chữ ký OA (`POST /webhook/zalo`, "Zalo webhook signature") ở dòng trên bị **superseded**; dòng được giữ nguyên để không viết lại spec Reviewed. Implement: migration `0053_zalo_ingress.sql`, route `apps/web/app/api/webhooks/zalo/[token]/route.ts`.
+
 > Không có app-facing REST API — mọi interaction qua Zalo OA webhook + DM.
 
 ### Error Codes (webhook + DM)
