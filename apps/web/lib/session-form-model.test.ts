@@ -125,6 +125,10 @@ describe("buildUpdateBody", () => {
       venueAddress: "1 Nguyễn Văn Linh",
     });
   });
+  it("does not report untouched times as changed when the stored value carries seconds", () => {
+    const withSeconds = { ...session, startsAt: "2026-10-20T11:30:42.123Z" };
+    expect(buildUpdateBody(valuesFromSession(withSeconds, "vi"), withSeconds)).toBeNull();
+  });
   it("detects a slots change to unlimited and a time change", () => {
     const v = {
       ...valuesFromSession(session, "vi"),

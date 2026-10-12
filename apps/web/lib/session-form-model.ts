@@ -148,10 +148,14 @@ export function buildUpdateBody(
 ): SessionFieldsBody | null {
   const tz = original.timezone;
   const body: SessionFieldsBody = {};
-  const start = localInputToIso(v.startsAt, tz)!;
-  const end = localInputToIso(v.endsAt, tz)!;
-  if (Date.parse(start) !== Date.parse(original.startsAt)) body.startsAt = start;
-  if (Date.parse(end) !== Date.parse(original.endsAt)) body.endsAt = end;
+  // The inputs are minute-precision; compare the TEXT the host saw (not instants) so a stored
+  // value carrying seconds is not reported as "changed" just because the input dropped them.
+  if (v.startsAt !== isoToLocalInput(original.startsAt, tz)) {
+    body.startsAt = localInputToIso(v.startsAt, tz)!;
+  }
+  if (v.endsAt !== isoToLocalInput(original.endsAt, tz)) {
+    body.endsAt = localInputToIso(v.endsAt, tz)!;
+  }
   const price = parseVndInput(v.price) as number;
   if (price !== original.priceAmount) body.priceAmount = price;
   const slots = slotsOf(v);

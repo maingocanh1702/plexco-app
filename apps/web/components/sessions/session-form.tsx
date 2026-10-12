@@ -230,9 +230,7 @@ export function SessionForm(props: SessionFormProps) {
           />
         )}
         {values.slotsUnlimited && errors.slotsMax ? (
-          <p role="alert" className={styles.fieldError}>
-            {errors.slotsMax}
-          </p>
+          <p className={styles.fieldError}>{errors.slotsMax}</p>
         ) : null}
       </fieldset>
 

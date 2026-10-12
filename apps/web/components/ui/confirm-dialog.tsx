@@ -57,6 +57,25 @@ export function ConfirmDialog({
         event.preventDefault(); // parent owns `open`; never let the browser close it behind React
         if (!busy) onCancel();
       }}
+      onKeyDown={(event) => {
+        // Native modals let Tab escape to the browser chrome; keep it cycling inside the sheet.
+        if (event.key !== "Tab") return;
+        const focusable = Array.from(
+          event.currentTarget.querySelectorAll<HTMLElement>(
+            "button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])",
+          ),
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}
       onClick={(event) => {
         if (event.target === ref.current && !busy) onCancel();
       }}
@@ -66,7 +85,7 @@ export function ConfirmDialog({
           {title}
         </h2>
         <div className={styles.body}>{body}</div>
-        {error ? <div role="alert">{error}</div> : null}
+        {error ?? null}
         <div className={styles.actions}>
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
             {t("Quay lại", "Go back")}
