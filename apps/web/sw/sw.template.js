@@ -7,10 +7,11 @@
  * - /api/* and every non-GET request: never intercepted, never cached (session, CSRF secret and
  *   tenant data must always come from the network).
  *
- * Bump VERSION whenever app/offline/page.tsx markup or this file's strategy changes: a new
- * version precaches afresh and deletes the old caches on activate.
+ * VERSION is stamped at build time (scripts/stamp-sw.mjs writes public/sw.js from this template),
+ * so every deploy changes the worker bytes: the browser installs it, precaches the new /offline
+ * page and its hashed assets, and activate deletes every cache from earlier versions.
  */
-const VERSION = "v1";
+const VERSION = "__SW_VERSION__"; // stamped per build by scripts/stamp-sw.mjs
 const STATIC_CACHE = "plexco-static-" + VERSION;
 const OFFLINE_URL = "/offline";
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon.svg"];
