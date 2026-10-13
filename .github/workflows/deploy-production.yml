@@ -1,0 +1,148 @@
+name: Deploy production
+
+# PROMOTION ONLY: deploys the EXACT image digest that already passed deploy-staging.yml. It never
+# builds. Nothing triggers it automatically - workflow_dispatch with a typed confirmation, and
+# `environment: production` carries required reviewers (owner). docs/runbooks/staging-deploy.md §6.
+#
+# DO NOT RUN until the owner has closed the open gates in docs/standards/environments-setup.md
+# §1.1 (fixed outbound-IP evidence) and §10, and has recorded a "go" in the go/no-go note
+# (docs/runbooks/go-no-go-template.md). Production deploy is a P0, owner-only action.
+#
+# Migration path is identical to staging: the App Spec's PRE_DEPLOY `migrate` job inside the VPC,
+# with DATABASE_URL_MIGRATION as a secret on that job only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Full 40-char git SHA that was built and tested on staging (= the image tag)
+        required: true
+        type: string
+      digest:
+        description: Image digest recorded in the staging deployment-evidence.json (sha256:...)
+        required: true
+        type: string
+      staging_run_id:
+        description: Run id of the SUCCESSFUL deploy-staging run for this SHA (proves e2e passed)
+        required: true
+        type: string
+      confirm:
+        description: Type the tag again to confirm a PRODUCTION deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: plexco
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - name: Validate inputs (shape + typed confirmation)
+        env:
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+          RUN_ID: ${{ inputs.staging_run_id }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          [[ "$TAG" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tag must be a full 40-char git SHA"; exit 1; }
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::digest must be sha256:<64 hex>"; exit 1; }
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::staging_run_id must be numeric"; exit 1; }
+          [ "$CONFIRM" = "$TAG" ] || { echo "::error::confirm must equal tag"; exit 1; }
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (same pin as ci.yml)
+        with:
+          # Spec + helper scripts from the SAME commit the image was built from.
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Require that this SHA passed the full staging run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+          RUN_ID: ${{ inputs.staging_run_id }}
+        run: |
+          run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")"
+          jq -e --arg sha "$TAG" '.path == ".github/workflows/deploy-staging.yml" and .conclusion == "success" and .head_sha == $sha' <<<"$run" >/dev/null \
+            || { echo "::error::run ${RUN_ID} is not a successful deploy-staging run of ${TAG}"; exit 1; }
+          # Bind the DIGEST to that run: the SHA tag in DOCR is mutable (a re-run of deploy-staging on the
+          # same SHA rebuilds and moves it, even if that run FAILED), so only the evidence artifact the
+          # successful run uploaded proves which digest was actually tested. Failed runs upload one too,
+          # which is why the conclusion check above stays.
+          gh run download "$RUN_ID" -n deployment-evidence-staging -D evidence
+          jq -e --arg d "$DIGEST" --arg s "$TAG" '.image_digest == $d and .git_sha == $s' evidence/deployment-evidence.json >/dev/null \
+            || { echo "::error::digest ${DIGEST} is not the digest tested in staging run ${RUN_ID}"; exit 1; }
+
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Require that the digest exists in DOCR and carries the tag (no rebuild, no mutable tag)
+        env:
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          doctl registry repository list-manifests "$IMAGE_REPOSITORY" -o json \
+            | jq -e --arg d "$DIGEST" --arg t "$TAG" 'any(.[]; .digest == $d and ((.tags // []) | index($t)))' >/dev/null \
+            || { echo "::error::digest ${DIGEST} with tag ${TAG} not found in DOCR ${IMAGE_REPOSITORY}"; exit 1; }
+
+      - name: Render the spec (committed spec + live secrets + the tested digest)
+        env:
+          IMAGE_DIGEST: ${{ inputs.digest }}
+          VPC_ID: ${{ vars.DO_VPC_ID }}
+          APP_ID: ${{ vars.DO_APP_ID }}
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          doctl apps spec get "$APP_ID" --format json > live-spec.json
+          yq -o=json infra/app.prod.yaml | infra/render-app-spec.sh live-spec.json > rendered-spec.json
+          jq '{name, region, components: [(.services, .workers, .jobs)[] | {name, digest: .image.digest}]}' rendered-spec.json
+
+      - name: Reconcile the app (PRE_DEPLOY migrate job runs first)
+        env:
+          APP_ID: ${{ vars.DO_APP_ID }}
+        run: doctl apps update "$APP_ID" --spec rendered-spec.json
+
+      - name: Wait for the deployment carrying this digest to be ACTIVE
+        env:
+          APP_ID: ${{ vars.DO_APP_ID }}
+          DIGEST: ${{ inputs.digest }}
+        run: infra/wait-for-deployment.sh "$APP_ID" "$DIGEST" 1500
+
+      - name: Smoke (/healthz, landing, manifest)
+        env:
+          PRODUCTION_BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
+        run: infra/smoke-check.sh "$PRODUCTION_BASE_URL"
+
+      - name: Record deployment evidence
+        env:
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+          STAGING_RUN: ${{ inputs.staging_run_id }}
+        run: |
+          jq -n --arg env production --arg sha "$TAG" --arg digest "$DIGEST" --arg staging "$STAGING_RUN" \
+            --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg actor "$GITHUB_ACTOR" --arg at "$(date -u +%FT%TZ)" \
+            '{environment:$env, git_sha:$sha, image_digest:$digest, promoted_from_staging_run:$staging, deployed_at:$at, run_url:$run, triggered_by:$actor}' \
+            > deployment-evidence.json
+          cat deployment-evidence.json
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0 (same pin as ci.yml)
+        with:
+          name: deployment-evidence-production
+          path: deployment-evidence.json
+          retention-days: 365

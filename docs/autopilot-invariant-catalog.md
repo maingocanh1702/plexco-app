@@ -50,6 +50,7 @@ design-tokens — web-app design tokens (shared styling source)
 api-contract — public/request-response shapes, versioning
 test-chain — test runner registration / CI test list
 build-config — package manifest / lockfile / tsconfig / bundler
+infra — App Platform specs, deploy workflows, Dockerfile/entrypoint, DB provisioning scripts
 reliability — attendance / no-show / reliability score + deprioritize policy per-tenant (DD-42)
 member-safety — manual safety ban: reason/evidence/expiry/actor/capability `member.ban` (DD-52)
 retry-liveness — CAS/lease worker ownership, claimed-attempt budget, DLQ / owner-review sink (DD-45)

@@ -14,6 +14,8 @@ import {
   tenantsForPerson,
 } from "@plexco/db";
 import { err } from "./api-envelope";
+import { requestIdFrom, runWithLogContext, setLogTenant, withRequestIdHeader } from "./log-context";
+import { log } from "./log";
 import { readBoundedBody } from "./read-bounded-body";
 import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
 import { resolveTenantLang } from "./tenant-lang";
@@ -606,16 +608,27 @@ export async function handleSessionCommand(
   handler: (context: SessionCommandContext) => Promise<Response>,
   options: { guestNoteSessionId?: string } = {},
 ): Promise<Response> {
-  const context = await resolveSessionCommandContext(request, rateLimit, options);
-  if (context instanceof Response) return context;
+  // Correlation scope for every log line this request writes (lib/log-context.ts). It wraps the
+  // whole body so unauthenticated/denied outcomes also echo the request id; the tenant id is added
+  // only after resolveSessionCommandContext has authorised it.
+  const requestId = requestIdFrom(request.headers);
+  return runWithLogContext({ requestId }, async () => {
+    const context = await resolveSessionCommandContext(request, rateLimit, options);
+    if (context instanceof Response) return withRequestIdHeader(context, requestId);
+    setLogTenant(context.tenantId);
 
-  return runWithLang(context.lang, async () => {
-    try {
-      return await handler(context);
-    } catch (error) {
-      const mapped = mapSessionCommandError(error);
-      if (mapped) return mapped;
-      throw error;
-    }
+    const response = await runWithLang(context.lang, async () => {
+      try {
+        return await handler(context);
+      } catch (error) {
+        const mapped = mapSessionCommandError(error);
+        if (mapped) return mapped;
+        // Unmapped = a 500. Name the failure with the request/tenant ids; the Error is reduced to
+        // name + bounded message by the logger, never a stack above debug.
+        log.error("session_command_unhandled", { error });
+        throw error;
+      }
+    });
+    return withRequestIdHeader(response, requestId);
   });
 }

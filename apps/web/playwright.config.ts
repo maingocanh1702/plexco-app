@@ -9,6 +9,12 @@ import { defineConfig, devices } from "@playwright/test";
  */
 const PORT = Number(process.env.E2E_PORT ?? 3217);
 // CI builds in its own step (clearer logs) and sets E2E_SKIP_BUILD=1 so only `next start` runs here.
+// External mode (staging smoke, M5): E2E_EXTERNAL=1 + PLAYWRIGHT_BASE_URL=https://... targets an
+// already-deployed app, so no local build/server is started. The local path is untouched.
+const EXTERNAL_URL = process.env.E2E_EXTERNAL === "1" ? process.env.PLAYWRIGHT_BASE_URL : undefined;
+if (process.env.E2E_EXTERNAL === "1" && !EXTERNAL_URL) {
+  throw new Error("E2E_EXTERNAL=1 requires PLAYWRIGHT_BASE_URL (the deployed origin).");
+}
 const START = `pnpm exec next start -p ${PORT}`;
 
 export default defineConfig({
@@ -19,18 +25,20 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: `http://127.0.0.1:${PORT}`,
+    baseURL: EXTERNAL_URL ?? `http://127.0.0.1:${PORT}`,
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: {
-    command: process.env.E2E_SKIP_BUILD ? START : `pnpm run build && ${START}`,
-    url: `http://127.0.0.1:${PORT}/healthz`,
-    timeout: 300_000,
-    reuseExistingServer: !process.env.CI,
-    env: {
-      DATABASE_URL: "postgres://app:unused@127.0.0.1:1/none",
-      LOG_LEVEL: "error",
-    },
-  },
+  webServer: EXTERNAL_URL
+    ? undefined
+    : {
+        command: process.env.E2E_SKIP_BUILD ? START : `pnpm run build && ${START}`,
+        url: `http://127.0.0.1:${PORT}/healthz`,
+        timeout: 300_000,
+        reuseExistingServer: !process.env.CI,
+        env: {
+          DATABASE_URL: "postgres://app:unused@127.0.0.1:1/none",
+          LOG_LEVEL: "error",
+        },
+      },
 });

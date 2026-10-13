@@ -1,6 +1,6 @@
 # Plexco — Setup dev · staging · production
 
-> **Version:** v2.2 · 2026-09-03
+> **Version:** v2.3 · 2026-10-13
 > **Authority:** DD-04 = DigitalOcean co-location: App Platform + Managed PostgreSQL HA in Singapore,
 > connected through the `sgp1` VPC. The accepted record is
 > [`../decisions/analysis/dd-04-hosting-final-decision.md`](../decisions/analysis/dd-04-hosting-final-decision.md).
@@ -406,6 +406,27 @@ promote a mutable tag.
 Migration and queue provisioning must not be implemented as an App Platform runtime command that injects the DDL
 credential into all components.
 
+### Implemented by (M5 launch-readiness lane, 2026-10-13)
+
+| Contract above | Implemented in |
+|---|---|
+| Staging / production App Specs (§3), job-scoped DDL credential | `infra/app.staging.yaml`, `infra/app.prod.yaml` (PRE_DEPLOY `migrate` job; role `migrate` in `infra/entrypoint.sh`) |
+| Immutable promotion, secrets never in git (§5, §6) | `infra/render-app-spec.sh` (+ `render-app-spec.test.mjs`), `infra/wait-for-deployment.sh`, `infra/smoke-check.sh` |
+| Required CI order (§6) | `.github/workflows/deploy-staging.yml` (manual, owner-approved); `.github/workflows/deploy-production.yml` (dispatch-only promotion, never triggered automatically) |
+| Recovery / TTL / acceptance evidence (§8–§10) | `docs/runbooks/staging-deploy.md`, `pitr-restore-drill.md`, `tenant-1-launch.md`, `go-no-go-template.md` |
+
+Deviations from this document (program default pending owner sign-off):
+
+- §5 says `DATABASE_URL_MIGRATION` lives in "the protected CI environment/job only". The implementation puts it as a
+  secret on the App Spec's PRE_DEPLOY `migrate` job component (DO side), because the managed DB trusts only the app's
+  private VPC identity and GitHub-hosted runners have no stable address. It is still absent from every runtime component.
+- "Required CI order" step 1 (validate PostgreSQL version/extensions/roles) is not implemented by anything yet
+  (backlog `infra-ci-order-step1-pg-validation`).
+
+Still **not** done and not proven: nothing was run against DigitalOcean; the §1.1 outbound-IP gate is still
+open (the specs are prepared, not applied); DB TLS CA verification (§4) is not implemented in code or image;
+automatic TTL teardown (§9) does not exist; measured RPO/RTO cells are empty until the drill is run.
+
 ---
 
 ## 7. URLs and channel configuration
@@ -537,6 +558,7 @@ resource is provisioned.
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-13 | v2.3 | Added "Implemented by" under §6: App Specs, deploy workflows, render/wait/smoke scripts, `migrate` entrypoint role and the four launch runbooks now exist as reviewed code/docs. Prepared only — no DigitalOcean resource was created or deployed; §1.1 and §10 items stay open. |
 | 2026-09-03 | v2.2 | Added §4.1 local development and test databases: `DATABASE_URL_TEST` (the one local/CI-only connection variable, previously undocumented here), the new `pnpm db:reset:test` and its fail-closed `_test` suffix guard, and the fact that `pnpm db:bootstrap` depends on an undeclared host `psql` plus the container route around it. Added the `schema_migrations` hand-editing anti-pattern. No change to the §1.1 egress evidence table. |
 | 2026-07-16 | v2.1 | Reality-check: Docker Compose definition valid but daemon availability is not guaranteed; current DB/full-suite gate remains open. Pin official non-provisioning App Spec validation/proposal commands in the infra slice. |
 | 2026-07-16 | v2.0 | Replaced the superseded Fly production body with the accepted DigitalOcean App Platform + Managed PG VPC runbook; made replica trigger-based; added component-scoped DB URLs, immutable promotion, CI secret boundary, TTL staging, DD-04 §7.6 acceptance and isolated Fly fallback. |
