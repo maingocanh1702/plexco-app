@@ -1,8 +1,8 @@
 # 🗺️ ROADMAP — Plexco
 
-**Phiên bản:** v3.18
+**Phiên bản:** v3.19
 > ⚠️ *Đính chính version: header đứng ở v3.7 trong khi changelog đã tới v3.8 (mirror DD-116, 24/08) — dòng header không được bump lần đó. v3.9 gánh cả phần lệch này.*
-**Ngày tạo:** 16/06/2026 · **Cập nhật:** 19/09/2026
+**Ngày tạo:** 16/06/2026 · **Cập nhật:** 12/10/2026
 **Căn cứ:** `BRD.md` v3.10 · `PRD.md` v2.9 · `TDD.md` v3.2 · `../standards/decisions.md` (current — đọc bảng tổng hợp + changelog của chính file đó; **không pin version decisions ở đây** vì số chép tay đã stale một lần: header này từng ghi v2.11 trong khi live là v2.19) · `../features/FE/feature_channel_booking_funnel.md` + BE companion · `../standards/BUILD-STATUS.md`
 
 > ROADMAP là nguồn sự thật cho **delivery order + dev progress**. Product scope thuộc BRD; behavior thuộc PRD; implementation contract thuộc TDD.
@@ -69,7 +69,7 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 | Invariant test | 5 file | **5 file** | không đổi |
 | Feature spec | 27 Product + 27 BE | **27 + 27** | không đổi |
 | FE spec (lớp riêng) | 17 | **17** | không đổi — luật 3 |
-| Màn FE nối API thật | **0** | **0** | 🔴 FE PENDING (DD-116; carve-out DD-119 **chưa ratify**) |
+| Màn FE nối API thật | **0** | **0** | 🔴 FE PENDING (DD-116; carve-out DD-119 **chưa ratify**) → ⚠️ **12/10/2026: GỠ bởi DD-122** (full MVP; DD-119 superseded; chương trình `../autopilot-templates/web-mvp-2026-10-12-RUN.md` M0–M13; agent sở hữu UI design) |
 
 **Luật 4 (đối chứng `static + Σ generated = runner`) — trạng thái tại `12f5191`: 🟡 CHƯA ĐÓNG Ở LỚP NÀO.**
 
@@ -80,9 +80,9 @@ TỔNG (code, theo slice roadmap)  ██████░░░░░░░░░
 
 **Blocker / chờ owner (mỗi mục một dòng ✅ là xong):**
 
-- 🔴 **FE PENDING (DD-116 Option B)** — gỡ chỉ khi đủ ba vế (canonical `.pen` · tracked trên `main` · owner ký gate DD-81). Owner **hoãn có chủ đích từ 03/09**; ghi ở đây một dòng, không hỏi lại.
+- 🔴 **FE PENDING (DD-116 Option B)** — gỡ chỉ khi đủ ba vế (canonical `.pen` · tracked trên `main` · owner ký gate DD-81). Owner **hoãn có chủ đích từ 03/09**; ghi ở đây một dòng, không hỏi lại. → ⚠️ **12/10/2026: GỠ bởi DD-122** (full MVP; DD-119 superseded; chương trình `../autopilot-templates/web-mvp-2026-10-12-RUN.md` M0–M13; agent sở hữu UI design).
 - ✅ **DD-56 — hai route guest-note ĐÃ KÝ (amendment #3, owner 2026-09-19, `decisions.md` v2.51).** Cổng tạm nay phủ **BẢY** route, liệt kê tường minh. Bề mặt cưỡng chế không rộng thêm (ESLint rule không phải sửa). Điều khoản 5 — void khi `tenant-capability-authority-core` land — áp cho cả bảy.
-- 🟡 **DD-119 chưa ratify** (carve-out designer dựng `plexco.pen` untracked).
+- 🟡 **DD-119 chưa ratify** (carve-out designer dựng `plexco.pen` untracked) → ⚠️ **12/10: superseded bởi DD-122 D1**.
 - 🟡 **DD-120 chưa ratify** (làn ap3 proactive cho class `code-quality-p2`).
 - ⬜ **DD-56 amendment #3** (route ĐỌC session) — draft, chưa ký ⇒ row `session-read-routes-list-detail` vẫn `blocked`, và Milestone 2 của `ap3/features/session-management/PLAN.md` (supervised) chưa chạy được.
 - 🟡 **`main` đang trước `origin/main` 3 commit, chưa push** (`0601229` · `c2132b5` · `12f5191`) — push là việc tay owner.
@@ -914,7 +914,7 @@ Chuỗi kế tiếp (theo `../autopilot-templates/next-lanes-2026-08-13-RUN.md`)
 | DD-78 | Ảnh share do Plexco render (template-only) | ✅ |
 | DD-79 | Home personal dashboard (S9, composition-only) | ✅ |
 | DD-80 | Auth credential lifecycle (B0) + slice order D0a→D1→email→gỡ Telegram | ✅ · **D0a..d1b đã merge** |
-| DD-81 | Pencil + target Energetic Orange/Sora/Inter; active tokens chưa đổi | ✅ direction · 🔴 **FE PENDING theo lệnh owner 13/08** (không còn là HOLD-chờ-gate) |
+| DD-81 | Pencil + target Energetic Orange/Sora/Inter; active tokens chưa đổi | ✅ direction · 🔴 **FE PENDING theo lệnh owner 13/08** (không còn là HOLD-chờ-gate) → ⚠️ 12/10: DD-122 — direction là input, gate `.pen` không còn áp, agent activate target C |
 | DD-86 | In-app N club channels; exact lifecycle/post keys `chat.channel.manage` + `chat.channel.post_restricted`; Assistant default ON `all_members`/OFF `admins_only`, mutable both under gates; Announcements admins-only default OFF. DD-95 owns moderation/mute keys | ✅ `DECISION_FINAL`; no runtime |
 | DD-88 | Broader notification grouping/message-request initiative | ⏸️ `DEFERRED_PROPOSAL`; does not own/block DD-94 exact Chat digest |
 | DD-91 | In-app Chat primary surface + requester-only `/pay` | ✅ `DECISION_FINAL`; no runtime |
@@ -934,7 +934,7 @@ Chuỗi kế tiếp (theo `../autopilot-templates/next-lanes-2026-08-13-RUN.md`)
 | DD-100/101 | Level 3.1 adoption · ratify B3-budget amendment | ✅ · process/kit, không đổi product scope |
 | DD-113 | GTM re-sequencing: launch = PWA + Zalo bot **song song**, native lùi phase sau; PWA v1 = 5 khối; gate native thành ngưỡng đo được | ✅ Chốt (owner 22/08) · **không** gỡ FE PENDING, **không** đổi P-number/dependency order |
 | DD-114 | Phase-1 = 7 nhóm (signin · create club · link club⇄bot · link account⇄Zalo · sync + public/private · session + tiền · settings/privacy); launch DD-113 là **subset** | ✅ Chốt (owner 22/08) · **billing P5 vào phase-1** (vế tiền chỉ `host_pro`) · toggle public/private **sau fence 8a** · A3 legal thành blocker · ⬜ OQ public-khi-chưa-có-discovery |
-| DD-116 | Lệnh FE PENDING (13/08) đưa vào decision log — **nguồn bền** thay RUN doc 13/08 | ✅ Chốt **Option B — KEEP** (owner 24/08) · gỡ chỉ khi named trigger đủ CẢ BA: chọn canonical `.pen` (đúng một) · tracked trên `main` · owner ký nghiệm thu design authority (gate DD-81); khi gỡ ⇒ FE bounded 5 khối launch, mỗi lane vẫn qua gate; không sự kiện khác gỡ |
+| DD-116 | Lệnh FE PENDING (13/08) đưa vào decision log — **nguồn bền** thay RUN doc 13/08 → ⚠️ **12/10: hết hiệu lực bởi DD-122** | ✅ Chốt **Option B — KEEP** (owner 24/08) · gỡ chỉ khi named trigger đủ CẢ BA: chọn canonical `.pen` (đúng một) · tracked trên `main` · owner ký nghiệm thu design authority (gate DD-81); khi gỡ ⇒ FE bounded 5 khối launch, mỗi lane vẫn qua gate; không sự kiện khác gỡ |
 | DD-117 | `Close`/`Cancel` nhánh paid/retry-root = **fail-closed refuse** (`CANCEL_REQUIRES_REVIEW` class) tới khi payments/review_policy tồn tại; thay deferral 14/08; **D5:** cả họ session command dedup CHỈ trên `(tenant_id, command_id)` — content fingerprint bị bác | ✅ Chốt (owner 25/08) · authorize build Update+Close+Cancel (S2, STOP_AT_READY) · **KHÔNG** authorize subsystem payments/review_policy · DD-112 vẫn ⬜ |
 
 ---
@@ -1255,6 +1255,7 @@ Chuỗi kế tiếp (theo `../autopilot-templates/next-lanes-2026-08-13-RUN.md`)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 12/10/2026 | **v3.19** | **Annotate DD-122 (owner 12/10): FE PENDING gỡ cho full MVP; chương trình Web MVP M0–M13.** Chỉ annotate §📍 (dòng "Màn FE" + blocker FE PENDING) và bảng mirror DD (DD-81 · DD-116) trỏ về `../standards/decisions.md` DD-122 + `../autopilot-templates/web-mvp-2026-10-12-RUN.md`; **không re-pin số** (pin vẫn `12f5191`, `pnpm progress` tại `0db92b9` khai stale 14 file — re-pin thuộc cổng cuối đợt A, M5). Không đổi P-number, dependency order, thanh %. |
 | 19/09/2026 | **v3.18** | **Re-pin `e235ea4` → `12f5191` (38 commit, 14 PR) — gate chạy thật, và lần đầu LUẬT THANH chạy được bằng máy.** (1) **§📍 re-pin toàn bộ:** runner **1823 workspace + 172 readiness/kit**, static **1376**, migration **47** (tail `0046`), test file **59+4**; mã nguồn tại pin ≡ `origin/main@00cc510`, chứng minh bằng `git diff` rỗng chứ không bằng lời. (2) **Luật 4 khai CHƯA ĐÓNG ở cả năm lớp** — kể cả core/bot từng đóng ở `e235ea4`; không lớp nào có bảng kiểm kê tại mốc này, và phần dư không được viết như hiệu. (3) 🔴 **Metric lớp readiness đổi thành phần**: plan `1..130` nhưng `# pass 172` (ở `0aff7ad` hai số khớp) ⇒ bước `128 → 172` không đọc thành "44 test mới". (4) **Không một ô ma trận nào đổi** — 38 commit đều là hardening/kit; ghi thẳng lý do thay vì để người đọc đoán, và để ngỏ cho owner quyết có cấp hàng riêng cho đợt `codebase-fixes-2026-09-16` như đã cấp cho `0037`–`0042` không. (5) **Thêm `pnpm progress`** (`tools/progress.mjs`): đọc ma trận §📊 và in lại thanh theo đúng luật, kèm điều kiện carry — không sửa ô, không chạy suite. (6) Bẫy **14 database `plexco_*` sót** lặp lại lần hai ⇒ luật mới: dọn cluster **trước VÀ sau** khi đo. |
 | 15/09/2026 | **v3.17** | **Re-pin `0aff7ad` → `e235ea4` (87 commit) + dựng lại §📍 và §📜 — số đo TỪ MỘT LẦN CHẠY THẬT, không carry.** (1) **§📍 Tiến độ thực tế** dựng ngay dưới header (bản 08/09 dựng mục này **chưa bao giờ được commit** — đo 15/09 `grep -c '📍'` = 0): pin + điều kiện carry viết bằng lệnh + LUẬT THANH + bảng thanh theo delivery group + bảng số rút gọn + blocker/đang bay/kế tiếp. (2) **§📜 Nhật ký cập nhật** ở cuối file: mọi khối 🟥/🟪/🟩/🟢/🔵/🟠 cũ **dời nguyên văn**, gập `<details>`, mới nhất trước — không đổi một chữ nào của chúng. (3) **Số đo mới @ `e235ea4`:** migration **37 → 45** (tail `0036` → **`0044`**) · test file **50 → 54** · runner **1308 → 1490 workspace** (core 163 · db 800 · web 468 · bot 59) **+ 124 → 128 readiness/kit** · static **1146 → 1308** · API route **15 → 15 nhưng thành phần đổi** (−2 Telegram, +2 guest-note ⇒ **7 route nghiệp vụ**) · session command **6 → 8**. Gate chạy thật trên Mac: `pnpm -w test` exit 0 + `pnpm typecheck` 4/4 + tree sạch. (4) **Ma trận:** thêm nhóm **Audit hardening `0037`–`0042`** (✅, 0 hành vi product mới); Session command family **Migration `—` → ✅ `0044`** ⇒ thanh **63 → 70**; Session API surface 5 → **7 route**; 3b Auth **8 → 6 route**; Identity link gộp `0034` + `0043`. Module Progress: 3b · 3c · 7 · 8 · 18 cập nhật theo đo. (5) **Phát hiện ghi lại, không tự quyết:** hai route guest-note đi qua choke-point tạm trong khi **DD-56 amendment #2 pin NĂM route** ⇒ decision còn thiếu. (6) **Không đổi:** phase · canonical P-number · dependency order · DD status · thanh ~33% · 0 màn FE · FE PENDING. |
 | 06/09/2026 | **v3.16** | **Audit code ↔ docs 06/09 (`../sessions/2026-09-06-repo-audit.md`) — đóng 16 điểm docs lệch code, KHÔNG re-pin trục Tests.** Khối 🟥 06/09 mới trên đầu file. (1) §Dev Progress: API route 13→**15** (`close`/`cancel` `6d62cf8`), test file 46→**50** `*.test.ts` + 4 `.mjs`, hàng Session API surface 3/6→**5/6** command có route, hàng Identity account link **bỏ cite file `identity-account-link.ts` không tồn tại** (chỉ có SQL fn `0034:83`), hàng Tenant locale ghi readiness đã `runWithLang`, hàng Shared job runtime "no producer"→**producer có, projector chưa**, Module 10 BE ⬜→🟡 (`onboarding/start` self-serve đã có), Module 18 "0 caller"→**5 caller**. (2) **Chữ "PWA"→"web app"** ở 12 dòng normative (§Positioning/§Context/§Delivery Groups/§GTM/footer) theo lệnh DD-113; giữ nguyên ở tên metric gate native, changelog và tiêu đề DD (Phụ lục A). (3) §Next Actions #6 thêm hàng đợi **A1→A9** của audit. (4) Đối chiếu: `eslint.config.mjs` **có trên main** (audit #13 đóng, không mở row). ⚠️ **KHÔNG đổi:** canonical P-number · dependency order · thanh ~33% · FE PENDING (DD-116) · trục Tests `1308 + 124 @ 0aff7ad` (code A1–A7 chưa merge nên số này vẫn đúng cho `main`). |

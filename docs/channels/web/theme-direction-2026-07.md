@@ -63,6 +63,7 @@
 - **Target direction (✅ DD-81, owner 2026-07-28):** **C · Energetic Orange** (`--primary` candidate `#FF5A1F`) + **Sora headings / Inter body**.
 - **Contrast correction:** chữ trắng `#FFFFFF` trên `#FF5A1F` đo **3.118:1**, không đạt WCAG AA cho normal text; target `--on-primary` là dark `#22100A` (**5.874:1**) nếu palette được activate. Large/decorative text không được dùng để né gate normal-text.
 - **Gates còn mở:** canonical `design.pen` phải được track + owner duyệt exact Home comparison; variables phải match `.md` SoT; contrast WCAG AA phải pass light/dark và representative components. Chỉ sau đó mới tune/activate value set trong `design-tokens.md`.
+  > ⚠️ **2026-10-12 — DD-122 D1 (owner):** hai gate `.pen` (track + owner duyệt · variables match) **bỏ**; gate WCAG AA light/dark **giữ** (là acceptance bar của mọi màn). Agent triển khai được activate target C trực tiếp (M1).
 - **Tool/path (✅):** Pencil, canonical root file `design.pen` (path owner-amended 25/07). Visual comparison nay để xác nhận/tune target C, không phải tự chọn lại A/B/C/D. Material hue hoặc font-family change phải mở DD mới.
 
 ## 6. Propagation path (sau khi chốt — thứ tự bắt buộc, theo playbook `../../templates/brd-to-pen-playbook.md` §1.2 + Bước 6D)
@@ -78,6 +79,8 @@
 7. **Drift audit + WCAG gate trước khi dùng:** so SoT ↔ file design ↔ CSS ↔ representative components (playbook template §5.5); contrast WCAG AA cả light/dark — đặc biệt primary sáng (Lime/Pink cần chữ tối, đã note §5).
 
 **Định nghĩa activated:** cả 7 bước hoàn thành trong cùng đợt activation; không có trạng thái "đã đổi SoT nhưng chưa propagate". Hiện mới hoàn tất bước 1 nên target đã chốt nhưng current value set chưa đổi.
+
+> ⚠️ **2026-10-12 — DD-122 D1 (owner):** không còn file design canonical ⇒ **bước 5 bỏ**, bước 7 chỉ còn vế drift audit SoT ↔ CSS ↔ component + WCAG AA; định nghĩa "activated" = bước 2 · 3 · 4 · 6 · 7 (rút gọn) hoàn thành trong PR FE đầu tiên (M1). Bước 1 đã xong (DD-81).
 
 ## 7. Benchmark bổ sung — Sporta Home (internal, 19/07/2026)
 
