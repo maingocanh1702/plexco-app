@@ -206,3 +206,5 @@ export {
   type LinkCodeKeys,
   type LinkCodeParty,
 } from "./identity.js";
+// Web account <-> Zalo link (M3b): consume + re-parent an EMPTY Zalo-side Person (0054).
+export { linkZaloToAccount, type LinkZaloOutcome } from "./identity-link-web.js";
