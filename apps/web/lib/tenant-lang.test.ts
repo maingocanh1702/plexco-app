@@ -150,6 +150,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (b) — authenticated but NO single tenant is routed. /session returns a LIST of tenants, so no
   // one tenant's locale applies; logout and logout-all are account-scoped.
   "app/api/auth/session/route.ts": "b",
+  // (b) — account-scoped linking (M3b): the Zalo identity is global, no tenant is routed; Vietnamese default.
+  "app/api/me/link/route.ts": "b",
   "app/api/auth/logout/route.ts": "b",
   "app/api/auth/logout-all/route.ts": "b",
   // (c) — liveness probe: {ok:true}, no DB, no auth.

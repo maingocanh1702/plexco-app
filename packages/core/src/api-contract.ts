@@ -56,6 +56,10 @@
  * INVALID_WEBHOOK_SECRET, WEBHOOK_PAYLOAD_MALFORMED, WEBHOOK_RATE_LIMITED and ZALO_TOKEN_INVALID
  * arrived with the Zalo connect and webhook routes (M3a), transcribed from
  * feature_connector_onboarding_tech.md section 3 / feature_zalo_channel_tech.md, not chosen here.
+ *
+ * LINK_CODE_INVALID, LINK_CODE_RATE_LIMITED and MERGE_REQUIRES_REVIEW arrived with POST /api/me/link (M3b),
+ * named by feature_identity_tech.md section 7; LINK_UNAVAILABLE (503, key not configured) is not pinned by
+ * the spec and is proposed in the lane report.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -79,8 +83,12 @@ export const API_ERROR_CODES = [
   "INVALID_TIME_RANGE",
   "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
+  "LINK_CODE_INVALID",
+  "LINK_CODE_RATE_LIMITED",
+  "LINK_UNAVAILABLE",
   "LOGIN_RATE_LIMITED",
   "MARK_PAID_TOTAL_MISMATCH",
+  "MERGE_REQUIRES_REVIEW",
   "MISSING_DISCOVERY_FIELDS",
   "NOT_FOUND",
   "NOT_NOTE_CREATOR",

@@ -153,3 +153,16 @@ describe("ApiEnvelope shape (compile-time contract lock)", () => {
     expect(failure.error.statusCode).toBe(403);
   });
 });
+
+describe("account <-> Zalo link codes (M3b)", () => {
+  it("registers the four literals POST /api/me/link emits", () => {
+    for (const code of [
+      "LINK_CODE_INVALID",
+      "LINK_CODE_RATE_LIMITED",
+      "LINK_UNAVAILABLE",
+      "MERGE_REQUIRES_REVIEW",
+    ]) {
+      expect(isApiErrorCode(code)).toBe(true);
+    }
+  });
+});
