@@ -1,0 +1,131 @@
+"use client";
+
+import { useRef, useState, type FormEvent } from "react";
+import { patchClubConfig, type ClubConfigDto } from "../../lib/club-settings-client";
+import {
+  buildDefaultsPatch,
+  defaultsValues,
+  type DefaultsFormValues,
+} from "../../lib/club-settings-model";
+import { useLang, useT } from "../../lib/i18n-client";
+import { formatVndInput } from "../../lib/money";
+import type { SportDto } from "../../lib/sessions-api";
+import { useCommandId } from "../../lib/use-command-id";
+import { useOnlineStatus } from "../../lib/use-online-status";
+import { Button } from "../ui/button";
+import { Select } from "../ui/select";
+import { TextField } from "../ui/text-field";
+import { FormFeedback } from "./form-feedback";
+import styles from "./settings-layout.module.css";
+
+/** Defaults a new session starts from: sport, price (VND) and visibility (`club.default_*`). */
+export function ClubDefaultsForm({
+  tenantId,
+  csrfToken,
+  club,
+  sports,
+  onSaved,
+}: {
+  tenantId: string;
+  csrfToken: string;
+  club: ClubConfigDto;
+  sports: SportDto[];
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const lang = useLang();
+  const online = useOnlineStatus();
+  const command = useCommandId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [values, setValues] = useState<DefaultsFormValues>(() =>
+    defaultsValues(club, (n) => formatVndInput(n, lang)),
+  );
+  const [priceError, setPriceError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [focusKey, setFocusKey] = useState(0);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+    const { patch, problem } = buildDefaultsPatch(club, values);
+    if (problem) {
+      setPriceError(
+        problem === "price_invalid"
+          ? t("Giá không hợp lệ.", "That price is not valid.")
+          : t("Nhập giá (0 nếu miễn phí).", "Enter a price (0 if free)."),
+      );
+      formRef.current?.querySelector<HTMLInputElement>('input[inputmode="numeric"]')?.focus();
+      return;
+    }
+    setPriceError(null);
+    if (patch === null) {
+      setMessage(t("Chưa có thay đổi nào để lưu.", "Nothing has changed."));
+      setFocusKey((n) => n + 1);
+      return;
+    }
+    setBusy(true);
+    try {
+      await patchClubConfig({ tenantId, csrfToken }, { ...patch, commandId: command.get() });
+      command.settle();
+      setMessage(t("Đã lưu mặc định buổi chơi.", "Session defaults saved."));
+      onSaved();
+    } catch (failure) {
+      command.settle(failure);
+      setError(failure);
+    } finally {
+      setBusy(false);
+      setFocusKey((n) => n + 1);
+    }
+  }
+
+  return (
+    <form ref={formRef} className={styles.form} onSubmit={(e) => void submit(e)} noValidate>
+      <Select
+        label={t("Môn thể thao mặc định", "Default sport")}
+        value={values.sportKey}
+        options={[
+          { value: "", label: t("Chưa chọn", "Not set") },
+          ...sports.map((sport) => ({ value: sport.key, label: sport.name })),
+        ]}
+        onChange={(e) => setValues({ ...values, sportKey: e.target.value })}
+      />
+      <TextField
+        label={t("Giá mặc định (₫)", "Default price (₫)")}
+        hint={t("Tiền Việt, không có phần lẻ.", "Vietnamese dong, no decimals.")}
+        inputMode="numeric"
+        value={values.price}
+        error={priceError}
+        onChange={(e) => {
+          setValues({ ...values, price: e.target.value });
+          setPriceError(null);
+        }}
+      />
+      <Select
+        label={t("Hiển thị mặc định", "Default visibility")}
+        value={values.visibility}
+        options={[
+          { value: "private", label: t("Riêng tư", "Private") },
+          { value: "public", label: t("Công khai", "Public") },
+        ]}
+        onChange={(e) =>
+          setValues({ ...values, visibility: e.target.value === "public" ? "public" : "private" })
+        }
+      />
+      <FormFeedback
+        focusKey={focusKey}
+        error={error}
+        message={message}
+        onRetry={() => formRef.current?.requestSubmit()}
+        onReload={onSaved}
+      />
+      <div className={styles.actions}>
+        <Button type="submit" disabled={busy || !online} aria-busy={busy ? true : undefined}>
+          {busy ? t("Đang lưu…", "Saving…") : t("Lưu", "Save")}
+        </Button>
+      </div>
+    </form>
+  );
+}

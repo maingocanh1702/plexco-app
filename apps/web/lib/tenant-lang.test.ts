@@ -227,6 +227,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/lang-storage.ts": "c",
   // (c) — browser-side settings screens (M4). Typed fetch wrappers + pure form models; user-facing
   // text comes from the `t` the caller passes from useT() (settings-error-ui, display-name rules).
+  "lib/club-settings-client.ts": "c",
+  "lib/club-settings-model.ts": "c",
   "lib/me-settings-client.ts": "c",
   "lib/settings-error-ui.ts": "c",
   "lib/use-command-id.ts": "c",
