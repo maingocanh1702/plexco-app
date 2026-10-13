@@ -163,6 +163,41 @@ test.describe("add / remove", () => {
     expect(members).toHaveLength(1);
   });
 
+  test("an uncertain add survives a tab switch: leaving the tab refetches and the member shows once", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    mock.failNext("add", "lost-response"); // the server APPLIES the add, the reply never arrives
+    await add(page, "Bình");
+    await expect(page.getByRole("button", { name: "Thử lại" })).toBeVisible(); // locked, uncertain
+    const detailGets = () => mock.callsTo("GET", /^\/api\/sessions\/r-open$/).length;
+    const before = detailGets();
+    await page.getByRole("tab", { name: "Chi tiết", exact: true }).click(); // unmounts the form
+    await expect.poll(detailGets).toBeGreaterThan(before);
+    await page.getByRole("tab", { name: "Người chơi", exact: true }).click();
+    await expect(page.getByText("Bình", { exact: true })).toHaveCount(1); // the applied member
+    expect(mock.callsTo("POST", /\/players$/)).toHaveLength(1); // no second add with a new key
+  });
+
+  test("an add still in flight when the tab switches refetches once its reply is lost", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    mock.failNext("add", "lost-response");
+    const release = mock.holdNext("add");
+    await add(page, "Bình");
+    await expect(page.getByLabel("Tên hiển thị")).toHaveAttribute("readonly", ""); // in flight
+    await page.getByRole("tab", { name: "Chi tiết", exact: true }).click();
+    await expect(page.getByLabel("Tên hiển thị")).toHaveCount(0); // unmounted while in flight
+    const detailGets = () => mock.callsTo("GET", /^\/api\/sessions\/r-open$/).length;
+    const before = detailGets();
+    release(); // the add applies now and its reply is lost: it settles uncertain after the unmount
+    await expect.poll(detailGets).toBeGreaterThan(before);
+    await page.getByRole("tab", { name: "Người chơi", exact: true }).click();
+    await expect(page.getByText("Bình", { exact: true })).toHaveCount(1);
+    expect(mock.callsTo("POST", /\/players$/)).toHaveLength(1);
+  });
+
   test("remove sends only the command key; a paid player is refused with the server's reverse-first message", async ({
     page,
   }) => {
@@ -271,7 +306,7 @@ test.describe("mark-paid", () => {
     await expect(page.getByRole("checkbox", { name: /Chọn An Võ/ })).toHaveCount(0); // paid in full
   });
 
-  test("out-of-range amount is flagged inline; per-line server failure offers reload", async ({
+  test("out-of-range amount is flagged inline; per-line server failure offers a reload that closes and focuses the heading", async ({
     page,
   }) => {
     const mock = await open(page);
@@ -296,8 +331,12 @@ test.describe("mark-paid", () => {
     await expect(dialog(page).getByRole("alert")).toContainText(
       "Số tiền vượt quá khoản còn thiếu.",
     );
+    const detailGets = () => mock.callsTo("GET", /^\/api\/sessions\/r-open$/).length;
+    const before = detailGets();
     await dialog(page).getByRole("button", { name: "Tải lại dữ liệu" }).click();
-    await expect(dialog(page)).toContainText("Gạch nợ cho 1 người"); // back to step 1
+    await expect(dialog(page)).toBeHidden(); // the refetched roster decides who is still payable
+    await expect.poll(detailGets).toBeGreaterThan(before);
+    await expect(heading(page)).toBeFocused(); // not <body>: the focused Reload button is gone
   });
 
   test("Go back on the review step returns to the method step without closing", async ({
@@ -315,6 +354,26 @@ test.describe("mark-paid", () => {
     // reopening starts clean at step 1 (no flash of the previous run)
     await page.getByRole("button", { name: "Gạch nợ (1)" }).click();
     await expect(dialog(page)).toContainText("Hình thức thanh toán");
+  });
+
+  test("Go back after a lost confirm reply refetches and focuses the heading (the opener is disabled by then)", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    await select(page, "An Võ");
+    await page.getByRole("button", { name: "Gạch nợ (1)" }).click();
+    await dialog(page).getByRole("button", { name: "Xem trước" }).click();
+    mock.failNext("mark-paid", "lost-response"); // applied server-side, the reply is lost
+    await dialog(page).getByRole("button", { name: "Xác nhận" }).click();
+    await expect(dialog(page).getByRole("alert")).toBeVisible();
+    const detailGets = () => mock.callsTo("GET", /^\/api\/sessions\/r-open$/).length;
+    const before = detailGets();
+    await dialog(page).getByRole("button", { name: "Quay lại" }).click();
+    await expect(dialog(page)).toBeHidden();
+    await expect.poll(detailGets).toBeGreaterThan(before);
+    await expect(page.getByRole("checkbox", { name: /Chọn An Võ/ })).toHaveCount(0); // it was paid
+    await expect(page.getByRole("button", { name: /Gạch nợ/ })).toBeDisabled();
+    await expect(heading(page)).toBeFocused(); // not <body>
   });
 
   test("a lost reply keeps the command key and freezes the amounts; the retry replays", async ({
@@ -398,18 +457,27 @@ test.describe("ledger / reversal", () => {
     await expect(page.getByText(/Đã hoàn tác .*20\.000/)).toBeVisible();
     const call = mock.callsTo("POST", /\/payments\/a2\/reverse$/)[0]!;
     expect(body(call).reason).toBe("nhập nhầm");
-    await expect(page.getByText(/Còn .*50\.000.* \/ .*50\.000/).first()).toBeVisible();
+    const minh = page
+      .getByRole("listitem")
+      .filter({ has: page.getByText("Minh Trần", { exact: true }) });
+    await expect(minh.getByText(/Còn .*50\.000.* \/ .*50\.000/)).toBeVisible(); // not An Võ's row
     await expect(page.getByRole("button", { name: /Hoàn tác khoản .*20\.000/ })).toHaveCount(0);
   });
 
-  test("an admin without money.correct sees the permission explanation", async ({ page }) => {
+  test("OD-5: an admin refused a reversal is told it is owner-only, without an internal key", async ({
+    page,
+  }) => {
     const mock = await open(page);
     await page.getByText(/Chi tiết thanh toán \(đã thu .*20\.000/).click();
     await page.getByRole("button", { name: /Hoàn tác khoản .*20\.000/ }).click();
     await dialog(page).getByLabel("Lý do (bắt buộc)").fill("nhập nhầm");
     mock.failNext("reverse", { code: "FORBIDDEN", message: "x", statusCode: 403 });
     await dialog(page).getByRole("button", { name: "Hoàn tác" }).click();
-    await expect(dialog(page).getByRole("alert")).toContainText("money.correct");
+    const alert = dialog(page).getByRole("alert");
+    await expect(alert).toContainText(
+      "Chỉ chủ CLB mới hoàn tác được thanh toán. Hãy nhờ chủ CLB thực hiện.",
+    );
+    await expect(alert).not.toContainText("money.correct");
   });
 
   test("a lost reversal reply freezes the reason; the retry replays (one negative row, replayed:true)", async ({

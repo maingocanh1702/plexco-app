@@ -167,8 +167,9 @@ export function isDefiniteFailure(error: unknown): boolean {
 }
 
 /**
- * Reversal-dialog variant: FORBIDDEN there means the admin lacks the owner-grantable `money.correct`
- * (DD-56), which the generic "not allowed" text would not explain.
+ * Reversal-dialog variant (OD-5): reversal is owner-only until a grant UI exists, so FORBIDDEN there
+ * tells the host to ask the club owner, which the generic "not allowed" text would not explain. No
+ * internal permission key is shown.
  */
 export function describeReverseError(error: unknown, t: TFn): ErrorView {
   const view = describeSessionError(error, t);
@@ -176,8 +177,8 @@ export function describeReverseError(error: unknown, t: TFn): ErrorView {
   return {
     ...view,
     message: t(
-      "Cần quyền money.correct (chủ CLB cấp) để hoàn tác thanh toán.",
-      "Reversing a payment needs the money.correct permission (granted by the club owner).",
+      "Chỉ chủ CLB mới hoàn tác được thanh toán. Hãy nhờ chủ CLB thực hiện.",
+      "Only the club owner can reverse a payment. Ask the club owner to do it.",
     ),
   };
 }

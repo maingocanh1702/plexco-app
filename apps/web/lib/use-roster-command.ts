@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { isDefiniteFailure } from "./session-error-ui";
 import { useCommandId } from "./use-command-id";
 
@@ -13,17 +13,36 @@ import { useCommandId } from "./use-command-id";
  * entry gate answers RATE_LIMITED / CSRF_INVALID before the replay lookup): it shows its error but
  * keeps the key and the lock. `run` resolves to the result, or `undefined` when it failed (the
  * error is then in `error`).
+ *
+ * `onAbandon` (the caller's refetch) covers an unmount while an attempt may have committed, e.g.
+ * the host switched tabs: the key and the lock die with the component and the next attempt would
+ * be a new command, so the screen refetches instead and shows whether the command landed. It runs
+ * at the unmount, or, for an attempt still in flight then, once that attempt settles uncertain.
  */
-export function useRosterCommand() {
+export function useRosterCommand(onAbandon?: () => void) {
   const id = useCommandId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [locked, setLocked] = useState(false);
   // `run` is created once, so it reads the sticky flag from a ref; `locked` re-renders the inputs.
   const uncertain = useRef(false);
+  const inFlight = useRef(false);
+  const gone = useRef(false);
+  const abandon = useRef(onAbandon);
+  useEffect(() => {
+    abandon.current = onAbandon;
+  });
+  useEffect(() => {
+    gone.current = false; // a StrictMode remount
+    return () => {
+      gone.current = true;
+      if (uncertain.current && !inFlight.current) abandon.current?.();
+    };
+  }, []);
 
   const run = useCallback(
     async <T>(call: (commandId: string) => Promise<T>): Promise<T | undefined> => {
+      inFlight.current = true;
       setBusy(true);
       setError(null);
       try {
@@ -39,7 +58,9 @@ export function useRosterCommand() {
         setError(e);
         return undefined;
       } finally {
+        inFlight.current = false;
         setBusy(false);
+        if (gone.current && uncertain.current) abandon.current?.(); // settled after the unmount
       }
     },
     // the `id` methods only close over a ref, so the first render's copy is always current

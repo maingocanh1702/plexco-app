@@ -108,6 +108,16 @@ describe("RosterTab", () => {
     expect(html).toContain("Chỉ ghi nhận thanh toán khi buổi đang mở hoặc đã đóng.");
   });
 
+  it("an unknown player or charge status shows a translated fallback, never the raw value", () => {
+    const odd = [
+      player("p9", "Tú", { status: "suspended", charge: charge({ status: "refunded" }) }),
+    ];
+    const vi = render(session({ players: odd }));
+    expect(vi.match(/Không rõ/g)).toHaveLength(2); // the status badge and the charge badge
+    expect(vi).not.toMatch(/suspended|refunded/);
+    expect(render(session({ players: odd }), "en").match(/>Unknown</g)).toHaveLength(2);
+  });
+
   it("empty roster shows the empty state", () => {
     expect(render(session({ players: [] }))).toContain("Chưa có người chơi");
   });

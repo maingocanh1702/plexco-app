@@ -17,7 +17,9 @@ export const DISPLAY_NAME_MAX = 100;
  * one field is trimmed 1..100; the server answers active or waitlisted and the result is announced.
  * The name is read-only while an add is in flight and after an UNCERTAIN failure (the add may have
  * committed): the retry replays the same command key, where an edit would mint a new key and could
- * add the person twice. The lock lasts until a 2xx or Cancel (which refetches).
+ * add the person twice. The lock lasts until a 2xx or Cancel (which refetches). Leaving the tab
+ * unmounts the form and drops the key, so the hook refetches then (`onReload`): the roster the host
+ * comes back to shows whether the add landed, before anyone types the name again.
  */
 export function RosterAddPlayerForm({
   ctx,
@@ -41,7 +43,7 @@ export function RosterAddPlayerForm({
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [invalid, setInvalid] = useState(false);
-  const cmd = useRosterCommand();
+  const cmd = useRosterCommand(onReload);
   const locked = cmd.locked;
 
   async function submit(event?: FormEvent) {
@@ -71,10 +73,12 @@ export function RosterAddPlayerForm({
   }
 
   // Cancelling after an uncertain failure: refetch so the host sees whether the add landed, and
-  // drop the name so reopening cannot re-add it blindly.
+  // drop the name so reopening cannot re-add it blindly. reset() releases the lock, so a later
+  // unmount (tab switch) does not refetch a second time.
   function cancel() {
     if (locked) {
       onReload();
+      cmd.reset();
       setName("");
     }
     setOpen(false);

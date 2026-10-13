@@ -142,9 +142,15 @@ describe("roster / payment errors", () => {
     expect(describeSessionError(e, vi).message).toBe(pinned);
   });
 
-  it("the reversal dialog explains FORBIDDEN as a missing money.correct grant; others unchanged", () => {
+  it("OD-5: the reversal dialog explains FORBIDDEN as owner-only, no internal permission key; others unchanged", () => {
+    const vi = (v: string) => v;
     const forbidden = describeReverseError(err("FORBIDDEN", "x", 403), en);
-    expect(forbidden.message).toContain("money.correct");
+    expect(forbidden.message).toBe(
+      "Only the club owner can reverse a payment. Ask the club owner to do it.",
+    );
+    expect(describeReverseError(err("FORBIDDEN", "x", 403), vi).message).toBe(
+      "Chỉ chủ CLB mới hoàn tác được thanh toán. Hãy nhờ chủ CLB thực hiện.",
+    );
     expect(forbidden.code).toBe("FORBIDDEN");
     expect(describeReverseError(err("REVERSAL_NOT_SUPPORTED", "nope", 409), en).message).toBe(
       "nope",

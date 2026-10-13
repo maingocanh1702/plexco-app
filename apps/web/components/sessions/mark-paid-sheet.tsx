@@ -38,7 +38,10 @@ export function MarkPaidSheet({
   ctx: SessionApiContext;
   sessionId: string;
   players: { id: string; name: string }[];
-  /** `paid` = at least one payment was recorded (caller refetches and returns focus). */
+  /**
+   * `paid` = a payment was (or, after an uncertain confirm, may have been) recorded, or the host
+   * asked to reload: the caller clears the selection, refetches and focuses the roster heading.
+   */
   onClose: (paid: boolean) => void;
   onReload: () => void;
 }) {
@@ -121,22 +124,17 @@ export function MarkPaidSheet({
   const active = step === "method" ? previewCmd : confirmCmd;
   // "Go back" must do what it says: one step back on review. After an uncertain confirm failure
   // the payment may have committed, so there is no safe step back (a new key could double-pay):
-  // close and refetch instead.
+  // close as `paid` instead, so the caller refetches and focuses the roster heading (the opener is
+  // disabled once the refetch shows the charge settled). "Reload data" closes the same way: its
+  // focused button unmounts, and the refetched roster decides who is still payable.
   function cancel() {
     if (step === "review" && !locked) {
       confirmCmd.reset();
       setStep("method");
       return;
     }
-    if (locked) onReload();
-    onClose(step === "result");
+    onClose(locked || step === "result");
   }
-  const reloadAndRestart = () => {
-    onReload();
-    previewCmd.reset();
-    confirmCmd.reset();
-    setStep("method");
-  };
 
   return (
     <ConfirmDialog
@@ -173,7 +171,7 @@ export function MarkPaidSheet({
           <ApiErrorNotice
             error={active.error}
             onRetry={copy[step].run}
-            onReload={reloadAndRestart}
+            onReload={() => onClose(true)}
           />
         ) : null
       }

@@ -57,14 +57,14 @@ export function RosterPlayerRow({
       ];
     }
     if (player.status === "left") return ["neutral", t("Đã rời", "Left")];
-    return ["neutral", player.status];
+    return ["neutral", t("Không rõ", "Unknown")]; // never a raw server value
   })();
   const chargeBadge = (s: string): [BadgeTone, string] => {
     if (s === "paid") return ["success", t("Đã thanh toán", "Paid")];
     if (s === "partial") return ["warning", t("Trả một phần", "Partly paid")];
     if (s === "open") return ["error", t("Chưa thanh toán", "Unpaid")];
     if (s === "void") return ["neutral", t("Không thu", "Not charged")];
-    return ["neutral", s];
+    return ["neutral", t("Không rõ", "Unknown")];
   };
 
   return (
