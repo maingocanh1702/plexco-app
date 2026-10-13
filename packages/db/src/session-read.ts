@@ -1,6 +1,15 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
-import { charges, memberships, players, sessionGuestNotes, sessions, sports } from "../schema.js";
+import {
+  charges,
+  memberships,
+  paymentAllocations,
+  players,
+  sessionGuestNotes,
+  sessions,
+  sports,
+} from "../schema.js";
 import type { Db } from "./client.js";
+import { effectiveByCharge } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -103,7 +112,24 @@ export interface SessionDetail extends SessionScalars {
     status: string;
     joinedAt: Date;
     waitlistPosition: number | null;
-    charge: { id: string; amountDue: number; amountAllocated: number; status: string } | null;
+    charge: {
+      id: string;
+      amountDue: number;
+      amountAllocated: number;
+      status: string;
+      /** SUM of the ledger (reversals are negative rows) -- the host-view truth for what is paid. */
+      effectiveAllocated: number;
+      /** amount_due - effectiveAllocated for a payable charge; 0 for a void one. */
+      remaining: number;
+      allocations: {
+        id: string;
+        source: string;
+        amount: number;
+        createdAt: Date;
+        reasonCode: string | null;
+        reversesAllocationId: string | null;
+      }[];
+    } | null;
   }[];
   guestNotes: {
     id: string;
@@ -257,6 +283,35 @@ export async function getSessionDetail(
       )
       .orderBy(asc(sessionGuestNotes.createdAt), asc(sessionGuestNotes.id));
 
+    // Host view only (HR2: money never reaches a public surface -- this module backs the
+    // authenticated host routes). One query for the whole session, grouped in memory.
+    const ledger = await tx
+      .select({
+        id: paymentAllocations.id,
+        chargeId: paymentAllocations.chargeId,
+        source: paymentAllocations.source,
+        amount: paymentAllocations.amount,
+        createdAt: paymentAllocations.createdAt,
+        reasonCode: paymentAllocations.reasonCode,
+        reversesAllocationId: paymentAllocations.reversesAllocationId,
+      })
+      .from(paymentAllocations)
+      .innerJoin(charges, eq(charges.id, paymentAllocations.chargeId))
+      .where(and(eq(charges.tenantId, tenantId), eq(charges.sessionId, sessionId)))
+      .orderBy(asc(paymentAllocations.createdAt), asc(paymentAllocations.id));
+    const allocationsByCharge = new Map<string, typeof ledger>();
+    for (const row of ledger) {
+      const list = allocationsByCharge.get(row.chargeId) ?? [];
+      list.push(row);
+      allocationsByCharge.set(row.chargeId, list);
+    }
+
+    // The canonical effective-amount derivation (never re-derived here): SUM of the ledger.
+    const effectiveById = await effectiveByCharge(
+      tx,
+      roster.flatMap((r) => (r.chargeId === null ? [] : [r.chargeId])),
+    );
+
     const mapped = roster.map((r) => ({
       id: r.id,
       membershipId: r.membershipId,
@@ -267,12 +322,20 @@ export async function getSessionDetail(
       charge:
         r.chargeId === null
           ? null
-          : {
-              id: r.chargeId,
-              amountDue: r.amountDue as number,
-              amountAllocated: r.amountAllocated as number,
-              status: r.chargeStatus as string,
-            },
+          : (() => {
+              const rows = allocationsByCharge.get(r.chargeId) ?? [];
+              const effectiveAllocated = effectiveById.get(r.chargeId) ?? 0;
+              return {
+                id: r.chargeId,
+                amountDue: r.amountDue as number,
+                amountAllocated: r.amountAllocated as number,
+                status: r.chargeStatus as string,
+                effectiveAllocated,
+                remaining:
+                  r.chargeStatus === "void" ? 0 : (r.amountDue as number) - effectiveAllocated,
+                allocations: rows.map(({ chargeId: _c, ...a }) => a),
+              };
+            })(),
     }));
     return {
       ...head,

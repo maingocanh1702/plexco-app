@@ -172,6 +172,17 @@ describe("getSessionDetail", () => {
        VALUES ($1, $2, $3, $4, 50000, 20000, 'partial')`,
       [tenant, sessionId, playerId, membership],
     );
+    const chargeRow = (
+      await ctx.owner.query<{ id: string }>(`SELECT id FROM charges WHERE player_id = $1`, [
+        playerId,
+      ])
+    ).rows[0]!.id;
+    // The ledger row behind amount_allocated: the host view derives effective/remaining from it.
+    await ctx.owner.query(
+      `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by)
+       VALUES ($1, $2, 20000, 'cash', $3)`,
+      [tenant, chargeRow, person],
+    );
     await ctx.owner.query(
       `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name, note)
        VALUES ($1, $2, $3, 'Khach A', 'ban cua Lan')`,
@@ -193,6 +204,18 @@ describe("getSessionDetail", () => {
           amountDue: 50000,
           amountAllocated: 20000,
           status: "partial",
+          effectiveAllocated: 20000,
+          remaining: 30000,
+          allocations: [
+            {
+              id: expect.any(String),
+              source: "cash",
+              amount: 20000,
+              createdAt: expect.any(Date),
+              reasonCode: null,
+              reversesAllocationId: null,
+            },
+          ],
         },
       }),
     ]);

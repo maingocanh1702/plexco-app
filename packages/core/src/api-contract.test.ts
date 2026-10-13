@@ -56,6 +56,24 @@ describe("API_ERROR_CODES registry", () => {
     }
   });
 
+  it("registers every literal the M2c roster / mark-paid / reversal routes can emit", () => {
+    for (const code of [
+      "ALLOCATION_EXCEEDS_FUNDS",
+      "ALLOCATION_NOT_FOUND",
+      "ALREADY_JOINED",
+      "CHARGE_ALREADY_SETTLED",
+      "CHARGE_NOT_PAYABLE",
+      "MARK_PAID_TOTAL_MISMATCH",
+      "PLAYER_NOT_FOUND",
+      "REJOIN_REQUIRES_REVIEW",
+      "REMOVE_REQUIRES_REVIEW",
+      "REVERSAL_EXCEEDS_EFFECTIVE",
+      "REVERSAL_NOT_SUPPORTED",
+    ]) {
+      expect(isApiErrorCode(code), code).toBe(true);
+    }
+  });
+
   // The two guest-note routes (POST /api/sessions/:id/guest-notes, DELETE …/:noteId) shipped with
   // the same additive two-file edit CANCEL_REQUIRES_REVIEW made: a code is registered when
   // something can actually emit it. These six are pinned by §3 of
