@@ -57,6 +57,13 @@ export function decodeSessionCursor(cursor: string): { startsAt: string; id: str
     if (!Array.isArray(parsed) || parsed.length !== 2) return null;
     const [startsAt, id] = parsed as unknown[];
     if (typeof startsAt !== "string" || !TS_RE.test(startsAt)) return null;
+    // Shape alone is not enough, and Date.parse is too lenient (it rolls 02-29 / 04-31 / 24:00
+    // over). Strict round-trip on the ms prefix; the microsecond tail stays untouched.
+    const d = new Date(startsAt);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 23) !== startsAt.slice(0, 23)) {
+      return null;
+    }
+    if (d.getUTCFullYear() < 1) return null; // Postgres has no year 0 (22008 -> 5xx)
     if (typeof id !== "string" || !UUID_RE.test(id)) return null;
     return { startsAt, id: id.toLowerCase() };
   } catch {
@@ -247,7 +254,10 @@ export async function getSessionDetail(
         chargeStatus: charges.status,
       })
       .from(players)
-      .innerJoin(memberships, eq(memberships.id, players.membershipId))
+      .innerJoin(
+        memberships,
+        and(eq(memberships.id, players.membershipId), eq(memberships.tenantId, tenantId)),
+      )
       .leftJoin(
         charges,
         and(
