@@ -39,7 +39,21 @@
   font-weight: var(--font-semibold);
 }
 
-/* Icon rail: labels stay in the accessibility tree but are not drawn. */
+/* Labels carry the global .sr-only (in the accessibility tree, not drawn). They are drawn again
+   below 768px (bottom nav) and from 1024px (sidebar); the icon rail between keeps them hidden. */
+@media (max-width: 767px), (min-width: 1024px) {
+  .label {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+}
+
+/* Icon rail */
 @media (min-width: 768px) {
   .nav {
     position: sticky;
@@ -65,15 +79,6 @@
     padding: var(--space-2);
     border-radius: var(--radius-md);
   }
-
-  .label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
 }
 
 @media (min-width: 1024px) {
@@ -82,14 +87,5 @@
     gap: var(--space-3);
     padding: var(--space-2) var(--space-4);
     font-size: var(--text-base);
-  }
-
-  .label {
-    position: static;
-    width: auto;
-    height: auto;
-    overflow: visible;
-    clip: auto;
-    white-space: normal;
   }
 }

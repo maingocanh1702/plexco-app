@@ -29,7 +29,7 @@
 .hero {
   display: grid;
   gap: var(--space-3);
-  max-width: 32rem;
+  max-width: var(--container-prose);
   text-align: center;
 }
 
@@ -45,7 +45,7 @@
   display: grid;
   gap: var(--space-4);
   width: 100%;
-  max-width: 24rem;
+  max-width: var(--container-narrow);
 }
 
 .fine {

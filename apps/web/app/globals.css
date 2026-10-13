@@ -117,6 +117,9 @@
   --rail-width: 72px;
   --header-height: 56px;
   --bottom-nav-height: 64px;
+  --container-narrow: 24rem; /* sign-in card, club chooser */
+  --container-form: 28rem; /* single-column forms */
+  --container-prose: 32rem; /* hero copy */
   --container-sm: 640px;
   --container-lg: 1024px;
   --z-sticky: 200;

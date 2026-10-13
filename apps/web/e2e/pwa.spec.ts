@@ -50,9 +50,18 @@ test.describe("PWA assets", () => {
       .poll(() => page.evaluate(() => navigator.serviceWorker.controller !== null))
       .toBe(true);
 
+    // Leave the /offline page first: it listens for "online" (by design) and the emulated
+    // network toggles would otherwise navigate it away before the navigation under test.
+    await page.goto("about:blank");
     await context.setOffline(true);
-    await page.goto("/");
+    // The /offline page we are on listens for "online"; let the emulation settle so a stray
+    // event cannot navigate away while we start the offline navigation under test.
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false);
+    await page.goto("/?auth_error=AUTH_STALE");
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Bạn đang offline");
+    // Back online: the user returns to the page they asked for, not the static fallback.
     await context.setOffline(false);
+    await expect(page).toHaveURL(/\/\?auth_error=AUTH_STALE$/);
+    await expect(page.getByRole("link", { name: "Tiếp tục với Google" })).toBeVisible();
   });
 });

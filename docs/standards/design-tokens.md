@@ -120,7 +120,7 @@
 }
 ```
 
-> Fonts qua `next/font/google` (tự host lúc build, `display: swap`): Sora (subsets `latin`, `latin-ext` — Sora KHÔNG có subset `vietnamese`, latin-ext thiếu U+1EA0–1EF1 nên các nguyên âm xếp dấu của tiếng Việt rơi về Inter qua `--font-heading`; đề xuất đổi heading font có subset vietnamese = DD của owner) cho heading, Inter (`latin`, `vietnamese`) cho body. `--font-sora` / `--font-inter` do `next/font` gắn trên `<html>`.
+> Fonts qua `next/font/google` (tự host lúc build, `display: swap`): Sora (subsets `latin`, `latin-ext` — Sora KHÔNG có subset `vietnamese`, latin-ext thiếu U+1EA0–1EF1 nên các nguyên âm xếp dấu của tiếng Việt rơi về Inter qua `--font-heading` (`adjustFontFallback: false` trong `app/layout.tsx` để Inter — không phải Arial do next/font chèn — cấp glyph U+1EA0–1EF1); đề xuất đổi heading font có subset vietnamese = DD của owner) cho heading, Inter (`latin`, `vietnamese`) cho body. `--font-sora` / `--font-inter` do `next/font` gắn trên `<html>`.
 
 ### Type Scale
 
@@ -249,6 +249,9 @@
 ```css
 :root {
   /* -- Container -- */
+  --container-narrow: 24rem;   /* sign-in card, club chooser */
+  --container-form: 28rem;     /* form một cột */
+  --container-prose: 32rem;    /* hero copy */
   --container-sm: 640px;
   --container-md: 768px;
   --container-lg: 1024px;

@@ -25,10 +25,11 @@ export function Button(props: ButtonProps | LinkProps) {
     };
     // Client-side navigation only for in-app pages. /api/* (the Google start redirect) and
     // external URLs must be real top-level navigations, so they stay a plain <a>.
-    const internal = href.startsWith("/") && !href.startsWith("//") && !href.startsWith("/api/");
+    const internal =
+      href.startsWith("/") && !href.startsWith("//") && !/^\/api(?:[/?#]|$)/.test(href);
     if (internal && target !== "_blank") {
       return (
-        <Link href={href} className={className} {...anchor}>
+        <Link href={href} className={className} rel={rel} {...anchor}>
           {children}
         </Link>
       );

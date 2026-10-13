@@ -1,19 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LangProvider, normalizeLang, useT, type ClientLang } from "../../lib/i18n-client";
 import { readStoredLang } from "../../lib/lang-storage";
 import { Button } from "../ui/button";
 import { SkipLink } from "../ui/skip-link";
 import styles from "./offline-view.module.css";
 
+/** Path to return to; /offline itself (a direct visit) recovers to the home page. */
+export function recoveryTarget(location: Pick<Location, "pathname" | "search" | "hash">): string {
+  if (location.pathname === "/offline") return "/";
+  return location.pathname + location.search + location.hash;
+}
+
 function OfflineBody() {
   const t = useT();
-  // Back online: reload straight away so the user lands on the real page, not this fallback.
+  // The service worker answers a failed navigation to /c/<id> with this page, and Next then
+  // rewrites the address bar (measured: before React renders this component). The inline script in
+  // app/offline/page.tsx records the REQUESTED URL while the document is still parsing; the
+  // location read below is only the fallback if that script did not run (e.g. a nonce CSP).
+  const target = useRef<string | null>(null);
+  if (target.current === null) {
+    target.current =
+      typeof window === "undefined"
+        ? "/"
+        : ((window as unknown as { __plxReturnTo?: string }).__plxReturnTo ??
+          recoveryTarget(window.location));
+  }
+  const retry = () => window.location.replace(target.current ?? "/");
+  // Back online: return to the requested page straight away.
   useEffect(() => {
-    const reload = () => window.location.reload();
-    window.addEventListener("online", reload);
-    return () => window.removeEventListener("online", reload);
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
   }, []);
   return (
     <>
@@ -29,7 +47,7 @@ function OfflineBody() {
             "Plexco needs a connection to load fresh data. Check your connection and try again.",
           )}
         </p>
-        <Button onClick={() => window.location.reload()}>{t("Thử lại", "Try again")}</Button>
+        <Button onClick={retry}>{t("Thử lại", "Try again")}</Button>
       </main>
     </>
   );

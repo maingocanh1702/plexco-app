@@ -20,17 +20,17 @@ describe("authErrorMessage", () => {
     expect(authErrorMessage("AUTH_UNAVAILABLE", t)).not.toBe(authErrorMessage("AUTH_INVALID", t));
   });
   it("unknown / hostile values get the generic message and are never echoed", () => {
-    const hostile = "<script>alert(1)</script>";
+    const hostile = "<b>evil</b>";
     const message = authErrorMessage(hostile, t);
     expect(message).toBe(authErrorMessage("AUTH_INVALID", t));
-    expect(message).not.toContain("script");
+    expect(message).not.toContain("evil");
   });
 });
 
 describe("normalizeAuthErrorParam", () => {
   it("passes only members of the closed set; anything else becomes the generic marker", () => {
     expect(normalizeAuthErrorParam("AUTH_STALE")).toBe("AUTH_STALE");
-    expect(normalizeAuthErrorParam("<script>alert(1)</script>")).toBe("AUTH_INVALID");
+    expect(normalizeAuthErrorParam("<b>evil</b>")).toBe("AUTH_INVALID");
     expect(normalizeAuthErrorParam(undefined)).toBeNull();
     expect(normalizeAuthErrorParam("")).toBeNull();
     expect(normalizeAuthErrorParam(["AUTH_STALE"])).toBeNull();
