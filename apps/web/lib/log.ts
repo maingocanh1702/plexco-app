@@ -1,3 +1,5 @@
+import { currentLogContext } from "./log-context";
+
 /**
  * Minimal structured logger for apps/web (audit 2026-09-06 W-11 / NFR-O2).
  *
@@ -90,11 +92,16 @@ export function sanitizeFields(
 
 function emit(level: LogLevel, event: string, fields: Record<string, unknown> = {}): void {
   if (LEVELS[level] > LEVELS[currentLevel()]) return;
+  // Correlation ids come from the request's AsyncLocalStorage scope (lib/log-context.ts) and are
+  // written AFTER the caller's fields so a call site can never override them. Opaque ids only.
+  const ctx = currentLogContext();
   const line = JSON.stringify({
     ts: new Date().toISOString(),
     level,
     event,
     ...sanitizeFields(fields, currentLevel()),
+    ...(ctx ? { request_id: ctx.requestId } : {}),
+    ...(ctx?.tenantId ? { tenant_id: ctx.tenantId } : {}),
   });
   if (level === "error") console.error(line);
   else if (level === "warn") console.warn(line);
