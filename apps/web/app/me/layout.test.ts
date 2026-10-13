@@ -14,7 +14,9 @@ beforeEach(() => vi.clearAllMocks());
 describe("/me auth boundary", () => {
   it("signed-out: redirects to / with a return-to before rendering children", async () => {
     vi.mocked(currentSession).mockResolvedValue(null);
-    await expect(MeLayout({ children: null })).rejects.toThrow("REDIRECT:/?returnTo=%2Fme%2Flink");
+    await expect(MeLayout({ children: null })).rejects.toThrow(
+      "REDIRECT:/?returnTo=%2Fme%2Fsettings",
+    );
   });
 
   it("signed-in: renders the children", async () => {

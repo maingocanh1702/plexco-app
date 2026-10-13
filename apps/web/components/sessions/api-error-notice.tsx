@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useT } from "../../lib/i18n-client";
-import { describeSessionError } from "../../lib/session-error-ui";
+import { describeSessionError, type ErrorView } from "../../lib/session-error-ui";
+import type { TFn } from "../../lib/i18n-client";
 import { Button } from "../ui/button";
 import styles from "./api-error-notice.module.css";
 
@@ -16,16 +17,19 @@ export function ApiErrorNotice({
   error,
   onReload,
   onRetry,
+  describe = describeSessionError,
 }: {
   error: unknown;
   /** Refetch the data this screen shows (STALE_VERSION, CSRF_INVALID). */
   onReload?: () => void;
   /** Repeat the failed attempt (network, rate limit, unknown). */
   onRetry?: () => void;
+  /** Error -> view mapping; settings screens pass their own (it falls back to the session one). */
+  describe?: (error: unknown, t: TFn) => ErrorView;
 }) {
   const t = useT();
   const router = useRouter();
-  const view = describeSessionError(error, t);
+  const view = describe(error, t);
 
   useEffect(() => {
     if (view.action === "sign-in") router.replace("/");
