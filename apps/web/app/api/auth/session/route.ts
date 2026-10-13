@@ -1,5 +1,5 @@
 import { t } from "@plexco/core/i18n";
-import { tenantsForPerson } from "@plexco/db";
+import { tenantsForPersonWithProfile } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import { appDb, currentSession } from "../../../../lib/session-cookies";
 
@@ -9,7 +9,7 @@ export async function GET(): Promise<Response> {
   if (!session) {
     return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
   }
-  const tenants = await tenantsForPerson(appDb().pool, session.personId);
+  const tenants = await tenantsForPersonWithProfile(appDb(), session.personId);
   return ok({
     personId: session.personId,
     expiresAt: session.expiresAt,

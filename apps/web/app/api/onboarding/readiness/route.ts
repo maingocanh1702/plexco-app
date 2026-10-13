@@ -1,18 +1,13 @@
 import { runWithLang, t } from "@plexco/core/i18n";
-import { onboardingSnapshot, tenantsForPerson } from "@plexco/db";
+import { onboardingSnapshot } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
-import { appDb, currentSession } from "../../../../lib/session-cookies";
-import { resolveTenantLang } from "../../../../lib/tenant-lang";
+import { resolveClubGate } from "../../../../lib/club-config-route";
+import { appDb } from "../../../../lib/session-cookies";
 
 /**
  * GET /api/onboarding/readiness?tenant=<uuid> — WAO-UC-10 checklist shell.
- * AuthZ: the API contract documents this as TenantOwner-only (BE tech spec
- * §3) — caller must hold the OWNER role for that tenant specifically, not
- * merely any tenant_admins row (codex round-14: today tenant_provision()
- * only ever grants 'owner', so this was equivalent in practice, but a
- * future delegated-admin feature would silently widen access without this
- * explicit check). The read itself also runs under withTenant → RLS
- * double-guards it.
+ * AuthZ: authorize(content.manage) (DD-56) through resolveClubGate -- no role check here. Until M1b
+ * this was owner-only; the capability also admits admin/co_admin (preset), per the DD-56 matrix.
  * Steps beyond run-creation stay not_configured until their feature slices
  * (bank → payment-reconcile, Zalo → zalo-adapter, first_session → session flow).
  *
@@ -26,27 +21,10 @@ const REQUIRED_STEPS = ["club_config", "bank_connect", "first_session"] as const
 const OPTIONAL_STEPS = ["zalo_connect"] as const;
 
 export async function GET(request: Request): Promise<Response> {
-  const session = await currentSession();
-  if (!session) return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
-
-  const tenantId = new URL(request.url).searchParams.get("tenant") ?? "";
-  const mine = await tenantsForPerson(appDb().pool, session.personId);
-  const membership = mine.find((m) => m.tenantId === tenantId);
-  if (!membership || membership.role !== "owner") {
-    return err("FORBIDDEN", t("Bạn không phải chủ CLB này.", "Not the owner of this club."), 403);
-  }
-
-  // DD-118 SEAM. Language is resolvable HERE and no earlier: the tenant is known AND has just been
-  // proven to be owned by this actor, which is exactly DD-118's condition. Every `return err(`
-  // ABOVE this line is emitted before that proof, so it stays Vietnamese — DD-118's ratified
-  // behaviour, not a gap.
-  //
-  // The ordering is a disclosure boundary, not a formatting preference. Resolving above the
-  // ownership check would answer a stranger's probe in the probed tenant's language, turning the
-  // 403 into an oracle for both tenant existence and a club's configured locale. `tenant-lang.ts`
-  // carries the full threat model; this comment exists so the next reader does not "simplify" the
-  // resolution upwards to cover the 403 too.
-  const lang = await resolveTenantLang(appDb().db, tenantId);
+  // authorize(content.manage) via the shared club gate; language resolves only after authz (DD-118).
+  const gate = await resolveClubGate(request, { csrf: false });
+  if (gate instanceof Response) return gate;
+  const { tenantId, lang } = gate;
 
   return runWithLang(lang, async () => {
     const snapshot = await onboardingSnapshot(appDb().db, tenantId);

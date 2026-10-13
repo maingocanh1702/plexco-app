@@ -44,9 +44,9 @@ import { type Db, tenantLocale } from "@plexco/db";
  *
  *   "Authorized for the routed tenant" is deliberately NOT "owns the tenant" (codex round-02 [P3]:
  *   an earlier revision said "owns" and contradicted a live caller). The predicate is per-surface
- *   and belongs to the caller, not here: `onboarding/readiness` requires the OWNER role because its
- *   API contract is TenantOwner-only, while `session-command-route` admits the wider DD-56 set
- *   (`owner`, `admin`, `co_admin`) because those endpoints are TenantAdmin. What this contract
+ *   and belongs to the caller, not here: `onboarding/readiness` and `onboarding/club` require
+ *   `authorize(content.manage)` (club-config-route), while `session-command-route` requires
+ *   `authorize(session.manage)`; both admit the DD-56 preset set (`owner`, `admin`, `co_admin`). What this contract
  *   requires is only that SOME sufficient tenant-authorization check has already passed — not which
  *   one. Restating a specific role here would duplicate a rule this module does not own and would
  *   drift from it, which is exactly what DD-56 bans.

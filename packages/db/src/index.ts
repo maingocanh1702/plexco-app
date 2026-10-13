@@ -24,6 +24,17 @@ export {
   type EffectiveStatus,
 } from "./authorization.js";
 export {
+  CLUB_ACTION,
+  ClubConfigError,
+  getClubConfig,
+  updateClubConfig,
+  type ClubConfig,
+  type ClubConfigErrorCode,
+  type ClubConfigPatch,
+  type UpdateClubConfigParams,
+  type UpdateClubConfigResult,
+} from "./club-config.js";
+export {
   authorize,
   type AuthorizeDecision,
   type AuthorizeParams,
@@ -138,6 +149,8 @@ export {
   revokeWebSession,
   rotateWebSession,
   tenantsForPerson,
+  tenantsForPersonWithProfile,
+  type TenantWithProfile,
   guestNoteTenantForPerson,
   type OnboardingSnapshot,
   type ResolvedSession,
