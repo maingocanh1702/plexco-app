@@ -34,6 +34,8 @@
 --     none                                                     new persons + channel_identities, created = true
 --     same Zalo user under a second bot (other scope hash)     DISTINCT person + identity (3-part key)
 --     existing row with the 3-part key but status inactive     reactivated, created = false
+--     the identity's Person is not status = 'active'           RAISE invalid_parameter_value (tombstoning
+--                                                              never relies on channel_identities.status)
 --     concurrent first event (unique race)                     re-read the winner; else RAISE integrity_constraint_violation
 --     NEVER merges persons, NEVER links an account (DD-14/15, HR4).
 --   zalo_bot_upsert_for_tenant(...)
@@ -241,6 +243,12 @@ BEGIN
       END IF;
     END;
   END IF;
+  -- Tombstoning must NEVER rely on channel_identities.status: refuse any non-active Person.
+  PERFORM 1 FROM public.persons p WHERE p.id = v_person AND p.status = 'active';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'zalo_identity_resolve: person is not active'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
   -- The unique ignores status, so an inactive row would otherwise lock the user out forever.
   IF v_status <> 'active' THEN
     UPDATE public.channel_identities SET status = 'active' WHERE id = v_ci;
@@ -363,7 +371,18 @@ BEGIN
   IF v_cur = 'revoked' THEN
     RAISE EXCEPTION 'zalo_bot_set_status: bot is revoked' USING ERRCODE = 'invalid_parameter_value';
   END IF;
-  IF p_only_from IS NOT NULL AND NOT (v_cur = ANY (p_only_from)) THEN
+  IF p_only_from IS NOT NULL AND NOT coalesce(v_cur = ANY (p_only_from), false) THEN
+    -- CAS skipped: the status stays, but a real setWebhook call is still stamped.
+    IF p_touch_setwebhook IS TRUE THEN
+      RETURN QUERY
+        WITH t AS (
+          UPDATE public.zalo_bots b SET last_setwebhook_at = clock_timestamp()
+           WHERE b.id = p_bot_id AND b.tenant_id = p_tenant_id
+          RETURNING b.id AS r_id, b.status AS r_status, b.verified_at AS r_verified,
+                    b.last_setwebhook_at AS r_hook
+        )
+        SELECT t.r_id, t.r_status, t.r_verified, t.r_hook FROM t;
+    END IF;
     RETURN;
   END IF;
   RETURN QUERY

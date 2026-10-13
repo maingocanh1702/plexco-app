@@ -2,6 +2,7 @@ import { runWithLang } from "@plexco/core/i18n";
 import {
   LINK_CODE_TTL_SECONDS,
   issueLinkCode,
+  pgErrorChainText,
   pgErrorHasCode,
   readZaloBotTokenEnc,
   resolveZaloIdentity,
@@ -9,6 +10,7 @@ import {
   type Db,
   type DbHandle,
   type ZaloBotRef,
+  type ZaloIdentity,
 } from "@plexco/db";
 import { keyedHash } from "../auth-secrets";
 import { decryptConnectorSecret, encryptConnectorSecret, textToBlob } from "../connector-secrets";
@@ -77,34 +79,42 @@ export async function processZaloEvent(args: {
   const chatId = event.chatId;
   const text = event.text;
 
-  const scopeHash = await keyedHash(`channel-scope:zalo:${bot.botId}`);
-  const userHash = await keyedHash(`channel-user:zalo:${fromId}`);
-  const userIdEnc = (
-    await encryptConnectorSecret(fromId, {
-      tenantId: bot.tenantId,
-      botId: bot.botId,
-      purpose: "channel_user",
-    })
-  ).enc;
-  const identity = await withTenant(db, bot.tenantId, (tx) =>
-    resolveZaloIdentity(tx, {
-      tenantId: bot.tenantId,
-      botId: bot.botId,
-      scopeHash,
-      userHash,
-      userIdEnc,
-      displayName: event.displayName,
-    }),
-  );
-
+  // Parse and classify BEFORE touching identity: group chatter (chat id != sender id) never creates a
+  // Person or channel identity; it only gets a help / "message the bot directly" reply.
   const isDirect = chatId === fromId;
+  const cmd = parseZaloCommand(text);
+  let identity: ZaloIdentity | null = null;
+  if (isDirect) {
+    const scopeHash = await keyedHash(`channel-scope:zalo:${bot.botId}`);
+    const userHash = await keyedHash(`channel-user:zalo:${fromId}`);
+    // ponytail: encrypted per DM event (cheap AES); a read-first definer would avoid it for known users.
+    const userIdEnc = (
+      await encryptConnectorSecret(fromId, {
+        tenantId: bot.tenantId,
+        botId: bot.botId,
+        purpose: "channel_user",
+      })
+    ).enc;
+    identity = await withTenant(db, bot.tenantId, (tx) =>
+      resolveZaloIdentity(tx, {
+        tenantId: bot.tenantId,
+        botId: bot.botId,
+        scopeHash,
+        userHash,
+        userIdEnc,
+        displayName: event.displayName,
+      }),
+    );
+  }
+
   const lang = bot.locale === "en" ? "en" : "vi"; // DD-118: the bot's tenant locale, fail-closed vi
   const reply = await runWithLang(lang, () =>
-    buildZaloReply(parseZaloCommand(text), {
-      displayName: identity.displayName,
-      hasAccount: identity.hasAccount,
+    buildZaloReply(cmd, {
+      displayName: identity?.displayName ?? null,
+      hasAccount: identity?.hasAccount ?? false,
       isDirect,
       issueLinkCode: async (): Promise<LinkIssueResult> => {
+        if (identity === null) return { ok: false, reason: "unavailable" }; // unreachable: groups never issue
         const keys = linkCodeKeys();
         if (!keys) {
           log.error("zalo_link_key_missing");
@@ -154,5 +164,8 @@ export async function processZaloEvent(args: {
 export function classifyProcessingError(error: unknown): string {
   if (error instanceof ZaloApiError) return `ZALO_${error.kind.toUpperCase()}`;
   if (pgErrorHasCode(error, "23000")) return "IDENTITY_SCOPE_CONFLICT";
+  if (pgErrorHasCode(error, "22023") && /person is not active/.test(pgErrorChainText(error))) {
+    return "PERSON_INACTIVE";
+  }
   return "PROCESSING_ERROR";
 }

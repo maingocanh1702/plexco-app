@@ -36,10 +36,10 @@ export const runtime = "nodejs";
  */
 const MAX_BODY_BYTES = 64 * 1024;
 const ACCEPTED_STATUS = new Set(["connecting", "registered", "active", "drift"]);
-const DUMMY_SECRET = "0".repeat(43);
+const DUMMY_DIGEST = createHash("sha256").update("0".repeat(43)).digest();
 
 const digest = (v: string) => createHash("sha256").update(v, "utf8").digest();
-const safeEqual = (a: string, b: string) => timingSafeEqual(digest(a), digest(b));
+const safeEqual = (a: string, expectedDigest: Buffer) => timingSafeEqual(digest(a), expectedDigest);
 const notFound = () => Response.json({}, { status: 404, headers: { "cache-control": "no-store" } });
 const ack = () => Response.json({ ok: true }, { headers: { "cache-control": "no-store" } });
 
@@ -54,7 +54,7 @@ export async function POST(
 
   const bot = await resolveZaloBotByToken(db, token);
   if (!bot || !ACCEPTED_STATUS.has(bot.status) || bot.webhookSecretEnc === null) {
-    safeEqual(header, DUMMY_SECRET); // keep unknown-token work shape close to the known path
+    safeEqual(header, DUMMY_DIGEST); // keep unknown-token work shape close to the known path
     return notFound();
   }
   const { tenantId, botId } = bot;
@@ -62,16 +62,16 @@ export async function POST(
 
   // Secret check FIRST: the decrypt is cached (one audit row per fill), so an unauthenticated caller
   // who only knows the path token cannot spend decrypts, audit rows or the bot's buckets.
-  let secret: string;
+  let expected: Buffer;
   try {
-    secret = await readWebhookSecret({ ...bot, webhookSecretEnc: bot.webhookSecretEnc }, (fn) =>
+    expected = await readWebhookSecret({ ...bot, webhookSecretEnc: bot.webhookSecretEnc }, (fn) =>
       withTenant(db, tenantId, fn),
     );
   } catch (error) {
     log.error("zalo_webhook_secret_unreadable", { botId, error });
     return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 401);
   }
-  if (!safeEqual(header, secret)) {
+  if (!safeEqual(header, expected)) {
     // Failed attempts only are bucketed, per bot AND caller, so guessing cannot lock out Zalo itself.
     if (await rateLimited(`zalo-webhook-auth:${botId}:${clientIp(request)}`, 30, 60)) {
       return err("WEBHOOK_RATE_LIMITED", t("Quá nhiều yêu cầu.", "Too many requests."), 429);

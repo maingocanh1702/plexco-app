@@ -77,7 +77,7 @@ beforeEach(() => {
       webhookToken: registered.webhookToken,
     };
   });
-  vi.mocked(finishZaloConnect).mockResolvedValue(registered);
+  vi.mocked(finishZaloConnect).mockResolvedValue({ state: registered, superseded: false });
 });
 
 describe("POST /api/onboarding/zalo/connect", () => {
@@ -126,7 +126,10 @@ describe("POST /api/onboarding/zalo/connect", () => {
 
   it("setWebhook failure -> status error is recorded (not registered)", async () => {
     vi.mocked(setWebhook).mockRejectedValue(new Error("down"));
-    vi.mocked(finishZaloConnect).mockResolvedValue({ ...registered, status: "error" });
+    vi.mocked(finishZaloConnect).mockResolvedValue({
+      state: { ...registered, status: "error" },
+      superseded: false,
+    });
     const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
     expect((await env(res)).data).toMatchObject({ status: "error" });
     expect(finishZaloConnect).toHaveBeenCalledWith(
@@ -182,6 +185,15 @@ describe("POST /api/onboarding/zalo/connect", () => {
   it("a revoked bot cannot be re-connected: 403", async () => {
     vi.mocked(beginZaloConnect).mockRejectedValueOnce(new ZaloConnectError("BOT_REVOKED", "x"));
     expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);
+  });
+
+  it("a superseded attempt (a newer connect replaced the token) -> 409, not success", async () => {
+    vi.mocked(finishZaloConnect).mockResolvedValue({ state: registered, superseded: true });
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(res.status).toBe(409);
+    expect(vi.mocked(finishZaloConnect).mock.calls[0]![1].webhookToken).toBe(
+      registered.webhookToken,
+    );
   });
 
   it("POST and GET share one response shape", async () => {

@@ -137,13 +137,24 @@ export async function POST(request: Request): Promise<Response> {
         reason = "ZALO_SETWEBHOOK_FAILED";
         log.warn("zalo_setwebhook_failed", { tenantId: gate.tenantId, error });
       }
-      const state = await finishZaloConnect(db, {
+      const { state, superseded } = await finishZaloConnect(db, {
         tenantId: gate.tenantId,
         botId: begun.botId,
         commandId,
+        webhookToken: begun.webhookToken,
         outcome,
         reason,
       });
+      if (superseded) {
+        return err(
+          "COMMAND_ID_CONFLICT",
+          t(
+            "Một lần kết nối mới hơn đã thay thế lần này.",
+            "A newer connect superseded this attempt.",
+          ),
+          409,
+        );
+      }
       return ok(zaloStateView(baseUrl, state));
     } catch (error) {
       if (error instanceof ZaloConnectError) {

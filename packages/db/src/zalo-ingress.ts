@@ -345,19 +345,54 @@ export async function beginZaloConnect(
   }
 }
 
-/** Phase 2: record the setWebhook outcome, the onboarding step and the processed command. */
+/**
+ * Phase 2: record the setWebhook outcome, the onboarding step and the processed command.
+ *
+ * SUPERSEDED guard: `webhookToken` is the token THIS request registered. If the row now holds another
+ * token, a concurrent connect replaced it; this attempt records step `error` / SUPERSEDED, skips the
+ * status update and does NOT mark the command processed. RESIDUAL: the Zalo-side webhook may already
+ * point at the loser's URL/secret (setWebhook calls can invert); the winner's own setWebhook normally
+ * lands last, but a per-tenant in-flight lease (backlog proposal) is the real fix.
+ */
 export async function finishZaloConnect(
   db: Db,
   p: {
     tenantId: string;
     botId: string;
     commandId: string;
+    webhookToken: string;
     outcome: "registered" | "error";
     reason?: string;
   },
-): Promise<ZaloOnboardingState> {
+): Promise<{ state: ZaloOnboardingState; superseded: boolean }> {
   const { tenantId } = p;
   return withTenant(db, tenantId, async (tx) => {
+    const current = await readState(tx, tenantId);
+    if (current.webhookToken !== p.webhookToken) {
+      const [run] = await tx
+        .select({ id: onboardingRuns.id })
+        .from(onboardingRuns)
+        .where(eq(onboardingRuns.tenantId, tenantId))
+        .orderBy(desc(onboardingRuns.createdAt))
+        .limit(1);
+      if (run) {
+        await tx
+          .insert(onboardingSteps)
+          .values({
+            runId: run.id,
+            step: STEP,
+            status: "error",
+            idempotencyKey: p.commandId,
+            errorCode: "SUPERSEDED",
+            completedAt: sql`now()`,
+          })
+          .onConflictDoUpdate({
+            target: [onboardingSteps.runId, onboardingSteps.step, onboardingSteps.idempotencyKey],
+            set: { status: "error", errorCode: "SUPERSEDED", completedAt: sql`now()` },
+          });
+      }
+      return { state: current, superseded: true };
+    }
     await tx.execute(
       sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${p.botId}::uuid, ${p.outcome}, false, true,
               ARRAY['connecting','registered']::text[])`,
@@ -400,6 +435,6 @@ export async function finishZaloConnect(
         })
         .onConflictDoNothing();
     }
-    return readState(tx, tenantId);
+    return { state: await readState(tx, tenantId), superseded: false };
   });
 }

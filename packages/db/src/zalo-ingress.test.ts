@@ -257,6 +257,7 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
     const bot = await resolveZaloBotByToken(ctx.appDb.db, t);
     expect(bot).toMatchObject({ botId: botA, tenantId: ctx.tenantA, status: "connecting" });
     expect(bot!.webhookSecretEnc).toBeInstanceOf(Buffer);
+    expect(bot!.locale).toMatch(/^(vi|en)$/);
     // The lookup GUC is restored: a bare read afterwards sees nothing.
     const { rows } = await ctx.appPool.query(`SELECT count(*)::int AS n FROM zalo_bots`);
     expect(rows[0].n).toBe(0);
@@ -280,12 +281,14 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
     expect(begun.replayed).toBe(false);
     if (begun.replayed) return;
     expect(begun.botId).toBe(botA);
-    const state = await finishZaloConnect(ctx.appDb.db, {
+    const { state, superseded } = await finishZaloConnect(ctx.appDb.db, {
       tenantId: ctx.tenantA,
       botId: botA,
       commandId,
+      webhookToken: begun.webhookToken,
       outcome: "registered",
     });
+    expect(superseded).toBe(false);
     expect(state.status).toBe("registered");
     expect(state.lastSetwebhookAt).not.toBeNull();
     const replay = await beginZaloConnect(ctx.appDb.db, {
@@ -315,6 +318,61 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
     expect((await getZaloOnboardingState(ctx.appDb.db, { tenantId: ctx.tenantA })).status).toBe(
       "registered",
     );
+  });
+
+  it("a connect superseded by a newer one records step error SUPERSEDED, keeps the status and does not mark the command processed", async () => {
+    const mk = (commandId: string) =>
+      beginZaloConnect(ctx.appDb.db, {
+        tenantId: ctx.tenantA,
+        actorPersonId: ownerA,
+        commandId,
+        newBotId: randomUUID(),
+        prepare: async () => ({
+          botTokenEnc: "enc",
+          webhookToken: `wh-${randomUUID()}`,
+          webhookSecretEnc: bytes("s"),
+          keyVersion: "local",
+        }),
+      });
+    const loserCmd = `zc-${seq++}`;
+    const loser = await mk(loserCmd);
+    const winner = await mk(`zc-${seq++}`);
+    if (loser.replayed || winner.replayed) throw new Error("unexpected replay");
+    const res = await finishZaloConnect(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      botId: botA,
+      commandId: loserCmd,
+      webhookToken: loser.webhookToken,
+      outcome: "registered",
+    });
+    expect(res.superseded).toBe(true);
+    expect(res.state.webhookToken).toBe(winner.webhookToken);
+    const step = await ctx.owner.query(
+      `SELECT s.status, s.error_code FROM onboarding_steps s JOIN onboarding_runs r ON r.id = s.run_id
+        WHERE r.tenant_id = $1 AND s.step = 'zalo_connect' AND s.idempotency_key = $2`,
+      [ctx.tenantA, loserCmd],
+    );
+    expect(step.rows[0]).toEqual({ status: "error", error_code: "SUPERSEDED" });
+    const done = await ctx.owner.query(
+      `SELECT 1 FROM processed_commands WHERE tenant_id = $1 AND command_id = $2`,
+      [ctx.tenantA, loserCmd],
+    );
+    expect(done.rows).toHaveLength(0);
+  });
+
+  it("set_status CAS skip still stamps last_setwebhook_at when a real setWebhook happened", async () => {
+    await ctx.owner.query(
+      `UPDATE zalo_bots SET status = 'active', last_setwebhook_at = NULL WHERE id = $1`,
+      [botA],
+    );
+    const r = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.execute(
+        sql`SELECT status, last_setwebhook_at FROM zalo_bot_set_status(${ctx.tenantA}::uuid, ${botA}::uuid, 'registered', false, true, ARRAY['connecting','registered']::text[])`,
+      ),
+    );
+    const row = r.rows[0] as { status: string; last_setwebhook_at: string | null };
+    expect(row.status).toBe("active");
+    expect(row.last_setwebhook_at).not.toBeNull();
   });
 
   it("set_status: verified_at stamped once; revoked is terminal", async () => {
@@ -442,6 +500,13 @@ describe("zalo_identity_resolve", () => {
       first.channelIdentityId,
     ]);
     expect(rows[0].status).toBe("active");
+  });
+
+  it("refuses an identity whose Person is not active (tombstoning never relies on channel_identities.status)", async () => {
+    const u = `u-${randomUUID()}`;
+    const first = await ident(ctx.tenantB, bot, u);
+    await ctx.owner.query(`UPDATE persons SET status = 'deleted' WHERE id = $1`, [first.personId]);
+    await expectErrorChainToMatch(ident(ctx.tenantB, bot, u), /person is not active/);
   });
 
   it("has_account is true once the person has an accounts row", async () => {

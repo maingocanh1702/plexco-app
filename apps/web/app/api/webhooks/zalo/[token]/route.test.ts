@@ -12,7 +12,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
 import { encryptConnectorSecret, blobToText } from "../../../../../lib/connector-secrets";
 import { rateLimited } from "../../../../../lib/session-cookies";
-import { __resetWebhookSecretCacheForTest } from "../../../../../lib/zalo/webhook-secret-cache";
+import {
+  __cacheEntriesForTest,
+  __resetWebhookSecretCacheForTest,
+} from "../../../../../lib/zalo/webhook-secret-cache";
 import { sendMessage } from "../../../../../lib/zalo/client";
 import { POST } from "./route";
 
@@ -147,6 +150,40 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     await call({ body: update("/start", 9100) });
     expect(audit).toHaveBeenCalledTimes(3); // cache hit: only the bot_token decrypt
     expect(JSON.stringify(audit.mock.calls)).not.toContain(SECRET);
+  });
+
+  it("the cache never holds the plaintext secret: only a 32-byte digest", async () => {
+    await call();
+    const entries = __cacheEntriesForTest();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!).toHaveLength(32);
+    expect(entries[0]!.toString("utf8")).not.toContain(SECRET);
+    expect(entries[0]!.includes(Buffer.from(SECRET))).toBe(false);
+  });
+
+  it("a GROUP message creates no identity and gets a reply", async () => {
+    const body = update("/start", 9300);
+    (body.result.message.chat as { id: string }).id = "group-9";
+    const res = await call({ body });
+    expect(res.status).toBe(200);
+    expect(resolveZaloIdentity).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("an inactive Person -> event row failed with PERSON_INACTIVE, still 200", async () => {
+    vi.mocked(resolveZaloIdentity).mockRejectedValue(
+      Object.assign(new Error("Failed query"), {
+        cause: Object.assign(new Error("zalo_identity_resolve: person is not active"), {
+          code: "22023",
+        }),
+      }),
+    );
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(finishInboundEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "failed", errorCode: "PERSON_INACTIVE" }),
+    );
   });
 
   it("the secret compare runs BEFORE any bucket: a valid caller never spends the auth bucket", async () => {
