@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import { charges, paymentAllocations, players, sessions } from "../schema.js";
 import type { Db, Tx } from "./client.js";
 import {
@@ -66,7 +66,8 @@ export async function applyEffective(
   await tx
     .update(charges)
     .set({ amountAllocated: effective, status })
-    .where(eq(charges.id, chargeId));
+    // never revive a void charge: its status is terminal, not derived
+    .where(and(eq(charges.id, chargeId), ne(charges.status, "void")));
   return { effective, status };
 }
 
@@ -230,8 +231,8 @@ export async function lockSession(tx: Tx, sessionId: string): Promise<void> {
     .for("update");
   // RLS hides another tenant's session, so this is also the cross-tenant answer (404, not 403).
   if (row === undefined) fail("SESSION_NOT_FOUND", "session not found in tenant context");
-  if (row!.status === "cancelled")
-    fail("SESSION_NOT_OPEN", "a cancelled session takes no payments");
+  if (row!.status !== "open" && row!.status !== "closed")
+    fail("SESSION_NOT_OPEN", "only an open or closed session takes payments");
 }
 
 const ACTIONS = ["session.manage", "money.mark_paid"] as const;
@@ -239,7 +240,7 @@ const ACTIONS = ["session.manage", "money.mark_paid"] as const;
 /**
  * Preview (preview: true) is READ-ONLY: authorizes, computes the per-player remaining balance and the
  * server total, writes nothing and consumes no commandId. Confirm re-computes under lock and requires
- * `expectedTotal` to equal the fresh total (a stale preview -> MARK_PAID_TOTAL_MISMATCH, nothing
+ * `expectedTotal` to equal the fresh total (expectedTotal != sum of the item amounts -> MARK_PAID_TOTAL_MISMATCH, nothing
  * written). One commandId covers the whole batch; a retry returns the stored result.
  */
 export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaidResult> {
@@ -259,8 +260,8 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
         .from(sessions)
         .where(eq(sessions.id, sessionId));
       if (s === undefined) return fail("SESSION_NOT_FOUND", "session not found in tenant context");
-      if (s.status === "cancelled")
-        return fail("SESSION_NOT_OPEN", "a cancelled session takes no payments");
+      if (s.status !== "open" && s.status !== "closed")
+        return fail("SESSION_NOT_OPEN", "only an open or closed session takes payments");
       const plan = await planLines(tx, sessionId, params, false);
       return { preview: true, replayed: false, method: params.method, ...plan };
     }
@@ -276,6 +277,21 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
       isStoredMarkPaid,
     );
     if (stored !== null) {
+      // Bound to its TARGET set (ids, not request content -- DD-117 D5), like add/remove/reverse.
+      // A malformed retry keeps replaying (DED2).
+      if (Array.isArray(params.items)) {
+        const asked = new Set(
+          params.items.map((i) =>
+            typeof (i as { playerId?: unknown })?.playerId === "string"
+              ? (i as { playerId: string }).playerId.toLowerCase()
+              : "",
+          ),
+        );
+        const had = new Set(stored.lines.map((l) => l.playerId));
+        if (asked.size !== had.size || [...asked].some((id) => !had.has(id))) {
+          return fail("COMMAND_ID_CONFLICT", "command_id belongs to a different player set");
+        }
+      }
       return {
         preview: false,
         replayed: true,
@@ -292,7 +308,10 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
     await lockSession(tx, sessionId);
     const plan = await planLines(tx, sessionId, params, true);
     if (plan.total !== params.expectedTotal) {
-      return fail("MARK_PAID_TOTAL_MISMATCH", "the balance changed since the preview");
+      return fail(
+        "MARK_PAID_TOTAL_MISMATCH",
+        "expectedTotal does not equal the sum of the item amounts",
+      );
     }
 
     // ponytail: 4 statements per line (insert, recompute, charge update, outbox); 200 items max

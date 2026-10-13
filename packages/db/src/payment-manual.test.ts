@@ -387,10 +387,25 @@ describe("markPaid confirm", () => {
         pay(w, { commandId, sessionId: await fx.seedSession(w.tenantId), expectedTotal: 100000 }),
       ),
     ).toBe("COMMAND_ID_CONFLICT");
-    await ctx.owner.query(`UPDATE sessions SET status = 'cancelled' WHERE id = $1`, [w.sessionId]);
+    for (const status of ["cancelled", "draft"]) {
+      await ctx.owner.query(`UPDATE sessions SET status = $2 WHERE id = $1`, [w.sessionId, status]);
+      expect(
+        await codeOf(pay(w, { items: [{ playerId: w.playerIds[1]! }], expectedTotal: 100000 })),
+      ).toBe("SESSION_NOT_OPEN");
+      expect(await codeOf(pay(w, { preview: true }))).toBe("SESSION_NOT_OPEN");
+    }
+  });
+
+  it("a batch replayed with a different player set is refused; the same set replays", async () => {
+    const w = await world();
+    const commandId = nextCommandId();
+    await pay(w, { commandId, expectedTotal: 100000 });
     expect(
-      await codeOf(pay(w, { items: [{ playerId: w.playerIds[1]! }], expectedTotal: 100000 })),
-    ).toBe("SESSION_NOT_OPEN");
+      await codeOf(
+        pay(w, { commandId, items: [{ playerId: w.playerIds[1]! }], expectedTotal: 100000 }),
+      ),
+    ).toBe("COMMAND_ID_CONFLICT");
+    expect((await pay(w, { commandId, expectedTotal: 100000 })).replayed).toBe(true);
   });
 
   it("CONCURRENCY: two different commands paying the SAME charge in full -> one wins, invariant holds", async () => {

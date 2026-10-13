@@ -11,7 +11,7 @@ import { appDb, currentSession } from "../../../../../lib/session-cookies";
  *   - confirm          -> `commandId` + `expectedTotal` (the preview's total) AND an explicit
  *     `amount` on EVERY item (the UI resends the per-line amounts the preview returned). Binding the
  *     lines, not just the total, means a balance that changed in between fails per line instead of
- *     silently re-splitting the same total. A stale total is MARK_PAID_TOTAL_MISMATCH; an omitted
+ *     silently re-splitting the same total. An `expectedTotal` that differs from the sum of the item amounts is MARK_PAID_TOTAL_MISMATCH; an omitted
  *     amount on confirm is INVALID_BODY; nothing is written either way.
  * Body: `method` cash | attested_transfer, `items: [{playerId, amount}]` (amount may be omitted on
  * preview only = the whole remaining balance), optional `note` (<= 200 chars, stored as reason_code).
