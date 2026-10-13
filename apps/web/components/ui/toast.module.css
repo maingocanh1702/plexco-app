@@ -1,7 +1,7 @@
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--bottom-nav-height) + var(--space-4));
+  bottom: var(--space-6);
   z-index: var(--z-toast);
   display: flex;
   align-items: center;
@@ -25,8 +25,9 @@
   cursor: pointer;
 }
 
-@media (min-width: 1024px) {
+/* Only the bottom nav (<768px) sits at the bottom edge; rail and sidebar do not. */
+@media (max-width: 767px) {
   .toast {
-    bottom: var(--space-6);
+    bottom: calc(var(--bottom-nav-height) + var(--space-4));
   }
 }

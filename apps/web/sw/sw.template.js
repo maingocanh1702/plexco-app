@@ -54,9 +54,7 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request).catch(() => caches.match(OFFLINE_URL).then((hit) => hit || Response.error())),
-    );
+    event.respondWith(fetch(request).catch(() => offlineFallback(request)));
     return;
   }
 
@@ -64,6 +62,25 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(staleWhileRevalidate(request));
   }
 });
+
+// Serves the precached /offline page for a failed navigation, with the REQUESTED path injected
+// as window.__plxReturnTo. The page cannot reliably read it itself: Next rewrites the address bar
+// to /offline while hydrating, so recovery ("Try again" / back online) needs it handed over here.
+async function offlineFallback(request) {
+  const cache = await caches.open(STATIC_CACHE);
+  const hit = await cache.match(OFFLINE_URL);
+  if (!hit) return Response.error();
+  const url = new URL(request.url);
+  const target = url.pathname === OFFLINE_URL ? "/" : url.pathname + url.search;
+  const html = await hit.text();
+  // JSON string literal; "<" escaped so the value can never close the script tag.
+  const tag =
+    "<script>window.__plxReturnTo=" + JSON.stringify(target).replace(/</g, "\\u003c") + "</script>";
+  return new Response(html.replace("<head>", "<head>" + tag), {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
 
 async function staleWhileRevalidate(request) {
   const cache = await caches.open(STATIC_CACHE);

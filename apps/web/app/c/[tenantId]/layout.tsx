@@ -5,6 +5,9 @@ import { log } from "../../../lib/log";
 import { currentSession } from "../../../lib/session-cookies";
 
 /**
+ * Trust boundary for /c/**: pages under /c/** take only `tenantId`; all tenant data comes through
+ * /api after the client-side membership proof. app/c/server-boundary.test.ts enforces it.
+ *
  * Club workspace layout. The server only proves "someone is signed in"; whether THIS tenant
  * belongs to them is decided by the client shell from /api/auth/session (see AppShell).
  */

@@ -10,6 +10,7 @@ import "./globals.css";
 // Self-hosted at build time by next/font; display swap + system fallbacks (see --font-* tokens).
 const sora = Sora({
   subsets: ["latin", "latin-ext"],
+  adjustFontFallback: false,
   variable: "--font-sora",
   display: "swap",
 });
