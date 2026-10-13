@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(50); // 0000..0049 (0049 = tenant capability authorize)
+    expect(ctx.migrateResult.applied.length).toBe(52); // 0000..0051 (0050 attested_transfer allocation source, 0051 host-add person definer)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(50);
+    expect(second.skipped.length).toBe(52);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1752,12 +1752,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
           return migrate(url(dbName));
         }),
       );
-      expect(res.applied.length).toBe(50); // 0000..0049
+      expect(res.applied.length).toBe(52); // 0000..0051
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(50);
+        expect(rows.length).toBe(52);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2035,7 +2035,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0049_tenant_capability_authorize.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0051_host_add_person_definer.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -3235,6 +3235,16 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
           const beforeDef = before.get(`${r.table}.${r.oldAuto}`);
           const afterDef = live.get(`${r.table}.${r.newDeclared}`);
           expect(beforeDef, `${r.table}.${r.oldAuto} must exist pre-0025`).toBeDefined();
+          // 0050 (web MVP M2c) intentionally widens the two payment_allocations CHECK predicates with
+          // the DD-40 `attested_transfer` source -- same exemption class as plans_key_chk: the name
+          // identity assertions still apply, only predicate byte-identity is exempt (the final
+          // predicates are pinned by the 0050 test below).
+          if (
+            r.table === "payment_allocations" &&
+            (r.newDeclared === "alloc_source_chk" || r.newDeclared === "alloc_shape_chk")
+          ) {
+            continue;
+          }
           if (r.table === "plans" && r.newDeclared === "plans_key_chk") {
             // DD-29 (packages/db/migrations/0028_dd29_capability_registry_expand.sql +
             // 0029_dd29_capability_registry_contract.sql) intentionally DROP+ADDs this
@@ -3267,6 +3277,45 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       "CHECK ((plan_key = ANY (ARRAY['free'::text, 'host_pro'::text])))",
     );
   });
+
+  it("0050-1: schema.ts's alloc_source_chk / alloc_shape_chk COMPILE (PgDialect, then Postgres) to the byte-identical live definitions (the entries CND-1/2/3 exempts from pre-0025 identity)", async () => {
+    const live = await allLiveCheckDefs(ctx.owner);
+    const cfg = getTableConfig(schemaModule.paymentAllocations);
+    const dbName = "plexco_0050_alloc_predicates";
+    await ctx.owner.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await ctx.owner.query(`CREATE DATABASE ${dbName}`);
+    const url = new URL(process.env.DATABASE_URL_TEST!);
+    url.pathname = `/${dbName}`;
+    const c = new pg.Client({ connectionString: url.toString() });
+    await c.connect();
+    try {
+      // Same table + column names as the real table so identifier resolution matches; types match
+      // the real columns so the canonical definition renders identically.
+      await c.query(
+        `CREATE TABLE payment_allocations (source text, amount integer, bank_transaction_id uuid, created_by uuid, reverses_allocation_id uuid)`,
+      );
+      for (const name of ["alloc_source_chk", "alloc_shape_chk"]) {
+        const check = cfg.checks.find((k) => k.name === name);
+        expect(check, `schema.ts must declare ${name}`).toBeDefined();
+        const { sql: predicateSql, params } = new PgDialect().sqlToQuery(
+          check!.value as Parameters<PgDialect["sqlToQuery"]>[0],
+        );
+        await c.query(
+          `ALTER TABLE payment_allocations ADD CONSTRAINT ${name} CHECK (${predicateSql})`,
+          params,
+        );
+        const { rows } = await c.query<{ d: string }>(
+          `SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = $1`,
+          [name],
+        );
+        expect(rows[0]?.d, name).toBe(live.get(`payment_allocations.${name}`));
+        expect(rows[0]?.d, name).toContain("attested_transfer");
+      }
+    } finally {
+      await c.end();
+      await ctx.owner.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    }
+  }, 30_000);
 
   it("CND-6: sessions_public_capacity_chk (0024) is untouched by 0025", async () => {
     const live = await allLiveCheckDefs(ctx.owner);
@@ -3475,6 +3524,30 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
           // invalid: cash but created_by NULL — source membership is satisfied, only shape fails
           `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source) VALUES ($1,$2,50000,'cash')`,
           [ctx.tenantA, chargeId],
+        ),
+      ).rejects.toThrow(/violates check constraint "alloc_shape_chk"/);
+    });
+
+    it("0050 attested_transfer: accepted ONLY as amount>0, bank_transaction_id NULL, created_by set (DD-40 dedicated source)", async () => {
+      const { sessionId, playerId } = await chargeParents();
+      const chargeId = await makeCharge(ctx.tenantA, sessionId, playerId);
+      const personId = await makePerson();
+      await ctx.owner.query(
+        `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by) VALUES ($1,$2,50000,'attested_transfer',$3)`,
+        [ctx.tenantA, chargeId, personId],
+      );
+      // no actor
+      await expect(
+        ctx.owner.query(
+          `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source) VALUES ($1,$2,50000,'attested_transfer')`,
+          [ctx.tenantA, chargeId],
+        ),
+      ).rejects.toThrow(/violates check constraint "alloc_shape_chk"/);
+      // negative amount
+      await expect(
+        ctx.owner.query(
+          `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by) VALUES ($1,$2,-5,'attested_transfer',$3)`,
+          [ctx.tenantA, chargeId, personId],
         ),
       ).rejects.toThrow(/violates check constraint "alloc_shape_chk"/);
     });
@@ -4514,10 +4587,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (50) matches the actual migrations/ directory listing, and the tail is 0049", async () => {
+    it("UCC-8: MIGRATION_COUNT (52) matches the actual migrations/ directory listing, and the tail is 0051", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(50);
-      expect(files[files.length - 1]).toBe("0049_tenant_capability_authorize.sql");
+      expect(files.length).toBe(52);
+      expect(files[files.length - 1]).toBe("0051_host_add_person_definer.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
@@ -4675,5 +4748,64 @@ describe("0049 tenant_capability_authorize definer ACL (DD-56 authorize primitiv
     );
     expect(rows[0].prosecdef).toBe(true);
     expect(rows[0].proconfig).toContain("search_path=pg_catalog, public, pg_temp");
+  });
+});
+
+describe("0051 create_host_added_person definer (web MVP M2c host-add)", () => {
+  const FN = "public.create_host_added_person(uuid, uuid, text)";
+
+  it("EXECUTE: app only; SECURITY DEFINER with search_path pinned (pg_temp LAST)", async () => {
+    const can = async (role: string) =>
+      (await ctx.owner.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [role, FN]))
+        .rows[0].ok as boolean;
+    expect(await can("app")).toBe(true);
+    expect(await can("app_worker")).toBe(false);
+    expect(await can("readonly")).toBe(false);
+    const { rows } = await ctx.owner.query(
+      `SELECT p.prosecdef, p.proconfig, p.proacl::text AS acl FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+      [FN],
+    );
+    expect(rows[0].prosecdef).toBe(true);
+    expect(rows[0].proconfig).toContain("search_path=pg_catalog, public, pg_temp");
+    expect(rows[0].acl).not.toBeNull();
+    expect(rows[0].acl).not.toMatch(/(^|[{,])=X/);
+  });
+
+  it("refuses an unscoped caller, a mismatched tenant GUC and a non-admin actor; mints a person only for an active admin", async () => {
+    const admin = (
+      await ctx.owner.query(`INSERT INTO persons (display_name) VALUES ('adm') RETURNING id`)
+    ).rows[0].id as string;
+    await ctx.owner.query(
+      `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active) VALUES ($1,'web',$2,'owner',true)`,
+      [ctx.tenantA, admin],
+    );
+    const client = await ctx.appPool.connect();
+    try {
+      const call = (tenant: string, actor: string, name: string) =>
+        client.query(`SELECT public.create_host_added_person($1::uuid, $2::uuid, $3) AS id`, [
+          tenant,
+          actor,
+          name,
+        ]);
+      await client.query(`SELECT set_config('app.tenant_id', '', false)`);
+      await expect(call(ctx.tenantA, admin, "X")).rejects.toThrow(/tenant context mismatch/);
+      await client.query(`SELECT set_config('app.tenant_id', $1, false)`, [ctx.tenantB]);
+      await expect(call(ctx.tenantA, admin, "X")).rejects.toThrow(/tenant context mismatch/);
+      await client.query(`SELECT set_config('app.tenant_id', $1, false)`, [ctx.tenantA]);
+      await expect(call(ctx.tenantA, randomUUID(), "X")).rejects.toThrow(
+        /not an active tenant admin/,
+      );
+      await expect(call(ctx.tenantA, admin, "   ")).rejects.toThrow(/display name/);
+      await expect(call(ctx.tenantA, admin, "x".repeat(101))).rejects.toThrow(/display name/);
+      const ok = await call(ctx.tenantA, admin, "  Lan  ");
+      const id = ok.rows[0].id as string;
+      const p = await ctx.owner.query(`SELECT display_name, status FROM persons WHERE id = $1`, [
+        id,
+      ]);
+      expect(p.rows[0]).toEqual({ display_name: "Lan", status: "active" });
+    } finally {
+      await client.query(`SELECT set_config('app.tenant_id', '', false)`);
+      client.release();
+    }
   });
 });
