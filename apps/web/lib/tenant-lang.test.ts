@@ -180,6 +180,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/auth-secrets.ts": "c",
   "lib/connector-secrets.ts": "c",
   "lib/link-code-keys.ts": "c",
+  // (c) — browser-side state mapping for /me/link (M3b): no t(), no response body; strings live in the view.
+  "lib/me-link-client.ts": "c",
   "lib/google-oidc.ts": "c",
   "lib/oauth-transaction.ts": "c",
   // (b) — RECLASSIFIED 2026-09-06 (audit W-4): buildCompletionLanding renders a user-facing
