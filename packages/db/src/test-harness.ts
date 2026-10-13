@@ -577,6 +577,8 @@ export interface NonSuperuserOwnerContext {
   /** call AFTER a successful runMigration(): ensures app_worker's test password (superuser-backed,
    *  since the role may have just been created by migrate()) and returns a pool connected as it */
   connectAsWorker: () => Promise<pg.Pool>;
+  /** same as connectAsWorker but for the HTTP runtime role `app` (the only grantee of the identity definers) */
+  connectAsApp: () => Promise<pg.Pool>;
   teardown: () => Promise<void>;
 }
 
@@ -704,6 +706,17 @@ export async function setupNonSuperuserOwnerContext(
     return chatDefinerBootstrapPromise;
   };
 
+  const connectAsApp = async (): Promise<pg.Pool> => {
+    await setRolePasswordRaceSafe(admin, "app", ROLE_PW.app!, /* allowMissing */ false);
+    const pool = new pg.Pool({
+      connectionString: testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app }),
+      max: 4,
+    });
+    guardPoolErrors(pool, () => tearingDown);
+    workerPools.push(pool);
+    return pool;
+  };
+
   const connectAsWorker = async (): Promise<pg.Pool> => {
     await setRolePasswordRaceSafe(
       admin,
@@ -733,6 +746,7 @@ export async function setupNonSuperuserOwnerContext(
     bootstrapChatDefinerForOwner,
     runMigration: () => migrate(ownerUrl),
     connectAsWorker,
+    connectAsApp,
     teardown: async () => {
       tearingDown = true;
       // codex round-06 [P2]: the whole post-acquisition cleanup sequence now runs under ONE outer

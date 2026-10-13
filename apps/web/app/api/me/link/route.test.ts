@@ -138,14 +138,31 @@ describe("POST /api/me/link outcomes", () => {
     else expect(body.error?.code).toBe(code);
   });
 
-  it("acts as the SESSION account; a smuggled body accountId is ignored", async () => {
-    await POST(req({ ...good, accountId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }));
+  it("acts as the SESSION account; a smuggled body accountId is refused as an unknown key", async () => {
+    const res = await POST(req({ ...good, accountId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }));
+    expect(res.status).toBe(400);
+    expect(linkZaloToAccount).not.toHaveBeenCalled();
+    await POST(req(good));
     expect(linkZaloToAccount).toHaveBeenCalledWith(
       { tag: "pool" },
       good.code,
       ACCOUNT,
       expect.objectContaining({ lookupHmacKey: expect.any(Buffer) }),
     );
+  });
+
+  it("an account with no active person (SQLSTATE 42501 from consume) is LINK_CODE_INVALID, not a 500", async () => {
+    vi.mocked(linkZaloToAccount).mockRejectedValue(
+      Object.assign(new Error("x"), { code: "42501" }),
+    );
+    const res = await POST(req(good));
+    expect(res.status).toBe(400);
+    expect((await env(res)).error?.code).toBe("LINK_CODE_INVALID");
+  });
+
+  it("any other database error still propagates", async () => {
+    vi.mocked(linkZaloToAccount).mockRejectedValue(new Error("boom"));
+    await expect(POST(req(good))).rejects.toThrow("boom");
   });
 
   it("never echoes person ids, counters or blocking tables", async () => {

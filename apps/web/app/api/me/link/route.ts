@@ -19,8 +19,7 @@ import {
  *
  * Gate order: session -> CSRF -> actor ceiling -> per-account bucket + per-IP bucket (both spent
  * BEFORE the consume, so guessing costs the guesser the budget) -> bounded body -> key config ->
- * linkZaloToAccount. The acting account comes ONLY from the session; a body `accountId` is never
- * read. Responses carry the coarse outcome only: no person ids, counters or blocking-table names,
+ * linkZaloToAccount. The acting account comes ONLY from the session; a body `accountId` is refused as an unknown key. Responses carry the coarse outcome only: no person ids, counters or blocking-table names,
  * and "no such code" / "wrong code" / "already used" are all the same LINK_CODE_INVALID (existence
  * oracle). Merging a Person that holds real data is refused (MERGE_REQUIRES_REVIEW), never done.
  * commandId is validated for parity with the other command routes but nothing is stored under it:
@@ -81,7 +80,9 @@ export async function POST(request: Request): Promise<Response> {
     return invalidBody();
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return invalidBody();
-  const { code, commandId } = raw as Record<string, unknown>;
+  const body = raw as Record<string, unknown>;
+  if (Object.keys(body).some((k) => k !== "commandId" && k !== "code")) return invalidBody();
+  const { code, commandId } = body;
   if (
     typeof commandId !== "string" ||
     commandId.trim().length === 0 ||
@@ -104,7 +105,16 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const { outcome } = await linkZaloToAccount(appDb().pool, code, session.accountId, keys);
+  let outcome: Awaited<ReturnType<typeof linkZaloToAccount>>["outcome"];
+  try {
+    ({ outcome } = await linkZaloToAccount(appDb().pool, code, session.accountId, keys));
+  } catch (error) {
+    // 42501 = link_code_consume refused the TARGET (the account has no active Person): nothing about
+    // the code was touched, and it must not become a 500.
+    if ((error as { code?: string }).code !== "42501") throw error;
+    log.warn("me_link", { accountId: session.accountId, outcome: "target_ineligible" });
+    return invalidCode();
+  }
   log.info("me_link", { accountId: session.accountId, outcome });
   switch (outcome) {
     case "linked":
@@ -114,8 +124,8 @@ export async function POST(request: Request): Promise<Response> {
       return err(
         "MERGE_REQUIRES_REVIEW",
         t(
-          "Tài khoản Zalo này đã có hoạt động trong một CLB nên cần bộ phận hỗ trợ gộp thủ công.",
-          "This Zalo account already has activity in a club, so support must merge it.",
+          "Không thể tự động liên kết Zalo này; cần bộ phận hỗ trợ gộp thủ công.",
+          "This Zalo cannot be linked automatically; support must merge it.",
         ),
         409,
       );

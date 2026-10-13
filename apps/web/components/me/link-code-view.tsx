@@ -42,8 +42,8 @@ function statusText(state: LinkUiState, pick: (vi: string, en: string) => string
       return [
         problem,
         pick(
-          "Tài khoản Zalo này đã có hoạt động trong một CLB, nên cần bộ phận hỗ trợ gộp thủ công. Hãy liên hệ chủ CLB hoặc hỗ trợ Plexco.",
-          "This Zalo account already has activity in a club, so support must merge it. Contact your club owner or Plexco support.",
+          "Không thể tự động liên kết Zalo này; cần bộ phận hỗ trợ gộp thủ công. Hãy liên hệ chủ CLB hoặc hỗ trợ Plexco.",
+          "This Zalo cannot be linked automatically; support must merge it. Contact your club owner or Plexco support.",
         ),
       ];
     case "invalid":
@@ -97,9 +97,8 @@ export function LinkCodeView({ lang, state, code, onCodeChange, onSubmit }: Prop
   const pick = (vi: string, en: string) => (lang === "en" ? en : vi);
   const status = statusText(state, pick);
   const busy = state === "submitting";
-  const failed = status !== null && state !== "linked" && state !== "already_linked";
   return (
-    <form className={styles.form} onSubmit={onSubmit} noValidate>
+    <form className={styles.form} onSubmit={onSubmit} aria-busy={busy} noValidate>
       <label className={styles.label} htmlFor="link-code">
         {pick("Mã liên kết", "Link code")}
       </label>
@@ -117,8 +116,8 @@ export function LinkCodeView({ lang, state, code, onCodeChange, onSubmit }: Prop
         value={code}
         onChange={(e) => onCodeChange(e.target.value.toUpperCase())}
         aria-describedby="link-code-hint link-code-status"
-        aria-invalid={failed || undefined}
-        disabled={busy}
+        aria-invalid={state === "invalid" || undefined}
+        readOnly={busy}
         required
       />
       <p id="link-code-hint" className={styles.hint}>

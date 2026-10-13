@@ -35,14 +35,21 @@
 -- channel_identities.person_id = exactly 1 (the identity being moved) and link_codes.source_person_id
 -- (any, revoked). A composite FK onto persons, or a table whose RLS this function's owner cannot
 -- read through (FORCE RLS, owner neither superuser nor BYPASSRLS: a count would silently read 0),
--- is UNPROVABLE and therefore blocking. ponytail: with a NOBYPASSRLS owner every Person is
--- non-empty (tenant tables are FORCE RLS), so linking degrades to requires_review everywhere
--- until the migration owner can bypass RLS or a per-tenant scan is added; that is fail closed, never
--- a false "empty".
+-- is UNPROVABLE and therefore blocking. The function also pins `row_security = off`, so a table
+-- wrongly predicted "provable" RAISES (a row-security error) instead of silently counting 0.
+-- ponytail: with a NOBYPASSRLS owner every Person is non-empty (tenant tables are FORCE RLS), so
+-- linking degrades to requires_review everywhere until the migration owner can bypass RLS or a
+-- per-tenant scan is added; that is fail closed, never a false "empty". Measured: the test suite
+-- migrates as a superuser, so the bypass branch is the one proven by default; the fail-closed branch
+-- has its own regression test (setupNonSuperuserOwnerContext). Current production shape: the managed
+-- host's admin role is documented as "Bypass RLS" and able to create BYPASSRLS roles
+-- (infra/postgres-init/01-job-definer.sql, confirmed 2026-08-05), so the bypass branch is the real
+-- one there; the fail-closed branch is documented defence.
 --
 -- LOCK ORDER matches 0043: accounts -> persons (UUID-sorted) -> channel_identities -> link_codes.
 -- merge_audit snapshots are NOT NULL; this path stores ids + reason only (no PII), as plain JSON
 -- bytes, not encrypted. The real merge planner owns encrypted snapshots.
+-- merge_audit rows with reason_code = 'link_code_empty_reparent' carry plaintext id-only JSON snapshots.
 -- routing_audit is written directly: routing_audit_append (0053) allowlists a single action and
 -- demands a tenant GUC, and linking is tenant-less.
 -- ============================================================================
@@ -53,6 +60,7 @@ LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp
+SET row_security = off
 AS $$
 #variable_conflict use_column
 DECLARE

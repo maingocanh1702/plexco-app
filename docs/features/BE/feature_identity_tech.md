@@ -302,8 +302,6 @@ Cross-tenant merge capability is isolated from normal HTTP role and audited per 
 | `resolvePersonSelf` | Verified session/magic link | Returns authenticated person only |
 | `supportRecoverMerge` | Restricted support role | Runbook + dual confirmation recommended |
 
-> **Đề xuất MVP — quy tắc "empty person" cho link web (🟡 chờ owner sign-off, chưa Reviewed):** `POST /api/me/link` (account đã đăng nhập nhập mã do bot Zalo cấp) chỉ re-parent channel identity Zalo sang Person của account khi Person phía Zalo **rỗng** (đúng 1 channel identity đó, không dòng nào khác tham chiếu `persons`; quét động từ `pg_constraint` nên bảng mới thêm sau cũng chặn theo mặc định). Mọi trường hợp còn lại trả `MERGE_REQUIRES_REVIEW` và ghi 1 dòng `routing_audit` cho support; merge thật (planner/commit §5) vẫn P0, chưa thực thi. Cài đặt: migration `0054` `link_code_reparent_empty_person` + `packages/db/src/identity-link-web.ts`.
-
 P4.6 `/myclubs` consumes `resolvePersonSelf`; it is not part of P3.5 rollout.
 
 ### Request/Response Examples
