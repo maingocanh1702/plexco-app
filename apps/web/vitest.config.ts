@@ -1,5 +1,7 @@
 import { defineConfig } from "vitest/config";
 
-// tsconfig keeps `jsx: preserve` for Next/SWC; vitest's esbuild needs the automatic runtime to
-// transform the .tsx component tests (renderToStaticMarkup) without importing React per file.
-export default defineConfig({ esbuild: { jsx: "automatic" } });
+export default defineConfig({
+  // Next compiles TSX with the automatic runtime; mirror it so component modules import cleanly.
+  esbuild: { jsx: "automatic" },
+  test: { exclude: ["e2e/**", "node_modules/**", ".next/**"] },
+});

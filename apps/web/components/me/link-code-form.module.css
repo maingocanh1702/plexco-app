@@ -46,7 +46,7 @@
   padding: var(--space-2) var(--space-4);
   font-size: var(--text-base);
   font-weight: var(--font-semibold);
-  color: var(--bg-primary);
+  color: var(--on-primary);
   background: var(--primary);
   border: 0;
   border-radius: var(--radius-md);
@@ -67,7 +67,7 @@
   padding: var(--space-3);
   font-size: var(--text-sm);
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }

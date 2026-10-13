@@ -2,74 +2,86 @@
 
 > Foundation-level design tokens cho web app. Khai báo CSS custom properties trong `:root`.
 > **Khi cần color/spacing/font mới → thêm vào đây kèm ghi chú.**
-> v1.2 · 2026-07-28 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
+> v2.0 · 2026-10-13 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
 > **Design System:** xem `design-system.md` (v1.0, 07/08/2026) cho component catalog, usage tokens, layout patterns, motion, a11y, và responsive grid — document đó reference values từ file này.
-> **Authority boundary:** current active values bên dưới vẫn là Indigo + Outfit/Inter. DD-81 đã chọn target Candidate C Energetic Orange + Sora/Inter, nhưng chưa activate trước tracked owner-approved `design.pen` + visual/WCAG/drift gate. `design.pen` variables phải match file này; authority flip cần DD mới + exporter + drift proof. Nhu cầu token: `token-needs-matrix.md`.
+> **Authority boundary (v2.0):** value set **target C — Energetic Orange + Sora/Inter đã ACTIVE** (DD-81 chọn, DD-122 D1 kích hoạt ngày 12/10/2026, thay cho cổng `design.pen`; xem `channels/web/theme-direction-2026-07.md` §5–§6). Code đọc đúng các giá trị này từ `apps/web/app/globals.css` — file duy nhất được chứa literal màu; `apps/web/app/tokens-only.test.ts` fail nếu component CSS/TSX chứa hex/rgba hoặc dùng `var(--x)` chưa định nghĩa. Nhu cầu token: `token-needs-matrix.md`.
 
 ---
 
 ## 1. Color Palette
 
-### Primary (current active: Indigo → Deep Blue)
+### Primary — Energetic Orange (target C, active)
+
+> Chữ trắng trên `#FF5A1F` chỉ đạt 3.12:1 (trượt AA normal text) → `--on-primary` là `#22100A` (5.87:1). Cam dùng làm **chữ** trên nền sáng phải là `--primary-text` (`#B23A0B`, ≥5.7:1); trên nền tối là `#FF8A5C`.
 
 ```css
 :root {
   /* -- Primary -- */
-  --primary: hsl(243, 75%, 59%);           /* #5B4CF5 — main brand */
-  --primary-hover: hsl(243, 75%, 52%);     /* darker on hover */
-  --primary-active: hsl(243, 75%, 46%);    /* pressed state */
-  --primary-light: hsl(243, 75%, 95%);     /* subtle background */
-  --primary-50: hsl(243, 75%, 97%);        /* lightest tint */
+  --primary: #ff5a1f;           /* main brand — nền nút/chip, KHÔNG dùng làm màu chữ trên nền sáng */
+  --primary-hover: #e8480f;     /* on-primary vẫn 4.68:1 */
+  --primary-active: #d94410;    /* pressed */
+  --on-primary: #22100a;        /* chữ/icon trên --primary */
+  --primary-subtle: #ff5a1f1f;  /* 12% alpha — tinted icon container (theme-direction §7 recipe 1) */
+  --primary-text: #b23a0b;      /* cam dùng làm chữ/link trên nền sáng */
 
-  /* -- Secondary (Teal) -- */
-  --secondary: hsl(173, 80%, 40%);         /* #0EA5A5 — accent */
-  --secondary-hover: hsl(173, 80%, 34%);
-  --secondary-light: hsl(173, 80%, 94%);
+  /* -- Accent (amber) -- */
+  --accent: #f5a524;
+  --on-accent: #22100a;
 
-  /* -- Semantic -- */
-  --success: hsl(142, 71%, 45%);           /* #22C55E — paid, active */
-  --success-light: hsl(142, 71%, 94%);
-  --warning: hsl(38, 92%, 50%);            /* #F59E0B — pending, caution */
-  --warning-light: hsl(38, 92%, 95%);
-  --error: hsl(0, 84%, 60%);              /* #EF4444 — unpaid, error */
-  --error-light: hsl(0, 84%, 95%);
-  --info: hsl(217, 91%, 60%);             /* #3B82F6 — informational */
-  --info-light: hsl(217, 91%, 95%);
+  /* -- Semantic (paid = success · pending = warning · unpaid = error) -- */
+  --success: #15803d;  --success-text: #116b31;  --success-subtle: #e7f6ec;
+  --warning: #b45309;  --warning-text: #92400e;  --warning-subtle: #fef3dc;
+  --error:   #c62828;  --error-text:   #b71c1c;  --error-subtle:   #fdecec;
+  --info:    #1d4ed8;  --info-subtle:  #e8eefc;
+  --paid: var(--success);
+  --pending: var(--warning);
+  --unpaid: var(--error);
 }
 ```
 
-### Neutral
+### Neutral (warm)
 
 ```css
 :root {
-  --gray-50: hsl(210, 20%, 98%);           /* lightest bg */
-  --gray-100: hsl(210, 17%, 95%);
-  --gray-200: hsl(210, 16%, 89%);          /* borders, dividers */
-  --gray-300: hsl(210, 14%, 81%);          /* disabled elements */
-  --gray-400: hsl(210, 12%, 64%);          /* placeholder text */
-  --gray-500: hsl(210, 10%, 47%);          /* secondary text */
-  --gray-600: hsl(210, 12%, 36%);          /* body text (light mode) */
-  --gray-700: hsl(210, 14%, 25%);          /* headings (light mode) */
-  --gray-800: hsl(210, 18%, 15%);          /* near-black */
-  --gray-900: hsl(210, 22%, 8%);           /* darkest */
+  --gray-50: #faf8f6;   /* page bg */
+  --gray-100: #f3f0ed;
+  --gray-200: #e6e2de;  /* borders, dividers */
+  --gray-300: #d2cdc8;
+  --gray-400: #8a837c;  /* KHÔNG đạt AA cho chữ — chỉ dùng cho viền/disabled */
+  --gray-500: #6b6560;  /* muted text (5.7:1 trên trắng) */
+  --gray-600: #5c5650;  /* secondary text */
+  --gray-700: #3f3a36;
+  --gray-800: #25211e;  /* primary text */
+  --gray-900: #14110f;
 }
 ```
 
 ### Dark Mode
 
+> Hai khối giống hệt nhau: `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }` và `:root[data-theme="dark"] { … }` (CSS không chia sẻ được một danh sách khai báo giữa media query và selector). Chỉ override semantic tokens.
+
 ```css
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-primary: hsl(220, 20%, 10%);
-    --bg-secondary: hsl(220, 18%, 14%);
-    --bg-card: hsl(220, 16%, 18%);
-    --bg-elevated: hsl(220, 14%, 22%);
-    --text-primary: hsl(0, 0%, 95%);
-    --text-secondary: hsl(0, 0%, 72%);
-    --text-muted: hsl(0, 0%, 50%);
-    --border: hsl(220, 14%, 25%);
-    --border-hover: hsl(220, 14%, 35%);
-  }
+:root[data-theme="dark"] {
+  --bg-page: #0f1115;
+  --bg-card: #181b21;
+  --bg-elevated: #20242c;
+  --bg-input: #20242c;
+  --bg-overlay: #000000b3;
+  --text-primary: #f3f4f6;
+  --text-secondary: #b4bac4;
+  --text-muted: #9aa1ad;
+  --border: #2b303a;
+  --border-strong: #6b7280;
+  --border-hairline: #ffffff14;
+  --focus-ring: #93b4ff;
+  --primary-text: #ff8a5c;
+  --success-text: #4ade80;  --success-subtle: #143d26;
+  --warning-text: #fbbf24;  --warning-subtle: #3d2e0a;
+  --error-text: #f87171;    --error-subtle: #4a1a1a;
+  --info-subtle: #16254d;
+  --primary-subtle: #ff5a1f2e;
+  --shadow-card: 0 2px 12px #00000066;
+  --shadow-overlay: 0 12px 32px #000000b3;
 }
 ```
 
@@ -77,15 +89,20 @@
 
 ```css
 :root {
-  --bg-primary: hsl(0, 0%, 100%);
-  --bg-secondary: var(--gray-50);
-  --bg-card: hsl(0, 0%, 100%);
-  --bg-elevated: hsl(0, 0%, 100%);
+  --bg-page: var(--gray-50);
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-overlay: #14110f80;
   --text-primary: var(--gray-800);
   --text-secondary: var(--gray-600);
-  --text-muted: var(--gray-400);
+  --text-muted: var(--gray-500);
+  --text-inverse: #ffffff;
+  --text-link: var(--primary-text);
   --border: var(--gray-200);
-  --border-hover: var(--gray-300);
+  --border-strong: var(--gray-400);   /* viền control (≥3:1, WCAG 1.4.11) */
+  --border-hairline: #1411140f;
+  --focus-ring: #1d4ed8;
 }
 ```
 
@@ -97,12 +114,13 @@
 
 ```css
 :root {
-  --font-sans: 'Inter', 'Roboto', system-ui, -apple-system, sans-serif;
+  --font-heading: var(--font-sora), 'Sora', var(--font-inter), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-sans: var(--font-inter), 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 }
 ```
 
-> Import Google Fonts: `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');`
+> Fonts qua `next/font/google` (tự host lúc build, `display: swap`): Sora (subsets `latin`, `latin-ext` — Sora KHÔNG có subset `vietnamese`, latin-ext thiếu U+1EA0–1EF1 nên các nguyên âm xếp dấu của tiếng Việt rơi về Inter qua `--font-heading` (`adjustFontFallback: false` trong `app/layout.tsx` để Inter — không phải Arial do next/font chèn — cấp glyph U+1EA0–1EF1); đề xuất đổi heading font có subset vietnamese = DD của owner) cho heading, Inter (`latin`, `vietnamese`) cho body. `--font-sora` / `--font-inter` do `next/font` gắn trên `<html>`.
 
 ### Type Scale
 
@@ -130,7 +148,7 @@
   --leading-relaxed: 1.625;
 
   /* -- Letter Spacing -- */
-  --tracking-tight: -0.025em;
+  --tracking-tight: -0.02em;
   --tracking-normal: 0;
   --tracking-wide: 0.025em;
 }
@@ -187,6 +205,10 @@
   --shadow-lg: 0 10px 15px -3px hsl(0 0% 0% / 0.1), 0 4px 6px -4px hsl(0 0% 0% / 0.1);
   --shadow-xl: 0 20px 25px -5px hsl(0 0% 0% / 0.1), 0 8px 10px -6px hsl(0 0% 0% / 0.1);
 
+  /* Card: elevation mềm + hairline (theme-direction §7 recipe 2) */
+  --shadow-card: 0 2px 12px #14110f10;
+  --shadow-overlay: 0 12px 32px #14110f33;
+
   /* Glassmorphism */
   --glass-bg: hsl(0 0% 100% / 0.7);
   --glass-blur: blur(12px);
@@ -227,15 +249,21 @@
 ```css
 :root {
   /* -- Container -- */
+  --container-narrow: 24rem;   /* sign-in card, club chooser */
+  --container-form: 28rem;     /* form một cột */
+  --container-prose: 32rem;    /* hero copy */
   --container-sm: 640px;
   --container-md: 768px;
   --container-lg: 1024px;
   --container-xl: 1280px;
   --container-max: 1440px;
 
-  /* -- Sidebar -- */
-  --sidebar-width: 240px;
-  --sidebar-collapsed: 64px;
+  /* -- Shell -- */
+  --sidebar-width: 240px;   /* >=1024px */
+  --rail-width: 72px;       /* 768-1023px icon rail */
+  --header-height: 56px;
+  --bottom-nav-height: 64px; /* <768px */
+  --touch-target: 44px;     /* min interactive size (WCAG 2.5.8) */
 
   /* -- Z-index -- */
   --z-base: 0;
@@ -254,17 +282,14 @@
 | Token | Value | Sử dụng |
 |---|---|---|
 | `--bp-mobile` | 375px | Mobile test baseline |
-| `--bp-tablet` | 768px | Sidebar collapse → hamburger |
-| `--bp-desktop` | 1024px | Sidebar fixed 240px |
+| `--bp-tablet` | 768px | Bottom nav → icon rail |
+| `--bp-desktop` | 1024px | Icon rail → sidebar 240px |
 | `--bp-wide` | 1440px | Desktop test baseline |
 
 ```css
-/* Responsive sidebar (desktop-first) */
-/* >1024px: fixed 240px */
-/* ≤1024px: collapse 64px icon-only */
-/* ≤768px: ẩn + hamburger overlay */
-
-/* IDs bắt buộc: #sidebar, #sidebar-backdrop, #menu-toggle */
+/* Shell (mobile-first, apps/web/components/shell): */
+/* <768px: bottom nav 64px (3 mục) · 768–1023px: icon rail 72px · ≥1024px: sidebar 240px */
+/* Media query không đọc được var() — breakpoint là literal trong CSS module (không phải màu). */
 ```
 
 ---
@@ -288,23 +313,11 @@
 
 ## 10. Tokens merged từ `channels/web` (v1.1 — 19/07/2026)
 
-> Các token chỉ tồn tại ở `channels/web/design-tokens.md` cũ, đưa về SoT dưới dạng **alias về foundation token** khi có thể (playbook: token per-surface chỉ được alias, không giá trị mới).
+> Các token chỉ tồn tại ở `channels/web/design-tokens.md` cũ, đưa về SoT dưới dạng **alias về foundation token** khi có thể (playbook: token per-surface chỉ được alias, không giá trị mới). v2.0: `--font-heading` đã chuyển sang Sora (§2); `--bg-page`/`--bg-input` nay là role token ở §1; `--bg-sidebar` bỏ (sidebar dùng `--bg-card`).
 
 ```css
 :root {
-  --font-heading: 'Outfit', var(--font-sans);  /* current active; DD-81 target Sora chỉ activate sau visual/WCAG gate */
-  --bg-page: var(--bg-secondary);              /* alias — nền page */
-  --bg-input: var(--gray-100);                 /* alias — input, search */
-  --bg-sidebar: hsl(230, 25%, 18%);            /* sidebar dark-trong-light (giữ từ channels/web); ⚠️ hue 230 lệch thang neutral 220 — re-check khi chốt theme */
-  --text-inverse: hsl(0, 0%, 100%);
-  --text-link: var(--primary);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg-input: var(--bg-elevated);
-    --bg-sidebar: hsl(230, 30%, 12%);
-  }
+  --text-link: var(--primary-text);
 }
 ```
 
@@ -316,6 +329,7 @@
 
 | Ngày | Token | SoT (giữ) | channels/web (bỏ) | Quyết định / lý do |
 |---|---|---|---|---|
+| 13/10 | toàn bộ palette | target C (cam `#FF5A1F`) | Indigo/Teal v1.x | DD-122 D1 kích hoạt DD-81; `--on-primary` tối vì trắng/cam = 3.12:1; thêm `*-text`/`*-subtle` cho semantic để chữ đạt AA ở cả hai theme. Lưu ý còn mở: `--sport-pickleball` (green 142) vẫn gần `--success` — re-check ở lane sport accents. |
 | 19/07 | `--success` | hsl(142,71%,45%) | hsl(152,69%,41%) | SoT thắng; toàn bộ semantic re-check khi chốt theme |
 | 19/07 | `--info` | hsl(217,91%,60%) | hsl(205,86%,53%) | SoT thắng |
 | 19/07 | `--primary-hover` | 52% lightness | 50% | SoT thắng |
@@ -333,7 +347,7 @@
 1. **KHÔNG hardcode hex/rgba trong component CSS hoặc JS** — luôn dùng `var(--token)`.
 2. Khi cần color/spacing mới → **thêm vào file này** kèm ghi chú, rồi mới dùng.
 3. Naming: `--{category}-{variant}` → `--primary`, `--primary-hover`, `--bg-card`.
-4. Dark mode: override trong `@media (prefers-color-scheme: dark)` — chỉ override semantic tokens (`--bg-*`, `--text-*`, `--border`).
+4. Dark mode: override trong `@media (prefers-color-scheme: dark)` **và** `:root[data-theme="dark"]` — chỉ override semantic tokens (`--bg-*`, `--text-*`, `--border*`, `*-text`, `*-subtle`).
 5. Component-level tokens: đặt trong file CSS của component, reference foundation tokens.
 
 ---
@@ -342,6 +356,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 13/10/2026 | v2.0 | **Activate target C (DD-122 D1 / theme-direction §6 bước 2):** Indigo/Outfit → Energetic Orange `#FF5A1F` + Sora/Inter. `--on-primary` `#22100A`; thêm `--primary-text`, `*-text`/`*-subtle` semantic, `--paid/--pending/--unpaid` alias, `--border-strong`/`--border-hairline`, `--focus-ring`, `--shadow-card`, `--touch-target`, shell layout tokens (`--rail-width`, `--header-height`, `--bottom-nav-height`). Giá trị dùng hex (đo contrast được); code = `apps/web/app/globals.css`. Giữ nguyên cấu trúc §1–§10. |
 | 28/07/2026 | v1.2 | **Authority/status only; zero value change.** DD-59 chốt `.md` value SoT; DD-81 chọn target C + Sora/Inter nhưng current Indigo/Outfit giữ active tới tracked owner-approved `design.pen` + visual/WCAG/drift gate. |
 | 19/07/2026 | v1.1 | **DD-59 reconcile (owner 19/07):** merge `channels/web/design-tokens.md` v0.1 về đây — file đó thành pointer. Thêm §10 (font-heading/bg-page/bg-input/bg-sidebar/text-inverse/text-link, alias-first) + Conflict Resolution Log. Sửa `--sport-tennis` → hsl(48,96%,53%) (SoT cũ trùng `--warning`). Header khai báo SoT duy nhất; link `token-needs-matrix.md`. |
 | 19/06/2026 | — | Thêm Changelog table |

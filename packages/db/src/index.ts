@@ -71,6 +71,7 @@ export {
   SESSION_STATUSES,
   type ListSessionsParams,
   type SessionDetail,
+  type SessionListItem,
   type SessionListPage,
   type SessionScalars,
 } from "./session-read.js";
@@ -99,6 +100,7 @@ export {
   type ReversePaymentResult,
 } from "./payment-reversal.js";
 export { RosterMoneyError, type RosterMoneyErrorCode } from "./roster-money-shared.js";
+export { listActiveSports, type ActiveSport } from "./sports-read.js";
 export { resolveCapability, type Capability, type CapabilityDecision } from "./capability.js";
 export {
   createSession,

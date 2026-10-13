@@ -10,6 +10,7 @@ import {
 } from "../schema.js";
 import type { Db } from "./client.js";
 import { effectiveByCharge } from "./roster-money-shared.js";
+import { sessionOccupancy } from "./session-service.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -99,8 +100,15 @@ export interface SessionScalars {
   updatedAt: Date;
 }
 
+/** List row = scalars + roster counts (additive, M2b). `occupiedCount` (active players + guest notes)
+ *  is the ONE capacity numerator the card shows against `slotsMax`; `activeCount` is players only. */
+export interface SessionListItem extends SessionScalars {
+  activeCount: number;
+  occupiedCount: number;
+}
+
 export interface SessionListPage {
-  sessions: SessionScalars[];
+  sessions: SessionListItem[];
   pageInfo: { hasMore: boolean; nextCursor: string | null };
 }
 
@@ -138,7 +146,8 @@ export interface SessionDetail extends SessionScalars {
     createdByPersonId: string;
     createdAt: Date;
   }[];
-  counts: { active: number; waitlisted: number; guestNotes: number };
+  /** `occupied` = active players + guest notes: the ONE capacity formula (sessionOccupancy). */
+  counts: { active: number; waitlisted: number; guestNotes: number; occupied: number };
 }
 
 const scalarColumns = {
@@ -190,6 +199,12 @@ export async function listSessions(db: Db, params: ListSessionsParams): Promise<
     tx
       .select({
         ...scalarColumns,
+        // Correlated count under the same tenant GUC + explicit tenant filter (least disclosure:
+        // a number, never the roster). Active only: waitlisted/left rows do not occupy a slot.
+        activeCount: sql<number>`(select count(*)::int from ${players} where ${players.sessionId} = ${sessions.id} and ${players.tenantId} = ${tenantId} and ${players.status} = 'active')`,
+        // Occupied slots (BL-DSC-1: ONE capacity formula = active players + guest notes, same as
+        // sessionOccupancy). Same tenant GUC + explicit tenant filter on both counts.
+        occupiedCount: sql<number>`((select count(*)::int from ${players} where ${players.sessionId} = ${sessions.id} and ${players.tenantId} = ${tenantId} and ${players.status} = 'active') + (select count(*)::int from ${sessionGuestNotes} where ${sessionGuestNotes.sessionId} = ${sessions.id} and ${sessionGuestNotes.tenantId} = ${tenantId}))::int`,
         cursorStartsAt: sql<string>`to_char(${sessions.startsAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
       .from(sessions)
@@ -345,6 +360,7 @@ export async function getSessionDetail(
         active: mapped.filter((p) => p.status === "active").length,
         waitlisted: mapped.filter((p) => p.status === "waitlisted").length,
         guestNotes: notes.length,
+        occupied: await sessionOccupancy(tx, sessionId),
       },
     };
   });
