@@ -1,14 +1,34 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { Db, Tx } from "./client.js";
-import { onboardingRuns, onboardingSteps, processedCommands, settings, sports } from "../schema.js";
+import type { Db } from "./client.js";
+import { onboardingRuns, onboardingSteps, processedCommands, sports } from "../schema.js";
+import { authorizeTenantAction } from "./authorization.js";
 import { authorize } from "./tenant-capability-authority.js";
 import { withTenant } from "./tenant.js";
+import {
+  bad,
+  ClubConfigError,
+  KEY_PRICE,
+  KEY_SPORT,
+  KEY_VISIBILITY,
+  readConfig,
+  upsertSetting,
+  validatePatch,
+  type ClubConfig,
+  type ClubConfigPatch,
+} from "./club-config-validation.js";
+
+export {
+  ClubConfigError,
+  type ClubConfig,
+  type ClubConfigErrorCode,
+  type ClubConfigPatch,
+} from "./club-config-validation.js";
 
 /**
  * Club configuration (WAO club step): name, timezone, language, default sport / price / visibility.
  *
  * STORAGE: name/timezone/locale live ONLY in `tenants` (one authority per fact) and are reached
- * through the 0051 SECURITY DEFINER pair `tenant_profile_read/update` -- role `app` has no
+ * through the 0052 SECURITY DEFINER pair `tenant_profile_read/update` -- role `app` has no
  * privilege on the table itself (0035). The three defaults live in `settings` (`club.default_*`).
  *
  * Authority: `authorize(content.manage)` (DD-56 matrix: tenant content/settings excluding
@@ -18,43 +38,6 @@ import { withTenant } from "./tenant.js";
 export const CLUB_ACTION = "content.manage";
 const COMMAND_TYPE = "UpdateClubConfig";
 const STEP = "club_config";
-const INT4_MAX = 2_147_483_647;
-const KEY_SPORT = "club.default_sport";
-const KEY_PRICE = "club.default_price";
-const KEY_VISIBILITY = "club.default_visibility";
-
-export type ClubConfigErrorCode =
-  "FORBIDDEN" | "INVALID_INPUT" | "COMMAND_ID_CONFLICT" | "NO_ONBOARDING_RUN";
-
-export class ClubConfigError extends Error {
-  constructor(
-    readonly code: ClubConfigErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "ClubConfigError";
-  }
-}
-
-export interface ClubConfigPatch {
-  name?: string;
-  timezone?: string;
-  locale?: "vi" | "en";
-  defaultSportKey?: string;
-  defaultPriceAmount?: number;
-  defaultVisibility?: "private" | "public";
-}
-
-export interface ClubConfig {
-  /** Read-only identity; never patchable here. */
-  slug: string | null;
-  name: string | null;
-  timezone: string | null;
-  locale: string | null;
-  defaultSportKey: string | null;
-  defaultPriceAmount: number | null;
-  defaultVisibility: string | null;
-}
 
 export interface UpdateClubConfigParams {
   tenantId: string;
@@ -69,98 +52,6 @@ export interface UpdateClubConfigResult {
   replayed: boolean;
 }
 
-const bad = (message: string): never => {
-  throw new ClubConfigError("INVALID_INPUT", message);
-};
-
-const isValidTimezone = (tz: string): boolean => {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/** Validates TYPES and ranges only; the sport lookup needs the tx and happens in the command. */
-function validatePatch(patch: ClubConfigPatch): ClubConfigPatch {
-  if (patch === null || typeof patch !== "object") return bad("patch must be an object");
-  const out: ClubConfigPatch = {};
-  if (patch.name !== undefined) {
-    const name = typeof patch.name === "string" ? patch.name.trim() : "";
-    if (name.length < 1 || name.length > 120 || name.includes("\u0000"))
-      bad("name must be 1-120 chars");
-    out.name = name;
-  }
-  if (patch.timezone !== undefined) {
-    if (typeof patch.timezone !== "string" || !isValidTimezone(patch.timezone))
-      bad("invalid timezone");
-    out.timezone = patch.timezone;
-  }
-  if (patch.locale !== undefined) {
-    if (patch.locale !== "vi" && patch.locale !== "en") bad("locale must be vi or en");
-    out.locale = patch.locale;
-  }
-  if (patch.defaultSportKey !== undefined) {
-    if (
-      typeof patch.defaultSportKey !== "string" ||
-      patch.defaultSportKey.length === 0 ||
-      patch.defaultSportKey.length > 64 ||
-      patch.defaultSportKey.includes("\u0000")
-    ) {
-      bad("invalid sport key");
-    }
-    out.defaultSportKey = patch.defaultSportKey;
-  }
-  if (patch.defaultPriceAmount !== undefined) {
-    const p = patch.defaultPriceAmount;
-    if (typeof p !== "number" || !Number.isInteger(p) || p < 0 || p > INT4_MAX)
-      bad("invalid price");
-    out.defaultPriceAmount = p;
-  }
-  if (patch.defaultVisibility !== undefined) {
-    if (patch.defaultVisibility !== "private" && patch.defaultVisibility !== "public")
-      bad("invalid visibility");
-    out.defaultVisibility = patch.defaultVisibility;
-  }
-  if (Object.keys(out).length === 0) bad("at least one field is required");
-  return out;
-}
-
-async function upsertSetting(tx: Tx, tenantId: string, key: string, value: unknown) {
-  await tx
-    .insert(settings)
-    .values({ tenantId, key, value })
-    .onConflictDoUpdate({
-      target: [settings.tenantId, settings.key],
-      set: { value: sql`excluded.value`, updatedAt: sql`now()` },
-    });
-}
-
-/** Reads the club config inside an open tenant tx: tenants via the 0051 definer, defaults via settings. */
-async function readConfig(tx: Tx, tenantId: string): Promise<ClubConfig> {
-  const profile = await tx.execute(
-    sql`SELECT slug, name, timezone, locale FROM tenant_profile_read(${tenantId}::uuid)`,
-  );
-  const p = (profile.rows[0] ?? {}) as Record<string, unknown>;
-  const rows = await tx
-    .select({ key: settings.key, value: settings.value })
-    .from(settings)
-    .where(eq(settings.tenantId, tenantId));
-  const byKey = new Map(rows.map((r) => [r.key, r.value as unknown]));
-  const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
-  const price = byKey.get(KEY_PRICE);
-  return {
-    slug: str(p.slug),
-    name: str(p.name),
-    timezone: str(p.timezone),
-    locale: str(p.locale),
-    defaultSportKey: str(byKey.get(KEY_SPORT)),
-    defaultPriceAmount: typeof price === "number" ? price : null,
-    defaultVisibility: str(byKey.get(KEY_VISIBILITY)),
-  };
-}
-
 export async function updateClubConfig(
   db: Db,
   params: UpdateClubConfigParams,
@@ -169,6 +60,10 @@ export async function updateClubConfig(
   return withTenant(db, tenantId, async (tx) => {
     const decision = await authorize(tx, { tenantId, action: CLUB_ACTION, actorPersonId });
     if (!decision.allowed) throw new ClubConfigError("FORBIDDEN", decision.reason);
+    // Tenant-status axis (billing): a suspended/cancelled club freezes admin mutations. Orthogonal
+    // to authorize(); the subscription row it reads is created by tenant_provision (0037).
+    const status = await authorizeTenantAction(tx, tenantId, "admin_mutation");
+    if (!status.allowed) throw new ClubConfigError("TENANT_SUSPENDED", "tenant is suspended");
 
     // Command-type-independent key reservation, same as the session family.
     await tx.execute(
@@ -216,8 +111,9 @@ export async function updateClubConfig(
       const updated = await tx.execute(
         sql`SELECT id FROM tenant_profile_update(${tenantId}::uuid, ${actorPersonId}::uuid, ${patch.name ?? null}, ${patch.timezone ?? null}, ${patch.locale ?? null})`,
       );
+      // Zero rows after authorize + the onboarding-run read = infrastructure anomaly, never a 4xx.
       if (updated.rows.length !== 1) {
-        throw new ClubConfigError("NO_ONBOARDING_RUN", "tenant not found");
+        throw new Error("updateClubConfig: tenant_profile_update returned no row");
       }
     }
     if (patch.defaultSportKey !== undefined)

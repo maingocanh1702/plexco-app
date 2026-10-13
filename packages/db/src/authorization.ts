@@ -53,7 +53,12 @@ export type ActionClass =
   | "announce_session"
   | "update_open_session"
   | "close_session"
-  | "cancel_session";
+  | "cancel_session"
+  // Web MVP lane M2c (DD-110 D3: a literal enters the enum with the command that uses it). Both
+  // are ordinary mutating classes: a suspended tenant freezes NEW commercial activity, so roster
+  // changes and manual payment recording are denied under suspension (NOT obligation-termination).
+  | "manage_roster"
+  | "mark_paid";
 
 const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "publish_new_sessions",
@@ -63,6 +68,8 @@ const RECOGNIZED_ACTION_CLASSES: ReadonlySet<ActionClass> = new Set([
   "update_open_session",
   "close_session",
   "cancel_session",
+  "manage_roster",
+  "mark_paid",
 ]);
 
 // DD-110 D2 obligation-termination classes: close_session (landed with B1) and cancel_session (landed

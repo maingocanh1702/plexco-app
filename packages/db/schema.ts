@@ -1230,10 +1230,11 @@ export const paymentAllocations = pgTable("payment_allocations", {
   chargeIdx: index("idx_alloc_charge").on(t.chargeId),
   bankTxnIdx: index("idx_alloc_bank_txn").on(t.bankTransactionId),
   amountChk: check("alloc_amount_nonzero_chk", sql`${t.amount} <> 0`),
-  sourceChk: check("alloc_source_chk", sql`${t.source} IN ('auto','manual','cash','waiver','reversal')`),
+  sourceChk: check("alloc_source_chk", sql`${t.source} IN ('auto','manual','cash','waiver','reversal','attested_transfer')`),
   shapeChk: check("alloc_shape_chk", sql`
     (${t.source} IN ('auto','manual') AND ${t.amount} > 0 AND ${t.bankTransactionId} IS NOT NULL)
     OR (${t.source} IN ('cash','waiver') AND ${t.amount} > 0 AND ${t.bankTransactionId} IS NULL AND ${t.createdBy} IS NOT NULL)
+    OR (${t.source} = 'attested_transfer' AND ${t.amount} > 0 AND ${t.bankTransactionId} IS NULL AND ${t.createdBy} IS NOT NULL)
     OR (${t.source} = 'reversal' AND ${t.amount} < 0 AND ${t.reversesAllocationId} IS NOT NULL)`),
   // DD-68 (migration 0020): payment_allocations is BOTH child and parent (the
   // reversal self-reference), so it carries its own candidate key. Additive.

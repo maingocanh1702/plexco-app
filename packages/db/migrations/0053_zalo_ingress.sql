@@ -3,9 +3,9 @@
 -- Web MVP lane M3a: Zalo bot ingress -- encrypted connector secrets, durable inbound event store,
 -- scoped channel identity key (DD-15 / DD-67), and the definers the web process calls.
 --
--- NUMBERING: this branch holds 0000..0049, 0051 and 0053. 0050 belongs to sibling lane M2c (PR #46)
--- and 0051 here (tenant profile definers, PR #45) will be renumbered to 0052 when the stack is
--- rebased; 0053 is deliberate, not a gap bug. MIGRATION_COUNT in the tests = 52 on this branch.
+-- NUMBERING: 0000..0053 contiguous. 0050 attested_transfer allocation source, 0051 host-add person
+-- definer and 0052 tenant profile definers come from the stacked M2c / M1b branches; 0053 is this lane.
+-- MIGRATION_COUNT in the tests = 54.
 --
 -- 1. zalo_bots: + webhook_secret_enc bytea, + key_version text, DROP legacy plaintext `secret`.
 --    MEASURED: `secret` had zero production readers and zero writers (only rls-invariants.test.ts

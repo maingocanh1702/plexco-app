@@ -2486,7 +2486,7 @@ function isStoredCreateGuestNoteResult(value: unknown): value is StoredCreateGue
 
 /** Reserve the command key, then read any prior row for it. Shared by both commands so the two
  *  can never drift on the dedup contract (edge #3, commandId-only per DD-117 D5). */
-async function reserveGuestNoteCommand(
+export async function reserveGuestNoteCommand(
   tx: Tx,
   tenantId: string,
   commandId: string,
@@ -2535,7 +2535,7 @@ async function guestNoteCountFor(tx: Tx, sessionId: string, personId: string): P
  * Both terms return here with the migrations that make them representable. Counting a column that
  * does not exist is not possible; pretending to count one would be worse.
  */
-async function sessionOccupancy(tx: Tx, sessionId: string): Promise<number> {
+export async function sessionOccupancy(tx: Tx, sessionId: string): Promise<number> {
   const active = await sessionActiveRosterCount(tx, sessionId);
   const notes = await tx
     .select({ n: sql<number>`count(*)` })
@@ -2545,7 +2545,7 @@ async function sessionOccupancy(tx: Tx, sessionId: string): Promise<number> {
 }
 
 /** Next per-aggregate outbox sequence, computed in-statement like every other session command. */
-const nextOutboxSequence = (sessionId: string) =>
+export const nextOutboxSequence = (sessionId: string) =>
   sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${sessionId}), 0) + 1`;
 
 /**
