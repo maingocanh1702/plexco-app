@@ -11,8 +11,8 @@ const PORT = Number(process.env.E2E_PORT ?? 3217);
 // CI builds in its own step (clearer logs) and sets E2E_SKIP_BUILD=1 so only `next start` runs here.
 // External mode (staging smoke, M5): E2E_EXTERNAL=1 + PLAYWRIGHT_BASE_URL=https://... targets an
 // already-deployed app, so no local build/server is started. The local path is untouched.
-const EXTERNAL_URL = process.env.E2E_EXTERNAL ? process.env.PLAYWRIGHT_BASE_URL : undefined;
-if (process.env.E2E_EXTERNAL && !EXTERNAL_URL) {
+const EXTERNAL_URL = process.env.E2E_EXTERNAL === "1" ? process.env.PLAYWRIGHT_BASE_URL : undefined;
+if (process.env.E2E_EXTERNAL === "1" && !EXTERNAL_URL) {
   throw new Error("E2E_EXTERNAL=1 requires PLAYWRIGHT_BASE_URL (the deployed origin).");
 }
 const START = `pnpm exec next start -p ${PORT}`;

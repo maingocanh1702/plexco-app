@@ -35,6 +35,10 @@ permissions:
   contents: read
   actions: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: deploy-production
   cancel-in-progress: false
@@ -113,7 +117,7 @@ jobs:
 
       - name: Smoke (/healthz, landing, manifest)
         env:
-          PRODUCTION_BASE_URL: ${{ secrets.PRODUCTION_BASE_URL }}
+          PRODUCTION_BASE_URL: ${{ vars.PRODUCTION_BASE_URL }}
         run: infra/smoke-check.sh "$PRODUCTION_BASE_URL"
 
       - name: Record deployment evidence

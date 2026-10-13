@@ -26,13 +26,20 @@ if [ -n "$domain" ]; then
   [[ "$domain" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || { echo "render: APP_DOMAIN is not a hostname" >&2; exit 1; }
 fi
 
-jq --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg domain "$domain" '
+# Empty stdin (a failed upstream `yq`) must fail HERE, not later inside `doctl apps update`.
+committed="$(cat)"
+[ -n "$committed" ] || { echo "render: empty spec on stdin" >&2; exit 1; }
+
+jq -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg domain "$domain" '
   # Live spec envs for a component, keyed "<kind>/<name>/<ENV_KEY>".
   def liveSecrets:
     [ ("services", "workers", "jobs") as $k | ($live[0][$k] // [])[] | . as $c | ($c.envs // [])[]
       | select(.type == "SECRET" and (.value // "") != "")
       | { key: "\($k)/\($c.name)/\(.key)", value: .value } ] | from_entries;
-  liveSecrets as $ls
+  # Choke-point guard: the DDL credential may exist on the PRE_DEPLOY job only (§4, §13).
+  (if any((.services[]?, .workers[]?) | .envs[]?; .key == "DATABASE_URL_MIGRATION")
+   then error("DATABASE_URL_MIGRATION on a runtime component") else . end)
+  | liveSecrets as $ls
   | def fill($kind): . as $c | .envs = [ ($c.envs // [])[] |
       if .type == "SECRET" and (.value // "") == ""
       then ($ls["\($kind)/\($c.name)/\(.key)"]) as $v
@@ -47,6 +54,6 @@ jq --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg domain
            | (if $domain != "" then gsub("__APP_DOMAIN__"; $domain) else . end)
          else . end)
   | if ([.. | strings | select(test("__[A-Z_]+__"))] | length) > 0
-    then error("unresolved placeholder: \([.. | strings | select(test("__[A-Z_]+__"))] | unique | join(", "))")
+    then error("unresolved placeholder: \([.. | strings | scan("__[A-Z_]+__")] | unique | join(", "))")
     else . end
-'
+' <<<"$committed"

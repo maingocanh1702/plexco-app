@@ -36,10 +36,10 @@ doctl registry create <registry-name> --subscription-tier basic --region sgp1   
 doctl databases create plexco-staging-pg --engine pg --version 16 --region sgp1 \
   --size db-s-1vcpu-2gb --num-nodes 1 --private-network-uuid <vpc-uuid>
 doctl databases db create <cluster-id> plexco
-# 2.2 Connection pool transaction-mode cho web/discovery (role app / readonly tạo ở bước 2.4)
-doctl databases pool create <cluster-id> app-pool --db plexco --mode transaction --size 20 --user app
-doctl databases pool create <cluster-id> readonly-pool --db plexco --mode transaction --size 10 --user readonly
 ```
+
+> Connection pool (transaction-mode) cho web/discovery được tạo **sau** lần `migrate` đầu tiên (§2.4b), vì
+> `--user app/readonly` phải tồn tại trước.
 
 **2.3 Bootstrap vai trò (một lần / cluster, bằng admin)** — chạy từ máy nằm trong trusted sources:
 
@@ -67,6 +67,17 @@ Thứ tự tự nhiên: lần deploy đầu tiên chạy job `migrate` (tạo ro
 healthy vì password role runtime chưa đặt → deployment ERROR là **bình thường ở lần đầu**; đặt password + điền
 `DATABASE_URL*` ở DO rồi chạy lại workflow.
 
+**2.4b Connection pool** (sau khi 3 role đã tồn tại):
+
+```bash
+doctl databases pool create <cluster-id> app-pool --db plexco --mode transaction --size 20 --user app
+doctl databases pool create <cluster-id> readonly-pool --db plexco --mode transaction --size 10 --user readonly
+```
+
+> **CHƯA ĐO:** pool của DO có thể chỉ chấp nhận user do DO quản lý (`doctl databases user create`). Nếu vậy, tạo
+> trước `app` / `app_worker` / `readonly` bằng `doctl databases user create <cluster-id> <name>` rồi mới migrate
+> (`migrate.ts` bỏ qua CREATE ROLE cho role đã có; đặt lại thuộc tính `NOSUPERUSER NOBYPASSRLS` nếu DO cấp khác).
+
 **2.5 Trusted sources** (chỉ app + máy admin của owner), sau khi app đã tạo (§2.7):
 `doctl databases firewalls append <cluster-id> --rule app:<app-id> --rule ip_addr:<your-ip>`.
 
@@ -76,8 +87,8 @@ tuỳ chọn) rồi thêm:
 | Loại | Tên | Giá trị |
 |---|---|---|
 | secret | `DIGITALOCEAN_ACCESS_TOKEN` | token DO (scope tối thiểu cho apps + registry) |
-| secret | `DOCR_REGISTRY` | `<registry-name>` |
-| secret | `STAGING_BASE_URL` | `https://<app>.ondigitalocean.app` (không dấu `/` cuối) |
+| variable | `DOCR_REGISTRY` | `<registry-name>` (không phải bí mật) |
+| variable | `STAGING_BASE_URL` | `https://<app>.ondigitalocean.app` (không dấu `/` cuối) |
 | variable | `DO_APP_ID` | id app staging (sau §2.7) |
 | variable | `DO_VPC_ID` | UUID VPC staging |
 
@@ -89,7 +100,7 @@ hoặc spec cục bộ **không commit**):
 yq -o=json infra/app.staging.yaml | jq --arg d "sha256:<64hex>" --arg v "<vpc-uuid>" \
   'walk(if type=="string" then gsub("__IMAGE_DIGEST__";$d) | gsub("__VPC_ID__";$v) else . end)' > spec.local.json
 # thêm "value" cho mọi env `type: SECRET` (xem §3) trong spec.local.json; file này KHÔNG được commit
-doctl apps create --spec spec.local.json; rm -P spec.local.json
+doctl apps create --spec spec.local.json; rm -f spec.local.json   # file chứa secret: xoá ngay (macOS: `rm -P` ghi đè trước khi xoá; không có trên Linux)
 ```
 
 ## 3. Inventory secret theo component (đặt ở DO, không ở GitHub)
@@ -100,7 +111,7 @@ doctl apps create --spec spec.local.json; rm -P spec.local.json
 | `DATABASE_URL_DIRECT` | — | — | direct `app_worker` | — | pg-boss cần session/direct |
 | `DATABASE_URL_MIGRATION` | — | — | — | role migration | **chỉ job này** |
 | `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` | x | — | — | — | client OAuth **staging**; redirect `${APP_URL}/api/auth/google/callback` |
-| `KMS_KEY_ID`, `AWS_REGION`, `KMS_ENCRYPTED_AUTH_PEPPER` | x | — | — | — | `KMS_PROVIDER=aws-kms` là giá trị thường trong spec |
+| `KMS_KEY_ID`, `KMS_ENCRYPTED_AUTH_PEPPER` | x | — | — | — | `KMS_PROVIDER=aws-kms` và `AWS_REGION` (mặc định `ap-southeast-1`, đổi nếu key ở region khác) là giá trị thường trong spec |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | x | — | — | — | IAM user chỉ `kms:Decrypt` trên key staging |
 | `LINK_CODE_LOOKUP_HMAC_KEY` | x | — | — | — | `openssl rand -base64 32`; M3a/M3b dùng chung |
 
@@ -110,7 +121,7 @@ default; thêm khi M3a lên staging nếu cần tách key). Giá trị khác nha
 
 ## 4. Chạy deploy
 
-GitHub → Actions → **Deploy staging** → Run workflow (`ref` mặc định `main`) → owner Approve. Bằng chứng:
+GitHub → Actions → **Deploy staging** → Run workflow, **chọn đúng branch/tag/commit muốn deploy ở ô "Use workflow from"** (workflow build đúng `github.sha`, không có input `ref`; nhờ vậy production kiểm được "SHA này đã qua staging" từ run) → owner Approve. Bằng chứng:
 artifact `deployment-evidence-staging` (`image_digest`, `git_sha`, run URL) — dán vào go/no-go note.
 
 Nếu fail: log nói rõ bước. `missing secret in live app: services/web/KMS_KEY_ID` = chưa đặt secret đó ở DO.
@@ -137,7 +148,7 @@ Deployment ERROR sau job `migrate` = migration lỗi; app trước đó vẫn ph
 `confirm == tag`; digest phải có thật trong DOCR kèm tag đó và SHA phải có một run deploy-staging xanh). Chỉ
 promote, không build. Điều kiện trước khi owner chạy: (a) §1.1 outbound-IP gate đóng, (b) DB TLS verify (R2),
 (c) R1 đã đo, (d) go/no-go note ký "go", (e) `production` environment + secret + variable
-(`DO_APP_ID`, `DO_VPC_ID`, `APP_DOMAIN`, secret `PRODUCTION_BASE_URL`, token DO riêng) đã tạo, (f) app prod
+(`DO_APP_ID`, `DO_VPC_ID`, `APP_DOMAIN`, variable `PRODUCTION_BASE_URL`, `DOCR_REGISTRY`, secret token DO riêng) đã tạo, (f) app prod
 đã tạo lần đầu như §2.7 với `infra/app.prod.yaml`.
 
 ## 7. Teardown / TTL (§9)

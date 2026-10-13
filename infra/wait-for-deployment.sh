@@ -15,8 +15,9 @@ deadline=$(( $(date +%s) + timeout ))
 dep=""
 
 while :; do
+  # A transient doctl/jq failure must not abort the wait; the deadline below still bounds the loop.
   dep_json="$(doctl apps list-deployments "$app" -o json \
-    | jq -c --arg d "$digest" '[.[] | select(any(.spec.services[]?; .name == "web" and .image.digest == $d))] | .[0] // empty')"
+    | jq -c --arg d "$digest" '[.[] | select(any(.spec.services[]?; .name == "web" and .image.digest == $d))] | .[0] // empty' || true)"
   if [ -n "$dep_json" ]; then
     dep="$(jq -r '.id' <<<"$dep_json")"
     phase="$(jq -r '.phase' <<<"$dep_json")"

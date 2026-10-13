@@ -60,12 +60,37 @@ test("fails closed when a secret is missing in the live app, naming it", () => {
   assert.equal(r.stdout, "");
 });
 
-test("does not let a secret on one component satisfy another (migration URL never reaches runtime)", () => {
-  const spec = JSON.parse(JSON.stringify(committed));
-  spec.services[0].envs.push({ key: "DATABASE_URL_MIGRATION", type: "SECRET" });
-  const r = render(spec, live);
+test("a committed spec listing DATABASE_URL_MIGRATION on a runtime component FAILS the render (guard)", () => {
+  for (const kind of ["services", "workers"]) {
+    const spec = JSON.parse(JSON.stringify(committed));
+    // Give it a value so it is the GUARD, not the missing-secret check, that rejects it.
+    spec[kind][0].envs.push({ key: "DATABASE_URL_MIGRATION", value: "x" });
+    const r = render(spec, live);
+    assert.notEqual(r.status, 0, kind);
+    assert.match(r.stderr, /DATABASE_URL_MIGRATION on a runtime component/);
+    assert.equal(r.stdout, "");
+  }
+});
+
+test("empty stdin fails instead of rendering 0 bytes", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "render-"));
+  const livePath = path.join(dir, "live.json");
+  writeFileSync(livePath, JSON.stringify(live));
+  const r = spawnSync("bash", [SCRIPT, livePath], {
+    input: "",
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, IMAGE_DIGEST: DIGEST, VPC_ID: VPC },
+  });
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /services\/web\/DATABASE_URL_MIGRATION/);
+  assert.match(r.stderr, /empty spec on stdin/);
+});
+
+test("unresolved-placeholder error prints only the token, never the whole string", () => {
+  const spec = JSON.parse(JSON.stringify(committed));
+  spec.services[0].envs.push({ key: "X", value: "prefix-super-long-value-__NOPE__-suffix" });
+  const r = render(spec, live);
+  assert.match(r.stderr, /unresolved placeholder: __NOPE__/);
+  assert.doesNotMatch(r.stderr, /super-long-value/);
 });
 
 test("rejects a malformed digest, a non-UUID VPC, and an unresolved placeholder", () => {

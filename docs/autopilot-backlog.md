@@ -5716,3 +5716,73 @@ notes: |
   KHÔNG viết thêm luật mới vào workflow doc từ row này — `level3-workflow.md` đã yêu cầu đúng điều đó ở bước 4;
   cái thiếu là thực thi, không phải câu chữ.
   source: `docs/sessions/2026-09-06-repo-audit.md` · `docs/autopilot-templates/audit-fix-lanes-2026-09-06-RUN.md`
+
+## task: infra-db-tls-ca-verification
+title: DB TLS CA + hostname verification (environments-setup §4) not implemented: no ssl config in code, no DO CA bundle in the image
+status: planned
+risk: P1
+change_class: infra-tooling
+depends_on: []
+invariants: [infra]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: Not built yet; bind a symbol the future fix introduces and verify it absent on origin at author time.
+notes: |
+  DO managed-PG CA via ${db.CA_CERT} or a bundle in the image; read by the pg Pool config (sslmode=verify-full). Staging runs sslmode=require until then; production is blocked on it. Source: M5 lane review (staging-deploy.md risk R2).
+
+## task: infra-staging-ttl-destruction-job
+title: Ephemeral staging TTL destruction job (environments-setup §9) does not exist; teardown is a manual runbook step
+status: planned
+risk: P3
+change_class: infra-tooling
+depends_on: []
+invariants: [infra]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: Not built yet; bind a symbol the future fix introduces and verify it absent on origin at author time.
+notes: |
+  Automation that destroys app + DB + VPC + temporary credentials at expires_at and alerts/fails closed if deletion does not complete. Source: M5 lane (staging-deploy.md §7).
+
+## task: infra-worker-liveness-probe
+title: App Platform worker component has no liveness probe in the spec (only a RESTART_COUNT alert); the Dockerfile HEALTHCHECK is not used by DO
+status: planned
+risk: P3
+change_class: infra-tooling
+depends_on: []
+invariants: [infra]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: Not built yet; bind a symbol the future fix introduces and verify it absent on origin at author time.
+notes: |
+  The worker writes a heartbeat file (apps/bot/src/heartbeat.ts); DO needs an equivalent signal (liveness_health_check or a heartbeat-age alert). Note: the Dockerfile HEALTHCHECK also does not understand PROCESS_ROLE=migrate (irrelevant for a PRE_DEPLOY job, noted for completeness).
+
+## task: infra-log-destinations-forwarding
+title: App Platform log_destinations (Papertrail/Datadog/Logtail/OpenSearch) not configured; retention beyond DO's default is absent
+status: planned
+risk: P3
+change_class: infra-tooling
+depends_on: []
+invariants: [infra]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: Not built yet; bind a symbol the future fix introduces and verify it absent on origin at author time.
+notes: |
+  Owner picks the vendor; add a log_destinations block with the token as a SECRET to infra/app.staging.yaml and infra/app.prod.yaml. Related: observability-sentry-loglevel-readers (error-reporting transport).
+
+## task: infra-ci-order-step1-pg-validation
+title: environments-setup §6 Required CI order step 1 (validate target PostgreSQL version/extensions/roles before migrating) is implemented by nothing
+status: planned
+risk: P2
+change_class: infra-tooling
+depends_on: []
+invariants: [infra]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: Not built yet; bind a symbol the future fix introduces and verify it absent on origin at author time.
+notes: |
+  A preflight in the migrate role (or a CI step) that asserts PG major version, required extensions and role attributes, failing before any DDL. Source: M5 lane (Implemented-by gap).

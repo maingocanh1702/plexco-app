@@ -415,6 +415,14 @@ credential into all components.
 | Required CI order (§6) | `.github/workflows/deploy-staging.yml` (manual, owner-approved); `.github/workflows/deploy-production.yml` (dispatch-only promotion, never triggered automatically) |
 | Recovery / TTL / acceptance evidence (§8–§10) | `docs/runbooks/staging-deploy.md`, `pitr-restore-drill.md`, `tenant-1-launch.md`, `go-no-go-template.md` |
 
+Deviations from this document (program default pending owner sign-off):
+
+- §5 says `DATABASE_URL_MIGRATION` lives in "the protected CI environment/job only". The implementation puts it as a
+  secret on the App Spec's PRE_DEPLOY `migrate` job component (DO side), because the managed DB trusts only the app's
+  private VPC identity and GitHub-hosted runners have no stable address. It is still absent from every runtime component.
+- "Required CI order" step 1 (validate PostgreSQL version/extensions/roles) is not implemented by anything yet
+  (backlog `infra-ci-order-step1-pg-validation`).
+
 Still **not** done and not proven: nothing was run against DigitalOcean; the §1.1 outbound-IP gate is still
 open (the specs are prepared, not applied); DB TLS CA verification (§4) is not implemented in code or image;
 automatic TTL teardown (§9) does not exist; measured RPO/RTO cells are empty until the drill is run.

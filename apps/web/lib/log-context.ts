@@ -7,7 +7,8 @@ import { randomUUID } from "node:crypto";
  * tenant, `tenant_id`. Both are opaque identifiers; neither is PII, and neither is ever taken from
  * a request body.
  *
- * Request id source: the platform edge id (`x-request-id`, or DigitalOcean's `do-request-id`) when
+ * Request id source: the platform edge id (DigitalOcean's `do-request-id`, which the edge sets and a
+ * client cannot spoof, preferred over the client-controllable `x-request-id`) when
  * it has a safe shape, otherwise a fresh UUID. A client-supplied header is attacker-controlled, so
  * it is only adopted when it is short and made of id-safe characters — never echoed raw.
  */
@@ -24,7 +25,7 @@ const SAFE_REQUEST_ID = /^[A-Za-z0-9._-]{8,64}$/;
 export const REQUEST_ID_HEADER = "x-request-id";
 
 export function requestIdFrom(headers: Headers): string {
-  for (const name of [REQUEST_ID_HEADER, "do-request-id"]) {
+  for (const name of ["do-request-id", REQUEST_ID_HEADER]) {
     const value = headers.get(name)?.trim();
     if (value && SAFE_REQUEST_ID.test(value)) return value;
   }

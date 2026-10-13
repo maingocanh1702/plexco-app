@@ -48,7 +48,9 @@ alerts:
 # Migrations + pg-boss/queue provisioning. PRE_DEPLOY = runs to completion inside the VPC against
 # the new image BEFORE the new web/discovery/worker containers take traffic; a non-zero exit fails
 # the whole deployment (the previous deployment keeps serving). DATABASE_URL_MIGRATION (DDL-owner
-# role) exists on THIS component only - never on a runtime component (§4, §13).
+# role) exists on THIS component only - never on a runtime component (§4, §13), and
+# render-app-spec.sh refuses a spec that lists it elsewhere. (The Dockerfile HEALTHCHECK does not
+# understand PROCESS_ROLE=migrate; irrelevant for a run-to-completion PRE_DEPLOY job.)
 jobs:
   - name: migrate
     kind: PRE_DEPLOY
@@ -104,7 +106,8 @@ services:
       - { key: GOOGLE_OAUTH_CLIENT_SECRET, scope: RUN_TIME, type: SECRET }
       - { key: KMS_PROVIDER, scope: RUN_TIME, value: aws-kms }
       - { key: KMS_KEY_ID, scope: RUN_TIME, type: SECRET }
-      - { key: AWS_REGION, scope: RUN_TIME, type: SECRET }
+      # Region of the KMS key (not a secret). Change if the key lives elsewhere.
+      - { key: AWS_REGION, scope: RUN_TIME, value: ap-southeast-1 }
       - { key: AWS_ACCESS_KEY_ID, scope: RUN_TIME, type: SECRET }
       - { key: AWS_SECRET_ACCESS_KEY, scope: RUN_TIME, type: SECRET }
       - { key: KMS_ENCRYPTED_AUTH_PEPPER, scope: RUN_TIME, type: SECRET }

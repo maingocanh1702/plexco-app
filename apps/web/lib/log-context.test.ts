@@ -74,6 +74,12 @@ describe("log context (M5 observability)", () => {
   it("request id: adopts a safe edge header, replaces an unsafe one, generates when absent", () => {
     expect(requestIdFrom(new Headers({ "x-request-id": "edge-1234abcd" }))).toBe("edge-1234abcd");
     expect(requestIdFrom(new Headers({ "do-request-id": "do-1234abcd" }))).toBe("do-1234abcd");
+    // The edge-set id wins over a client-supplied x-request-id.
+    expect(
+      requestIdFrom(
+        new Headers({ "x-request-id": "client-1234abcd", "do-request-id": "do-1234abcd" }),
+      ),
+    ).toBe("do-1234abcd");
     const evil = requestIdFrom(new Headers({ "x-request-id": 'a"}{"level":"error"' }));
     expect(evil).toMatch(/^[0-9a-f-]{36}$/);
     expect(requestIdFrom(new Headers({ "x-request-id": "short" }))).toMatch(/^[0-9a-f-]{36}$/);

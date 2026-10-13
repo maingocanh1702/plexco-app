@@ -45,14 +45,13 @@ timestamp bắt đầu đồng hồ RTO (`T_start`).
 ## 4. Restore bằng fork (point-in-time)
 
 ```bash
-doctl databases fork plexco-staging-drill-$(date +%Y%m%d) \
-  --restore-from-cluster-id <cluster-id> \
-  --restore-from-timestamp "<T_fault, UTC, dạng 2026-10-14T03:00:00Z>" \
-  --region sgp1 --size db-s-1vcpu-2gb --num-nodes 1 --private-network-uuid <vpc-uuid>
-doctl databases get <new-cluster-id>        # lặp tới khi Status = online
+doctl databases create plexco-staging-drill-$(date +%Y%m%d) --engine pg --version 16 \
+  --region sgp1 --size db-s-1vcpu-2gb --num-nodes 1 --private-network-uuid <vpc-uuid> \
+  --restore-from-cluster-name plexco-staging-pg \
+  --restore-from-timestamp "2026-10-14 03:00:00 +0000 UTC"      # = T_fault, định dạng "2006-01-02 15:04:05 +0000 UTC"
 ```
 
-Khi `online`: tạo lại user + trusted source cho cluster mới (fork không kế thừa mật khẩu role ứng dụng — kiểm
+Theo dõi `doctl databases get <new-cluster-id>` tới khi Status = `online`. Khi `online`: tạo lại user + trusted source cho cluster mới (bản restore không kế thừa mật khẩu role ứng dụng — kiểm
 `doctl databases user list <new-cluster-id>`), rồi chạy **kiểm tra toàn vẹn** với `<DRILL_URL>`:
 
 ```bash

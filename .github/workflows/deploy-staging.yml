@@ -8,6 +8,9 @@ name: Deploy staging
 # TRIGGER POLICY: manual only (no push/tag trigger). Staging is EPHEMERAL (48-96h TTL, §9); an
 # automatic deploy would keep a production-shaped environment and its bill alive by accident.
 # `environment: staging` carries required reviewers, so every run needs one owner approval.
+# DISPATCH THE WORKFLOW FROM THE COMMIT YOU WANT TO DEPLOY (branch/tag picker in the Run workflow
+# dialog): the build uses github.sha, so the run's head_sha IS the built SHA and production can
+# verify "this SHA passed staging" from the run alone.
 # ONE job on purpose: GitHub asks for approval per job that names a protected environment, and the
 # digest/evidence flow between steps without artifact hand-offs.
 #
@@ -19,16 +22,15 @@ name: Deploy staging
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref (branch, tag or full SHA) to build and deploy
-        required: false
-        default: main
-        type: string
 
 permissions:
   contents: read
   checks: read
+
+# bash with -o pipefail: a failing `yq`/`doctl` at the head of a pipe must fail the step.
+defaults:
+  run:
+    shell: bash
 
 # Two deploys must never race on the same app; queue instead of cancelling one in flight.
 concurrency:
@@ -46,7 +48,6 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (same pin as ci.yml)
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       - name: Resolve commit
@@ -79,12 +80,12 @@ jobs:
           context: .
           file: infra/Dockerfile
           push: true
-          tags: registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/${{ env.IMAGE_REPOSITORY }}:${{ env.SHA }}
+          tags: registry.digitalocean.com/${{ vars.DOCR_REGISTRY }}/${{ env.IMAGE_REPOSITORY }}:${{ env.SHA }}
 
       - name: Record deployment evidence
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
-          REF: ${{ inputs.ref }}
+          REF: ${{ github.ref_name }}
         run: |
           echo "DIGEST=${DIGEST}" >> "$GITHUB_ENV"
           jq -n --arg env staging --arg sha "$SHA" --arg digest "$DIGEST" --arg ref "$REF" \
@@ -118,7 +119,7 @@ jobs:
 
       - name: 5. Smoke (/healthz, landing, manifest)
         env:
-          STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+          STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
         run: infra/smoke-check.sh "$STAGING_BASE_URL"
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9 (same pin as ci.yml)
@@ -136,7 +137,7 @@ jobs:
         env:
           CI: "true"
           E2E_EXTERNAL: "1"
-          PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
+          PLAYWRIGHT_BASE_URL: ${{ vars.STAGING_BASE_URL }}
         run: pnpm --filter @plexco/web exec playwright test
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0 (same pin as ci.yml)
