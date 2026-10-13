@@ -53,7 +53,8 @@ describe("GET /api/auth/session", () => {
       csrfSecret: "csrf-1",
       expiresAt: new Date("2030-01-01T00:00:00Z"),
     } as never);
-    // A's profile read failed (nulls), B's raw locale is present: both serve the DD-118 value.
+    // A's profile read failed (nulls); B's stored "fr" is outside vi/en. Each tenant must serve the
+    // resolved DD-118 value, never the raw profile one (`m.locale ?? resolve...` would serve "fr").
     vi.mocked(tenantsForPersonWithProfile).mockResolvedValue([
       { tenantId: A, role: "owner", name: null, slug: null, locale: null, timezone: null },
       {
@@ -61,11 +62,19 @@ describe("GET /api/auth/session", () => {
         role: "admin",
         name: "CLB B",
         slug: "clb-b",
-        locale: "vi",
+        locale: "fr",
         timezone: "Asia/Ho_Chi_Minh",
       },
     ]);
-    vi.mocked(resolveTenantLang).mockImplementation(async (_db, id) => (id === A ? "en" : "vi"));
+    // One at a time: a person in many clubs must not take the whole pool (peak in-flight = 1).
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(resolveTenantLang).mockImplementation(async (_db, id) => {
+      peak = Math.max(peak, ++inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return id === A ? "en" : "vi";
+    });
 
     const res = await GET();
     const body = await res.json();
@@ -87,6 +96,7 @@ describe("GET /api/auth/session", () => {
         },
       ],
     });
+    expect(peak).toBe(1);
   });
 
   it("returns person, csrf and tenants enriched with profile (additive over tenantId/role)", async () => {

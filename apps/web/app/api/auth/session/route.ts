@@ -20,14 +20,13 @@ export async function GET(): Promise<Response> {
   }
   const handle = appDb();
   const memberships = await tenantsForPersonWithProfile(handle, session.personId);
-  const tenants = await Promise.all(
+  // One at a time, like the profile reads: a person in many clubs must not take the whole pool.
+  const tenants: SessionDto["tenants"] = [];
+  for (const m of memberships) {
     // Spread, never `m.role`: this route serialises the caller's OWN memberships back to them and
     // must not DECIDE on a role (DD-56; this file is exempt from lib/role-read-guard.test.ts).
-    memberships.map(async (m) => ({
-      ...m,
-      locale: await resolveTenantLang(handle.db, m.tenantId),
-    })),
-  );
+    tenants.push({ ...m, locale: await resolveTenantLang(handle.db, m.tenantId) });
+  }
   const dto: SessionDto = {
     personId: session.personId,
     expiresAt: session.expiresAt.toISOString(),
