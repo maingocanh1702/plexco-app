@@ -50,7 +50,7 @@
  * Web MVP lane M2c (host roster + manual mark-paid + reversal) registers: ALREADY_JOINED,
  * PLAYER_NOT_FOUND, REJOIN_REQUIRES_REVIEW (spec §3 catalog); ALLOCATION_EXCEEDS_FUNDS,
  * CHARGE_ALREADY_SETTLED, REVERSAL_EXCEEDS_EFFECTIVE (payment_reconcile BE/FE specs); and five codes
- * the specs do NOT pin, proposed in the lane report for decisions.md: ALLOCATION_NOT_FOUND,
+ * the specs do NOT pin, proposed as DD-127 (ledger PR) for decisions.md: ALLOCATION_NOT_FOUND,
  * REMOVE_REQUIRES_REVIEW, CHARGE_NOT_PAYABLE, MARK_PAID_TOTAL_MISMATCH, REVERSAL_NOT_SUPPORTED.
  *
  * INVALID_WEBHOOK_SECRET, WEBHOOK_PAYLOAD_MALFORMED, WEBHOOK_RATE_LIMITED and ZALO_TOKEN_INVALID
@@ -59,7 +59,7 @@
  *
  * LINK_CODE_INVALID, LINK_CODE_RATE_LIMITED and MERGE_REQUIRES_REVIEW arrived with POST /api/me/link (M3b),
  * named by feature_identity_tech.md section 7; LINK_UNAVAILABLE (503, key not configured) is not pinned by
- * the spec and is proposed in the lane report.
+ * the spec and is proposed as DD-127 (ledger PR).
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",

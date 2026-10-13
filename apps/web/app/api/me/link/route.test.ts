@@ -151,13 +151,18 @@ describe("POST /api/me/link outcomes", () => {
     );
   });
 
-  it("an account with no active person (SQLSTATE 42501 from consume) is LINK_CODE_INVALID, not a 500", async () => {
-    vi.mocked(linkZaloToAccount).mockRejectedValue(
-      Object.assign(new Error("x"), { code: "42501" }),
-    );
+  it("an account with no active person is LINK_CODE_INVALID (the service maps consume's target raise)", async () => {
+    vi.mocked(linkZaloToAccount).mockResolvedValue({ outcome: "invalid" });
     const res = await POST(req(good));
     expect(res.status).toBe(400);
     expect((await env(res)).error?.code).toBe("LINK_CODE_INVALID");
+  });
+
+  it("a 42501 the service did not map (ACL / row-security) propagates as a failure, never invalid", async () => {
+    vi.mocked(linkZaloToAccount).mockRejectedValue(
+      Object.assign(new Error("x"), { code: "42501" }),
+    );
+    await expect(POST(req(good))).rejects.toMatchObject({ code: "42501" });
   });
 
   it("any other database error still propagates", async () => {

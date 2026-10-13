@@ -259,15 +259,33 @@ describe("linkZaloToAccount - refusals", () => {
     expect(detail.blocking_tables).toContain("persons.merged_into_person_id");
   });
 
-  it("an account with no active person: consume raises 42501 (the route maps it to invalid)", async () => {
+  it("an account with no active person: consume's target raise is mapped to invalid", async () => {
     const zalo = await zaloUser();
     const orphan = (
       await ctx.owner.query(`INSERT INTO accounts (person_id) VALUES (NULL) RETURNING id`)
     ).rows[0].id as string;
     const issued = await issueFor(zalo.ciId);
-    await expect(linkZaloToAccount(ctx.appPool, issued.code, orphan, keys)).rejects.toMatchObject({
-      code: "42501",
+    // consume's own target RAISE is the one 42501 mapped to the generic invalid.
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, orphan, keys)).toEqual({
+      outcome: "invalid",
     });
+  });
+
+  it("any OTHER 42501 (a revoked EXECUTE grant) propagates instead of reading as an invalid code", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    const issued = await issueFor(zalo.ciId);
+    // Committed (an uncommitted REVOKE is invisible to the app connection) and restored in finally;
+    // the DB is private to this file and its tests run sequentially.
+    const sig = "link_code_consume(text, bytea, uuid, uuid, interval)";
+    try {
+      await ctx.owner.query(`REVOKE EXECUTE ON FUNCTION ${sig} FROM app`);
+      await expect(
+        linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys),
+      ).rejects.toMatchObject({ code: "42501" });
+    } finally {
+      await ctx.owner.query(`GRANT EXECUTE ON FUNCTION ${sig} TO app`);
+    }
   });
 
   it("an account-issued code is unsupported", async () => {
