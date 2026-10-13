@@ -75,8 +75,18 @@ case "$ROLE" in
     #     worker provision
     exec pnpm --filter @plexco/bot provision:queue
     ;;
+  migrate)
+    # DO App Platform PRE_DEPLOY job (infra/app.*.yaml): SQL migrations, then pg-boss/queue
+    # provisioning, BOTH with the job-scoped DATABASE_URL_MIGRATION (environments-setup §6 "Required
+    # CI order" steps 2-3). Runs from apps/bot because tsx is a production dependency there; the
+    # db package's own `migrate` script needs a dev-only tsx the pruned image does not carry.
+    # Not `exec`: the second step must follow only if the first succeeded (set -e aborts otherwise).
+    : "${DATABASE_URL_MIGRATION:?DATABASE_URL_MIGRATION is required for role=migrate}"
+    pnpm --filter @plexco/bot exec tsx ../../packages/db/src/migrate.ts
+    exec pnpm --filter @plexco/bot provision:queue
+    ;;
   *)
-    echo "[entrypoint] PROCESS_ROLE không hợp lệ: ${ROLE} (web|discovery|worker|provision)" >&2
+    echo "[entrypoint] PROCESS_ROLE không hợp lệ: ${ROLE} (web|discovery|worker|provision|migrate)" >&2
     exit 1
     ;;
 esac

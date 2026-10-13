@@ -1,0 +1,150 @@
+# Plexco STAGING - DigitalOcean App Platform spec (DD-04, docs/standards/environments-setup.md §3).
+#
+# SOURCE OF TRUTH for the staging app. Do not edit the app in the DO console: a console-only change
+# is drift, and the next .github/workflows/deploy-staging.yml run overwrites it.
+#
+# NO SECRET VALUE LIVES HERE. Every `type: SECRET` entry below is a NAME. Values are set once by the
+# owner in DO (docs/runbooks/staging-deploy.md §2) and carried forward by infra/render-app-spec.sh,
+# which copies the already-encrypted EV[...] value from the live app and FAILS if one is missing.
+#
+# Placeholders the workflow fills (infra/render-app-spec.sh): __IMAGE_DIGEST__ (sha256 of the ONE
+# image built for this run - never a mutable tag) and __VPC_ID__ (GitHub environment variable
+# DO_VPC_ID, the staging sgp1 VPC UUID).
+#
+# STAGING SIZING: 1 web + 1 discovery + 1 worker. Production runs 2 web + 2 discovery (HTTP HA needs
+# >= 2 containers) - staging proves the same components, roles, VPC path and migration job, but a
+# single replica each keeps the 48-96h ephemeral environment inside the $8-18/month envelope
+# (§11). Rolling-deploy and two-instance HA are therefore NOT exercised on staging; the production
+# acceptance checklist (§10) keeps those two items open until measured on a 2-instance run.
+name: plexco-staging
+region: sgp
+
+vpc:
+  id: __VPC_ID__
+
+# Path routing on the one public hostname. `discovery` only ever serves /healthz and /discover*
+# (PROCESS_ROLE=discovery allowlist in apps/web/middleware.ts); everything else is `web`.
+ingress:
+  rules:
+    - match:
+        path:
+          prefix: /discover
+      component:
+        name: discovery
+    - match:
+        path:
+          prefix: /
+      component:
+        name: web
+
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+# Migrations + pg-boss/queue provisioning. PRE_DEPLOY = runs to completion inside the VPC against
+# the new image BEFORE the new web/discovery/worker containers take traffic; a non-zero exit fails
+# the whole deployment (the previous deployment keeps serving). DATABASE_URL_MIGRATION (DDL-owner
+# role) exists on THIS component only - never on a runtime component (§4, §13).
+jobs:
+  - name: migrate
+    kind: PRE_DEPLOY
+    image: &image
+      registry_type: DOCR
+      repository: plexco
+      digest: __IMAGE_DIGEST__
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 1
+    envs:
+      - key: PROCESS_ROLE
+        scope: RUN_TIME
+        value: migrate
+      - key: DATABASE_URL_MIGRATION
+        scope: RUN_TIME
+        type: SECRET
+
+services:
+  - name: web
+    image: *image
+    http_port: 3000
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 1
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 20
+      period_seconds: 10
+      timeout_seconds: 3
+      failure_threshold: 6
+    alerts:
+      - { rule: CPU_UTILIZATION, operator: GREATER_THAN, value: 80, window: FIVE_MINUTES }
+      - { rule: MEM_UTILIZATION, operator: GREATER_THAN, value: 85, window: FIVE_MINUTES }
+      - { rule: RESTART_COUNT, operator: GREATER_THAN, value: 2, window: FIVE_MINUTES }
+      - { rule: REQUEST_DURATION_P95_MS, operator: GREATER_THAN, value: 1500, window: FIVE_MINUTES }
+    envs:
+      - { key: PROCESS_ROLE, scope: RUN_TIME, value: web }
+      - { key: NODE_ENV, scope: RUN_TIME, value: production }
+      - { key: LOG_LEVEL, scope: RUN_TIME, value: info }
+      # Rate limits trust ONLY DO's overwritten do-connecting-ip (never X-Forwarded-For).
+      - { key: TRUSTED_INGRESS_PROVIDER, scope: RUN_TIME, value: digitalocean }
+      # Fixed origin, never derived from Host. Staging uses the app's default *.ondigitalocean.app
+      # URL; register ${APP_URL}/api/auth/google/callback in the STAGING Google OAuth client.
+      - { key: APP_BASE_URL, scope: RUN_TIME, value: "${APP_URL}" }
+      - { key: CSP_SCRIPT_NONCE_ENABLED, scope: RUN_TIME, value: "false" }
+      # Opt-in guard (program default): rehearsed on staging so a wrong credential fails closed.
+      - { key: DB_EXPECTED_ROLE, scope: RUN_TIME, value: app }
+      # DB: pooled (transaction-mode) `app` URL. DATABASE_URL_LISTEN (direct `app` URL for the SSE
+      # listener) is deliberately absent: no code reads it at this base. Add it with the listener.
+      - { key: DATABASE_URL, scope: RUN_TIME, type: SECRET }
+      # Auth + encryption (AWS KMS envelope). The two AWS_* credentials are for the KMS SDK default
+      # credential chain; scope the IAM user to kms:Decrypt on KMS_KEY_ID only.
+      - { key: GOOGLE_OAUTH_CLIENT_ID, scope: RUN_TIME, type: SECRET }
+      - { key: GOOGLE_OAUTH_CLIENT_SECRET, scope: RUN_TIME, type: SECRET }
+      - { key: KMS_PROVIDER, scope: RUN_TIME, value: aws-kms }
+      - { key: KMS_KEY_ID, scope: RUN_TIME, type: SECRET }
+      - { key: AWS_REGION, scope: RUN_TIME, type: SECRET }
+      - { key: AWS_ACCESS_KEY_ID, scope: RUN_TIME, type: SECRET }
+      - { key: AWS_SECRET_ACCESS_KEY, scope: RUN_TIME, type: SECRET }
+      - { key: KMS_ENCRYPTED_AUTH_PEPPER, scope: RUN_TIME, type: SECRET }
+      # Zalo link-code lookup HMAC (M3a producer + M3b web consumer MUST share the value).
+      - { key: LINK_CODE_LOOKUP_HMAC_KEY, scope: RUN_TIME, type: SECRET }
+
+  - name: discovery
+    image: *image
+    http_port: 3000
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 1
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 20
+      period_seconds: 10
+      timeout_seconds: 3
+      failure_threshold: 6
+    alerts:
+      - { rule: CPU_UTILIZATION, operator: GREATER_THAN, value: 80, window: FIVE_MINUTES }
+      - { rule: MEM_UTILIZATION, operator: GREATER_THAN, value: 85, window: FIVE_MINUTES }
+      - { rule: RESTART_COUNT, operator: GREATER_THAN, value: 2, window: FIVE_MINUTES }
+    envs:
+      - { key: PROCESS_ROLE, scope: RUN_TIME, value: discovery }
+      - { key: NODE_ENV, scope: RUN_TIME, value: production }
+      - { key: LOG_LEVEL, scope: RUN_TIME, value: info }
+      - { key: TRUSTED_INGRESS_PROVIDER, scope: RUN_TIME, value: digitalocean }
+      - { key: DB_EXPECTED_ROLE, scope: RUN_TIME, value: readonly }
+      # Pooled `readonly` URL on the primary (Day 1). Same KEY as web, different component secret.
+      - { key: DATABASE_URL, scope: RUN_TIME, type: SECRET }
+
+workers:
+  - name: worker
+    image: *image
+    instance_size_slug: apps-s-1vcpu-1gb-fixed
+    instance_count: 1
+    alerts:
+      - { rule: CPU_UTILIZATION, operator: GREATER_THAN, value: 80, window: FIVE_MINUTES }
+      - { rule: MEM_UTILIZATION, operator: GREATER_THAN, value: 85, window: FIVE_MINUTES }
+      - { rule: RESTART_COUNT, operator: GREATER_THAN, value: 2, window: FIVE_MINUTES }
+    envs:
+      - { key: PROCESS_ROLE, scope: RUN_TIME, value: worker }
+      - { key: NODE_ENV, scope: RUN_TIME, value: production }
+      - { key: LOG_LEVEL, scope: RUN_TIME, value: info }
+      # Owner-only flag: stays "false" until the real projector lands (see .env.example blocker).
+      - { key: OUTBOX_DISPATCH_SCHEDULE_ENABLED, scope: RUN_TIME, value: "false" }
+      # Direct/session `app_worker` URL (pg-boss needs LISTEN/NOTIFY + advisory locks, no pooler).
+      - { key: DATABASE_URL_DIRECT, scope: RUN_TIME, type: SECRET }
