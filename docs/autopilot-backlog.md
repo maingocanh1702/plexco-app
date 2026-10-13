@@ -5732,3 +5732,200 @@ notes: |
   Until this lands, the route gate's one-request window (decision committed before the command opens its own tx) is carried forward for the 7 routes using handleSessionCommand - the same posture DD-56 amendment #1 accepted. Guest-note commands keep their association proof; the actor recheck applies to the host path.
   merged_probe `actorRecheckUnderLock` is a slice-unique identifier the implementing lane must introduce (verify ABSENT on origin at author time of the manifest). Changes command signatures: serialize against any other lane touching session-service.ts.
   source: PR #43 review round 1 (should-fix 1).
+
+## task: zalo-connect-inflight-lease
+title: Lease per-tenant bao cả chuỗi connect Zalo (getMe → setWebhook → finish) — đóng cửa sổ URL webhook của connect "thua"
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: [auth, transport-zalo]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào (symbol duy nhất, verify ABSENT trên origin lúc author manifest); chưa có.
+_readiness: NOT_CODE_READY — scope chưa pin file (PR #47 không nêu đường dẫn); refine trên base đã merge.
+notes: |
+  Nguồn: PR #47 (M3a) review round 2, S-3. `finishZaloConnect` đã chặn token/secret bị đè (SUPERSEDED → 409, bot không bị flip active),
+  nhưng phía Zalo webhook có thể vẫn trỏ về URL của connect thua. Chưa có lock nào bao các call Zalo. Đề xuất: lease per-tenant.
+  source: PR #47 · DD-126
+
+## task: channel-inbound-events-retention-reclaimer
+title: Retention cho `channel_inbound_events` + reclaimer cho row `received` mắc kẹt
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema, retry-liveness]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chờ owner chọn retention (DD-126) và mô hình reclaimer.
+notes: |
+  Bảng mới của migration 0053 (PR #47) lưu raw payload đã mã hoá, UNIQUE (tenant_id, bot_id, external_event_id), chưa có
+  retention và chưa có job nào quét row `received` (store-before-process: crash giữa chừng để lại row chưa xử lý).
+  Ràng buộc: giữ dedup key đủ lâu để Zalo retry không xử lý trùng.
+  source: PR #47 (M3a) · DD-126
+
+## task: routing-audit-retention
+title: Retention cho `routing_audit` — tăng theo mỗi lần nạp cache secret và mỗi lần decrypt token
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema, auth]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chờ owner chọn chính sách retention hoặc sampling (DD-126).
+notes: |
+  PR #47 (M3a) ghi 1 row `routing_audit` (action `zalo.secret_decrypt`) cho mỗi lần nạp cache secret (60 s) và mỗi lần decrypt token.
+  Audit là bằng chứng — retention không được xoá row đang là bằng chứng của một sự kiện bảo mật chưa đóng. Cần quyết định trước khi
+  thêm job xoá/sampling.
+  source: PR #47 (M3a) review round 2 backlog note · DD-126
+
+## task: session-close-cancel-roster-review-policy
+title: review_policy cho close/cancel session có roster/charge — gỡ chặn luồng "chạy buổi → đóng" (hệ quả DD-117)
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [money-model, schema]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chờ owner quyết câu hỏi mở của DD-125 (ràng buộc DD-117 cho close/cancel nhánh paid/retry-root).
+notes: |
+  PR #46 (M2c): `closeSession` từ chối `CANCEL_REQUIRES_REVIEW` cho mọi charge (kể cả void); `cancelSession` từ chối khi còn active roster/charge.
+  Hệ quả: một session đã có một người được thêm thì không close/cancel được tới khi review_policy land. Đây là câu hỏi mở quan trọng
+  nhất của wave Web MVP. `roster-add-mark-paid-m2c` là slug tham chiếu, chưa phải row backlog — dùng khi PR #46 có row riêng.
+  source: PR #46 (M2c) owner note 1 · DD-117 · DD-125
+
+## task: m2c-round3-nits-follow-up
+title: Gom nit vòng 3 của M2c (remainingFor, guard returning của applyEffective, isStoredAdd, shape waitlisted-void)
+status: planned
+risk: P1
+change_class: code
+depends_on: []
+invariants: [money-model]
+scope: [packages/db/src/payment-manual.ts, packages/db/src/roster-service.ts, packages/db/src/session-read.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào (symbol duy nhất, ví dụ `remainingFor`); verify ABSENT trên origin lúc author manifest.
+_readiness: NOT_CODE_READY — không có verdict block; scope lấy từ PR #46 body; refine trên base đã merge.
+notes: |
+  Nit vòng 3 PR #46 đã ghi là "follow-up, không cần vòng fix":
+  N-1 `remaining` tính inline ở `session-read.ts` cạnh `planLines` → một primitive `remainingFor()` cạnh `chargeStatusFor` (clamp đến cùng DD-91);
+  N-2 `applyEffective` không-revive khớp 0 row trên charge void một cách im lặng → `.returning()` + throw khi 0 row;
+  N-3 comment replay nói quá DED2; N-4 preview copy predicate `open|closed` thay vì dùng chung `lockSession`;
+  N-5 `recordCommand` dùng commandId thô (`roster-service.ts:371`); N-6 `isStoredAdd` không validate `chargeId`/`waitlistPosition` khi replay;
+  N-7 `left` player re-add vào session đầy hiện `charge: {status: void}`, còn row waitlist mới là `charge: null` — document hoặc chuẩn hoá.
+  source: PR #46 (M2c) review round 3 · DD-125
+
+## task: request-id-log-context-auth-onboarding
+title: Gắn request id + tenant id vào log cho route auth và onboarding (hiện chỉ có ở `handleSessionCommand`)
+status: planned
+risk: P2
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/lib/log-context.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — phụ thuộc PR #50 (M5) chưa merge; danh sách route cần wire chưa pin.
+notes: |
+  PR #50 (M5) đã wire `apps/web/lib/log-context.ts` (AsyncLocalStorage requestId + tenantId) vào choke-point `handleSessionCommand`
+  (13 route session). Auth và onboarding routes là follow-up được ghi tường minh trong PR. Thêm đúng cách: đi qua cùng helper, không
+  viết logger thứ hai.
+  source: PR #50 (M5) · DD-129
+
+## task: db-tls-ca-verification-do-managed-pg
+title: Xác minh TLS CA + hostname cho kết nối DB tới DO Managed PG (hiện chỉ `sslmode=require`)
+status: idea
+risk: P1
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — phải xong trước production; chờ DO Managed PG được provision để đo CA thật.
+notes: |
+  PR #50 (M5), risk R2: `environments-setup` §4 yêu cầu DB TLS verification (CA + hostname); code không set `ssl` và image không mang
+  CA bundle của DO → hiện chỉ `sslmode=require`. Phải có trước production. Không sửa được nếu chưa có quyền DO.
+  source: PR #50 (M5) risks · DD-129
+
+## task: staging-ttl-teardown-automation
+title: Tự động teardown staging theo TTL (hiện teardown thủ công, đã ghi trong runbook)
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chờ staging chạy được lần đầu (owner asks PR #50).
+notes: |
+  PR #50 (M5) không có teardown TTL tự động; staging teardown thủ công, mô tả trong `docs/runbooks/staging-deploy.md`.
+  Worker cũng chưa có liveness probe — gom vào cùng lane nếu owner muốn.
+  source: PR #50 (M5) · DD-129
+
+## task: identity-definer-bypassrls-ownership-0054
+title: Chọn mô hình owner cho definer `link_code_reparent_empty_person` (0054) dưới NOBYPASSRLS
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: [auth, schema]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — phụ thuộc quyết định owner DD-127 (bracket BYPASSRLS hay giữ fail-closed). Không bắt đầu trước đó.
+notes: |
+  PR #49 (M3b): dưới migration owner NOBYPASSRLS, emptiness scan không đọc được bảng FORCE-RLS ⇒ mọi link thành `requires_review`
+  (fail-closed, không sai, nhưng vô dụng cho người dùng). Hướng sửa đã biết trong repo: bracket `SET ROLE` tới role BYPASSRLS NOLOGIN
+  (kiểu `job_definer` / `chat_definer`). Ràng buộc: R1 của PR #50 — role BYPASSRLS có thể bị DO Managed PG từ chối.
+  `depends_on` ghi staging-readiness vì R1 chỉ đo được trên cluster thật; dùng slug đúng khi PR #50 có row riêng.
+  source: PR #49 (M3b) known gaps · DD-127 · DD-129
+
+## task: reminder-preferences-m7
+title: Preference nhắc lịch cho player (M7) — chưa có reader nào
+status: idea
+risk: P2
+change_class: code
+depends_on: [reminder-cron-and-confirm-paid]
+invariants: [billing]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — ngoài Web MVP M0–M5; chờ M7 và quyết định phạm vi nhắc (DD-114 D2).
+notes: |
+  Ghi nhận từ ledger M7 (billing + nhắc tự động). Hiện không có reader cho preference nhắc. Liên quan trực tiếp row
+  `reminder-cron-and-confirm-paid`; không tạo bảng preference song song khi chưa có decision.
+  source: `docs/sessions/web-mvp-program-status.md` (M7) · DD-114 D2
+
+## task: web-bot-vnd-display-convention
+title: Một convention hiển thị VND cho web và bot (hiện `50.000 ₫` trên web, `110.000đ` trên bot)
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chờ owner chọn convention (DD-128 owner choice b).
+notes: |
+  PR #48 (M2b) owner note: hai format VND cùng tồn tại (web `50.000 ₫`, bot `110.000đ`). Chưa có decision chọn một. Khi chọn, chuẩn hoá
+  ở helper dùng chung thay vì sửa hai nơi.
+  source: PR #48 (M2b) owner notes · DD-128
