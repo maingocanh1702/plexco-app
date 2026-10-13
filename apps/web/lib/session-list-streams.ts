@@ -4,7 +4,7 @@ import type { SessionListItemDto } from "./sessions-api";
  * Pure list model. The API filters by ONE status and has no `upcoming` parameter, so a tab is a
  * set of "streams" (one paged request per status) merged on the client:
  *   all      -> [no status filter]
- *   upcoming -> [open], then keep startsAt >= now   (client-side; there is no server param)
+ *   upcoming -> [open], then keep startsAt > now   (client-side; there is no server param)
  *   draft    -> [draft]
  *   closed   -> [closed, cancelled]                 (two streams merged, newest first)
  */
@@ -57,7 +57,7 @@ export function visibleSessions(
     const watermark = boundaries.sort(newerFirst)[0]!;
     shown = merged.filter((x) => newerFirst(x, watermark) <= 0);
   }
-  return tab === "upcoming" ? shown.filter((x) => Date.parse(x.startsAt) >= now) : shown;
+  return tab === "upcoming" ? shown.filter((x) => Date.parse(x.startsAt) > now) : shown;
 }
 
 /**
@@ -70,6 +70,6 @@ export function hasMorePages(streams: readonly Stream[], tab?: ListTab, now?: nu
     if (!s.hasMore) return false;
     if (tab !== "upcoming" || now === undefined) return true;
     const last = s.items[s.items.length - 1];
-    return !last || Date.parse(last.startsAt) >= now;
+    return !last || Date.parse(last.startsAt) > now;
   });
 }

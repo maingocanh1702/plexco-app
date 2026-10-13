@@ -91,10 +91,12 @@ export function useSessionList(tenantId: string, tab: ListTab) {
   // Bumped whenever the tab/tenant/nonce effect restarts; a loadMore that started under an older
   // generation must not write its (old-tab) rows over the new tab's state.
   const generation = useRef(0);
+  const moreController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     generation.current += 1;
+    moreController.current?.abort();
     now.current = Date.now();
     setLoadingMore(false);
     setState({ status: "loading" });
@@ -139,23 +141,28 @@ export function useSessionList(tenantId: string, tab: ListTab) {
         );
       },
     );
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      moreController.current?.abort();
+    };
   }, [tenantId, tab, nonce]);
 
   const loadMore = useCallback(async () => {
     if (!streams || loadingMore) return;
     const gen = generation.current;
+    const controller = new AbortController();
+    moreController.current = controller;
     setLoadingMore(true);
     setMoreError(null);
     try {
       const next = await Promise.all(
         streams.map(async (s): Promise<Stream> => {
           if (!s.hasMore) return s;
-          const page = await listSessions(tenantId, {
-            status: s.status,
-            cursor: s.cursor,
-            limit: PAGE,
-          });
+          const page = await listSessions(
+            tenantId,
+            { status: s.status, cursor: s.cursor, limit: PAGE },
+            controller.signal,
+          );
           return {
             ...s,
             items: [...s.items, ...page.sessions],

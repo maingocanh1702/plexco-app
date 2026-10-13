@@ -18,7 +18,8 @@ import { withTenant } from "./tenant.js";
  * `GET /api/sessions`, `GET /api/sessions/:id`). Authorization is the CALLER's job (the route runs
  * authorize(session.manage) first); this module guarantees tenant isolation: every query runs in
  * `withTenant` (RLS) AND repeats `tenant_id = $tenant` explicitly, so a missing policy could not
- * widen a read.
+ * widen a read. The one exception is `sessionOccupancy` (shared with the commands, `counts.occupied`):
+ * it filters by session id only, relying on RLS plus the id already verified in this tenant.
  *
  * Least disclosure: only the columns named below leave. In particular `public_sessions.
  * confirmed_count` (0033: deliberately NOT exposed) is never selected or projected -- counts are
@@ -194,6 +195,7 @@ export async function listSessions(db: Db, params: ListSessionsParams): Promise<
     throw new SessionReadError("INVALID_CURSOR", "malformed cursor");
   }
   const limit = clampSessionLimit(params.limit);
+  const activeCountSql = sql<number>`(select count(*)::int from ${players} where ${players.sessionId} = ${sessions.id} and ${players.tenantId} = ${tenantId} and ${players.status} = 'active')`;
 
   const rows = await withTenant(db, tenantId, (tx) =>
     tx
@@ -201,10 +203,10 @@ export async function listSessions(db: Db, params: ListSessionsParams): Promise<
         ...scalarColumns,
         // Correlated count under the same tenant GUC + explicit tenant filter (least disclosure:
         // a number, never the roster). Active only: waitlisted/left rows do not occupy a slot.
-        activeCount: sql<number>`(select count(*)::int from ${players} where ${players.sessionId} = ${sessions.id} and ${players.tenantId} = ${tenantId} and ${players.status} = 'active')`,
+        activeCount: activeCountSql,
         // Occupied slots (BL-DSC-1: ONE capacity formula = active players + guest notes, same as
         // sessionOccupancy). Same tenant GUC + explicit tenant filter on both counts.
-        occupiedCount: sql<number>`((select count(*)::int from ${players} where ${players.sessionId} = ${sessions.id} and ${players.tenantId} = ${tenantId} and ${players.status} = 'active') + (select count(*)::int from ${sessionGuestNotes} where ${sessionGuestNotes.sessionId} = ${sessions.id} and ${sessionGuestNotes.tenantId} = ${tenantId}))::int`,
+        occupiedCount: sql<number>`(${activeCountSql} + (select count(*)::int from ${sessionGuestNotes} where ${sessionGuestNotes.sessionId} = ${sessions.id} and ${sessionGuestNotes.tenantId} = ${tenantId}))::int`,
         cursorStartsAt: sql<string>`to_char(${sessions.startsAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
       .from(sessions)

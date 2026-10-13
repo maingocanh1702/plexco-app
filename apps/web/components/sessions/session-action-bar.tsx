@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { useT } from "../../lib/i18n-client";
 import { allowedActions, blockedReason, type SessionAction } from "../../lib/session-actions";
 import type { SessionDetailDto } from "../../lib/sessions-api";
@@ -17,6 +18,10 @@ export function SessionActionBar({
   onAction: (action: Exclude<SessionAction, "edit">) => void;
 }) {
   const t = useT();
+  const uid = useId();
+  const editId = `${uid}-edit-blocked`;
+  const publishId = `${uid}-publish-blocked`;
+  const cancelId = `${uid}-cancel-blocked`;
   const actions = allowedActions(session.status);
   if (actions.length === 0) {
     return (
@@ -31,7 +36,7 @@ export function SessionActionBar({
     <div className={styles.actions}>
       {actions.includes("edit") ? (
         editBlocked ? (
-          <Button variant="secondary" disabled aria-describedby="edit-blocked">
+          <Button variant="secondary" disabled aria-describedby={editId}>
             {t("Sửa", "Edit")}
           </Button>
         ) : (
@@ -43,7 +48,7 @@ export function SessionActionBar({
       {actions.includes("publish") ? (
         <Button
           disabled={publishBlocked !== null}
-          aria-describedby={publishBlocked ? "publish-blocked" : undefined}
+          aria-describedby={publishBlocked ? publishId : undefined}
           onClick={() => onAction("publish")}
         >
           {t("Đăng kèo", "Publish")}
@@ -56,7 +61,7 @@ export function SessionActionBar({
         <Button
           variant="secondary"
           disabled={cancelBlocked !== null}
-          aria-describedby={cancelBlocked ? "cancel-blocked" : undefined}
+          aria-describedby={cancelBlocked ? cancelId : undefined}
           onClick={() => onAction("cancel")}
         >
           {session.status === "draft"
@@ -65,7 +70,7 @@ export function SessionActionBar({
         </Button>
       ) : null}
       {editBlocked ? (
-        <p id="edit-blocked" className={styles.viewOnly}>
+        <p id={editId} className={styles.viewOnly}>
           {t(
             "Buổi đã bắt đầu nên không sửa được nữa.",
             "The session has started, so it can no longer be edited.",
@@ -73,7 +78,7 @@ export function SessionActionBar({
         </p>
       ) : null}
       {publishBlocked ? (
-        <p id="publish-blocked" className={styles.viewOnly}>
+        <p id={publishId} className={styles.viewOnly}>
           {t(
             "Buổi đã qua giờ bắt đầu — sửa giờ trước khi đăng",
             "Start time has passed — change it before publishing",
@@ -81,7 +86,7 @@ export function SessionActionBar({
         </p>
       ) : null}
       {cancelBlocked ? (
-        <p id="cancel-blocked" className={styles.viewOnly}>
+        <p id={cancelId} className={styles.viewOnly}>
           {t(
             "Buổi đã bắt đầu nên không huỷ được — hãy đóng buổi.",
             "The session has started, so it can no longer be cancelled — close it instead.",
