@@ -11,9 +11,10 @@ import {
   createSession,
   guestNoteTenantForPerson,
   tenantLocale,
-  tenantsForPerson,
+  authorize,
+  withTenant,
 } from "@plexco/db";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import ts from "typescript";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +38,10 @@ vi.mock("@plexco/db", async (importOriginal) => {
   return {
     ...actual,
     createDb: vi.fn(() => ({ pool: {}, db: {} })),
-    tenantsForPerson: vi.fn(),
+    authorize: vi.fn(),
+    withTenant: vi.fn(async (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) =>
+      fn({}),
+    ),
     guestNoteTenantForPerson: vi.fn(),
     createSession: vi.fn(),
     tenantLocale: vi.fn(),
@@ -60,6 +64,8 @@ process.env.DATABASE_URL ??= "postgres://test:test@localhost:5432/test";
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const OTHER_TENANT = "22222222-2222-4222-8222-222222222222";
 const LIMIT = { bucket: "session-test", limit: 10 };
+const ALLOW_OWNER = { allowed: true, role: "owner" } as const;
+const DENY = { allowed: false, reason: "not_a_member" } as const;
 
 const liveSession = {
   sessionId: "sess-1",
@@ -93,12 +99,12 @@ const envelope = async (response: Response) =>
 
 beforeEach(() => {
   // vitest does not clear mock call history between tests by default, and the ordering cases
-  // below assert tenantsForPerson was NEVER called — without this they read leftover calls.
+  // below assert authorize was NEVER called — without this they read leftover calls.
   vi.clearAllMocks();
   vi.mocked(currentSession).mockResolvedValue(liveSession);
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
-  vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(authorize).mockResolvedValue(ALLOW_OWNER);
   vi.mocked(guestNoteTenantForPerson).mockResolvedValue(null);
   vi.mocked(tenantLocale).mockResolvedValue(null); // default: unresolvable tenant falls back to vi
 });
@@ -132,7 +138,7 @@ describe("resolveSessionCommandContext — entry gate", () => {
     );
     const { error } = await envelope(result as Response);
     expect(error).toMatchObject({ code: "INVALID_BODY", statusCode: 400 });
-    expect(tenantsForPerson).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
   });
 
   it("throttles a pre-authorization caller on an ACTOR bucket, before any membership read", async () => {
@@ -141,13 +147,13 @@ describe("resolveSessionCommandContext — entry gate", () => {
     const { error } = await envelope(result as Response);
     expect(error).toMatchObject({ code: "RATE_LIMITED", statusCode: 429 });
     expect(rateLimited).toHaveBeenCalledWith("session-actor:acc-1", 60, 60);
-    expect(tenantsForPerson).not.toHaveBeenCalled();
+    expect(authorize).not.toHaveBeenCalled();
   });
 
   it("does NOT spend the tenant bucket until membership is proven (no cross-tenant DoS)", async () => {
     // codex round-01 [P1]: the per-tenant counter is shared, so if a stranger could spend it they
     // could drive a victim tenant's real admins into 429s and tell a live tenant from 429-vs-403.
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(authorize).mockResolvedValue(DENY);
     const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
     const { error } = await envelope(result as Response);
     expect(error).toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
@@ -202,7 +208,7 @@ describe("resolveSessionCommandContext — entry gate", () => {
       ["CSRF_INVALID", () => vi.mocked(csrfOk).mockReturnValue(false), "Yêu cầu không hợp lệ."],
       [
         "FORBIDDEN",
-        () => vi.mocked(tenantsForPerson).mockResolvedValue([]),
+        () => vi.mocked(authorize).mockResolvedValue(DENY),
         "Bạn không có quyền với CLB này.",
       ],
       [
@@ -219,7 +225,7 @@ describe("resolveSessionCommandContext — entry gate", () => {
       vi.mocked(currentSession).mockResolvedValue(liveSession);
       vi.mocked(csrfOk).mockReturnValue(true);
       vi.mocked(rateLimited).mockResolvedValue(false);
-      vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+      vi.mocked(authorize).mockResolvedValue(ALLOW_OWNER);
       vi.mocked(tenantLocale).mockResolvedValue("en");
       arrange();
       const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
@@ -272,9 +278,9 @@ describe("explicit guest-note context", () => {
       order.push(bucket.startsWith("session-actor:") ? "actor" : "target");
       return false;
     });
-    vi.mocked(tenantsForPerson).mockImplementation(async () => {
+    vi.mocked(authorize).mockImplementation(async () => {
       order.push("admin");
-      return [];
+      return DENY;
     });
     vi.mocked(guestNoteTenantForPerson).mockImplementation(async () => {
       order.push("proof");
@@ -307,7 +313,7 @@ describe("explicit guest-note context", () => {
   it.each(["owner", "admin", "co_admin"])(
     "keeps %s on the existing admin path even if guest proof would fail",
     async (role) => {
-      vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role }]);
+      vi.mocked(authorize).mockResolvedValue({ allowed: true, role: role as "owner" });
       vi.mocked(guestNoteTenantForPerson).mockRejectedValue(new Error("must not run"));
       const result = await resolveSessionCommandContext(req({ commandId: "c" }), LIMIT, {
         guestNoteSessionId: "bad-id",
@@ -318,7 +324,7 @@ describe("explicit guest-note context", () => {
   );
 
   it("never infers guest mode from a body, URL or bucket", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(authorize).mockResolvedValue(DENY);
     vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
     const request = new Request(
       `https://plexco.app/api/sessions/${sessionId}/guest-notes?tenant=${TENANT}`,
@@ -344,7 +350,7 @@ describe("explicit guest-note context", () => {
       expect((result as Response).status).toBe(
         { auth: 401, csrf: 403, tenant: 400, actor: 429 }[kind],
       );
-      expect(tenantsForPerson).not.toHaveBeenCalled();
+      expect(authorize).not.toHaveBeenCalled();
       expect(guestNoteTenantForPerson).not.toHaveBeenCalled();
       expect(tenantLocale).not.toHaveBeenCalled();
       expect(request.bodyUsed).toBe(false);
@@ -352,7 +358,7 @@ describe("explicit guest-note context", () => {
   );
 
   it("keeps absent association indistinguishable and does not consume target quota or body", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(authorize).mockResolvedValue(DENY);
     vi.mocked(tenantLocale).mockResolvedValue("en");
     const request = req({ commandId: "c" });
     const result = await resolveSessionCommandContext(request, LIMIT, options);
@@ -368,7 +374,7 @@ describe("explicit guest-note context", () => {
   it.each(["database unavailable", "Invalid guest-note tenant context result"])(
     "propagates %s without entering tenant context",
     async (message) => {
-      vi.mocked(tenantsForPerson).mockResolvedValue([]);
+      vi.mocked(authorize).mockResolvedValue(DENY);
       const failure = new Error(message);
       vi.mocked(guestNoteTenantForPerson).mockRejectedValue(failure);
       const request = req({ commandId: "c" });
@@ -382,7 +388,7 @@ describe("explicit guest-note context", () => {
   it.each(["quota", "json", "commandId"] as const)(
     "uses tenant language for %s failure after proof",
     async (kind) => {
-      vi.mocked(tenantsForPerson).mockResolvedValue([]);
+      vi.mocked(authorize).mockResolvedValue(DENY);
       vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
       vi.mocked(tenantLocale).mockResolvedValue("en");
       vi.mocked(rateLimited).mockImplementation(
@@ -522,38 +528,53 @@ describe("resolveSessionCommandContext — body size ceiling", () => {
   });
 });
 
-describe("resolveSessionCommandContext — actor authorization", () => {
+describe("resolveSessionCommandContext — actor authorization (DD-56 authorize)", () => {
   it("allows an owner", async () => {
     const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
     expect(result).not.toBeInstanceOf(Response);
     expect(result).toMatchObject({ tenantId: TENANT, commandId: "c1" });
   });
 
-  it("allows a legacy admin (DD-56 maps it onto the session.manage preset)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "admin" }]);
-    const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
-    expect(result).not.toBeInstanceOf(Response);
+  it.each(["admin", "co_admin"] as const)(
+    "allows %s (default preset holds session.manage)",
+    async (role) => {
+      vi.mocked(authorize).mockResolvedValue({ allowed: true, role });
+      const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
+      expect(result).not.toBeInstanceOf(Response);
+    },
+  );
+
+  it("asks authorize() for exactly session.manage, for the canonical tenant and the session's person, inside withTenant", async () => {
+    await resolveSessionCommandContext(req({ commandId: "c1" }, TENANT.toUpperCase()), LIMIT);
+    expect(withTenant).toHaveBeenCalledWith(expect.anything(), TENANT, expect.any(Function));
+    expect(authorize).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: TENANT,
+      action: "session.manage",
+      actorPersonId: liveSession.personId,
+    });
   });
 
-  it("ALLOWS co_admin — session.manage is in DD-56's DEFAULT preset, not the granted set", async () => {
-    // Reversed in codex round-01 [P2]. DD-56's explicit grant/expiry storage governs the
-    // SENSITIVE owner-only capabilities (role.manage, money.refund, billing.manage, …);
-    // session.manage is in the default preset that admin and co_admin share, so denying
-    // co_admin was a deviation from the accepted contract rather than extra safety.
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "co_admin" }]);
-    const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
-    expect(result).not.toBeInstanceOf(Response);
-  });
+  it.each(["unknown_action", "tenant_context", "not_a_member", "not_permitted", "grant_required"])(
+    "DENIES with 403 FORBIDDEN on authorize reason %s",
+    async (reason) => {
+      vi.mocked(authorize).mockResolvedValue({ allowed: false, reason });
+      const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
+      const { error } = await envelope(result as Response);
+      expect(error).toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+      expect(error?.message).not.toContain(reason);
+    },
+  );
 
-  it("DENIES an unrecognised role", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
-    const result = await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT);
-    const { error } = await envelope(result as Response);
-    expect(error).toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
+  it("an authorize() infrastructure failure propagates (5xx), never allow and never a fake 403", async () => {
+    vi.mocked(authorize).mockRejectedValue(new Error("connection reset"));
+    await expect(resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT)).rejects.toThrow(
+      /connection reset/,
+    );
+    const buckets = vi.mocked(rateLimited).mock.calls.map(([bucket]) => bucket);
+    expect(buckets).not.toContain(`session-test:${TENANT}`);
   });
 
   it("accepts an UPPERCASE tenant UUID and canonicalizes it (round-02 [P2])", async () => {
-    // PostgreSQL renders uuid lowercase, so comparing the raw value denied a legitimate member.
     const result = await resolveSessionCommandContext(
       req({ commandId: "c1" }, TENANT.toUpperCase()),
       LIMIT,
@@ -567,23 +588,31 @@ describe("resolveSessionCommandContext — actor authorization", () => {
     expect(rateLimited).toHaveBeenCalledWith(`session-test:${TENANT}`, 10, 60);
   });
 
-  it("TENANT ISOLATION: an owner of tenant A cannot command tenant B", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: OTHER_TENANT, role: "owner" }]);
+  it("TENANT ISOLATION: the decision is requested for the ROUTED tenant, so a foreign-tenant admin is denied by authorize", async () => {
+    vi.mocked(authorize).mockImplementation(async (_tx, params) =>
+      params.tenantId === OTHER_TENANT ? ALLOW_OWNER : DENY,
+    );
     const result = await resolveSessionCommandContext(req({ commandId: "c1" }, TENANT), LIMIT);
     const { error } = await envelope(result as Response);
     expect(error).toMatchObject({ code: "FORBIDDEN", statusCode: 403 });
   });
 
-  it("returns the SAME 403 for a non-member as for a bad role (no tenant-existence oracle)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+  it("returns the SAME 403 body for every denial reason (no tenant-existence oracle)", async () => {
+    vi.mocked(authorize).mockResolvedValue(DENY);
     const nonMember = await envelope(
       (await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT)) as Response,
     );
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
-    const wrongRole = await envelope(
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_permitted" });
+    const noCapability = await envelope(
       (await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT)) as Response,
     );
-    expect(nonMember.error).toEqual(wrongRole.error);
+    expect(nonMember.error).toEqual(noCapability.error);
+  });
+
+  it("no source file keeps a role list or tenantsForPerson in the session command gate", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(path.join(here, "session-command-route.ts"), "utf8");
+    expect(source).not.toMatch(/ALLOWED_ROLES|tenantsForPerson/);
   });
 });
 
@@ -662,7 +691,7 @@ describe("resolveSessionCommandContext — body", () => {
  */
 describe("CRITERION 1 — language reaches a real request (expected RED before the fix)", () => {
   it("a tenant with locale 'en' gets an English error message", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+    vi.mocked(authorize).mockResolvedValue(ALLOW_OWNER);
     vi.mocked(tenantLocale).mockResolvedValue("en");
     vi.mocked(createSession).mockRejectedValue(
       new SessionPublishError("SESSION_NOT_FOUND", "internal"),
@@ -688,7 +717,7 @@ describe("CRITERION 1 — language reaches a real request (expected RED before t
 
 describe("CRITERION 3 — Vietnamese stays the default on every unresolved path", () => {
   async function errorMessageFor(locale: string | null): Promise<string> {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+    vi.mocked(authorize).mockResolvedValue(ALLOW_OWNER);
     vi.mocked(tenantLocale).mockResolvedValue(locale);
     vi.mocked(createSession).mockRejectedValue(
       new SessionPublishError("SESSION_NOT_FOUND", "internal"),
@@ -1120,235 +1149,11 @@ describe("readExpectedVersion", () => {
   );
 });
 
-/**
- * Enforces clause 2 of the DD-56 amendment (owner 2026-08-26): the interim role predicate lives at
- * ONE choke-point, and no other file in apps/web decides on a membership role.
- *
- * This is an AST walk, and the reason is recorded below in an executable form rather than a
- * comment: the previous revision matched `role ===` / `ALLOWED_ROLES` textually, and codex proved
- * it bypassable — `["owner"].includes(m.role)`, `switch (m.role)` and `new Set([...]).has(m.role)`
- * all sail past it. Widening the pattern until it stops missing the forms someone happens to think
- * of is not a guarantee, because the form space is open (ternaries, `in`, index access, aliasing a
- * role into a local first). So the rule inverts: instead of enumerating the ways a role can be
- * COMPARED, detect any READ of a role property at all. Reading one in an API route or lib file
- * means participating in the authorization decision, whatever syntax follows.
- *
- * The allowlist is DERIVED from disk (measured, not assumed):
- *   - lib/session-command-route.ts             the choke-point this amendment governs
- *   - app/api/onboarding/readiness/route.ts    pre-existing, merged and gate-passed; the precedent
- *                                              the amendment cites in clause 6 (owner-only,
- *                                              different feature)
- * A third entry is a decision, not a chore: clause 1 requires its own owner decision.
- */
-describe("DD-56 amendment clause 2 — the role predicate has exactly one home", () => {
-  const WEB_ROOT = fileURLToPath(new URL("..", import.meta.url));
-
-  /** The first read of a `role` property, or null. Property assignment (`{ role: "owner" }`) and
-   *  type members (`role: string` in an interface) are NOT reads and do not count. */
-  function roleRead(sourceText: string, fileName = "probe.ts"): string | null {
-    const src = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true);
-    let hit: string | null = null;
-    const visit = (node: ts.Node): void => {
-      if (hit) return;
-      if (ts.isPropertyAccessExpression(node) && node.name.text === "role") {
-        hit = node.getText();
-      } else if (
-        ts.isElementAccessExpression(node) &&
-        node.argumentExpression &&
-        ts.isStringLiteralLike(node.argumentExpression) &&
-        node.argumentExpression.text === "role"
-      ) {
-        hit = node.getText();
-      } else if (
-        ts.isBindingElement(node) &&
-        ts.isIdentifier(node.name) &&
-        node.name.text === "role"
-      ) {
-        hit = node.getText();
-      } else if (
-        // ALIASED destructuring: `const { role: r } = membership` binds to `r`, so checking the
-        // bound name alone missed it — the propertyName is the side that names `role`.
-        // codex round-01 [P2].
-        ts.isBindingElement(node) &&
-        node.propertyName &&
-        ts.isIdentifier(node.propertyName) &&
-        node.propertyName.text === "role"
-      ) {
-        hit = node.getText();
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(src);
-    return hit;
-  }
-
-  function sourceFiles(dir: string, acc: string[] = []): string[] {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.name === ".next") continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) sourceFiles(full, acc);
-      else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith(".test.ts")) acc.push(full);
-    }
-    return acc;
-  }
-
-  it("no site outside the allowlist reads a membership role", () => {
-    const sites = [
-      ...sourceFiles(path.join(WEB_ROOT, "app")),
-      ...sourceFiles(path.join(WEB_ROOT, "lib")),
-    ]
-      .filter((file) => roleRead(readFileSync(file, "utf8"), file) !== null)
-      .map((file) => path.relative(WEB_ROOT, file).split(path.sep).join("/"))
-      .sort();
-
-    expect(sites).toEqual([
-      "app/api/onboarding/readiness/route.ts",
-      "lib/session-command-route.ts",
-    ]);
-  });
-
-  // Each form is a probe the PREVIOUS regex missed. They are permanent cases rather than one-off
-  // manual mutations, so the detector cannot silently lose a form later.
-  it.each([
-    ["strict equality", 'export const f = (m: { role: string }) => m.role === "owner";'],
-    ["Array.includes", 'export const f = (m: { role: string }) => ["owner"].includes(m.role);'],
-    [
-      "switch",
-      'export const f = (m: { role: string }) => { switch (m.role) { case "owner": return true; default: return false; } };',
-    ],
-    ["Set.has", 'export const f = (m: { role: string }) => new Set(["owner"]).has(m.role);'],
-    [
-      "destructured parameter",
-      'export const f = ({ role }: { role: string }) => role === "owner";',
-    ],
-    ["index access", 'export const f = (m: Record<string, string>) => m["role"] === "owner";'],
-    [
-      "aliased into a local first",
-      'export const f = (m: { role: string }) => { const r = m.role; return r === "owner"; };',
-    ],
-    ["ternary", 'export const f = (m: { role: string }) => (m.role === "owner" ? 1 : 0);'],
-    [
-      "aliased destructuring",
-      'export const f = (m: { role: string }) => { const { role: r } = m; return r === "owner"; };',
-    ],
-  ])("the AST detector catches the %s form", (_label, source) => {
-    expect(roleRead(source)).not.toBeNull();
-  });
-
-  it("the regex this replaced missed three of those forms — why this is an AST walk", () => {
-    // Exactly three, measured — not four. A destructured `({ role }) => role === "owner"` still
-    // contains the literal `role ===`, so the old pattern DID catch that one; claiming otherwise
-    // would overstate the case for this change. These three are the real escapes.
-    const SUPERSEDED = /\brole\s*(?:===|!==|==|!=)|ALLOWED_ROLES/;
-    const evaded = [
-      'export const f = (m: { role: string }) => ["owner"].includes(m.role);',
-      'export const f = (m: { role: string }) => { switch (m.role) { case "owner": return true; default: return false; } };',
-      'export const f = (m: { role: string }) => new Set(["owner"]).has(m.role);',
-    ];
-    for (const source of evaded) {
-      expect(SUPERSEDED.test(source)).toBe(false); // the old guard said "fine"
-      expect(roleRead(source)).not.toBeNull(); // the new one does not
-    }
-    // And one the old pattern did catch, kept so the comparison stays honest in both directions.
-    const caught = 'export const f = ({ role }: { role: string }) => role === "owner";';
-    expect(SUPERSEDED.test(caught)).toBe(true);
-    expect(roleRead(caught)).not.toBeNull();
-  });
-
-  it("does NOT flag a role-shaped type member or object literal (no false positive)", () => {
-    expect(roleRead("export interface M { role: string }")).toBeNull();
-    expect(roleRead('export const seed = { role: "owner" };')).toBeNull();
-  });
-
-  /**
-   * The CLOSED half of this guard, and the reason the syntax scan above is no longer load-bearing
-   * on its own.
-   *
-   * Two consecutive review rounds found the scan bypassable — first `includes` / `switch` /
-   * `Set.has`, then aliased destructuring and computed access `membership[key]`. That is the shape
-   * of an unbounded edge family: each round names one more form, and a computed access cannot be
-   * resolved syntactically at all. Enumerating harder is the wrong layer.
-   *
-   * So this checks the DOOR instead of the uses. Every membership role in apps/web comes from
-   * exactly one function, `tenantsForPerson` (the SECURITY DEFINER-backed resolver); grep confirms
-   * no other source exists in this app. A file cannot obtain a role without importing it, and an
-   * import specifier is finite and exact — no syntax trick evades it.
-   *
-   * Together the two halves close the family: the door bounds WHO can hold a role to three
-   * reviewed files, and the scan says which of those may DECIDE on one. Dynamic access remains
-   * unresolvable syntactically, which is precisely why the door check exists — it confines such
-   * code to this enumerated set rather than the whole app.
-   */
-  const ROLE_SOURCE_IMPORTERS = [
-    // Returns the caller's OWN memberships; passes them through and makes no role decision.
-    "app/api/auth/session/route.ts",
-    "app/api/onboarding/readiness/route.ts",
-    "lib/session-command-route.ts",
-  ];
-
-  function importsRoleSource(sourceText: string, fileName = "probe.ts"): boolean {
-    const src = ts.createSourceFile(fileName, sourceText, ts.ScriptTarget.Latest, true);
-    let found = false;
-    const visit = (node: ts.Node): void => {
-      if (found) return;
-      if (ts.isImportDeclaration(node)) {
-        const bindings = node.importClause?.namedBindings;
-        if (bindings && ts.isNamedImports(bindings)) {
-          for (const element of bindings.elements) {
-            if ((element.propertyName ?? element.name).text === "tenantsForPerson") found = true;
-          }
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(src);
-    return found;
-  }
-
-  it("only the enumerated files can OBTAIN a membership role at all", () => {
-    const importers = [
-      ...sourceFiles(path.join(WEB_ROOT, "app")),
-      ...sourceFiles(path.join(WEB_ROOT, "lib")),
-    ]
-      .filter((file) => importsRoleSource(readFileSync(file, "utf8"), file))
-      .map((file) => path.relative(WEB_ROOT, file).split(path.sep).join("/"))
-      .sort();
-
-    expect(importers).toEqual([...ROLE_SOURCE_IMPORTERS].sort());
-  });
-
-  it("every file that READS a role is one that may obtain one (the two halves agree)", () => {
-    const readers = [
-      ...sourceFiles(path.join(WEB_ROOT, "app")),
-      ...sourceFiles(path.join(WEB_ROOT, "lib")),
-    ]
-      .filter((file) => roleRead(readFileSync(file, "utf8"), file) !== null)
-      .map((file) => path.relative(WEB_ROOT, file).split(path.sep).join("/"));
-
-    for (const reader of readers) expect(ROLE_SOURCE_IMPORTERS).toContain(reader);
-  });
-
-  it("the import detector catches aliased and renamed specifiers", () => {
-    expect(importsRoleSource('import { tenantsForPerson } from "@plexco/db";')).toBe(true);
-    expect(importsRoleSource('import { tenantsForPerson as tfp } from "@plexco/db";')).toBe(true);
-    expect(importsRoleSource('import { resolveCapability } from "@plexco/db";')).toBe(false);
-  });
-
-  it("the scan actually reaches the routes it is meant to police (not a vacuous pass)", () => {
-    const scanned = sourceFiles(path.join(WEB_ROOT, "app")).map((file) =>
-      path.relative(WEB_ROOT, file).split(path.sep).join("/"),
-    );
-    expect(scanned).toContain("app/api/sessions/route.ts");
-    expect(scanned).toContain("app/api/sessions/[id]/publish/route.ts");
-    expect(scanned.length).toBeGreaterThan(8);
-  });
-});
-
 describe.each(["admin", "guest"])("extracted body reader for %s session commands", (actor) => {
   const options =
     actor === "guest" ? { guestNoteSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" } : {};
   beforeEach(() => {
-    if (actor === "guest") vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    if (actor === "guest") vi.mocked(authorize).mockResolvedValue(DENY);
     vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
     vi.mocked(tenantLocale).mockResolvedValue("en");
   });
@@ -1481,7 +1286,7 @@ describe.each(["admin", "guest"])("extracted body reader for %s session commands
 it.each(["auth", "csrf", "tenant", "actor", "association", "quota"] as const)(
   "guest body stays untouched after %s refusal",
   async (gate) => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(authorize).mockResolvedValue(DENY);
     vi.mocked(guestNoteTenantForPerson).mockResolvedValue(gate === "association" ? null : TENANT);
     if (gate === "auth") vi.mocked(currentSession).mockResolvedValue(null);
     if (gate === "csrf") vi.mocked(csrfOk).mockReturnValue(false);

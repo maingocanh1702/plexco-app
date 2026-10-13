@@ -148,6 +148,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (a) — the shared entry gate for the five session routes. It resolves language itself and runs
   // its handler body inside runWithLang; it is the reason those five need no wiring of their own.
   "lib/session-command-route.ts": "a",
+  "lib/session-read-route.ts": "a",
   // (a) — the guest-note error boundary. It calls t() to build every mapped message
   // (COMMAND_ID_CONFLICT..SESSION_NOT_OPEN) and its own docstring requires running inside
   // runWithLang; both callers only ever invoke it from within an already-wired "a" route's

@@ -1,7 +1,7 @@
 import {
   SessionUpdateAuthorizationError,
   SessionUpdateError,
-  tenantsForPerson,
+  authorize,
   updateSession,
 } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +22,10 @@ vi.mock("@plexco/db", async (importOriginal) => {
       db: { execute: async () => ({ rows: [{ locale: "vi" }] }) },
     })),
     updateSession: vi.fn(),
-    tenantsForPerson: vi.fn(),
+    authorize: vi.fn(),
+    withTenant: vi.fn(async (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) =>
+      fn({}),
+    ),
   };
 });
 
@@ -76,7 +79,7 @@ beforeEach(() => {
   });
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
-  vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "owner" });
   vi.mocked(updateSession).mockResolvedValue({
     sessionId: SESSION_ID,
     status: "open",
@@ -145,22 +148,20 @@ describe("PUT /api/sessions/:id", () => {
   });
 
   it("denies a caller with no session-managing role and never reaches the command", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     const response = await PUT(req({ commandId: "cmd_1" }), ctx());
     expect(response.status).toBe(403);
     expect(updateSession).not.toHaveBeenCalled();
   });
 
   it("allows co_admin (DD-56 default preset includes session.manage)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "co_admin" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "co_admin" });
     const response = await PUT(req({ commandId: "cmd_1" }), ctx());
     expect(response.status).toBe(200);
   });
 
   it("does not touch another tenant's session (isolation)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([
-      { tenantId: "44444444-4444-4444-8444-444444444444", role: "owner" },
-    ]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     const response = await PUT(req({ commandId: "cmd_1" }), ctx());
     expect(response.status).toBe(403);
     expect(updateSession).not.toHaveBeenCalled();

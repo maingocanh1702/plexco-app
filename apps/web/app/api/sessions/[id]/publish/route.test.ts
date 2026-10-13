@@ -2,7 +2,7 @@ import {
   publishSession,
   SessionPublishAuthorizationError,
   SessionPublishError,
-  tenantsForPerson,
+  authorize,
 } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
@@ -22,7 +22,10 @@ vi.mock("@plexco/db", async (importOriginal) => {
       db: { execute: async () => ({ rows: [{ locale: "vi" }] }) },
     })),
     publishSession: vi.fn(),
-    tenantsForPerson: vi.fn(),
+    authorize: vi.fn(),
+    withTenant: vi.fn(async (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) =>
+      fn({}),
+    ),
   };
 });
 
@@ -76,7 +79,7 @@ beforeEach(() => {
   });
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
-  vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "owner" });
   vi.mocked(publishSession).mockResolvedValue({
     sessionId: SESSION_ID,
     status: "open",
@@ -145,14 +148,14 @@ describe("POST /api/sessions/:id/publish", () => {
   });
 
   it("denies a caller with no session-managing role and never reaches the command", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     const response = await POST(req({ commandId: "cmd_1" }), ctx());
     expect(response.status).toBe(403);
     expect(publishSession).not.toHaveBeenCalled();
   });
 
   it("allows co_admin (DD-56 default preset includes session.manage)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "co_admin" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "co_admin" });
     const response = await POST(req({ commandId: "cmd_1" }), ctx());
     expect(response.status).toBe(200);
   });
