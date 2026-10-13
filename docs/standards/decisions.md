@@ -1751,7 +1751,7 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ### Rời khỏi MVP
 
-- **Không tích hợp ngân hàng:** không SePay, không ApiPay (kéo theo: không đối soát CK tự động, không cổng IP outbound cố định).
+- **Không tích hợp ngân hàng:** không SePay, không ApiPay.
 - **Không billing / paywall `host_pro` / entitlement:** **mọi CLB dùng mọi tính năng**. Phần "tiền `host_pro` (billing · đối soát CK
   · nhắc tự động)" của đợt B (DD-122 D2) bị gỡ.
 - **Không nhắc nợ tự động.**
@@ -1770,16 +1770,16 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 ### Hệ quả lên phụ thuộc đợt B/C
 
 - **M9 chỉ phụ thuộc M6** (RUN doc cũ ghi M6, M7). Không còn chờ M7.
-- Đợt A: mục "E2E staging đủ 5 khối" ở cột Cổng cuối của DD-122 D2 mất mục tiêu (không còn staging DO). Owner chưa nêu cổng thay thế
-  ⇒ **không tự bịa**; ghi OPEN trong báo cáo PR, owner chọn cổng cuối đợt A riêng.
 - DD-129 và các ràng buộc của nó (R1 BYPASSRLS trên DO · R2 TLS CA · cổng IP outbound SePay/ApiPay/Zalo Bot) **không còn trên
   đường găng MVP**; không bị xoá khỏi log — chỉ đóng băng cùng PR #50.
-- Đổi ý (đưa hạng mục nào trở lại) là một DD mới, không sửa lại mục này.
+- **Ghi chú chương trình (không phải quyết định owner):** cổng cuối đợt A thay cho "E2E staging đủ 5 khối" (DD-122 D2) vẫn do owner chọn.
 
-## DD-131 — Owner ký OD-0…OD-9 (14/10): đóng DD-123…DD-130, đảo một phần DD-117 D3 (close), thu hẹp scope · ✅ Quyết định owner 2026-10-14 (ghi từ chỉ dẫn lập kế hoạch của owner 2026-10-14; hiệu lực khi PR merge)
+---
+
+## DD-131 — Owner ký OD-0…OD-9 (14/10): đóng DD-123…DD-128 và DD-130, đóng băng DD-129, đảo một phần DD-117 D3 (close) · ✅ Quyết định owner 2026-10-14 (ghi từ chỉ dẫn lập kế hoạch của owner 2026-10-14; hiệu lực khi PR merge)
 
 > **Nguồn:** chỉ dẫn lập kế hoạch của owner ngày 2026-10-14 — mục G "OWNER DECISIONS 2026-10-14" (OD-0…OD-9) của file
-> context phase-2 của chương trình (file local, chưa track; cả chín mục còn nguyên, không mục nào bị xoá). Merge clerk của
+> context phase-2 của chương trình (file local, chưa track; cả mười mục còn nguyên, không mục nào bị xoá). Merge clerk của
 > chương trình merge PR này ở cuối phase; tới lúc đó mọi dòng dưới là "quyết định đã nói, chưa ký". Mục G **thay thế** mọi
 > dòng "default applied" của DD-122 D3 và các đề xuất 🟡 DD-123…DD-130 (v2.54). Hai nhãn do owner được yêu cầu xem kỹ:
 > **[REVERSAL]** (OD-1) và **[DEFAULT]** (OD-7, OD-9). Scope amendment của OD-0 nằm ở **DD-132**.
@@ -1832,7 +1832,7 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
     (host-confirmed)" kèm fallback "Other"; (4) nút reversal hiện cho mọi người có quyền thu tiền, `FORBIDDEN` giải thích trong
     dialog; (5) **không** thêm guard session-status cho reversal (cancel đã đòi 0 tiền ghi nhận — OD-1).
   - **PR #52 (M4):** (6) detach = Person rỗng mới, code bị revoke, có audit, **không** merge/claim; (7) tuỳ chọn nhắc nợ
-    **hoãn** (cũng là hệ quả của OD-0, M7 gỡ); (8) **không** đổi ngôn ngữ cấp member (hệ quả DD-118); (9) tự detach do người dùng
+    **hoãn** (tới M7, theo body PR #52); (8) **không** đổi ngôn ngữ cấp member (hệ quả DD-118); (9) tự detach do người dùng
     (mở rộng bot vốn chỉ có `/unlink` do host chạy); (10) `CHANNEL_NOT_LINKED` 409; (11) bucket `me-profile` 10/60 s và
     `me-detach` 5/600 s; bề mặt `/api/me/*` theo DD-118 bucket (b).
   - Đóng: các đề xuất "DD-131 candidate" trong body PR #52 và #53; migration `0055_me_settings_definers.sql`.
@@ -1848,6 +1848,8 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 **Trạng thái sau DD-131:** DD-123 · 124 · 125 · 126 · 127 · 128 · 130 chuyển 🟡 → ✅ (DD-123 ✅ có điều kiện: xác minh subset
 font trước khi ship). **DD-129 không được ký** — đóng băng theo OD-0 + DD-132 (PR #50 chỉ-owner). Không đổi DD-122 D1/D3/D4.
+
+---
 
 ## DD-122 — Gỡ FE PENDING cho **full MVP**; agent sở hữu UI design; scope BRD §5.1 ship 3 đợt; default cho quyết định treo · ✅ Quyết định owner 2026-10-12 (hiệu lực khi PR M0 merge)
 
