@@ -14,6 +14,14 @@
 const VERSION = "__SW_VERSION__"; // stamped per build by scripts/stamp-sw.mjs
 const STATIC_CACHE = "plexco-static-" + VERSION;
 const OFFLINE_URL = "/offline";
+// Copied by name from the cached /offline response (never content-encoding / content-length).
+const SECURITY_HEADERS = [
+  "content-security-policy",
+  "x-frame-options",
+  "x-content-type-options",
+  "referrer-policy",
+  "permissions-policy",
+];
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -71,15 +79,29 @@ async function offlineFallback(request) {
   const hit = await cache.match(OFFLINE_URL);
   if (!hit) return Response.error();
   const url = new URL(request.url);
-  const target = url.pathname === OFFLINE_URL ? "/" : url.pathname + url.search;
+  // "//host/..." is a protocol-relative URL, not a same-origin path: never hand it to the page.
+  const path = url.pathname;
+  const target = path === OFFLINE_URL || path.startsWith("//") ? "/" : path + url.search;
   const html = await hit.text();
+  // The cached page's CSP may be nonce-based; reuse its nonce so the injected script still runs.
+  const nonce = /nonce="([^"]+)"/.exec(html);
   // JSON string literal; "<" escaped so the value can never close the script tag.
   const tag =
-    "<script>window.__plxReturnTo=" + JSON.stringify(target).replace(/</g, "\\u003c") + "</script>";
-  return new Response(html.replace("<head>", "<head>" + tag), {
-    status: 200,
-    headers: { "content-type": "text/html; charset=utf-8" },
-  });
+    "<script" +
+    (nonce ? ' nonce="' + nonce[1] + '"' : "") +
+    ">window.__plxReturnTo=" +
+    JSON.stringify(target).replace(/</g, "\\u003c") +
+    "</script>";
+  // Function replacer: a string replacement would expand "$'", "$`", "$&" found inside `target`.
+  const headers = { "content-type": "text/html; charset=utf-8" };
+  for (const name of SECURITY_HEADERS) {
+    const value = hit.headers.get(name);
+    if (value) headers[name] = value;
+  }
+  return new Response(
+    html.replace("<head>", () => "<head>" + tag),
+    { status: 200, headers },
+  );
 }
 
 async function staleWhileRevalidate(request) {

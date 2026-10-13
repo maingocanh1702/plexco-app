@@ -26,8 +26,12 @@ export function ShellFrame({
   const lang = useLang();
 
   useEffect(() => {
+    const previous = document.documentElement.lang;
     document.documentElement.lang = lang;
     storeLang(lang);
+    return () => {
+      document.documentElement.lang = previous;
+    };
   }, [lang]);
 
   return (

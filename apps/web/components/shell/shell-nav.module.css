@@ -42,7 +42,7 @@
 /* Labels carry the global .sr-only (in the accessibility tree, not drawn). They are drawn again
    below 768px (bottom nav) and from 1024px (sidebar); the icon rail between keeps them hidden. */
 @media (max-width: 767px), (min-width: 1024px) {
-  .label {
+  .link .label {
     position: static;
     width: auto;
     height: auto;

@@ -90,20 +90,26 @@ export function NewClubForm() {
 
   if (state.status === "error") {
     return (
-      <main id="main-content" className={styles.page}>
-        <ErrorState
-          title={t("Không tải được trang", "Could not load this page")}
-          body={t("Kiểm tra kết nối mạng rồi thử lại.", "Check your connection and try again.")}
-          onRetry={() => void refresh()}
-        />
-      </main>
+      <>
+        <SkipLink />
+        <main id="main-content" className={styles.page}>
+          <ErrorState
+            title={t("Không tải được trang", "Could not load this page")}
+            body={t("Kiểm tra kết nối mạng rồi thử lại.", "Check your connection and try again.")}
+            onRetry={() => void refresh()}
+          />
+        </main>
+      </>
     );
   }
   if (state.status !== "ready") {
     return (
-      <main id="main-content" className={styles.page}>
-        <Spinner />
-      </main>
+      <>
+        <SkipLink />
+        <main id="main-content" className={styles.page}>
+          <Spinner />
+        </main>
+      </>
     );
   }
 

@@ -13,6 +13,11 @@ export function recoveryTarget(location: Pick<Location, "pathname" | "search" | 
   return location.pathname + location.search + location.hash;
 }
 
+/** Same-origin path only: exactly one leading "/" ("//" and "/\\" are protocol-relative). */
+export function safeReturnTo(candidate: unknown): string {
+  return typeof candidate === "string" && /^\/(?![/\\])/.test(candidate) ? candidate : "/";
+}
+
 function OfflineBody() {
   const t = useT();
   // The service worker answers a failed navigation to /c/<id> with this page, and Next then
@@ -24,8 +29,10 @@ function OfflineBody() {
     target.current =
       typeof window === "undefined"
         ? "/"
-        : ((window as unknown as { __plxReturnTo?: string }).__plxReturnTo ??
-          recoveryTarget(window.location));
+        : safeReturnTo(
+            (window as { __plxReturnTo?: unknown }).__plxReturnTo ??
+              recoveryTarget(window.location),
+          );
   }
   const retry = () => window.location.replace(target.current ?? "/");
   // Back online: return to the requested page straight away.
