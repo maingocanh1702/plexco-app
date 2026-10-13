@@ -2035,7 +2035,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0054_link_code_reparent_empty_person.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0054_link_code_reparent_empty_person.sql",
+        );
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
