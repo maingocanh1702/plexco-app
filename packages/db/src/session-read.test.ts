@@ -179,8 +179,8 @@ describe("getSessionDetail", () => {
     ).rows[0]!.id;
     // The ledger row behind amount_allocated: the host view derives effective/remaining from it.
     await ctx.owner.query(
-      `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by, reason_code)
-       VALUES ($1, $2, 20000, 'cash', $3, 'cash')`,
+      `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by)
+       VALUES ($1, $2, 20000, 'cash', $3)`,
       [tenant, chargeRow, person],
     );
     await ctx.owner.query(
@@ -212,7 +212,7 @@ describe("getSessionDetail", () => {
               source: "cash",
               amount: 20000,
               createdAt: expect.any(Date),
-              reasonCode: "cash",
+              reasonCode: null,
               reversesAllocationId: null,
             },
           ],
@@ -250,7 +250,15 @@ describe("cursor codec", () => {
     const id = "00000000-0000-4000-8000-0000000000a1";
     const ts = "2031-01-01T10:00:00.000001Z";
     expect(decodeSessionCursor(encodeSessionCursor(ts, id))).toEqual({ startsAt: ts, id });
+    const forged = [
+      "2031-13-45T10:00:00.000001Z",
+      "2031-02-29T00:00:00.000000Z",
+      "2031-04-31T00:00:00.000000Z",
+      "2031-01-01T24:00:00.000000Z",
+      "0000-01-01T00:00:00.000000Z",
+    ].map((x) => encodeSessionCursor(x, id));
     for (const bad of [
+      ...forged,
       "",
       "%%%",
       Buffer.from("[]").toString("base64url"),

@@ -54,9 +54,10 @@ import { resolveTenantLang } from "./tenant-lang";
  * WHAT IT EXPLICITLY DOES NOT DEFEND AGAINST. The decision here is made in a SEPARATE, already
  * committed transaction BEFORE the command opens its own. A role deactivation that commits in
  * between is not seen by the command: the in-command actor re-check under the command's own row
- * locks (the `actor-recheck-under-lock` invariant) is NOT implemented here -- it is the next
- * lane (M2a-2), which changes the commands' signatures. Until then the window is one request
- * long. Every domain rule -- status transitions, version races, roster and money guards --
+ * locks (the `actor-recheck-under-lock` invariant) is NOT implemented here -- it is the
+ * backlog slice `session-commands-actor-recheck-under-lock`, which changes the commands'
+ * signatures. Until then the window is one request long. Every domain rule -- status transitions,
+ * version races, roster and money guards --
  * belongs to the command, under its own row locks. It does not defend against a compromised
  * session cookie, nor against a malicious tenant admin acting WITHIN their own tenant (that is
  * what the commands' fail-closed money guards and the outbox audit trail are for), nor against
@@ -74,11 +75,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Pre-authorization ceiling, keyed on the ACTOR rather than the tenant. It bounds how fast an
- * authenticated caller can drive membership reads without ever touching a tenant's own quota.
- * Deliberately looser than the per-tenant write limits (spec §3 pins 10–20/min) so a legitimate
- * admin always meets the tenant limit first and this never becomes the binding constraint.
+ * authenticated caller can drive authorize() reads without ever touching a tenant's own quota.
+ * It is looser than the per-tenant WRITE limits (spec §3 pins 10–20/min) so a legitimate admin
+ * meets those first. It is NOT looser than the shared 60/min read bucket: an admin issuing only
+ * reads can reach either 60/min ceiling first, and that is acceptable (both answer 429).
  */
 const ACTOR_LIMIT = { limit: 60, windowSeconds: 60 };
+
+/** The ONE vi/en pair for SESSION_NOT_FOUND, shared by command and read routes. */
+export const SESSION_NOT_FOUND_MESSAGE = ["Không tìm thấy kèo.", "Session not found."] as const;
 
 /** The capability every session command and session read requires (default preset, DD-56). */
 const SESSION_ACTION = "session.manage";
@@ -434,12 +439,12 @@ export function readExpectedVersion(body: Record<string, unknown>): number | und
 const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   // Web MVP lane M2c (roster + manual mark-paid + reversal), raised as RosterMoneyError.
   ["ALLOCATION_EXCEEDS_FUNDS", 409],
+  ["ALLOCATION_NOT_FOUND", 404],
   ["ALREADY_JOINED", 409],
   ["CHARGE_ALREADY_SETTLED", 409],
   ["CHARGE_NOT_PAYABLE", 409],
   ["FORBIDDEN", 403],
   ["MARK_PAID_TOTAL_MISMATCH", 409],
-  ["NOT_FOUND", 404],
   ["PLAYER_NOT_FOUND", 404],
   ["REJOIN_REQUIRES_REVIEW", 409],
   ["REMOVE_REQUIRES_REVIEW", 409],
@@ -521,7 +526,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "The balance changed — review and confirm again.",
     ],
   ],
-  ["NOT_FOUND", ["Không tìm thấy khoản thanh toán.", "Payment not found."]],
+  ["ALLOCATION_NOT_FOUND", ["Không tìm thấy khoản thanh toán.", "Payment not found."]],
   ["PLAYER_NOT_FOUND", ["Không tìm thấy người chơi.", "Player not found."]],
   [
     "REJOIN_REQUIRES_REVIEW",
@@ -592,7 +597,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "Changing the price with existing charges requires a policy.",
     ],
   ],
-  ["SESSION_NOT_FOUND", ["Không tìm thấy kèo.", "Session not found."]],
+  ["SESSION_NOT_FOUND", [SESSION_NOT_FOUND_MESSAGE[0], SESSION_NOT_FOUND_MESSAGE[1]]],
   [
     "SESSION_NOT_OPEN",
     [

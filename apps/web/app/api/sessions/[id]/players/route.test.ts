@@ -142,6 +142,13 @@ describe("POST /api/sessions/:id/players", () => {
     expect((await envelope(response)).error?.code).toBe("INVALID_BODY");
   });
 
+  it("a non-string membershipId (null) is INVALID_BODY 400 and never reaches the command", async () => {
+    const response = await POST(req({ commandId: "c1", membershipId: null }), ctx());
+    expect(response.status).toBe(400);
+    expect((await envelope(response)).error?.code).toBe("INVALID_BODY");
+    expect(addMemberToSession).not.toHaveBeenCalled();
+  });
+
   it("the shared gate still applies: no commandId -> 400, role gate denied -> 403, command never reached", async () => {
     expect((await POST(req({ displayName: "x" }), ctx())).status).toBe(400);
     vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_permitted" });

@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { charges, memberships, players, sessions } from "../schema.js";
 import type { Db, Tx } from "./client.js";
-import { chargeStatusFor } from "./payment-manual.js";
+import { applyEffective, chargeStatusFor } from "./payment-manual.js";
 import {
   DISPLAY_NAME_MAX,
   UUID_RE,
@@ -9,6 +9,8 @@ import {
   emitSessionEvent,
   fail,
   isBoundedText,
+  isUuid,
+  requireCommandId,
   recordCommand,
   replayOrNull,
   requireActor,
@@ -57,10 +59,10 @@ const isStoredAdd = (v: unknown): v is StoredAdd => {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
   return (
-    typeof r.sessionId === "string" &&
-    typeof r.actorPersonId === "string" &&
-    typeof r.playerId === "string" &&
-    typeof r.membershipId === "string" &&
+    isUuid(r.sessionId) &&
+    isUuid(r.actorPersonId) &&
+    isUuid(r.playerId) &&
+    isUuid(r.membershipId) &&
     (r.status === "active" || r.status === "waitlisted")
   );
 };
@@ -127,16 +129,25 @@ export async function addMemberToSession(
       return fail("SESSION_NOT_FOUND", "session not found in tenant context");
     }
     const sessionId = params.sessionId.toLowerCase();
+    const commandKey = requireCommandId(commandId);
     const stored = await replayOrNull(
       tx,
       tenantId,
-      commandId,
+      commandKey,
       ADD_TYPE,
       sessionId,
       actor,
       isStoredAdd,
     );
     if (stored !== null) {
+      // A membershipId add is bound to its TARGET member (an id, not request content -- DD-117 D5):
+      // reusing the key for another member must not read as success. A displayName add has no
+      // stable target (the name never resolves to an existing member, DD-85), so it is bound only
+      // by session + actor.
+      const requested = (params.member as { membershipId?: unknown } | null)?.membershipId;
+      if (requested !== undefined && String(requested).toLowerCase() !== stored.membershipId) {
+        return fail("COMMAND_ID_CONFLICT", "command_id belongs to a different member");
+      }
       const { sessionId: _s, actorPersonId: _a, ...rest } = stored;
       return { ...rest, replayed: true };
     }
@@ -149,8 +160,10 @@ export async function addMemberToSession(
       .for("update");
     if (session === undefined)
       return fail("SESSION_NOT_FOUND", "session not found in tenant context");
-    if (session.status !== "draft" && session.status !== "open") {
-      return fail("SESSION_NOT_OPEN", "players can only be added to a draft or open session");
+    // OPEN only: a draft has no players and no charges (spec edge #28; cancelSession's draft branch
+    // and updateSession's any-charge price guard both rely on it), so draft is SESSION_NOT_OPEN.
+    if (session.status !== "open") {
+      return fail("SESSION_NOT_OPEN", "players can only be added to an open session");
     }
 
     const membershipId = await resolveMembership(tx, tenantId, actor, params.member);
@@ -213,7 +226,7 @@ export async function addMemberToSession(
       waitlistPosition,
       chargeId,
     };
-    await recordCommand(tx, tenantId, commandId, ADD_TYPE, result);
+    await recordCommand(tx, tenantId, commandKey, ADD_TYPE, result);
     const { sessionId: _s, actorPersonId: _a, ...rest } = result;
     return { ...rest, replayed: false };
   });
@@ -249,12 +262,14 @@ async function upsertCharge(
     return row!.id;
   }
   // Void charges only exist for removed players, whose effective allocations were 0 (and still are).
+  // REJOIN_REQUIRES_REVIEW is a fail-closed guard that this lane's writers cannot reach (removal
+  // requires effective 0); it protects against a `left` row created by a future writer. The revived
+  // amount_due re-derives from the CURRENT price, and applyEffective stays THE writer of
+  // amount_allocated/status (INV-7).
   const effective = (await effectiveByCharge(tx, [prior.id])).get(prior.id) ?? 0;
   if (effective !== 0) return fail("REJOIN_REQUIRES_REVIEW", "prior payments need review first");
-  await tx
-    .update(charges)
-    .set({ amountDue: price, amountAllocated: 0, status: chargeStatusFor(price, 0) })
-    .where(eq(charges.id, prior.id));
+  await tx.update(charges).set({ amountDue: price }).where(eq(charges.id, prior.id));
+  await applyEffective(tx, prior.id, price);
   return prior.id;
 }
 
@@ -277,11 +292,7 @@ interface StoredRemove {
 const isStoredRemove = (v: unknown): v is StoredRemove => {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
-  return (
-    typeof r.sessionId === "string" &&
-    typeof r.actorPersonId === "string" &&
-    typeof r.playerId === "string"
-  );
+  return isUuid(r.sessionId) && isUuid(r.actorPersonId) && isUuid(r.playerId);
 };
 
 /** Removes an UNPAID player (active or waitlisted): player -> left, charge -> void. Any effective
@@ -300,7 +311,7 @@ export async function removePlayerFromSession(
     const stored = await replayOrNull(
       tx,
       tenantId,
-      commandId,
+      requireCommandId(commandId),
       REMOVE_TYPE,
       sessionId,
       actor,
@@ -325,7 +336,8 @@ export async function removePlayerFromSession(
       .for("update");
     if (session === undefined)
       return fail("SESSION_NOT_FOUND", "session not found in tenant context");
-    if (session.status !== "draft" && session.status !== "open") {
+    // OPEN only (same invariant as add: a draft never holds player rows).
+    if (session.status !== "open") {
       return fail("SESSION_NOT_OPEN", "the roster of this session is frozen");
     }
     const [player] = await tx

@@ -1,4 +1,4 @@
-import { addMemberToSession, type AddMemberParams } from "@plexco/db";
+import { addMemberToSession, RosterMoneyError, type AddMemberParams } from "@plexco/db";
 import { ok } from "../../../../../lib/api-envelope";
 import { handleSessionCommand, present } from "../../../../../lib/session-command-route";
 import { appDb, currentSession } from "../../../../../lib/session-cookies";
@@ -27,6 +27,10 @@ export async function POST(
       const session = await currentSession();
       if (!session) throw new Error("session vanished between the entry gate and the command");
       const { id } = await params;
+      // A present-but-non-string membershipId (e.g. null) is a malformed body, not a missing member.
+      if (present(context.body, "membershipId") && typeof context.body.membershipId !== "string") {
+        throw new RosterMoneyError("INVALID_INPUT", "membershipId must be a string");
+      }
       // Only the keys the client sent are forwarded; the command rejects "both" and "neither".
       const member = {
         ...(present(context.body, "membershipId")

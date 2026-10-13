@@ -9,6 +9,7 @@ import {
   sports,
 } from "../schema.js";
 import type { Db } from "./client.js";
+import { effectiveByCharge } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -56,6 +57,13 @@ export function decodeSessionCursor(cursor: string): { startsAt: string; id: str
     if (!Array.isArray(parsed) || parsed.length !== 2) return null;
     const [startsAt, id] = parsed as unknown[];
     if (typeof startsAt !== "string" || !TS_RE.test(startsAt)) return null;
+    // Shape alone is not enough, and Date.parse is too lenient (it rolls 02-29 / 04-31 / 24:00
+    // over). Strict round-trip on the ms prefix; the microsecond tail stays untouched.
+    const d = new Date(startsAt);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 23) !== startsAt.slice(0, 23)) {
+      return null;
+    }
+    if (d.getUTCFullYear() < 1) return null; // Postgres has no year 0 (22008 -> 5xx)
     if (typeof id !== "string" || !UUID_RE.test(id)) return null;
     return { startsAt, id: id.toLowerCase() };
   } catch {
@@ -246,7 +254,10 @@ export async function getSessionDetail(
         chargeStatus: charges.status,
       })
       .from(players)
-      .innerJoin(memberships, eq(memberships.id, players.membershipId))
+      .innerJoin(
+        memberships,
+        and(eq(memberships.id, players.membershipId), eq(memberships.tenantId, tenantId)),
+      )
       .leftJoin(
         charges,
         and(
@@ -295,6 +306,12 @@ export async function getSessionDetail(
       allocationsByCharge.set(row.chargeId, list);
     }
 
+    // The canonical effective-amount derivation (never re-derived here): SUM of the ledger.
+    const effectiveById = await effectiveByCharge(
+      tx,
+      roster.flatMap((r) => (r.chargeId === null ? [] : [r.chargeId])),
+    );
+
     const mapped = roster.map((r) => ({
       id: r.id,
       membershipId: r.membershipId,
@@ -307,7 +324,7 @@ export async function getSessionDetail(
           ? null
           : (() => {
               const rows = allocationsByCharge.get(r.chargeId) ?? [];
-              const effectiveAllocated = rows.reduce((sum, a) => sum + a.amount, 0);
+              const effectiveAllocated = effectiveById.get(r.chargeId) ?? 0;
               return {
                 id: r.chargeId,
                 amountDue: r.amountDue as number,
@@ -315,9 +332,7 @@ export async function getSessionDetail(
                 status: r.chargeStatus as string,
                 effectiveAllocated,
                 remaining:
-                  r.chargeStatus === "void"
-                    ? 0
-                    : Math.max((r.amountDue as number) - effectiveAllocated, 0),
+                  r.chargeStatus === "void" ? 0 : (r.amountDue as number) - effectiveAllocated,
                 allocations: rows.map(({ chargeId: _c, ...a }) => a),
               };
             })(),

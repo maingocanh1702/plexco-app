@@ -59,6 +59,7 @@ describe("API_ERROR_CODES registry", () => {
   it("registers every literal the M2c roster / mark-paid / reversal routes can emit", () => {
     for (const code of [
       "ALLOCATION_EXCEEDS_FUNDS",
+      "ALLOCATION_NOT_FOUND",
       "ALREADY_JOINED",
       "CHARGE_ALREADY_SETTLED",
       "CHARGE_NOT_PAYABLE",

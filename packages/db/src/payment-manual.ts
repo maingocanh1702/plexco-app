@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import { charges, paymentAllocations, players, sessions } from "../schema.js";
 import type { Db, Tx } from "./client.js";
 import {
@@ -10,6 +10,8 @@ import {
   fail,
   isBoundedText,
   isPositiveInt4,
+  isUuid,
+  requireCommandId,
   recordCommand,
   replayOrNull,
   requireActor,
@@ -64,7 +66,8 @@ export async function applyEffective(
   await tx
     .update(charges)
     .set({ amountAllocated: effective, status })
-    .where(eq(charges.id, chargeId));
+    // never revive a void charge: its status is terminal, not derived
+    .where(and(eq(charges.id, chargeId), ne(charges.status, "void")));
   return { effective, status };
 }
 
@@ -114,15 +117,18 @@ const isStoredMarkPaid = (v: unknown): v is StoredMarkPaid => {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
   return (
-    typeof r.sessionId === "string" &&
-    typeof r.actorPersonId === "string" &&
+    isUuid(r.sessionId) &&
+    isUuid(r.actorPersonId) &&
     typeof r.total === "number" &&
     METHODS.includes(r.method as ManualPaymentMethod) &&
     Array.isArray(r.lines)
   );
 };
 
-function validateItems(params: MarkPaidParams): void {
+/** `confirm` requires an explicit per-line amount: the confirmed lines are exactly what the host saw
+ *  in the preview (which returns per-line amounts for the UI to resend), so a balance that changed
+ *  in between fails per line instead of silently re-splitting the same total. */
+function validateItems(params: MarkPaidParams, confirm: boolean): void {
   const { items, method, note } = params;
   if (!METHODS.includes(method)) fail("INVALID_INPUT", "unknown payment method");
   if (!Array.isArray(items) || items.length < 1 || items.length > MAX_ITEMS) {
@@ -137,6 +143,9 @@ function validateItems(params: MarkPaidParams): void {
     const key = item.playerId.toLowerCase();
     if (seen.has(key)) fail("INVALID_INPUT", "duplicate playerId in one batch");
     seen.add(key);
+    if (confirm && item.amount === undefined) {
+      fail("INVALID_INPUT", "confirm requires an explicit amount on every item");
+    }
     if (item.amount !== undefined && !isPositiveInt4(item.amount)) {
       fail("INVALID_INPUT", "amount must be a positive integer");
     }
@@ -149,30 +158,50 @@ function validateItems(params: MarkPaidParams): void {
 /** Locks the batch's charges (UUID order) and computes every line under that lock. */
 async function planLines(tx: Tx, sessionId: string, params: MarkPaidParams, lock: boolean) {
   const ids = params.items.map((i) => i.playerId.toLowerCase());
+  // FROM players LEFT JOIN charges: a visible roster row WITHOUT a charge (waitlisted) is a payable-
+  // state problem (CHARGE_NOT_PAYABLE), not a missing player. NULLs sort last, so charges still lock
+  // in UUID order.
   const query = tx
     .select({
       chargeId: charges.id,
-      playerId: charges.playerId,
+      playerId: players.id,
       amountDue: charges.amountDue,
       chargeStatus: charges.status,
       playerStatus: players.status,
     })
-    .from(charges)
-    .innerJoin(players, eq(players.id, charges.playerId))
-    .where(and(eq(charges.sessionId, sessionId), inArray(charges.playerId, ids)))
+    .from(players)
+    .leftJoin(
+      charges,
+      and(eq(charges.playerId, players.id), eq(charges.sessionId, players.sessionId)),
+    )
+    .where(and(eq(players.sessionId, sessionId), inArray(players.id, ids)))
     .orderBy(asc(charges.id));
-  const found = await (lock ? query.for("update", { of: charges }) : query);
+  if (lock) {
+    // FOR UPDATE cannot apply to the nullable side of an outer join, so the charges are locked by
+    // their own statement (UUID order) BEFORE the read that computes the lines.
+    await tx
+      .select({ id: charges.id })
+      .from(charges)
+      .where(and(eq(charges.sessionId, sessionId), inArray(charges.playerId, ids)))
+      .orderBy(asc(charges.id))
+      .for("update");
+  }
+  const found = await query;
   const byPlayer = new Map(found.map((c) => [c.playerId, c]));
   const effective = await effectiveByCharge(
     tx,
-    found.map((c) => c.chargeId),
+    found.flatMap((c) => (c.chargeId === null ? [] : [c.chargeId])),
   );
   let total = 0;
   const lines: MarkPaidLine[] = params.items.map((item) => {
     const charge = byPlayer.get(item.playerId.toLowerCase());
-    if (charge === undefined)
-      return fail("PLAYER_NOT_FOUND", "player has no charge in this session");
-    if (charge.playerStatus !== "active" || charge.chargeStatus === "void") {
+    if (charge === undefined) return fail("PLAYER_NOT_FOUND", "player not found in this session");
+    if (
+      charge.chargeId === null ||
+      charge.amountDue === null ||
+      charge.playerStatus !== "active" ||
+      charge.chargeStatus === "void"
+    ) {
       return fail("CHARGE_NOT_PAYABLE", "only an active player's open charge can be paid");
     }
     const before = effective.get(charge.chargeId) ?? 0;
@@ -202,8 +231,8 @@ export async function lockSession(tx: Tx, sessionId: string): Promise<void> {
     .for("update");
   // RLS hides another tenant's session, so this is also the cross-tenant answer (404, not 403).
   if (row === undefined) fail("SESSION_NOT_FOUND", "session not found in tenant context");
-  if (row!.status === "cancelled")
-    fail("SESSION_NOT_OPEN", "a cancelled session takes no payments");
+  if (row!.status !== "open" && row!.status !== "closed")
+    fail("SESSION_NOT_OPEN", "only an open or closed session takes payments");
 }
 
 const ACTIONS = ["session.manage", "money.mark_paid"] as const;
@@ -211,7 +240,7 @@ const ACTIONS = ["session.manage", "money.mark_paid"] as const;
 /**
  * Preview (preview: true) is READ-ONLY: authorizes, computes the per-player remaining balance and the
  * server total, writes nothing and consumes no commandId. Confirm re-computes under lock and requires
- * `expectedTotal` to equal the fresh total (a stale preview -> MARK_PAID_TOTAL_MISMATCH, nothing
+ * `expectedTotal` to equal the fresh total (expectedTotal != sum of the item amounts -> MARK_PAID_TOTAL_MISMATCH, nothing
  * written). One commandId covers the whole batch; a retry returns the stored result.
  */
 export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaidResult> {
@@ -225,28 +254,44 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
     const sessionId = params.sessionId.toLowerCase();
 
     if (params.preview) {
-      validateItems(params);
+      validateItems(params, false);
       const [s] = await tx
         .select({ status: sessions.status })
         .from(sessions)
         .where(eq(sessions.id, sessionId));
       if (s === undefined) return fail("SESSION_NOT_FOUND", "session not found in tenant context");
-      if (s.status === "cancelled")
-        return fail("SESSION_NOT_OPEN", "a cancelled session takes no payments");
+      if (s.status !== "open" && s.status !== "closed")
+        return fail("SESSION_NOT_OPEN", "only an open or closed session takes payments");
       const plan = await planLines(tx, sessionId, params, false);
       return { preview: true, replayed: false, method: params.method, ...plan };
     }
 
+    const commandKey = requireCommandId(commandId);
     const stored = await replayOrNull(
       tx,
       tenantId,
-      commandId,
+      commandKey,
       MARK_PAID_TYPE,
       sessionId,
       actor,
       isStoredMarkPaid,
     );
     if (stored !== null) {
+      // Bound to its TARGET set (ids, not request content -- DD-117 D5), like add/remove/reverse.
+      // A malformed retry keeps replaying (DED2).
+      if (Array.isArray(params.items)) {
+        const asked = new Set(
+          params.items.map((i) =>
+            typeof (i as { playerId?: unknown })?.playerId === "string"
+              ? (i as { playerId: string }).playerId.toLowerCase()
+              : "",
+          ),
+        );
+        const had = new Set(stored.lines.map((l) => l.playerId));
+        if (asked.size !== had.size || [...asked].some((id) => !had.has(id))) {
+          return fail("COMMAND_ID_CONFLICT", "command_id belongs to a different player set");
+        }
+      }
       return {
         preview: false,
         replayed: true,
@@ -255,7 +300,7 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
         lines: stored.lines,
       };
     }
-    validateItems(params);
+    validateItems(params, true);
     if (!isPositiveInt4(params.expectedTotal)) {
       return fail("INVALID_INPUT", "expectedTotal (from the preview) is required");
     }
@@ -263,10 +308,15 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
     await lockSession(tx, sessionId);
     const plan = await planLines(tx, sessionId, params, true);
     if (plan.total !== params.expectedTotal) {
-      return fail("MARK_PAID_TOTAL_MISMATCH", "the balance changed since the preview");
+      return fail(
+        "MARK_PAID_TOTAL_MISMATCH",
+        "expectedTotal does not equal the sum of the item amounts",
+      );
     }
 
-    const reason = params.note === undefined ? params.method : params.note;
+    // ponytail: 4 statements per line (insert, recompute, charge update, outbox); 200 items max
+    // (MAX_ITEMS) keeps a confirm well inside the transaction budget. Batch the inserts if the cap
+    // is ever raised.
     const lines: MarkPaidLine[] = [];
     for (const line of plan.lines) {
       const [alloc] = await tx
@@ -278,7 +328,8 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
           source: params.method,
           bankTransactionId: null,
           createdBy: actor,
-          reasonCode: reason,
+          // The method is already the row's `source`; reason_code carries ONLY the host's note.
+          reasonCode: params.note ?? null,
         })
         .returning({ id: paymentAllocations.id });
       const derived = await applyEffective(tx, line.chargeId, line.amountDue);
@@ -300,7 +351,7 @@ export async function markPaid(db: Db, params: MarkPaidParams): Promise<MarkPaid
       total: plan.total,
       lines,
     };
-    await recordCommand(tx, tenantId, commandId as string, MARK_PAID_TYPE, result);
+    await recordCommand(tx, tenantId, commandKey, MARK_PAID_TYPE, result);
     return { preview: false, replayed: false, method: params.method, total: plan.total, lines };
   });
 }
