@@ -29,6 +29,8 @@ export function ShellNav({ tenantId }: { tenantId: string }) {
                 href={item.href}
                 className={styles.link}
                 aria-current={active ? "page" : undefined}
+                aria-label={item.label}
+                title={item.label}
               >
                 {item.icon}
                 <span className={styles.label}>{item.label}</span>

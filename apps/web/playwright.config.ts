@@ -37,7 +37,7 @@ export default defineConfig({
       env: { E2E_PG_PORT: String(PG_PORT) },
     },
     {
-      command: process.env.E2E_SKIP_BUILD ? START : `pnpm exec next build && ${START}`,
+      command: process.env.E2E_SKIP_BUILD ? START : `pnpm run build && ${START}`,
       url: `http://127.0.0.1:${PORT}/healthz`,
       timeout: 300_000,
       reuseExistingServer: !process.env.CI,

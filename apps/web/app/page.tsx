@@ -1,5 +1,6 @@
 import { LandingView } from "../components/landing/landing-view";
 import { WorkspaceRedirect } from "../components/landing/workspace-redirect";
+import { normalizeAuthErrorParam } from "../lib/auth-error-message";
 import { log } from "../lib/log";
 import { currentSession } from "../lib/session-cookies";
 
@@ -15,7 +16,8 @@ export default async function LandingPage({
   searchParams: Promise<{ auth_error?: string | string[] }>;
 }) {
   const params = await searchParams;
-  const authError = typeof params.auth_error === "string" ? params.auth_error : null;
+  // Closed set only: the raw query value never enters the RSC payload.
+  const authError = normalizeAuthErrorParam(params.auth_error);
 
   let signedIn = false;
   try {

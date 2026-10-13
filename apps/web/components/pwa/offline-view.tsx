@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { LangProvider, normalizeLang, useT, type ClientLang } from "../../lib/i18n-client";
-import { LANG_STORAGE_KEY } from "../shell/shell-frame";
+import { readStoredLang } from "../../lib/lang-storage";
 import { Button } from "../ui/button";
 import { SkipLink } from "../ui/skip-link";
 import styles from "./offline-view.module.css";
@@ -39,11 +39,7 @@ function OfflineBody() {
 export function OfflineView() {
   const [lang, setLang] = useState<ClientLang>("vi");
   useEffect(() => {
-    try {
-      setLang(normalizeLang(window.localStorage.getItem(LANG_STORAGE_KEY)));
-    } catch {
-      // Storage unavailable: stay on the `vi` default.
-    }
+    setLang(normalizeLang(readStoredLang()));
   }, []);
   useEffect(() => {
     document.documentElement.lang = lang;

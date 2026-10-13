@@ -80,9 +80,9 @@ export default tseslint.config(
     },
   },
   {
-    // Hand-written service worker (apps/web/public/sw.js): it runs in ServiceWorkerGlobalScope,
+    // Hand-written service worker (apps/web/sw/sw.template.js, stamped into public/sw.js): it runs in ServiceWorkerGlobalScope,
     // not Node and not a window, so the browser worker globals are declared here by name.
-    files: ["apps/web/public/sw.js"],
+    files: ["apps/web/sw/sw.template.js", "apps/web/public/sw.js"],
     languageOptions: {
       sourceType: "script",
       globals: {

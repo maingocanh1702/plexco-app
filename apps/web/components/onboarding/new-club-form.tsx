@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ApiClientError, apiFetch } from "../../lib/api-client";
 import { useT } from "../../lib/i18n-client";
 import {
@@ -38,6 +38,7 @@ export function NewClubForm() {
   const [errors, setErrors] = useState<NewClubErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
   // The full IANA list is browser-dependent, so it is read after mount (no hydration mismatch).
   useEffect(() => {
@@ -47,6 +48,14 @@ export function NewClubForm() {
   useEffect(() => {
     if (state.status === "signed-out") router.replace("/");
   }, [state.status, router]);
+
+  // After a failed submit, move focus to the first invalid field so keyboard and screen-reader
+  // users land on the problem (the error text is wired via aria-describedby).
+  useEffect(() => {
+    if (Object.keys(errors).length > 0) {
+      formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
+  }, [errors]);
 
   const timezoneOptions = useMemo(
     () => timezones.map((value) => ({ value, label: value.replace(/_/g, " ") })),
@@ -112,7 +121,7 @@ export function NewClubForm() {
           </p>
         </div>
         <Card className={styles.card}>
-          <form className={styles.form} onSubmit={onSubmit} noValidate>
+          <form ref={formRef} className={styles.form} onSubmit={onSubmit} noValidate>
             {formError ? <InlineError>{formError}</InlineError> : null}
             <TextField
               label={t("Tên câu lạc bộ", "Club name")}

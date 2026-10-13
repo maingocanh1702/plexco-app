@@ -121,7 +121,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Build web
+      - name: Build web (stamps the service worker version, then next build)
         # next/font/google downloads Sora + Inter here (network required), so this is the one
         # step that must run on a runner with internet access.
         env:
@@ -136,3 +136,14 @@ jobs:
           CI: "true"
           E2E_SKIP_BUILD: "1"
         run: pnpm --filter @plexco/web exec playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0 (commit SHA verified vs tag via GitHub API 2026-10-13)
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -50,6 +50,7 @@ describe("validateNewClub", () => {
 describe("onboardingErrorMessage", () => {
   it("AUTH_REQUIRED means redirect (null); known codes map; unknown fails closed", () => {
     expect(onboardingErrorMessage("AUTH_REQUIRED", t)).toBeNull();
+    expect(onboardingErrorMessage("AUTH_INVALID", t)).toBeNull();
     expect(onboardingErrorMessage("SLUG_TAKEN", t)).toMatch(/already uses/);
     expect(onboardingErrorMessage("RATE_LIMITED", t)).toMatch(/Too many/);
     expect(onboardingErrorMessage("INVALID_BODY", t)).toMatch(/invalid/);
