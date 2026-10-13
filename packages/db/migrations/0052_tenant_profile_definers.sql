@@ -1,12 +1,12 @@
 -- ============================================================================
--- 0051_tenant_profile_definers.sql
+-- 0052_tenant_profile_definers.sql
 -- Closes the gap measured in 0035: role `app` holds ZERO privileges on `tenants`, so the web
 -- club-configuration step (M1b) could not write name/timezone/locale and the shell could not
 -- read the club name. Same remedy as 0035/0049: two narrow SECURITY DEFINER functions, NO grant
 -- on the table itself.
 --
--- NUMBERING: 0050 is written by the parallel lane M2c (payment allocations) on a sibling
--- branch; this branch is rebased on top of it before merge. 0051 is deliberate, not a gap bug.
+-- NUMBERING: 0050 and 0051 belong to lane M2c (attested_transfer allocation source, host-add
+-- person definer), merged before this one; 0052 follows them contiguously.
 --
 -- DECISION TABLE
 --   function              caller state                              result
@@ -17,7 +17,7 @@
 --                         tenant_capability_authorize(content.manage) denies
 --                                                                   RAISE insufficient_privilege
 --                         name outside 1..120 after trim, locale not in (vi,en),
---                         timezone empty                            RAISE invalid_parameter_value
+--                         timezone empty or > 64 chars              RAISE invalid_parameter_value
 --                         otherwise                                 UPDATE only non-NULL args, return row
 --                         tenant missing                            zero rows
 -- NULL argument = leave unchanged. IANA timezone validity stays in TypeScript (Intl).
@@ -105,8 +105,8 @@ BEGIN
     RAISE EXCEPTION 'tenant_profile_update: unsupported locale'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
-  IF p_timezone IS NOT NULL AND btrim(p_timezone) = '' THEN
-    RAISE EXCEPTION 'tenant_profile_update: timezone required'
+  IF p_timezone IS NOT NULL AND (btrim(p_timezone) = '' OR char_length(p_timezone) > 64) THEN
+    RAISE EXCEPTION 'tenant_profile_update: timezone must be 1..64 chars'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
 

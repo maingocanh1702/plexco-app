@@ -244,7 +244,7 @@ The lifecycle below is normative. **Current-state (2026-07-23): the storage laye
 | POST | /api/auth/logout-all | ✅ Account/Person | Revoke all web sessions for current account |
 | GET | /api/auth/session | ✅ Account/Person | Current session info; exact account-self |
 | POST | /api/onboarding/start | ✅ Account/Person | Create tenant + run; becomes owner only through successful provision |
-| PATCH | /api/onboarding/club | 🔑 Exact capability | Club config |
+| PATCH | /api/onboarding/club | 🔑 Exact capability | Club config. Capability: `content.manage` (also `GET /api/onboarding/club` and `GET /api/onboarding/readiness`) — proposal pending owner sign-off, DD-122 D3 mechanism |
 | POST | /api/onboarding/bank/connect | 🔑 Exact capability | Connect bank provider |
 | POST | /api/onboarding/bank/verify | 🔑 Exact capability | Verify bank webhook |
 | POST | /api/onboarding/zalo/connect | 🔑 Exact capability | Connect Zalo (dán Bot Token) |

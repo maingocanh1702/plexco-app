@@ -83,6 +83,15 @@ describe("PATCH /api/onboarding/club", () => {
     });
   });
 
+  it("asks authorize for content.manage in THIS tenant for THIS person", async () => {
+    await PATCH(patchReq({ commandId: "c1", name: "CLB" }));
+    expect(authorize).toHaveBeenLastCalledWith(expect.anything(), {
+      tenantId: TENANT,
+      action: "content.manage",
+      actorPersonId: "p",
+    });
+  });
+
   it("401 without a session", async () => {
     vi.mocked(currentSession).mockResolvedValue(null);
     expect((await PATCH(patchReq({ commandId: "c" }))).status).toBe(401);
@@ -152,6 +161,7 @@ describe("PATCH /api/onboarding/club", () => {
     ["COMMAND_ID_CONFLICT", 409, "COMMAND_ID_CONFLICT"],
     ["NO_ONBOARDING_RUN", 404, "NOT_FOUND"],
     ["FORBIDDEN", 403, "FORBIDDEN"],
+    ["TENANT_SUSPENDED", 403, "TENANT_SUSPENDED"],
   ] as const)("maps %s to %i %s", async (code, status, apiCode) => {
     vi.mocked(updateClubConfig).mockRejectedValue(new ClubConfigError(code, "m"));
     const res = await PATCH(patchReq({ commandId: "c", name: "x" }));

@@ -33,10 +33,16 @@ async function admin(tenantId: string, role: string): Promise<string> {
   );
   return id;
 }
-const run = (tenantId: string, id: string) =>
-  ctx.owner
-    .query(`INSERT INTO onboarding_runs (tenant_id) VALUES ($1) RETURNING id`, [tenantId])
-    .then(() => id);
+const openRun = async (tenantId: string) => {
+  await ctx.owner.query(`INSERT INTO onboarding_runs (tenant_id) VALUES ($1)`, [tenantId]);
+};
+const addSubscription = async (tenantId: string, status = "active") => {
+  await ctx.owner.query(
+    `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+     VALUES ($1, 'free', 1, $2, now(), 'infinity')`,
+    [tenantId, status],
+  );
+};
 
 const update = (
   patch: ClubConfigPatch,
@@ -71,8 +77,11 @@ beforeAll(async () => {
     ])
   ).rows[0]!.key;
   ownerA = await admin(ctx.tenantA, "owner");
-  await run(ctx.tenantA, ownerA);
-  await run(ctx.tenantB, ownerA);
+  await openRun(ctx.tenantA);
+  await openRun(ctx.tenantB);
+  // authorizeTenantAction fails closed without a subscription row (tenant_provision creates one).
+  await addSubscription(ctx.tenantA);
+  await addSubscription(ctx.tenantB);
 }, 120_000);
 afterAll(async () => {
   await ctx?.teardown();
@@ -196,7 +205,7 @@ describe("updateClubConfig", () => {
     );
   });
 
-  it("RLS isolation: tenant A data is invisible under tenant B", async () => {
+  it("RLS isolation: under B's GUC the app role sees none of A's settings; B reads only its own profile", async () => {
     await update({ name: "Only A", defaultPriceAmount: 123, defaultVisibility: "public" });
     // (a) A's club.default_* settings are not visible under B (B never wrote any).
     const b = await getClubConfig(ctx.appDb.db, { tenantId: ctx.tenantB });
@@ -210,7 +219,23 @@ describe("updateClubConfig", () => {
     expect(b.name).toBe(bRow.name);
     expect(b.slug).toBe(bRow.slug);
     expect(b.name).not.toBe("Only A");
-    // (b) Under B's GUC the 0051 definer refuses to read or write A's profile.
+    // (d) The real RLS proof: no tenant predicate at all, role app under B's GUC sees 0 rows although
+    // A just wrote its three club.default_* keys.
+    const a = await ctx.owner.query(
+      `SELECT count(*)::int n FROM settings WHERE tenant_id = $1 AND key LIKE 'club.default_%'`,
+      [ctx.tenantA],
+    );
+    expect(a.rows[0].n).toBe(3);
+    const rls = await ctx.appPool.connect();
+    try {
+      await rls.query("BEGIN");
+      await rls.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantB]);
+      expect((await rls.query(`SELECT count(*)::int n FROM settings`)).rows[0].n).toBe(0);
+      await rls.query("ROLLBACK");
+    } finally {
+      rls.release();
+    }
+    // (b) Under B's GUC the 0052 definer refuses to read or write A's profile.
     const c = await ctx.appPool.connect();
     try {
       await c.query("BEGIN");
@@ -236,12 +261,31 @@ describe("updateClubConfig", () => {
     ).toBe("Only A");
   });
 
+  it("a suspended tenant's owner cannot rename (tenant-status axis)", async () => {
+    const t = randomUUID();
+    await ctx.owner.query(
+      `INSERT INTO tenants (id, name, slug, status) VALUES ($1, 'Frozen', $2, 'suspended')`,
+      [t, `s-${t}`],
+    );
+    await addSubscription(t, "suspended");
+    await ctx.owner.query(`INSERT INTO onboarding_runs (tenant_id) VALUES ($1)`, [t]);
+    const o = await admin(t, "owner");
+    await expectCode(
+      update({ name: "Renamed" }, { tenantId: t, actorPersonId: o }),
+      "TENANT_SUSPENDED",
+    );
+    expect(
+      (await ctx.owner.query(`SELECT name FROM tenants WHERE id = $1`, [t])).rows[0].name,
+    ).toBe("Frozen");
+  });
+
   it("no onboarding run -> NO_ONBOARDING_RUN and nothing written", async () => {
     const t = randomUUID();
     await ctx.owner.query(
       `INSERT INTO tenants (id, name, slug, status) VALUES ($1, 'x', $2, 'active')`,
       [t, `s-${t}`],
     );
+    await addSubscription(t);
     const o = await admin(t, "owner");
     await expectCode(update({ name: "N" }, { tenantId: t, actorPersonId: o }), "NO_ONBOARDING_RUN");
     expect(
@@ -257,6 +301,9 @@ describe("updateClubConfig", () => {
       ["name > 120", { name: "x".repeat(121) }],
       ["non-string name", { name: 5 }],
       ["unknown timezone", { timezone: "Mars/Base" }],
+      ["timezone > 64 chars", { timezone: "A".repeat(65) }],
+      ["name with control char", { name: "a\u0007b" }],
+      ["name with bidi override", { name: "club\u202Eevil" }],
       ["bad locale", { locale: "fr" }],
       ["unknown sport", { defaultSportKey: "no-such-sport" }],
       ["negative price", { defaultPriceAmount: -1 }],

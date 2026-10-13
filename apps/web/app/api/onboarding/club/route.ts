@@ -87,6 +87,12 @@ export async function PATCH(request: Request): Promise<Response> {
               t("Bạn không có quyền với CLB này.", "Not permitted for this club."),
               403,
             );
+          case "TENANT_SUSPENDED":
+            return err(
+              "TENANT_SUSPENDED",
+              t("CLB đang bị tạm ngưng.", "This club is suspended."),
+              403,
+            );
           case "INVALID_INPUT":
             return invalid();
           case "COMMAND_ID_CONFLICT":
