@@ -1,15 +1,28 @@
-import { onboardingSnapshot, tenantLocale, tenantsForPerson } from "@plexco/db";
+import { authorize, onboardingSnapshot, tenantLocale } from "@plexco/db";
 import { cookies } from "next/headers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "./route";
+
+const allow = (role: "owner" | "admin" | "co_admin" = "owner") =>
+  vi.mocked(authorize).mockResolvedValue({ allowed: true, role });
+const deny = (reason = "not_a_member") =>
+  vi.mocked(authorize).mockResolvedValue({ allowed: false, reason });
 
 vi.mock("@plexco/db", () => ({
   createDb: vi.fn(() => ({ pool: {}, db: {} })),
   onboardingSnapshot: vi.fn(),
   resolveWebSession: vi.fn(),
-  tenantsForPerson: vi.fn(),
   tenantLocale: vi.fn(),
+  authorize: vi.fn(),
+  CLUB_ACTION: "content.manage",
+  withTenant: vi.fn(async (_db: unknown, _id: string, fn: (tx: unknown) => unknown) => fn({})),
 }));
+
+// The gate spends the ACTOR ceiling bucket; the limiter itself is not under test here.
+vi.mock("../../../../lib/session-cookies", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../../lib/session-cookies")>();
+  return { ...actual, rateLimited: vi.fn(async () => false) };
+});
 
 vi.mock("next/headers", () => ({
   cookies: vi.fn(),
@@ -29,7 +42,7 @@ function reqFor(tenantId: string): Request {
   return new Request(`https://plexco.app/api/onboarding/readiness?tenant=${tenantId}`);
 }
 
-describe("GET /api/onboarding/readiness — owner-only authz (codex round-14)", () => {
+describe("GET /api/onboarding/readiness — authorize(content.manage) gate", () => {
   beforeEach(async () => {
     mockSession();
     const { resolveWebSession } = await import("@plexco/db");
@@ -44,35 +57,39 @@ describe("GET /api/onboarding/readiness — owner-only authz (codex round-14)", 
   });
 
   it("allows the OWNER of the tenant", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT_ID, role: "owner" }]);
+    allow();
     const res = await GET(reqFor(TENANT_ID));
     expect(res.status).toBe(200);
   });
 
-  it("rejects a delegated 'admin' (not the owner) — API contract is TenantOwner-only", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT_ID, role: "admin" }]);
-    const res = await GET(reqFor(TENANT_ID));
-    expect(res.status).toBe(403);
+  it("allows a delegated admin / co_admin holding the content.manage preset", async () => {
+    allow("admin");
+    expect((await GET(reqFor(TENANT_ID))).status).toBe(200);
+    allow("co_admin");
+    expect((await GET(reqFor(TENANT_ID))).status).toBe(200);
   });
 
-  it("rejects a delegated 'co_admin' (not the owner)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT_ID, role: "co_admin" }]);
-    const res = await GET(reqFor(TENANT_ID));
-    expect(res.status).toBe(403);
+  it("rejects when authorize denies (no membership / no capability / foreign tenant): one 403", async () => {
+    deny("no_capability");
+    expect((await GET(reqFor(TENANT_ID))).status).toBe(403);
+    deny("tenant_context");
+    expect((await GET(reqFor(TENANT_ID))).status).toBe(403);
   });
 
-  it("rejects someone with no membership in this tenant at all", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
-    const res = await GET(reqFor(TENANT_ID));
-    expect(res.status).toBe(403);
+  it("asks authorize for content.manage in THIS tenant for THIS person", async () => {
+    allow();
+    await GET(reqFor(TENANT_ID));
+    expect(authorize).toHaveBeenLastCalledWith(expect.anything(), {
+      tenantId: TENANT_ID,
+      action: "content.manage",
+      actorPersonId: "p1",
+    });
   });
 
-  it("rejects an owner of a DIFFERENT tenant", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([
-      { tenantId: "22222222-2222-2222-2222-222222222222", role: "owner" },
-    ]);
-    const res = await GET(reqFor(TENANT_ID));
-    expect(res.status).toBe(403);
+  it("answers 400 for a malformed tenant id without touching authorize", async () => {
+    vi.mocked(authorize).mockClear();
+    expect((await GET(reqFor("nope"))).status).toBe(400);
+    expect(authorize).not.toHaveBeenCalled();
   });
 });
 
@@ -93,7 +110,7 @@ describe("GET /api/onboarding/readiness — DD-118 language resolution", () => {
       csrfSecret: "c1",
       expiresAt: new Date(Date.now() + 60_000),
     });
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT_ID, role: "owner" }]);
+    allow();
     // The one string emitted BELOW the seam today.
     vi.mocked(onboardingSnapshot).mockResolvedValue(null);
     // Call history does NOT reset between cases in this project's vitest config, and the
@@ -132,19 +149,17 @@ describe("GET /api/onboarding/readiness — DD-118 language resolution", () => {
   // it is configured. DD-118 ratifies pre-proof responses as Vietnamese.
   it("(b) keeps the 403 Vietnamese even when the caller owns an EN tenant elsewhere", async () => {
     vi.mocked(tenantLocale).mockResolvedValue("en");
-    vi.mocked(tenantsForPerson).mockResolvedValue([
-      { tenantId: "22222222-2222-2222-2222-222222222222", role: "owner" },
-    ]);
+    deny("tenant_context");
     const res = await GET(reqFor(TENANT_ID));
     expect(res.status).toBe(403);
-    expect(await messageOf(res)).toBe("Bạn không phải chủ CLB này.");
+    expect(await messageOf(res)).toBe("Bạn không có quyền với CLB này.");
   });
 
   // The oracle argument, asserted structurally rather than trusted: a caller who does not own the
   // tenant must not cause its locale to be read at all.
   it("(b) never reads the tenant's locale before ownership is proven", async () => {
     vi.mocked(tenantLocale).mockResolvedValue("en");
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    deny();
     const res = await GET(reqFor(TENANT_ID));
     expect(res.status).toBe(403);
     expect(tenantLocale).not.toHaveBeenCalled();
@@ -169,7 +184,7 @@ describe("GET /api/onboarding/readiness — readiness predicate (audit W-5)", ()
       csrfSecret: "c1",
       expiresAt: new Date(Date.now() + 60_000),
     });
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT_ID, role: "owner" }]);
+    allow();
     vi.mocked(tenantLocale).mockResolvedValue("vi");
   });
 

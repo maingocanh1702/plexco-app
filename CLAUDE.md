@@ -185,6 +185,9 @@ forward-only, không migrate giữa chừng. Entry point vận hành: `docs/auto
    khi vượt boundary thật), rồi review độc lập bắt buộc qua `scripts/codex-review-pin.sh`; slice chạm
    auth/secret/permission/tiền/external input/deployment chạy thêm 1 security round. Reviewer không
    gọi được → `HALT TOOL_UNAVAILABLE`, cấm tự hạ gate. Prose không thay được bằng chứng chạy thật.
+   > ⚠️ **Ngoại lệ có tên (owner 2026-10-12, `decisions.md` DD-122 D4):** PR của **chương trình Web MVP**
+   > review bằng Claude subagent độc lập (+ security reviewer), **không Codex, không scope-gate lifecycle**;
+   > quality gate + CI giữ nguyên. Mọi task ngoài chương trình đó: câu trên áp nguyên.
 5. Kết thúc ở **`READY | AWAIT | HALT`**. `READY` = diff chính xác + gate chạy trực tiếp + review sạch;
    `AWAIT` = thiếu đúng 1 quyết định/context/authority bên ngoài, kèm 1 đề xuất và điều kiện resume nhị
    phân; `HALT` = breaker cứng (`MAX_ROUNDS` >5 vòng, `REGION_THRASH` cùng vùng 3 vòng liên tiếp).
