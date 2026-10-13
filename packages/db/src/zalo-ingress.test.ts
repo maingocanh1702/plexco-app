@@ -228,8 +228,8 @@ describe("channel_inbound_events RLS + idempotency", () => {
     );
     await expect(
       ctx.owner.query(
-        `INSERT INTO channel_inbound_events (tenant_id, platform, bot_id, external_event_id, raw_payload_enc)
-         VALUES ($1, 'zalo', $2, 'cross', 'x')`,
+        `INSERT INTO channel_inbound_events (tenant_id, platform, bot_id, external_event_id, raw_payload_enc, key_version)
+         VALUES ($1, 'zalo', $2, 'cross', 'x', 'local')`,
         [ctx.tenantA, rows[0]!.id],
       ),
     ).rejects.toThrow(/channel_inbound_events_tenant_bot_fk/);
@@ -318,12 +318,20 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
   });
 
   it("set_status: verified_at stamped once; revoked is terminal", async () => {
-    const set = (status: string, verified: boolean, onlyFrom: string[] | null = null) =>
-      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+    // drizzle expands a bound JS array into ($1, $2) (a record, not text[]): build an ARRAY[...] literal.
+    const set = (status: string, verified: boolean, onlyFrom: string[] | null = null) => {
+      const arr = onlyFrom
+        ? sql`ARRAY[${sql.join(
+            onlyFrom.map((x) => sql`${x}`),
+            sql`, `,
+          )}]::text[]`
+        : sql`NULL::text[]`;
+      return withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
         tx.execute(
-          sql`SELECT status, verified_at FROM zalo_bot_set_status(${ctx.tenantA}::uuid, ${botA}::uuid, ${status}, ${verified}, false, ${onlyFrom}::text[])`,
+          sql`SELECT status, verified_at FROM zalo_bot_set_status(${ctx.tenantA}::uuid, ${botA}::uuid, ${status}, ${verified}, false, ${arr})`,
         ),
       );
+    };
     // db.execute returns timestamptz as text: compare instants, not Date methods.
     const at = (r: { rows: unknown[] }) =>
       new Date((r.rows[0] as { verified_at: string }).verified_at).getTime();
