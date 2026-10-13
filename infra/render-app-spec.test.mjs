@@ -15,7 +15,7 @@ const VPC = "11111111-2222-4333-8444-555555555555";
 const committed = {
   name: "x",
   vpc: { id: "__VPC_ID__" },
-  jobs: [{ name: "migrate", image: { digest: "__IMAGE_DIGEST__" }, envs: [{ key: "DATABASE_URL_MIGRATION", type: "SECRET" }] }],
+  jobs: [{ name: "migrate", kind: "PRE_DEPLOY", image: { digest: "__IMAGE_DIGEST__" }, envs: [{ key: "DATABASE_URL_MIGRATION", type: "SECRET" }] }],
   services: [
     {
       name: "web",
@@ -60,16 +60,32 @@ test("fails closed when a secret is missing in the live app, naming it", () => {
   assert.equal(r.stdout, "");
 });
 
-test("a committed spec listing DATABASE_URL_MIGRATION on a runtime component FAILS the render (guard)", () => {
-  for (const kind of ["services", "workers"]) {
+test("DATABASE_URL_MIGRATION outside the PRE_DEPLOY job FAILS the render (closed-set guard)", () => {
+  const surfaces = {
+    services: (spec) => spec.services[0].envs.push({ key: "DATABASE_URL_MIGRATION", value: "x" }),
+    workers: (spec) => spec.workers[0].envs.push({ key: "DATABASE_URL_MIGRATION", value: "x" }),
+    functions: (spec) => (spec.functions = [{ name: "f", envs: [{ key: "DATABASE_URL_MIGRATION", value: "x" }] }]),
+    static_sites: (spec) => (spec.static_sites = [{ name: "s", envs: [{ key: "DATABASE_URL_MIGRATION", value: "x" }] }]),
+    "top-level envs": (spec) => (spec.envs = [{ key: "DATABASE_URL_MIGRATION", value: "x" }]),
+    "POST_DEPLOY job": (spec) =>
+      spec.jobs.push({ name: "post", kind: "POST_DEPLOY", envs: [{ key: "DATABASE_URL_MIGRATION", value: "x" }] }),
+  };
+  for (const [name, mutate] of Object.entries(surfaces)) {
     const spec = JSON.parse(JSON.stringify(committed));
-    // Give it a value so it is the GUARD, not the missing-secret check, that rejects it.
-    spec[kind][0].envs.push({ key: "DATABASE_URL_MIGRATION", value: "x" });
+    mutate(spec); // valued, so it is the GUARD (not the missing-secret check) that rejects it
     const r = render(spec, live);
-    assert.notEqual(r.status, 0, kind);
-    assert.match(r.stderr, /DATABASE_URL_MIGRATION on a runtime component/);
-    assert.equal(r.stdout, "");
+    assert.notEqual(r.status, 0, name);
+    assert.match(r.stderr, /DATABASE_URL_MIGRATION outside the PRE_DEPLOY job/, name);
+    assert.equal(r.stdout, "", name);
   }
+});
+
+test("a SECRET left valueless on an uncovered surface fails instead of being silently blank", () => {
+  const spec = JSON.parse(JSON.stringify(committed));
+  spec.functions = [{ name: "f", envs: [{ key: "TOKEN", type: "SECRET" }] }];
+  const r = render(spec, live);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /unfilled SECRET outside services\/workers\/jobs/);
 });
 
 test("empty stdin fails instead of rendering 0 bytes", () => {

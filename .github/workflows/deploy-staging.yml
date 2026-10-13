@@ -55,14 +55,16 @@ jobs:
 
       - name: Require green CI on this exact commit
         # Required flow (§6): PR gates run BEFORE the image is built. Only a commit whose `verify`
-        # job already passed can reach staging.
+        # and `e2e-web` jobs already passed can reach staging.
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" \
-            --jq '[.check_runs[] | select(.name == "verify")] | sort_by(.completed_at) | last | .conclusion')"
-          echo "verify conclusion for ${SHA}: ${conclusion}"
-          [ "${conclusion}" = "success" ] || { echo "::error::no successful 'verify' run on ${SHA}"; exit 1; }
+          for job in verify e2e-web; do
+            conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" \
+              --jq "[.check_runs[] | select(.name == \"${job}\")] | sort_by(.completed_at) | last | .conclusion")"
+            echo "${job} conclusion for ${SHA}: ${conclusion}"
+            [ "${conclusion}" = "success" ] || { echo "::error::no successful '${job}' run on ${SHA}"; exit 1; }
+          done
 
       - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
         with:

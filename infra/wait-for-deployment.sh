@@ -13,11 +13,21 @@ digest="${2:?digest required}"
 timeout="${3:-900}"
 deadline=$(( $(date +%s) + timeout ))
 dep=""
+fails=0
 
 while :; do
-  # A transient doctl/jq failure must not abort the wait; the deadline below still bounds the loop.
-  dep_json="$(doctl apps list-deployments "$app" -o json \
-    | jq -c --arg d "$digest" '[.[] | select(any(.spec.services[]?; .name == "web" and .image.digest == $d))] | .[0] // empty' || true)"
+  # A transient doctl/jq failure must not abort the wait, but 5 CONSECUTIVE failures do (a dead token
+  # or API must not burn the whole timeout); the deadline below also bounds the loop.
+  dep_json=""
+  if raw="$(doctl apps list-deployments "$app" -o json 2>/dev/null)" \
+     && dep_json="$(jq -c --arg d "$digest" '[.[] | select(any(.spec.services[]?; .name == "web" and .image.digest == $d))] | .[0] // empty' <<<"$raw")"; then
+    fails=0
+  else
+    dep_json=""
+    fails=$((fails + 1))
+    [ "$fails" -lt 5 ] || { echo "doctl/jq failed ${fails}x consecutively" >&2; exit 1; }
+    echo "doctl/jq failed (${fails}/5); retrying"
+  fi
   if [ -n "$dep_json" ]; then
     dep="$(jq -r '.id' <<<"$dep_json")"
     phase="$(jq -r '.phase' <<<"$dep_json")"

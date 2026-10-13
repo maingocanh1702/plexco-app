@@ -54,7 +54,7 @@ Mỗi dòng = một mục trong `decisions.md` đánh dấu "default applied …
 | Backup off-provider restore + đối soát | PASS | `<…>` | hàng "off-provider" |
 | Log: có `request_id`+`tenant_id`, không PII | mẫu 20 dòng, 0 PII | `<…>` | `<link/ảnh>` |
 | Outbound-IP gate (SePay/ApiPay/Zalo) | `DO_VPC_COMPATIBLE` | `<…>` | environments-setup §1.1 |
-| R1 `job_definer BYPASSRLS` trên DO PG | tạo được / có phương án | `<…>` | `staging-deploy.md` §8 |
+| R1 `job_definer BYPASSRLS` trên DO PG | đo 2026-08-05 (`01-job-definer.sql`); xác nhận lại ở bootstrap đầu — kỳ vọng ĐÚNG MỘT warning từ `LOCK TABLE`, không phải lỗi | `<…>` | `staging-deploy.md` §2.3 |
 | R2 TLS verify tới DB | verify CA + hostname | `<…>` | |
 | Rolling deploy 2×web/2×discovery | pass | `<…>` | (staging chạy 1 instance — cần run riêng) |
 

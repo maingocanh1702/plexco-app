@@ -91,5 +91,4 @@ DONE WHEN của M5: "measured RPO/RTO recorded"): **RPO đo: —  ·  RTO đo: �
 2. Restore vào PostgreSQL vanilla ngoài DO, chạy bộ kiểm tra ở §4 + đối soát tiền (DD-04 §7.4).
 3. Ghi một hàng riêng vào bảng §6 với cột "Cluster" = "off-provider".
 
-Hai thứ cần đo đầu tiên vì chúng quyết định cả drill có khả thi: R1 (`job_definer BYPASSRLS` có tạo được trên
-DO Managed PG không) và việc fork có giữ role/extension đúng không — xem `staging-deploy.md` §2.3 và §8.
+Hai thứ cần xác nhận đầu tiên vì chúng quyết định drill có khả thi: R1 (đã đo 2026-08-05 trong `01-job-definer.sql`; xác nhận lại ở lần bootstrap đầu — kỳ vọng MỘT warning từ `LOCK TABLE`, không phải lỗi) và việc bản restore có giữ role/extension đúng không — xem `staging-deploy.md` §2.3 và §8.

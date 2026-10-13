@@ -20,7 +20,7 @@ workflow_dispatch (owner approve, environment: staging)
 
 - **Một** đường migrate: PRE_DEPLOY job trong spec. DB chỉ tin identity private của app (§2), runner GitHub
   không có IP ổn định nên không chạy migration từ runner. `DATABASE_URL_MIGRATION` chỉ tồn tại ở job `migrate`.
-- Secret **không bao giờ** nằm trong repo hay GitHub (trừ token DO + base URL). `render-app-spec.sh` copy giá
+- Secret **không bao giờ** nằm trong repo hay GitHub (trừ token DO; base URL là variable, không phải secret). `render-app-spec.sh` copy giá
   trị đã mã hoá `EV[...]` từ app live, và **fail** nếu thiếu secret nào (nêu tên).
 - Staging 1×web + 1×discovery + 1×worker (production 2+2+1): đủ chứng minh role/VPC/migration; **không** chứng
   minh được rolling-deploy 2 instance — mục §10 của environments-setup giữ mở cho tới khi đo trên run 2 instance.
@@ -48,10 +48,11 @@ export DATABASE_URL_MIGRATION='<URL của user có quyền tạo role, sslmode=r
 MIGRATION_ROLE=<tên user migration> pnpm db:bootstrap     # job_definer + chat_definer (cần psql)
 ```
 
-> **CHƯA ĐO / rủi ro R1.** `01-job-definer.sql` tạo role `BYPASSRLS`; PostgreSQL thường chỉ cho superuser tạo.
-> `doadmin` của DO Managed PG **không** phải superuser. Nếu bước này bị từ chối, đây là blocker kiến trúc
-> cho cả staging lẫn production: ghi kết quả vào bảng đo của `pitr-restore-drill.md` và đưa owner quyết định
-> (đổi cách tạo `job_definer`, hoặc DD-04 fallback). Tương tự cần đo: `migration` user có `CREATEROLE` để
+> **R1 — đã có bằng chứng repo, xác nhận lại trên cluster thật.** `infra/postgres-init/01-job-definer.sql`
+> (đo 2026-08-05): `doadmin` của DO = Create role, Create DB, Replication, Bypass RLS (không Superuser) và
+> `CREATE ROLE … BYPASSRLS` chạy được; chỉ câu `LOCK TABLE` nâng cấp cluster-wide cảnh báo. Khi bootstrap thật
+> **kỳ vọng ĐÚNG MỘT warning từ `LOCK TABLE`, không phải lỗi** — ghi lại kết quả vào go/no-go note; nếu khác
+> kỳ vọng thì dừng và đưa owner quyết định. Vẫn chưa đo: `migration` user có `CREATEROLE` để
 > `ensureRoleExists` tạo `app/app_worker/readonly` không; nếu không, tạo trước bằng admin với đúng thuộc tính
 > `LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`.
 
@@ -94,7 +95,7 @@ tuỳ chọn) rồi thêm:
 
 **2.7 Tạo app lần đầu** (workflow chỉ *update*; lần đầu cần image đã build). Build + push thủ công **một lần**
 hoặc chạy workflow tới bước build rồi huỷ; lấy digest. Sau đó (spec không có secret → thêm giá trị ở console
-hoặc spec cục bộ **không commit**):
+hoặc spec cục bộ **không commit**). Lần `apps create` đầu có thể dùng URL trực tiếp/placeholder cho `DATABASE_URL*` (pool chỉ có sau §2.4b), hoặc đi đường `doctl databases user create` → pool → app:
 
 ```bash
 yq -o=json infra/app.staging.yaml | jq --arg d "sha256:<64hex>" --arg v "<vpc-uuid>" \
@@ -111,7 +112,7 @@ doctl apps create --spec spec.local.json; rm -f spec.local.json   # file chứa 
 | `DATABASE_URL_DIRECT` | — | — | direct `app_worker` | — | pg-boss cần session/direct |
 | `DATABASE_URL_MIGRATION` | — | — | — | role migration | **chỉ job này** |
 | `GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` | x | — | — | — | client OAuth **staging**; redirect `${APP_URL}/api/auth/google/callback` |
-| `KMS_KEY_ID`, `KMS_ENCRYPTED_AUTH_PEPPER` | x | — | — | — | `KMS_PROVIDER=aws-kms` và `AWS_REGION` (mặc định `ap-southeast-1`, đổi nếu key ở region khác) là giá trị thường trong spec |
+| `KMS_KEY_ID`, `KMS_ENCRYPTED_AUTH_PEPPER` | x | — | — | — | `KMS_PROVIDER=aws-kms` và `AWS_REGION` (mặc định `ap-southeast-1` — **owner xác nhận region của KMS key**) là giá trị thường trong spec |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | x | — | — | — | IAM user chỉ `kms:Decrypt` trên key staging |
 | `LINK_CODE_LOOKUP_HMAC_KEY` | x | — | — | — | `openssl rand -base64 32`; M3a/M3b dùng chung |
 
@@ -146,9 +147,9 @@ Deployment ERROR sau job `migrate` = migration lỗi; app trước đó vẫn ph
 
 `infra/app.prod.yaml` + `deploy-production.yml` (dispatch-only; nhập `tag`, `digest`, `staging_run_id`,
 `confirm == tag`; digest phải có thật trong DOCR kèm tag đó và SHA phải có một run deploy-staging xanh). Chỉ
-promote, không build. Điều kiện trước khi owner chạy: (a) §1.1 outbound-IP gate đóng, (b) DB TLS verify (R2),
-(c) R1 đã đo, (d) go/no-go note ký "go", (e) `production` environment + secret + variable
-(`DO_APP_ID`, `DO_VPC_ID`, `APP_DOMAIN`, variable `PRODUCTION_BASE_URL`, `DOCR_REGISTRY`, secret token DO riêng) đã tạo, (f) app prod
+promote, không build. Workflow tải artifact `deployment-evidence-staging` của run đó và đòi `image_digest`/`git_sha` khớp input — nên **retention 90 ngày của artifact chính là cửa sổ promote**; quá hạn thì chạy lại staging để có digest mới. Điều kiện trước khi owner chạy: (a) §1.1 outbound-IP gate đóng, (b) DB TLS verify (R2),
+(c) R1 đã xác nhận trên cluster thật, (d) go/no-go note ký "go", (e) `production` environment + secret + variable
+(variable `DO_APP_ID`, `DO_VPC_ID`, `APP_DOMAIN`, `PRODUCTION_BASE_URL`; secret token DO riêng; workflow production không đọc `DOCR_REGISTRY`) đã tạo, (f) app prod
 đã tạo lần đầu như §2.7 với `infra/app.prod.yaml`.
 
 ## 7. Teardown / TTL (§9)
@@ -169,6 +170,7 @@ Ghi owner + `expires_at` + cost ceiling vào go/no-go note khi tạo; quên hu�
 - `doctl apps spec validate`, `actionlint` chưa chạy (không cài). Spec/workflow chỉ được parse YAML.
 - Hành vi DO với `digest:` + `${APP_URL}` + secret `EV[...]` gửi lại khi update chưa kiểm chứng; `wait-for-deployment.sh`
   giả định `doctl apps list-deployments -o json` trả `phase` + `spec` — kiểm ở lần chạy đầu.
+- **Request id**: probe lần deploy đầu — `curl -sD- -H 'do-request-id: forged-00000000' https://<app>/api/sessions` (hoặc route lệnh session bất kỳ); `x-request-id` trả về **không** được là `forged-00000000`. Nếu bị echo, edge không tự đặt `do-request-id` → đổi `lib/log-context.ts` sang bỏ qua header của client.
 - **R2 — TLS DB**: environments-setup §4 đòi verify CA + hostname; code không set `ssl` và image không có CA
   bundle của DO. Staging tạm dùng `sslmode=require` (mã hoá, chưa verify). Production cần follow-up (CA qua
   `${db.CA_CERT}` hoặc bundle trong image) trước go-live.

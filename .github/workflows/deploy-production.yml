@@ -74,11 +74,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
           RUN_ID: ${{ inputs.staging_run_id }}
         run: |
           run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")"
           jq -e --arg sha "$TAG" '.path == ".github/workflows/deploy-staging.yml" and .conclusion == "success" and .head_sha == $sha' <<<"$run" >/dev/null \
             || { echo "::error::run ${RUN_ID} is not a successful deploy-staging run of ${TAG}"; exit 1; }
+          # Bind the DIGEST to that run: the SHA tag in DOCR is mutable (a re-run of deploy-staging on the
+          # same SHA rebuilds and moves it, even if that run FAILED), so only the evidence artifact the
+          # successful run uploaded proves which digest was actually tested. Failed runs upload one too,
+          # which is why the conclusion check above stays.
+          gh run download "$RUN_ID" -n deployment-evidence-staging -D evidence
+          jq -e --arg d "$DIGEST" --arg s "$TAG" '.image_digest == $d and .git_sha == $s' evidence/deployment-evidence.json >/dev/null \
+            || { echo "::error::digest ${DIGEST} is not the digest tested in staging run ${RUN_ID}"; exit 1; }
 
       - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
         with:

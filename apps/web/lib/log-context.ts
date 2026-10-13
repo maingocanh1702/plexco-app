@@ -7,8 +7,8 @@ import { randomUUID } from "node:crypto";
  * tenant, `tenant_id`. Both are opaque identifiers; neither is PII, and neither is ever taken from
  * a request body.
  *
- * Request id source: the platform edge id (DigitalOcean's `do-request-id`, which the edge sets and a
- * client cannot spoof, preferred over the client-controllable `x-request-id`) when
+ * Request id source: the platform edge id (DigitalOcean's `do-request-id`, which the edge is expected to set
+ * itself - verify on first deploy, see staging-deploy.md §8 - preferred over the client-controllable `x-request-id`) when
  * it has a safe shape, otherwise a fresh UUID. A client-supplied header is attacker-controlled, so
  * it is only adopted when it is short and made of id-safe characters — never echoed raw.
  */

@@ -36,9 +36,13 @@ jq -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg dom
     [ ("services", "workers", "jobs") as $k | ($live[0][$k] // [])[] | . as $c | ($c.envs // [])[]
       | select(.type == "SECRET" and (.value // "") != "")
       | { key: "\($k)/\($c.name)/\(.key)", value: .value } ] | from_entries;
-  # Choke-point guard: the DDL credential may exist on the PRE_DEPLOY job only (§4, §13).
-  (if any((.services[]?, .workers[]?) | .envs[]?; .key == "DATABASE_URL_MIGRATION")
-   then error("DATABASE_URL_MIGRATION on a runtime component") else . end)
+  # Choke-point guard (CLOSED SET): the DDL credential may exist ONLY as an env of a PRE_DEPLOY job
+  # (§4, §13). Count it everywhere in the document and compare with the PRE_DEPLOY-job count, so any
+  # other surface (services, workers, static_sites, functions, top-level envs, POST_DEPLOY /
+  # FAILED_DEPLOY / SCHEDULED jobs) fails without being enumerated.
+  (if ([.. | objects | select(.key? == "DATABASE_URL_MIGRATION")] | length)
+      != ([.jobs[]? | select(.kind == "PRE_DEPLOY") | .envs[]? | select(.key == "DATABASE_URL_MIGRATION")] | length)
+   then error("DATABASE_URL_MIGRATION outside the PRE_DEPLOY job") else . end)
   | liveSecrets as $ls
   | def fill($kind): . as $c | .envs = [ ($c.envs // [])[] |
       if .type == "SECRET" and (.value // "") == ""
@@ -49,6 +53,9 @@ jq -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg dom
   .services |= (. // [] | map(fill("services")))
   | .workers |= (. // [] | map(fill("workers")))
   | .jobs    |= (. // [] | map(fill("jobs")))
+  # Never silently blank a secret: a SECRET left valueless on any surface fill() does not cover fails.
+  | (if any(.. | objects | select(.type? == "SECRET" and (.value // "") == ""); .)
+     then error("unfilled SECRET outside services/workers/jobs") else . end)
   | walk(if type == "string" then
            gsub("__IMAGE_DIGEST__"; $digest) | gsub("__VPC_ID__"; $vpc)
            | (if $domain != "" then gsub("__APP_DOMAIN__"; $domain) else . end)
