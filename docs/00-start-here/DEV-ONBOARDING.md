@@ -73,7 +73,7 @@ Launch = **web app (installable/offline) + Zalo bot ra mắt song song** → pha
 
 **Chưa có, đừng đọc nhầm:**
 
-- **0 màn FE** — FE đang **PENDING theo lệnh owner** (DD-116 Option B), không phải "chưa kịp làm". Carve-out DD-119 vẫn **🟡 chưa ratify**.
+- **0 màn FE** — FE đang **PENDING theo lệnh owner** (DD-116 Option B), không phải "chưa kịp làm". Carve-out DD-119 vẫn **🟡 chưa ratify**. ⚠️ **12/10/2026: gỡ bởi DD-122** (full MVP; DD-119 superseded; chương trình `../autopilot-templates/web-mvp-2026-10-12-RUN.md`).
 - **Projector thật** — production vẫn là `productionStubDeliver` (DLQ mọi delivery) ⇒ `OUTBOX_DISPATCH_SCHEDULE_ENABLED` **OFF**.
 - **Route ĐỌC session** (`GET /api/sessions`, `/[id]`) — chờ DD-56 amendment #3 ký.
 - **In-app Chat** — có DB root `0030`–`0032` và **0 dòng TS production nào đọc `chat_*`**. Schema không phải runtime.
@@ -239,8 +239,8 @@ git --no-optional-locks log --oneline -1    # xác nhận HEAD đã nhúc nhích
 
 | Mục | Chặn cái gì |
 |---|---|
-| **DD-116 FE PENDING** | 100% scope launch. Gỡ chỉ khi đủ ba vế: chọn 1 `.pen` canonical · tracked trên `main` · owner ký gate DD-81 |
-| **DD-119** 🟡 | Carve-out cho designer dựng `plexco.pen` untracked — chưa ratify ⇒ designer vẫn chưa được vẽ |
+| **DD-116 FE PENDING** | 100% scope launch. Gỡ chỉ khi đủ ba vế: chọn 1 `.pen` canonical · tracked trên `main` · owner ký gate DD-81 → ⚠️ **12/10: GỠ bởi DD-122**, không qua trigger `.pen` |
+| **DD-119** 🟡 | Carve-out cho designer dựng `plexco.pen` untracked — chưa ratify ⇒ designer vẫn chưa được vẽ → ⚠️ **12/10: superseded bởi DD-122** (không cần `.pen`) |
 | **DD-120** 🟡 | Làn ap3 proactive |
 | **DD-56 amendment #3** (draft) | Route ĐỌC session |
 | **OPEN NOTE DD-56** (15/09) | Cổng tạm nay phủ **BẢY** route (2 route guest-note) trong khi amendment #2 pin **NĂM**. Cần chữ ký, không phải sửa code |
@@ -258,7 +258,7 @@ git --no-optional-locks log --oneline -1    # xác nhận HEAD đã nhúc nhích
 2. **Route ĐỌC session** — chờ DD-56 amendment #3 ký, code thì đã có đủ tiền đề.
 3. **DD-29 capability wiring** — `resolveCapability()` còn 0 caller ⇒ hard-dependency (a) của phase-1 vẫn mở, billing chưa gate được nhánh tiền nào.
 4. **`app-worker-password` (L8)** và **`migrate-gate` (L4a)** trong hàng đợi infra.
-5. Đừng mở lane FE trước khi DD-116 được gỡ — đó là lệnh owner, không phải thiếu tài liệu. Gói tài liệu cho designer đã tồn tại từ 14/08 (`docs/channels/web/designer-docs-guide.md`).
+5. ~~Đừng mở lane FE trước khi DD-116 được gỡ~~ ⚠️ **12/10/2026: DD-116 đã gỡ bởi DD-122** — lane FE mở theo RUN doc Web MVP; review của chương trình đó theo DD-122 D4 (không Codex), mọi task khác vẫn theo §7 ở trên. Gói tài liệu cho designer đã tồn tại từ 14/08 (`docs/channels/web/designer-docs-guide.md`).
 
 ---
 

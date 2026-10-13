@@ -113,6 +113,10 @@ describe("resolveTenantLang — the single DD-118 derivation", () => {
 const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (a) — wired. Authorization for THIS tenant is proven before the seam.
   "app/api/onboarding/readiness/route.ts": "a",
+  // (a) — club configuration (M1b): both delegate to resolveClubGate, which proves authorize()
+  // before it resolves language; the PATCH body runs inside runWithLang.
+  "app/api/onboarding/club/route.ts": "a",
+  "lib/club-config-route.ts": "a",
   // (a) — already wired upstream: all five delegate to handleSessionCommand, whose handler body
   // runs inside runWithLang. They emit only ok(...).
   "app/api/sessions/route.ts": "a",
@@ -125,6 +129,10 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // within runWithLang. Neither emits t() directly; the error mapping does.
   "app/api/sessions/[id]/guest-notes/route.ts": "a",
   "app/api/sessions/[id]/guest-notes/[noteId]/route.ts": "a",
+  "app/api/sessions/[id]/players/route.ts": "a",
+  "app/api/sessions/[id]/players/[playerId]/route.ts": "a",
+  "app/api/sessions/[id]/mark-paid/route.ts": "a",
+  "app/api/sessions/[id]/payments/[allocationId]/reverse/route.ts": "a",
   // (b) — the tenant does not exist yet: this is the tenant-CREATION route, every t() is an error
   // path, and at the locale check the value is still an unvalidated request-body field. Reading it
   // would be a SECOND language source, which DD-118 forbids.
@@ -148,6 +156,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (a) — the shared entry gate for the five session routes. It resolves language itself and runs
   // its handler body inside runWithLang; it is the reason those five need no wiring of their own.
   "lib/session-command-route.ts": "a",
+  "lib/session-read-route.ts": "a",
   // (a) — the guest-note error boundary. It calls t() to build every mapped message
   // (COMMAND_ID_CONFLICT..SESSION_NOT_OPEN) and its own docstring requires running inside
   // runWithLang; both callers only ever invoke it from within an already-wired "a" route's

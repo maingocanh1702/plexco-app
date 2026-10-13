@@ -2,10 +2,10 @@
 export interface SessionTenantDto {
   tenantId: string;
   role: string;
-  /** Club profile fields arrive from lane M1b's reader; absent until then (shell falls back). */
-  name?: string;
-  slug?: string;
-  timezone?: string;
+  /** Club profile from M1b's reader: null when unreadable (the shell falls back). */
+  name?: string | null;
+  slug?: string | null;
+  timezone?: string | null;
   locale?: string;
 }
 

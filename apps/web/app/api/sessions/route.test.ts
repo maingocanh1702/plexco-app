@@ -1,4 +1,4 @@
-import { createSession, SessionCommandError, tenantsForPerson } from "@plexco/db";
+import { createSession, SessionCommandError, authorize } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../lib/session-cookies";
 import { POST } from "./route";
@@ -19,7 +19,10 @@ vi.mock("@plexco/db", async (importOriginal) => {
       db: { execute: async () => ({ rows: [{ locale: "vi" }] }) },
     })),
     createSession: vi.fn(),
-    tenantsForPerson: vi.fn(),
+    authorize: vi.fn(),
+    withTenant: vi.fn(async (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) =>
+      fn({}),
+    ),
   };
 });
 
@@ -85,7 +88,7 @@ beforeEach(() => {
   });
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
-  vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "owner" });
   vi.mocked(createSession).mockResolvedValue({
     sessionId: SESSION_ID,
     status: "draft",
@@ -148,23 +151,21 @@ describe("POST /api/sessions", () => {
   });
 
   it("does not call the command when the caller holds no session-managing role", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     const response = await POST(req(validBody));
     expect(response.status).toBe(403);
     expect(createSession).not.toHaveBeenCalled();
   });
 
   it("allows co_admin (DD-56 default preset includes session.manage)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "co_admin" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "co_admin" });
     const response = await POST(req(validBody));
     expect(response.status).toBe(200);
     expect(createSession).toHaveBeenCalled();
   });
 
   it("does not call the command for another tenant (isolation)", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([
-      { tenantId: "44444444-4444-4444-8444-444444444444", role: "owner" },
-    ]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     const response = await POST(req(validBody));
     expect(response.status).toBe(403);
     expect(createSession).not.toHaveBeenCalled();

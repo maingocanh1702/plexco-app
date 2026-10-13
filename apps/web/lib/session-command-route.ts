@@ -1,6 +1,7 @@
 import { isApiErrorCode, type ApiErrorCode } from "@plexco/core";
 import { runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
+  RosterMoneyError,
   SessionCancelAuthorizationError,
   SessionCancelError,
   SessionCloseAuthorizationError,
@@ -10,8 +11,9 @@ import {
   SessionPublishError,
   SessionUpdateAuthorizationError,
   SessionUpdateError,
+  authorize,
   guestNoteTenantForPerson,
-  tenantsForPerson,
+  withTenant,
 } from "@plexco/db";
 import { err } from "./api-envelope";
 import { readBoundedBody } from "./read-bounded-body";
@@ -24,40 +26,47 @@ import { resolveTenantLang } from "./tenant-lang";
  * nothing can deliver yet, so it returns with the slice that provides a real projector (DD-56
  * amendment, clause 1).
  *
- * ONE choke-point on purpose: DD-56 bans adapters from scattering `role === ...` across routes,
- * and when the capability registry (`tenant-capability-authority-core`) lands there must be
- * exactly one call site to replace — not five copies drifting apart.
+ * ONE choke-point on purpose: DD-56 bans adapters from scattering `role === ...` across routes.
+ * The actor gate is the capability primitive `authorize()` (tenant-capability-authority-core,
+ * migration 0049) for action `session.manage`; this file holds no role list and decides on no role.
  *
  * The commands own their own `withTenant` transaction, so a route calls them directly and
- * must NOT wrap them again.
+ * must NOT wrap them again. The gate below runs in its OWN short transaction before the command.
  *
  * ── THREAT MODEL ────────────────────────────────────────────────────────────────────────────
  *
  * WHAT THIS GATE DEFENDS AGAINST. An AUTHENTICATED caller acting outside their authority, and a
  * client being told the wrong thing about a mutation. Concretely: a signed-in account driving a
- * host command without an allowed admin role, or a guest-note command without proven association
- * (both answer with one indistinguishable 403, never a 404, so this is not a tenant-existence
- * oracle); a cross-tenant denial of service by spending a victim tenant's rate-limit bucket
- * before proving membership (closed by ordering the actor ceiling ahead of the per-tenant
+ * host command without a current `session.manage` capability in that tenant (owner, admin and
+ * co_admin hold it in the default preset; a person with no ACTIVE web tenant_admins row, or only
+ * a row in another tenant, does not), or a guest-note command without proven association (both
+ * answer with one indistinguishable 403, never a 404, so this is not a tenant-existence oracle);
+ * a cross-tenant denial of service by spending a victim tenant's rate-limit bucket before proving
+ * authority (closed by ordering the actor ceiling and `authorize()` ahead of the per-tenant
  * bucket); a forged cross-origin write (CSRF token); an oversized or chunked body held open to
- * exhaust the process; and — the reason this file is P1 — an idempotency key that reaches
+ * exhaust the process; and -- the reason this file is P1 -- an idempotency key that reaches
  * `processed_commands` as a DIFFERENT key than it arrived as, which would hand one caller another
  * caller's stored result. That last one is why `isUnsafeCommandKey` and the FATAL TextDecoder
- * exist, and why both fail closed.
+ * exist, and why both fail closed. `authorize()` is fail-closed: an unknown action, a tenant
+ * context mismatch or any denial yields 403; an infrastructure error is NOT mapped to 403 or to
+ * allow, it propagates as a 5xx.
  *
- * WHAT IT EXPLICITLY DOES NOT DEFEND AGAINST. It is not an authorization ENGINE: it answers only
- * "may this actor run a session command at all". Every domain rule — status transitions, version
- * races, roster and money guards — belongs to the command, under its own row locks, where it can
- * be enforced transactionally. A route-level re-check would be a second reading of the same
- * predicate and would drift, which is DD-56's whole point. It does not defend against a
- * compromised session cookie, nor against a malicious tenant admin acting WITHIN their own tenant
- * (that is what the commands' fail-closed money guards and the outbox audit trail are for), nor
- * against anything below the transport: TLS, cookie flags and origin policy are owned elsewhere.
+ * WHAT IT EXPLICITLY DOES NOT DEFEND AGAINST. The decision here is made in a SEPARATE, already
+ * committed transaction BEFORE the command opens its own. A role deactivation that commits in
+ * between is not seen by the command: the in-command actor re-check under the command's own row
+ * locks (the `actor-recheck-under-lock` invariant) is NOT implemented here -- it is the
+ * backlog slice `session-commands-actor-recheck-under-lock`, which changes the commands'
+ * signatures. Until then the window is one request long. Every domain rule -- status transitions,
+ * version races, roster and money guards --
+ * belongs to the command, under its own row locks. It does not defend against a compromised
+ * session cookie, nor against a malicious tenant admin acting WITHIN their own tenant (that is
+ * what the commands' fail-closed money guards and the outbox audit trail are for), nor against
+ * anything below the transport: TLS, cookie flags and origin policy are owned elsewhere.
  *
  * WHEN THIS MODEL MUST BE REWRITTEN. If a session command becomes reachable by any principal that
- * is not a signed-in tenant member — a bot transport, a webhook, a public link, a service token —
- * every sentence above is void, because all of it assumes `currentSession()` identified an account
- * and `tenantsForPerson` bounded it. Also void if a command starts MOVING money rather than
+ * is not a signed-in tenant member -- a bot transport, a webhook, a public link, a service token --
+ * every sentence above is void, because all of it assumes `currentSession()` identified a person
+ * and `authorize()` bounded it. Also void if a command starts MOVING money rather than
  * refusing when money is present: the guards behind `CANCEL_REQUIRES_REVIEW` are refusals, not
  * settlement, and a settlement path needs its own model.
  */
@@ -65,29 +74,47 @@ import { resolveTenantLang } from "./tenant-lang";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Actor authorization for a session command. The BE tech spec §3 marks these endpoints
- * `TenantAdmin`, and DD-56 pins the role model: `tenant_admins.role='admin'` is a legacy label
- * that maps onto "đúng cùng least-privilege preset" as `co_admin`, and that DEFAULT preset
- * contains `session.manage`.
- *
- * `co_admin` is therefore allowed. An earlier revision of this slice excluded it, reasoning that
- * its capability needed the unbuilt DD-56 grant storage; codex round-01 [P2] corrected that, and
- * re-reading the decision confirms it — the explicit grant/expiry/revocation machinery governs
- * the SENSITIVE owner-only list (`role.manage`, `money.refund`, `billing.manage`, …), not the
- * default preset. Excluding co_admin was a deviation from an accepted contract, not extra safety.
- *
- * Owner-only capabilities are NOT granted here: this gate answers only "may this actor run a
- * session command", which is a default-preset question for all three roles.
- */
-const ALLOWED_ROLES: ReadonlySet<string> = new Set(["owner", "admin", "co_admin"]);
-
-/**
  * Pre-authorization ceiling, keyed on the ACTOR rather than the tenant. It bounds how fast an
- * authenticated caller can drive membership reads without ever touching a tenant's own quota.
- * Deliberately looser than the per-tenant write limits (spec §3 pins 10–20/min) so a legitimate
- * admin always meets the tenant limit first and this never becomes the binding constraint.
+ * authenticated caller can drive authorize() reads without ever touching a tenant's own quota.
+ * It is looser than the per-tenant WRITE limits (spec §3 pins 10–20/min) so a legitimate admin
+ * meets those first. It is NOT looser than the shared 60/min read bucket: an admin issuing only
+ * reads can reach either 60/min ceiling first, and that is acceptable (both answer 429).
  */
 const ACTOR_LIMIT = { limit: 60, windowSeconds: 60 };
+
+/** The ONE vi/en pair for SESSION_NOT_FOUND, shared by command and read routes. */
+export const SESSION_NOT_FOUND_MESSAGE = ["Không tìm thấy kèo.", "Session not found."] as const;
+
+/** The capability every session command and session read requires (default preset, DD-56). */
+const SESSION_ACTION = "session.manage";
+
+/**
+ * Canonical (lowercase) `?tenant=<uuid>`, or null when absent/malformed. Canonicalized ONCE
+ * because PostgreSQL renders uuid lowercase while the regex is case-insensitive: using the raw
+ * value would split the rate-limit bucket and the routing context by letter case (codex
+ * round-02 [P2]).
+ */
+export function readTenantParam(request: Request): string | null {
+  const raw = new URL(request.url).searchParams.get("tenant") ?? "";
+  return UUID_RE.test(raw) ? raw.toLowerCase() : null;
+}
+
+/** True when the ACTOR has exhausted the pre-authorization ceiling (never spends a tenant bucket). */
+export function actorThrottled(accountId: string): Promise<boolean> {
+  return rateLimited(`session-actor:${accountId}`, ACTOR_LIMIT.limit, ACTOR_LIMIT.windowSeconds);
+}
+
+/**
+ * One short `withTenant` transaction answering "does this person hold session.manage in this
+ * tenant right now". Denial -> false; an infrastructure error propagates (never allow, never a
+ * fake 403).
+ */
+export async function mayManageSessions(tenantId: string, personId: string): Promise<boolean> {
+  const decision = await withTenant(appDb().db, tenantId, (tx) =>
+    authorize(tx, { tenantId, action: SESSION_ACTION, actorPersonId: personId }),
+  );
+  return decision.allowed;
+}
 
 /**
  * Rejects a commandId that cannot survive the trip to `processed_commands` intact.
@@ -146,16 +173,11 @@ export async function resolveSessionCommandContext(
 
   // Tenant selection mirrors the existing tenant-scoped route (onboarding/readiness):
   // `?tenant=<uuid>`, which keeps the request BODY exactly as the spec's DTO pins it.
-  const rawTenantId = new URL(request.url).searchParams.get("tenant") ?? "";
-  if (!UUID_RE.test(rawTenantId)) {
+  const parsedTenant = readTenantParam(request);
+  if (parsedTenant === null) {
     return err("INVALID_BODY", t("Thiếu hoặc sai mã CLB.", "Missing or invalid club id."), 400);
   }
-  // Canonicalize ONCE, here, before the value is used for anything. The regex is
-  // case-insensitive but PostgreSQL renders uuid as lowercase, so comparing a raw uppercase id
-  // against tenantsForPerson() output denied a legitimate member with a 403 — and would also
-  // have split the rate-limit bucket and the tenant routing context by letter case.
-  // codex round-02 [P2].
-  let tenantId = rawTenantId.toLowerCase();
+  let tenantId = parsedTenant;
 
   // ORDER MATTERS, and an earlier revision had it backwards. The per-tenant bucket must be
   // consumed ONLY by callers already proven to belong to that tenant: because the counter is
@@ -166,19 +188,11 @@ export async function resolveSessionCommandContext(
   // The original concern that ordering answered — an unbounded membership-read probe — is now
   // handled by an ACTOR-scoped ceiling, which throttles the prober without spending anyone
   // else's quota.
-  if (
-    await rateLimited(
-      `session-actor:${session.accountId}`,
-      ACTOR_LIMIT.limit,
-      ACTOR_LIMIT.windowSeconds,
-    )
-  ) {
+  if (await actorThrottled(session.accountId)) {
     return err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429);
   }
 
-  const mine = await tenantsForPerson(appDb().pool, session.personId);
-  const membership = mine.find((m) => m.tenantId === tenantId);
-  if (!membership || !ALLOWED_ROLES.has(membership.role)) {
+  if (!(await mayManageSessions(tenantId, session.personId))) {
     // Only adapters opt in. This proves association; commands own permissions and actor-bound replay.
     const guestTenant =
       options.guestNoteSessionId === undefined
@@ -201,7 +215,7 @@ export async function resolveSessionCommandContext(
   }
 
   // Language is resolvable HERE, and this line must stay ABOVE the per-tenant 429 below. The
-  // tenant is known and has just been proven to belong to this actor, which is DD-118's condition
+  // tenant is known and has just been proven to be authorized for this actor, which is DD-118's condition
   // for resolving language — so every response from this point on, INCLUDING the rate-limit
   // rejection, is owed the tenant's language. v1 resolved after the 429 and answered an English
   // tenant's quota rejection in Vietnamese.
@@ -423,6 +437,19 @@ export function readExpectedVersion(body: Record<string, unknown>): number | und
  * narrowing alone was not enough.
  */
 const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
+  // Web MVP lane M2c (roster + manual mark-paid + reversal), raised as RosterMoneyError.
+  ["ALLOCATION_EXCEEDS_FUNDS", 409],
+  ["ALLOCATION_NOT_FOUND", 404],
+  ["ALREADY_JOINED", 409],
+  ["CHARGE_ALREADY_SETTLED", 409],
+  ["CHARGE_NOT_PAYABLE", 409],
+  ["FORBIDDEN", 403],
+  ["MARK_PAID_TOTAL_MISMATCH", 409],
+  ["PLAYER_NOT_FOUND", 404],
+  ["REJOIN_REQUIRES_REVIEW", 409],
+  ["REMOVE_REQUIRES_REVIEW", 409],
+  ["REVERSAL_EXCEEDS_EFFECTIVE", 409],
+  ["REVERSAL_NOT_SUPPORTED", 409],
   // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
   // (feature_session_management_tech.md:285), which is authority here — this route does not get
   // to pick a status for a spec-pinned code. It is a refusal to act while money or an active
@@ -473,6 +500,60 @@ const VALIDATION_VARIANTS: ReadonlySet<string> = new Set([
  */
 const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = new Map([
   [
+    "ALLOCATION_EXCEEDS_FUNDS",
+    ["Số tiền vượt quá khoản còn thiếu.", "The amount exceeds the remaining balance."],
+  ],
+  ["ALREADY_JOINED", ["Người chơi đã có trong buổi này.", "This player is already on the roster."]],
+  [
+    "CHARGE_ALREADY_SETTLED",
+    ["Khoản thu này đã được thanh toán đủ.", "This charge is already fully paid."],
+  ],
+  [
+    "CHARGE_NOT_PAYABLE",
+    [
+      "Chỉ ghi nhận thanh toán cho người chơi đang tham gia.",
+      "Payments can only be recorded for an active player.",
+    ],
+  ],
+  [
+    "FORBIDDEN",
+    ["Bạn không có quyền thực hiện thao tác này.", "You are not permitted to do this."],
+  ],
+  [
+    "MARK_PAID_TOTAL_MISMATCH",
+    [
+      "Số tiền đã thay đổi — xem lại rồi xác nhận lại.",
+      "The balance changed — review and confirm again.",
+    ],
+  ],
+  ["ALLOCATION_NOT_FOUND", ["Không tìm thấy khoản thanh toán.", "Payment not found."]],
+  ["PLAYER_NOT_FOUND", ["Không tìm thấy người chơi.", "Player not found."]],
+  [
+    "REJOIN_REQUIRES_REVIEW",
+    [
+      "Người chơi này cần được xem xét trước khi thêm lại.",
+      "This player needs review before being added again.",
+    ],
+  ],
+  [
+    "REMOVE_REQUIRES_REVIEW",
+    [
+      "Người chơi đã có thanh toán — hãy hoàn tác trước khi xoá.",
+      "This player has payments — reverse them before removing.",
+    ],
+  ],
+  [
+    "REVERSAL_EXCEEDS_EFFECTIVE",
+    ["Khoản thanh toán này đã được hoàn tác hết.", "This payment is already fully reversed."],
+  ],
+  [
+    "REVERSAL_NOT_SUPPORTED",
+    [
+      "Chỉ hoàn tác được khoản thu tiền mặt hoặc chuyển khoản do chủ CLB ghi nhận.",
+      "Only cash or host-attested transfer payments can be reversed here.",
+    ],
+  ],
+  [
     // Says what happened and who must act, without leaking WHY. The refusal fires for a charge
     // (including a `void` one) or, on cancel, a non-zero active roster — telling an unauthorized-
     // but-authenticated caller which of those it was would turn an error body into a probe for a
@@ -516,7 +597,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "Changing the price with existing charges requires a policy.",
     ],
   ],
-  ["SESSION_NOT_FOUND", ["Không tìm thấy kèo.", "Session not found."]],
+  ["SESSION_NOT_FOUND", [SESSION_NOT_FOUND_MESSAGE[0], SESSION_NOT_FOUND_MESSAGE[1]]],
   [
     "SESSION_NOT_OPEN",
     [
@@ -540,6 +621,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
 export function mapSessionCommandError(error: unknown): Response | null {
   const isDomain =
     error instanceof SessionCommandError ||
+    error instanceof RosterMoneyError ||
     error instanceof SessionPublishError ||
     error instanceof SessionUpdateError ||
     error instanceof SessionCloseError ||

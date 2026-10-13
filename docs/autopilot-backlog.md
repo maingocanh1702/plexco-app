@@ -5716,3 +5716,20 @@ notes: |
   KHÔNG viết thêm luật mới vào workflow doc từ row này — `level3-workflow.md` đã yêu cầu đúng điều đó ở bước 4;
   cái thiếu là thực thi, không phải câu chữ.
   source: `docs/sessions/2026-09-06-repo-audit.md` · `docs/autopilot-templates/audit-fix-lanes-2026-09-06-RUN.md`
+
+## task: session-commands-actor-recheck-under-lock
+title: Re-check the actor with authorize() INSIDE each session command's own transaction (invariant actor-recheck-under-lock)
+status: planned
+risk: P1
+change_class: manual-auth-feature
+depends_on: []
+invariants: [auth]
+scope: [packages/db/src/session-service.ts, apps/web/lib/session-command-route.ts]
+manifest: null
+merged_probe: packages/db/src/session-service.ts :: actorRecheckUnderLock
+notes: |
+  Follow-up of lane M2a-1 (PR #43), which replaced the interim role gate with authorize(session.manage) but left the decision in a SEPARATE transaction before the command. This row closes that window.
+  Contract: the 8 session commands (create, publish, announce, update, close, cancel, createGuestNote, deleteGuestNote) take `actorPersonId` and call `authorize(tx, ...)` as the FIRST statement of their own `withTenant` transaction, BEFORE the session-row `FOR UPDATE` (lock order actor/grant lock first, session lock second). Spec: `docs/features/BE/feature_tenant_routing_authz_tech.md:426-433` ("Actor-recheck-under-lock"); PLAN.md M3 #1. The route gate becomes the cheap early deny only.
+  Until this lands, the route gate's one-request window (decision committed before the command opens its own tx) is carried forward for the 7 routes using handleSessionCommand - the same posture DD-56 amendment #1 accepted. Guest-note commands keep their association proof; the actor recheck applies to the host path.
+  merged_probe `actorRecheckUnderLock` is a slice-unique identifier the implementing lane must introduce (verify ABSENT on origin at author time of the manifest). Changes command signatures: serialize against any other lane touching session-service.ts.
+  source: PR #43 review round 1 (should-fix 1).
