@@ -7,9 +7,10 @@ import { describe, expect, it } from "vitest";
  * of tenant data arrives through /api after the client-side membership proof. So nothing here may
  * reach the database, and the only session helper it may import is `currentSession`.
  *
- * What is checked: FORBIDDEN patterns over the direct files AND their relative-transitive import
- * closure (`./`, `../`; static, `import * as`, default, side-effect, dynamic and re-export forms;
- * `.ts/.tsx/.js/index` resolution). Not checked: package-path indirection (`@plexco/*`, `@/`
+ * What is checked: FORBIDDEN patterns and the session-cookies import names, both over the direct
+ * files AND their relative-transitive import closure (`./`, `../`; static, `import * as`, default,
+ * side-effect, dynamic and re-export forms; `.ts/.tsx/.js/index` resolution; either quote style).
+ * Not checked: package-path indirection (`@plexco/*`, `@/`
  * aliases) is not followed, and `lib/session-cookies` is the one permitted seam so its own
  * server-side imports are not walked. This is a textual guard, not a module-graph proof.
  */
@@ -75,28 +76,38 @@ describe("app/c/** server boundary", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("imports only currentSession from lib/session-cookies", () => {
+  it("imports only currentSession from lib/session-cookies (direct and relative-transitive)", () => {
     const offenders: string[] = [];
-    for (const file of files) {
+    let allowed = 0;
+    for (const file of reached) {
       const text = readFileSync(file, "utf8");
-      for (const m of text.matchAll(/import\s+\*\s+as\s+\w+\s+from\s*"[^"]*session-cookies"/g)) {
-        offenders.push(`${relative(ROOT, file)}: ${m[0]}`);
+      const where = relative(ROOT, file);
+      // Namespace / star (import or re-export) and default imports expose more than currentSession.
+      for (const m of text.matchAll(
+        /\b(?:import|export)\s*\*\s*(?:as\s+\w+\s*)?from\s*["'][^"']*session-cookies["']/g,
+      )) {
+        offenders.push(`${where}: ${m[0]}`);
       }
       for (const m of text.matchAll(
-        /import\s+\w+\s*(?:,\s*\{[^}]*\}\s*)?from\s*"[^"]*session-cookies"/g,
+        /\bimport\s+\w+\s*(?:,\s*(?:\{[^}]*\}|\*\s*as\s+\w+)\s*)?from\s*["'][^"']*session-cookies["']/g,
       )) {
-        offenders.push(`${relative(ROOT, file)}: ${m[0]}`);
+        offenders.push(`${where}: ${m[0]}`);
       }
-      for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*"[^"]*session-cookies"/g)) {
+      for (const m of text.matchAll(
+        /\b(?:import|export)\s*\{([^}]*)\}\s*from\s*["'][^"']*session-cookies["']/g,
+      )) {
         const names = m[1]!
           .split(",")
           .map((n) => n.trim())
           .filter(Boolean);
         for (const name of names) {
-          if (name !== "currentSession") offenders.push(`${relative(ROOT, file)}: ${name}`);
+          if (name === "currentSession") allowed += 1;
+          else offenders.push(`${where}: ${name}`);
         }
       }
     }
     expect(offenders).toEqual([]);
+    // The scanner must still see the one permitted import, or it is matching nothing at all.
+    expect(allowed).toBeGreaterThan(0);
   });
 });

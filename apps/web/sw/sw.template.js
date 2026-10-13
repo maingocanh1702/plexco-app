@@ -109,7 +109,10 @@ async function staleWhileRevalidate(request) {
   const cached = await cache.match(request);
   const network = fetch(request)
     .then((response) => {
-      if (response.ok) cache.put(request, response.clone());
+      // Only a plain same-origin answer: never opaque/cors, never the result of a redirect.
+      if (response.ok && response.type === "basic" && !response.redirected) {
+        cache.put(request, response.clone());
+      }
       return response;
     })
     .catch(() => undefined);
