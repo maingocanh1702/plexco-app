@@ -5,6 +5,8 @@
 > v1.2 · 2026-07-28 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
 > **Design System:** xem `design-system.md` (v1.0, 07/08/2026) cho component catalog, usage tokens, layout patterns, motion, a11y, và responsive grid — document đó reference values từ file này.
 > **Authority boundary:** current active values bên dưới vẫn là Indigo + Outfit/Inter. DD-81 đã chọn target Candidate C Energetic Orange + Sora/Inter, nhưng chưa activate trước tracked owner-approved `design.pen` + visual/WCAG/drift gate. `design.pen` variables phải match file này; authority flip cần DD mới + exporter + drift proof. Nhu cầu token: `token-needs-matrix.md`.
+>
+> ⚠️ **2026-10-12 — DD-122 D1 (owner):** gate `design.pen`/exporter/drift-proof **không còn áp dụng**; agent triển khai **được activate** target C (Orange `#FF5A1F` · `--on-primary #22100A` · Sora/Inter) vào `apps/web` và cập nhật giá trị trong file này trong PR FE đầu tiên (M1) theo bước 2 §6 `../channels/web/theme-direction-2026-07.md`. Cho tới PR đó, giá trị bên dưới vẫn là Indigo/Outfit (chưa đổi).
 
 ---
 

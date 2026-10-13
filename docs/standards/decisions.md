@@ -117,6 +117,7 @@
 | DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
 | DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
 | DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-122 | **Gỡ FE PENDING (DD-116) cho full MVP; agent sở hữu UI design (DD-81 là input, không cần `.pen`); scope = BRD §5.1 ship 3 đợt A Launch ⊂ B Phase-1 ⊂ C MVP; bảng DEFAULTS cho 9 quyết định treo (Tier C #1 host-add · DD-56-read-routes chờ `authorize()` · O4 chặt nhất · DD-114-D6 self-serve · DB_EXPECTED_ROLE opt-in · C4 staging-only · O2 uỷ quyền · Tier C #2 per-club · DD-119 superseded); review chương trình = Claude subagent độc lập, không Codex, không scope-gate lifecycle** → gate `.pen` của DD-81/DD-58/DD-116/DD-119 không còn áp; thay bằng acceptance bar 375px+desktop · light/dark · 5 state · WCAG 2.2 AA · tokens-only · `t(vi,en)` | ✅ Quyết định owner 2026-10-12 (hiệu lực khi PR M0 merge — merge = ký) | Launch → MVP (M0–M13) | `../autopilot-templates/web-mvp-2026-10-12-RUN.md` · `../BACKEND-HANDOFF-2026-09-26.md` · `../sessions/web-mvp-program-status.md` · DD-116 · DD-119 · DD-81 · DD-58 · DD-113 · DD-114 · DD-118 |
 | DD-121 | **Recurrence editing (SES-OQ-2): this-and-future only** → sửa recurring session tạo **rule version mới** áp dụng từ occurrence được chọn trở đi; occurrence trước đó và đã-generate KHÔNG bị rewrite (khớp nguyên văn BE §4 "Recurrence Implementation" đã pin sẵn từ trước). Sửa một occurrence riêng lẻ là **ngoài phạm vi** phase hiện tại. Không cần schema mới (`session_recurrence_rules.version` đã có sẵn) | ✅ Chốt (owner 2026-09-11) | P2/P4 (session management) | `ap3-intake` gap closure R4.2 · `../features/FE/feature_session_management.md` §7 SES-OQ-2 · `../features/BE/feature_session_management_tech.md` §4 |
 | DD-120 | **Làn ap3 (proactive, native Claude Code) cho class `code-quality-p2`** → run do `ap3/dispatch.sh` (launchd) khởi động không cần người gõ lệnh; thẩm quyền code = task file `ap3/queue/<slug>.md` (qua `lint-task.sh`, trên `origin/main`) + class `enabled` trong `ap3/routines.json`; READY = **PR đang mở** + `verify` xanh + Codex `AP3_REVIEW_VERDICT: CLEAN` + dòng evidence; owner merge tay, `AUTO_MERGE: off` giữ nguyên. **Không** áp P0/P1 · schema/migration · auth · tiền · i18n string · slice đã có verdict. Class `paused` ở mọi HALT/crash/PR đóng/sửa tay trước merge; giữ làn = 3 run READY liên tiếp merge nguyên vẹn (`ap3/evidence.jsonl`) | 🟡 Đề xuất (2026-09-09, chờ owner ratify) | P0–P1 (tooling) | `../autopilot-templates/ap3-workflow.md` (mirror `docs/level3-native/DESIGN.md` bên Claude template) · `../../ap3/routines.json` · `../../ap3/README-W2.md` · `CLAUDE.md` mục "Làn ap3" |
 | DD-119 | **Canonical design file = file MỚI (`plexco.pen`) do designer dựng; carve-out gỡ deadlock DD-116** → owner chọn 08/09 "file mới hoàn toàn + designer dựng", tức **không** phải `design.pen` cũng **không** phải `fe.pen` ⇒ named trigger (a) của DD-116 **không bao giờ thoả**, mà DD-116 tự khai "không sự kiện nào khác gỡ" ⇒ **deadlock**: PENDING chặn chính việc dựng file, mà file là điều kiện gỡ PENDING. **D1** `plexco.pen` root là canonical; `design.pen`+`fe.pen` **superseded** (giữ tham khảo, không track, không import câm — 2/6 screen của `design.pen` nghịch negative scope DD-113 D3 và kickoff §3B). Amend luôn path DD-81. **D2 carve-out:** designer được dựng `plexco.pen` **untracked** cho Giai đoạn A + 5 khối launch + Home; bốn cấm tường minh của DD-116 (code · migration · FE lane · `.pen` tracking) **giữ nguyên**. **D4** checklist nghiệm thu 7 mục nhị phân (token khớp 1-1 DD-59 · WCAG AA target C trên Home · 6 state × light/dark · 4 state × 3 breakpoint · `t(vi,en)` · 0 vi phạm negative scope · exact node id DD-58). **D5** rủi ro dựng untracked, nhận tường minh. Không đảo DD-113 D5 / DD-69 | 🟡 Đề xuất (chờ owner ratify 2026-09-08) | Launch (DD-113) | DD-116 (nguồn bền PENDING) · DD-81 · DD-59 · DD-58 · DD-111 D4 · `../channels/web/designer-kickoff.md` · `../channels/web/designer-docs-guide.md` |
@@ -1129,6 +1130,8 @@
 
 ## DD-81 — Pencil + target theme direction · ✅ Chốt direction (owner 2026-07-28)
 
+> ⚠️ **2026-10-12 — DD-122 D1:** direction (Orange/Sora/Inter) **giữ nguyên** và là input; các gate `.pen` (tracked + owner-approved `design.pen`, variables khớp SoT, drift audit) **không còn áp dụng** — agent triển khai được activate target C trực tiếp vào `apps/web` + `design-tokens.md`.
+
 > **Nguồn:** theme-direction §5/§7 và canonical root `design.pen`. Decision này chốt target direction nhưng chưa mở FE implementation gate.
 
 - **Bối cảnh:** root `design.pen` hiện tồn tại dưới dạng untracked/local WIP; nó chưa là visual authority. Active `design-tokens.md` vẫn mang Indigo/Outfit.
@@ -1724,6 +1727,135 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-122 — Gỡ FE PENDING cho **full MVP**; agent sở hữu UI design; scope BRD §5.1 ship 3 đợt; default cho quyết định treo · ✅ Quyết định owner 2026-10-12 (hiệu lực khi PR M0 merge)
+
+> **Nguồn:** phiên Cowork với owner 2026-10-12, ghi tại `../autopilot-templates/web-mvp-2026-10-12-RUN.md` (bảng
+> "Owner chốt 12/10" + Shared contract §DEFAULTS) và prompt điều phối owner paste vào Claude Code cùng ngày.
+> Theo DD-111 D4, quyết định owner phải sống trong decision log — mục này là **nguồn bền**; RUN doc là bản
+> vận hành. **Owner merge PR M0 = chữ ký.** Tới lúc đó mọi dòng dưới là "quyết định đã nói, chưa ký".
+
+- **Bối cảnh — đo tại `main@0db92b9` (12/10):** 49 migration (tail `0048`) · 15 API route (**0** route ĐỌC
+  session) · **0** màn FE · 8 session command · `pnpm typecheck`/`lint`/`format:check`/`review:check`/`build` đều
+  exit 0; `pnpm -w test` không chạy local (Docker tắt) — CI của PR M0 là bằng chứng suite. FE PENDING (DD-116 Option B) chặn 100% launch scope DD-113 từ 13/08; carve-out DD-119 (08/09)
+  chưa ratify; `design.pen` + `fe.pen` vẫn untracked. BE readiness phase-1 39%, launch readiness 8%
+  (`pnpm progress`). Trục yếu nhất của sản phẩm là **không có surface người dùng chạm được**.
+
+### D1 — Gỡ FE PENDING (DD-116) cho **toàn bộ MVP scope**, không chỉ 5 khối launch
+
+- **Quyết định:** lệnh FE PENDING 13/08 (DD-116) **hết hiệu lực** kể từ khi PR M0 merge. Named trigger 3 vế
+  của DD-116 (chọn canonical `.pen` · tracked trên `main` · owner ký gate DD-81) **được thay** bằng chính
+  quyết định này — owner gỡ bằng quyết định trực tiếp, không qua trigger. Phạm vi FE được authorize = toàn bộ
+  MVP (D2), rộng hơn mệnh đề "bounded đúng 5 khối launch" của DD-116.
+- **DD-119 superseded.** Không còn cần designer dựng `plexco.pen`; carve-out và checklist nghiệm thu 7 mục
+  của DD-119 **không áp dụng**. `design.pen` + `fe.pen` giữ untracked (tham khảo tuỳ chọn, **không** track,
+  **không** là authority).
+- **Agent triển khai sở hữu UI design.** Input: direction DD-81 (Energetic Orange `#FF5A1F` · Sora heading ·
+  Inter body · `--on-primary #22100A`) và cấu trúc token SoT `design-tokens.md`. Agent **được activate** bộ
+  giá trị target C vào `apps/web` (và cập nhật `design-tokens.md` theo bước 2 §6 `../channels/web/theme-direction-2026-07.md`; các bước còn hiệu lực của §6: 2 · 3 · 4 · 6 và vế drift audit SoT ↔ CSS ↔ component + WCAG của 7 — bước 5 và vế drift-audit-với-file-design của 7 **bỏ**)
+  trong PR FE đầu tiên — tức gate "activate chỉ sau tracked owner-approved `.pen`" (DD-81 · `design-tokens.md` v1.2 authority
+  boundary) được gỡ bởi quyết định này; value SoT **vẫn là `design-tokens.md`** (DD-59); "authority flip" sang file
+  design (theme-direction §8) nay moot, **không xảy ra**; không cần DD riêng, không cần exporter `.pen`.
+- **Các gate `.pen` KHÔNG còn áp dụng:** DD-81 "file chỉ thành authority sau khi tracked + owner-approved;
+  variables phải khớp SoT; drift audit `design.pen`"; DD-58 "mỗi screen cần tracked owner-approved node";
+  DD-116 trigger (a)(b)(c); DD-119 D1–D5. Phần **còn hiệu lực** của DD-58: pipeline `token-mapping → code →
+  screenshot verify` (không có bước `.pen`), FE-INV-1..6 của `frontend-architecture.md` §0, và DD-57.
+- **Acceptance bar thay cho gate `.pen` (mọi màn):** mobile-first **375px** + dùng được trên desktop · light
+  **và** dark · đủ state `loading / ready / empty / error / offline` · **WCAG 2.2 AA** · tokens-only (không
+  hardcode hex/px) · `t(vi, en)` (HR5) · a11y kiểm bằng máy + một lượt keyboard/screen-reader ghi trong PR.
+
+### D2 — Scope = **full MVP** (BRD §5.1), ship **3 đợt lồng nhau**
+
+| Đợt | Gồm | Mốc RUN | Cổng cuối đợt |
+|---|---|---|---|
+| **A — Launch** | DD-113 5 khối (signin/signup · link Zalo · session management · session detail · settings) **+ tạo CLB self-serve** (default DD-114 D6) **+ gạch nợ thủ công** (baseline DD-40) | M0–M5 | E2E staging đủ 5 khối; **owner** quyết deploy production |
+| **B — Phase-1** | phần còn lại DD-114: sync 2 chiều đạt SLO · toggle public/private (sau fence 8a — đã land `0033`) · tiền `host_pro` (billing · đối soát CK · nhắc tự động) · privacy (sau A3) | M6–M8 | như trên |
+| **C — MVP** | phần còn lại BRD §5.1: phía player (view · join web/Zalo · cross-club · discovery) · giá theo giới tính · in-app Chat · Messenger · email login · hardening | M9–M13 | như trên |
+
+Ngoài scope cả chương trình: app native · membership (DD-115) · tournament/club tools · feed/kudos · rating
+công khai · fill-slot · web push · Telegram · thanh toán in-app/ví/thẻ. **Launch ⊂ Phase-1 ⊂ MVP** — DD-113 và
+DD-114 giữ nguyên thứ bậc; quyết định này chỉ **mở rộng phạm vi được authorize** tới hết MVP, không đảo thứ tự.
+
+### D3 — Default cho quyết định đang treo — **áp ngay, không dừng hỏi**
+
+Mỗi dòng là *"default applied 2026-10-12, pending owner sign-off"*; owner merge PR M0 = ký. Lane nào dựa vào
+default nào thì PR của lane đó cite dòng tương ứng. Owner muốn đổi: sửa dòng đó **trước** khi lane liên quan
+chạy; đã chạy rồi thì đổi là một DD mới.
+
+| ID | Câu hỏi | Default áp dụng | Trạng thái |
+|---|---|---|---|
+| **Tier C #1** | Writer roster đầu tiên: host-add hay bot-join? | **Host-add trên web** (audit 06/09 khuyến nghị). Bot self-join vào M9 (DD-32 Option D) | default applied 2026-10-12, pending owner sign-off |
+| **DD-56-read-routes** | Route ĐỌC session qua cổng tạm (amendment #4) hay chờ capability core? | **Chờ capability core**: `authorize()` thay cổng tạm trước rồi route GET đi sau `authorize()` (M2a = BACKEND-HANDOFF A1 + A2 + A3). **Không** có amendment #4 | default applied 2026-10-12, pending owner sign-off |
+| **O4** (Zalo secret) | KMS chung hay riêng; ai giải mã; audit mỗi lần đọc? | Trace read-only reader/writer thật trước; rồi chọn phương án **chặt nhất**: khoá riêng, chỉ process gọi Zalo giải mã, audit mọi lần giải mã | default applied 2026-10-12, pending owner sign-off — **owner lưu ý:** vế "chặt nhất" là mở rộng so với inbox (chỉ ghi "trace trước") |
+| **DD-114-D6** | Launch self-serve hay provision tay tenant #1? | **Self-serve** (`POST /api/onboarding/start`), kể cả tenant #1 — đóng OPEN NOTE v2.48 | default applied 2026-10-12, pending owner sign-off |
+| **DB_EXPECTED_ROLE** | Bắt buộc hay opt-in? | **Opt-in** (giữ như B3/A7) | default applied 2026-10-12, pending owner sign-off |
+| **C4** (Google OAuth) | Bật `GOOGLE_OAUTH_*` production? | **Bật trên staging** cho E2E; production **chỉ owner** bật | default applied 2026-10-12, pending owner sign-off |
+| **O2** (autonomy) | Uỷ quyền thường trực `autonomous_to_ready`? | **Có** cho slice P1/P2 của chương trình này — nghĩa vận hành dưới D4 (không còn manifest scope-gate): primary agent đưa slice tới **PR mở + gate xanh + review sạch** mà không dừng hỏi owner giữa chừng; P0 vẫn prepare-only | default applied 2026-10-12, pending owner sign-off |
+| **Tier C #2** (ngôn ngữ) | Ngôn ngữ per-user? | **Per club** qua `tenants.locale` (DD-118). **Không** có locale cấp member trong MVP | default applied 2026-10-12, pending owner sign-off |
+| **DD-119** | Ratify carve-out `plexco.pen`? | **Superseded** bởi D1; `plexco.pen` là input tuỳ chọn nếu tồn tại | default applied 2026-10-12, pending owner sign-off (hệ quả của D1) |
+
+Quyết định **không có default** (Tier C #6 giới hạn lần thử outbox · Occupancy authority · mọi luật tiền còn
+mở · A3 luật sư · vendor email C7): lane viết **proposal** kèm khuyến nghị, làm hết phần không phụ thuộc, và
+**AWAIT đúng slice phụ thuộc**.
+
+### D4 — Quy trình review cho **chương trình Web MVP 2026-10-12** (owner override, phạm vi hẹp)
+
+> **Nguồn riêng của D4 (khác với D1–D3):** prompt điều phối owner **paste vào Claude Code ngày 12/10**, mục
+> "REVIEW — owner rule for this session (overrides the review requirement in CLAUDE.md)". Trích nguyên văn
+> (English, agent-facing) để bản ghi này không phụ thuộc hội thoại: *"No Codex: do not run
+> scripts/codex-review-pin.sh or any Codex reviewer, and do not HALT TOOL_UNAVAILABLE over a missing reviewer.
+> Do not use the scripts/autopilot-scope-gate register / ready / ap-finish lifecycle: its ready step runs the
+> Codex gate. Work on ordinary branches, one pull request per coherent change. Every PR gets an independent
+> Claude review before you call it ready: a separate subagent that did not write the code, given only the
+> diff, the specs it implements and the MUST HOLD rules. PRs that touch auth, permissions, secrets, money,
+> external input (webhooks) or deployment also get a second, security-focused reviewer subagent. Fix every
+> blocking finding, then re-review with a fresh subagent. At most 3 review rounds per PR. The PR body states
+> 'Codex waived by owner 2026-10-12; reviewed by independent Claude subagent'."*
+>
+> **D4 THẮNG, trong phạm vi chương trình, các văn bản sau (mỗi chỗ có một dòng annotate trỏ về đây, trừ
+> chỗ ghi rõ):** đoạn WORKFLOW của Shared contract trong `../autopilot-templates/web-mvp-2026-10-12-RUN.md`
+> (register manifest · `codex-review-pin.sh` · `HALT TOOL_UNAVAILABLE`) · `../BACKEND-HANDOFF-2026-09-26.md`
+> §2 mục 2 ("Codex review sạch"), §7.2 (scope-gate lifecycle), §7.4 (Codex), §7.6 (prompt mẫu) (annotate một dòng ở header của file, không per-section) · câu
+> Codex/`HALT TOOL_UNAVAILABLE` ở bước 4 mục "Workflow mặc định — Level 3" của `CLAUDE.md` (annotate một dòng
+> tại chỗ) · quy tắc "Cross-model review = Codex ONLY" trong invariants toàn cục (**ngoài repo, KHÔNG
+> annotate** — agent tới D4 qua Shared contract của RUN doc hoặc index DD-122). **KHÔNG override** mục
+> "Review / Plan Readiness" của `CLAUDE.md` (validator `pnpm review:check` và readiness gate cho docs/plan/spec
+> giữ nguyên — xem mục 6 dưới). **Ngoài chương trình này, tất cả giữ nguyên hiệu lực.**
+>
+> **Mở rộng so với nguồn, cần owner xác nhận (cùng cơ chế merge = ký):** nguồn ghi *"owner rule for **this
+> session**"*; D4 áp cho **mọi PR của chương trình M0–M13** (nhiều phiên), vì chương trình được chạy bởi
+> cùng một prompt điều phối và cùng một ràng buộc môi trường (Codex không có trong phiên). Không đồng ý →
+> sửa dòng này trước khi M1 chạy.
+
+Áp cho mọi PR của chương trình này:
+
+1. **Không Codex.** Không chạy `scripts/codex-review-pin.sh`; không `HALT TOOL_UNAVAILABLE` vì thiếu reviewer.
+2. **Không dùng lifecycle `scripts/autopilot-scope-gate register/ready` và `ap-finish`** (bước `ready` gọi
+   Codex). Làm trên branch thường, **một PR cho một thay đổi mạch lạc**.
+3. **Mỗi PR có review độc lập bằng Claude subagent** không viết code đó, chỉ nhận diff + spec liên quan + 5
+   HARD RULES; báo từng finding `blocking / should-fix / nit` kèm `file:line` + lý do. PR chạm auth ·
+   permission · secret · tiền · input ngoài (webhook) · deployment có thêm **reviewer thứ hai chuyên security**.
+4. Sửa hết `blocking` → review lại bằng subagent **mới**; `should-fix` sửa hoặc giải trình trong PR body.
+   **Tối đa 3 vòng/PR**; vẫn blocking sau vòng 3 ⇒ PR để mở, đánh dấu blocked, liệt kê trong báo cáo cuối.
+5. PR body ghi *"Codex waived by owner 2026-10-12; reviewed by independent Claude subagent"* + bảng finding và
+   cách giải quyết.
+6. **Quality gate không đổi:** `pnpm -w test` · `typecheck` · `lint` · `format:check` · `review:check` · `build`
+   xanh trên mỗi PR, **cộng CI** (`.github/workflows/ci.yml`) xanh trước merge.
+
+### Hệ quả · nghĩa vụ mirror · KHÔNG authorize
+
+- **Mirror (M0 làm):** `HANDOFF.md` (khối LIVE TRUTH mới) · `ROADMAP.md` §📍 (dòng FE PENDING) ·
+  `frontend-architecture.md` status boundary · `design-tokens.md` authority boundary · `decisions-inbox.json`
+  (O1 · DD-119 · các dòng có default ở D3) · `BACKEND-HANDOFF-2026-09-26.md` (header "FE PENDING"). Chỉ
+  **annotate** trỏ về đây, không viết lại spec đã Reviewed.
+- **Ledger chương trình:** `../sessions/web-mvp-program-status.md` (chỉ primary agent ghi, PR docs-only riêng).
+- **Vẫn giữ:** 5 HARD RULES · Level 3 supervised (trừ phần D4 thay Codex) · `AUTO_MERGE: off` · owner giữ merge
+  · deploy · bật flag/credential production · gửi bên ngoài · sửa `ap3/routines.json`. Chương trình **không**
+  đi làn ap3.
+- **KHÔNG authorize:** deploy production · bật `GOOGLE_OAUTH_*` production · `OUTBOX_DISPATCH_SCHEDULE_ENABLED`
+  · provider key thật · đổi canonical P-number · đảo DD-113/DD-114/DD-69 · giả lập provider ngoài.
+
+---
+
 ## DD-121 — Recurrence editing (SES-OQ-2): this-and-future only, single-occurrence edit ngoài phạm vi · ✅ Chốt (owner 2026-09-11)
 
 > **Chốt (owner 2026-09-11):** phase hiện tại của `feature_session_management` chỉ hỗ trợ sửa recurring session theo **this-and-future** — sửa một `session_recurrence_rules` row tạo **rule version mới** áp dụng từ occurrence được chọn trở đi. Sửa **một occurrence riêng lẻ** (giữ nguyên chuỗi, chỉ đổi một buổi) là **ngoài phạm vi** phase hiện tại.
@@ -1844,6 +1976,8 @@ từ `ap3/queue/_after-v6/` lên `ap3/queue/`. **`DEMONSTRATED_STEP: 3` chỉ đ
 ---
 
 ## DD-119 — Canonical design file = file MỚI do designer dựng; carve-out gỡ deadlock của DD-116 · 🟡 Đề xuất (chờ owner ratify)
+
+> ⚠️ **2026-10-12 — SUPERSEDED bởi DD-122 D1 (owner):** không cần `plexco.pen`; carve-out và checklist D4 không áp dụng. Giữ nguyên văn làm lịch sử.
 
 > **Nguồn:** owner chọn 2026-09-08: canonical design file = **file mới hoàn toàn**, **designer dựng**. Hai lựa chọn mà DD-116 named trigger (a) cho phép (`design.pen` / `fe.pen`) đều **không** được chọn ⇒ trigger như đang viết **không bao giờ thoả**, trong khi DD-116 tự khai *"Không sự kiện nào khác gỡ"*. DD-119 là chỗ ký riêng cho việc amend đó. Sửa thẳng thân DD-116, hoặc lặng lẽ track một file thứ ba, là đúng thứ **DD-111 D4** cấm.
 
@@ -2014,6 +2148,8 @@ amendment nào**.
 ---
 
 ## DD-116 — Lệnh FE PENDING (13/08): đưa vào decision log · ✅ Chốt Option B — KEEP (owner 2026-08-24)
+
+> ⚠️ **2026-10-12 — HẾT HIỆU LỰC bởi DD-122 (owner):** lệnh FE PENDING được gỡ cho full MVP bằng quyết định trực tiếp; named trigger 3 vế dưới đây không còn là điều kiện. Giữ nguyên văn làm lịch sử.
 
 > **Nguồn:** audit V2 (`../sessions/2026-08-24-repo-audit.md`) + DD-113 D5. Lệnh FE PENDING owner ra 13/08 đang chặn **100% launch scope DD-113**, nhưng primary source duy nhất là `../autopilot-templates/next-lanes-2026-08-13-RUN.md` rồi mirror sang ROADMAP/HANDOFF — **chưa từng thành một DD**. Đây đúng thứ **DD-111 D4** cấm: quyết định owner phải sống trong decision log (bản ghi bền), không chỉ trong RUN doc/hội thoại (lời khai). **DD-116 nay là nguồn bền (durable source) của trạng thái FE PENDING**, thay cho RUN doc 13/08; owner đã ratify **Option B — KEEP** (2026-08-24).
 
@@ -2259,6 +2395,8 @@ settings/privacy và có đường tiền (bank memo) ⇒ A3 không còn là vi�
 Làn B và làn C **không** chạy song song bừa: mọi slice dùng chung migration tail / state / generated
 artifact phải tuần tự (luật §3 `CLAUDE.md`).
 
+> ✅ **2026-10-12 — ĐÓNG bởi DD-122 D3 (default DD-114-D6 = self-serve, kể cả tenant #1; pending owner sign-off = merge PR M0).** Giữ nguyên văn bên dưới làm lịch sử.
+>
 > ⬜ **OPEN NOTE (audit 2026-09-06, KHÔNG phải amendment — owner quyết, Tier C #3):** làn A ghi "tenant provision **thủ công**", nhưng đường self-serve của làn B **đã có trên `main`** — `POST /api/onboarding/start` (`apps/web/app/api/onboarding/start/route.ts`) → `provisionTenant` (`packages/db/src/auth.ts`) → `tenant_provision()` (`0028`), kèm `GET /api/onboarding/readiness`. Hai cách đọc, chưa doc nào chọn: (a) launch **dùng** self-serve (ranh giới A/B ở bảng trên dời: mục 2 sang làn A) — hoặc (b) route bị **tắt/gate** lúc launch và tenant #1 provision tay đúng như D6 viết. Khuyến nghị của audit: (a), vì code đã qua review và RLS fix (`0037`, lane A2) làm nó chạy được dưới role `app`; điều kiện resume = owner viết một dòng ✅ ở đây. Nguồn: `../sessions/2026-09-06-repo-audit.md` §3 #4 · §5 #8.
 
 ### D7 — Vẫn NGOÀI phase-1
@@ -3263,6 +3401,7 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 12/10/2026 | v2.52 | **Thêm DD-122 → ✅ Quyết định owner 2026-10-12 (hiệu lực khi PR M0 merge): gỡ FE PENDING (DD-116) cho FULL MVP; agent triển khai sở hữu UI design với DD-81 làm input (không cần `.pen`, DD-119 superseded, gate `.pen` của DD-81/DD-58 không còn áp); scope = BRD §5.1 ship 3 đợt A/B/C (M0–M13 của `web-mvp-2026-10-12-RUN.md`); bảng DEFAULTS áp cho 9 quyết định treo, mỗi dòng "default applied 2026-10-12, pending owner sign-off"; D4 quy trình review riêng cho chương trình (Claude subagent độc lập + security reviewer, không Codex, không scope-gate lifecycle, ≤3 vòng/PR).** Đo tại `main@0db92b9`: 49 migration · 15 route (0 GET session) · 0 màn FE · gate typecheck/lint/format/review:check exit 0. Mirror cùng PR: HANDOFF khối 🟧 12/10 · ROADMAP v3.19 §📍 · `frontend-architecture.md` · `design-tokens.md` · `decisions-inbox.json` · `BACKEND-HANDOFF-2026-09-26.md` (commit lần đầu cùng RUN doc) · ledger `sessions/web-mvp-program-status.md`. Không authorize deploy/flag production. |
 | 19/09/2026 | v2.51 | **DD-56 amendment #3 — hai route guest-note được KÝ TÊN, cổng tạm nay phủ BẢY route.** Đóng OPEN NOTE v2.49 (15/09): owner chọn **ký tên hai route** thay vì đọc rộng chúng vào scope amendment #2, vì cơ chế “liệt kê tường minh” là thứ điều khoản 1 dựa vào. **Bề mặt cưỡng chế không rộng thêm** — đo tại `main@4d275f7`: tập file import `tenantsForPerson` vẫn đúng ba, hai route guest-note chỉ import choke-point, vẫn một điểm quyết định trên role ⇒ ESLint rule phủ mà không cần sửa. Kèm đính chính: amendment #2 pin điểm đó ở `session-command-route.ts:232`, nay là `:181` ⇒ **pin bằng symbol, không pin bằng số dòng**. Điều khoản 5 (expiry khi `tenant-capability-authority-core` land) áp cho cả bảy. *(Nhảy số sang v2.51 vì v2.50 đã dùng hôm 11/09 — cột Version là thứ tự merge, không phải thứ tự ngày.)* |
 | 15/09/2026 | v2.49 | **OPEN NOTE dưới DD-56 amendment #2 (đo tại `main@e235ea4`, KHÔNG phải amendment, không DD mới, không đổi trạng thái DD nào).** Cổng tạm `apps/web/lib/session-command-route.ts` nay phủ **BẢY** route: hai route guest-note (`POST /api/sessions/:id/guest-notes`, `DELETE /api/sessions/:id/guest-notes/:noteId`, slice `session-management` M3b) gọi `handleSessionCommand` nhưng **không** có tên trong danh sách năm route mà amendment #2 liệt kê tường minh, trong khi điều khoản 1 của amendment #1 đòi decision riêng cho mỗi route copy pattern. Không phải lỗi code (hai route còn siết chặt hơn: bucket rate-limit per *(actor, session)*); cái thiếu là chữ ký của owner — một dòng ✅ xác nhận thuộc scope amendment #2, hoặc một amendment ký tên chúng. Điều khoản 5 (expiry khi `tenant-capability-authority-core` land) áp cho cả bảy. Nguồn: đợt re-pin docs 15/09 (`ROADMAP.md` v3.17 §📍 · `TDD.md` v3.2 §📍 lớp 6 · `HANDOFF.md` v1.42). |
 | 11/09/2026 | v2.50 | **Sửa SES-OQ-10 (timezone validation) cùng ngày với DD-121 — whitelist gốc `Intl.supportedValuesOf('timeZone')` SAI trên runtime CI thật, rút lại.** Phát sinh từ run `session-management-m01-timezone-validation-canonical-iana` (`ap3`, class `feature-session-p2`, first slice của class này) HALT `BUDGET` ($6.04 > trần $6, `ap3/state/runs-archive/session-management-m01-timezone-validation-canonical-iana-BUDGET-2026-09-11`) — cả 2 vòng review Codex (code + security) trên slice đó đều gắn **[P1]** cùng một phát hiện: `Intl.supportedValuesOf('timeZone')` trên Node 22/ICU 78 là tập **CLDR-canonical, KHÔNG phải IANA-canonical** — thiếu `Asia/Ho_Chi_Minh` (chỉ có alias `Asia/Saigon`), `Asia/Kolkata` (chỉ có alias `Asia/Calcutta`), `Europe/Kyiv` (chỉ có alias `Europe/Kiev`); dùng set này làm whitelist sẽ REJECT nhầm các timezone hợp lệ đó. **Probe đo tại chỗ** (`node -e`, Node `v22.22.1` / ICU `78.2`): `{"zone":"Asia/Ho_Chi_Minh","inSupportedValuesOf":false,"constructible":true,"resolvedTimeZone":"Asia/Saigon"}` · `{"zone":"Asia/Saigon","inSupportedValuesOf":true,"constructible":true,"resolvedTimeZone":"Asia/Saigon"}` · `{"zone":"US/Eastern","inSupportedValuesOf":false,"constructible":true,"resolvedTimeZone":"America/New_York"}` · `{"zone":"Mars/Olympus","inSupportedValuesOf":false,"constructible":false,"resolvedTimeZone":null}` — cùng runtime, `Asia/Kolkata`/`Europe/Kyiv` đo tương tự: absent + resolve về `Asia/Calcutta`/`Europe/Kiev`. **Quyết định sửa:** reject mọi `timezone` mà `Intl.DateTimeFormat('en-US', { timeZone })` KHÔNG dựng được (ném `RangeError`) → `INVALID_TIMEZONE` (400); IANA link/alias (`US/Eastern`, `Asia/Saigon`, `Asia/Calcutta`...) được CHẤP NHẬN và ICU tự canonicalize — `Intl.supportedValuesOf` KHÔNG phải nguồn thật cho việc này. `isValidTimezone()` (`packages/db/src/session-service.ts:96-103`) đã implement đúng hành vi này từ trước (chưa từng đổi) — **không cần sửa code**. Mirror: FE §7 SES-OQ-10 (`../features/FE/feature_session_management.md:902`), BE §5 test row #92 (`../features/BE/feature_session_management_tech.md:923`). SES-OQ-10 chưa từng có số DD riêng (chốt thẳng trong bảng §7 hai bản), hàng changelog này không tạo DD mới. **Hệ quả:** milestone M1 của `ap3/features/session-management/PLAN.md` (`session-management-m01-timezone-validation-canonical-iana`) **rút (WITHDRAWN)** — không có successor slice cho M1; không còn slice nào của `feature-session-p2` dispatchable cho tới khi milestone 3a (schema migration) merge. |
