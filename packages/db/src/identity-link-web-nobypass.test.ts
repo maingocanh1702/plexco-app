@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
-import type pg from "pg";
+import pg from "pg";
 import { issueLinkCode } from "./identity.js";
 import { linkZaloToAccount } from "./identity-link-web.js";
 import {
@@ -17,6 +17,9 @@ import {
  */
 let ns: NonSuperuserOwnerContext;
 let app: pg.Pool;
+// ns.superuser is connected to the BASE database (it creates/drops the throwaway one), so seeds that
+// the `app` role must see go through a superuser connection INTO the owner-context database.
+let su: pg.Client;
 const keys = { lookupHmacKey: randomBytes(32) };
 
 beforeAll(async () => {
@@ -27,14 +30,18 @@ beforeAll(async () => {
     await ns.runMigration();
   });
   app = await ns.connectAsApp();
+  const url = new URL(process.env.DATABASE_URL_TEST!);
+  url.pathname = `/${ns.dbName}`;
+  su = new pg.Client({ connectionString: url.toString() });
+  await su.connect();
 }, 240_000);
 afterAll(async () => {
+  await su?.end();
   await ns?.teardown();
 });
 
 describe("0054 under a NOBYPASSRLS owner", () => {
   it("a Person with a membership is requires_review: the owner cannot read memberships (0 rows) yet nothing moves", async () => {
-    const su = ns.superuser;
     const tenant = (
       await su.query(
         `INSERT INTO tenants (name, slug, status) VALUES ('NB Club', 'nb-club', 'active') RETURNING id`,
