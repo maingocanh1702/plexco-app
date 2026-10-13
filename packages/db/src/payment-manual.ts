@@ -57,6 +57,7 @@ export async function applyEffective(
   tx: Tx,
   chargeId: string,
   amountDue: number,
+  opts: { revive?: boolean } = {},
 ): Promise<{ effective: number; status: ChargeStatus }> {
   const effective = (await effectiveByCharge(tx, [chargeId])).get(chargeId) ?? 0;
   if (effective < 0 || effective > amountDue) {
@@ -66,8 +67,10 @@ export async function applyEffective(
   await tx
     .update(charges)
     .set({ amountAllocated: effective, status })
-    // never revive a void charge: its status is terminal, not derived
-    .where(and(eq(charges.id, chargeId), ne(charges.status, "void")));
+    // a void charge is terminal unless the caller explicitly revives it (roster re-add only)
+    .where(
+      and(eq(charges.id, chargeId), opts.revive === true ? undefined : ne(charges.status, "void")),
+    );
   return { effective, status };
 }
 
