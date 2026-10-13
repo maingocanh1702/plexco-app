@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
-import { describeSessionError, errorField, isDefiniteFailure } from "./session-error-ui";
+import {
+  describeReverseError,
+  describeSessionError,
+  errorField,
+  isDefiniteFailure,
+} from "./session-error-ui";
 
 const en = (_vi: string, e: string) => e;
 const err = (code: string, message = "server text", status = 400) =>
@@ -32,6 +37,17 @@ describe("describeSessionError", () => {
       "SPORT_INACTIVE",
       "STALE_VERSION",
       "TENANT_SUSPENDED",
+      "ALLOCATION_EXCEEDS_FUNDS",
+      "ALLOCATION_NOT_FOUND",
+      "ALREADY_JOINED",
+      "CHARGE_ALREADY_SETTLED",
+      "CHARGE_NOT_PAYABLE",
+      "MARK_PAID_TOTAL_MISMATCH",
+      "PLAYER_NOT_FOUND",
+      "REJOIN_REQUIRES_REVIEW",
+      "REMOVE_REQUIRES_REVIEW",
+      "REVERSAL_EXCEEDS_EFFECTIVE",
+      "REVERSAL_NOT_SUPPORTED",
     ]) {
       const v = describeSessionError(err(code, `msg ${code}`), en);
       expect(v.known, code).toBe(true);
@@ -96,5 +112,30 @@ describe("isDefiniteFailure (when may a commandId be discarded)", () => {
     expect(isDefiniteFailure(new ApiClientError(CLIENT_BAD_RESPONSE, "x", 400))).toBe(false);
     expect(isDefiniteFailure(err("INTERNAL_ERROR", "x", 500))).toBe(false);
     expect(isDefiniteFailure(new TypeError("boom"))).toBe(false);
+  });
+});
+
+describe("roster / payment errors", () => {
+  it("balance-changed codes offer a reload, the rest just explain", () => {
+    for (const code of [
+      "ALLOCATION_EXCEEDS_FUNDS",
+      "CHARGE_ALREADY_SETTLED",
+      "MARK_PAID_TOTAL_MISMATCH",
+      "REVERSAL_EXCEEDS_EFFECTIVE",
+    ]) {
+      expect(describeSessionError(err(code, "m", 409), en).action, code).toBe("reload");
+    }
+    for (const code of ["ALREADY_JOINED", "REJOIN_REQUIRES_REVIEW", "REMOVE_REQUIRES_REVIEW"]) {
+      expect(describeSessionError(err(code, "m", 409), en).action, code).toBe("none");
+    }
+  });
+
+  it("the reversal dialog explains FORBIDDEN as a missing money.correct grant; others unchanged", () => {
+    const forbidden = describeReverseError(err("FORBIDDEN", "x", 403), en);
+    expect(forbidden.message).toContain("money.correct");
+    expect(forbidden.code).toBe("FORBIDDEN");
+    expect(describeReverseError(err("REVERSAL_NOT_SUPPORTED", "nope", 409), en).message).toBe(
+      "nope",
+    );
   });
 });

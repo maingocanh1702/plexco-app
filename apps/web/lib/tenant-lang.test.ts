@@ -232,6 +232,11 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/me-settings-client.ts": "c",
   "lib/settings-error-ui.ts": "c",
   "lib/use-command-id.ts": "c",
+  // (c) — host roster / manual-payment screens (M2c-fe): pure UI rules and the command hook; every
+  // user-facing string comes from the `t` the caller passes from useT().
+  "lib/mark-paid-model.ts": "c",
+  "lib/roster-rules.ts": "c",
+  "lib/use-roster-command.ts": "c",
   // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation
   // screens (landing `?auth_error`, create-club form), which render Vietnamese by DD-118 bucket b.
   "lib/auth-error-message.ts": "b",
