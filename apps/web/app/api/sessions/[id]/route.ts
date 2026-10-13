@@ -3,6 +3,7 @@ import { getSessionDetail, updateSession } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import {
   handleSessionCommand,
+  SESSION_NOT_FOUND_MESSAGE,
   readExpectedVersion,
   shapeSessionFields,
 } from "../../../../lib/session-command-route";
@@ -61,7 +62,7 @@ export async function GET(
       sessionId: id,
     });
     if (!session) {
-      return err("SESSION_NOT_FOUND", t("Buổi chơi không tồn tại.", "Session not found."), 404);
+      return err("SESSION_NOT_FOUND", t(...SESSION_NOT_FOUND_MESSAGE), 404);
     }
     return ok({ session });
   });

@@ -113,4 +113,40 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // DD-56 (after tenant-capability-authority-core): membership roles are DECIDED by authorize().
+    // Only ONE closed property is kept from the retired clause-2 lint: `tenantsForPerson` (the sole
+    // source of a membership role in apps/web) may be OBTAINED only by the two surfaces that
+    // legitimately read the caller's own memberships. No syntax selectors, no carve-outs.
+    //
+    // The HR1 path is repeated deliberately: flat config resolves rules last-wins per rule NAME, so
+    // re-declaring no-restricted-imports here would drop the HR1 entry above for every apps/web
+    // file if it were not restated.
+    files: ["apps/web/**/*.{ts,tsx}"],
+    ignores: [
+      "apps/web/app/api/auth/session/route.ts",
+      "apps/web/app/api/onboarding/readiness/route.ts",
+      "apps/web/**/*.test.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@plexco/db/schema",
+              message:
+                "Tenant tables are reached ONLY via tenantRepo/withTenant from @plexco/db (HR1 fail-closed RLS choke-point).",
+            },
+            {
+              name: "@plexco/db",
+              importNames: ["tenantsForPerson"],
+              message:
+                "membership roles are decided by authorize(); tenantsForPerson may only be OBTAINED in auth/session and onboarding/readiness",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
