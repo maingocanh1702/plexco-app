@@ -96,10 +96,13 @@ export async function POST(
     const event = extractZaloEvent(payload);
     if (event === null) return malformed();
 
-    // First verified event proves the whole path (token + secret): registered/drift -> active.
+    // First verified event proves the whole path (token + secret): registered -> active, bound to this request's token (drift is left alone).
     if (bot.status !== "active") {
       try {
-        await withTenant(db, tenantId, (tx) => markBotVerifiedActive(tx, tenantId, botId));
+        const outcome = await withTenant(db, tenantId, (tx) =>
+          markBotVerifiedActive(tx, tenantId, botId, token),
+        );
+        if (outcome === "token_rotated") log.info("zalo_bot_activate_skipped", { botId, outcome });
       } catch (error) {
         log.error("zalo_bot_activate_failed", { botId, error });
       }

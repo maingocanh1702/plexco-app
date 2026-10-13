@@ -174,15 +174,29 @@ export async function readZaloBotTokenEnc(
   return row?.enc ?? null;
 }
 
-/** Webhook outcome: first verified event flips registered -> active and stamps verified_at once. */
+/**
+ * Webhook outcome: the first verified event flips connecting|registered -> active and stamps
+ * verified_at once. Bound to the token that authenticated the request: the row is locked FOR UPDATE
+ * (serialises against zalo_bot_upsert_for_tenant) and a rotated token means the evidence is for the
+ * OLD secret, so nothing flips. `drift` is never cleared here (onboarding tech doc: Tier-2 CAS).
+ */
 export async function markBotVerifiedActive(
   tx: Tx,
   tenantId: string,
   botId: string,
-): Promise<void> {
-  await tx.execute(
-    sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${botId}::uuid, 'active', true, false, NULL::text[])`,
+  verifiedToken: string,
+): Promise<"activated" | "token_rotated"> {
+  const res = await tx.execute(
+    sql`SELECT webhook_token FROM zalo_bots WHERE id = ${botId}::uuid AND tenant_id = ${tenantId}::uuid FOR UPDATE`,
   );
+  const stored = (res.rows[0] as { webhook_token: string } | undefined)?.webhook_token;
+  if (stored !== verifiedToken) {
+    return "token_rotated";
+  }
+  await tx.execute(
+    sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${botId}::uuid, 'active', true, false, ARRAY['connecting','registered']::text[])`,
+  );
+  return "activated";
 }
 
 export interface ZaloBotSecretsInput {

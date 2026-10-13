@@ -14,7 +14,7 @@ import { log } from "../../../../../lib/log";
 import { readBoundedBody } from "../../../../../lib/read-bounded-body";
 import { isUnsafeCommandKey } from "../../../../../lib/session-command-route";
 import { appDb } from "../../../../../lib/session-cookies";
-import { getMe, setWebhook } from "../../../../../lib/zalo/client";
+import { getMe, setWebhook, ZaloApiError } from "../../../../../lib/zalo/client";
 import { zaloStateView, zaloWebhookUrl } from "../../../../../lib/zalo/webhook-url";
 
 /**
@@ -30,6 +30,26 @@ import { zaloStateView, zaloWebhookUrl } from "../../../../../lib/zalo/webhook-u
 const MAX_BODY_BYTES = 4 * 1024;
 const CONNECT_LIMIT = { bucket: "zalo-connect", limit: 5, windowSeconds: 600 };
 
+const unavailable = (vi: string, en: string) => err("AUTH_UNAVAILABLE", t(vi, en), 503);
+
+/** APP_BASE_URL must parse as a URL; production additionally requires https (webhook goes to Zalo). */
+function validBaseUrl(raw: string | undefined): string | null {
+  const v = raw?.trim();
+  if (!v) return null;
+  try {
+    const u = new URL(v);
+    if (
+      u.protocol !== "https:" &&
+      !(u.protocol === "http:" && process.env.NODE_ENV !== "production")
+    ) {
+      return null;
+    }
+    return v;
+  } catch {
+    return null;
+  }
+}
+
 const invalid = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
 
 export async function POST(request: Request): Promise<Response> {
@@ -41,13 +61,9 @@ export async function POST(request: Request): Promise<Response> {
   if (gate instanceof Response) return gate;
 
   return runWithLang(gate.lang, async () => {
-    const baseUrl = process.env.APP_BASE_URL?.trim();
+    const baseUrl = validBaseUrl(process.env.APP_BASE_URL);
     if (!baseUrl) {
-      return err(
-        "AUTH_UNAVAILABLE",
-        t("Chưa cấu hình địa chỉ ứng dụng.", "App base URL is not configured."),
-        503,
-      );
+      return unavailable("Chưa cấu hình địa chỉ ứng dụng.", "App base URL is not configured.");
     }
     if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {
       return invalid();
@@ -95,7 +111,10 @@ export async function POST(request: Request): Promise<Response> {
       err("ZALO_TOKEN_INVALID", t("Token bot Zalo không hợp lệ.", "Invalid Zalo bot token."), 400);
     try {
       await getMe(botToken);
-    } catch {
+    } catch (error) {
+      if (error instanceof ZaloApiError && (error.kind === "timeout" || error.kind === "network")) {
+        return unavailable("Zalo tạm thời không phản hồi.", "Zalo is temporarily unavailable.");
+      }
       return tokenInvalid(); // stable kind only; the client never puts the token in an error
     }
 

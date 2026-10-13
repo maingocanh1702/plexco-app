@@ -83,7 +83,8 @@ function open(enc: Buffer, key: Buffer, binding: ConnectorBinding): string {
 /**
  * Audited decrypt of a stored secret. `tx` must be an open withTenant transaction for the binding's
  * tenant. `keyVersion` is the stored label; anything other than the current connector version (or a
- * missing one) fails closed BEFORE audit or decrypt, with a distinct log event.
+ * missing one) fails closed BEFORE audit or decrypt, with a distinct log event. The audit row shares
+ * the caller's tx, so a decrypt that fails afterwards is logged but its audit row rolls back with the tx.
  */
 export async function decryptConnectorSecret(
   tx: Tx,

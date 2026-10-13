@@ -8,7 +8,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
-import { getMe, setWebhook } from "../../../../../lib/zalo/client";
+import { getMe, setWebhook, ZaloApiError } from "../../../../../lib/zalo/client";
 import { POST } from "./route";
 
 vi.mock("@plexco/db", async (importOriginal) => {
@@ -32,7 +32,11 @@ vi.mock("../../../../../lib/session-cookies", async (importOriginal) => {
     rateLimited: vi.fn(),
   };
 });
-vi.mock("../../../../../lib/zalo/client", () => ({ getMe: vi.fn(), setWebhook: vi.fn() }));
+vi.mock("../../../../../lib/zalo/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../../../lib/zalo/client")>()),
+  getMe: vi.fn(),
+  setWebhook: vi.fn(),
+}));
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const BOT_TOKEN = "123456:SECRET-bot_token";
@@ -122,6 +126,26 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect(res.status).toBe(400);
     expect((await env(res)).error?.code).toBe("ZALO_TOKEN_INVALID");
     expect(beginZaloConnect).not.toHaveBeenCalled();
+  });
+
+  it("getMe timeout/network -> 503 AUTH_UNAVAILABLE, not a token verdict", async () => {
+    for (const kind of ["timeout", "network"] as const) {
+      vi.mocked(getMe).mockRejectedValue(new ZaloApiError(kind));
+      const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+      expect(res.status).toBe(503);
+      expect((await env(res)).error?.code).toBe("AUTH_UNAVAILABLE");
+    }
+    expect(beginZaloConnect).not.toHaveBeenCalled();
+  });
+
+  it("APP_BASE_URL: garbage -> 503; http in production -> 503", async () => {
+    process.env.APP_BASE_URL = "not a url";
+    expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(503);
+    process.env.APP_BASE_URL = "http://plexco.app";
+    vi.stubEnv("NODE_ENV", "production");
+    expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(503);
+    vi.unstubAllEnvs();
+    expect(getMe).not.toHaveBeenCalled();
   });
 
   it("setWebhook failure -> status error is recorded (not registered)", async () => {

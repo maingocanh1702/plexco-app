@@ -33,6 +33,7 @@ export interface ZaloEventFields {
   eventId: string;
   fromId: string | null;
   chatId: string | null;
+  chatType: string | null;
   text: string | null;
   displayName: string | null;
 }
@@ -60,6 +61,7 @@ export function extractZaloEvent(payload: unknown): ZaloEventFields | null {
     eventId,
     fromId: scalar(from.id),
     chatId: scalar(chat.id),
+    chatType: typeof chat.chat_type === "string" ? chat.chat_type : null,
     text: typeof message.text === "string" ? message.text : null,
     displayName: scalar(from.display_name) ?? scalar(from.name),
   };
@@ -81,7 +83,8 @@ export async function processZaloEvent(args: {
 
   // Parse and classify BEFORE touching identity: group chatter (chat id != sender id) never creates a
   // Person or channel identity; it only gets a help / "message the bot directly" reply.
-  const isDirect = chatId === fromId;
+  // A present chat_type other than PRIVATE is never a DM, whatever the ids say (fail closed).
+  const isDirect = (event.chatType === null || event.chatType === "PRIVATE") && chatId === fromId;
   const cmd = parseZaloCommand(text);
   let identity: ZaloIdentity | null = null;
   if (isDirect) {

@@ -342,6 +342,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     vi.mocked(resolveZaloBotByToken).mockResolvedValue({ ...bot, status: "registered" });
     await call();
     expect(markBotVerifiedActive).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(markBotVerifiedActive).mock.calls[0]![3]).toBe("tok");
     vi.mocked(markBotVerifiedActive).mockClear();
     vi.mocked(resolveZaloBotByToken).mockResolvedValue(bot);
     await call({ body: update("/me", 9004) });

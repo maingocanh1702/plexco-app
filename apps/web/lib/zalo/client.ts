@@ -54,7 +54,12 @@ async function call(
     await res.body?.cancel().catch(() => undefined);
     throw new ZaloApiError("rejected");
   }
-  const read = await readBoundedBody(res, MAX_RESPONSE_BYTES);
+  let read: Awaited<ReturnType<typeof readBoundedBody>>;
+  try {
+    read = await readBoundedBody(res, MAX_RESPONSE_BYTES);
+  } catch {
+    throw new ZaloApiError("timeout"); // abort mid-body (the request timeout signal covers the body)
+  }
   if (!read.ok) throw new ZaloApiError("bad_response");
   let json: unknown;
   try {
