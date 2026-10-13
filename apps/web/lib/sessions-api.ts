@@ -3,7 +3,7 @@ import { apiFetch } from "./api-client";
 /**
  * Typed browser wrappers for the session routes (FE-INV-3/6: the client only talks to the web
  * boundary and only reads the envelope). DTOs mirror what the routes serialise (Dates arrive as
- * ISO strings); they are re-declared here, never imported from @plexco/db.
+ * ISO strings); they are re-declared here, never imported from the db package (the /c boundary scan is textual).
  */
 
 export interface SessionScalarsDto {

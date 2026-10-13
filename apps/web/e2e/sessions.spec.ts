@@ -442,7 +442,7 @@ test.describe("detail", () => {
     await open(page, "/s-draft");
     await page.getByRole("button", { name: "Huỷ nháp" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Huỷ nháp" }).click();
-    await expect(page.getByText("Đã huỷ buổi.")).toBeVisible();
+    await expect(page.getByText("Đã huỷ bản nháp.")).toBeVisible();
     await expect(page.getByText("Đã huỷ", { exact: true })).toBeVisible();
   });
 

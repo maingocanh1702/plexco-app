@@ -199,11 +199,18 @@ describe("listSessions occupiedCount", () => {
       );
     }
     for (const status of ["active", "left"] as const) {
+      // One person per membership: memberships_active_person_unique is (tenant_id, person_id).
+      const memberPerson = (
+        await ctx.owner.query<{ id: string }>(
+          `INSERT INTO persons (display_name) VALUES ($1) RETURNING id`,
+          [`Occ-${status}`],
+        )
+      ).rows[0]!.id;
       const membership = (
         await ctx.owner.query<{ id: string }>(
           `INSERT INTO memberships (tenant_id, person_id, display_name, status)
            VALUES ($1, $2, $3, 'active') RETURNING id`,
-          [tenant, person, `Occ-${status}`],
+          [tenant, memberPerson, `Occ-${status}`],
         )
       ).rows[0]!.id;
       await ctx.owner.query(
