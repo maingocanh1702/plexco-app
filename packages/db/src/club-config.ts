@@ -60,7 +60,16 @@ export async function updateClubConfig(
   return withTenant(db, tenantId, async (tx) => {
     const decision = await authorize(tx, { tenantId, action: CLUB_ACTION, actorPersonId });
     if (!decision.allowed) throw new ClubConfigError("FORBIDDEN", decision.reason);
-    // Tenant-status axis (billing): a suspended/cancelled club freezes admin mutations. Orthogonal
+    // Per-tenant serialization BEFORE the status axis: authorizeTenantAction share-locks the
+    // `tenants` row (resolve_tenant_status_locked, FOR SHARE) and tenant_profile_update then
+    // UPDATEs that same row, so two concurrent PATCHes with distinct commandIds would each hold the
+    // share lock and wait for the other's upgrade (40P01 deadlock -> 500). One xact advisory lock
+    // per tenant orders them; it is released with the transaction.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended('club-config:' || ${tenantId}::uuid::text, 0))`,
+    );
+    // Tenant-status axis (billing). Note: `past_due` tenants also get TENANT_SUSPENDED here
+    // (pre-existing admin_mutation policy in authorization.ts, not changed by this lane).: a suspended/cancelled club freezes admin mutations. Orthogonal
     // to authorize(); the subscription row it reads is created by tenant_provision (0037).
     const status = await authorizeTenantAction(tx, tenantId, "admin_mutation");
     if (!status.allowed) throw new ClubConfigError("TENANT_SUSPENDED", "tenant is suspended");

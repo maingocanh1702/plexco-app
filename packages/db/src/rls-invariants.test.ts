@@ -3278,15 +3278,44 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
     );
   });
 
-  it("0050-1: alloc_source_chk / alloc_shape_chk carry exactly the DD-40 attested_transfer widening (the entries CND-1/2/3 exempts from pre-0025 byte-identity)", async () => {
+  it("0050-1: schema.ts's alloc_source_chk / alloc_shape_chk COMPILE (PgDialect, then Postgres) to the byte-identical live definitions (the entries CND-1/2/3 exempts from pre-0025 identity)", async () => {
     const live = await allLiveCheckDefs(ctx.owner);
-    const source = live.get("payment_allocations.alloc_source_chk") as string;
-    for (const v of ["auto", "manual", "cash", "waiver", "reversal", "attested_transfer"]) {
-      expect(source, v).toContain(`'${v}'::text`);
+    const cfg = getTableConfig(schemaModule.paymentAllocations);
+    const dbName = "plexco_0050_alloc_predicates";
+    await ctx.owner.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await ctx.owner.query(`CREATE DATABASE ${dbName}`);
+    const url = new URL(process.env.DATABASE_URL_TEST!);
+    url.pathname = `/${dbName}`;
+    const c = new pg.Client({ connectionString: url.toString() });
+    await c.connect();
+    try {
+      // Same table + column names as the real table so identifier resolution matches; types match
+      // the real columns so the canonical definition renders identically.
+      await c.query(
+        `CREATE TABLE payment_allocations (source text, amount integer, bank_transaction_id uuid, created_by uuid, reverses_allocation_id uuid)`,
+      );
+      for (const name of ["alloc_source_chk", "alloc_shape_chk"]) {
+        const check = cfg.checks.find((k) => k.name === name);
+        expect(check, `schema.ts must declare ${name}`).toBeDefined();
+        const { sql: predicateSql, params } = new PgDialect().sqlToQuery(
+          check!.value as Parameters<PgDialect["sqlToQuery"]>[0],
+        );
+        await c.query(
+          `ALTER TABLE payment_allocations ADD CONSTRAINT ${name} CHECK (${predicateSql})`,
+          params,
+        );
+        const { rows } = await c.query<{ d: string }>(
+          `SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint WHERE conname = $1`,
+          [name],
+        );
+        expect(rows[0]?.d, name).toBe(live.get(`payment_allocations.${name}`));
+        expect(rows[0]?.d, name).toContain("attested_transfer");
+      }
+    } finally {
+      await c.end();
+      await ctx.owner.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     }
-    const shape = live.get("payment_allocations.alloc_shape_chk") as string;
-    expect(shape).toContain("attested_transfer");
-  });
+  }, 30_000);
 
   it("CND-6: sessions_public_capacity_chk (0024) is untouched by 0025", async () => {
     const live = await allLiveCheckDefs(ctx.owner);

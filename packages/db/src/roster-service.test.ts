@@ -157,6 +157,20 @@ describe("addMemberToSession", () => {
     );
   });
 
+  it("a replayed key is bound to the requested member: same key + another membershipId is COMMAND_ID_CONFLICT", async () => {
+    const { tenantId, actor, sessionId } = await world();
+    const m1 = await fx.seedMembership(tenantId);
+    const m2 = await fx.seedMembership(tenantId);
+    const commandId = nextCommandId();
+    await add(tenantId, actor, sessionId, { membershipId: m1 }, commandId);
+    expect(await codeOf(add(tenantId, actor, sessionId, { membershipId: m2 }, commandId))).toBe(
+      "COMMAND_ID_CONFLICT",
+    );
+    expect((await add(tenantId, actor, sessionId, { membershipId: m1 }, commandId)).replayed).toBe(
+      true,
+    );
+  });
+
   it("a DIFFERENT command for an already-rostered member is ALREADY_JOINED (no second player/charge)", async () => {
     const { tenantId, actor, sessionId } = await world();
     const membershipId = await fx.seedMembership(tenantId);
@@ -212,9 +226,9 @@ describe("addMemberToSession", () => {
     ).toBe(1);
   });
 
-  it("session status: draft and open accept; closed and cancelled are SESSION_NOT_OPEN, nothing written", async () => {
+  it("session status: ONLY open accepts; draft (no players/charges invariant), closed and cancelled are SESSION_NOT_OPEN, nothing written", async () => {
     for (const [status, ok] of [
-      ["draft", true],
+      ["draft", false],
       ["open", true],
       ["closed", false],
       ["cancelled", false],

@@ -8,6 +8,8 @@ import {
   emitSessionEvent,
   fail,
   isBoundedText,
+  isUuid,
+  requireCommandId,
   recordCommand,
   replayOrNull,
   requireActor,
@@ -50,11 +52,11 @@ const isStoredReverse = (v: unknown): v is StoredReverse => {
   if (typeof v !== "object" || v === null) return false;
   const r = v as Record<string, unknown>;
   return (
-    typeof r.sessionId === "string" &&
-    typeof r.actorPersonId === "string" &&
-    typeof r.reversalId === "string" &&
-    typeof r.allocationId === "string" &&
-    typeof r.chargeId === "string" &&
+    isUuid(r.sessionId) &&
+    isUuid(r.actorPersonId) &&
+    isUuid(r.reversalId) &&
+    isUuid(r.allocationId) &&
+    isUuid(r.chargeId) &&
     typeof r.amount === "number" &&
     typeof r.status === "string"
   );
@@ -74,16 +76,19 @@ export async function reversePaymentAllocation(
       tenantId,
       params.actorPersonId,
       REVERSE_ACTIONS,
+      // Rides the mark_paid class, so a SUSPENDED tenant cannot correct a payment (fail-closed,
+      // DD-110 D2). Owner call: mint a `correct_payment` class if corrections must survive suspension.
       "mark_paid",
     );
     if (typeof params.sessionId !== "string" || !UUID_RE.test(params.sessionId)) {
       return fail("SESSION_NOT_FOUND", "session not found in tenant context");
     }
     const sessionId = params.sessionId.toLowerCase();
+    const commandKey = requireCommandId(commandId);
     const stored = await replayOrNull(
       tx,
       tenantId,
-      commandId,
+      commandKey,
       REVERSE_TYPE,
       sessionId,
       actor,
@@ -99,7 +104,7 @@ export async function reversePaymentAllocation(
       return { ...rest, replayed: true };
     }
     if (typeof params.allocationId !== "string" || !UUID_RE.test(params.allocationId)) {
-      return fail("NOT_FOUND", "allocation not found in tenant context");
+      return fail("ALLOCATION_NOT_FOUND", "allocation not found in tenant context");
     }
     if (!isBoundedText(params.reason, 1, NOTE_MAX)) {
       return fail("INVALID_INPUT", `reason must be 1..${NOTE_MAX} characters`);
@@ -113,7 +118,8 @@ export async function reversePaymentAllocation(
       .from(paymentAllocations)
       .innerJoin(charges, eq(charges.id, paymentAllocations.chargeId))
       .where(and(eq(paymentAllocations.id, allocationId), eq(charges.sessionId, sessionId)));
-    if (probe === undefined) return fail("NOT_FOUND", "allocation not found in this session");
+    if (probe === undefined)
+      return fail("ALLOCATION_NOT_FOUND", "allocation not found in this session");
 
     const [charge] = await tx
       .select({ id: charges.id, amountDue: charges.amountDue })
@@ -130,9 +136,9 @@ export async function reversePaymentAllocation(
       .where(eq(paymentAllocations.id, allocationId))
       .for("update");
     if (charge === undefined || alloc === undefined)
-      return fail("NOT_FOUND", "allocation not found in this session");
+      return fail("ALLOCATION_NOT_FOUND", "allocation not found in this session");
     if (alloc.amount <= 0)
-      return fail("REVERSAL_EXCEEDS_EFFECTIVE", "a reversal row cannot itself be reversed");
+      return fail("REVERSAL_NOT_SUPPORTED", "a reversal row cannot itself be reversed");
     if (!REVERSIBLE_SOURCES.includes(alloc.source)) {
       return fail("REVERSAL_NOT_SUPPORTED", "only host-recorded payments can be reversed here");
     }
@@ -174,7 +180,7 @@ export async function reversePaymentAllocation(
       amount: -remaining,
       status: derived.status,
     };
-    await recordCommand(tx, tenantId, commandId, REVERSE_TYPE, result);
+    await recordCommand(tx, tenantId, commandKey, REVERSE_TYPE, result);
     return {
       reversalId: result.reversalId,
       allocationId,

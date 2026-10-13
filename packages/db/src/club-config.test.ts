@@ -261,6 +261,41 @@ describe("updateClubConfig", () => {
     ).toBe("Only A");
   });
 
+  it("two concurrent PATCHes with distinct commandIds do not deadlock (40P01)", async () => {
+    // Hazard, made deterministic: both hold the tenants FOR SHARE lock that the status axis takes,
+    // then both try the UPDATE inside tenant_profile_update -> one is chosen as deadlock victim.
+    const c1 = await ctx.appPool.connect();
+    const c2 = await ctx.appPool.connect();
+    try {
+      for (const c of [c1, c2]) {
+        await c.query("BEGIN");
+        await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+        await c.query(`SELECT status FROM resolve_tenant_status_locked($1)`, [ctx.tenantA]);
+      }
+      const call = (c: typeof c1, name: string) =>
+        c.query(`SELECT id FROM tenant_profile_update($1, $2, $3, NULL, NULL)`, [
+          ctx.tenantA,
+          ownerA,
+          name,
+        ]);
+      const settled = await Promise.allSettled([call(c1, "x1"), call(c2, "x2")]);
+      expect(settled.filter((r) => r.status === "rejected")).toHaveLength(1);
+      expect(
+        String((settled.find((r) => r.status === "rejected") as PromiseRejectedResult).reason),
+      ).toMatch(/deadlock/);
+    } finally {
+      await c1.query("ROLLBACK").catch(() => undefined);
+      await c2.query("ROLLBACK").catch(() => undefined);
+      c1.release();
+      c2.release();
+    }
+    // The command serializes per tenant, so the same race through updateClubConfig both succeed.
+    await Promise.all([update({ name: "race-a" }), update({ name: "race-b" })]);
+    const name = (await ctx.owner.query(`SELECT name FROM tenants WHERE id = $1`, [ctx.tenantA]))
+      .rows[0].name;
+    expect(["race-a", "race-b"]).toContain(name);
+  });
+
   it("a suspended tenant's owner cannot rename (tenant-status axis)", async () => {
     const t = randomUUID();
     await ctx.owner.query(

@@ -6,15 +6,19 @@ import { appDb, currentSession } from "../../../../../lib/session-cookies";
 /**
  * POST /api/sessions/:id/mark-paid -- manual payment for ONE OR MANY players (a single player is a
  * batch of one). Two phases on one endpoint (DD-25 preview -> confirm):
- *   - `preview: true`  -> server-computed per-player remaining + batch total; writes NOTHING and
- *     consumes no command key (the shared gate still wants a `commandId` field; send any value);
- *   - confirm          -> `commandId` + `expectedTotal` (the preview's total). A stale total is
- *     refused (MARK_PAID_TOTAL_MISMATCH) with nothing written.
- * Body: `method` cash | attested_transfer, `items: [{playerId, amount?}]` (amount omitted = pay the
- * whole remaining balance), optional `note` (<= 200 chars).
+ *   - `preview: true`  -> server-computed per-player remaining + amount + batch total; writes NOTHING
+ *     and consumes no command key (the shared gate still wants a `commandId` field; send any value);
+ *   - confirm          -> `commandId` + `expectedTotal` (the preview's total) AND an explicit
+ *     `amount` on EVERY item (the UI resends the per-line amounts the preview returned). Binding the
+ *     lines, not just the total, means a balance that changed in between fails per line instead of
+ *     silently re-splitting the same total. An `expectedTotal` that differs from the sum of the item amounts is MARK_PAID_TOTAL_MISMATCH; an omitted
+ *     amount on confirm is INVALID_BODY; nothing is written either way.
+ * Body: `method` cash | attested_transfer, `items: [{playerId, amount}]` (amount may be omitted on
+ * preview only = the whole remaining balance), optional `note` (<= 200 chars, stored as reason_code).
  *
- * Rate limit: 30/min per tenant (feature_payment_reconcile_tech.md batch endpoint). Everything is
- * forwarded unvalidated -- dedup precedes validation (DD-117 D5); the actor comes from the cookie.
+ * Rate limit: the spec pins 30/min per ACCOUNT; this route's bucket is 30/min per TENANT (the shared
+ * gate appends the tenant id), and the gate's per-actor ceiling (60/min) bounds one account. Everything
+ * is forwarded unvalidated -- dedup precedes validation (DD-117 D5); the actor comes from the cookie.
  * Money appears only here, in the authenticated host response (HR2).
  */
 export async function POST(

@@ -112,7 +112,7 @@ describe("POST /api/sessions/:id/payments/:allocationId/reverse", () => {
   it.each([
     ["REVERSAL_EXCEEDS_EFFECTIVE", 409],
     ["REVERSAL_NOT_SUPPORTED", 409],
-    ["NOT_FOUND", 404],
+    ["ALLOCATION_NOT_FOUND", 404],
     ["SESSION_NOT_FOUND", 404],
     ["FORBIDDEN", 403],
     ["COMMAND_ID_CONFLICT", 409],

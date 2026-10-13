@@ -56,17 +56,23 @@ async function world(over: { priceAmount?: number; players?: number } = {}): Pro
   return { tenantId, actor, sessionId, playerIds, chargeIds };
 }
 
-const pay = (w: World, over: Partial<MarkPaidParams>) =>
-  markPaid(ctx.appDb.db, {
+/** Confirm requires an explicit amount per item (S7); tests that mean "the whole price" get it filled
+ *  here (every world uses price 100000). Pass `raw: true` to send items exactly as given. */
+const pay = (w: World, over: Partial<MarkPaidParams> & { raw?: boolean }) => {
+  const { raw, ...rest } = over;
+  const items = rest.items ?? [{ playerId: w.playerIds[0]! }];
+  const preview = rest.preview === true;
+  return markPaid(ctx.appDb.db, {
     tenantId: w.tenantId,
     actorPersonId: w.actor,
     commandId: nextCommandId(),
     sessionId: w.sessionId,
     method: "cash",
-    items: [{ playerId: w.playerIds[0]! }],
     preview: false,
-    ...over,
+    ...rest,
+    items: raw || preview ? items : items.map((i) => ({ amount: 100000, ...i })),
   });
+};
 const charge = (id: string) =>
   fx.row(`SELECT amount_due, amount_allocated, status FROM charges WHERE id = $1`, [id]);
 const ledgerSum = async (chargeId: string) =>
@@ -125,7 +131,7 @@ describe("markPaid confirm", () => {
       amount: 100000,
       bank_transaction_id: null,
       created_by: w.actor,
-      reason_code: "cash",
+      reason_code: null,
       reverses_allocation_id: null,
       tenant_id: w.tenantId,
     });
@@ -180,7 +186,7 @@ describe("markPaid confirm", () => {
     });
     const p = await pay(w, { preview: true });
     expect(p.lines[0]).toMatchObject({ effectiveBefore: 40000, remaining: 60000, amount: 60000 });
-    await pay(w, { expectedTotal: 60000 });
+    await pay(w, { items: [{ playerId: w.playerIds[0]!, amount: 60000 }], expectedTotal: 60000 });
     expect(await charge(w.chargeIds[0]!)).toMatchObject({
       amount_allocated: 100000,
       status: "paid",
@@ -238,6 +244,31 @@ describe("markPaid confirm", () => {
       ),
     ).toBe("MARK_PAID_TOTAL_MISMATCH");
     expect(await codeOf(pay(w, {}))).toBe("INVALID_INPUT");
+    expect(await fx.counts(w.tenantId)).toEqual(before);
+  });
+
+  it("confirm REQUIRES an explicit amount on every item (preview may omit it); nothing is written", async () => {
+    const w = await world();
+    const before = await fx.counts(w.tenantId);
+    expect(
+      await codeOf(
+        pay(w, { raw: true, items: [{ playerId: w.playerIds[0]! }], expectedTotal: 100000 }),
+      ),
+    ).toBe("INVALID_INPUT");
+    expect(await fx.counts(w.tenantId)).toEqual(before);
+  });
+
+  it("a stale per-line split with the SAME total is refused per line (A was partly paid after the preview)", async () => {
+    const w = await world();
+    const items = w.playerIds.map((playerId) => ({ playerId, amount: 100000 }));
+    const preview = await pay(w, { preview: true, items });
+    expect(preview.total).toBe(200000);
+    await pay(w, { items: [{ playerId: w.playerIds[0]!, amount: 40000 }], expectedTotal: 40000 });
+    const before = await fx.counts(w.tenantId);
+    // the UI resends the previewed lines and total; line A no longer fits its balance
+    expect(await codeOf(pay(w, { items, expectedTotal: preview.total }))).toBe(
+      "ALLOCATION_EXCEEDS_FUNDS",
+    );
     expect(await fx.counts(w.tenantId)).toEqual(before);
   });
 
@@ -309,7 +340,7 @@ describe("markPaid confirm", () => {
       await codeOf(
         pay(w, { sessionId: full, items: [{ playerId: waiting.playerId }], expectedTotal: 1 }),
       ),
-    ).toBe("PLAYER_NOT_FOUND");
+    ).toBe("CHARGE_NOT_PAYABLE"); // visible roster row without a charge (waitlisted), not "missing"
     const other = await world({ players: 1 });
     // other tenant's player id presented in MY session: no charge in this session -> PLAYER_NOT_FOUND
     expect(
@@ -356,10 +387,25 @@ describe("markPaid confirm", () => {
         pay(w, { commandId, sessionId: await fx.seedSession(w.tenantId), expectedTotal: 100000 }),
       ),
     ).toBe("COMMAND_ID_CONFLICT");
-    await ctx.owner.query(`UPDATE sessions SET status = 'cancelled' WHERE id = $1`, [w.sessionId]);
+    for (const status of ["cancelled", "draft"]) {
+      await ctx.owner.query(`UPDATE sessions SET status = $2 WHERE id = $1`, [w.sessionId, status]);
+      expect(
+        await codeOf(pay(w, { items: [{ playerId: w.playerIds[1]! }], expectedTotal: 100000 })),
+      ).toBe("SESSION_NOT_OPEN");
+      expect(await codeOf(pay(w, { preview: true }))).toBe("SESSION_NOT_OPEN");
+    }
+  });
+
+  it("a batch replayed with a different player set is refused; the same set replays", async () => {
+    const w = await world();
+    const commandId = nextCommandId();
+    await pay(w, { commandId, expectedTotal: 100000 });
     expect(
-      await codeOf(pay(w, { items: [{ playerId: w.playerIds[1]! }], expectedTotal: 100000 })),
-    ).toBe("SESSION_NOT_OPEN");
+      await codeOf(
+        pay(w, { commandId, items: [{ playerId: w.playerIds[1]! }], expectedTotal: 100000 }),
+      ),
+    ).toBe("COMMAND_ID_CONFLICT");
+    expect((await pay(w, { commandId, expectedTotal: 100000 })).replayed).toBe(true);
   });
 
   it("CONCURRENCY: two different commands paying the SAME charge in full -> one wins, invariant holds", async () => {
@@ -469,13 +515,13 @@ describe("reversePaymentAllocation", () => {
     });
   });
 
-  it("a second reversal of the same allocation, and a reversal of a reversal, are REVERSAL_EXCEEDS_EFFECTIVE", async () => {
+  it("a second reversal of the same allocation, and a reversal of a reversal, are refused: EXCEEDS_EFFECTIVE / NOT_SUPPORTED", async () => {
     const w = await world();
     const allocationId = await paid(w);
     const r = await reverse(w, allocationId);
     const before = await fx.counts(w.tenantId);
     expect(await codeOf(reverse(w, allocationId))).toBe("REVERSAL_EXCEEDS_EFFECTIVE");
-    expect(await codeOf(reverse(w, r.reversalId))).toBe("REVERSAL_EXCEEDS_EFFECTIVE");
+    expect(await codeOf(reverse(w, r.reversalId))).toBe("REVERSAL_NOT_SUPPORTED");
     expect(await fx.counts(w.tenantId)).toEqual(before);
   });
 
@@ -511,15 +557,15 @@ describe("reversePaymentAllocation", () => {
     expect((await reverse(w, allocationId)).amount).toBe(-100000);
   });
 
-  it("another tenant's allocation (and a foreign session id, malformed ids) are NOT_FOUND/SESSION_NOT_FOUND", async () => {
+  it("another tenant's allocation (and a foreign session id, malformed ids) are ALLOCATION_NOT_FOUND/SESSION_NOT_FOUND", async () => {
     const a = await world({ players: 1 });
     const b = await world({ players: 1 });
     const allocationId = await paid(a);
-    expect(await codeOf(reverse(b, allocationId))).toBe("NOT_FOUND");
+    expect(await codeOf(reverse(b, allocationId))).toBe("ALLOCATION_NOT_FOUND");
     expect(await codeOf(reverse(a, allocationId, { sessionId: b.sessionId }))).toBe(
       "SESSION_NOT_FOUND",
     );
-    expect(await codeOf(reverse(a, "nope"))).toBe("NOT_FOUND");
+    expect(await codeOf(reverse(a, "nope"))).toBe("ALLOCATION_NOT_FOUND");
     expect(await codeOf(reverse(a, allocationId, { sessionId: "nope" }))).toBe("SESSION_NOT_FOUND");
     expect(await codeOf(reverse(a, allocationId, { reason: "" }))).toBe("INVALID_INPUT");
     expect(await codeOf(reverse(a, allocationId, { reason: "x".repeat(201) }))).toBe(
@@ -531,7 +577,9 @@ describe("reversePaymentAllocation", () => {
     const w = await world({ players: 1 });
     const allocationId = await paid(w);
     const otherSession = await fx.seedSession(w.tenantId);
-    expect(await codeOf(reverse(w, allocationId, { sessionId: otherSession }))).toBe("NOT_FOUND");
+    expect(await codeOf(reverse(w, allocationId, { sessionId: otherSession }))).toBe(
+      "ALLOCATION_NOT_FOUND",
+    );
   });
 
   it("bank-bound sources (auto/manual/waiver) are REVERSAL_NOT_SUPPORTED here", async () => {
