@@ -269,7 +269,7 @@ async function upsertCharge(
   const effective = (await effectiveByCharge(tx, [prior.id])).get(prior.id) ?? 0;
   if (effective !== 0) return fail("REJOIN_REQUIRES_REVIEW", "prior payments need review first");
   await tx.update(charges).set({ amountDue: price }).where(eq(charges.id, prior.id));
-  await applyEffective(tx, prior.id, price);
+  await applyEffective(tx, prior.id, price, { revive: true });
   return prior.id;
 }
 
