@@ -174,10 +174,6 @@ export function SessionDetailView({
           setPending(action);
         }}
       />
-      {pending === null && actionError ? (
-        // A failure must never be swallowed by a dialog that is no longer on screen.
-        <ApiErrorNotice error={actionError} onReload={refresh} />
-      ) : null}
 
       <Tabs
         label={t("Nội dung buổi chơi", "Session content")}

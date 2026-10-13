@@ -97,5 +97,9 @@ describe("hasMorePages", () => {
     expect(hasMorePages(started, "upcoming", NOW)).toBe(false);
     expect(hasMorePages(future, "upcoming", NOW)).toBe(true);
     expect(hasMorePages(started, "all", NOW)).toBe(true);
+    // startsAt === now counts as started (same boundary as blockedReason and the server).
+    expect(
+      hasMorePages([stream("open", [mk("z", "2026-10-20T00:00:00Z")], true)], "upcoming", NOW),
+    ).toBe(false);
   });
 });

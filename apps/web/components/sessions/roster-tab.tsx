@@ -41,10 +41,14 @@ export function RosterTab({ session }: { session: SessionDetailDto }) {
       <dl className={styles.counts}>
         <div>
           <dt>{t("Đang tham gia", "Active")}</dt>
-          <dd>
-            {session.slotsMax === null ? counts.active : `${counts.active}/${session.slotsMax}`}
-          </dd>
+          <dd>{counts.active}</dd>
         </div>
+        {session.slotsMax === null ? null : (
+          <div>
+            <dt>{t("Đã có chỗ", "Occupied")}</dt>
+            <dd>{`${counts.occupied}/${session.slotsMax}`}</dd>
+          </div>
+        )}
         <div>
           <dt>{t("Chỗ trống", "Free slots")}</dt>
           <dd>{free === null ? t("Không giới hạn", "Unlimited") : free}</dd>

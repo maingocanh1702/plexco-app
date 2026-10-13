@@ -147,6 +147,31 @@ test.describe("list", () => {
     await expect(page.getByRole("button", { name: "Tải thêm" })).toHaveCount(0);
   });
 
+  test("switching tabs while load-more is in flight never shows the old tab's rows", async ({
+    page,
+  }) => {
+    const many = Array.from({ length: 25 }, (_, i) =>
+      makeSession({
+        id: `r-${i}`,
+        venueName: `Sân ${i}`,
+        startsAt: new Date(Date.now() + (i + 1) * DAY).toISOString(),
+        endsAt: new Date(Date.now() + (i + 1) * DAY + 3_600_000).toISOString(),
+      }),
+    );
+    const mock = await open(page, "", [...many, draft]);
+    await expect(page.locator("main ul li")).toHaveCount(20);
+    mock.moreDelayMs = 800;
+    await page.getByRole("button", { name: "Tải thêm" }).click();
+    await page
+      .getByRole("group", { name: "Lọc buổi chơi" })
+      .getByRole("button", { name: "Nháp" })
+      .click();
+    await expect(card(page, "s-draft")).toBeVisible();
+    await page.waitForTimeout(1200); // let the stale page resolve
+    await expect(page.locator("main ul li")).toHaveCount(1);
+    await expect(card(page, "r-0")).toHaveCount(0);
+  });
+
   test("offline: last loaded snapshot with a banner; sign-out wipes it", async ({ page }) => {
     const mock = await open(page, "");
     await expect(card(page, "s-open")).toBeVisible();
@@ -295,6 +320,9 @@ test.describe("detail", () => {
     await expect(page.getByText("Trả một phần")).toBeVisible();
     await expect(page.getByText("Chờ #1")).toBeVisible();
     await expect(page.getByText("Chỗ trống")).toBeVisible();
+    // One capacity ratio: occupied (active players) over the cap, same numerator as the list card.
+    await expect(page.getByText("Đã có chỗ")).toBeVisible();
+    await expect(page.getByText("2/12", { exact: true })).toBeVisible();
     for (const name of ["Sửa", "Đóng buổi", "Huỷ buổi"]) {
       await expect(
         page.getByRole("link", { name }).or(page.getByRole("button", { name })),
@@ -345,6 +373,7 @@ test.describe("detail", () => {
     await dialog.getByRole("button", { name: "Đăng kèo" }).click();
     await expect(dialog).toBeHidden();
     await expect(page.getByText("Đã đăng kèo.")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
     await expect(page.getByText("Đang mở", { exact: true })).toBeVisible();
     const [call] = mock.callsTo("POST", /\/publish$/);
     expect(call!.body).toMatchObject({ expectedVersion: 2 });
@@ -364,6 +393,23 @@ test.describe("detail", () => {
     await opener.click();
     await page.getByRole("dialog").getByRole("button", { name: "Quay lại" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
+  });
+
+  test("a second Escape while the command is in flight cannot hide the busy dialog", async ({
+    page,
+  }) => {
+    const mock = await open(page, "/s-draft");
+    const release = mock.holdNext("publish");
+    await page.getByRole("button", { name: "Đăng kèo" }).click();
+    const dialog = page.getByRole("dialog", { name: "Đăng kèo này?" });
+    await dialog.getByRole("button", { name: "Đăng kèo" }).click();
+    await expect(dialog.getByRole("button", { name: "Đang xử lý…" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    release();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText("Đã đăng kèo.")).toBeVisible();
   });
 
   test("dialog traps focus: Tab cycles inside it", async ({ page }) => {

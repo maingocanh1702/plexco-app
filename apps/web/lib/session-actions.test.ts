@@ -30,6 +30,11 @@ describe("blockedReason", () => {
   it("blocks publish on a past-start draft", () => {
     expect(blockedReason("publish", { status: "draft", startsAt: past }, now)).toBe("started");
   });
+  it("treats startsAt === now as started (matches the server's <=)", () => {
+    expect(
+      blockedReason("publish", { status: "draft", startsAt: "2026-10-20T12:00:00Z" }, now),
+    ).toBe("started");
+  });
   it("never blocks close (no past-guard), a draft edit/discard, or anything in the future", () => {
     expect(blockedReason("close", { status: "open", startsAt: past }, now)).toBeNull();
     expect(blockedReason("edit", { status: "draft", startsAt: past }, now)).toBeNull();

@@ -112,8 +112,12 @@ export interface ApiMock {
   calls: RecordedCall[];
   /** The next call to this route key is answered with `error` instead (consumed once). */
   failNext(key: string, error: MockError | "network"): void;
+  /** The next call to this route key waits until the returned resolver is called (consumed once). */
+  holdNext(key: string): () => void;
   /** Delay (ms) applied to the list response, to observe the loading state. */
   listDelayMs: number;
+  /** Delay (ms) applied only to cursor (load-more) list requests. */
+  moreDelayMs: number;
   callsTo(method: string, pathPattern: RegExp): RecordedCall[];
 }
 
@@ -146,11 +150,21 @@ export async function installApiMock(
 ): Promise<ApiMock> {
   const state = initial.map((s) => ({ ...s }));
   const failures = new Map<string, (MockError | "network")[]>();
+  const holds = new Map<string, Promise<void>[]>();
   let seq = 0;
   const mock: ApiMock = {
     state,
     calls: [],
     listDelayMs: 0,
+    moreDelayMs: 0,
+    holdNext(key) {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      holds.set(key, [...(holds.get(key) ?? []), gate]);
+      return release;
+    },
     failNext(key, error) {
       failures.set(key, [...(failures.get(key) ?? []), error]);
     },
@@ -203,6 +217,7 @@ export async function installApiMock(
           : "create"
         : (detailMatch?.[2] ?? (method === "PUT" ? "update" : "detail"));
 
+    await holds.get(key)?.shift();
     const injected = take(key);
     if (injected === "network") return route.abort("internetdisconnected");
     if (injected) return json(route, injected.statusCode, errorEnvelope(injected));
@@ -224,6 +239,9 @@ export async function installApiMock(
 
     if (path === "/api/sessions" && method === "GET") {
       if (mock.listDelayMs) await new Promise((r) => setTimeout(r, mock.listDelayMs));
+      if (mock.moreDelayMs && url.searchParams.get("cursor")) {
+        await new Promise((r) => setTimeout(r, mock.moreDelayMs));
+      }
       const status = url.searchParams.get("status");
       const limit = Number(url.searchParams.get("limit") ?? 20);
       const offset = Number((url.searchParams.get("cursor") ?? "c:0").slice(2));
