@@ -88,10 +88,15 @@ export function useSessionList(tenantId: string, tab: ListTab) {
   const [moreError, setMoreError] = useState<ApiClientError | null>(null);
   const [nonce, setNonce] = useState(0);
   const now = useRef(Date.now());
+  // Bumped whenever the tab/tenant/nonce effect restarts; a loadMore that started under an older
+  // generation must not write its (old-tab) rows over the new tab's state.
+  const generation = useRef(0);
 
   useEffect(() => {
     const controller = new AbortController();
+    generation.current += 1;
     now.current = Date.now();
+    setLoadingMore(false);
     setState({ status: "loading" });
     setStreams(null);
     setMoreError(null);
@@ -114,7 +119,7 @@ export function useSessionList(tenantId: string, tab: ListTab) {
         setState({
           status: "ready",
           sessions: visible,
-          hasMore: hasMorePages(loaded),
+          hasMore: hasMorePages(loaded, tab, now.current),
           offlineSavedAt: null,
         });
       },
@@ -139,6 +144,7 @@ export function useSessionList(tenantId: string, tab: ListTab) {
 
   const loadMore = useCallback(async () => {
     if (!streams || loadingMore) return;
+    const gen = generation.current;
     setLoadingMore(true);
     setMoreError(null);
     try {
@@ -158,17 +164,18 @@ export function useSessionList(tenantId: string, tab: ListTab) {
           };
         }),
       );
+      if (gen !== generation.current) return;
       setStreams(next);
       setState({
         status: "ready",
         sessions: visibleSessions(next, tab, now.current),
-        hasMore: hasMorePages(next),
+        hasMore: hasMorePages(next, tab, now.current),
         offlineSavedAt: null,
       });
     } catch (raw) {
-      setMoreError(noteError(raw));
+      if (gen === generation.current) setMoreError(noteError(raw));
     } finally {
-      setLoadingMore(false);
+      if (gen === generation.current) setLoadingMore(false);
     }
   }, [streams, loadingMore, tenantId, tab]);
 

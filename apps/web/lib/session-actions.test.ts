@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedActions, editBlockedReason, isKnownStatus } from "./session-actions";
+import { allowedActions, blockedReason, isKnownStatus } from "./session-actions";
 
 describe("allowedActions", () => {
   it("draft: edit, publish, cancel", () => {
@@ -19,17 +19,24 @@ describe("allowedActions", () => {
   });
 });
 
-describe("editBlockedReason", () => {
+describe("blockedReason", () => {
   const now = Date.parse("2026-10-20T12:00:00Z");
-  it("blocks an open session that already started", () => {
-    expect(editBlockedReason({ status: "open", startsAt: "2026-10-20T11:00:00Z" }, now)).toBe(
-      "started",
-    );
+  const past = "2026-10-20T11:00:00Z";
+  const future = "2026-10-21T11:00:00Z";
+  it("blocks edit and cancel on an open session that already started", () => {
+    expect(blockedReason("edit", { status: "open", startsAt: past }, now)).toBe("started");
+    expect(blockedReason("cancel", { status: "open", startsAt: past }, now)).toBe("started");
   });
-  it("never blocks a draft (past-guard is open-only) or a future open session", () => {
-    expect(
-      editBlockedReason({ status: "draft", startsAt: "2026-10-20T11:00:00Z" }, now),
-    ).toBeNull();
-    expect(editBlockedReason({ status: "open", startsAt: "2026-10-21T11:00:00Z" }, now)).toBeNull();
+  it("blocks publish on a past-start draft", () => {
+    expect(blockedReason("publish", { status: "draft", startsAt: past }, now)).toBe("started");
+  });
+  it("never blocks close (no past-guard), a draft edit/discard, or anything in the future", () => {
+    expect(blockedReason("close", { status: "open", startsAt: past }, now)).toBeNull();
+    expect(blockedReason("edit", { status: "draft", startsAt: past }, now)).toBeNull();
+    expect(blockedReason("cancel", { status: "draft", startsAt: past }, now)).toBeNull();
+    for (const action of ["edit", "publish", "close", "cancel"] as const) {
+      expect(blockedReason(action, { status: "open", startsAt: future }, now)).toBeNull();
+      expect(blockedReason(action, { status: "draft", startsAt: future }, now)).toBeNull();
+    }
   });
 });

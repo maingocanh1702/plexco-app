@@ -20,12 +20,18 @@ export function allowedActions(status: string): SessionAction[] {
 }
 
 /**
- * updateSession refuses an OPEN session whose start has passed (SESSION_NOT_OPEN, privileged
- * correction); a draft has no such guard. The UI mirrors it so the host is not offered a dead end.
+ * The backend refuses three past-start commands with SESSION_NOT_OPEN: updating an OPEN session,
+ * publishing a DRAFT, and cancelling an OPEN session (close has no past-guard). The UI mirrors
+ * them so the host is not offered a dead end; the server stays the authority.
  */
-export function editBlockedReason(
+export function blockedReason(
+  action: SessionAction,
   session: { status: string; startsAt: string },
   now: number,
 ): "started" | null {
-  return session.status === "open" && Date.parse(session.startsAt) <= now ? "started" : null;
+  const started = Date.parse(session.startsAt) <= now;
+  if (!started) return null;
+  if ((action === "edit" || action === "cancel") && session.status === "open") return "started";
+  if (action === "publish" && session.status === "draft") return "started";
+  return null;
 }

@@ -82,3 +82,15 @@ describe("zones + formatting", () => {
     expect(out).toContain("18:30–20:00");
   });
 });
+
+describe("an unusable zone from a DTO falls back instead of throwing", () => {
+  const bad = "Mars/Olympus_Mons";
+  it("formats and prefills in the fallback zone", () => {
+    const iso = "2026-10-20T11:30:00Z"; // 18:30 in Asia/Ho_Chi_Minh
+    expect(() => formatSessionRange(iso, "2026-10-20T13:00:00Z", bad, "en")).not.toThrow();
+    expect(formatSessionRange(iso, "2026-10-20T13:00:00Z", bad, "en")).toBe(
+      formatSessionRange(iso, "2026-10-20T13:00:00Z", "Asia/Ho_Chi_Minh", "en"),
+    );
+    expect(isoToLocalInput(iso, bad)).toBe("2026-10-20T18:30");
+  });
+});

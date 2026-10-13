@@ -60,4 +60,16 @@ export function visibleSessions(
   return tab === "upcoming" ? shown.filter((x) => Date.parse(x.startsAt) >= now) : shown;
 }
 
-export const hasMorePages = (streams: readonly Stream[]): boolean => streams.some((s) => s.hasMore);
+/**
+ * "Load more" is offered only while a further page could still add a visible row. On `upcoming`
+ * the pages run newest-first, so once a stream's boundary (last loaded) item has already started,
+ * every older page is past too and would be filtered out: stop offering it.
+ */
+export function hasMorePages(streams: readonly Stream[], tab?: ListTab, now?: number): boolean {
+  return streams.some((s) => {
+    if (!s.hasMore) return false;
+    if (tab !== "upcoming" || now === undefined) return true;
+    const last = s.items[s.items.length - 1];
+    return !last || Date.parse(last.startsAt) >= now;
+  });
+}

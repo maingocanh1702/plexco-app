@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
 import type { SessionAction } from "../../lib/session-actions";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
@@ -40,6 +40,13 @@ export function SessionDetailView({
   const [done, setDone] = useState<string | null>(null);
   // One idempotency key per confirm attempt; kept across an uncertain failure, dropped on a definite one.
   const commandId = useRef<string | null>(null);
+  // Bumped after a successful transition: the opener button may be gone (status changed), so focus
+  // moves to the heading once the dialog has closed (child effects run first, then this one).
+  const [focusHeading, setFocusHeading] = useState(0);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusHeading > 0) headingRef.current?.focus();
+  }, [focusHeading]);
   const base = `/c/${tenantId}/sessions`;
 
   if (state.status === "loading") {
@@ -101,7 +108,10 @@ export function SessionDetailView({
         session.status === "draft"
           ? t("Huỷ nháp", "Discard draft")
           : t("Huỷ buổi", "Cancel session"),
-      done: t("Đã huỷ buổi.", "Session cancelled."),
+      done:
+        session.status === "draft"
+          ? t("Đã huỷ bản nháp.", "Draft cancelled.")
+          : t("Đã huỷ buổi.", "Session cancelled."),
       danger: true,
     },
   };
@@ -125,6 +135,7 @@ export function SessionDetailView({
       });
       setDone(copy[pending].done);
       setPending(null);
+      setFocusHeading((n) => n + 1);
       commandId.current = null;
       refresh();
     } catch (error) {
@@ -139,7 +150,9 @@ export function SessionDetailView({
     <div className={styles.page}>
       <header className={styles.header}>
         <div>
-          <h1>{session.sportName}</h1>
+          <h1 ref={headingRef} tabIndex={-1}>
+            {session.sportName}
+          </h1>
           <p className={styles.when}>
             {formatSessionRange(session.startsAt, session.endsAt, session.timezone, lang)}
           </p>
@@ -161,6 +174,10 @@ export function SessionDetailView({
           setPending(action);
         }}
       />
+      {pending === null && actionError ? (
+        // A failure must never be swallowed by a dialog that is no longer on screen.
+        <ApiErrorNotice error={actionError} onReload={refresh} />
+      ) : null}
 
       <Tabs
         label={t("Nội dung buổi chơi", "Session content")}

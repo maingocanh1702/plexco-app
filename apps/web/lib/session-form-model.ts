@@ -1,6 +1,6 @@
 import type { TFn, ClientLang } from "./i18n-client";
 import { INT4_MAX, formatVndInput, parseVndInput } from "./money";
-import { isoToLocalInput, localInputToIso } from "./session-time";
+import { isoToLocalInput, localInputToIso, resolveTimeZone } from "./session-time";
 import type { SessionDetailDto, SessionFieldsBody } from "./sessions-api";
 
 /**
@@ -41,8 +41,8 @@ export const emptyFormValues = (): SessionFormValues => ({
 export function valuesFromSession(s: SessionDetailDto, lang: ClientLang): SessionFormValues {
   return {
     sportId: s.sportId,
-    startsAt: isoToLocalInput(s.startsAt, s.timezone),
-    endsAt: isoToLocalInput(s.endsAt, s.timezone),
+    startsAt: isoToLocalInput(s.startsAt, resolveTimeZone(s.timezone)),
+    endsAt: isoToLocalInput(s.endsAt, resolveTimeZone(s.timezone)),
     venueName: s.venueName ?? "",
     venueAddress: s.venueAddress ?? "",
     area: s.area ?? "",
@@ -63,12 +63,7 @@ function slotsOf(v: SessionFormValues): number | null {
   return n >= 1 && n <= INT4_MAX ? n : Number.NaN;
 }
 
-export function validateForm(
-  v: SessionFormValues,
-  tz: string,
-  t: TFn,
-  mode: "create" | "edit",
-): FormErrors {
+export function validateForm(v: SessionFormValues, tz: string, t: TFn): FormErrors {
   const e: FormErrors = {};
   if (!v.sportId) e.sportId = t("Chọn môn thể thao.", "Choose a sport.");
 
@@ -109,7 +104,6 @@ export function validateForm(
       );
     }
   }
-  void mode;
   return e;
 }
 
@@ -146,7 +140,7 @@ export function buildUpdateBody(
   v: SessionFormValues,
   original: SessionDetailDto,
 ): SessionFieldsBody | null {
-  const tz = original.timezone;
+  const tz = resolveTimeZone(original.timezone);
   const body: SessionFieldsBody = {};
   // The inputs are minute-precision; compare the TEXT the host saw (not instants) so a stored
   // value carrying seconds is not reported as "changed" just because the input dropped them.

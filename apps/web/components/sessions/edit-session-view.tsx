@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
-import { editBlockedReason } from "../../lib/session-actions";
+import { blockedReason } from "../../lib/session-actions";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
+import { resolveTimeZone } from "../../lib/session-time";
 import { buildUpdateBody, valuesFromSession } from "../../lib/session-form-model";
 import { updateSession } from "../../lib/sessions-api";
 import { useSessionDetail } from "../../lib/use-sessions-data";
@@ -47,7 +48,7 @@ export function EditSessionView({ tenantId, sessionId }: { tenantId: string; ses
   const blocked =
     session.status !== "draft" && session.status !== "open"
       ? "terminal"
-      : editBlockedReason(session, Date.now());
+      : blockedReason("edit", session, Date.now());
   if (blocked) {
     return (
       <EmptyState
@@ -76,7 +77,7 @@ export function EditSessionView({ tenantId, sessionId }: { tenantId: string; ses
         key={`${session.id}:${session.version}`}
         mode="edit"
         initial={valuesFromSession(session, lang)}
-        timezone={session.timezone}
+        timezone={resolveTimeZone(session.timezone)}
         sports={[{ id: session.sportId, name: session.sportName }]}
         openNotice={session.status === "open"}
         submitLabel={t("Lưu thay đổi", "Save changes")}

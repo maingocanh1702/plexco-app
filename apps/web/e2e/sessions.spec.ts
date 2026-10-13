@@ -453,6 +453,25 @@ test.describe("detail", () => {
     await expect(page.getByRole("button", { name: "Sửa" })).toBeDisabled();
     await expect(page.getByText("Buổi đã bắt đầu nên không sửa được nữa.")).toBeVisible();
   });
+
+  test("past-start guards: open session cannot be cancelled (close stays), past draft cannot be published", async ({
+    page,
+  }) => {
+    const pastDraft = makeSession({
+      id: "s-past-draft",
+      status: "draft",
+      startsAt: new Date(Date.now() - DAY).toISOString(),
+      endsAt: new Date(Date.now() - DAY + 2 * 3_600_000).toISOString(),
+    });
+    await open(page, "/s-past-open", [...fixtures(), pastDraft]);
+    await expect(page.getByRole("button", { name: "Huỷ buổi" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Đóng buổi" })).toBeEnabled();
+    await expect(page.getByText(/hãy đóng buổi/)).toBeVisible();
+    await page.goto(`${BASE}/s-past-draft`);
+    await expect(page.getByRole("button", { name: "Đăng kèo" })).toBeDisabled();
+    await expect(page.getByText(/sửa giờ trước khi đăng/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Huỷ nháp" })).toBeEnabled();
+  });
 });
 
 test.describe("edit", () => {

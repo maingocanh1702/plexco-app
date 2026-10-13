@@ -12,10 +12,8 @@ export function RosterTab({ session }: { session: SessionDetailDto }) {
   const t = useT();
   const lang = useLang();
   const { counts } = session;
-  const free =
-    session.slotsMax === null
-      ? null
-      : Math.max(0, session.slotsMax - counts.active - counts.guestNotes);
+  // Server-computed occupancy is the only capacity formula (BL-DSC-1): no client-side sum.
+  const free = session.slotsMax === null ? null : Math.max(0, session.slotsMax - counts.occupied);
 
   const playerBadge = (p: SessionDetailDto["players"][number]): [BadgeTone, string] => {
     if (p.status === "active") return ["success", t("Đang tham gia", "Active")];

@@ -2535,7 +2535,7 @@ async function guestNoteCountFor(tx: Tx, sessionId: string, personId: string): P
  * Both terms return here with the migrations that make them representable. Counting a column that
  * does not exist is not possible; pretending to count one would be worse.
  */
-async function sessionOccupancy(tx: Tx, sessionId: string): Promise<number> {
+export async function sessionOccupancy(tx: Tx, sessionId: string): Promise<number> {
   const active = await sessionActiveRosterCount(tx, sessionId);
   const notes = await tx
     .select({ n: sql<number>`count(*)` })

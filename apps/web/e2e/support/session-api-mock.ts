@@ -6,6 +6,7 @@ import type { BrowserContext, Page, Route } from "@playwright/test";
  * query is answered by fake-postgres.mjs). The mock keeps real state so create -> detail, edit and
  * transitions behave end to end, and records every request body for assertions.
  */
+// Same literal as E2E_SESSION_TOKEN in ./fake-postgres.mjs (the stub DB hashes it); keep them equal.
 export const E2E_SESSION_TOKEN = "e2e-session-token";
 export const TENANT_ID = "11111111-1111-4111-8111-111111111111";
 const SPORT_ID = "22222222-2222-4222-8222-222222222222";
@@ -212,9 +213,13 @@ export async function installApiMock(
       void guestNotes;
       return scalars;
     };
+    const activeOf = (s: MockSession) =>
+      (s.players as { status: string }[]).filter((p) => p.status === "active").length;
+    // The real BE computes occupancy server-side (active players + guest notes); mirror it here.
     const withActive = (s: MockSession) => ({
       ...view(s),
-      activeCount: (s.players as { status: string }[]).filter((p) => p.status === "active").length,
+      activeCount: activeOf(s),
+      occupiedCount: activeOf(s) + s.guestNotes.length,
     });
 
     if (path === "/api/sessions" && method === "GET") {
@@ -284,7 +289,12 @@ export async function installApiMock(
         envelope({
           session: {
             ...target,
-            counts: { active, waitlisted, guestNotes: target.guestNotes.length },
+            counts: {
+              active,
+              waitlisted,
+              guestNotes: target.guestNotes.length,
+              occupied: active + target.guestNotes.length,
+            },
           },
         }),
       );

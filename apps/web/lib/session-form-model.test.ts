@@ -42,38 +42,32 @@ const session: SessionDetailDto = {
   updatedAt: "2026-10-01T00:00:00.000Z",
   players: [],
   guestNotes: [],
-  counts: { active: 0, waitlisted: 0, guestNotes: 0 },
+  counts: { active: 0, waitlisted: 0, guestNotes: 0, occupied: 0 },
 };
 
 describe("validateForm", () => {
   it("accepts a minimal private session", () => {
-    expect(validateForm(base(), TZ, en, "create")).toEqual({});
+    expect(validateForm(base(), TZ, en)).toEqual({});
   });
   it("requires sport and times; end must be after start", () => {
-    const e = validateForm(base({ sportId: "", startsAt: "", endsAt: "" }), TZ, en, "create");
+    const e = validateForm(base({ sportId: "", startsAt: "", endsAt: "" }), TZ, en);
     expect(Object.keys(e).sort()).toEqual(["endsAt", "sportId", "startsAt"]);
-    expect(validateForm(base({ endsAt: "2026-10-20T18:30" }), TZ, en, "create").endsAt).toContain(
-      "after",
-    );
-    expect(validateForm(base({ endsAt: "2026-10-20T17:00" }), TZ, en, "create").endsAt).toContain(
-      "after",
-    );
+    expect(validateForm(base({ endsAt: "2026-10-20T18:30" }), TZ, en).endsAt).toContain("after");
+    expect(validateForm(base({ endsAt: "2026-10-20T17:00" }), TZ, en).endsAt).toContain("after");
   });
   it("validates price and finite slots", () => {
-    expect(validateForm(base({ price: "" }), TZ, en, "create").price).toBeDefined();
-    expect(validateForm(base({ price: "9999999999" }), TZ, en, "create").price).toBeDefined();
+    expect(validateForm(base({ price: "" }), TZ, en).price).toBeDefined();
+    expect(validateForm(base({ price: "9999999999" }), TZ, en).price).toBeDefined();
     expect(
-      validateForm(base({ slotsUnlimited: false, slotsMax: "0" }), TZ, en, "create").slotsMax,
+      validateForm(base({ slotsUnlimited: false, slotsMax: "0" }), TZ, en).slotsMax,
     ).toBeDefined();
     expect(
-      validateForm(base({ slotsUnlimited: false, slotsMax: "1.5" }), TZ, en, "create").slotsMax,
+      validateForm(base({ slotsUnlimited: false, slotsMax: "1.5" }), TZ, en).slotsMax,
     ).toBeDefined();
-    expect(validateForm(base({ slotsUnlimited: false, slotsMax: "10" }), TZ, en, "create")).toEqual(
-      {},
-    );
+    expect(validateForm(base({ slotsUnlimited: false, slotsMax: "10" }), TZ, en)).toEqual({});
   });
   it("public needs an area and finite slots (MISSING_DISCOVERY_FIELDS)", () => {
-    const e = validateForm(base({ visibility: "public" }), TZ, en, "create");
+    const e = validateForm(base({ visibility: "public" }), TZ, en);
     expect(e.area).toBeDefined();
     expect(e.slotsMax).toBeDefined();
     expect(
@@ -81,7 +75,6 @@ describe("validateForm", () => {
         base({ visibility: "public", area: "Q7", slotsUnlimited: false, slotsMax: "8" }),
         TZ,
         en,
-        "create",
       ),
     ).toEqual({});
   });
@@ -109,6 +102,10 @@ describe("buildCreateBody", () => {
 });
 
 describe("buildUpdateBody", () => {
+  it("an unusable stored zone round-trips in the fallback zone instead of throwing", () => {
+    const odd = { ...session, timezone: "Mars/Olympus_Mons" };
+    expect(buildUpdateBody(valuesFromSession(odd, "vi"), odd)).toBeNull();
+  });
   it("returns null when nothing changed (round-trip of the loaded session)", () => {
     expect(buildUpdateBody(valuesFromSession(session, "vi"), session)).toBeNull();
   });

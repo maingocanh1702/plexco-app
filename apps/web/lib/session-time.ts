@@ -28,7 +28,7 @@ const WALL_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 /** Offset (ms, east positive) of `tz` at the instant `ms`. */
 function offsetAt(ms: number, tz: string): number {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
+    timeZone: resolveTimeZone(tz), // a zone this browser's ICU lacks must not crash the page
     hourCycle: "h23",
     year: "numeric",
     month: "2-digit",
@@ -108,7 +108,7 @@ const locale = (lang: ClientLang) => (lang === "en" ? "en-GB" : "vi-VN");
 /** "T3, 20/10/2026" style date in the session's zone. */
 export function formatSessionDate(iso: string, tz: string, lang: ClientLang): string {
   return new Intl.DateTimeFormat(locale(lang), {
-    timeZone: tz,
+    timeZone: resolveTimeZone(tz),
     weekday: "short",
     day: "2-digit",
     month: "2-digit",
@@ -118,7 +118,7 @@ export function formatSessionDate(iso: string, tz: string, lang: ClientLang): st
 
 export function formatSessionTime(iso: string, tz: string, lang: ClientLang): string {
   return new Intl.DateTimeFormat(locale(lang), {
-    timeZone: tz,
+    timeZone: resolveTimeZone(tz),
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",

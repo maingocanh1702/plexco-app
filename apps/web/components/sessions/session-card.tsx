@@ -21,12 +21,12 @@ export function SessionListCard({
   const slots =
     session.slotsMax === null
       ? t(
-          `${session.activeCount} người · không giới hạn chỗ`,
+          `${session.activeCount} người chơi · không giới hạn chỗ`,
           `${session.activeCount} players · unlimited slots`,
         )
       : t(
-          `${session.activeCount}/${session.slotsMax} chỗ`,
-          `${session.activeCount}/${session.slotsMax} slots`,
+          `${session.occupiedCount}/${session.slotsMax} chỗ`,
+          `${session.occupiedCount}/${session.slotsMax} slots`,
         );
   return (
     <Link href={`/c/${tenantId}/sessions/${session.id}`} className={styles.card}>

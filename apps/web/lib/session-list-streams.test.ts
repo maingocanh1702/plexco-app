@@ -91,4 +91,11 @@ describe("hasMorePages", () => {
     expect(hasMorePages([stream("a", [], false), stream("b", [], true)])).toBe(true);
     expect(hasMorePages([stream("a", [], false)])).toBe(false);
   });
+  it("upcoming: false once the boundary item has already started (older pages are all past)", () => {
+    const started = [stream("open", [mk("x", "2026-10-19T00:00:00Z")], true)];
+    const future = [stream("open", [mk("y", "2026-10-21T00:00:00Z")], true)];
+    expect(hasMorePages(started, "upcoming", NOW)).toBe(false);
+    expect(hasMorePages(future, "upcoming", NOW)).toBe(true);
+    expect(hasMorePages(started, "all", NOW)).toBe(true);
+  });
 });

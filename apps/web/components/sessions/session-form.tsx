@@ -71,7 +71,7 @@ export function SessionForm(props: SessionFormProps) {
     event.preventDefault();
     if (busy) return;
     setServerError(null);
-    const found = validateForm(values, timezone, t, mode);
+    const found = validateForm(values, timezone, t);
     setErrors(found);
     if (Object.keys(found).length > 0) {
       setFocusSummary((n) => n + 1);

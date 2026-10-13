@@ -128,6 +128,7 @@ describe("listSessions", () => {
         "endsAt",
         "id",
         "joinPolicy",
+        "occupiedCount",
         "priceAmount",
         "skillLevel",
         "slotsMax",
@@ -177,6 +178,49 @@ describe("listSessions activeCount", () => {
   });
 });
 
+describe("listSessions occupiedCount", () => {
+  it("counts active players + guest notes (never waitlisted/left), and never another tenant's notes", async () => {
+    const tenant = ctx.tenantA;
+    const sessionId = await seedSession(tenant, { startsAt: "2034-02-01T10:00:00Z" });
+    const otherTenantSession = await seedSession(ctx.tenantB, { startsAt: "2034-02-01T10:00:00Z" });
+    const person = (
+      await ctx.owner.query<{ id: string }>(
+        `INSERT INTO persons (display_name) VALUES ('Occ') RETURNING id`,
+      )
+    ).rows[0]!.id;
+    for (const [t, sid] of [
+      [tenant, sessionId],
+      [ctx.tenantB, otherTenantSession],
+    ] as const) {
+      await ctx.owner.query(
+        `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name)
+         VALUES ($1, $2, $3, 'Khach')`,
+        [t, sid, person],
+      );
+    }
+    for (const status of ["active", "left"] as const) {
+      const membership = (
+        await ctx.owner.query<{ id: string }>(
+          `INSERT INTO memberships (tenant_id, person_id, display_name, status)
+           VALUES ($1, $2, $3, 'active') RETURNING id`,
+          [tenant, person, `Occ-${status}`],
+        )
+      ).rows[0]!.id;
+      await ctx.owner.query(
+        `INSERT INTO players (tenant_id, session_id, membership_id, status) VALUES ($1, $2, $3, $4)`,
+        [tenant, sessionId, membership, status],
+      );
+    }
+    const listA = await listSessions(ctx.appDb.db, { tenantId: tenant, limit: 50 });
+    const row = listA.sessions.find((s) => s.id === sessionId)!;
+    expect(row.activeCount).toBe(1);
+    expect(row.occupiedCount).toBe(2); // 1 active player + 1 guest note
+    expect(listA.sessions.map((s) => s.id)).not.toContain(otherTenantSession);
+    const listB = await listSessions(ctx.appDb.db, { tenantId: ctx.tenantB, limit: 50 });
+    expect(listB.sessions.find((s) => s.id === otherTenantSession)!.occupiedCount).toBe(1);
+  });
+});
+
 describe("getSessionDetail", () => {
   it("returns roster, charge, guest notes and counts for the host view", async () => {
     const tenant = ctx.tenantA;
@@ -211,7 +255,12 @@ describe("getSessionDetail", () => {
 
     const detail = await getSessionDetail(ctx.appDb.db, { tenantId: tenant, sessionId });
     expect(detail).not.toBeNull();
-    expect(detail!.counts).toEqual({ active: 1, waitlisted: 0, guestNotes: 1 });
+    expect(detail!.counts).toEqual({
+      active: 1,
+      waitlisted: 0,
+      guestNotes: 1,
+      occupied: 2,
+    });
     expect(detail!.players).toEqual([
       expect.objectContaining({
         id: playerId,

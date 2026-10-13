@@ -50,12 +50,18 @@ export function ConfirmDialog({
     <dialog
       ref={ref}
       className={styles.dialog}
-      role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault(); // parent owns `open`; never let the browser close it behind React
         if (!busy) onCancel();
+      }}
+      onClose={() => {
+        // A second Escape without an intervening click closes natively with NO cancel event.
+        // React still says open: re-open while busy, otherwise treat it as a cancel.
+        if (!open) return;
+        if (busy) ref.current?.showModal();
+        else onCancel();
       }}
       onKeyDown={(event) => {
         // Native modals let Tab escape to the browser chrome; keep it cycling inside the sheet.
