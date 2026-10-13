@@ -2,7 +2,7 @@ import {
   createGuestNote,
   guestNoteTenantForPerson,
   SessionGuestNoteError,
-  tenantsForPerson,
+  authorize,
 } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
@@ -20,7 +20,10 @@ vi.mock("@plexco/db", async (importOriginal) => {
       db: { execute: async () => ({ rows: [{ locale: "vi" }] }) },
     })),
     createGuestNote: vi.fn(),
-    tenantsForPerson: vi.fn(),
+    authorize: vi.fn(),
+    withTenant: vi.fn(async (_db: unknown, _tenantId: string, fn: (tx: unknown) => unknown) =>
+      fn({}),
+    ),
     guestNoteTenantForPerson: vi.fn(),
   };
 });
@@ -79,7 +82,7 @@ beforeEach(() => {
   });
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
-  vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "owner" }]);
+  vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "owner" });
   vi.mocked(guestNoteTenantForPerson).mockResolvedValue(null);
   vi.mocked(createGuestNote).mockResolvedValue({
     noteId: NOTE_ID,
@@ -164,14 +167,14 @@ describe("POST /api/sessions/:id/guest-notes", () => {
   });
 
   it("denies a caller without an admin role or guest-note association", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: TENANT, role: "member" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     const response = await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
     expect(response.status).toBe(403);
     expect(createGuestNote).not.toHaveBeenCalled();
   });
 
   it("opts a non-admin into guest context using the path and authenticated actor only", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     vi.mocked(guestNoteTenantForPerson).mockResolvedValue(TENANT);
     const response = await POST(
       req({
@@ -196,7 +199,7 @@ describe("POST /api/sessions/:id/guest-notes", () => {
   });
 
   it("denies a caller who belongs to a DIFFERENT tenant with the same 403, never a 404", async () => {
-    vi.mocked(tenantsForPerson).mockResolvedValue([{ tenantId: OTHER_TENANT, role: "owner" }]);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
     const response = await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
     expect(response.status).toBe(403);
     const { error } = await envelope(response);

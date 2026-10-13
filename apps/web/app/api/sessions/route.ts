@@ -1,6 +1,14 @@
-import { createSession, type CreateSessionInputPayload } from "@plexco/db";
-import { ok } from "../../../lib/api-envelope";
+import {
+  SESSION_STATUSES,
+  createSession,
+  decodeSessionCursor,
+  listSessions,
+  type CreateSessionInputPayload,
+} from "@plexco/db";
+import { t } from "@plexco/core/i18n";
+import { err, ok } from "../../../lib/api-envelope";
 import { handleSessionCommand, shapeCreateFields } from "../../../lib/session-command-route";
+import { handleSessionRead } from "../../../lib/session-read-route";
 import { appDb } from "../../../lib/session-cookies";
 
 /**
@@ -32,5 +40,38 @@ export async function POST(request: Request): Promise<Response> {
     return ok({
       session: { id: result.sessionId, status: result.status, version: result.version },
     });
+  });
+}
+
+const invalidQuery = () =>
+  err("INVALID_BODY", t("Tham số không hợp lệ.", "Invalid query parameter."), 400);
+
+/**
+ * GET /api/sessions — host list, newest first (BE tech spec §3, 60/min per tenant). Query:
+ * `status` (draft|open|closed|cancelled), `cursor` (opaque, from pageInfo.nextCursor), `limit`
+ * (1..50, default 20). Authorized by authorize(session.manage) in the read gate.
+ */
+export async function GET(request: Request): Promise<Response> {
+  return handleSessionRead(request, { bucket: "session-read", limit: 60 }, async (context) => {
+    const status = context.query.get("status") ?? undefined;
+    const cursor = context.query.get("cursor") ?? undefined;
+    const rawLimit = context.query.get("limit");
+    if (status !== undefined && !(SESSION_STATUSES as readonly string[]).includes(status)) {
+      return invalidQuery();
+    }
+    if (cursor !== undefined && decodeSessionCursor(cursor) === null) return invalidQuery();
+    let limit: number | undefined;
+    if (rawLimit !== null) {
+      if (!/^\d{1,4}$/.test(rawLimit)) return invalidQuery();
+      limit = Number(rawLimit);
+      if (limit < 1 || limit > 50) return invalidQuery();
+    }
+    const page = await listSessions(appDb().db, {
+      tenantId: context.tenantId,
+      status,
+      cursor,
+      limit,
+    });
+    return ok({ sessions: page.sessions, pageInfo: page.pageInfo });
   });
 }

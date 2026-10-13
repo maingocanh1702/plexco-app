@@ -23,6 +23,23 @@ export {
   type AuthorizationDecision,
   type EffectiveStatus,
 } from "./authorization.js";
+export {
+  authorize,
+  type AuthorizeDecision,
+  type AuthorizeParams,
+  type AuthorizeRole,
+} from "./tenant-capability-authority.js";
+export {
+  decodeSessionCursor,
+  getSessionDetail,
+  listSessions,
+  SessionReadError,
+  SESSION_STATUSES,
+  type ListSessionsParams,
+  type SessionDetail,
+  type SessionListPage,
+  type SessionScalars,
+} from "./session-read.js";
 export { resolveCapability, type Capability, type CapabilityDecision } from "./capability.js";
 export {
   createSession,
