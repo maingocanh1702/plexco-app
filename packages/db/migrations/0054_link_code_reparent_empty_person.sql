@@ -49,6 +49,7 @@
 -- LOCK ORDER matches 0043: accounts -> persons (UUID-sorted) -> channel_identities -> link_codes.
 -- merge_audit snapshots are NOT NULL; this path stores ids + reason only (no PII), as plain JSON
 -- bytes, not encrypted. The real merge planner owns encrypted snapshots.
+-- The empty-Person rule is proposed as DD-127 (ledger PR), pending owner sign-off.
 -- merge_audit rows with reason_code = 'link_code_empty_reparent' carry plaintext id-only JSON snapshots.
 -- routing_audit is written directly: routing_audit_append (0053) allowlists a single action and
 -- demands a tenant GUC, and linking is tenant-less.
@@ -156,11 +157,12 @@ BEGIN
       v_blocking := v_blocking || (f.rel || '.' || f.col);
       CONTINUE;
     END IF;
+    IF f.sch = 'public' AND f.rel = 'link_codes' AND f.col = 'source_person_id' THEN
+      CONTINUE; -- the source's own codes are revoked below; not counted
+    END IF;
     EXECUTE format('SELECT count(*) FROM %I.%I WHERE %I = $1', f.sch, f.rel, f.col)
       INTO v_cnt USING v_source;
-    IF f.sch = 'public' AND f.rel = 'link_codes' AND f.col = 'source_person_id' THEN
-      CONTINUE; -- the source's own codes are revoked below
-    ELSIF f.sch = 'public' AND f.rel = 'channel_identities' AND f.col = 'person_id' THEN
+    IF f.sch = 'public' AND f.rel = 'channel_identities' AND f.col = 'person_id' THEN
       IF v_cnt <> 1 THEN v_blocking := v_blocking || (f.rel || '.' || f.col); END IF;
     ELSIF v_cnt <> 0 THEN
       v_blocking := v_blocking || (f.rel || '.' || f.col);

@@ -16,6 +16,21 @@ export type LinkZaloOutcome =
 
 type ReparentOutcome = "consumed" | "same_person" | "requires_review" | "invalid" | "unsupported";
 
+/**
+ * link_code_consume RAISEs insufficient_privilege (42501) when the TARGET account has no active
+ * Person; the code is untouched. ONLY that raise is mapped: a plpgsql RAISE reports routine
+ * `exec_stmt_raise`, while ACL / row-security refusals (aclcheck_error, check_enable_rls) carry other
+ * routines, and those must propagate.
+ */
+function isConsumeTargetRefusal(error: unknown): boolean {
+  const e = error as { code?: string; routine?: string; message?: string };
+  return (
+    e.code === "42501" &&
+    e.routine === "exec_stmt_raise" &&
+    /^link_code_consume: target/.test(e.message ?? "")
+  );
+}
+
 export async function linkZaloToAccount(
   pool: pg.Pool,
   rawCode: string,
@@ -23,7 +38,13 @@ export async function linkZaloToAccount(
   keys: LinkCodeKeys,
   opts: { cooldownSeconds?: number } = {},
 ): Promise<{ outcome: LinkZaloOutcome }> {
-  const consumed = await consumeLinkCode(pool, rawCode, { accountId }, keys, opts);
+  let consumed: Awaited<ReturnType<typeof consumeLinkCode>>;
+  try {
+    consumed = await consumeLinkCode(pool, rawCode, { accountId }, keys, opts);
+  } catch (error) {
+    if (isConsumeTargetRefusal(error)) return { outcome: "invalid" };
+    throw error; // any other failure (ACL, RLS, connectivity) is a real fault, never "invalid code"
+  }
   switch (consumed.outcome) {
     case "invalid":
       return { outcome: "invalid" };
