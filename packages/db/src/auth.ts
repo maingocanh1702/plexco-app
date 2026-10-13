@@ -289,7 +289,7 @@ export interface TenantWithProfile {
 }
 
 /**
- * `tenantsForPerson` plus each club's profile (0051 `tenant_profile_read`, which needs the tenant
+ * `tenantsForPerson` plus each club's profile (0052 `tenant_profile_read`, which needs the tenant
  * GUC, hence one short withTenant per tenant). Sibling rather than a change to the original so
  * its callers and exact-shape tests are untouched. FAIL-OPEN per tenant (the `tenantLocale`
  * posture): a profile read that throws is logged and yields nulls, so one bad tenant can never 500
@@ -302,32 +302,33 @@ export async function tenantsForPersonWithProfile(
   const { withTenant } = await import("./tenant.js");
   const { sql } = await import("drizzle-orm");
   const mine = await tenantsForPerson(handle.pool, personId);
-  return Promise.all(
-    mine.map(async (m) => {
-      let p: { name: string; slug: string; locale: string; timezone: string } | undefined;
-      try {
-        const rows = await withTenant(handle.db, m.tenantId, async (tx) => {
-          const r = await tx.execute(
-            sql`SELECT name, slug, locale, timezone FROM tenant_profile_read(${m.tenantId}::uuid)`,
-          );
-          return r.rows as { name: string; slug: string; locale: string; timezone: string }[];
-        });
-        p = rows[0];
-      } catch (error) {
-        console.error(
-          "[tenantsForPersonWithProfile] profile read failed; listing without it:",
-          error,
+  // Sequential on purpose: a person with many clubs must not monopolise the small app pool.
+  const out: TenantWithProfile[] = [];
+  for (const m of mine) {
+    let p: { name: string; slug: string; locale: string; timezone: string } | undefined;
+    try {
+      const rows = await withTenant(handle.db, m.tenantId, async (tx) => {
+        const r = await tx.execute(
+          sql`SELECT name, slug, locale, timezone FROM tenant_profile_read(${m.tenantId}::uuid)`,
         );
-      }
-      return {
-        ...m,
-        name: p?.name ?? null,
-        slug: p?.slug ?? null,
-        locale: p?.locale ?? null,
-        timezone: p?.timezone ?? null,
-      };
-    }),
-  );
+        return r.rows as { name: string; slug: string; locale: string; timezone: string }[];
+      });
+      p = rows[0];
+    } catch (error) {
+      console.error(
+        "[tenantsForPersonWithProfile] profile read failed; listing without it:",
+        error,
+      );
+    }
+    out.push({
+      ...m,
+      name: p?.name ?? null,
+      slug: p?.slug ?? null,
+      locale: p?.locale ?? null,
+      timezone: p?.timezone ?? null,
+    });
+  }
+  return out;
 }
 
 /** Routing association for an authenticated server-side person; commands own permissions. */

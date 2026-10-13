@@ -114,7 +114,7 @@ export async function upsertSetting(tx: Tx, tenantId: string, key: string, value
     });
 }
 
-/** Reads the club config inside an open tenant tx: tenants via the 0051 definer, defaults via settings. */
+/** Reads the club config inside an open tenant tx: tenants via the 0052 definer, defaults via settings. */
 export async function readConfig(tx: Tx, tenantId: string): Promise<ClubConfig> {
   const profile = await tx.execute(
     sql`SELECT slug, name, timezone, locale FROM tenant_profile_read(${tenantId}::uuid)`,
