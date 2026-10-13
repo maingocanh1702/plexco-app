@@ -22,7 +22,7 @@ export function MarkPaidLines({
   names: Record<string, string>;
   raw: Record<string, string>;
   amounts: AmountMap;
-  /** After an uncertain failure the amounts are frozen so a retry replays the SAME command. */
+  /** Read-only while a confirm is in flight and after an uncertain failure (the retry replays). */
   locked: boolean;
   onChange: (playerId: string, text: string) => void;
 }) {

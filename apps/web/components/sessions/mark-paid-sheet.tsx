@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
 import { buildConfirmBody, initialAmounts, type AmountMap } from "../../lib/mark-paid-model";
 import { formatVndInput } from "../../lib/money";
-import { isDefiniteFailure } from "../../lib/session-error-ui";
 import {
   confirmMarkPaid,
   previewMarkPaid,
@@ -71,7 +70,7 @@ export function MarkPaidSheet({
     lines.map((l) => [l.playerId, parseAmount(raw[l.playerId] ?? "")]),
   );
   const body = buildConfirmBody({ method, lines, amounts, note });
-  const locked = confirmCmd.error !== null && !isDefiniteFailure(confirmCmd.error);
+  const locked = confirmCmd.locked;
 
   async function preview() {
     if (players.length === 0) return;
@@ -154,7 +153,7 @@ export function MarkPaidSheet({
             names={names}
             raw={raw}
             amounts={amounts}
-            locked={locked}
+            locked={locked || confirmCmd.busy}
             onChange={(id, text) => {
               const digits = text.replace(/\D/g, "");
               const value = parseAmount(digits);

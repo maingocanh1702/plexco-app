@@ -97,6 +97,17 @@ describe("RosterTab", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Gạch nợ \(0\)/);
   });
 
+  it("a disabled Reverse is described by the payment hint, and that id exists", () => {
+    const html = render(session({ status: "cancelled" }));
+    const id =
+      /<button[^>]*disabled=""[^>]*aria-describedby="([^"]+)"[^>]*aria-label="Hoàn tác khoản/.exec(
+        html,
+      )?.[1];
+    expect(id).toBeTruthy();
+    expect(html).toContain(`id="${id}"`);
+    expect(html).toContain("Chỉ ghi nhận thanh toán khi buổi đang mở hoặc đã đóng.");
+  });
+
   it("empty roster shows the empty state", () => {
     expect(render(session({ players: [] }))).toContain("Chưa có người chơi");
   });

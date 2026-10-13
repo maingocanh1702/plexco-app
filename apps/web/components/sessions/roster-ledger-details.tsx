@@ -3,7 +3,7 @@
 import { useLang, useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
 import { ledgerRows } from "../../lib/roster-rules";
-import { resolveTimeZone } from "../../lib/session-time";
+import { formatTimestamp } from "../../lib/session-time";
 import type { RosterChargeDto } from "../../lib/sessions-api";
 import { Button } from "../ui/button";
 import styles from "./roster.module.css";
@@ -14,6 +14,7 @@ export function RosterLedgerDetails({
   name,
   canReverse,
   timeZone,
+  reverseHint,
   onReverse,
 }: {
   charge: RosterChargeDto;
@@ -21,16 +22,13 @@ export function RosterLedgerDetails({
   canReverse: boolean;
   /** Session zone (session-time.ts invariant): never the browser's own. */
   timeZone: string;
+  /** id of the paragraph explaining why Reverse is disabled (the payment gate's hint) */
+  reverseHint?: string;
   onReverse: (allocationId: string, amount: number) => void;
 }) {
   const t = useT();
   const lang = useLang();
   const rows = ledgerRows(charge, t);
-  const date = new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "vi-VN", {
-    dateStyle: "short",
-    timeStyle: "short",
-    timeZone: resolveTimeZone(timeZone),
-  });
   return (
     <details className={styles.ledger}>
       <summary>
@@ -45,7 +43,7 @@ export function RosterLedgerDetails({
       >
         {rows.map((row) => (
           <li key={row.id} className={styles.ledgerRow}>
-            <span>{date.format(new Date(row.createdAt))}</span>
+            <span>{formatTimestamp(row.createdAt, timeZone, lang)}</span>
             <strong className={row.amount < 0 ? styles.negative : undefined}>
               {formatVnd(row.amount, lang)}
             </strong>
@@ -55,6 +53,7 @@ export function RosterLedgerDetails({
               <Button
                 variant="ghost"
                 disabled={!canReverse}
+                aria-describedby={canReverse ? undefined : reverseHint}
                 aria-label={t(
                   `Hoàn tác khoản ${formatVnd(row.amount, lang)} của ${name}`,
                   `Reverse ${formatVnd(row.amount, lang)} payment of ${name}`,

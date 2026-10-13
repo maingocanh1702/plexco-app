@@ -69,11 +69,15 @@ export function rosterRouteKey(
 }
 
 /**
- * Idempotency, as the server does it: a command is applied once per (route key, commandId); a repeat
- * answers the stored result with `replayed: true` and changes nothing. A 4xx is never stored (the
- * server did not apply it), so the same id may be tried again. Preview carries no command key.
+ * Idempotency, as the server does it (one processed-command row per tenant + commandId): a key is
+ * bound to its command, session and TARGET ids (remove: the player, reverse: the allocation,
+ * mark-paid: the player set; a by-name add has no target, DD-85), never to other content such as a
+ * name, amount or note (DD-117 D5). A repeat with the same binding answers the stored result with
+ * `replayed: true` and changes nothing; the same key with another binding is COMMAND_ID_CONFLICT.
+ * A 4xx is never stored (the server did not apply it), so the same id may be tried again. Preview
+ * carries no command key.
  */
-const applied = new WeakMap<MockSession[], Map<string, unknown>>();
+const applied = new WeakMap<MockSession[], Map<string, { binding: string; data: unknown }>>();
 export function handleRoster(
   state: MockSession[],
   key: string,
@@ -82,14 +86,26 @@ export function handleRoster(
 ): RosterResult {
   const commandId = typeof body?.commandId === "string" ? body.commandId : null;
   if (key === "preview" || commandId === null) return applyRoster(state, key, path, body);
-  const store = applied.get(state) ?? new Map<string, unknown>();
+  const store = applied.get(state) ?? new Map<string, { binding: string; data: unknown }>();
   applied.set(state, store);
-  const slot = `${key}:${commandId}`;
-  if (store.has(slot))
-    return { status: 200, data: { ...(store.get(slot) as object), replayed: true } };
+  const binding = bindingOf(key, path, body);
+  const prior = store.get(commandId);
+  if (prior) {
+    return prior.binding === binding
+      ? { status: 200, data: { ...(prior.data as object), replayed: true } }
+      : fail("COMMAND_ID_CONFLICT", "commandId đã được dùng cho yêu cầu khác.");
+  }
   const result = applyRoster(state, key, path, body);
-  if ("data" in result) store.set(slot, result.data);
+  if ("data" in result) store.set(commandId, { binding, data: result.data });
   return result;
+}
+
+/** command | session | target id (path) | mark-paid player set: what the server binds a key to. */
+function bindingOf(key: string, path: string, body: Record<string, unknown> | null): string {
+  const [, , , sessionId, , target = ""] = path.split("/");
+  const items = key === "mark-paid" ? ((body?.items as { playerId?: unknown }[]) ?? []) : [];
+  const set = [...new Set(items.map((i) => String(i.playerId)))].sort().join(",");
+  return `${key}|${sessionId}|${target}|${set}`;
 }
 
 let seq = 0;
@@ -157,11 +173,13 @@ function applyRoster(
   if (key === "remove") {
     if (session.status !== "open") return fail("SESSION_NOT_OPEN", "Buổi chưa mở.");
     const player = players.find((p) => p.id === tail);
-    if (!player) return fail("PLAYER_NOT_FOUND", "Không tìm thấy người chơi.", 404);
+    // A player who already left is not found (the server's rule): a second removal never applies.
+    if (!player || player.status === "left")
+      return fail("PLAYER_NOT_FOUND", "Không tìm thấy người chơi.", 404);
     if ((player.charge?.effectiveAllocated ?? 0) > 0)
       return fail(
         "REMOVE_REQUIRES_REVIEW",
-        "Người chơi đã có thanh toán — hãy hoàn tác thanh toán trước khi gỡ.",
+        "Người chơi đã có thanh toán — hãy hoàn tác trước khi xoá.",
       );
     player.status = "left";
     if (player.charge) {

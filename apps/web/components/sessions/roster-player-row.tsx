@@ -20,6 +20,7 @@ export function RosterPlayerRow({
   canReverse,
   timeZone,
   removeHint,
+  reverseHint,
   onSelect,
   onRemove,
   onReverse,
@@ -33,6 +34,8 @@ export function RosterPlayerRow({
   timeZone: string;
   /** id of the paragraph explaining why remove is disabled */
   removeHint?: string;
+  /** id of the paragraph explaining why reverse is disabled */
+  reverseHint?: string;
   onSelect: (checked: boolean) => void;
   onRemove: () => void;
   onReverse: (allocationId: string, amount: number) => void;
@@ -116,6 +119,7 @@ export function RosterPlayerRow({
           name={name}
           canReverse={canReverse}
           timeZone={timeZone}
+          reverseHint={reverseHint}
           onReverse={onReverse}
         />
       ) : null}

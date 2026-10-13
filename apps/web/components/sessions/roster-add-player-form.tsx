@@ -3,7 +3,6 @@
 import { useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import { addPlayer } from "../../lib/roster-payments-api";
-import { isDefiniteFailure } from "../../lib/session-error-ui";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { Button } from "../ui/button";
@@ -16,8 +15,9 @@ export const DISPLAY_NAME_MAX = 100;
 /**
  * Host-add by display name (DD-85: no member picker, a name is never resolved to a member). The
  * one field is trimmed 1..100; the server answers active or waitlisted and the result is announced.
- * After an UNCERTAIN failure the first add may have committed, so the name freezes and the retry
- * replays the same command key; a reset would mint a new key and could add the person twice.
+ * The name is read-only while an add is in flight and after an UNCERTAIN failure (the add may have
+ * committed): the retry replays the same command key, where an edit would mint a new key and could
+ * add the person twice. The lock lasts until a 2xx or Cancel (which refetches).
  */
 export function RosterAddPlayerForm({
   ctx,
@@ -26,6 +26,7 @@ export function RosterAddPlayerForm({
   describedBy,
   onAdded,
   onReload,
+  onCancel,
 }: {
   ctx: SessionApiContext;
   sessionId: string;
@@ -33,13 +34,15 @@ export function RosterAddPlayerForm({
   describedBy?: string;
   onAdded: (message: string) => void;
   onReload: () => void;
+  /** The form closed without adding (its focused Cancel unmounts): the host moves focus. */
+  onCancel: () => void;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [invalid, setInvalid] = useState(false);
   const cmd = useRosterCommand();
-  const locked = cmd.error !== null && !isDefiniteFailure(cmd.error);
+  const locked = cmd.locked;
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -75,6 +78,7 @@ export function RosterAddPlayerForm({
       setName("");
     }
     setOpen(false);
+    onCancel();
   }
 
   if (!open) {
@@ -112,7 +116,7 @@ export function RosterAddPlayerForm({
         maxLength={DISPLAY_NAME_MAX}
         autoComplete="off"
         autoFocus
-        readOnly={locked}
+        readOnly={locked || cmd.busy}
         onChange={(e) => {
           setName(e.target.value);
           cmd.reset(); // a changed name is a new command

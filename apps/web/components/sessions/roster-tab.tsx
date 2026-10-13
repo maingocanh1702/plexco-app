@@ -45,7 +45,8 @@ export function RosterTab({
     name: string;
   } | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  // After a command the opener may be gone: focus moves to the heading once the dialog has closed.
+  // After a command, a refetch or a cancelled add the opener may be gone (a removed row's button,
+  // the add form's Cancel): focus moves to the heading once the dialog or form has closed.
   const [focusHeading, setFocusHeading] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -83,6 +84,7 @@ export function RosterTab({
             describedBy={editHint}
             onAdded={finished}
             onReload={onChanged}
+            onCancel={() => setFocusHeading((n) => n + 1)}
           />
           <Button
             disabled={!payable || selectedPlayers.length === 0}
@@ -117,6 +119,7 @@ export function RosterTab({
                 canReverse={payable}
                 timeZone={session.timezone}
                 removeHint={editHint}
+                reverseHint={payHint}
                 onSelect={(on) =>
                   setPicked((prev) => {
                     const next = new Set(prev);
@@ -148,7 +151,7 @@ export function RosterTab({
         }}
         onReload={() => {
           setRemoving(null);
-          onChanged();
+          finished();
         }}
       />
       <RosterReverseDialog
@@ -162,7 +165,7 @@ export function RosterTab({
         }}
         onReload={() => {
           setReversing(null);
-          onChanged();
+          finished();
         }}
       />
       <MarkPaidSheet

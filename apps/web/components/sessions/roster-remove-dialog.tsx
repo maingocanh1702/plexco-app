@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import { useT } from "../../lib/i18n-client";
 import { removePlayer } from "../../lib/roster-payments-api";
-import { isDefiniteFailure } from "../../lib/session-error-ui";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { ConfirmDialog } from "../ui/confirm-dialog";
@@ -11,8 +10,8 @@ import { ApiErrorNotice } from "./api-error-notice";
 
 /**
  * Remove an unpaid player. The server takes no note (RemovePlayerParams has none), so the body is
- * just the command key. A paid player is refused (REMOVE_REQUIRES_REVIEW, explained by the shared
- * error mapping: reverse the payment first).
+ * just the command key. A paid player is refused (REMOVE_REQUIRES_REVIEW; the server's envelope
+ * message says to reverse the payment first).
  */
 export function RosterRemoveDialog({
   target,
@@ -66,7 +65,7 @@ export function RosterRemoveDialog({
       }
       onConfirm={() => void confirm()}
       // after an uncertain failure the removal may have landed: refetch (which also closes) instead of just closing
-      onCancel={() => (cmd.error && !isDefiniteFailure(cmd.error) ? onReload() : onClose())}
+      onCancel={() => (cmd.locked ? onReload() : onClose())}
     />
   );
 }

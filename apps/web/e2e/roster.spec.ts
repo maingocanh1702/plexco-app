@@ -80,6 +80,20 @@ const select = (page: Page, name: string) =>
   page.getByRole("checkbox", { name: `Chọn ${name} để gạch nợ` }).check();
 const dialog = (page: Page) => page.getByRole("dialog");
 const body = (call: { body: Record<string, unknown> | null }) => call.body!;
+const heading = (page: Page) => page.getByRole("heading", { name: "Người chơi", exact: true });
+/** A call from the page itself (another tab or host): page.route sees it, page.request would not. */
+const send = (page: Page, method: string, path: string, json: object) =>
+  page.evaluate(
+    async ({ method, path, json }) => {
+      const res = await fetch(path, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(json),
+      });
+      return { status: res.status, body: await res.json() };
+    },
+    { method, path, json },
+  );
 
 test.describe("add / remove", () => {
   const add = async (page: Page, name: string) => {
@@ -115,9 +129,9 @@ test.describe("add / remove", () => {
     await expect(page.locator("main").getByRole("alert")).toContainText(
       "Người chơi đã có trong buổi này.",
     );
-    await page.getByLabel("Tên hiển thị").fill("Bình 2");
+    // retried WITHOUT editing: a new key can then only come from the 4xx drop, not an edit's reset()
     await page.getByRole("button", { name: "Thêm", exact: true }).click();
-    await expect(page.getByText("Đã thêm Bình 2")).toBeVisible();
+    await expect(page.getByText("Đã thêm Bình")).toBeVisible();
     const ids = mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
     expect(ids).toHaveLength(2);
     expect(ids[1]).not.toBe(ids[0]); // a 4xx is definite: the key is dropped
@@ -128,8 +142,12 @@ test.describe("add / remove", () => {
   }) => {
     const mock = await open(page);
     mock.failNext("add", "lost-response"); // the server APPLIES the add, the reply never arrives
+    const release = mock.holdNext("add");
     await add(page, "Bình");
-    await expect(page.getByLabel("Tên hiển thị")).toHaveAttribute("readonly", "");
+    await expect(page.getByLabel("Tên hiển thị")).toHaveAttribute("readonly", ""); // in flight
+    release();
+    await expect(page.getByRole("button", { name: "Thử lại" })).toBeVisible();
+    await expect(page.getByLabel("Tên hiển thị")).toHaveAttribute("readonly", ""); // uncertain
     const replay = page.waitForResponse(
       (r) => r.request().method() === "POST" && /\/players$/.test(new URL(r.url()).pathname),
     );
@@ -145,7 +163,7 @@ test.describe("add / remove", () => {
     expect(members).toHaveLength(1);
   });
 
-  test("remove sends only the command key; a paid player is refused with the reverse-first copy", async ({
+  test("remove sends only the command key; a paid player is refused with the server's reverse-first message", async ({
     page,
   }) => {
     const mock = await open(page);
@@ -160,13 +178,63 @@ test.describe("add / remove", () => {
     await page.getByRole("button", { name: "Gỡ Lan Nguyễn" }).click();
     await dialog(page).getByRole("button", { name: "Gỡ người chơi" }).click();
     await expect(dialog(page).getByRole("alert")).toContainText(
-      "Hãy hoàn tác thanh toán trước rồi mới gỡ.",
+      "Người chơi đã có thanh toán — hãy hoàn tác trước khi xoá.",
     );
     // OD-5 also holds for the retry: a 4xx is definite, so the second press is a NEW command
     await dialog(page).getByRole("button", { name: "Gỡ người chơi" }).click();
     const ids = mock.callsTo("DELETE", /\/players\/p1$/).map((c) => body(c).commandId);
     expect(ids).toHaveLength(2);
     expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  test("Cancel closes the add form and moves focus to the roster heading, not <body>", async ({
+    page,
+  }) => {
+    await open(page);
+    await page.getByRole("button", { name: "Thêm người chơi" }).click();
+    await page.getByRole("button", { name: "Huỷ", exact: true }).click();
+    await expect(heading(page)).toBeFocused();
+  });
+
+  test("removing a player who already left is PLAYER_NOT_FOUND, never a second removal; reload focuses the heading", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    await page.getByRole("button", { name: "Gỡ An Võ" }).click();
+    // another host removes An Võ first, with its own command key
+    const first = await send(page, "DELETE", "/api/sessions/r-open/players/p3", {
+      commandId: "00000000-0000-4000-8000-000000000001",
+    });
+    expect(first.status).toBe(200);
+    await dialog(page).getByRole("button", { name: "Gỡ người chơi" }).click();
+    await expect(dialog(page).getByRole("alert")).toContainText("Không tìm thấy người chơi.");
+    await dialog(page).getByRole("button", { name: "Tải lại dữ liệu" }).click();
+    await expect(dialog(page)).toBeHidden();
+    await expect(heading(page)).toBeFocused(); // the row's Remove button is gone after the refetch
+    await expect(page.getByText("Đã rời")).toBeVisible();
+    const removals = mock.callsTo("DELETE", /\/players\/p3$/);
+    expect(removals).toHaveLength(2);
+    expect(body(removals[1]!).commandId).not.toBe(body(removals[0]!).commandId);
+  });
+
+  test("a command key reused for another player is COMMAND_ID_CONFLICT; for the same player it replays", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    await page.getByRole("button", { name: "Gỡ An Võ" }).click();
+    await dialog(page).getByRole("button", { name: "Gỡ người chơi" }).click();
+    await expect(page.getByText("Đã gỡ An Võ")).toBeVisible();
+    const commandId = body(mock.callsTo("DELETE", /\/players\/p3$/)[0]!).commandId;
+    const other = await send(page, "DELETE", "/api/sessions/r-open/players/p4", { commandId });
+    expect(other.status).toBe(409);
+    expect(other.body.error.code).toBe("COMMAND_ID_CONFLICT");
+    const same = await send(page, "DELETE", "/api/sessions/r-open/players/p3", { commandId });
+    expect(same.status).toBe(200);
+    expect(same.body.data.replayed).toBe(true);
+    const p4 = mock.state[0]!.players.find((p) => (p as { id: string }).id === "p4") as {
+      status: string;
+    };
+    expect(p4.status).toBe("waitlisted"); // the conflicting call changed nothing
   });
 });
 
@@ -280,6 +348,40 @@ test.describe("mark-paid", () => {
     };
     expect(p3.charge.allocations).toHaveLength(1); // replayed, not applied twice
   });
+
+  test("after a lost reply, a RATE_LIMITED retry keeps the key and the frozen amounts; the next retry replays", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    await select(page, "An Võ");
+    await page.getByRole("button", { name: "Gạch nợ (1)" }).click();
+    await dialog(page).getByRole("button", { name: "Xem trước" }).click();
+    const amount = dialog(page).getByLabel("Số tiền cho An Võ");
+    mock.failNext("mark-paid", "lost-response"); // applied server-side, the reply is lost
+    // the entry gate answers 429 BEFORE the replay lookup: it says nothing about attempt 1
+    mock.failNext("mark-paid", { code: "RATE_LIMITED", message: "x", statusCode: 429 });
+    await dialog(page).getByRole("button", { name: "Xác nhận" }).click();
+    await expect(amount).toHaveAttribute("readonly", "");
+    const release = mock.holdNext("mark-paid");
+    await dialog(page).getByRole("button", { name: "Thử lại" }).click();
+    await expect(dialog(page).getByRole("button", { name: "Đang xử lý" })).toBeVisible();
+    await expect(amount).toHaveAttribute("readonly", ""); // still frozen while the retry is in flight
+    release();
+    await expect(dialog(page).getByRole("alert")).toContainText("Bạn thao tác quá nhanh");
+    await expect(amount).toHaveAttribute("readonly", ""); // a definite 4xx keeps the lock
+    await dialog(page).getByRole("button", { name: "Thử lại" }).click();
+    await expect(dialog(page)).toContainText("Đã ghi nhận thanh toán");
+    const ids = mock
+      .callsTo("POST", /\/mark-paid$/)
+      .filter((c) => c.body!.preview !== true)
+      .map((c) => c.body!.commandId);
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(1); // one command key across all three attempts
+    const p3 = mock.state[0]!.players.find((p) => (p as { id: string }).id === "p3") as {
+      charge: { allocations: unknown[] };
+    };
+    expect(p3.charge.allocations).toHaveLength(1); // replayed, not applied twice
+  });
 });
 
 test.describe("ledger / reversal", () => {
@@ -308,6 +410,51 @@ test.describe("ledger / reversal", () => {
     mock.failNext("reverse", { code: "FORBIDDEN", message: "x", statusCode: 403 });
     await dialog(page).getByRole("button", { name: "Hoàn tác" }).click();
     await expect(dialog(page).getByRole("alert")).toContainText("money.correct");
+  });
+
+  test("a lost reversal reply freezes the reason; the retry replays (one negative row, replayed:true)", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    await page.getByText(/Chi tiết thanh toán \(đã thu .*20\.000/).click();
+    await page.getByRole("button", { name: /Hoàn tác khoản .*20\.000/ }).click();
+    const reason = dialog(page).getByLabel("Lý do (bắt buộc)");
+    await reason.fill("nhập nhầm");
+    mock.failNext("reverse", "lost-response"); // applied server-side, the reply is lost
+    await dialog(page).getByRole("button", { name: "Hoàn tác" }).click();
+    await expect(reason).toHaveAttribute("readonly", "");
+    const replay = page.waitForResponse(
+      (r) => r.request().method() === "POST" && /\/reverse$/.test(new URL(r.url()).pathname),
+    );
+    await dialog(page).getByRole("button", { name: "Thử lại" }).click();
+    expect((await (await replay).json()).data.replayed).toBe(true);
+    await expect(page.getByText(/Đã hoàn tác .*20\.000/)).toBeVisible(); // the replay is a success
+    const ids = mock.callsTo("POST", /\/payments\/a2\/reverse$/).map((c) => body(c).commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+    const p2 = mock.state[0]!.players.find((p) => (p as { id: string }).id === "p2") as {
+      charge: { allocations: { source: string }[] };
+    };
+    expect(p2.charge.allocations.filter((a) => a.source === "reversal")).toHaveLength(1);
+  });
+
+  test("Go back after a lost reversal reply refetches (the reversal shows) and focuses the heading", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    await page.getByText(/Chi tiết thanh toán \(đã thu .*20\.000/).click();
+    await page.getByRole("button", { name: /Hoàn tác khoản .*20\.000/ }).click();
+    await dialog(page).getByLabel("Lý do (bắt buộc)").fill("nhập nhầm");
+    mock.failNext("reverse", "lost-response");
+    await dialog(page).getByRole("button", { name: "Hoàn tác" }).click();
+    await expect(dialog(page).getByRole("alert")).toBeVisible();
+    const detailGets = () => mock.callsTo("GET", /^\/api\/sessions\/r-open$/).length;
+    const before = detailGets();
+    await dialog(page).getByRole("button", { name: "Quay lại" }).click();
+    await expect(dialog(page)).toBeHidden();
+    await expect(heading(page)).toBeFocused();
+    await expect(page.getByText(/Chi tiết thanh toán \(đã thu 0\D/)).toBeVisible();
+    expect(detailGets()).toBeGreaterThan(before);
   });
 });
 
@@ -351,8 +498,9 @@ test.describe("status gates", () => {
     await expect(page.getByText("Đang ngoại tuyến")).toBeVisible();
     await expect(page.getByRole("button", { name: "Thêm người chơi" })).toBeDisabled();
     await expect(page.getByRole("checkbox")).toHaveCount(0);
+    await page.getByText(/Chi tiết thanh toán \(đã thu .*20\.000/).click(); // show its Reverse
     // every aria-describedby on a disabled write control points at an element that exists
-    for (const name of ["Thêm người chơi", "Gỡ An Võ", /Gạch nợ/]) {
+    for (const name of ["Thêm người chơi", "Gỡ An Võ", /Gạch nợ/, /Hoàn tác khoản .*20\.000/]) {
       const id = await page.getByRole("button", { name }).first().getAttribute("aria-describedby");
       expect(id, String(name)).toBeTruthy();
       await expect(page.locator(`[id="${id}"]`)).toContainText("Đang ngoại tuyến");
