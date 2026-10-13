@@ -434,12 +434,12 @@ export function readExpectedVersion(body: Record<string, unknown>): number | und
 const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   // Web MVP lane M2c (roster + manual mark-paid + reversal), raised as RosterMoneyError.
   ["ALLOCATION_EXCEEDS_FUNDS", 409],
+  ["ALLOCATION_NOT_FOUND", 404],
   ["ALREADY_JOINED", 409],
   ["CHARGE_ALREADY_SETTLED", 409],
   ["CHARGE_NOT_PAYABLE", 409],
   ["FORBIDDEN", 403],
   ["MARK_PAID_TOTAL_MISMATCH", 409],
-  ["NOT_FOUND", 404],
   ["PLAYER_NOT_FOUND", 404],
   ["REJOIN_REQUIRES_REVIEW", 409],
   ["REMOVE_REQUIRES_REVIEW", 409],
@@ -521,7 +521,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "The balance changed — review and confirm again.",
     ],
   ],
-  ["NOT_FOUND", ["Không tìm thấy khoản thanh toán.", "Payment not found."]],
+  ["ALLOCATION_NOT_FOUND", ["Không tìm thấy khoản thanh toán.", "Payment not found."]],
   ["PLAYER_NOT_FOUND", ["Không tìm thấy người chơi.", "Player not found."]],
   [
     "REJOIN_REQUIRES_REVIEW",

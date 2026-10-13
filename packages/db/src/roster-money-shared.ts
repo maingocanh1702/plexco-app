@@ -17,7 +17,7 @@ export type RosterMoneyErrorCode =
   | "SESSION_NOT_FOUND"
   | "SESSION_NOT_OPEN"
   | "PLAYER_NOT_FOUND"
-  | "NOT_FOUND" // allocation not found in this session/tenant
+  | "ALLOCATION_NOT_FOUND" // allocation not found in this session/tenant
   | "ALREADY_JOINED"
   | "REJOIN_REQUIRES_REVIEW"
   | "REMOVE_REQUIRES_REVIEW"
@@ -92,6 +92,16 @@ export async function requireActor(
   return actorPersonId.toLowerCase();
 }
 
+export const isUuid = (v: unknown): v is string => typeof v === "string" && UUID_RE.test(v);
+
+/** The command key, validated once; callers keep the returned string instead of re-casting. */
+export function requireCommandId(commandId: unknown): string {
+  if (typeof commandId !== "string" || commandId.length === 0) {
+    return fail("INVALID_INPUT", "commandId is required");
+  }
+  return commandId;
+}
+
 /**
  * Dedup (DD-117 D5: commandId-only). Returns the stored result for a legitimate replay (same
  * command type, session and actor), null for a fresh key, and throws COMMAND_ID_CONFLICT for any
@@ -100,15 +110,12 @@ export async function requireActor(
 export async function replayOrNull<T extends { sessionId: string; actorPersonId: string }>(
   tx: Tx,
   tenantId: string,
-  commandId: unknown,
+  commandId: string,
   commandType: string,
   sessionId: string,
   actorPersonId: string,
   isStored: (value: unknown) => value is T,
 ): Promise<T | null> {
-  if (typeof commandId !== "string" || commandId.length === 0) {
-    return fail("INVALID_INPUT", "commandId is required");
-  }
   const prior = await reserveGuestNoteCommand(tx, tenantId, commandId);
   if (prior === null) return null;
   if (

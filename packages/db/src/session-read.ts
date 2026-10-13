@@ -9,6 +9,7 @@ import {
   sports,
 } from "../schema.js";
 import type { Db } from "./client.js";
+import { effectiveByCharge } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -295,6 +296,12 @@ export async function getSessionDetail(
       allocationsByCharge.set(row.chargeId, list);
     }
 
+    // The canonical effective-amount derivation (never re-derived here): SUM of the ledger.
+    const effectiveById = await effectiveByCharge(
+      tx,
+      roster.flatMap((r) => (r.chargeId === null ? [] : [r.chargeId])),
+    );
+
     const mapped = roster.map((r) => ({
       id: r.id,
       membershipId: r.membershipId,
@@ -307,7 +314,7 @@ export async function getSessionDetail(
           ? null
           : (() => {
               const rows = allocationsByCharge.get(r.chargeId) ?? [];
-              const effectiveAllocated = rows.reduce((sum, a) => sum + a.amount, 0);
+              const effectiveAllocated = effectiveById.get(r.chargeId) ?? 0;
               return {
                 id: r.chargeId,
                 amountDue: r.amountDue as number,
@@ -315,9 +322,7 @@ export async function getSessionDetail(
                 status: r.chargeStatus as string,
                 effectiveAllocated,
                 remaining:
-                  r.chargeStatus === "void"
-                    ? 0
-                    : Math.max((r.amountDue as number) - effectiveAllocated, 0),
+                  r.chargeStatus === "void" ? 0 : (r.amountDue as number) - effectiveAllocated,
                 allocations: rows.map(({ chargeId: _c, ...a }) => a),
               };
             })(),

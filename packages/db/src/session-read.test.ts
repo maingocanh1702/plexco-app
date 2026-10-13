@@ -179,8 +179,8 @@ describe("getSessionDetail", () => {
     ).rows[0]!.id;
     // The ledger row behind amount_allocated: the host view derives effective/remaining from it.
     await ctx.owner.query(
-      `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by, reason_code)
-       VALUES ($1, $2, 20000, 'cash', $3, 'cash')`,
+      `INSERT INTO payment_allocations (tenant_id, charge_id, amount, source, created_by)
+       VALUES ($1, $2, 20000, 'cash', $3)`,
       [tenant, chargeRow, person],
     );
     await ctx.owner.query(
@@ -212,7 +212,7 @@ describe("getSessionDetail", () => {
               source: "cash",
               amount: 20000,
               createdAt: expect.any(Date),
-              reasonCode: "cash",
+              reasonCode: null,
               reversesAllocationId: null,
             },
           ],
