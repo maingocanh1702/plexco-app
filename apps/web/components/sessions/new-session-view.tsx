@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
+import { ApiClientError } from "../../lib/api-client";
 import { useT } from "../../lib/i18n-client";
 import { buildCreateBody, emptyFormValues } from "../../lib/session-form-model";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
@@ -53,6 +54,18 @@ export function NewSessionView({ tenantId }: { tenantId: string }) {
                 router.push(`${back}/${created.id}`);
               } catch (error) {
                 if (isDefiniteFailure(error)) commandId.current = null; // not applied: next attempt is a new command
+                if (error instanceof ApiClientError && error.code === "COMMAND_ID_CONFLICT") {
+                  // The key was already used: the earlier attempt may have been saved.
+                  throw new ApiClientError(
+                    error.code,
+                    t(
+                      "Lần gửi trước có thể đã được lưu — kiểm tra danh sách",
+                      "The earlier attempt may have gone through — check the list",
+                    ),
+                    error.statusCode,
+                    error.requestId,
+                  );
+                }
                 throw error;
               }
             }}
