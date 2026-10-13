@@ -11,6 +11,8 @@ import { Toast } from "../ui/toast";
 import { MarkPaidSheet } from "./mark-paid-sheet";
 import { RosterAddPlayerForm } from "./roster-add-player-form";
 import { RosterCounts } from "./roster-counts";
+import { RosterGateHints } from "./roster-gate-hints";
+import { RosterGuestNotes } from "./roster-guest-notes";
 import { RosterPlayerRow } from "./roster-player-row";
 import { RosterRemoveDialog } from "./roster-remove-dialog";
 import { RosterReverseDialog } from "./roster-reverse-dialog";
@@ -97,22 +99,7 @@ export function RosterTab({
             {t(`Gạch nợ (${selectedPlayers.length})`, `Record payment (${selectedPlayers.length})`)}
           </Button>
         </div>
-        {!canEditRoster(session.status) ? (
-          <p id={editHint} className={rosterStyles.hint}>
-            {t(
-              "Chỉ thêm hoặc gỡ người chơi khi buổi đang mở.",
-              "Players can only be added or removed while the session is open.",
-            )}
-          </p>
-        ) : null}
-        {!canTakePayments(session.status) ? (
-          <p id={payHint} className={rosterStyles.hint}>
-            {t(
-              "Chỉ ghi nhận thanh toán khi buổi đang mở hoặc đã đóng.",
-              "Payments can only be recorded while the session is open or closed.",
-            )}
-          </p>
-        ) : null}
+        <RosterGateHints status={session.status} editHint={editHint} payHint={payHint} />
         {session.players.length === 0 ? (
           <EmptyState
             title={t("Chưa có người chơi", "No players yet")}
@@ -147,21 +134,7 @@ export function RosterTab({
         )}
       </section>
 
-      {session.guestNotes.length > 0 ? (
-        <section aria-labelledby={`${uid}-guests`}>
-          <h2 id={`${uid}-guests`} className={styles.sectionTitle}>
-            {t("Ghi chú khách", "Guest notes")}
-          </h2>
-          <ul className={styles.playerList}>
-            {session.guestNotes.map((g) => (
-              <li key={g.id} className={styles.player}>
-                <span className={styles.playerName}>{g.guestName}</span>
-                {g.note ? <span className={styles.note}>{g.note}</span> : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <RosterGuestNotes notes={session.guestNotes} />
 
       <RosterRemoveDialog
         target={removing}

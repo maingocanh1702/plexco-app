@@ -8,7 +8,7 @@ import {
   NOTE_MAX,
   type AmountMap,
 } from "../../lib/mark-paid-model";
-import { formatVnd, formatVndInput } from "../../lib/money";
+import { formatVndInput } from "../../lib/money";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
 import {
   confirmMarkPaid,
@@ -19,12 +19,11 @@ import {
   type SessionApiContext,
 } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
-import { Badge } from "../ui/badge";
 import { ConfirmDialog } from "../ui/confirm-dialog";
-import { TextField } from "../ui/text-field";
 import { ApiErrorNotice } from "./api-error-notice";
 import { MarkPaidLines, parseAmount } from "./mark-paid-lines";
-import styles from "./roster.module.css";
+import { MarkPaidMethodStep } from "./mark-paid-method-step";
+import { MarkPaidResult } from "./mark-paid-result";
 
 type Step = "method" | "review" | "result";
 
@@ -140,31 +139,7 @@ export function MarkPaidSheet({
       busy={active.busy}
       body={
         step === "method" ? (
-          <>
-            <fieldset className={styles.radios}>
-              <legend>{t("Hình thức thanh toán", "Payment method")}</legend>
-              {(["cash", "attested_transfer"] as const).map((m) => (
-                <label key={m} className={styles.radio}>
-                  <input
-                    type="radio"
-                    name="mark-paid-method"
-                    value={m}
-                    checked={method === m}
-                    onChange={() => setMethod(m)}
-                  />
-                  {m === "cash"
-                    ? t("Tiền mặt", "Cash")
-                    : t("Chuyển khoản (host xác nhận)", "Bank transfer (host-confirmed)")}
-                </label>
-              ))}
-            </fieldset>
-            <TextField
-              label={t("Ghi chú (không bắt buộc)", "Note (optional)")}
-              value={note}
-              maxLength={NOTE_MAX}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </>
+          <MarkPaidMethodStep method={method} note={note} onMethod={setMethod} onNote={setNote} />
         ) : step === "review" ? (
           <MarkPaidLines
             lines={lines}
@@ -183,19 +158,7 @@ export function MarkPaidSheet({
             }}
           />
         ) : (
-          <ul className={styles.lines} aria-live="polite">
-            {result?.lines.map((l) => (
-              <li key={l.playerId} className={styles.lineHead}>
-                <span>{names[l.playerId]}</span>
-                <span>{formatVnd(l.amount, lang)}</span>
-                <Badge tone={l.status === "paid" ? "success" : "warning"}>
-                  {l.status === "paid"
-                    ? t("Đã thanh toán", "Paid")
-                    : t("Trả một phần", "Partly paid")}
-                </Badge>
-              </li>
-            ))}
-          </ul>
+          <MarkPaidResult lines={result?.lines ?? []} names={names} />
         )
       }
       error={
