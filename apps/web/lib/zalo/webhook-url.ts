@@ -5,7 +5,7 @@ export function zaloWebhookUrl(baseUrl: string, webhookToken: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/api/webhooks/zalo/${webhookToken}`;
 }
 
-/** The ONE response shape for POST connect and GET state. Never carries a token or secret. */
+/** The ONE response shape for POST connect and GET state. Carries `webhook_token` (a non-secret lookup by design), never the bot token or webhook secret. */
 export function zaloStateView(baseUrl: string | undefined, s: ZaloOnboardingState) {
   return {
     status: s.status,

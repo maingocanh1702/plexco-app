@@ -5,7 +5,7 @@ import { resolveClubGate } from "../../../../lib/club-config-route";
 import { appDb } from "../../../../lib/session-cookies";
 import { zaloStateView } from "../../../../lib/zalo/webhook-url";
 
-/** GET /api/onboarding/zalo?tenant=<uuid> -- connection state; never returns a token or secret. */
+/** GET /api/onboarding/zalo?tenant=<uuid> -- connection state; returns the webhook URL (embeds the non-secret `webhook_token` lookup), never the bot token or webhook secret. */
 const GET_LIMIT = { bucket: "zalo-connect-read", limit: 60 };
 
 export async function GET(request: Request): Promise<Response> {

@@ -42,6 +42,16 @@ describe("zalo client", () => {
     expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ chat_id: "chat-1", text: "hi" });
   });
 
+  it("an abort while reading the body maps to kind timeout", async () => {
+    const body = new ReadableStream({
+      pull() {
+        throw new DOMException("aborted", "AbortError");
+      },
+    });
+    fetchMock.mockImplementation(async () => new Response(body, { status: 200 }));
+    expect(await kindOf(getMe(TOKEN))).toBe("timeout");
+  });
+
   it("rejects a token that could alter the URL path before any request", async () => {
     expect(await kindOf(getMe("abc/../x?y=1"))).toBe("invalid_token");
     expect(fetchMock).not.toHaveBeenCalled();

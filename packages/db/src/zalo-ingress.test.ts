@@ -7,6 +7,7 @@ import {
   beginZaloConnect,
   finishInboundEvent,
   finishZaloConnect,
+  markBotVerifiedActive,
   getZaloOnboardingState,
   resolveZaloBotByToken,
   resolveZaloIdentity,
@@ -415,6 +416,61 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
       upsert(ctx.tenantA, ownerA, botA, `wh-${randomUUID()}`),
       /bot is revoked/,
     );
+  });
+});
+
+describe("markBotVerifiedActive (token-bound activation)", () => {
+  const stateOf = async () => {
+    const { rows } = await ctx.owner.query<{ status: string; verified_at: Date | null }>(
+      `SELECT status, verified_at FROM zalo_bots WHERE id = $1`,
+      [botA],
+    );
+    return rows[0]!;
+  };
+  const activate = (token: string) =>
+    withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      markBotVerifiedActive(tx, ctx.tenantA, botA, token),
+    );
+  const force = (status: string) =>
+    ctx.owner.query(`UPDATE zalo_bots SET status = $2, verified_at = NULL WHERE id = $1`, [
+      botA,
+      status,
+    ]);
+  const currentToken = async () =>
+    (
+      await ctx.owner.query<{ webhook_token: string }>(
+        `SELECT webhook_token FROM zalo_bots WHERE id = $1`,
+        [botA],
+      )
+    ).rows[0]!.webhook_token;
+
+  // The status describe above leaves botA revoked; later suites expect that, so restore it.
+  afterAll(async () => {
+    await force("revoked");
+  });
+
+  it("happy path: registered -> active with verified_at", async () => {
+    await force("registered");
+    expect(await activate(await currentToken())).toBe("activated");
+    const s = await stateOf();
+    expect(s.status).toBe("active");
+    expect(s.verified_at).not.toBeNull();
+  });
+
+  it("upsert-rotate between resolve and activate: stays connecting, verified_at NULL", async () => {
+    await force("registered");
+    const stale = await currentToken();
+    await upsert(ctx.tenantA, ownerA, botA, `wh-${randomUUID()}`); // owner reconnect: new token
+    expect(await activate(stale)).toBe("token_rotated");
+    const s = await stateOf();
+    expect(s.status).toBe("connecting");
+    expect(s.verified_at).toBeNull();
+  });
+
+  it("a drift row is not cleared by a verified event", async () => {
+    await force("drift");
+    expect(await activate(await currentToken())).toBe("activated");
+    expect((await stateOf()).status).toBe("drift");
   });
 });
 

@@ -16,6 +16,7 @@ describe("extractZaloEvent", () => {
       eventId: "5",
       fromId: "7",
       chatId: "c9",
+      chatType: null,
       text: "/me",
       displayName: "An",
     });
@@ -39,6 +40,14 @@ describe("extractZaloEvent", () => {
       expect(extractZaloEvent(payload)).toBeNull();
     },
   );
+
+  it("extracts chat_type for the DM detector", () => {
+    const e = extractZaloEvent({
+      update_id: 1,
+      message: { from: { id: "u" }, chat: { id: "u", chat_type: "GROUP" }, text: "x" },
+    });
+    expect(e?.chatType).toBe("GROUP");
+  });
 
   it("keeps non-text events (null text) for the caller to ignore", () => {
     expect(extractZaloEvent({ update_id: 1, result: { message: {} } })?.text).toBeNull();
