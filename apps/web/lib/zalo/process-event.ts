@@ -2,6 +2,7 @@ import { runWithLang } from "@plexco/core/i18n";
 import {
   LINK_CODE_TTL_SECONDS,
   issueLinkCode,
+  pgErrorHasCode,
   readZaloBotTokenEnc,
   resolveZaloIdentity,
   withTenant,
@@ -28,7 +29,6 @@ import { buildZaloReply, parseZaloCommand, type LinkIssueResult } from "./comman
  */
 export interface ZaloEventFields {
   eventId: string;
-  eventName: string | null;
   fromId: string | null;
   chatId: string | null;
   text: string | null;
@@ -37,10 +37,12 @@ export interface ZaloEventFields {
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
+// Numbers only when they are exactly representable: a JSON number above 2^53 has already lost
+// digits, so two different ids would collapse onto one dedup key. Strings pass through untouched.
 const scalar = (v: unknown): string | null =>
   typeof v === "string" && v.length > 0
     ? v
-    : typeof v === "number" && Number.isFinite(v)
+    : typeof v === "number" && Number.isSafeInteger(v)
       ? String(v)
       : null;
 
@@ -54,7 +56,6 @@ export function extractZaloEvent(payload: unknown): ZaloEventFields | null {
   if (eventId === null || eventId.length > 200) return null;
   return {
     eventId,
-    eventName: scalar(root.event_name),
     fromId: scalar(from.id),
     chatId: scalar(chat.id),
     text: typeof message.text === "string" ? message.text : null,
@@ -96,11 +97,13 @@ export async function processZaloEvent(args: {
     }),
   );
 
+  const isDirect = chatId === fromId;
   const lang = bot.locale === "en" ? "en" : "vi"; // DD-118: the bot's tenant locale, fail-closed vi
   const reply = await runWithLang(lang, () =>
     buildZaloReply(parseZaloCommand(text), {
       displayName: identity.displayName,
       hasAccount: identity.hasAccount,
+      isDirect,
       issueLinkCode: async (): Promise<LinkIssueResult> => {
         const keys = linkCodeKeys();
         if (!keys) {
@@ -132,11 +135,16 @@ export async function processZaloEvent(args: {
   const botToken = await withTenant(db, bot.tenantId, async (tx) => {
     const enc = await readZaloBotTokenEnc(tx, bot.tenantId, bot.botId);
     if (enc === null) throw new Error("bot token missing");
-    return decryptConnectorSecret(tx, textToBlob(enc), {
-      tenantId: bot.tenantId,
-      botId: bot.botId,
-      purpose: "bot_token",
-    });
+    return decryptConnectorSecret(
+      tx,
+      textToBlob(enc),
+      {
+        tenantId: bot.tenantId,
+        botId: bot.botId,
+        purpose: "bot_token",
+      },
+      bot.keyVersion,
+    );
   });
   await sendMessage(botToken, chatId, reply);
   return "processed";
@@ -145,8 +153,6 @@ export async function processZaloEvent(args: {
 /** Stable, non-sensitive error_code for a failed event row. */
 export function classifyProcessingError(error: unknown): string {
   if (error instanceof ZaloApiError) return `ZALO_${error.kind.toUpperCase()}`;
-  for (let c: unknown = error; c && typeof c === "object"; c = (c as { cause?: unknown }).cause) {
-    if ((c as { code?: string }).code === "23000") return "IDENTITY_SCOPE_CONFLICT";
-  }
+  if (pgErrorHasCode(error, "23000")) return "IDENTITY_SCOPE_CONFLICT";
   return "PROCESSING_ERROR";
 }

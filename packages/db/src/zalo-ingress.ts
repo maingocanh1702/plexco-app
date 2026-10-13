@@ -7,6 +7,7 @@ import {
   processedCommands,
   zaloBots,
 } from "../schema.js";
+import { pgErrorChainText, pgErrorHasCode } from "./pg-error.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -75,7 +76,13 @@ export async function appendSecretDecryptAudit(
 /** Store-before-process. `duplicate` = this (bot, event id) was already stored. */
 export async function storeInboundEvent(
   tx: Tx,
-  p: { tenantId: string; botId: string; externalEventId: string; rawPayloadEnc: Buffer },
+  p: {
+    tenantId: string;
+    botId: string;
+    externalEventId: string;
+    rawPayloadEnc: Buffer;
+    keyVersion: string;
+  },
 ): Promise<{ id: string | null; duplicate: boolean }> {
   const rows = await tx
     .insert(channelInboundEvents)
@@ -85,8 +92,15 @@ export async function storeInboundEvent(
       botId: p.botId,
       externalEventId: p.externalEventId,
       rawPayloadEnc: p.rawPayloadEnc,
+      keyVersion: p.keyVersion,
     })
-    .onConflictDoNothing()
+    .onConflictDoNothing({
+      target: [
+        channelInboundEvents.tenantId,
+        channelInboundEvents.botId,
+        channelInboundEvents.externalEventId,
+      ],
+    })
     .returning({ id: channelInboundEvents.id });
   return rows.length === 0 ? { id: null, duplicate: true } : { id: rows[0]!.id, duplicate: false };
 }
@@ -167,7 +181,7 @@ export async function markBotVerifiedActive(
   botId: string,
 ): Promise<void> {
   await tx.execute(
-    sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${botId}::uuid, 'active', true, false)`,
+    sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${botId}::uuid, 'active', true, false, NULL::text[])`,
   );
 }
 
@@ -213,7 +227,8 @@ export async function getZaloOnboardingState(
   return withTenant(db, p.tenantId, (tx) => readState(tx, p.tenantId));
 }
 
-export type ZaloConnectErrorCode = "FORBIDDEN" | "COMMAND_ID_CONFLICT" | "NO_ONBOARDING_RUN";
+export type ZaloConnectErrorCode =
+  "FORBIDDEN" | "COMMAND_ID_CONFLICT" | "NO_ONBOARDING_RUN" | "BOT_REVOKED";
 
 export class ZaloConnectError extends Error {
   constructor(
@@ -225,16 +240,38 @@ export class ZaloConnectError extends Error {
   }
 }
 
-const isPgCode = (e: unknown, code: string): boolean => {
-  for (let c: unknown = e; c && typeof c === "object"; c = (c as { cause?: unknown }).cause) {
-    if ((c as { code?: string }).code === code) return true;
-  }
-  return false;
-};
-
 export type BeginZaloConnectResult =
   | { replayed: true; state: ZaloOnboardingState }
   | { replayed: false; botId: string; webhookToken: string };
+
+/**
+ * Cheap replay probe, run BEFORE any Zalo call: a processed ConnectZaloBot command returns the stored
+ * state so a retry never re-validates the token against Zalo. Null = not processed yet.
+ */
+export async function probeZaloConnectReplay(
+  db: Db,
+  p: { tenantId: string; commandId: string },
+): Promise<ZaloOnboardingState | null> {
+  return withTenant(db, p.tenantId, async (tx) => {
+    const prior = await tx
+      .select({ commandType: processedCommands.commandType })
+      .from(processedCommands)
+      .where(
+        and(
+          eq(processedCommands.tenantId, p.tenantId),
+          eq(processedCommands.commandId, p.commandId),
+        ),
+      );
+    if (prior.length === 0) return null;
+    if (prior[0]!.commandType !== COMMAND_TYPE) {
+      throw new ZaloConnectError(
+        "COMMAND_ID_CONFLICT",
+        "command_id belongs to a different command",
+      );
+    }
+    return readState(tx, p.tenantId);
+  });
+}
 
 /**
  * Phase 1 of connect: dedup, then upsert the bot as `connecting` with freshly encrypted secrets.
@@ -300,7 +337,10 @@ export async function beginZaloConnect(
       return { replayed: false as const, botId: r.bot_id, webhookToken: r.webhook_token };
     });
   } catch (e) {
-    if (isPgCode(e, "42501")) throw new ZaloConnectError("FORBIDDEN", "not permitted");
+    if (pgErrorHasCode(e, "42501")) throw new ZaloConnectError("FORBIDDEN", "not permitted");
+    if (pgErrorHasCode(e, "22023") && /bot is revoked/.test(pgErrorChainText(e))) {
+      throw new ZaloConnectError("BOT_REVOKED", "bot is revoked");
+    }
     throw e;
   }
 }
@@ -319,7 +359,8 @@ export async function finishZaloConnect(
   const { tenantId } = p;
   return withTenant(db, tenantId, async (tx) => {
     await tx.execute(
-      sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${p.botId}::uuid, ${p.outcome}, false, true)`,
+      sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${p.botId}::uuid, ${p.outcome}, false, true,
+              ARRAY['connecting','registered']::text[])`,
     );
     const [run] = await tx
       .select({ id: onboardingRuns.id })

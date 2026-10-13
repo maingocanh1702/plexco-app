@@ -1,7 +1,11 @@
 type BoundedBody =
   { ok: true; text: string } | { ok: false; reason: "too_large" | "malformed_encoding" };
 
-export async function readBoundedBody(request: Request, maxBytes: number): Promise<BoundedBody> {
+/** Accepts a Request or a Response: only `headers` and `body` are read. */
+export async function readBoundedBody(
+  request: Pick<Request, "headers" | "body">,
+  maxBytes: number,
+): Promise<BoundedBody> {
   const declared = Number(request.headers.get("content-length") ?? Number.NaN);
   if (Number.isFinite(declared) && declared > maxBytes) {
     return { ok: false, reason: "too_large" };

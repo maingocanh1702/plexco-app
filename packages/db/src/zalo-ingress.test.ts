@@ -116,7 +116,7 @@ describe("definer ACLs", () => {
     "zalo_bot_resolve_by_webhook_token(text)",
     "zalo_identity_resolve(uuid, uuid, text, text, bytea, text)",
     "zalo_bot_upsert_for_tenant(uuid, uuid, uuid, text, text, bytea, text, text)",
-    "zalo_bot_set_status(uuid, uuid, text, boolean, boolean)",
+    "zalo_bot_set_status(uuid, uuid, text, boolean, boolean, text[])",
     "routing_audit_append(text, uuid, uuid, jsonb)",
   ];
   it("EXECUTE for app only; not app_worker, readonly or PUBLIC", async () => {
@@ -132,6 +132,25 @@ describe("definer ACLs", () => {
   });
 });
 
+describe("definer hardening (0048 lesson)", () => {
+  it("all five are SECURITY DEFINER with search_path = pg_catalog, public, pg_temp", async () => {
+    for (const f of [
+      "zalo_bot_resolve_by_webhook_token(text)",
+      "zalo_identity_resolve(uuid, uuid, text, text, bytea, text)",
+      "zalo_bot_upsert_for_tenant(uuid, uuid, uuid, text, text, bytea, text, text)",
+      "zalo_bot_set_status(uuid, uuid, text, boolean, boolean, text[])",
+      "routing_audit_append(text, uuid, uuid, jsonb)",
+    ]) {
+      const { rows } = await ctx.owner.query(
+        `SELECT p.prosecdef, p.proconfig FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+        [f],
+      );
+      expect(rows[0].prosecdef, f).toBe(true);
+      expect(rows[0].proconfig, f).toContain("search_path=pg_catalog, public, pg_temp");
+    }
+  });
+});
+
 describe("channel_inbound_events RLS + idempotency", () => {
   it("stores once per (bot, event id); a duplicate reports duplicate and adds no row", async () => {
     const id = `evt-${seq++}`;
@@ -141,6 +160,7 @@ describe("channel_inbound_events RLS + idempotency", () => {
         botId: botA,
         externalEventId: id,
         rawPayloadEnc: bytes("x"),
+        keyVersion: "local",
       }),
     );
     const again = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
@@ -149,6 +169,7 @@ describe("channel_inbound_events RLS + idempotency", () => {
         botId: botA,
         externalEventId: id,
         rawPayloadEnc: bytes("y"),
+        keyVersion: "local",
       }),
     );
     expect(first.duplicate).toBe(false);
@@ -188,6 +209,7 @@ describe("channel_inbound_events RLS + idempotency", () => {
           botId: botA,
           externalEventId: "x",
           rawPayloadEnc: bytes("x"),
+          keyVersion: "local",
         }),
       ),
       /row-level security|violates/,
@@ -296,17 +318,37 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
   });
 
   it("set_status: verified_at stamped once; revoked is terminal", async () => {
-    const set = (status: string, verified: boolean) =>
+    const set = (status: string, verified: boolean, onlyFrom: string[] | null = null) =>
       withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
         tx.execute(
-          sql`SELECT status, verified_at FROM zalo_bot_set_status(${ctx.tenantA}::uuid, ${botA}::uuid, ${status}, ${verified}, false)`,
+          sql`SELECT status, verified_at FROM zalo_bot_set_status(${ctx.tenantA}::uuid, ${botA}::uuid, ${status}, ${verified}, false, ${onlyFrom}::text[])`,
         ),
       );
-    const a = (await set("active", true)).rows[0] as { verified_at: Date };
-    const b = (await set("active", true)).rows[0] as { verified_at: Date };
-    expect(a.verified_at.getTime()).toBe(b.verified_at.getTime());
+    // db.execute returns timestamptz as text: compare instants, not Date methods.
+    const at = (r: { rows: unknown[] }) =>
+      new Date((r.rows[0] as { verified_at: string }).verified_at).getTime();
+    const a = at(await set("active", true));
+    const b = at(await set("active", true));
+    expect(a).toBe(b);
+    // CAS: a late connect finish (only_from connecting/registered) must NOT demote an active bot.
+    const cas = await set("registered", false, ["connecting", "registered"]);
+    expect(cas.rows).toHaveLength(0);
+    expect(((await set("active", false)).rows[0] as { status: string }).status).toBe("active");
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
+        tx.execute(
+          sql`SELECT * FROM zalo_bot_set_status(${ctx.tenantA}::uuid, ${botA}::uuid, 'active', false, false, NULL::text[])`,
+        ),
+      ),
+      /tenant context mismatch/,
+    );
     await set("revoked", false);
     await expectErrorChainToMatch(set("active", true), /revoked/);
+    // A revoked row is never resurrected by a re-connect.
+    await expectErrorChainToMatch(
+      upsert(ctx.tenantA, ownerA, botA, `wh-${randomUUID()}`),
+      /bot is revoked/,
+    );
   });
 });
 
@@ -339,11 +381,67 @@ describe("zalo_identity_resolve", () => {
     expect(rows[0].n).toBe(2);
   });
 
-  it("refuses a foreign tenant GUC, a bot outside the tenant, and the legacy-unique scope conflict", async () => {
+  it("refuses a bot outside the tenant and a GUC that differs from p_tenant_id", async () => {
     await expectErrorChainToMatch(ident(ctx.tenantA, bot, "u-x"), /bot not in tenant/);
+    await expectErrorChainToMatch(
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        resolveZaloIdentity(tx, {
+          tenantId: ctx.tenantB,
+          botId: bot,
+          scopeHash: "s",
+          userHash: "u",
+          userIdEnc: bytes("e"),
+          displayName: null,
+        }),
+      ),
+      /tenant context mismatch/,
+    );
+  });
+
+  it("the SAME Zalo user under a second bot scope is a DISTINCT person + identity (3-part key)", async () => {
     const u = `u-${randomUUID()}`;
-    await ident(ctx.tenantB, bot, u, "scope-1");
-    await expectErrorChainToMatch(ident(ctx.tenantB, bot, u, "scope-2"), /scope conflict/);
+    const a = await ident(ctx.tenantB, bot, u, "scope-1");
+    const b = await ident(ctx.tenantB, bot, u, "scope-2");
+    expect(b.created).toBe(true);
+    expect(b.personId).not.toBe(a.personId);
+    expect(b.channelIdentityId).not.toBe(a.channelIdentityId);
+  });
+
+  it("legacy unscoped rows keep the 2-part unique; scoped rows are exempt (partial index)", async () => {
+    const hash = `legacy-${randomUUID()}`;
+    const p1 = await person();
+    const p2 = await person();
+    const ins = (pid: string, scope: string | null) =>
+      ctx.owner.query(
+        `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, provider_scope_lookup_hash)
+         VALUES ($1, 'zalo', '\\x00'::bytea, $2, $3)`,
+        [pid, hash, scope],
+      );
+    await ins(p1, null);
+    await expect(ins(p2, null)).rejects.toThrow(/channel_identities_platform_uid_uq/);
+    await ins(p2, "some-scope");
+  });
+
+  it("an inactive identity with the 3-part key is reactivated, not a permanent lockout", async () => {
+    const u = `u-${randomUUID()}`;
+    const first = await ident(ctx.tenantB, bot, u);
+    await ctx.owner.query(`UPDATE channel_identities SET status = 'inactive' WHERE id = $1`, [
+      first.channelIdentityId,
+    ]);
+    const again = await ident(ctx.tenantB, bot, u);
+    expect(again).toMatchObject({ created: false, channelIdentityId: first.channelIdentityId });
+    const { rows } = await ctx.owner.query(`SELECT status FROM channel_identities WHERE id = $1`, [
+      first.channelIdentityId,
+    ]);
+    expect(rows[0].status).toBe("active");
+  });
+
+  it("has_account is true once the person has an accounts row", async () => {
+    const u = `u-${randomUUID()}`;
+    const first = await ident(ctx.tenantB, bot, u);
+    expect(first.hasAccount).toBe(false);
+    await ctx.owner.query(`INSERT INTO accounts (person_id) VALUES ($1)`, [first.personId]);
+    expect((await ident(ctx.tenantB, bot, u)).hasAccount).toBe(true);
   });
 
   it("app has no direct privilege on persons / channel_identities / routing_audit", async () => {

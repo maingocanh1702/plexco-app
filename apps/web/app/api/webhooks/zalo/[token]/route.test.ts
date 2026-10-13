@@ -1,5 +1,6 @@
 import {
   finishInboundEvent,
+  issueLinkCode,
   markBotVerifiedActive,
   resolveZaloBotByToken,
   resolveZaloIdentity,
@@ -11,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
 import { encryptConnectorSecret, blobToText } from "../../../../../lib/connector-secrets";
 import { rateLimited } from "../../../../../lib/session-cookies";
+import { __resetWebhookSecretCacheForTest } from "../../../../../lib/zalo/webhook-secret-cache";
 import { sendMessage } from "../../../../../lib/zalo/client";
 import { POST } from "./route";
 
@@ -67,13 +69,14 @@ const update = (text: string, id: number | string = 9001) => ({
   update_id: id,
   result: {
     event_name: "message.text.received",
-    message: { text, from: { id: "zuser-1", display_name: "An" }, chat: { id: "zchat-1" } },
+    message: { text, from: { id: "zuser-1", display_name: "An" }, chat: { id: "zuser-1" } },
   },
 });
 const env = async (r: Response) => (await r.json()) as { error?: { code: string } | null };
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  __resetWebhookSecretCacheForTest();
   process.env.ENCRYPTION_KEY = Buffer.from("k".repeat(32)).toString("base64");
   __resetAuthSecretCacheForTest();
   const secretEnc = (
@@ -138,10 +141,70 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(storeInboundEvent).not.toHaveBeenCalled();
   });
 
-  it("audits the secret decrypt (once) without secret material", async () => {
+  it("audits the webhook-secret decrypt once per cache FILL (not per request), never with secret material", async () => {
     await call();
-    expect(audit).toHaveBeenCalledTimes(2); // webhook_secret + bot_token for the reply
+    expect(audit).toHaveBeenCalledTimes(2); // webhook_secret fill + bot_token for the reply
+    await call({ body: update("/start", 9100) });
+    expect(audit).toHaveBeenCalledTimes(3); // cache hit: only the bot_token decrypt
     expect(JSON.stringify(audit.mock.calls)).not.toContain(SECRET);
+  });
+
+  it("the secret compare runs BEFORE any bucket: a valid caller never spends the auth bucket", async () => {
+    await call();
+    expect(vi.mocked(rateLimited).mock.calls.map((c) => c[0])).toEqual([`zalo-webhook:${BOT}`]);
+  });
+
+  it("failed attempts are bucketed per bot AND caller; over the limit -> 429", async () => {
+    vi.mocked(rateLimited).mockImplementation(async (k) => k.startsWith("zalo-webhook-auth:"));
+    const res = await call({ secret: "wrong" });
+    expect(res.status).toBe(429);
+    expect(rateLimited).toHaveBeenCalledWith(`zalo-webhook-auth:${BOT}:local`, 30, 60);
+  });
+
+  it("key version mismatch fails closed: 401, no audit, nothing stored", async () => {
+    vi.mocked(resolveZaloBotByToken).mockResolvedValue({ ...bot, keyVersion: "old-key" });
+    const res = await call();
+    expect(res.status).toBe(401);
+    expect(audit).not.toHaveBeenCalled();
+    expect(storeInboundEvent).not.toHaveBeenCalled();
+  });
+
+  it("a numeric update_id above 2^53 -> 400 (digits already lost)", async () => {
+    const res = await call({ raw: '{"update_id": 9007199254740993, "result": {}}' });
+    expect(res.status).toBe(400);
+  });
+
+  it("a failed STORE answers 5xx (nothing durable yet, Zalo must retry)", async () => {
+    vi.mocked(storeInboundEvent).mockRejectedValue(new Error("db down"));
+    await expect(call()).rejects.toThrow("db down");
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("records the key version with the stored event", async () => {
+    await call();
+    expect(vi.mocked(storeInboundEvent).mock.calls[0]![1].keyVersion).toBe("local");
+  });
+
+  it("/link in a GROUP chat posts no code and issues none", async () => {
+    const body = update("/link", 9200);
+    (body.result.message.chat as { id: string }).id = "group-9";
+    await call({ body });
+    expect(vi.mocked(sendMessage).mock.calls[0]![2]).toContain("message the bot directly");
+    expect(issueLinkCode).not.toHaveBeenCalled();
+  });
+
+  it("/me for a linked person says linked", async () => {
+    vi.mocked(resolveZaloIdentity).mockResolvedValue({
+      personId: "p1",
+      channelIdentityId: "ci1",
+      created: false,
+      displayName: "An",
+      hasAccount: true,
+    });
+    const body = update("/me", 9201);
+    (body.result.message.chat as { id: string }).id = "zuser-1";
+    await call({ body });
+    expect(vi.mocked(sendMessage).mock.calls[0]![2]).toContain("Plexco account linked");
   });
 
   it("per-bot rate limit -> 429 WEBHOOK_RATE_LIMITED", async () => {
@@ -195,7 +258,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     await call();
     expect(sendMessage).toHaveBeenCalledWith(
       BOT_TOKEN,
-      "zchat-1",
+      "zuser-1",
       expect.stringContaining("Welcome"),
     );
   });

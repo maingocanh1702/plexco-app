@@ -3,7 +3,7 @@ import { getZaloOnboardingState, ZALO_CONNECTOR_ACTION } from "@plexco/db";
 import { ok } from "../../../../lib/api-envelope";
 import { resolveClubGate } from "../../../../lib/club-config-route";
 import { appDb } from "../../../../lib/session-cookies";
-import { zaloWebhookUrl } from "../../../../lib/zalo/webhook-url";
+import { zaloStateView } from "../../../../lib/zalo/webhook-url";
 
 /** GET /api/onboarding/zalo?tenant=<uuid> -- connection state; never returns a token or secret. */
 const GET_LIMIT = { bucket: "zalo-connect-read", limit: 60 };
@@ -17,12 +17,6 @@ export async function GET(request: Request): Promise<Response> {
   if (gate instanceof Response) return gate;
   return runWithLang(gate.lang, async () => {
     const s = await getZaloOnboardingState(appDb().db, { tenantId: gate.tenantId });
-    const baseUrl = process.env.APP_BASE_URL?.trim();
-    return ok({
-      status: s.status,
-      verifiedAt: s.verifiedAt,
-      lastSetwebhookAt: s.lastSetwebhookAt,
-      webhookUrl: s.webhookToken && baseUrl ? zaloWebhookUrl(baseUrl, s.webhookToken) : null,
-    });
+    return ok(zaloStateView(process.env.APP_BASE_URL?.trim(), s));
   });
 }

@@ -5,6 +5,7 @@ import { buildZaloReply, parseZaloCommand, type ZaloReplyDeps } from "./commands
 const deps = (over: Partial<ZaloReplyDeps> = {}): ZaloReplyDeps => ({
   displayName: "An",
   hasAccount: false,
+  isDirect: true,
   issueLinkCode: vi.fn(async () => ({ ok: true as const, code: "ABCD-EFGH", ttlMinutes: 10 })),
   ...over,
 });
@@ -21,7 +22,7 @@ describe("parseZaloCommand", () => {
     ["/pay", "coming_soon"],
     ["/leave", "coming_soon"],
     ["2", "coming_soon"],
-    ["/link ABCD-EFGH", "coming_soon"],
+    ["/link ABCD-EFGH", "link_code"],
     ["hello there", "unknown"],
     ["", "unknown"],
     ["/frobnicate", "unknown"],
@@ -74,6 +75,25 @@ describe("buildZaloReply", () => {
       ),
     );
     expect(un).toContain("tạm thời không khả dụng");
+  });
+
+  it("/link and /me in a GROUP chat never issue a code or reveal info", async () => {
+    const issue = vi.fn(async () => ({ ok: true as const, code: "ABCD-EFGH", ttlMinutes: 10 }));
+    const link = await runWithLang("en", () =>
+      buildZaloReply(parseZaloCommand("/link"), deps({ isDirect: false, issueLinkCode: issue })),
+    );
+    expect(link).toContain("message the bot directly");
+    expect(link).not.toContain("ABCD");
+    expect(issue).not.toHaveBeenCalled();
+    const me = await runWithLang("vi", () =>
+      buildZaloReply(parseZaloCommand("/me"), deps({ isDirect: false, hasAccount: true })),
+    );
+    expect(me).toContain("nhắn riêng");
+  });
+
+  it("`/link <code>` points to web Settings and never asks for the code in chat", async () => {
+    const r = await runWithLang("en", () => buildZaloReply(parseZaloCommand("/link ABCD"), deps()));
+    expect(r).toContain("Settings");
   });
 
   it("M9 commands and numbers reply coming-soon; unknown shows help", async () => {

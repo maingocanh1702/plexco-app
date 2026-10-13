@@ -3,9 +3,9 @@ import { runWithLang, t } from "@plexco/core/i18n";
 import {
   beginZaloConnect,
   finishZaloConnect,
+  probeZaloConnectReplay,
   ZALO_CONNECTOR_ACTION,
   ZaloConnectError,
-  type ZaloOnboardingState,
 } from "@plexco/db";
 import { err, ok } from "../../../../../lib/api-envelope";
 import { resolveClubGate } from "../../../../../lib/club-config-route";
@@ -15,7 +15,7 @@ import { readBoundedBody } from "../../../../../lib/read-bounded-body";
 import { isUnsafeCommandKey } from "../../../../../lib/session-command-route";
 import { appDb } from "../../../../../lib/session-cookies";
 import { getMe, setWebhook } from "../../../../../lib/zalo/client";
-import { zaloWebhookUrl } from "../../../../../lib/zalo/webhook-url";
+import { zaloStateView, zaloWebhookUrl } from "../../../../../lib/zalo/webhook-url";
 
 /**
  * POST /api/onboarding/zalo/connect?tenant=<uuid> -- owner pastes the club's Zalo bot token.
@@ -31,11 +31,6 @@ const MAX_BODY_BYTES = 4 * 1024;
 const CONNECT_LIMIT = { bucket: "zalo-connect", limit: 5, windowSeconds: 600 };
 
 const invalid = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
-
-const view = (baseUrl: string, s: ZaloOnboardingState) => ({
-  status: s.status,
-  webhookUrl: s.webhookToken ? zaloWebhookUrl(baseUrl, s.webhookToken) : null,
-});
 
 export async function POST(request: Request): Promise<Response> {
   const gate = await resolveClubGate(request, {
@@ -80,6 +75,22 @@ export async function POST(request: Request): Promise<Response> {
     if (typeof botToken !== "string" || botToken.length === 0 || botToken.length > 200)
       return invalid();
 
+    const db = appDb().db;
+    // Replay probe BEFORE any Zalo call: a processed commandId returns the stored state untouched.
+    try {
+      const replay = await probeZaloConnectReplay(db, { tenantId: gate.tenantId, commandId });
+      if (replay) return ok(zaloStateView(baseUrl, replay));
+    } catch (error) {
+      if (error instanceof ZaloConnectError && error.code === "COMMAND_ID_CONFLICT") {
+        return err(
+          "COMMAND_ID_CONFLICT",
+          t("commandId đã được dùng.", "commandId already used."),
+          409,
+        );
+      }
+      throw error;
+    }
+
     const tokenInvalid = () =>
       err("ZALO_TOKEN_INVALID", t("Token bot Zalo không hợp lệ.", "Invalid Zalo bot token."), 400);
     try {
@@ -88,7 +99,6 @@ export async function POST(request: Request): Promise<Response> {
       return tokenInvalid(); // stable kind only; the client never puts the token in an error
     }
 
-    const db = appDb().db;
     const webhookSecret = randomBytes(32).toString("base64url"); // 43 chars, inside Zalo's 8-256
     const webhookToken = randomBytes(32).toString("base64url");
     try {
@@ -116,7 +126,7 @@ export async function POST(request: Request): Promise<Response> {
           };
         },
       });
-      if (begun.replayed) return ok(view(baseUrl, begun.state));
+      if (begun.replayed) return ok(zaloStateView(baseUrl, begun.state));
 
       let outcome: "registered" | "error" = "registered";
       let reason: string | undefined;
@@ -134,10 +144,12 @@ export async function POST(request: Request): Promise<Response> {
         outcome,
         reason,
       });
-      return ok(view(baseUrl, state));
+      return ok(zaloStateView(baseUrl, state));
     } catch (error) {
       if (error instanceof ZaloConnectError) {
         switch (error.code) {
+          case "BOT_REVOKED":
+            return err("FORBIDDEN", t("Bot này đã bị thu hồi.", "This bot has been revoked."), 403);
           case "FORBIDDEN":
             return err(
               "FORBIDDEN",

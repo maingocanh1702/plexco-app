@@ -11,6 +11,8 @@
  * The token is part of the URL, so errors NEVER carry the URL or the response body: callers only see a
  * stable `kind`. Every call has a 5 s timeout and a 64 KiB response cap.
  */
+import { readBoundedBody } from "../read-bounded-body";
+
 const DEFAULT_BASE = "https://bot-api.zaloplatforms.com";
 const TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -52,10 +54,11 @@ async function call(
     await res.body?.cancel().catch(() => undefined);
     throw new ZaloApiError("rejected");
   }
-  const text = await readCapped(res);
+  const read = await readBoundedBody(res, MAX_RESPONSE_BYTES);
+  if (!read.ok) throw new ZaloApiError("bad_response");
   let json: unknown;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(read.text);
   } catch {
     throw new ZaloApiError("bad_response");
   }
@@ -63,24 +66,6 @@ async function call(
     throw new ZaloApiError("rejected");
   }
   return json;
-}
-
-async function readCapped(res: Response): Promise<string> {
-  const reader = res.body?.getReader();
-  if (!reader) return "";
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > MAX_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new ZaloApiError("bad_response");
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** Validates the bot token. Resolves on success, throws ZaloApiError otherwise. */

@@ -66,8 +66,10 @@ export const channelIdentities = pgTable("channel_identities", {
   providerScopeLookupHash: text("provider_scope_lookup_hash"),
   zaloBotId: uuid("zalo_bot_id").references(() => zaloBots.id),
 }, (t) => ({
+  // 0053: partial -- only UNSCOPED (legacy) rows keep the 2-part invariant; scoped rows use the 3-part key.
   platformUq: uniqueIndex("channel_identities_platform_uid_uq")
-    .on(t.platform, t.platformUserLookupHash),
+    .on(t.platform, t.platformUserLookupHash)
+    .where(sql`${t.providerScopeLookupHash} IS NULL`),
   scopedUq: uniqueIndex("channel_identities_scoped_uq")
     .on(t.platform, t.providerScopeLookupHash, t.platformUserLookupHash)
     .where(sql`${t.providerScopeLookupHash} IS NOT NULL`),
@@ -1353,6 +1355,7 @@ export const channelInboundEvents = pgTable("channel_inbound_events", {
   externalEventId: text("external_event_id").notNull(),
   // AES-256-GCM, AAD = tenant_id|bot_id|external_event_id; never plaintext (HR2).
   rawPayloadEnc: bytea("raw_payload_enc").notNull(),
+  keyVersion: text("key_version").notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   processedAt: timestamp("processed_at", { withTimezone: true }),
   status: text("status").notNull().default("received"), // received|processed|failed|ignored

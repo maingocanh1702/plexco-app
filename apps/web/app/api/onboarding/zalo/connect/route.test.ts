@@ -1,4 +1,10 @@
-import { authorize, beginZaloConnect, finishZaloConnect, ZaloConnectError } from "@plexco/db";
+import {
+  authorize,
+  beginZaloConnect,
+  finishZaloConnect,
+  probeZaloConnectReplay,
+  ZaloConnectError,
+} from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
@@ -12,6 +18,7 @@ vi.mock("@plexco/db", async (importOriginal) => {
     authorize: vi.fn(),
     beginZaloConnect: vi.fn(),
     finishZaloConnect: vi.fn(),
+    probeZaloConnectReplay: vi.fn(),
     withTenant: vi.fn(async (_d: unknown, _t: string, fn: (tx: unknown) => unknown) => fn({})),
   };
 });
@@ -59,6 +66,7 @@ beforeEach(() => {
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
   vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "owner" });
+  vi.mocked(probeZaloConnectReplay).mockResolvedValue(null);
   vi.mocked(getMe).mockResolvedValue(undefined);
   vi.mocked(setWebhook).mockResolvedValue(undefined);
   vi.mocked(beginZaloConnect).mockImplementation(async (_db, p) => {
@@ -153,12 +161,37 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect(rateLimited).toHaveBeenCalledWith(`zalo-connect:${TENANT}`, 5, 600);
   });
 
-  it("replay of a processed commandId returns the current state without calling setWebhook", async () => {
-    vi.mocked(beginZaloConnect).mockResolvedValue({ replayed: true, state: registered });
+  it("replay of a processed commandId returns the stored state WITHOUT any Zalo call", async () => {
+    vi.mocked(probeZaloConnectReplay).mockResolvedValue(registered);
     const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
     expect(res.status).toBe(200);
+    expect((await env(res)).data).toMatchObject({ status: "registered" });
+    expect(getMe).not.toHaveBeenCalled();
     expect(setWebhook).not.toHaveBeenCalled();
-    expect(finishZaloConnect).not.toHaveBeenCalled();
+    expect(beginZaloConnect).not.toHaveBeenCalled();
+  });
+
+  it("a commandId owned by another command -> 409 before any Zalo call", async () => {
+    vi.mocked(probeZaloConnectReplay).mockRejectedValue(
+      new ZaloConnectError("COMMAND_ID_CONFLICT", "x"),
+    );
+    expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(409);
+    expect(getMe).not.toHaveBeenCalled();
+  });
+
+  it("a revoked bot cannot be re-connected: 403", async () => {
+    vi.mocked(beginZaloConnect).mockRejectedValueOnce(new ZaloConnectError("BOT_REVOKED", "x"));
+    expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);
+  });
+
+  it("POST and GET share one response shape", async () => {
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(Object.keys((await env(res)).data!).sort()).toEqual([
+      "lastSetwebhookAt",
+      "status",
+      "verifiedAt",
+      "webhookUrl",
+    ]);
   });
 
   it.each([

@@ -14,7 +14,6 @@ describe("extractZaloEvent", () => {
       }),
     ).toEqual({
       eventId: "5",
-      eventName: "message.text.received",
       fromId: "7",
       chatId: "c9",
       text: "/me",
@@ -27,6 +26,11 @@ describe("extractZaloEvent", () => {
       message: { message_id: "m-1", text: "x", from: { id: "u" }, chat: { id: "c" } },
     });
     expect(e?.eventId).toBe("m-1");
+  });
+
+  it("rejects a numeric id above 2^53 (digits already lost) but keeps the same id as a string", () => {
+    expect(extractZaloEvent(JSON.parse('{"update_id": 9007199254740993}'))).toBeNull();
+    expect(extractZaloEvent({ update_id: "9007199254740993" })?.eventId).toBe("9007199254740993");
   });
 
   it.each([null, "str", 5, [], {}, { update_id: "" }, { update_id: "x".repeat(201) }])(

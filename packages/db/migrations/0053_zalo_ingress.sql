@@ -14,8 +14,12 @@
 --    `bot_token_enc` stays text and now holds base64url(iv || tag || ciphertext) AES-256-GCM.
 -- 2. channel_inbound_events: tenant-scoped store-before-process ledger (BRD NFR-S4), idempotent on
 --    (tenant_id, bot_id, external_event_id). Raw payload only as AES-GCM ciphertext.
--- 3. channel_identities: + provider_scope_lookup_hash (+ partial UNIQUE) and + zalo_bot_id.
---    The legacy UNIQUE (platform, platform_user_lookup_hash) is KEPT.
+-- 3. channel_identities: + provider_scope_lookup_hash (+ partial UNIQUE on the 3-part key) and
+--    + zalo_bot_id. The legacy 2-part UNIQUE (platform, platform_user_lookup_hash) is REPLACED by a
+--    partial unique index over rows WITHOUT a scope (legacy/unscoped rows keep their invariant; 0042
+--    already blocks new telegram rows). Why: the user hash is HMAC("channel-user:zalo:"+from.id) and
+--    does not contain the bot, so the 2-part unique made one Zalo user unservable by a second club's
+--    bot (DD-15 / DD-67 pin the 3-part key only). The two-HMAC shape is unchanged.
 -- 4. Definers (all app-only): zalo_bot_resolve_by_webhook_token, zalo_identity_resolve,
 --    zalo_bot_upsert_for_tenant, zalo_bot_set_status, routing_audit_append.
 --
@@ -28,18 +32,24 @@
 --     GUC unset / <> tenant, bot not in tenant, NULL hash/enc  RAISE insufficient_privilege / invalid_parameter_value
 --     active identity with the 3-part key exists               that row, created = false
 --     none                                                     new persons + channel_identities, created = true
---     legacy (platform,user_hash) unique hit by another scope  RAISE integrity_constraint_violation
+--     same Zalo user under a second bot (other scope hash)     DISTINCT person + identity (3-part key)
+--     existing row with the 3-part key but status inactive     reactivated, created = false
+--     concurrent first event (unique race)                     re-read the winner; else RAISE integrity_constraint_violation
 --     NEVER merges persons, NEVER links an account (DD-14/15, HR4).
 --   zalo_bot_upsert_for_tenant(...)
 --     GUC unset / <> tenant                            RAISE insufficient_privilege
 --     tenant_capability_authorize(connector.secret_manage) denies   RAISE insufficient_privilege
 --     status <> 'connecting', NULL secret/token/id     RAISE invalid_parameter_value
+--     existing row for the tenant is revoked           RAISE invalid_parameter_value (terminal, never resurrected)
 --     no row for the tenant                            insert
 --     row exists with the SAME id                      rotate token/secret, status connecting, verified_at NULL
 --     row exists with another id                       RAISE serialization_failure (caller retries)
---   zalo_bot_set_status(tenant, bot, status, verified, touch_setwebhook)
+--   zalo_bot_set_status(tenant, bot, status, verified, touch_setwebhook, only_from)
 --     GUC mismatch                                     RAISE insufficient_privilege
 --     current status revoked                           RAISE invalid_parameter_value (terminal)
+--     only_from given and current status not in it     zero rows, NO change (compare-and-set: a
+--                                                      connect finishing late cannot demote an
+--                                                      already-active bot)
 --     otherwise                                        UPDATE; verified => verified_at once
 --   routing_audit_append(action, actor, tenant, detail)
 --     action outside the allowlist (zalo.secret_decrypt), GUC mismatch   RAISE
@@ -80,6 +90,7 @@ CREATE TABLE channel_inbound_events (
   bot_id            uuid NOT NULL,
   external_event_id text NOT NULL,
   raw_payload_enc   bytea NOT NULL,
+  key_version       text NOT NULL,
   received_at       timestamptz NOT NULL DEFAULT now(),
   processed_at      timestamptz,
   status            text NOT NULL DEFAULT 'received',
@@ -106,6 +117,29 @@ GRANT SELECT, INSERT, UPDATE ON channel_inbound_events TO app;
 -- ---- 3. channel_identities ------------------------------------------------
 ALTER TABLE channel_identities ADD COLUMN provider_scope_lookup_hash text;
 ALTER TABLE channel_identities ADD COLUMN zalo_bot_id uuid REFERENCES zalo_bots(id);
+-- Drop the legacy 2-part unique by LOOKING UP its real name (0001 created it unnamed; schema.ts's
+-- channel_identities_platform_uid_uq is a drizzle-only name that does not exist in the database).
+DO $$
+DECLARE
+  v_name text;
+BEGIN
+  SELECT c.conname INTO v_name
+    FROM pg_catalog.pg_constraint c
+   WHERE c.conrelid = 'public.channel_identities'::regclass
+     AND c.contype = 'u'
+     AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text)
+            FROM pg_catalog.pg_attribute a
+           WHERE a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey))
+         = ARRAY['platform', 'platform_user_lookup_hash'];
+  IF v_name IS NULL THEN
+    RAISE EXCEPTION '0053: legacy channel_identities (platform, platform_user_lookup_hash) unique not found';
+  END IF;
+  EXECUTE format('ALTER TABLE public.channel_identities DROP CONSTRAINT %I', v_name);
+END
+$$;
+CREATE UNIQUE INDEX channel_identities_platform_uid_uq
+  ON channel_identities (platform, platform_user_lookup_hash)
+  WHERE provider_scope_lookup_hash IS NULL;
 CREATE UNIQUE INDEX channel_identities_scoped_uq
   ON channel_identities (platform, provider_scope_lookup_hash, platform_user_lookup_hash)
   WHERE provider_scope_lookup_hash IS NOT NULL;
@@ -156,6 +190,7 @@ DECLARE
   v_person uuid;
   v_ci uuid;
   v_created boolean := false;
+  v_status text;
   v_name text := left(nullif(btrim(p_display_name), ''), 120);
 BEGIN
   BEGIN
@@ -178,10 +213,10 @@ BEGIN
       USING ERRCODE = 'insufficient_privilege';
   END IF;
 
-  SELECT ci.id, ci.person_id INTO v_ci, v_person
+  SELECT ci.id, ci.person_id, ci.status INTO v_ci, v_person, v_status
     FROM public.channel_identities ci
    WHERE ci.platform = 'zalo' AND ci.provider_scope_lookup_hash = p_scope_hash
-     AND ci.platform_user_lookup_hash = p_user_hash AND ci.status = 'active';
+     AND ci.platform_user_lookup_hash = p_user_hash;
   IF NOT FOUND THEN
     BEGIN
       INSERT INTO public.persons (display_name, status) VALUES (v_name, 'active')
@@ -192,18 +227,23 @@ BEGIN
         VALUES (v_person, 'zalo', p_user_id_enc, p_user_hash, 'active', p_scope_hash, p_bot_id)
         RETURNING id INTO v_ci;
       v_created := true;
+      v_status := 'active';
     EXCEPTION WHEN unique_violation THEN
-      -- A concurrent first event won the race (the block rolled back our persons row), or the
-      -- legacy (platform, user_hash) unique is held by another scope: re-read, else refuse.
-      SELECT ci.id, ci.person_id INTO v_ci, v_person
+      -- Only a concurrent first event can race here (the block rolled back our persons row):
+      -- re-read the winner, else refuse.
+      SELECT ci.id, ci.person_id, ci.status INTO v_ci, v_person, v_status
         FROM public.channel_identities ci
        WHERE ci.platform = 'zalo' AND ci.provider_scope_lookup_hash = p_scope_hash
-         AND ci.platform_user_lookup_hash = p_user_hash AND ci.status = 'active';
+         AND ci.platform_user_lookup_hash = p_user_hash;
       IF NOT FOUND THEN
         RAISE EXCEPTION 'zalo_identity_resolve: identity scope conflict'
           USING ERRCODE = 'integrity_constraint_violation';
       END IF;
     END;
+  END IF;
+  -- The unique ignores status, so an inactive row would otherwise lock the user out forever.
+  IF v_status <> 'active' THEN
+    UPDATE public.channel_identities SET status = 'active' WHERE id = v_ci;
   END IF;
 
   RETURN QUERY
@@ -254,6 +294,12 @@ BEGIN
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
+  PERFORM 1 FROM public.zalo_bots b WHERE b.tenant_id = p_tenant_id AND b.status = 'revoked';
+  IF FOUND THEN
+    RAISE EXCEPTION 'zalo_bot_upsert_for_tenant: bot is revoked'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
   RETURN QUERY
     WITH ins AS (
       INSERT INTO public.zalo_bots AS z
@@ -268,7 +314,7 @@ BEGIN
             status = 'connecting',
             verified_at = NULL,
             rotation_pending = false
-        WHERE z.id = EXCLUDED.id
+        WHERE z.id = EXCLUDED.id AND z.status <> 'revoked'
       RETURNING z.id AS r_id, z.webhook_token AS r_token, z.status AS r_status
     )
     SELECT ins.r_id, ins.r_token, ins.r_status FROM ins;
@@ -283,7 +329,8 @@ GRANT EXECUTE ON FUNCTION zalo_bot_upsert_for_tenant(uuid, uuid, uuid, text, tex
 
 -- ---- 4d. zalo_bot_set_status ---------------------------------------------
 CREATE FUNCTION zalo_bot_set_status(
-  p_tenant_id uuid, p_bot_id uuid, p_status text, p_verified boolean, p_touch_setwebhook boolean
+  p_tenant_id uuid, p_bot_id uuid, p_status text, p_verified boolean, p_touch_setwebhook boolean,
+  p_only_from text[]
 )
 RETURNS TABLE (bot_id uuid, status text, verified_at timestamptz, last_setwebhook_at timestamptz)
 LANGUAGE plpgsql
@@ -316,6 +363,9 @@ BEGIN
   IF v_cur = 'revoked' THEN
     RAISE EXCEPTION 'zalo_bot_set_status: bot is revoked' USING ERRCODE = 'invalid_parameter_value';
   END IF;
+  IF p_only_from IS NOT NULL AND NOT (v_cur = ANY (p_only_from)) THEN
+    RETURN;
+  END IF;
   RETURN QUERY
     WITH upd AS (
       UPDATE public.zalo_bots b
@@ -331,8 +381,8 @@ BEGIN
     SELECT upd.r_id, upd.r_status, upd.r_verified, upd.r_hook FROM upd;
 END;
 $$;
-REVOKE ALL ON FUNCTION zalo_bot_set_status(uuid, uuid, text, boolean, boolean) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION zalo_bot_set_status(uuid, uuid, text, boolean, boolean) TO app;
+REVOKE ALL ON FUNCTION zalo_bot_set_status(uuid, uuid, text, boolean, boolean, text[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION zalo_bot_set_status(uuid, uuid, text, boolean, boolean, text[]) TO app;
 
 -- ---- 4e. routing_audit_append --------------------------------------------
 -- routing_audit is global-protected (0009: zero app grants). One allowlisted action for now.

@@ -34,6 +34,7 @@ export {
   type UpdateClubConfigParams,
   type UpdateClubConfigResult,
 } from "./club-config.js";
+export { pgErrorHasCode } from "./pg-error.js";
 export {
   ZALO_CONNECTOR_ACTION,
   ZaloConnectError,
@@ -43,6 +44,7 @@ export {
   finishZaloConnect,
   getZaloOnboardingState,
   markBotVerifiedActive,
+  probeZaloConnectReplay,
   readZaloBotTokenEnc,
   resolveZaloBotByToken,
   resolveZaloIdentity,

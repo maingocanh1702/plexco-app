@@ -1,6 +1,7 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { appendSecretDecryptAudit, type Tx } from "@plexco/db";
 import { resolveConnectorSecretRoot } from "./auth-secrets";
+import { log } from "./log";
 import { authKeyVersion, deriveAesKey } from "./oauth-transaction";
 
 /**
@@ -17,6 +18,21 @@ import { authKeyVersion, deriveAesKey } from "./oauth-transaction";
  * decrypt of a stored secret writes one routing_audit row FIRST: if the audit write fails, nothing
  * is decrypted (fail closed). No secret material is ever logged or audited.
  */
+/**
+ * Version label stored next to every ciphertext and CHECKED on decrypt (fail closed on mismatch).
+ * With KMS_PROVIDER=aws-kms and KMS_ENCRYPTED_CONNECTOR_PEPPER set, the connector root has its OWN
+ * identity: `connector-pepper:` + first 16 hex of SHA-256 of that (non-secret) ciphertext blob, so
+ * rotating the pepper changes the label. Otherwise the root is the auth secret and the label is
+ * authKeyVersion() (KMS_KEY_ID or "local").
+ */
+export function connectorKeyVersion(): string {
+  const blob = process.env.KMS_ENCRYPTED_CONNECTOR_PEPPER;
+  if (process.env.KMS_PROVIDER === "aws-kms" && blob) {
+    return `connector-pepper:${createHash("sha256").update(blob).digest("hex").slice(0, 16)}`;
+  }
+  return authKeyVersion();
+}
+
 export const CONNECTOR_ZALO_KEY_INFO = "plexco:connector-zalo-enc:v1";
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
@@ -47,7 +63,7 @@ export async function encryptConnectorSecret(
   });
   cipher.setAAD(aad(binding));
   const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return { enc: Buffer.concat([iv, cipher.getAuthTag(), ct]), keyVersion: authKeyVersion() };
+  return { enc: Buffer.concat([iv, cipher.getAuthTag(), ct]), keyVersion: connectorKeyVersion() };
 }
 
 function open(enc: Buffer, key: Buffer, binding: ConnectorBinding): string {
@@ -64,12 +80,21 @@ function open(enc: Buffer, key: Buffer, binding: ConnectorBinding): string {
   ]).toString("utf8");
 }
 
-/** Audited decrypt of a stored secret. `tx` must be an open withTenant transaction for the binding's tenant. */
+/**
+ * Audited decrypt of a stored secret. `tx` must be an open withTenant transaction for the binding's
+ * tenant. `keyVersion` is the stored label; anything other than the current connector version (or a
+ * missing one) fails closed BEFORE audit or decrypt, with a distinct log event.
+ */
 export async function decryptConnectorSecret(
   tx: Tx,
   enc: Buffer,
   binding: ConnectorBinding,
+  keyVersion: string | null,
 ): Promise<string> {
+  if (keyVersion === null || keyVersion !== connectorKeyVersion()) {
+    log.error("connector_key_version_mismatch", { botId: binding.botId });
+    throw new Error("connector secret: key version mismatch");
+  }
   await appendSecretDecryptAudit(tx, {
     tenantId: binding.tenantId,
     botId: binding.botId,

@@ -8,18 +8,16 @@ import {
   withTenant,
 } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
-import {
-  decryptConnectorSecret,
-  encryptConnectorSecret,
-} from "../../../../../lib/connector-secrets";
+import { encryptConnectorSecret } from "../../../../../lib/connector-secrets";
 import { log } from "../../../../../lib/log";
 import { readBoundedBody } from "../../../../../lib/read-bounded-body";
-import { appDb, rateLimited } from "../../../../../lib/session-cookies";
+import { appDb, clientIp, rateLimited } from "../../../../../lib/session-cookies";
 import {
   classifyProcessingError,
   extractZaloEvent,
   processZaloEvent,
 } from "../../../../../lib/zalo/process-event";
+import { readWebhookSecret } from "../../../../../lib/zalo/webhook-secret-cache";
 
 export const runtime = "nodejs";
 
@@ -31,8 +29,8 @@ export const runtime = "nodejs";
  * signature by design), compared timing-safe over SHA-256 digests so lengths never leak. Raw event
  * is stored (encrypted) BEFORE processing, idempotent on (bot, event id) (BRD NFR-S4).
  *
- * ORDER: token -> status -> pre-auth bucket -> secret -> per-bot bucket -> body -> parse ->
- * [verified] -> store -> process -> 200. Processing failures are recorded on the event row and still
+ * ORDER: token -> status -> secret (cached decrypt) -> [failed attempt: per bot+IP bucket] ->
+ * per-bot bucket -> body -> parse -> [verified] -> store -> process -> 200. Processing failures are recorded on the event row and still
  * answer 200 so Zalo does not retry forever; only a failed STORE answers 5xx (nothing durable yet).
  * Logs carry event names and ids only, never payloads, tokens or secrets.
  */
@@ -62,21 +60,22 @@ export async function POST(
   const { tenantId, botId } = bot;
   const lang = bot.locale === "en" ? "en" : "vi"; // DD-118; replies before auth stay Vietnamese
 
-  // Pre-auth bucket: a leaked token must not let a caller flood decrypt audit rows.
-  if (await rateLimited(`zalo-webhook-auth:${botId}`, 600, 60)) {
-    return err("WEBHOOK_RATE_LIMITED", t("Quá nhiều yêu cầu.", "Too many requests."), 429);
-  }
+  // Secret check FIRST: the decrypt is cached (one audit row per fill), so an unauthenticated caller
+  // who only knows the path token cannot spend decrypts, audit rows or the bot's buckets.
   let secret: string;
   try {
-    const enc = bot.webhookSecretEnc;
-    secret = await withTenant(db, tenantId, (tx) =>
-      decryptConnectorSecret(tx, enc, { tenantId, botId, purpose: "webhook_secret" }),
+    secret = await readWebhookSecret({ ...bot, webhookSecretEnc: bot.webhookSecretEnc }, (fn) =>
+      withTenant(db, tenantId, fn),
     );
   } catch (error) {
     log.error("zalo_webhook_secret_unreadable", { botId, error });
     return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 401);
   }
   if (!safeEqual(header, secret)) {
+    // Failed attempts only are bucketed, per bot AND caller, so guessing cannot lock out Zalo itself.
+    if (await rateLimited(`zalo-webhook-auth:${botId}:${clientIp(request)}`, 30, 60)) {
+      return err("WEBHOOK_RATE_LIMITED", t("Quá nhiều yêu cầu.", "Too many requests."), 429);
+    }
     return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 401);
   }
 
@@ -117,6 +116,7 @@ export async function POST(
         botId,
         externalEventId: event.eventId,
         rawPayloadEnc: raw.enc,
+        keyVersion: raw.keyVersion,
       }),
     );
     if (stored.duplicate || stored.id === null) return ack();
@@ -129,7 +129,7 @@ export async function POST(
     } catch (error) {
       status = "failed";
       errorCode = classifyProcessingError(error);
-      log.error("zalo_event_failed", { botId, errorCode });
+      log.error("zalo_event_failed", { botId, reason: errorCode });
     }
     try {
       await withTenant(db, tenantId, (tx) =>

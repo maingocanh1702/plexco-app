@@ -4416,8 +4416,8 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
         insert: async (v) => {
           const tenantId = await makeFreshTenant();
           await ctx.owner.query(
-            `INSERT INTO zalo_bots (tenant_id, bot_token_enc, webhook_token, status)
-             VALUES ($1,'ucc-bot-token',$2,$3)`,
+            `INSERT INTO zalo_bots (tenant_id, bot_token_enc, webhook_token, webhook_secret_enc, status)
+             VALUES ($1,'ucc-bot-token',$2,'\\x00'::bytea,$3)`,
             [tenantId, randomUUID(), v],
           );
         },
