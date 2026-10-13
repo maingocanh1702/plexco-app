@@ -30,6 +30,8 @@ export function LinkCodeForm({ lang }: { lang: UiLang }) {
       code={code}
       onCodeChange={(next) => {
         setCode(next);
+        // An edited code is a different command: a kept id from an uncertain attempt must not survive.
+        if (state !== "submitting") commandId.current = null;
         if (state !== "submitting") setState("idle");
       }}
       onSubmit={onSubmit}

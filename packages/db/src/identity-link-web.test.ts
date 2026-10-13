@@ -222,6 +222,54 @@ describe("linkZaloToAccount - refusals", () => {
     });
   });
 
+  it("a second (revoked) identity on the source person blocks: channel_identities must count exactly 1", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    const extra = randomUUID();
+    await ctx.owner.query(
+      `INSERT INTO channel_identities
+         (id, person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
+       VALUES ($1, $2, 'zalo', $3, $4, 'inactive')`,
+      [extra, zalo.personId, Buffer.from("x"), `lw-${extra}`],
+    );
+    const issued = await issueFor(zalo.ciId);
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "requires_review",
+    });
+    expect(await ciPerson(zalo.ciId)).toBe(zalo.personId);
+  });
+
+  it("a person merged INTO the source (persons.merged_into_person_id self-reference) blocks", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    await ctx.owner.query(
+      `INSERT INTO persons (display_name, status, merged_into_person_id) VALUES ('Old', 'merged', $1)`,
+      [zalo.personId],
+    );
+    const issued = await issueFor(zalo.ciId);
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "requires_review",
+    });
+    const detail = (
+      await ctx.owner.query(
+        `SELECT detail FROM routing_audit WHERE action = 'identity.link_requires_review' AND actor_id = $1`,
+        [web.accountId],
+      )
+    ).rows[0].detail;
+    expect(detail.blocking_tables).toContain("persons.merged_into_person_id");
+  });
+
+  it("an account with no active person: consume raises 42501 (the route maps it to invalid)", async () => {
+    const zalo = await zaloUser();
+    const orphan = (
+      await ctx.owner.query(`INSERT INTO accounts (person_id) VALUES (NULL) RETURNING id`)
+    ).rows[0].id as string;
+    const issued = await issueFor(zalo.ciId);
+    await expect(linkZaloToAccount(ctx.appPool, issued.code, orphan, keys)).rejects.toMatchObject({
+      code: "42501",
+    });
+  });
+
   it("an account-issued code is unsupported", async () => {
     const web = await webUser();
     const other = await webUser();

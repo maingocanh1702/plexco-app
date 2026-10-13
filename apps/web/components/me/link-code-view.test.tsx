@@ -50,7 +50,8 @@ describe("LinkCodeView", () => {
   it("idle shows no status; submitting disables the controls", () => {
     expect(render("idle")).not.toContain("<strong>");
     const busy = render("submitting");
-    expect(busy).toMatch(/<input[^>]*disabled/);
+    expect(busy).toMatch(/<input[^>]*readOnly=""|<input[^>]*readonly=""/i);
+    expect(busy).toContain('aria-busy="true"');
     expect(busy).toMatch(/<button[^>]*disabled/);
     expect(busy).toContain("Linking…");
   });
@@ -58,11 +59,15 @@ describe("LinkCodeView", () => {
   it("an empty code disables submit; failures mark the input invalid", () => {
     expect(render("idle", "en", "")).toMatch(/<button[^>]*disabled/);
     expect(render("invalid")).toContain('aria-invalid="true"');
+    for (const s of ["offline", "unavailable", "signed_out", "error", "rate_limited"] as const) {
+      expect(render(s)).not.toContain("aria-invalid");
+    }
     expect(render("linked")).not.toContain("aria-invalid");
   });
 
   it("requires_review explains support must merge", () => {
-    expect(render("requires_review", "en")).toContain("support must merge it");
+    expect(render("requires_review", "en")).toContain("cannot be linked automatically");
     expect(render("requires_review", "vi")).toContain("gộp thủ công");
+    expect(render("requires_review", "en")).not.toContain("activity");
   });
 });
