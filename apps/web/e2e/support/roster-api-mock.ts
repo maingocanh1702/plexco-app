@@ -68,8 +68,32 @@ export function rosterRouteKey(
   return null;
 }
 
-let seq = 0;
+/**
+ * Idempotency, as the server does it: a command is applied once per (route key, commandId); a repeat
+ * answers the stored result with `replayed: true` and changes nothing. A 4xx is never stored (the
+ * server did not apply it), so the same id may be tried again. Preview carries no command key.
+ */
+const applied = new WeakMap<MockSession[], Map<string, unknown>>();
 export function handleRoster(
+  state: MockSession[],
+  key: string,
+  path: string,
+  body: Record<string, unknown> | null,
+): RosterResult {
+  const commandId = typeof body?.commandId === "string" ? body.commandId : null;
+  if (key === "preview" || commandId === null) return applyRoster(state, key, path, body);
+  const store = applied.get(state) ?? new Map<string, unknown>();
+  applied.set(state, store);
+  const slot = `${key}:${commandId}`;
+  if (store.has(slot))
+    return { status: 200, data: { ...(store.get(slot) as object), replayed: true } };
+  const result = applyRoster(state, key, path, body);
+  if ("data" in result) store.set(slot, result.data);
+  return result;
+}
+
+let seq = 0;
+function applyRoster(
   state: MockSession[],
   key: string,
   path: string,
@@ -88,8 +112,8 @@ export function handleRoster(
     if (session.status !== "open") return fail("SESSION_NOT_OPEN", "Buổi chưa mở.");
     const displayName = String(b.displayName ?? "").trim();
     if (!displayName) return fail("INVALID_BODY", "Dữ liệu chưa hợp lệ.", 400);
-    if (players.some((p) => p.displayName === displayName && p.status !== "left"))
-      return fail("ALREADY_JOINED", "Người chơi đã có trong buổi này.");
+    // No name-dedup: DD-85 host-add never resolves a name to a member, so the server has no way to
+    // answer ALREADY_JOINED for a repeated displayName. Tests inject that error with failNext("add").
     seq += 1;
     const occupied =
       players.filter((p) => p.status === "active").length + session.guestNotes.length;
@@ -137,7 +161,7 @@ export function handleRoster(
     if ((player.charge?.effectiveAllocated ?? 0) > 0)
       return fail(
         "REMOVE_REQUIRES_REVIEW",
-        "Người chơi đã có thanh toán — hãy hoàn tác trước khi xoá.",
+        "Người chơi đã có thanh toán — hãy hoàn tác thanh toán trước khi gỡ.",
       );
     player.status = "left";
     if (player.charge) {

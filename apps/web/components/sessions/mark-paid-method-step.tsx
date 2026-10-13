@@ -2,7 +2,8 @@
 
 import { useT } from "../../lib/i18n-client";
 import { NOTE_MAX } from "../../lib/mark-paid-model";
-import type { PaymentMethod } from "../../lib/sessions-api";
+import type { PaymentMethod } from "../../lib/roster-payments-api";
+import { methodLabel } from "../../lib/roster-rules";
 import { TextField } from "../ui/text-field";
 import styles from "./roster.module.css";
 
@@ -32,9 +33,7 @@ export function MarkPaidMethodStep({
               checked={method === m}
               onChange={() => onMethod(m)}
             />
-            {m === "cash"
-              ? t("Tiền mặt", "Cash")
-              : t("Chuyển khoản (host xác nhận)", "Bank transfer (host-confirmed)")}
+            {methodLabel(m, t)}
           </label>
         ))}
       </fieldset>

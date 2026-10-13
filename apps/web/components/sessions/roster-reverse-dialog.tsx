@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
-import { describeReverseError } from "../../lib/session-error-ui";
-import { reversePayment, type SessionApiContext } from "../../lib/sessions-api";
+import { describeReverseError, isDefiniteFailure } from "../../lib/session-error-ui";
+import { reversePayment } from "../../lib/roster-payments-api";
+import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { TextField } from "../ui/text-field";
@@ -102,7 +103,8 @@ export function RosterReverseDialog({
         ) : null
       }
       onConfirm={() => void confirm()}
-      onCancel={onClose}
+      // after an uncertain failure the reversal may have landed: refetch (which also closes) instead of just closing
+      onCancel={() => (cmd.error && !isDefiniteFailure(cmd.error) ? onReload() : onClose())}
     />
   );
 }

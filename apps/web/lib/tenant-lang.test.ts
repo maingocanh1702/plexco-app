@@ -235,6 +235,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (c) — host roster / manual-payment screens (M2c-fe): pure UI rules and the command hook; every
   // user-facing string comes from the `t` the caller passes from useT().
   "lib/mark-paid-model.ts": "c",
+  "lib/roster-payments-api.ts": "c",
   "lib/roster-rules.ts": "c",
   "lib/use-roster-command.ts": "c",
   // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation

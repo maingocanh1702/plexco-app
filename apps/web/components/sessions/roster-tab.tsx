@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useT } from "../../lib/i18n-client";
-import { canEditRoster, canTakePayments, isPayable } from "../../lib/roster-rules";
+import { canEditRoster, canTakePayments, displayNameOf, isPayable } from "../../lib/roster-rules";
 import type { SessionApiContext, SessionDetailDto } from "../../lib/sessions-api";
 import { useOnlineStatus } from "../../lib/use-online-status";
 import { Button } from "../ui/button";
@@ -61,11 +61,12 @@ export function RosterTab({
     setFocusHeading((n) => n + 1);
     onChanged();
   };
-  const name = (p: SessionDetailDto["players"][number]) =>
-    p.displayName ?? t("(chưa đặt tên)", "(unnamed)");
+  const name = (p: SessionDetailDto["players"][number]) => displayNameOf(p.displayName, t);
 
-  const editHint = `${uid}-edit`;
-  const payHint = `${uid}-pay`;
+  // Offline explains both gates with one paragraph; online each gate has its own status hint.
+  const offlineId = `${uid}-offline`;
+  const editHint = online ? `${uid}-edit` : offlineId;
+  const payHint = online ? `${uid}-pay` : offlineId;
   return (
     <div className={styles.roster}>
       <RosterCounts session={session} />
@@ -74,14 +75,6 @@ export function RosterTab({
         <h2 id={`${uid}-players`} ref={heading} tabIndex={-1} className={styles.sectionTitle}>
           {t("Người chơi", "Players")}
         </h2>
-        {!online ? (
-          <p role="status" className={rosterStyles.hint}>
-            {t(
-              "Đang ngoại tuyến — chưa thể thêm, gỡ hay gạch nợ.",
-              "You are offline — adding, removing and recording payments are unavailable.",
-            )}
-          </p>
-        ) : null}
         <div className={rosterStyles.toolbar}>
           <RosterAddPlayerForm
             ctx={ctx}
@@ -99,7 +92,14 @@ export function RosterTab({
             {t(`Gạch nợ (${selectedPlayers.length})`, `Record payment (${selectedPlayers.length})`)}
           </Button>
         </div>
-        <RosterGateHints status={session.status} editHint={editHint} payHint={payHint} />
+        <RosterGateHints
+          online={online}
+          editable={editable}
+          payable={payable}
+          offlineId={offlineId}
+          editHint={editHint}
+          payHint={payHint}
+        />
         {session.players.length === 0 ? (
           <EmptyState
             title={t("Chưa có người chơi", "No players yet")}
@@ -115,6 +115,7 @@ export function RosterTab({
                 selected={picked.has(p.id)}
                 canRemove={editable}
                 canReverse={payable}
+                timeZone={session.timezone}
                 removeHint={editHint}
                 onSelect={(on) =>
                   setPicked((prev) => {

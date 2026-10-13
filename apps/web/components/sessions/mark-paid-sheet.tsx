@@ -2,12 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
-import {
-  buildConfirmBody,
-  initialAmounts,
-  NOTE_MAX,
-  type AmountMap,
-} from "../../lib/mark-paid-model";
+import { buildConfirmBody, initialAmounts, type AmountMap } from "../../lib/mark-paid-model";
 import { formatVndInput } from "../../lib/money";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
 import {
@@ -16,8 +11,8 @@ import {
   type MarkPaidLineDto,
   type MarkPaidResultDto,
   type PaymentMethod,
-  type SessionApiContext,
-} from "../../lib/sessions-api";
+} from "../../lib/roster-payments-api";
+import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { ConfirmDialog } from "../ui/confirm-dialog";
 import { ApiErrorNotice } from "./api-error-notice";
@@ -60,8 +55,9 @@ export function MarkPaidSheet({
   const previewCmd = useRosterCommand();
   const confirmCmd = useRosterCommand();
 
+  // Reset while the sheet is CLOSED, so reopening never flashes the previous run's step or lines.
   useEffect(() => {
-    if (!open) return;
+    if (open) return;
     setStep("method");
     setMethod("cash");
     setNote("");
@@ -74,7 +70,7 @@ export function MarkPaidSheet({
   const amounts: AmountMap = Object.fromEntries(
     lines.map((l) => [l.playerId, parseAmount(raw[l.playerId] ?? "")]),
   );
-  const body = buildConfirmBody({ commandId: "x", method, lines, amounts, note });
+  const body = buildConfirmBody({ method, lines, amounts, note });
   const locked = confirmCmd.error !== null && !isDefiniteFailure(confirmCmd.error);
 
   async function preview() {
@@ -95,7 +91,7 @@ export function MarkPaidSheet({
   }
 
   async function confirm() {
-    if (!body || note.trim().length > NOTE_MAX) return;
+    if (!body) return;
     const res = await confirmCmd.run((commandId) =>
       confirmMarkPaid(ctx, sessionId, { ...body, commandId }),
     );
@@ -124,6 +120,18 @@ export function MarkPaidSheet({
     },
   };
   const active = step === "method" ? previewCmd : confirmCmd;
+  // "Go back" must do what it says: one step back on review. After an uncertain confirm failure
+  // the payment may have committed, so there is no safe step back (a new key could double-pay):
+  // close and refetch instead.
+  function cancel() {
+    if (step === "review" && !locked) {
+      confirmCmd.reset();
+      setStep("method");
+      return;
+    }
+    if (locked) onReload();
+    onClose(step === "result");
+  }
   const reloadAndRestart = () => {
     onReload();
     previewCmd.reset();
@@ -174,7 +182,7 @@ export function MarkPaidSheet({
         if (step === "review" && !body) return;
         copy[step].run();
       }}
-      onCancel={() => onClose(step === "result")}
+      onCancel={cancel}
     />
   );
 }

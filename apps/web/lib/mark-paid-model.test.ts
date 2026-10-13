@@ -6,7 +6,7 @@ import {
   problems,
   shownTotal,
 } from "./mark-paid-model";
-import type { MarkPaidLineDto } from "./sessions-api";
+import type { MarkPaidLineDto } from "./roster-payments-api";
 
 const line = (playerId: string, remaining: number, amount = remaining): MarkPaidLineDto => ({
   playerId,
@@ -32,13 +32,12 @@ describe("amountProblem", () => {
 });
 
 describe("buildConfirmBody", () => {
-  const base = { commandId: "cmd-1", method: "cash" as const, lines, note: "" };
+  const base = { method: "cash" as const, lines, note: "" };
 
   it("expectedTotal is always the sum of the item amounts shown (partial payment included)", () => {
     const amounts = { p1: 50000, p2: 10000 }; // p2 pays partially
     const body = buildConfirmBody({ ...base, amounts });
     expect(body).toEqual({
-      commandId: "cmd-1",
       method: "cash",
       items: [
         { playerId: "p1", amount: 50000 },
@@ -76,6 +75,18 @@ describe("buildConfirmBody", () => {
     const amounts = initialAmounts(lines);
     expect(buildConfirmBody({ ...base, amounts, note: "  tiền mặt  " })!.note).toBe("tiền mặt");
     expect("note" in buildConfirmBody({ ...base, amounts, note: "   " })!).toBe(false);
+  });
+
+  it("shownTotal is null while any line is invalid, never a partial sum", () => {
+    expect(shownTotal(lines, { p1: 50000, p2: 10000 })).toBe(60000);
+    expect(shownTotal(lines, { p1: 50000, p2: 30001 })).toBeNull();
+    expect(shownTotal(lines, { p1: 50000 })).toBeNull();
+  });
+
+  it("the body carries no commandId (the hook mints one per attempt)", () => {
+    expect("commandId" in buildConfirmBody({ ...base, amounts: initialAmounts(lines) })!).toBe(
+      false,
+    );
   });
 
   it("per-line problems are reported by player", () => {

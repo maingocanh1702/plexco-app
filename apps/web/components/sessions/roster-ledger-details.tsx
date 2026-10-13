@@ -3,6 +3,7 @@
 import { useLang, useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
 import { ledgerRows } from "../../lib/roster-rules";
+import { resolveTimeZone } from "../../lib/session-time";
 import type { RosterChargeDto } from "../../lib/sessions-api";
 import { Button } from "../ui/button";
 import styles from "./roster.module.css";
@@ -12,11 +13,14 @@ export function RosterLedgerDetails({
   charge,
   name,
   canReverse,
+  timeZone,
   onReverse,
 }: {
   charge: RosterChargeDto;
   name: string;
   canReverse: boolean;
+  /** Session zone (session-time.ts invariant): never the browser's own. */
+  timeZone: string;
   onReverse: (allocationId: string, amount: number) => void;
 }) {
   const t = useT();
@@ -25,6 +29,7 @@ export function RosterLedgerDetails({
   const date = new Intl.DateTimeFormat(lang === "en" ? "en-GB" : "vi-VN", {
     dateStyle: "short",
     timeStyle: "short",
+    timeZone: resolveTimeZone(timeZone),
   });
   return (
     <details className={styles.ledger}>

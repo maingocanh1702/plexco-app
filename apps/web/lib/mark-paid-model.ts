@@ -1,4 +1,4 @@
-import type { MarkPaidLineDto, PaymentMethod } from "./sessions-api";
+import type { MarkPaidLineDto, PaymentMethod } from "./roster-payments-api";
 
 /**
  * Pure model of the manual mark-paid sheet (DD-25 preview -> confirm). The confirm body is built
@@ -34,16 +34,19 @@ export function problems(
   );
 }
 
-/** Sum of the amounts currently shown; invalid lines count 0 (the confirm is disabled then anyway). */
-export function shownTotal(lines: readonly MarkPaidLineDto[], amounts: AmountMap): number {
-  return lines.reduce((sum, l) => {
+/** Sum of the amounts currently shown, or `null` while any line is invalid (never a misleading partial sum). */
+export function shownTotal(lines: readonly MarkPaidLineDto[], amounts: AmountMap): number | null {
+  let sum = 0;
+  for (const l of lines) {
     const a = amounts[l.playerId] ?? null;
-    return amountProblem(a, l.remaining) === null ? sum + (a as number) : sum;
-  }, 0);
+    if (amountProblem(a, l.remaining) !== null) return null;
+    sum += a as number;
+  }
+  return sum;
 }
 
+/** The confirm body minus the idempotency key, which the command hook supplies per attempt. */
 export interface ConfirmBody {
-  commandId: string;
   method: PaymentMethod;
   items: { playerId: string; amount: number }[];
   expectedTotal: number;
@@ -52,7 +55,6 @@ export interface ConfirmBody {
 
 /** `null` unless every line is valid (and there is at least one). The note is trimmed, omitted when empty. */
 export function buildConfirmBody(input: {
-  commandId: string;
   method: PaymentMethod;
   lines: readonly MarkPaidLineDto[];
   amounts: AmountMap;
@@ -70,7 +72,6 @@ export function buildConfirmBody(input: {
   const note = input.note.trim();
   if (note.length > NOTE_MAX) return null;
   return {
-    commandId: input.commandId,
     method: input.method,
     items,
     expectedTotal,

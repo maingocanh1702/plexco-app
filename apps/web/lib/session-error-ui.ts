@@ -136,6 +136,15 @@ export function describeSessionError(error: unknown, t: TFn): ErrorView {
         ),
         "none",
       );
+    case "REMOVE_REQUIRES_REVIEW":
+      // OD-5: client copy (not the envelope message) so every surface tells the host the same next step.
+      return view(
+        t(
+          "Người này đã có thanh toán. Hãy hoàn tác thanh toán trước rồi mới gỡ.",
+          "This person has a recorded payment. Reverse the payment first, then remove them.",
+        ),
+        "none",
+      );
     case "SESSION_NOT_FOUND":
       return view(t("Không tìm thấy buổi chơi này.", "This session was not found."), "none");
     default:

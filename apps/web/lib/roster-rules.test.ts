@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { makeT } from "./i18n-client";
-import { canEditRoster, canTakePayments, isPayable, ledgerRows } from "./roster-rules";
+import {
+  canEditRoster,
+  canTakePayments,
+  displayNameOf,
+  isPayable,
+  ledgerRows,
+  methodLabel,
+  sourceLabel,
+} from "./roster-rules";
 import type { RosterChargeDto, RosterPlayerDto } from "./sessions-api";
 
 const t = makeT("en");
@@ -97,5 +105,27 @@ describe("ledgerRows", () => {
     expect(
       ledgerRows(charge({ allocations: [alloc("a1", "cash", 1)] }), makeT("vi"))[0]!.label,
     ).toBe("Tiền mặt");
+  });
+});
+
+describe("OD-6 money-source labels", () => {
+  const vi = makeT("vi");
+  it("cash and host-attested transfer are named the same in the picker and the ledger", () => {
+    expect(methodLabel("cash", vi)).toBe("Tiền mặt");
+    expect(methodLabel("attested_transfer", vi)).toBe("Chuyển khoản (chủ xác nhận)");
+    expect(sourceLabel("attested_transfer", 1, vi)).toBe(methodLabel("attested_transfer", vi));
+    expect(sourceLabel("cash", 1, t)).toBe(methodLabel("cash", t));
+  });
+  it("an unknown source never leaks its raw key: it reads Other / Khác", () => {
+    expect(sourceLabel("stripe_v9", 1, t)).toBe("Other");
+    expect(sourceLabel("stripe_v9", 1, vi)).toBe("Khác");
+  });
+});
+
+describe("displayNameOf", () => {
+  it("falls back to (unnamed) for a missing name only", () => {
+    expect(displayNameOf(null, t)).toBe("(unnamed)");
+    expect(displayNameOf(undefined, makeT("vi"))).toBe("(chưa đặt tên)");
+    expect(displayNameOf("Lan", t)).toBe("Lan");
   });
 });

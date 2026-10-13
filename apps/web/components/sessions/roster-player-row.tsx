@@ -3,6 +3,7 @@
 import { useId } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
+import { displayNameOf } from "../../lib/roster-rules";
 import type { RosterPlayerDto } from "../../lib/sessions-api";
 import { Badge, type BadgeTone } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -17,6 +18,7 @@ export function RosterPlayerRow({
   selected,
   canRemove,
   canReverse,
+  timeZone,
   removeHint,
   onSelect,
   onRemove,
@@ -27,6 +29,8 @@ export function RosterPlayerRow({
   selected: boolean;
   canRemove: boolean;
   canReverse: boolean;
+  /** The session's IANA zone: ledger instants are shown in it, like the rest of the page. */
+  timeZone: string;
   /** id of the paragraph explaining why remove is disabled */
   removeHint?: string;
   onSelect: (checked: boolean) => void;
@@ -36,7 +40,7 @@ export function RosterPlayerRow({
   const t = useT();
   const lang = useLang();
   const checkId = useId();
-  const name = player.displayName ?? t("(chưa đặt tên)", "(unnamed)");
+  const name = displayNameOf(player.displayName, t);
   const { charge } = player;
 
   const status = ((): [BadgeTone, string] => {
@@ -111,6 +115,7 @@ export function RosterPlayerRow({
           charge={charge}
           name={name}
           canReverse={canReverse}
+          timeZone={timeZone}
           onReverse={onReverse}
         />
       ) : null}

@@ -45,7 +45,6 @@ describe("describeSessionError", () => {
       "MARK_PAID_TOTAL_MISMATCH",
       "PLAYER_NOT_FOUND",
       "REJOIN_REQUIRES_REVIEW",
-      "REMOVE_REQUIRES_REVIEW",
       "REVERSAL_EXCEEDS_EFFECTIVE",
       "REVERSAL_NOT_SUPPORTED",
     ]) {
@@ -128,6 +127,16 @@ describe("roster / payment errors", () => {
     for (const code of ["ALREADY_JOINED", "REJOIN_REQUIRES_REVIEW", "REMOVE_REQUIRES_REVIEW"]) {
       expect(describeSessionError(err(code, "m", 409), en).action, code).toBe("none");
     }
+  });
+
+  it("OD-5: REMOVE_REQUIRES_REVIEW tells the host to reverse the payment first, in both languages", () => {
+    const vi = (v: string) => v;
+    const e = err("REMOVE_REQUIRES_REVIEW", "server text", 409);
+    expect(describeSessionError(e, en)).toMatchObject({ action: "none", known: true });
+    expect(describeSessionError(e, en).message).toBe(
+      "This person has a recorded payment. Reverse the payment first, then remove them.",
+    );
+    expect(describeSessionError(e, vi).message).toContain("Hãy hoàn tác thanh toán trước");
   });
 
   it("the reversal dialog explains FORBIDDEN as a missing money.correct grant; others unchanged", () => {

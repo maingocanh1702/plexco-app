@@ -2,7 +2,9 @@
 
 import { useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
-import { addPlayer, type SessionApiContext } from "../../lib/sessions-api";
+import { addPlayer } from "../../lib/roster-payments-api";
+import { isDefiniteFailure } from "../../lib/session-error-ui";
+import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { Button } from "../ui/button";
 import { TextField } from "../ui/text-field";
@@ -14,6 +16,8 @@ export const DISPLAY_NAME_MAX = 100;
 /**
  * Host-add by display name (DD-85: no member picker, a name is never resolved to a member). The
  * one field is trimmed 1..100; the server answers active or waitlisted and the result is announced.
+ * After an UNCERTAIN failure the first add may have committed, so the name freezes and the retry
+ * replays the same command key; a reset would mint a new key and could add the person twice.
  */
 export function RosterAddPlayerForm({
   ctx,
@@ -35,9 +39,11 @@ export function RosterAddPlayerForm({
   const [name, setName] = useState("");
   const [invalid, setInvalid] = useState(false);
   const cmd = useRosterCommand();
+  const locked = cmd.error !== null && !isDefiniteFailure(cmd.error);
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
+    if (cmd.busy) return;
     const displayName = name.trim();
     if (displayName.length === 0 || displayName.length > DISPLAY_NAME_MAX) {
       setInvalid(true);
@@ -58,6 +64,16 @@ export function RosterAddPlayerForm({
         : t(`Đã thêm ${displayName}`, `${displayName} added`),
     );
     setName("");
+    setOpen(false);
+  }
+
+  // Cancelling after an uncertain failure: refetch so the host sees whether the add landed, and
+  // drop the name so reopening cannot re-add it blindly.
+  function cancel() {
+    if (locked) {
+      onReload();
+      setName("");
+    }
     setOpen(false);
   }
 
@@ -96,6 +112,7 @@ export function RosterAddPlayerForm({
         maxLength={DISPLAY_NAME_MAX}
         autoComplete="off"
         autoFocus
+        readOnly={locked}
         onChange={(e) => {
           setName(e.target.value);
           cmd.reset(); // a changed name is a new command
@@ -108,7 +125,7 @@ export function RosterAddPlayerForm({
         <Button type="submit" disabled={cmd.busy} aria-busy={cmd.busy ? true : undefined}>
           {cmd.busy ? t("Đang thêm…", "Adding…") : t("Thêm", "Add")}
         </Button>
-        <Button variant="ghost" disabled={cmd.busy} onClick={() => setOpen(false)}>
+        <Button variant="ghost" disabled={cmd.busy} onClick={cancel}>
           {t("Huỷ", "Cancel")}
         </Button>
       </div>

@@ -1,4 +1,5 @@
 import type { TFn } from "./i18n-client";
+import type { PaymentMethod } from "./roster-payments-api";
 import type { RosterChargeDto, RosterPlayerDto } from "./sessions-api";
 
 /**
@@ -35,14 +36,23 @@ export interface LedgerRow {
   reversible: boolean;
 }
 
+/** The ONE place a player's name is rendered: a roster row may have no display name. */
+export const displayNameOf = (name: string | null | undefined, t: TFn): string =>
+  name ?? t("(chưa đặt tên)", "(unnamed)");
+
+/** OD-6: the two manual money sources, labelled the same in the method picker and in the ledger. */
+export function methodLabel(method: PaymentMethod, t: TFn): string {
+  return method === "cash"
+    ? t("Tiền mặt", "Cash")
+    : t("Chuyển khoản (chủ xác nhận)", "Bank transfer (host-confirmed)");
+}
+
 export function sourceLabel(source: string, amount: number, t: TFn): string {
   if (source === "reversal" || amount < 0) return t("Hoàn tác", "Reversal");
-  if (source === "cash") return t("Tiền mặt", "Cash");
-  if (source === "attested_transfer")
-    return t("Chuyển khoản (host xác nhận)", "Bank transfer (host-confirmed)");
+  if (source === "cash" || source === "attested_transfer") return methodLabel(source, t);
   if (source === "auto" || source === "manual") return t("Đối soát ngân hàng", "Bank match");
   if (source === "waiver") return t("Miễn thu", "Waiver");
-  return source;
+  return t("Khác", "Other");
 }
 
 /** Ledger rows in server order, with `reversible` derived from the same ledger (never a second formula). */

@@ -4,7 +4,8 @@ import { useId } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
 import { problems, shownTotal, type AmountMap } from "../../lib/mark-paid-model";
 import { formatVnd, parseVndInput } from "../../lib/money";
-import type { MarkPaidLineDto } from "../../lib/sessions-api";
+import { displayNameOf } from "../../lib/roster-rules";
+import type { MarkPaidLineDto } from "../../lib/roster-payments-api";
 import fieldStyles from "../ui/field.module.css";
 import styles from "./roster.module.css";
 
@@ -29,11 +30,12 @@ export function MarkPaidLines({
   const lang = useLang();
   const uid = useId();
   const bad = problems(lines, amounts);
+  const total = shownTotal(lines, amounts);
   return (
     <>
       <ul className={styles.lines}>
-        {lines.map((line) => {
-          const name = names[line.playerId] ?? t("(chưa đặt tên)", "(unnamed)");
+        {lines.map((line, index) => {
+          const name = displayNameOf(names[line.playerId], t);
           const problem = bad[line.playerId];
           const inputId = `${uid}-${line.playerId}`;
           const errId = `${inputId}-err`;
@@ -54,6 +56,8 @@ export function MarkPaidLines({
                 inputMode="numeric"
                 autoComplete="off"
                 readOnly={locked}
+                // the review step just replaced the form: move focus to the first amount (announces it)
+                autoFocus={index === 0}
                 value={raw[line.playerId] ?? ""}
                 aria-invalid={problem ? true : undefined}
                 aria-describedby={problem ? errId : undefined}
@@ -73,7 +77,7 @@ export function MarkPaidLines({
       </ul>
       <p className={styles.total} aria-live="polite">
         <span>{t("Tổng cộng", "Total")}</span>
-        <span>{formatVnd(shownTotal(lines, amounts), lang)}</span>
+        <span>{total === null ? "—" : formatVnd(total, lang)}</span>
       </p>
     </>
   );

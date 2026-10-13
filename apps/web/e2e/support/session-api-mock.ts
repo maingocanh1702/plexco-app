@@ -145,8 +145,12 @@ export const ROSTER_PLAYERS = [
 export interface ApiMock {
   state: MockSession[];
   calls: RecordedCall[];
-  /** The next call to this route key is answered with `error` instead (consumed once). */
-  failNext(key: string, error: MockError | "network"): void;
+  /**
+   * The next call to this route key is answered with `error` instead (consumed once). `"network"`
+   * drops the request BEFORE the server sees it; `"lost-response"` (roster keys only) lets the
+   * server APPLY it and then drops the reply, the case an idempotent retry must replay.
+   */
+  failNext(key: string, error: MockError | "network" | "lost-response"): void;
   /** The next call to this route key waits until the returned resolver is called (consumed once). */
   holdNext(key: string): () => void;
   /** Delay (ms) applied to the list response, to observe the loading state. */
@@ -185,7 +189,7 @@ export async function installApiMock(
 ): Promise<ApiMock> {
   // Deep copy: fixtures are module-level and the roster mock mutates players/ledgers in place.
   const state = initial.map((s) => structuredClone(s));
-  const failures = new Map<string, (MockError | "network")[]>();
+  const failures = new Map<string, (MockError | "network" | "lost-response")[]>();
   const holds = new Map<string, Promise<void>[]>();
   let seq = 0;
   const mock: ApiMock = {
@@ -258,9 +262,15 @@ export async function installApiMock(
     await holds.get(key)?.shift();
     const injected = take(key);
     if (injected === "network") return route.abort("internetdisconnected");
-    if (injected) return json(route, injected.statusCode, errorEnvelope(injected));
+    if (injected && injected !== "lost-response")
+      return json(route, injected.statusCode, errorEnvelope(injected));
 
     const rosterKey = rosterRouteKey(method, path, body);
+    if (injected === "lost-response") {
+      if (!rosterKey) throw new Error(`lost-response needs a roster route key, got "${key}"`);
+      handleRoster(state, rosterKey, path, body);
+      return route.abort("internetdisconnected");
+    }
     if (rosterKey) {
       const result = handleRoster(state, rosterKey, path, body);
       return "error" in result
