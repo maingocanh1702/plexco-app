@@ -60,6 +60,10 @@
  * LINK_CODE_INVALID, LINK_CODE_RATE_LIMITED and MERGE_REQUIRES_REVIEW arrived with POST /api/me/link (M3b),
  * named by feature_identity_tech.md section 7; LINK_UNAVAILABLE (503, key not configured) is not pinned by
  * the spec and is proposed in the lane report.
+ *
+ * CHANNEL_NOT_LINKED (409) arrived with POST /api/me/channels/:id/detach (M4): one answer for "not yours",
+ * "unknown" and "already detached" (no existence oracle). feature_user_settings_tech.md does not pin it;
+ * proposed in the lane report.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -72,6 +76,7 @@ export const API_ERROR_CODES = [
   "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_OCCUPANCY",
   "CAPACITY_BELOW_ROSTER",
+  "CHANNEL_NOT_LINKED",
   "CHARGE_ALREADY_SETTLED",
   "CHARGE_NOT_PAYABLE",
   "COMMAND_ID_CONFLICT",

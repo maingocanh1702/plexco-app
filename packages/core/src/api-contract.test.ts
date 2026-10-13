@@ -166,3 +166,9 @@ describe("account <-> Zalo link codes (M3b)", () => {
     }
   });
 });
+
+describe("linked channels (M4)", () => {
+  it("registers the literal POST /api/me/channels/:id/detach emits", () => {
+    expect(isApiErrorCode("CHANNEL_NOT_LINKED")).toBe(true);
+  });
+});
