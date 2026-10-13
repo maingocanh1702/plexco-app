@@ -7,6 +7,7 @@ import { useSession } from "../../lib/use-session";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { ErrorState } from "../ui/error-state";
+import { SkipLink } from "../ui/skip-link";
 import { Spinner } from "../ui/spinner";
 import { LandingView } from "./landing-view";
 import styles from "./workspace-redirect.module.css";
@@ -33,39 +34,48 @@ export function WorkspaceRedirect() {
   if (state.status === "signed-out") return <LandingView authError={null} />;
   if (state.status === "error") {
     return (
-      <main id="main-content" className={styles.page}>
-        <ErrorState
-          title={t("Không tải được tài khoản", "Could not load your account")}
-          body={t("Kiểm tra kết nối mạng rồi thử lại.", "Check your connection and try again.")}
-          onRetry={() => void refresh()}
-        />
-      </main>
+      <>
+        <SkipLink />
+        <main id="main-content" className={styles.page}>
+          <ErrorState
+            title={t("Không tải được tài khoản", "Could not load your account")}
+            body={t("Kiểm tra kết nối mạng rồi thử lại.", "Check your connection and try again.")}
+            onRetry={() => void refresh()}
+          />
+        </main>
+      </>
     );
   }
   if (state.status === "ready" && !target) {
     return (
-      <main id="main-content" className={styles.page}>
-        <h1>{t("Chọn câu lạc bộ", "Choose a club")}</h1>
-        <ul className={styles.list}>
-          {state.session.tenants.map((tenant, index) => (
-            <li key={tenant.tenantId}>
-              <Card>
-                <Button href={`/c/${tenant.tenantId}`} variant="secondary" block>
-                  {tenant.name ?? t(`Câu lạc bộ ${index + 1}`, `Club ${index + 1}`)}
-                </Button>
-              </Card>
-            </li>
-          ))}
-        </ul>
-        <Button href="/onboarding/new-club" variant="ghost">
-          {t("Tạo câu lạc bộ mới", "Create a new club")}
-        </Button>
-      </main>
+      <>
+        <SkipLink />
+        <main id="main-content" className={styles.page}>
+          <h1>{t("Chọn câu lạc bộ", "Choose a club")}</h1>
+          <ul className={styles.list}>
+            {state.session.tenants.map((tenant, index) => (
+              <li key={tenant.tenantId}>
+                <Card>
+                  <Button href={`/c/${tenant.tenantId}`} variant="secondary" block>
+                    {tenant.name ?? t(`Câu lạc bộ ${index + 1}`, `Club ${index + 1}`)}
+                  </Button>
+                </Card>
+              </li>
+            ))}
+          </ul>
+          <Button href="/onboarding/new-club" variant="ghost">
+            {t("Tạo câu lạc bộ mới", "Create a new club")}
+          </Button>
+        </main>
+      </>
     );
   }
   return (
-    <main id="main-content" className={styles.page}>
-      <Spinner />
-    </main>
+    <>
+      <SkipLink />
+      <main id="main-content" className={styles.page}>
+        <Spinner />
+      </main>
+    </>
   );
 }
