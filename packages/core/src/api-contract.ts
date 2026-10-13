@@ -46,8 +46,16 @@
  * "you are not a member", and "this note is not yours" (403) is not "there is no such note" (404).
  * createGuestNote also raises a narrow INVALID_INPUT, which the route collapses onto INVALID_BODY
  * exactly like the other commands' validation variants.
+ *
+ * Web MVP lane M2c (host roster + manual mark-paid + reversal) registers: ALREADY_JOINED,
+ * PLAYER_NOT_FOUND, REJOIN_REQUIRES_REVIEW (spec §3 catalog); ALLOCATION_EXCEEDS_FUNDS,
+ * CHARGE_ALREADY_SETTLED, REVERSAL_EXCEEDS_EFFECTIVE (payment_reconcile BE/FE specs); and four codes
+ * the specs do NOT pin, proposed in the lane report for decisions.md: REMOVE_REQUIRES_REVIEW,
+ * CHARGE_NOT_PAYABLE, MARK_PAID_TOTAL_MISMATCH, REVERSAL_NOT_SUPPORTED.
  */
 export const API_ERROR_CODES = [
+  "ALLOCATION_EXCEEDS_FUNDS",
+  "ALREADY_JOINED",
   "AUTH_INVALID",
   "AUTH_REQUIRED",
   "AUTH_STALE",
@@ -55,6 +63,8 @@ export const API_ERROR_CODES = [
   "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_OCCUPANCY",
   "CAPACITY_BELOW_ROSTER",
+  "CHARGE_ALREADY_SETTLED",
+  "CHARGE_NOT_PAYABLE",
   "COMMAND_ID_CONFLICT",
   "CSRF_INVALID",
   "FORBIDDEN",
@@ -64,12 +74,18 @@ export const API_ERROR_CODES = [
   "INVALID_TIME_RANGE",
   "INVITE_NOT_ALLOWED",
   "LOGIN_RATE_LIMITED",
+  "MARK_PAID_TOTAL_MISMATCH",
   "MISSING_DISCOVERY_FIELDS",
   "NOT_FOUND",
   "NOT_NOTE_CREATOR",
   "PLAYER_NOT_ACTIVE",
+  "PLAYER_NOT_FOUND",
   "PRICE_CHANGE_REQUIRES_POLICY",
   "RATE_LIMITED",
+  "REJOIN_REQUIRES_REVIEW",
+  "REMOVE_REQUIRES_REVIEW",
+  "REVERSAL_EXCEEDS_EFFECTIVE",
+  "REVERSAL_NOT_SUPPORTED",
   "SESSION_FULL",
   "SESSION_NOT_FOUND",
   "SESSION_NOT_OPEN",

@@ -1,6 +1,7 @@
 import { isApiErrorCode, type ApiErrorCode } from "@plexco/core";
 import { runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
+  RosterMoneyError,
   SessionCancelAuthorizationError,
   SessionCancelError,
   SessionCloseAuthorizationError,
@@ -431,6 +432,19 @@ export function readExpectedVersion(body: Record<string, unknown>): number | und
  * narrowing alone was not enough.
  */
 const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
+  // Web MVP lane M2c (roster + manual mark-paid + reversal), raised as RosterMoneyError.
+  ["ALLOCATION_EXCEEDS_FUNDS", 409],
+  ["ALREADY_JOINED", 409],
+  ["CHARGE_ALREADY_SETTLED", 409],
+  ["CHARGE_NOT_PAYABLE", 409],
+  ["FORBIDDEN", 403],
+  ["MARK_PAID_TOTAL_MISMATCH", 409],
+  ["NOT_FOUND", 404],
+  ["PLAYER_NOT_FOUND", 404],
+  ["REJOIN_REQUIRES_REVIEW", 409],
+  ["REMOVE_REQUIRES_REVIEW", 409],
+  ["REVERSAL_EXCEEDS_EFFECTIVE", 409],
+  ["REVERSAL_NOT_SUPPORTED", 409],
   // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
   // (feature_session_management_tech.md:285), which is authority here — this route does not get
   // to pick a status for a spec-pinned code. It is a refusal to act while money or an active
@@ -480,6 +494,60 @@ const VALIDATION_VARIANTS: ReadonlySet<string> = new Set([
  * waiting to be found — there are none. The count is true of that tree, not forever.
  */
 const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = new Map([
+  [
+    "ALLOCATION_EXCEEDS_FUNDS",
+    ["Số tiền vượt quá khoản còn thiếu.", "The amount exceeds the remaining balance."],
+  ],
+  ["ALREADY_JOINED", ["Người chơi đã có trong buổi này.", "This player is already on the roster."]],
+  [
+    "CHARGE_ALREADY_SETTLED",
+    ["Khoản thu này đã được thanh toán đủ.", "This charge is already fully paid."],
+  ],
+  [
+    "CHARGE_NOT_PAYABLE",
+    [
+      "Chỉ ghi nhận thanh toán cho người chơi đang tham gia.",
+      "Payments can only be recorded for an active player.",
+    ],
+  ],
+  [
+    "FORBIDDEN",
+    ["Bạn không có quyền thực hiện thao tác này.", "You are not permitted to do this."],
+  ],
+  [
+    "MARK_PAID_TOTAL_MISMATCH",
+    [
+      "Số tiền đã thay đổi — xem lại rồi xác nhận lại.",
+      "The balance changed — review and confirm again.",
+    ],
+  ],
+  ["NOT_FOUND", ["Không tìm thấy khoản thanh toán.", "Payment not found."]],
+  ["PLAYER_NOT_FOUND", ["Không tìm thấy người chơi.", "Player not found."]],
+  [
+    "REJOIN_REQUIRES_REVIEW",
+    [
+      "Người chơi này cần được xem xét trước khi thêm lại.",
+      "This player needs review before being added again.",
+    ],
+  ],
+  [
+    "REMOVE_REQUIRES_REVIEW",
+    [
+      "Người chơi đã có thanh toán — hãy hoàn tác trước khi xoá.",
+      "This player has payments — reverse them before removing.",
+    ],
+  ],
+  [
+    "REVERSAL_EXCEEDS_EFFECTIVE",
+    ["Khoản thanh toán này đã được hoàn tác hết.", "This payment is already fully reversed."],
+  ],
+  [
+    "REVERSAL_NOT_SUPPORTED",
+    [
+      "Chỉ hoàn tác được khoản thu tiền mặt hoặc chuyển khoản do chủ CLB ghi nhận.",
+      "Only cash or host-attested transfer payments can be reversed here.",
+    ],
+  ],
   [
     // Says what happened and who must act, without leaking WHY. The refusal fires for a charge
     // (including a `void` one) or, on cancel, a non-zero active roster — telling an unauthorized-
@@ -548,6 +616,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
 export function mapSessionCommandError(error: unknown): Response | null {
   const isDomain =
     error instanceof SessionCommandError ||
+    error instanceof RosterMoneyError ||
     error instanceof SessionPublishError ||
     error instanceof SessionUpdateError ||
     error instanceof SessionCloseError ||
