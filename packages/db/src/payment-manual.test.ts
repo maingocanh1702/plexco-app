@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { markPaid, type MarkPaidParams } from "./payment-manual.js";
+import { applyEffective, markPaid, type MarkPaidParams } from "./payment-manual.js";
 import { reversePaymentAllocation } from "./payment-reversal.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession, removePlayerFromSession } from "./roster-service.js";
+import { withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 // Real-PG tests for manual mark-paid (DD-40) and reversal, run as the `app` role (DATABASE_URL_TEST).
@@ -394,6 +395,18 @@ describe("markPaid confirm", () => {
       ).toBe("SESSION_NOT_OPEN");
       expect(await codeOf(pay(w, { preview: true }))).toBe("SESSION_NOT_OPEN");
     }
+  });
+
+  it("applyEffective leaves a void charge void and untouched unless revive is explicit", async () => {
+    const w = await world({ players: 1 });
+    const [c] = await fx.rows(`SELECT id FROM charges WHERE player_id = $1`, [w.playerIds[0]!]);
+    await ctx.owner.query(`UPDATE charges SET status = 'void' WHERE id = $1`, [c!.id]);
+    await withTenant(ctx.appDb.db, w.tenantId, (tx) => applyEffective(tx, c!.id, 100000));
+    expect(await charge(c!.id)).toMatchObject({ status: "void", amount_allocated: 0 });
+    await withTenant(ctx.appDb.db, w.tenantId, (tx) =>
+      applyEffective(tx, c!.id, 100000, { revive: true }),
+    );
+    expect((await charge(c!.id)).status).toBe("open");
   });
 
   it("a batch replayed with a different player set is refused; the same set replays", async () => {
