@@ -10,7 +10,6 @@ import {
   type Db,
   type DbHandle,
   type ZaloBotRef,
-  type ZaloIdentity,
 } from "@plexco/db";
 import { keyedHash } from "../auth-secrets";
 import { decryptConnectorSecret, encryptConnectorSecret, textToBlob } from "../connector-secrets";
@@ -23,16 +22,22 @@ import { buildZaloReply, parseZaloCommand, type LinkIssueResult } from "./comman
 /**
  * Inline processing of one STORED Zalo event (store-before-process is the caller's job).
  *
- * AWAIT-verify (Zalo Bot webhook payload is not pinned in repo docs): the field paths below follow the
- * Telegram-like model in docs/research/player-side-saas-reconciliation.md section 4 (`from.id`,
- * `chat.id`, event names `message.text.received`). The payload may be wrapped in `result`; both
- * shapes are tolerated. The event id is `update_id` (top level or in `result`), falling back to
- * `message.message_id`. If none exists the webhook answers WEBHOOK_PAYLOAD_MALFORMED.
+ * Webhook body as the owner signed it in DD-126 (OD-2): the shape the payment bot types as
+ * `ZaloUpdate` (src/zalo/zalo.ts) and the chatbot parses in `parseZaloUpdate`: top-level
+ * `{ event_name, message: { message_id, date, text, from: { id, display_name },
+ * chat: { id, chat_type: "PRIVATE" | "GROUP" } } }`. Zalo has NO update_id, and `result` only wraps
+ * Bot API RESPONSES, never a webhook body: neither is read.
+ *
+ * Dedupe key = message_id composed with chat.id and from.id (one sender can reuse a message_id in
+ * another chat). The JSON-array composition is injective, so no id content can forge a separator.
+ * A missing part has no usable key: the webhook answers WEBHOOK_PAYLOAD_MALFORMED (fail closed).
+ * No length cap: the route stores only the fixed-length keyed HMAC of the key.
  */
 export interface ZaloEventFields {
+  /** Canonical dedupe key. Holds raw provider ids: the route persists only its keyed HMAC (DD-67). */
   eventId: string;
-  fromId: string | null;
-  chatId: string | null;
+  fromId: string;
+  chatId: string;
   chatType: string | null;
   text: string | null;
   displayName: string | null;
@@ -51,23 +56,32 @@ const scalar = (v: unknown): string | null =>
 
 export function extractZaloEvent(payload: unknown): ZaloEventFields | null {
   if (!isObj(payload)) return null;
-  const root = isObj(payload.result) ? payload.result : payload;
-  const message = isObj(root.message) ? root.message : {};
+  const message = isObj(payload.message) ? payload.message : {};
   const from = isObj(message.from) ? message.from : {};
   const chat = isObj(message.chat) ? message.chat : {};
-  const eventId = scalar(payload.update_id) ?? scalar(root.update_id) ?? scalar(message.message_id);
-  if (eventId === null || eventId.length > 200) return null;
+  const messageId = scalar(message.message_id);
+  const chatId = scalar(chat.id);
+  const fromId = scalar(from.id);
+  if (messageId === null || chatId === null || fromId === null) return null;
   return {
-    eventId,
-    fromId: scalar(from.id),
-    chatId: scalar(chat.id),
+    eventId: JSON.stringify([messageId, chatId, fromId]),
+    fromId,
+    chatId,
     chatType: typeof chat.chat_type === "string" ? chat.chat_type : null,
     text: typeof message.text === "string" ? message.text : null,
-    displayName: scalar(from.display_name) ?? scalar(from.name),
+    displayName: scalar(from.display_name),
   };
 }
 
 export type ProcessOutcome = "processed" | "ignored";
+
+/**
+ * DD-126 (OD-2): only a 1:1 chat with the bot is served. GROUP, any other present chat_type than
+ * PRIVATE, or a chat whose id is not the sender's (a group that omits chat_type) is not a DM; an
+ * absent chat_type stays allowed when chat.id == from.id, as the payment bot allows it for 1:1 chats.
+ */
+export const isDirectZaloChat = (e: ZaloEventFields): boolean =>
+  (e.chatType === null || e.chatType === "PRIVATE") && e.chatId === e.fromId;
 
 export async function processZaloEvent(args: {
   handle: DbHandle;
@@ -76,48 +90,40 @@ export async function processZaloEvent(args: {
 }): Promise<ProcessOutcome> {
   const { handle, bot, event } = args;
   const db: Db = handle.db;
-  if (event.fromId === null || event.chatId === null || event.text === null) return "ignored";
-  const fromId = event.fromId;
-  const chatId = event.chatId;
-  const text = event.text;
+  // A non-DM is ignored outright: no identity, no reply, no link code. The webhook already drops it
+  // before the store (no payload persisted); this is the same rule at the processor, fail closed.
+  if (event.text === null || !isDirectZaloChat(event)) return "ignored";
+  const { fromId, chatId, text } = event;
 
-  // Parse and classify BEFORE touching identity: group chatter (chat id != sender id) never creates a
-  // Person or channel identity; it only gets a help / "message the bot directly" reply.
-  // A present chat_type other than PRIVATE is never a DM, whatever the ids say (fail closed).
-  const isDirect = (event.chatType === null || event.chatType === "PRIVATE") && chatId === fromId;
   const cmd = parseZaloCommand(text);
-  let identity: ZaloIdentity | null = null;
-  if (isDirect) {
-    const scopeHash = await keyedHash(`channel-scope:zalo:${bot.botId}`);
-    const userHash = await keyedHash(`channel-user:zalo:${fromId}`);
-    // ponytail: encrypted per DM event (cheap AES); a read-first definer would avoid it for known users.
-    const userIdEnc = (
-      await encryptConnectorSecret(fromId, {
-        tenantId: bot.tenantId,
-        botId: bot.botId,
-        purpose: "channel_user",
-      })
-    ).enc;
-    identity = await withTenant(db, bot.tenantId, (tx) =>
-      resolveZaloIdentity(tx, {
-        tenantId: bot.tenantId,
-        botId: bot.botId,
-        scopeHash,
-        userHash,
-        userIdEnc,
-        displayName: event.displayName,
-      }),
-    );
-  }
+  const scopeHash = await keyedHash(`channel-scope:zalo:${bot.botId}`);
+  const userHash = await keyedHash(`channel-user:zalo:${fromId}`);
+  // ponytail: encrypted per DM event (cheap AES); a read-first definer would avoid it for known users.
+  const userIdEnc = (
+    await encryptConnectorSecret(fromId, {
+      tenantId: bot.tenantId,
+      botId: bot.botId,
+      purpose: "channel_user",
+    })
+  ).enc;
+  const identity = await withTenant(db, bot.tenantId, (tx) =>
+    resolveZaloIdentity(tx, {
+      tenantId: bot.tenantId,
+      botId: bot.botId,
+      scopeHash,
+      userHash,
+      userIdEnc,
+      displayName: event.displayName,
+    }),
+  );
 
   const lang = bot.locale === "en" ? "en" : "vi"; // DD-118: the bot's tenant locale, fail-closed vi
   const reply = await runWithLang(lang, () =>
     buildZaloReply(cmd, {
-      displayName: identity?.displayName ?? null,
-      hasAccount: identity?.hasAccount ?? false,
-      isDirect,
+      displayName: identity.displayName,
+      hasAccount: identity.hasAccount,
+      isDirect: true,
       issueLinkCode: async (): Promise<LinkIssueResult> => {
-        if (identity === null) return { ok: false, reason: "unavailable" }; // unreachable: groups never issue
         const keys = linkCodeKeys();
         if (!keys) {
           log.error("zalo_link_key_missing");

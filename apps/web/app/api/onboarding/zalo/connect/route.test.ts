@@ -198,12 +198,48 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect(beginZaloConnect).not.toHaveBeenCalled();
   });
 
-  it("a commandId owned by another command -> 409 before any Zalo call", async () => {
+  it("a commandId owned by another command -> 409 COMMAND_ID_CONFLICT before any Zalo call", async () => {
     vi.mocked(probeZaloConnectReplay).mockRejectedValue(
       new ZaloConnectError("COMMAND_ID_CONFLICT", "x"),
     );
-    expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(409);
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(res.status).toBe(409);
+    expect((await env(res)).error?.code).toBe("COMMAND_ID_CONFLICT");
     expect(getMe).not.toHaveBeenCalled();
+  });
+
+  it("an unmapped DB error is rethrown sanitized (name + SQLSTATE), never with the query params", async () => {
+    let webhookToken = "";
+    vi.mocked(beginZaloConnect).mockImplementationOnce(async (_db, p) => {
+      const s = await p.prepare("22222222-2222-4222-8222-222222222222");
+      webhookToken = s.webhookToken;
+      // drizzle-orm 0.45 DrizzleQueryError: params in the message AND on `.params`, pg error on `.cause`.
+      const params = [s.botTokenEnc, s.webhookToken, s.webhookSecretEnc.toString("hex")];
+      throw Object.assign(
+        new Error(
+          `Failed query: SELECT bot_id FROM zalo_bot_upsert_for_tenant($1)\nparams: ${params}`,
+        ),
+        {
+          query: "SELECT ...",
+          params,
+          cause: Object.assign(new Error("deadlock"), { code: "40P01" }),
+        },
+      );
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const thrown = await POST(req({ commandId: "c1", botToken: BOT_TOKEN })).then(
+      () => new Error("expected a rejection"),
+      (e: unknown) => e as Error,
+    );
+    const logLines = JSON.stringify(logged.mock.calls); // read before mockRestore() clears them
+    logged.mockRestore();
+    expect(webhookToken.length).toBeGreaterThan(16);
+    expect(thrown.message).toBe("zalo_connect_failed: Error 40P01");
+    expect(thrown.cause).toBeUndefined();
+    expect(JSON.stringify({ ...thrown, m: thrown.message, s: thrown.stack })).not.toContain(
+      webhookToken,
+    );
+    expect(logLines).not.toContain(webhookToken);
   });
 
   it("a revoked bot cannot be re-connected: 403", async () => {
@@ -211,10 +247,15 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);
   });
 
-  it("a superseded attempt (a newer connect replaced the token) -> 409, not success", async () => {
+  it("a superseded attempt (a newer connect replaced the token) -> 409 CONNECT_SUPERSEDED, not success", async () => {
     vi.mocked(finishZaloConnect).mockResolvedValue({ state: registered, superseded: true });
     const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
     expect(res.status).toBe(409);
+    const body = (await res.json()) as { data: unknown; error: { code: string; message: string } };
+    // OD-2 / DD-126: its own code; COMMAND_ID_CONFLICT is reserved for a reused commandId.
+    expect(body.error.code).toBe("CONNECT_SUPERSEDED");
+    expect(body.error.message).toBe("A newer connect superseded this attempt.");
+    expect(body.data).toBeNull();
     expect(vi.mocked(finishZaloConnect).mock.calls[0]![1].webhookToken).toBe(
       registered.webhookToken,
     );

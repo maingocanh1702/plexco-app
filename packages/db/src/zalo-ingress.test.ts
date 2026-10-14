@@ -196,6 +196,59 @@ describe("channel_inbound_events RLS + idempotency", () => {
     expect(r.rows[0].processed_at).not.toBeNull();
   });
 
+  it("retry-driven recovery: a redelivery re-claims a failed row or one stuck in 'received' past 5 min, one winner only", async () => {
+    const store = (externalEventId: string) =>
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        storeInboundEvent(tx, {
+          tenantId: ctx.tenantA,
+          botId: botA,
+          externalEventId,
+          rawPayloadEnc: bytes("x"),
+          keyVersion: "local",
+        }),
+      );
+    const finish = (id: string, status: "processed" | "failed" | "ignored") =>
+      withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+        finishInboundEvent(tx, {
+          tenantId: ctx.tenantA,
+          id,
+          status,
+          errorCode: status === "failed" ? "X" : undefined,
+        }),
+      );
+    const age = (id: string, minutes: number) =>
+      ctx.owner.query(
+        `UPDATE channel_inbound_events SET received_at = clock_timestamp() - make_interval(mins => $2)
+          WHERE id = $1`,
+        [id, minutes],
+      );
+    const key = `evt-${seq++}`;
+    const id = (await store(key)).id!;
+    // In flight ('received', younger than the window): a plain duplicate, ack only.
+    expect(await store(key)).toEqual({ id: null, duplicate: true });
+    await age(id, 4);
+    expect(await store(key)).toEqual({ id: null, duplicate: true });
+    // Stuck past the window (crash between store and finish): re-claimed once, then in flight again.
+    await age(id, 6);
+    expect(await store(key)).toEqual({ id, duplicate: false });
+    expect(await store(key)).toEqual({ id: null, duplicate: true });
+    // Failed: two concurrent redeliveries, exactly one re-claims; the row is reset for processing.
+    await finish(id, "failed");
+    const both = await Promise.all([store(key), store(key)]);
+    expect(both.filter((r) => !r.duplicate)).toEqual([{ id, duplicate: false }]);
+    const row = await ctx.owner.query(
+      `SELECT status, error_code, processed_at FROM channel_inbound_events WHERE id = $1`,
+      [id],
+    );
+    expect(row.rows[0]).toEqual({ status: "received", error_code: null, processed_at: null });
+    // processed / ignored are final, however old.
+    for (const s of ["processed", "ignored"] as const) {
+      await finish(id, s);
+      await age(id, 60);
+      expect(await store(key)).toEqual({ id: null, duplicate: true });
+    }
+  });
+
   it("tenant B cannot see or write tenant A's events; no GUC sees nothing", async () => {
     const seen = await withTenant(ctx.appDb.db, ctx.tenantB, (tx) =>
       tx.execute(
@@ -361,6 +414,93 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
     expect(done.rows).toHaveLength(0);
   });
 
+  it("race: a newer connect committing between an older finish's token check and its write never receives the older outcome", async () => {
+    const connect = (commandId: string) =>
+      beginZaloConnect(ctx.appDb.db, {
+        tenantId: ctx.tenantA,
+        actorPersonId: ownerA,
+        commandId,
+        newBotId: randomUUID(),
+        prepare: async () => ({
+          botTokenEnc: "enc",
+          webhookToken: `wh-${randomUUID()}`,
+          webhookSecretEnc: bytes("s"),
+          keyVersion: "local",
+        }),
+      });
+    // Backends of this database waiting on a lock (pg_locks is live; pid/datname are visible to all).
+    const blocked = async () =>
+      (
+        await ctx.owner.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+            WHERE NOT l.granted AND a.datname = current_database()`,
+        )
+      ).rows[0]!.n;
+    const untilBlocked = async (n: number) => {
+      for (let i = 0; i < 400 && (await blocked()) < n; i++) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(await blocked()).toBeGreaterThanOrEqual(n);
+    };
+    const rowOf = async () =>
+      (
+        await ctx.owner.query(
+          `SELECT status, webhook_token, last_setwebhook_at FROM zalo_bots WHERE id = $1`,
+          [botA],
+        )
+      ).rows[0];
+
+    const loserCmd = `zc-${seq++}`;
+    const winnerCmd = `zc-${seq++}`;
+    const loser = await connect(loserCmd);
+    if (loser.replayed) throw new Error("unexpected replay");
+    const before = await rowOf();
+    // Deterministic interleaving: park the bot row, queue the newer connect's upsert FIRST, then the
+    // older attempt's finish (its setWebhook failed: outcome error). Releasing the row lets the newer
+    // connect commit before the older finish proceeds, i.e. between its token check and its write.
+    const holder = await ctx.appPool.connect();
+    let winnerP: ReturnType<typeof connect> | undefined;
+    let loserP: ReturnType<typeof finishZaloConnect> | undefined;
+    try {
+      await holder.query("BEGIN");
+      await holder.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      await holder.query(`SELECT 1 FROM zalo_bots WHERE id = $1 FOR UPDATE`, [botA]);
+      winnerP = connect(winnerCmd);
+      await untilBlocked(1);
+      loserP = finishZaloConnect(ctx.appDb.db, {
+        tenantId: ctx.tenantA,
+        botId: botA,
+        commandId: loserCmd,
+        webhookToken: loser.webhookToken,
+        outcome: "error",
+        reason: "ZALO_SETWEBHOOK_FAILED",
+      });
+      await untilBlocked(2);
+    } finally {
+      await holder.query("COMMIT");
+      holder.release();
+    }
+    const winner = await winnerP!;
+    const lost = await loserP!;
+    if (winner.replayed) throw new Error("unexpected replay");
+    expect(lost.superseded).toBe(true);
+    // The newer connect's row is exactly as its own upsert left it: the older outcome wrote nothing.
+    expect(await rowOf()).toEqual({
+      status: "connecting",
+      webhook_token: winner.webhookToken,
+      last_setwebhook_at: before.last_setwebhook_at,
+    });
+    const won = await finishZaloConnect(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      botId: botA,
+      commandId: winnerCmd,
+      webhookToken: winner.webhookToken,
+      outcome: "registered",
+    });
+    expect(won.superseded).toBe(false);
+    expect(won.state.status).toBe("registered");
+  });
+
   it("set_status CAS skip still stamps last_setwebhook_at when a real setWebhook happened", async () => {
     await ctx.owner.query(
       `UPDATE zalo_bots SET status = 'active', last_setwebhook_at = NULL WHERE id = $1`,
@@ -467,9 +607,9 @@ describe("markBotVerifiedActive (token-bound activation)", () => {
     expect(s.verified_at).toBeNull();
   });
 
-  it("a drift row is not cleared by a verified event", async () => {
+  it("a drift row is not cleared by a verified event, and the outcome says so (unchanged)", async () => {
     await force("drift");
-    expect(await activate(await currentToken())).toBe("activated");
+    expect(await activate(await currentToken())).toBe("unchanged");
     expect((await stateOf()).status).toBe("drift");
   });
 });

@@ -75,6 +75,7 @@ export {
   type SessionListPage,
   type SessionScalars,
 } from "./session-read.js";
+export { listActiveSports, type ActiveSport } from "./sports-read.js";
 // Web MVP lane M2c: host roster writer + manual mark-paid (DD-40) + reversal.
 export {
   addMemberToSession,
@@ -100,7 +101,6 @@ export {
   type ReversePaymentResult,
 } from "./payment-reversal.js";
 export { RosterMoneyError, type RosterMoneyErrorCode } from "./roster-money-shared.js";
-export { listActiveSports, type ActiveSport } from "./sports-read.js";
 export { resolveCapability, type Capability, type CapabilityDecision } from "./capability.js";
 export {
   createSession,
