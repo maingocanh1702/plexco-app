@@ -2829,12 +2829,13 @@ describe("closeSession (B1 of the split)", () => {
       chargeStatus = "open",
       playerStatus = "active",
     }: { chargeStatus?: string; playerStatus?: string } = {},
-  ): Promise<void> {
+  ): Promise<string> {
     const playerId = await seedRosterPlayer(tenantId, sessionId, playerStatus);
     await ctx.owner.query(
       `INSERT INTO charges (tenant_id, session_id, player_id, amount_due, status) VALUES ($1, $2, $3, 120000, $4)`,
       [tenantId, sessionId, playerId, chargeStatus],
     );
+    return playerId;
   }
 
   async function projectToPublic(sessionId: string, tenantId: string): Promise<void> {
@@ -2965,19 +2966,24 @@ describe("closeSession (B1 of the split)", () => {
     expect(await sessionState(a.sessionId)).toMatchObject({ status: "open", version: a.version });
   });
 
-  it("C-CHARGE: closing a session with ANY charge is CANCEL_REQUIRES_REVIEW (fail-closed, edge #5), zero mutation", async () => {
+  it("C-CHARGE: closing a session with an UNPAID charge is CLOSE_BLOCKED_OPEN_DEBT carrying that player (DD-131 OD-1 — no longer CANCEL_REQUIRES_REVIEW), zero mutation", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId, version } = await seedSession(tenantId, { status: "open" });
-    await seedCharge(tenantId, sessionId);
-    await expectCloseReject(
-      () => close(tenantId, { sessionId, expectedVersion: version }),
-      "CANCEL_REQUIRES_REVIEW",
+    const playerId = await seedCharge(tenantId, sessionId);
+    const err = await close(tenantId, { sessionId, expectedVersion: version }).catch(
+      (e: unknown) => e,
     );
+    expect(err).toBeInstanceOf(SessionCloseError);
+    expect((err as SessionCloseError).code).toBe("CLOSE_BLOCKED_OPEN_DEBT");
+    // The fixture membership has no display_name: the list carries null, never a fallback field.
+    expect((err as SessionCloseError).openBalancePlayers).toEqual([
+      { playerId, displayName: null },
+    ]);
     expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
     expect(await sessionEvents(sessionId)).toHaveLength(0);
   });
 
-  it("C-STALE-CHARGE: a STALE close request against a session WITH a charge is STALE_VERSION, NOT CANCEL_REQUIRES_REVIEW — closeSession checks the version before the money guard", async () => {
+  it("C-STALE-CHARGE: a STALE close request against a session WITH a charge is STALE_VERSION, NOT CLOSE_BLOCKED_OPEN_DEBT — closeSession checks the version before the money guard", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId, version } = await seedSession(tenantId, { status: "open" });
     await seedCharge(tenantId, sessionId);
@@ -2989,16 +2995,13 @@ describe("closeSession (B1 of the split)", () => {
     expect(await sessionEvents(sessionId)).toHaveLength(0);
   });
 
-  it("C-VOID: a session whose ONLY charge is `void` STILL blocks close — sessionHasCharges has NO status filter (fail-closed money posture, DD-117); CANCEL_REQUIRES_REVIEW, zero mutation, no event", async () => {
+  it("C-VOID: a session whose ONLY charge is `void` CLOSES — a void charge has a zero balance (DD-131 OD-1 reverses DD-117 D3's close half; the old any-charge probe blocked it)", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId, version } = await seedSession(tenantId, { status: "open" });
     await seedCharge(tenantId, sessionId, { chargeStatus: "void" });
-    await expectCloseReject(
-      () => close(tenantId, { sessionId, expectedVersion: version }),
-      "CANCEL_REQUIRES_REVIEW",
-    );
-    expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
-    expect(await sessionEvents(sessionId)).toHaveLength(0);
+    const result = await close(tenantId, { sessionId, expectedVersion: version });
+    expect(result).toMatchObject({ status: "closed", version: version + 1, replayed: false });
+    expect(await sessionEvents(sessionId)).toHaveLength(1);
   });
 
   it("C-SUSPENDED: closing an OPEN session while the SUBSCRIPTION is suspended SUCCEEDS (DD-110 D2 obligation-termination — the one relaxed cell)", async () => {
@@ -3540,7 +3543,7 @@ describe("cancelSession (B2 of the split)", () => {
     expect(await sessionEvents(sessionId)).toHaveLength(0);
   });
 
-  it("XC-CHARGE: cancelling an OPEN session with ANY charge is CANCEL_REQUIRES_REVIEW (edge #5), zero mutation", async () => {
+  it("XC-CHARGE: cancelling an OPEN session whose charged player is still ACTIVE is CANCEL_REQUIRES_REVIEW (gate #3 — since DD-131 OD-1 a charge alone no longer blocks), zero mutation", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId, version } = await seedSession(tenantId, { status: "open" });
     await seedCharge(tenantId, sessionId);
@@ -3552,16 +3555,18 @@ describe("cancelSession (B2 of the split)", () => {
     expect(await sessionEvents(sessionId)).toHaveLength(0);
   });
 
-  it("XC-VOID: an OPEN session whose ONLY charge is `void` STILL blocks cancel — sessionHasCharges has NO status filter (fail-closed money posture, DD-117); CANCEL_REQUIRES_REVIEW, zero mutation, no event", async () => {
+  it("XC-VOID: an OPEN session whose ONLY charge is the `void` charge of a REMOVED ('left') player CANCELS — no recorded money (DD-131 OD-1 replaces the old any-charge probe, which blocked it)", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId, version } = await seedSession(tenantId, { status: "open" });
-    await seedCharge(tenantId, sessionId, { chargeStatus: "void" });
-    await expectCancelReject(
-      () => cancel(tenantId, { sessionId, expectedVersion: version }),
-      "CANCEL_REQUIRES_REVIEW",
-    );
-    expect(await sessionState(sessionId)).toMatchObject({ status: "open", version });
-    expect(await sessionEvents(sessionId)).toHaveLength(0);
+    await seedCharge(tenantId, sessionId, { chargeStatus: "void", playerStatus: "left" });
+    const result = await cancel(tenantId, { sessionId, expectedVersion: version });
+    expect(result).toMatchObject({ status: "cancelled", version: version + 1, replayed: false });
+    const evs = await sessionEvents(sessionId);
+    expect(evs).toHaveLength(1);
+    expect((evs[0] as { payload: Record<string, unknown> }).payload).toMatchObject({
+      roster_count: 0,
+      has_paid: false,
+    });
   });
 
   it("XC-DRAFT-ANOMALY: a DRAFT carrying BOTH a roster and a charge -> CANCEL_REQUIRES_REVIEW; draft unchanged; ONE session.expiry_anomaly_detected event ['players','charges'] (no session.cancelled)", async () => {

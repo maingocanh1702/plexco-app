@@ -38,8 +38,12 @@ describe("API_ERROR_CODES registry", () => {
     // mapSessionCommandError now narrows through isApiErrorCode instead of casting, so an
     // unregistered code fails closed to a 500 rather than reaching a client. Losing one of these
     // would silently downgrade a spec-pinned response to a generic error.
+    //
+    // CLOSE_BLOCKED_OPEN_DEBT joined with DD-131 OD-1 (pending in PR #51): close's open-debt refusal.
+    // CANCEL_REQUIRES_REVIEW stays: cancel still emits it, close no longer does.
     for (const code of [
       "CANCEL_REQUIRES_REVIEW",
+      "CLOSE_BLOCKED_OPEN_DEBT",
       "CAPACITY_BELOW_OCCUPANCY",
       "CAPACITY_BELOW_ROSTER",
       "COMMAND_ID_CONFLICT",
@@ -152,6 +156,27 @@ describe("ApiEnvelope shape (compile-time contract lock)", () => {
     expect(success.error).toBeNull();
     expect(failure.data).toBeNull();
     expect(failure.error.statusCode).toBe(403);
+    // `details` is optional: an error without it still satisfies ApiError, unchanged.
+    expect("details" in failure.error).toBe(false);
+  });
+
+  it("types CLOSE_BLOCKED_OPEN_DEBT's details as ids + display names only (DD-131 OD-1)", () => {
+    const blocked = {
+      code: "CLOSE_BLOCKED_OPEN_DEBT",
+      message: "Còn người chơi chưa trả đủ tiền — thu đủ trước khi đóng kèo.",
+      statusCode: 409,
+      details: {
+        openBalancePlayers: [
+          { playerId: "4c3a2e9e-0000-4000-8000-000000000001", displayName: "Lan" },
+          { playerId: "4c3a2e9e-0000-4000-8000-000000000002", displayName: null },
+        ],
+      },
+    } satisfies ApiError;
+    // Compile-time half: an amount (or any other key) on an entry fails `tsc` through `satisfies`
+    // (excess-property check); the runtime half pins the exact key set of every entry.
+    for (const entry of blocked.details.openBalancePlayers) {
+      expect(Object.keys(entry).sort()).toEqual(["displayName", "playerId"]);
+    }
   });
 });
 

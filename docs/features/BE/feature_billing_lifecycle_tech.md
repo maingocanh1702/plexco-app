@@ -310,18 +310,21 @@ CREATE TABLE billing_overrides (
 > enforces exactly that reading and this slice cites `6c67d72` as its authority. B1 does not edit `decisions.md`
 > — the owner landed the amendment directly on main, so it is not in this slice's diff. `cancel_session`'s matrix
 > row, literal and handling landed with B2 (the Cancel session row above; see the B2 note below). Money safety is
-> NOT in the resolver: DD-117 authorizes a fail-closed refuse (`CANCEL_REQUIRES_REVIEW`, spec edge #5 — "no silent
-> cancellation") keyed on the session's own `charges`, which lives in the `closeSession` and `cancelSession` service commands and holds
-> until the payments/review_policy subsystem exists. Recorded in `../../standards/decisions.md` DD-110 + DD-117;
-> `close_session` and `cancel_session` are both now present in the enum here.
+> NOT in the resolver: it lives in the `closeSession` and `cancelSession` service commands, keyed on the session's own
+> `charges` and ledger. Since **DD-131 OD-1** (DD-131 / DD-132 (pending in PR #51)) — which reverses DD-117 D3's close half —
+> close refuses an open balance with `CLOSE_BLOCKED_OPEN_DEBT` (409, naming who owes) and never answers
+> `CANCEL_REQUIRES_REVIEW`; cancel refuses (`CANCEL_REQUIRES_REVIEW`) only recorded money (net allocated > 0), see the B2 note
+> below and `feature_session_management_tech.md` §4 "Close / Cancel money policy". Recorded in `../../standards/decisions.md`
+> DD-110 + DD-117 (+ DD-131 once PR #51 merges); `close_session` and `cancel_session` are both now present in the enum here.
 
 > **B2 — `cancel_session` (owner-ratified 2026-08-26; `session-commands-cancel` slice).** The obligation-termination
 > class `cancel_session` (✅ for active/past_due/`suspended` — the Cancel session row above) is now wired, both the
 > literal AND its handling, with first caller `cancelSession`. It CONSUMES the same action-class-aware resolution as
 > `close_session` (CASE B below: literal per-axis allowlist, deny-before-matrix — `cancel_session` is a member of
 > `OBLIGATION_TERMINATION`, so there is NO new resolver branch). Money/roster safety is NOT in the resolver: per
-> **DD-117 D1 + owner gate #3 (2026-08-26)**, `cancelSession` fail-closed refuses (`CANCEL_REQUIRES_REVIEW`) an OPEN
-> session carrying ANY charge OR a non-zero ACTIVE roster — `roster_count != 0` is a REFUSAL, not an advisory:
+> **owner gate #3 (2026-08-26) + DD-131 OD-1** (replacing DD-117's "any charge"), `cancelSession` fail-closed refuses
+> (`CANCEL_REQUIRES_REVIEW`) an OPEN session with a non-zero ACTIVE roster OR a charge carrying recorded money (net
+> allocated > 0) — a removed unpaid player's `void` charge no longer blocks; `roster_count != 0` is a REFUSAL, not an advisory:
 > cancelling over a roster with no review_policy is the "no silent cancellation" hazard (the proceed-and-record CA3
 > path is out of scope until review_policy lands). A DRAFT carrying any player (any status) or any charge records a
 > `session.expiry_anomaly_detected` audit event then refuses (edge #28). Fence DD-12 raised unconditionally

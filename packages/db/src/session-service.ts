@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
   charges,
   memberships,
@@ -11,7 +11,11 @@ import {
 } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
 import type { Db, Tx } from "./client.js";
+// Import cycle (payment-manual -> roster-money-shared -> this module) is benign: both bindings are
+// hoisted function declarations used only inside command bodies, never at module evaluation.
+import { chargeStatusFor } from "./payment-manual.js";
 import { raisePublicSessionFence } from "./public-session-fence.js";
+import { effectiveByCharge } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -1582,19 +1586,14 @@ export async function updateSession(
   });
 }
 
-// so a tx from withTenant passes to the helper below without a cast). Used by the shared
-// close/cancel money choke-point.
+// so a tx from withTenant passes to the helpers below without a cast). Used by the close/cancel
+// money guards.
 
 /**
- * Money choke-point for the obligation-termination commands (edge #5 / DD-117 D3): a session
- * carrying ANY charge has nonterminal finance roots a review_policy must resolve BEFORE a
- * close/cancel can commit ("no silent cancellation"). That subsystem does not exist on base, so
- * close/cancel FAIL-CLOSED (CANCEL_REQUIRES_REVIEW) whenever a charge exists — money never
- * terminates silently. ANY charge, NO status carve-out (matching updateSession's price guard: a
- * `void` charge still evidences prior financial activity whose reconciliation is a review
- * question). On current main this is vacuously false (no join/waitlist/payments → no charges
- * reachable); the guard exists so the refuse path is in place BEFORE paid rosters become
- * reachable. SINGLE source for both close and cancel — the derived "has charges" money check.
+ * ANY-charge existence probe, NO status filter: a `void` row counts. Since DD-131 OD-1 (pending in
+ * PR #51) its ONLY caller is cancelSession's DRAFT anomaly branch (edge #28: "a draft has NO players
+ * and NO charges", unchanged by OD-1). The open-source close/cancel money guards read
+ * sessionChargeBalances instead; updateSession's price guard keeps its own inline probe.
  */
 async function sessionHasCharges(tx: Tx, sessionId: string): Promise<boolean> {
   const rows = await tx
@@ -1605,21 +1604,106 @@ async function sessionHasCharges(tx: Tx, sessionId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** One player whose charge still has an open balance: the CLOSE_BLOCKED_OPEN_DEBT payload. Stable id
+ *  + display name ONLY (DD-131 OD-1) — never an amount, a membership/person id or a contact field. */
+export interface OpenBalancePlayer {
+  playerId: string;
+  displayName: string | null;
+}
+
+/** The money posture of one charge, as both obligation-termination guards read it. */
+interface ChargeBalance extends OpenBalancePlayer {
+  isVoid: boolean;
+  /** A non-void charge the canonical paid-state derivation does not call `paid`. */
+  openBalance: boolean;
+  /** Net allocated (ledger SUM, reversals negative) > 0. */
+  recordedMoney: boolean;
+}
+
+/**
+ * Every charge on a session with its money posture — the ONE read behind close's open-debt guard
+ * and cancel's recorded-money guard (DD-131 OD-1 / DD-132, pending in PR #51). Composition only, no
+ * second formula:
+ *  - net allocated = effectiveByCharge, the ledger SUM the host roster read model shows as
+ *    `effectiveAllocated` (session-read.ts getSessionDetail);
+ *  - open balance = non-`void` AND chargeStatusFor (INV-7, THE paid-state derivation) is not `paid`,
+ *    i.e. exactly the read model's `remaining > 0` (a void charge has remaining 0; a free price-0
+ *    charge is `paid` with zero money — the "exempt" case, charges_status_chk has no 'exempt');
+ *  - recorded money = net allocated > 0, on ANY charge, void included.
+ * LEFT JOINs keep a charge whose player row is not visible (fail-closed: it still counts). Order =
+ * the roster read model's (joined_at, player id), so the open-balance list is deterministic. Plain
+ * reads: the caller already holds the session row FOR UPDATE, which every charge/ledger writer
+ * (add/remove player, mark-paid, reversal) takes FIRST and re-checks status under — so no charge or
+ * allocation can land between this read and the caller's commit.
+ */
+async function sessionChargeBalances(
+  tx: Tx,
+  tenantId: string,
+  sessionId: string,
+): Promise<ChargeBalance[]> {
+  const rows = await tx
+    .select({
+      chargeId: charges.id,
+      playerId: charges.playerId,
+      amountDue: charges.amountDue,
+      status: charges.status,
+      displayName: memberships.displayName,
+    })
+    .from(charges)
+    .leftJoin(players, eq(players.id, charges.playerId))
+    .leftJoin(
+      memberships,
+      and(eq(memberships.id, players.membershipId), eq(memberships.tenantId, tenantId)),
+    )
+    .where(and(eq(charges.tenantId, tenantId), eq(charges.sessionId, sessionId)))
+    .orderBy(asc(players.joinedAt), asc(charges.playerId));
+  const effective = await effectiveByCharge(
+    tx,
+    rows.map((r) => r.chargeId),
+  );
+  return rows.map((r) => {
+    const net = effective.get(r.chargeId) ?? 0;
+    const isVoid = r.status === "void";
+    return {
+      playerId: r.playerId,
+      displayName: r.displayName,
+      isVoid,
+      openBalance: !isVoid && chargeStatusFor(r.amountDue, net) !== "paid",
+      recordedMoney: net > 0,
+    };
+  });
+}
+
 // ============================ CloseSession ============================
 
+/** CANCEL_REQUIRES_REVIEW is deliberately absent: since DD-131 OD-1 close never answers it. */
 export type CloseSessionErrorCode =
   | "SESSION_NOT_FOUND"
   | "SESSION_NOT_OPEN"
   | "STALE_VERSION"
-  | "CANCEL_REQUIRES_REVIEW"
+  | "CLOSE_BLOCKED_OPEN_DEBT"
   | "COMMAND_ID_CONFLICT";
 
 export class SessionCloseError extends Error {
   readonly code: CloseSessionErrorCode;
-  constructor(code: CloseSessionErrorCode, message: string) {
+  // A #private field, not a public property: util.inspect / JSON.stringify of this error (a log line,
+  // an unexpected rethrow) never carries a display name. Only the route mapper reads it, through the
+  // getter, after the caller was authorized.
+  readonly #openBalancePlayers: readonly OpenBalancePlayer[] | undefined;
+  constructor(
+    code: CloseSessionErrorCode,
+    message: string,
+    openBalancePlayers?: readonly OpenBalancePlayer[],
+  ) {
     super(message);
     this.name = "SessionCloseError";
     this.code = code;
+    this.#openBalancePlayers = openBalancePlayers;
+  }
+
+  /** CLOSE_BLOCKED_OPEN_DEBT only: the players whose charge still has an open balance. */
+  get openBalancePlayers(): readonly OpenBalancePlayer[] | undefined {
+    return this.#openBalancePlayers;
   }
 }
 
@@ -1696,10 +1780,19 @@ function isStoredCloseResult(value: unknown): value is StoredCloseResult {
  * One withTenant transaction on the S2 pattern: upfront suspension gate →
  * validate → advisory command-key lock → dedup (commandId-only, DD-117 D5) → FOR UPDATE lock →
  * idempotent no-op (already closed) → transition guard (only `open`) → MANDATORY expectedVersion →
- * money fail-closed (any charge → CANCEL_REQUIRES_REVIEW, edge #5) → mutate + version bump +
- * `updated_at = clock_timestamp()` → raise the DD-12 fence ('closed', unconditional) → one
- * `session.closed` outbox row → record. Close has NO past-guard: closing a session whose start has
- * passed is the normal completion (unlike cancel's edge #31 past-guard on `open`).
+ * open-debt guard (DD-131 OD-1: any charge with an open balance → CLOSE_BLOCKED_OPEN_DEBT carrying
+ * those players) → mutate + version bump + `updated_at = clock_timestamp()` → raise the DD-12 fence
+ * ('closed', unconditional) → one `session.closed` outbox row → record. Close has NO past-guard:
+ * closing a session whose start has passed is the normal completion (unlike cancel's edge #31
+ * past-guard on `open`), and NO active-roster gate (a fully paid roster closes; edge #48).
+ *
+ * LOCK ORDER (one global order, shared with every roster/money writer): tenant authorization reads
+ * (tenants/subscriptions FOR SHARE; the writers' capability grants FOR SHARE) → per-command advisory
+ * lock → sessions FOR UPDATE (+ status re-check) → players FOR UPDATE → charges FOR UPDATE (UUID
+ * order) → payment_allocations FOR UPDATE. close/cancel stop at the session row and only READ the
+ * charges and the ledger: addMemberToSession, removePlayerFromSession, markPaid and
+ * reversePaymentAllocation all take the session row FOR UPDATE before touching a charge or the
+ * ledger, so they serialize behind a close/cancel and then re-read its committed status.
  */
 export async function closeSession(
   db: Db,
@@ -1793,8 +1886,8 @@ export async function closeSession(
     // expectedVersion validation runs on the MUTATE branch ONLY — AFTER the idempotent no-op above,
     // so an already-closed session wins the no-op even with a malformed expectedVersion (edge #27).
     // A provided value must be a positive int4; then it is MANDATORY (edge #26): missing OR mismatch
-    // → STALE_VERSION. Version is checked BEFORE the money guard (a stale charged request →
-    // STALE_VERSION, not CANCEL_REQUIRES_REVIEW).
+    // → STALE_VERSION. Version is checked BEFORE the money guard (a stale request against a session
+    // with open debt → STALE_VERSION, and the open-balance list is never computed for it).
     if (input.expectedVersion !== undefined && !isInt4(input.expectedVersion, 1)) {
       failClose("STALE_VERSION", "expected_version must be a positive integer");
     }
@@ -1802,11 +1895,19 @@ export async function closeSession(
       failClose("STALE_VERSION", "expected_version is required and must match the current version");
     }
 
-    // Money fail-closed (edge #5 / DD-117): a session with ANY charge → CANCEL_REQUIRES_REVIEW.
-    if (await sessionHasCharges(tx, sessionId)) {
-      failClose(
-        "CANCEL_REQUIRES_REVIEW",
-        "cannot close a session with existing charges — resolution requires review_policy",
+    // Open-debt guard (DD-131 OD-1, reversing DD-117 D3's close half; edge #48): close only when no
+    // charge still has an open balance — every charge fully paid, free (price 0) or void. Otherwise
+    // refuse with the players who still owe, ids + display names only. Read under the session FOR
+    // UPDATE above (see sessionChargeBalances), so a concurrent add-player/mark-paid either committed
+    // before this read or will see status 'closed' after our commit. Plain rollback, no event.
+    const owing = (await sessionChargeBalances(tx, tenantId, sessionId)).filter(
+      (c) => c.openBalance,
+    );
+    if (owing.length > 0) {
+      throw new SessionCloseError(
+        "CLOSE_BLOCKED_OPEN_DEBT",
+        "cannot close a session while a charge still has an open balance",
+        owing.map(({ playerId, displayName }) => ({ playerId, displayName })),
       );
     }
 
@@ -1983,8 +2084,11 @@ async function sessionHasAnyPlayer(tx: Tx, sessionId: string): Promise<boolean> 
  * version (step 5) → paid-impact (step 6). Sources differ:
  *  - `open` (edge #11/#31): past-guard FIRST — an open session whose starts_at has passed →
  *    SESSION_NOT_OPEN BEFORE version and money (a realized game needs privileged correction). Then
- *    (open-FUTURE only) paid/roster-impact: an ACTIVE roster (gate #3) OR ANY charge (edge #5) →
- *    CANCEL_REQUIRES_REVIEW (after the version check, so a stale request → STALE_VERSION).
+ *    (open-FUTURE only) paid/roster-impact: an ACTIVE roster (gate #3) OR any charge carrying
+ *    recorded money (DD-131 OD-1: net allocated > 0) OR a live charge with no active player (an
+ *    unreachable invariant violation, fail-closed) → CANCEL_REQUIRES_REVIEW (after the version
+ *    check, so a stale request → STALE_VERSION). The `void` charge of a removed, unpaid player does
+ *    NOT block: the host removes players one by one, reversing recorded payments first.
  *  - `draft` (edge #25/#28): NO past-guard (never was open). A draft must have NO players (any status)
  *    and NO charges; any → COMMIT an append-only session.expiry_anomaly_detected audit event (the audit
  *    must survive the refusal), then fail-closed CANCEL_REQUIRES_REVIEW thrown AFTER the tx commits.
@@ -2148,21 +2252,30 @@ export async function cancelSession(
       // Step 6 — paid/roster-impact, AFTER the version check (step 5). Only an OPEN-FUTURE session (past
       // ones exited at step 4) or a DRAFT reaches here.
       if (current.status === "open") {
-        // Open source: fail-closed on financial OR roster impact until review_policy exists. ANY charge
-        // (edge #5, a nonterminal finance root) OR a non-zero ACTIVE roster (gate #3) →
-        // CANCEL_REQUIRES_REVIEW. The roster REFUSES (owner gate #3, 2026-08-26: "roster_count != 0 is a
-        // refusal path, not an advisory") — cancelling over a roster with no review_policy is the "no
-        // silent cancellation" hazard; the proceed-and-record CA3 path is out of scope until review_policy
-        // lands. Plain rollback, NO event (the spec specifies session.expiry_anomaly_detected only for the
-        // draft path). Runs AFTER the version check, so a stale request against a charged/rostered open
-        // session returns STALE_VERSION. If it reaches the clean path below, the active roster is 0.
-        if (
-          (await sessionActiveRosterCount(tx, sessionId)) !== 0 ||
-          (await sessionHasCharges(tx, sessionId))
-        ) {
+        // Open source: fail-closed on roster OR money impact. A non-zero ACTIVE roster (owner gate #3,
+        // 2026-08-26: "roster_count != 0 is a refusal path, not an advisory"; kept by DD-131 OD-1 — the
+        // host removes players one by one first) → CANCEL_REQUIRES_REVIEW. Plain rollback, NO event (the
+        // spec specifies session.expiry_anomaly_detected only for the draft path). Runs AFTER the version
+        // check, so a stale request against a charged/rostered open session returns STALE_VERSION.
+        if ((await sessionActiveRosterCount(tx, sessionId)) !== 0) {
           failCancel(
             "CANCEL_REQUIRES_REVIEW",
-            "cannot cancel an open session with an active roster or existing charges — resolution requires review_policy",
+            "cannot cancel an open session with an active roster — remove the players first",
+          );
+        }
+        // Money (DD-131 OD-1, replacing DD-117's "any charge"): refuse only when a charge carries
+        // recorded money (net allocated > 0, void included — the host reverses it first). The `void`
+        // charge of a removed, unpaid player does not block. With the active roster at 0, a LIVE
+        // (non-void) charge has no active player: no writer on main can produce that (remove voids the
+        // charge, a waitlist join creates none), so it is an invariant violation and stays fail-closed
+        // rather than silently orphaning a debt on a cancelled session. Read under the session FOR
+        // UPDATE (see sessionChargeBalances); if it reaches the clean path below, the roster is 0 and
+        // no money is recorded.
+        const ledger = await sessionChargeBalances(tx, tenantId, sessionId);
+        if (ledger.some((c) => c.recordedMoney || !c.isVoid)) {
+          failCancel(
+            "CANCEL_REQUIRES_REVIEW",
+            "cannot cancel a session carrying recorded money or a live charge — reverse the payments first",
           );
         }
       } else {
@@ -2216,10 +2329,11 @@ export async function cancelSession(
         }
       }
 
-      // Clean path (open-future with no active roster and no charges, or an empty draft). roster_count
-      // is provably 0 here: gate #3 refuses a non-zero active roster on the open path, and an empty
-      // draft has none. It stays in the session.cancelled event as a forward-compat field (the CA3
-      // proceed-with-roster path will record a real count once review_policy lands).
+      // Clean path (open-future with no active roster and no recorded money — only void charges, if
+      // any — or an empty draft). roster_count is provably 0 here: gate #3 refuses a non-zero active
+      // roster on the open path, and an empty draft has none. It stays in the session.cancelled event
+      // as a forward-compat field (the CA3 proceed-with-roster path will record a real count once
+      // review_policy lands).
       const [updated] = await tx
         .update(sessions)
         .set({
@@ -2236,8 +2350,9 @@ export async function cancelSession(
 
       // One session.cancelled outbox row (§4 Events: {session_id, roster_count, has_paid,
       // cancel_reason}). has_paid is false and roster_count is 0: this point is reached only after the
-      // paid/roster guard passed (open → no charges and no active roster; draft → empty). cancel_reason
-      // 'manual' — a client/host cancel (the auto-expiry job that emits 'auto' is a separate lane).
+      // paid/roster guard passed (open → no active roster and no recorded money; draft → empty).
+      // cancel_reason 'manual' — a client/host cancel (the auto-expiry job that emits 'auto' is a
+      // separate lane).
       await tx.insert(outboxEvents).values({
         tenantId,
         aggregateType: "session",
