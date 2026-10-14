@@ -346,10 +346,10 @@ init scripts entirely — see the file's own header). The compose init mount
 "Ensure psql client" step first (codex round-03 [P1]: never assume the runner image already has it
 — install it if `command -v psql` fails, a no-op otherwise). `pnpm db:bootstrap` itself shells out
 to `psql`, which is **not** guaranteed on a Docker-only host: if it is missing locally, run the
-SAME file through the postgres container's own client instead —
-`docker compose -f infra/docker-compose.yml exec -T postgres psql -U plexco -d plexco -v
-ON_ERROR_STOP=1 -f - < infra/postgres-init/01-job-definer.sql` (see `infra/docker-compose.yml`'s
-worker-prep comment). Production's admin/deploy tooling for this step must likewise run somewhere
+SAME files through the postgres container's own client instead, all three in order (01, 02, 03) —
+`for f in 01-job-definer 02-chat-definer 03-identity-definer; do docker compose -f
+infra/docker-compose.yml exec -T postgres psql -U plexco -d plexco -v ON_ERROR_STOP=1 -f - <
+infra/postgres-init/$f.sql; done` (see `infra/docker-compose.yml`'s worker-prep comment). Production's admin/deploy tooling for this step must likewise run somewhere
 `psql` is available — the application's own runtime image is not required to have it, since this
 step never runs from inside it. The bootstrap file creates/verifies exactly:
 
@@ -537,6 +537,30 @@ session shadow `chat_members`/`chat_channels`/`memberships` with an attacker-con
 all three tables is `ENABLE` + `FORCE`, two permissive policies per table (club branch OR dm branch);
 `app` has `SELECT` only — zero `INSERT`/`UPDATE`/`DELETE` grant on any of the three, since mutation has
 no owner yet.
+
+`identity_definer` (`NOLOGIN`, `BYPASSRLS`, `NOINHERIT`) is the analogous role for web account linking:
+`infra/postgres-init/03-identity-definer.sql` provisions it via `pnpm db:bootstrap` (right after
+`02-chat-definer.sql`), and migration `0054` only asserts it, then owns
+`link_code_reparent_empty_person` through a `SET ROLE identity_definer` bracket so the emptiness scan
+reads the FORCE-RLS tenant tables for real (DD-127 / DD-131 OD-3, `decisions.md`, pending in PR #51).
+Its privileges are column-level (exactly what the body reads or writes: never a code hash, salt or
+`*_enc` column), and `0054` step 1 also refuses an `identity_definer` that is a member of any role or
+has a member besides the migration role. `linkZaloToAccount` reads the salt (one autocommit statement) and
+runs the scrypt first, outside any transaction (no pooled client is held through the slow hash), then
+runs `link_code_consume` and the definer in
+ONE transaction on one client: a failed re-parent rolls the consume back (the code stays live), a
+wrong code still counts toward the attempt cap, a `requires_review` revokes the code it judged (a
+re-call of the definer with it is `invalid`), and a 40P01/40001 is the retryable `unavailable`.
+A test run killed inside `migrate.test.ts`'s 0054 step-1 window leaves the real role renamed to
+`identity_definer_hidden_for_test` (maybe beside a scratch `identity_definer`); the next run of that
+file puts it back under the window's own locks (`healHiddenIdentityDefiner`, which also documents the
+manual repair for the one case it refuses).
+A local database that applied an earlier `0054` text fails the sha256 guard: run `pnpm db:bootstrap`,
+then `pnpm db:reset:test` for a `*_test` database; any other database (`db:reset:test` refuses it)
+must be dropped and recreated through the compose container (`docker compose -f
+infra/docker-compose.yml exec -T postgres psql -U plexco -d postgres -c 'DROP DATABASE <db> WITH
+(FORCE)' -c 'CREATE DATABASE <db> TEMPLATE template0'`), then migrated (`pnpm --filter @plexco/db
+migrate`), never patched through `schema_migrations` (0054's header records the measurement).
 
 ## Chat DM safety config single-read (DD-102, `0032` — CODE DARK)
 

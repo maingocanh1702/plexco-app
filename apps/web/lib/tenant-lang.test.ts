@@ -150,6 +150,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (b) — authenticated but NO single tenant is routed. /session returns a LIST of tenants, so no
   // one tenant's locale applies; logout and logout-all are account-scoped.
   "app/api/auth/session/route.ts": "b",
+  // (b) — account-scoped linking (M3b): the Zalo identity is global, no tenant is routed; Vietnamese default.
+  "app/api/me/link/route.ts": "b",
   "app/api/auth/logout/route.ts": "b",
   "app/api/auth/logout-all/route.ts": "b",
   // (b) — authenticated, but the payload is the GLOBAL sports directory: no tenant is routed, so no
@@ -182,6 +184,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/auth-secrets.ts": "c",
   "lib/connector-secrets.ts": "c",
   "lib/link-code-keys.ts": "c",
+  // (c) — browser-side state mapping for /me/link (M3b): no t(), no response body; strings live in the view.
+  "lib/me-link-client.ts": "c",
   "lib/google-oidc.ts": "c",
   "lib/oauth-transaction.ts": "c",
   // (b) — RECLASSIFIED 2026-09-06 (audit W-4): buildCompletionLanding renders a user-facing

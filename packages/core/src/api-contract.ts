@@ -50,7 +50,7 @@
  * Web MVP lane M2c (host roster + manual mark-paid + reversal) registers: ALREADY_JOINED,
  * PLAYER_NOT_FOUND, REJOIN_REQUIRES_REVIEW (spec §3 catalog); ALLOCATION_EXCEEDS_FUNDS,
  * CHARGE_ALREADY_SETTLED, REVERSAL_EXCEEDS_EFFECTIVE (payment_reconcile BE/FE specs); and five codes
- * the specs do NOT pin, proposed in the lane report for decisions.md: ALLOCATION_NOT_FOUND,
+ * the specs do NOT pin, proposed as DD-127 (ledger PR) for decisions.md: ALLOCATION_NOT_FOUND,
  * REMOVE_REQUIRES_REVIEW, CHARGE_NOT_PAYABLE, MARK_PAID_TOTAL_MISMATCH, REVERSAL_NOT_SUPPORTED.
  *
  * INVALID_WEBHOOK_SECRET, WEBHOOK_PAYLOAD_MALFORMED, WEBHOOK_RATE_LIMITED and ZALO_TOKEN_INVALID
@@ -59,6 +59,15 @@
  * CONNECT_SUPERSEDED (409: a newer connect replaced this attempt's webhook token) is the owner's own
  * code for that case (DD-126, signed as OD-2), pinned in feature_connector_onboarding_tech.md
  * section 3; COMMAND_ID_CONFLICT stays reserved for a commandId owned by another command.
+ *
+ * LINK_CODE_INVALID, LINK_CODE_RATE_LIMITED and MERGE_REQUIRES_REVIEW arrived with POST /api/me/link (M3b),
+ * named by feature_identity_tech.md section 7; LINK_UNAVAILABLE (503, retryable) is not pinned by the spec
+ * and is proposed as DD-127 (ledger PR). It covers two cases: the link-code lookup key is not configured,
+ * or the link transaction hit a deadlock / serialization failure (40P01 / 40001) and was rolled back
+ * whole (nothing written, the code still live). Any other failure, a lost connection included, is not
+ * mapped to it: it propagates (the route answers 500) and its outcome is UNKNOWN: a failure before
+ * COMMIT rolls the transaction back, but a connection that drops after the server applied COMMIT
+ * leaves the committed decision (the link included) in place behind that 500.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -83,8 +92,12 @@ export const API_ERROR_CODES = [
   "INVALID_TIME_RANGE",
   "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
+  "LINK_CODE_INVALID",
+  "LINK_CODE_RATE_LIMITED",
+  "LINK_UNAVAILABLE",
   "LOGIN_RATE_LIMITED",
   "MARK_PAID_TOTAL_MISMATCH",
+  "MERGE_REQUIRES_REVIEW",
   "MISSING_DISCOVERY_FIELDS",
   "NOT_FOUND",
   "NOT_NOTE_CREATOR",
