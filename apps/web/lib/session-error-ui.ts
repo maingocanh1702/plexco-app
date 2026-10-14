@@ -26,7 +26,24 @@ export interface ErrorView {
 /** Form fields an error should be pinned to, when the code is about one field. */
 export type ErrorField = "sportId" | "startsAt" | "endsAt" | "area" | "slotsMax" | "priceAmount";
 
+/** Roster / manual-payment codes (lane M2c) after which a refetch is the right next step. */
+const RELOAD_DOMAIN_CODES = new Set([
+  "ALLOCATION_EXCEEDS_FUNDS",
+  "ALLOCATION_NOT_FOUND",
+  "CHARGE_ALREADY_SETTLED",
+  "CHARGE_NOT_PAYABLE",
+  "MARK_PAID_TOTAL_MISMATCH",
+  "PLAYER_NOT_FOUND",
+  "REVERSAL_EXCEEDS_EFFECTIVE",
+  "STALE_VERSION",
+]);
+
 const DOMAIN_CODES = new Set([
+  ...RELOAD_DOMAIN_CODES,
+  "ALREADY_JOINED",
+  "REJOIN_REQUIRES_REVIEW",
+  "REMOVE_REQUIRES_REVIEW",
+  "REVERSAL_NOT_SUPPORTED",
   "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_OCCUPANCY",
   "CAPACITY_BELOW_ROSTER",
@@ -36,7 +53,6 @@ const DOMAIN_CODES = new Set([
   "PRICE_CHANGE_REQUIRES_POLICY",
   "SESSION_NOT_OPEN",
   "SPORT_INACTIVE",
-  "STALE_VERSION",
   "TENANT_SUSPENDED",
 ]);
 
@@ -126,7 +142,7 @@ export function describeSessionError(error: unknown, t: TFn): ErrorView {
       break;
   }
   if (DOMAIN_CODES.has(code) && message.length > 0) {
-    return view(message, code === "STALE_VERSION" ? "reload" : "none");
+    return view(message, RELOAD_DOMAIN_CODES.has(code) ? "reload" : "none");
   }
   return view(
     t(
@@ -148,4 +164,21 @@ export function isDefiniteFailure(error: unknown): boolean {
   if (!(error instanceof ApiClientError)) return false;
   if (error.code === CLIENT_NETWORK_ERROR || error.code === CLIENT_BAD_RESPONSE) return false;
   return error.statusCode >= 400 && error.statusCode < 500;
+}
+
+/**
+ * Reversal-dialog variant (OD-5): reversal is owner-only until a grant UI exists, so FORBIDDEN there
+ * tells the host to ask the club owner, which the generic "not allowed" text would not explain. No
+ * internal permission key is shown.
+ */
+export function describeReverseError(error: unknown, t: TFn): ErrorView {
+  const view = describeSessionError(error, t);
+  if (view.code !== "FORBIDDEN") return view;
+  return {
+    ...view,
+    message: t(
+      "Chỉ chủ CLB mới hoàn tác được thanh toán. Hãy nhờ chủ CLB thực hiện.",
+      "Only the club owner can reverse a payment. Ask the club owner to do it.",
+    ),
+  };
 }

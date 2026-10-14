@@ -1,72 +1,107 @@
 "use client";
 
-import { useLang, useT } from "../../lib/i18n-client";
-import { formatVnd } from "../../lib/money";
-import type { SessionDetailDto } from "../../lib/sessions-api";
-import { Badge, type BadgeTone } from "../ui/badge";
+import { useEffect, useId, useRef, useState } from "react";
+import { useT } from "../../lib/i18n-client";
+import { canEditRoster, canTakePayments, displayNameOf, isPayable } from "../../lib/roster-rules";
+import type { SessionApiContext, SessionDetailDto } from "../../lib/sessions-api";
+import { useOnlineStatus } from "../../lib/use-online-status";
+import { Button } from "../ui/button";
 import { EmptyState } from "../ui/empty-state";
+import { Toast } from "../ui/toast";
+import { MarkPaidSheet } from "./mark-paid-sheet";
+import { RosterAddPlayerForm } from "./roster-add-player-form";
+import { RosterCounts } from "./roster-counts";
+import { RosterGateHints } from "./roster-gate-hints";
+import { RosterGuestNotes } from "./roster-guest-notes";
+import { RosterPlayerRow } from "./roster-player-row";
+import { RosterRemoveDialog } from "./roster-remove-dialog";
+import { RosterReverseDialog } from "./roster-reverse-dialog";
 import styles from "./session-detail-view.module.css";
+import rosterStyles from "./roster.module.css";
 
-/** Read-only roster (adding players / mark-paid is lane M2c-fe): players, charges, guest notes, counts. */
-export function RosterTab({ session }: { session: SessionDetailDto }) {
+/**
+ * Host roster: counts, add by name, remove, select-and-pay (mark-paid sheet), per-player ledger
+ * with reversal. Gates mirror the server allowlists (lib/roster-rules.ts); offline disables writes.
+ */
+export function RosterTab({
+  session,
+  ctx,
+  onChanged,
+}: {
+  session: SessionDetailDto;
+  ctx: SessionApiContext;
+  /** Refetch the detail (silently: the roster stays on screen). */
+  onChanged: () => void;
+}) {
   const t = useT();
-  const lang = useLang();
-  const { counts } = session;
-  // Server-computed occupancy is the only capacity formula (BL-DSC-1): no client-side sum.
-  const free = session.slotsMax === null ? null : Math.max(0, session.slotsMax - counts.occupied);
+  const uid = useId();
+  const online = useOnlineStatus();
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
+  const [reversing, setReversing] = useState<{
+    allocationId: string;
+    amount: number;
+    name: string;
+  } | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+  // After a command, a refetch or a cancelled add the opener may be gone (a removed row's button,
+  // the add form's Cancel): focus moves to the heading once the dialog or form has closed.
+  const [focusHeading, setFocusHeading] = useState(0);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusHeading > 0) heading.current?.focus();
+  }, [focusHeading]);
 
-  const playerBadge = (p: SessionDetailDto["players"][number]): [BadgeTone, string] => {
-    if (p.status === "active") return ["success", t("Đang tham gia", "Active")];
-    if (p.status === "waitlisted") {
-      return [
-        "warning",
-        p.waitlistPosition
-          ? t(`Chờ #${p.waitlistPosition}`, `Waitlist #${p.waitlistPosition}`)
-          : t("Danh sách chờ", "Waitlisted"),
-      ];
-    }
-    if (p.status === "left") return ["neutral", t("Đã rời", "Left")];
-    return ["neutral", p.status];
+  const editable = online && canEditRoster(session.status);
+  const payable = online && canTakePayments(session.status);
+  // Selection survives refetches but never keeps a player who is no longer payable.
+  const selectedPlayers = session.players.filter((p) => picked.has(p.id) && isPayable(p));
+  const finished = (message?: string) => {
+    if (message) setDone(message);
+    setFocusHeading((n) => n + 1);
+    onChanged();
   };
-  const chargeBadge = (status: string): [BadgeTone, string] => {
-    if (status === "paid") return ["success", t("Đã thanh toán", "Paid")];
-    if (status === "partial") return ["warning", t("Trả một phần", "Partly paid")];
-    if (status === "open") return ["error", t("Chưa thanh toán", "Unpaid")];
-    if (status === "void") return ["neutral", t("Đã huỷ khoản thu", "Void")];
-    return ["neutral", status];
-  };
+  const name = (p: SessionDetailDto["players"][number]) => displayNameOf(p.displayName, t);
 
+  // Offline explains both gates with one paragraph; online each gate has its own status hint.
+  const offlineId = `${uid}-offline`;
+  const editHint = online ? `${uid}-edit` : offlineId;
+  const payHint = online ? `${uid}-pay` : offlineId;
   return (
     <div className={styles.roster}>
-      <dl className={styles.counts}>
-        <div>
-          <dt>{t("Đang tham gia", "Active")}</dt>
-          <dd>{counts.active}</dd>
-        </div>
-        {session.slotsMax === null ? null : (
-          <div>
-            <dt>{t("Đã có chỗ", "Occupied")}</dt>
-            <dd>{`${counts.occupied}/${session.slotsMax}`}</dd>
-          </div>
-        )}
-        <div>
-          <dt>{t("Chỗ trống", "Free slots")}</dt>
-          <dd>{free === null ? t("Không giới hạn", "Unlimited") : free}</dd>
-        </div>
-        <div>
-          <dt>{t("Danh sách chờ", "Waitlist")}</dt>
-          <dd>{counts.waitlisted}</dd>
-        </div>
-        <div>
-          <dt>{t("Khách", "Guests")}</dt>
-          <dd>{counts.guestNotes}</dd>
-        </div>
-      </dl>
+      <RosterCounts session={session} />
 
-      <section aria-labelledby="roster-players">
-        <h2 id="roster-players" className={styles.sectionTitle}>
+      <section aria-labelledby={`${uid}-players`}>
+        <h2 id={`${uid}-players`} ref={heading} tabIndex={-1} className={styles.sectionTitle}>
           {t("Người chơi", "Players")}
         </h2>
+        <div className={rosterStyles.toolbar}>
+          <RosterAddPlayerForm
+            ctx={ctx}
+            sessionId={session.id}
+            disabled={!editable}
+            describedBy={editHint}
+            onAdded={finished}
+            onReload={onChanged}
+            onCancel={() => setFocusHeading((n) => n + 1)}
+          />
+          <Button
+            disabled={!payable || selectedPlayers.length === 0}
+            aria-describedby={payable ? undefined : payHint}
+            onClick={() => setSheetOpen(true)}
+          >
+            {t(`Gạch nợ (${selectedPlayers.length})`, `Record payment (${selectedPlayers.length})`)}
+          </Button>
+        </div>
+        <RosterGateHints
+          online={online}
+          editable={editable}
+          payable={payable}
+          offlineId={offlineId}
+          editHint={editHint}
+          payHint={payHint}
+        />
         {session.players.length === 0 ? (
           <EmptyState
             title={t("Chưa có người chơi", "No players yet")}
@@ -74,54 +109,80 @@ export function RosterTab({ session }: { session: SessionDetailDto }) {
           />
         ) : (
           <ul className={styles.playerList}>
-            {session.players.map((p) => {
-              const [tone, label] = playerBadge(p);
-              return (
-                <li key={p.id} className={styles.player}>
-                  <span className={styles.playerName}>
-                    {p.displayName ?? t("(chưa đặt tên)", "(unnamed)")}
-                  </span>
-                  <Badge tone={tone}>{label}</Badge>
-                  {p.charge ? (
-                    <span className={styles.charge}>
-                      <span className={styles.money}>
-                        {formatVnd(p.charge.amountAllocated, lang)} /{" "}
-                        {formatVnd(p.charge.amountDue, lang)}
-                      </span>
-                      <Badge tone={chargeBadge(p.charge.status)[0]}>
-                        {chargeBadge(p.charge.status)[1]}
-                      </Badge>
-                    </span>
-                  ) : (
-                    <span
-                      className={styles.charge}
-                      aria-label={t("Chưa có khoản thu", "No charge")}
-                    >
-                      —
-                    </span>
-                  )}
-                </li>
-              );
-            })}
+            {session.players.map((p) => (
+              <RosterPlayerRow
+                key={p.id}
+                player={p}
+                selectable={payable && isPayable(p)}
+                selected={picked.has(p.id)}
+                canRemove={editable}
+                canReverse={payable}
+                timeZone={session.timezone}
+                removeHint={editHint}
+                reverseHint={payHint}
+                onSelect={(on) =>
+                  setPicked((prev) => {
+                    const next = new Set(prev);
+                    if (on) next.add(p.id);
+                    else next.delete(p.id);
+                    return next;
+                  })
+                }
+                onRemove={() => setRemoving({ id: p.id, name: name(p) })}
+                onReverse={(allocationId, amount) =>
+                  setReversing({ allocationId, amount, name: name(p) })
+                }
+              />
+            ))}
           </ul>
         )}
       </section>
 
-      {session.guestNotes.length > 0 ? (
-        <section aria-labelledby="roster-guests">
-          <h2 id="roster-guests" className={styles.sectionTitle}>
-            {t("Ghi chú khách", "Guest notes")}
-          </h2>
-          <ul className={styles.playerList}>
-            {session.guestNotes.map((g) => (
-              <li key={g.id} className={styles.player}>
-                <span className={styles.playerName}>{g.guestName}</span>
-                {g.note ? <span className={styles.note}>{g.note}</span> : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <RosterGuestNotes notes={session.guestNotes} />
+
+      <RosterRemoveDialog
+        target={removing}
+        ctx={ctx}
+        sessionId={session.id}
+        onClose={() => setRemoving(null)}
+        onRemoved={(m) => {
+          setRemoving(null);
+          finished(m);
+        }}
+        onReload={() => {
+          setRemoving(null);
+          finished();
+        }}
+      />
+      <RosterReverseDialog
+        target={reversing}
+        ctx={ctx}
+        sessionId={session.id}
+        onClose={() => setReversing(null)}
+        onReversed={(m) => {
+          setReversing(null);
+          finished(m);
+        }}
+        onReload={() => {
+          setReversing(null);
+          finished();
+        }}
+      />
+      <MarkPaidSheet
+        open={sheetOpen}
+        ctx={ctx}
+        sessionId={session.id}
+        players={selectedPlayers.map((p) => ({ id: p.id, name: name(p) }))}
+        onReload={onChanged}
+        onClose={(paid) => {
+          setSheetOpen(false);
+          if (paid) {
+            setPicked(new Set());
+            finished();
+          }
+        }}
+      />
+      {done ? <Toast message={done} onDismiss={() => setDone(null)} /> : null}
     </div>
   );
 }

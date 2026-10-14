@@ -49,7 +49,28 @@ export interface RosterPlayerDto {
   status: string;
   joinedAt: string;
   waitlistPosition: number | null;
-  charge: { id: string; amountDue: number; amountAllocated: number; status: string } | null;
+  charge: RosterChargeDto | null;
+}
+
+/** One ledger row (append-only; a reversal is a NEGATIVE row pointing at the row it undoes). */
+export interface LedgerAllocationDto {
+  id: string;
+  source: string;
+  amount: number;
+  createdAt: string;
+  reasonCode: string | null;
+  reversesAllocationId: string | null;
+}
+
+/** Host-view charge: `effectiveAllocated` = SUM of the ledger, `remaining` is server-computed (0 for void). */
+export interface RosterChargeDto {
+  id: string;
+  amountDue: number;
+  amountAllocated: number;
+  status: string;
+  effectiveAllocated: number;
+  remaining: number;
+  allocations: LedgerAllocationDto[];
 }
 
 export interface GuestNoteDto {
@@ -98,7 +119,7 @@ export interface SessionFieldsBody {
   joinPolicy?: "open" | "approval";
 }
 
-const tenantQuery = (tenantId: string) => `tenant=${encodeURIComponent(tenantId)}`;
+export const tenantQuery = (tenantId: string) => `tenant=${encodeURIComponent(tenantId)}`;
 
 export function listSessions(
   tenantId: string,

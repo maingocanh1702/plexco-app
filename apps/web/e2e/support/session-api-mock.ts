@@ -1,4 +1,5 @@
 import type { BrowserContext, Page, Route } from "@playwright/test";
+import { handleRoster, rosterRouteKey } from "./roster-api-mock";
 
 /**
  * Deterministic browser-side mock of the session API for the workspace specs. Every /api call the
@@ -85,7 +86,24 @@ export const ROSTER_PLAYERS = [
     status: "active",
     joinedAt: "2026-10-01T00:00:00.000Z",
     waitlistPosition: null,
-    charge: { id: "c1", amountDue: 50000, amountAllocated: 50000, status: "paid" },
+    charge: {
+      id: "c1",
+      amountDue: 50000,
+      amountAllocated: 50000,
+      status: "paid",
+      effectiveAllocated: 50000,
+      remaining: 0,
+      allocations: [
+        {
+          id: "a1",
+          source: "cash",
+          amount: 50000,
+          createdAt: "2026-10-02T03:00:00.000Z",
+          reasonCode: null,
+          reversesAllocationId: null,
+        },
+      ],
+    },
   },
   {
     id: "p2",
@@ -94,7 +112,24 @@ export const ROSTER_PLAYERS = [
     status: "active",
     joinedAt: "2026-10-01T00:01:00.000Z",
     waitlistPosition: null,
-    charge: { id: "c2", amountDue: 50000, amountAllocated: 20000, status: "partial" },
+    charge: {
+      id: "c2",
+      amountDue: 50000,
+      amountAllocated: 20000,
+      status: "partial",
+      effectiveAllocated: 20000,
+      remaining: 30000,
+      allocations: [
+        {
+          id: "a2",
+          source: "attested_transfer",
+          amount: 20000,
+          createdAt: "2026-10-02T04:00:00.000Z",
+          reasonCode: "ck lần 1",
+          reversesAllocationId: null,
+        },
+      ],
+    },
   },
   {
     id: "p3",
@@ -110,8 +145,12 @@ export const ROSTER_PLAYERS = [
 export interface ApiMock {
   state: MockSession[];
   calls: RecordedCall[];
-  /** The next call to this route key is answered with `error` instead (consumed once). */
-  failNext(key: string, error: MockError | "network"): void;
+  /**
+   * The next call to this route key is answered with `error` instead (consumed once). `"network"`
+   * drops the request BEFORE the server sees it; `"lost-response"` (roster keys only) lets the
+   * server APPLY it and then drops the reply, the case an idempotent retry must replay.
+   */
+  failNext(key: string, error: MockError | "network" | "lost-response"): void;
   /** The next call to this route key waits until the returned resolver is called (consumed once). */
   holdNext(key: string): () => void;
   /** Delay (ms) applied to the list response, to observe the loading state. */
@@ -148,8 +187,9 @@ export async function installApiMock(
   initial: MockSession[],
   opts: { locale?: "vi" | "en" } = {},
 ): Promise<ApiMock> {
-  const state = initial.map((s) => ({ ...s }));
-  const failures = new Map<string, (MockError | "network")[]>();
+  // Deep copy: fixtures are module-level and the roster mock mutates players/ledgers in place.
+  const state = initial.map((s) => structuredClone(s));
+  const failures = new Map<string, (MockError | "network" | "lost-response")[]>();
   const holds = new Map<string, Promise<void>[]>();
   let seq = 0;
   const mock: ApiMock = {
@@ -215,12 +255,28 @@ export async function installApiMock(
         ? method === "GET"
           ? "list"
           : "create"
-        : (detailMatch?.[2] ?? (method === "PUT" ? "update" : "detail"));
+        : (rosterRouteKey(method, path, body) ??
+          detailMatch?.[2] ??
+          (method === "PUT" ? "update" : "detail"));
 
     await holds.get(key)?.shift();
     const injected = take(key);
     if (injected === "network") return route.abort("internetdisconnected");
-    if (injected) return json(route, injected.statusCode, errorEnvelope(injected));
+    if (injected && injected !== "lost-response")
+      return json(route, injected.statusCode, errorEnvelope(injected));
+
+    const rosterKey = rosterRouteKey(method, path, body);
+    if (injected === "lost-response") {
+      if (!rosterKey) throw new Error(`lost-response needs a roster route key, got "${key}"`);
+      handleRoster(state, rosterKey, path, body);
+      return route.abort("internetdisconnected");
+    }
+    if (rosterKey) {
+      const result = handleRoster(state, rosterKey, path, body);
+      return "error" in result
+        ? json(route, result.status, errorEnvelope(result.error))
+        : json(route, 200, envelope(result.data));
+    }
 
     const view = (s: MockSession) => {
       const { players, guestNotes, ...scalars } = s;

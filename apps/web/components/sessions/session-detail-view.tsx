@@ -183,7 +183,7 @@ export function SessionDetailView({
           {
             id: "roster",
             label: t("Người chơi", "Roster"),
-            panel: <RosterTab session={session} />,
+            panel: <RosterTab session={session} ctx={ctx} onChanged={refresh} />,
           },
           {
             id: "details",
