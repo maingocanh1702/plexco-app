@@ -52,8 +52,8 @@ export async function POST(request: Request): Promise<Response> {
     err(
       "LINK_CODE_RATE_LIMITED",
       t(
-        "Bạn đã thử quá nhiều lần. Hãy thử lại sau ít phút.",
-        "Too many attempts. Try again in a few minutes.",
+        "Bạn đã thử quá nhiều lần. Hãy đợi 10 phút rồi thử lại.",
+        "Too many attempts. Wait 10 minutes and try again.",
       ),
       429,
     );
