@@ -1,10 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ClubConfigDto } from "../../lib/club-settings-client";
-import { LangProvider } from "../../lib/i18n-client";
+import { LangProvider, makeT } from "../../lib/i18n-client";
 import { ClubDefaultsForm } from "./club-defaults-form";
 import { ClubProfileForm } from "./club-profile-form";
+import { FormFeedback } from "./form-feedback";
 import { ZaloConnectCard } from "./zalo-connect-card";
+import { connectOutcome, statusLabel, statusTone } from "./zalo-connect-status";
 
 const club: ClubConfigDto = {
   slug: "clb",
@@ -45,6 +47,15 @@ describe("ClubDefaultsForm", () => {
     expect(html).toContain("Private");
     expect(html).toContain("Public");
   });
+
+  it("labels the price in đ (U+0111, OD-4(b)), never the U+20AB dong sign", () => {
+    const html = wrap(
+      <ClubDefaultsForm tenantId="t" csrfToken="x" club={club} sports={[]} onSaved={vi.fn()} />,
+      "vi",
+    );
+    expect(html).toContain(`Giá mặc định (${String.fromCodePoint(0x111)})`);
+    expect(html).not.toContain(String.fromCodePoint(0x20ab));
+  });
 });
 
 describe("ZaloConnectCard", () => {
@@ -52,5 +63,48 @@ describe("ZaloConnectCard", () => {
     const html = wrap(<ZaloConnectCard tenantId="t" csrfToken="x" />);
     expect(html).not.toContain('type="password"');
     expect(html).not.toContain("Connected");
+  });
+});
+
+describe("Zalo connect status copy", () => {
+  const en = makeT("en");
+  it("every known status has its own label and tone; an unknown one fails closed, never blank", () => {
+    for (const status of ["not_connected", "connecting", "registered", "active", "drift"]) {
+      expect(statusLabel(status, en)).not.toBe("Unknown status");
+    }
+    expect(statusLabel("error", en)).toBe("Connection error");
+    expect(statusTone("error")).toBe("error");
+    expect(statusLabel("paused_by_zalo", en)).toBe("Unknown status");
+    expect(statusTone("paused_by_zalo")).toBe("neutral");
+  });
+
+  it("a 200 is worded from the status it returned (status error is NOT 'registered')", () => {
+    expect(connectOutcome("registered", en)).toEqual({
+      message: expect.stringMatching(/webhook registered/),
+      tone: "success",
+    });
+    expect(connectOutcome("active", en).tone).toBe("success");
+    const failed = connectOutcome("error", en);
+    expect(failed.tone).toBe("warning");
+    expect(failed.message).toMatch(/did not accept the webhook registration/);
+    expect(failed.message).not.toMatch(/webhook registered/);
+    expect(connectOutcome("something_new", en).tone).toBe("warning");
+  });
+});
+
+describe("FormFeedback", () => {
+  it("keeps an empty, visually hidden live region mounted so the next outcome is announced", () => {
+    const html = wrap(<FormFeedback focusKey={0} />);
+    expect(html).toContain('class="sr-only"');
+    expect(html).toContain('role="status"');
+  });
+
+  it("shows the message in that same live region (the alert path is pinned by e2e/settings.spec.ts)", () => {
+    const saved = wrap(<FormFeedback focusKey={0} message="Saved." />);
+    expect(saved).toMatch(/role="status"[^>]*>Saved\.</);
+    expect(saved).not.toContain('class="sr-only"');
+    expect(wrap(<FormFeedback focusKey={0} message="Careful." tone="warning" />)).toMatch(
+      /role="status"[^>]*>Careful\.</,
+    );
   });
 });

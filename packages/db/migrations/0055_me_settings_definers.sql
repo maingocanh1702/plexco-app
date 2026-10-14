@@ -21,25 +21,43 @@
 --                                        otherwise                               zero rows
 --   channel_identity_detach(account, ci) account or ci NULL                      RAISE invalid_parameter_value
 --     (the UNLINK rule)                  account has no active Person            invalid
---                                        ci missing / owned by another Person    invalid  (one outcome: no oracle)
---                                        ci already inactive                     invalid  (a concurrent double
---                                                                                detach: the second call lands here)
+--                                        ci missing / owned by another Person    invalid  (one outcome: no oracle.
+--                                                                                A repeat or concurrent detach of
+--                                                                                the same ci lands HERE: the first
+--                                                                                call moved it to a new Person)
+--                                        ci inactive                             invalid  (listed but not
+--                                                                                detachable: see INACTIVE below)
 --                                        otherwise                               detached: a FRESH empty Person
 --                                        (display_name NULL, status active) is minted, the identity is moved onto it
 --                                        (status unchanged), the identity's live link codes are revoked, one
 --                                        routing_audit row `identity.channel_detached` (tenant NULL, ids only).
 --
--- WHY A NEW EMPTY PERSON AND NOT A DELETE / TOMBSTONE / MERGE. The Zalo user simply becomes a
--- stranger again, exactly the state before linking (zalo_identity_resolve mints one empty Person per
--- new Zalo user); a later re-link goes through 0054's empty-person rule. The Person that owns
+-- WHY A NEW EMPTY PERSON AND NOT A DELETE / TOMBSTONE / MERGE. The Zalo user becomes a stranger to
+-- the bot again, and a later re-link goes through 0054's empty-person rule. It is NOT exactly the
+-- state before linking: the name that user had then lived on the Person 0054 tombstoned, and no name
+-- is stored for the identity itself (channel_identities holds no plaintext name), so the fresh Person
+-- starts with display_name NULL. Copying the account Person's name would hand one Person's PII to
+-- another, so nothing is copied. zalo_identity_resolve (0053) names a Person only when it mints one,
+-- so the bot shows this user without a name until a later flow sets one. The Person that owns
 -- memberships / charges is NEVER touched, merged, tombstoned or deleted (DD-14/15/50/67): unlinking
 -- must not merge or claim anything.
 --
+-- INACTIVE IDENTITIES are listed (the account sees every identity still tied to its Person) but not
+-- detachable: the signed unlink rule (OD-6, owner 2026-10-14) moves ACTIVE identities only. No
+-- current flow sets an identity inactive, and zalo_identity_resolve (0053) reactivates one on its
+-- next event, after which it can be unlinked; the web list shows such a row with no unlink action.
+--
 -- Hardening: SET search_path = pg_catalog, public, pg_temp, every relation public.-qualified (0048
 -- lesson); EXECUTE for app only. LOCK ORDER matches 0043/0054: accounts -> persons ->
--- channel_identities. display-name rule = TypeScript validateDisplayName (me-settings.ts): trimmed,
--- 1..120 CODE POINTS, no control (Cc) or format (Cf) character. Cf is enumerated by hand (PostgreSQL
--- regexes have no \p{}); the TS side is authoritative, this is the backstop.
+-- channel_identities. Display-name rule = TypeScript validateDisplayName (me-settings.ts): trimmed of
+-- exactly what JavaScript's String.prototype.trim removes, then 1..120 CODE POINTS and no control (Cc)
+-- or format (Cf) character. PostgreSQL regexes have no Unicode property classes, and their whitespace
+-- class shorthand follows the database locale (NBSP is not a space under C), so both sets are
+-- enumerated by hand, in E'' strings so the escapes never depend on the caller's
+-- standard_conforming_strings. Cf = the 170 code points Node 20.20 and 25.6 (Unicode 17.0) report.
+-- me-settings.test.ts walks every code point Node classifies Cc/Cf and every one trim() removes, so a
+-- Node whose Unicode adds one fails the suite until these lists grow. The TS validator runs first in
+-- the web route; this is the backstop for every other app caller.
 -- No schema.ts change (no new table/column).
 -- ============================================================================
 
@@ -69,14 +87,23 @@ AS $$
 DECLARE
   v_name   text;
   v_person uuid;
+  -- ECMAScript WhiteSpace + LineTerminator: exactly the set String.prototype.trim removes.
+  c_space  CONSTANT text := E'[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]';
+  -- Cc (U+0000 never reaches a text parameter) and Cf; see the header for where the list comes from.
+  c_reject CONSTANT text := '['
+    || E'\u0001-\u001f\u007f-\u009f'
+    || E'\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890\u0891\u08e2\u180e'
+    || E'\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb'
+    || E'\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3'
+    || E'\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f'
+    || ']';
 BEGIN
   IF p_account_id IS NULL OR p_display_name IS NULL THEN
     RAISE EXCEPTION 'person_profile_update: account id and display name are required'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
-  v_name := regexp_replace(p_display_name, '^\s+|\s+$', '', 'g');
-  IF char_length(v_name) < 1 OR char_length(v_name) > 120
-     OR v_name ~ '[\u0001-\u001f\u007f-\u009f­؀-؅؜۝܏᠎​-‏‪-‮⁠-⁤⁦-⁯﻿￹-￻\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f]' THEN
+  v_name := regexp_replace(p_display_name, '^' || c_space || '+|' || c_space || '+$', '', 'g');
+  IF char_length(v_name) < 1 OR char_length(v_name) > 120 OR v_name ~ c_reject THEN
     RAISE EXCEPTION 'person_profile_update: display name must be 1-120 printable characters'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
@@ -141,6 +168,8 @@ BEGIN
   END IF;
   SELECT c.person_id, c.status INTO v_owner, v_status
     FROM public.channel_identities c WHERE c.id = p_channel_identity_id FOR UPDATE;
+  -- One outcome for: missing; owned by another Person (a repeat or concurrent detach lands here, the
+  -- first call moved it); inactive (OD-6 detaches active identities only; see the header).
   IF NOT FOUND OR v_owner IS DISTINCT FROM v_person OR v_status <> 'active' THEN
     RETURN QUERY SELECT 'invalid'::text, NULL::uuid; RETURN;
   END IF;

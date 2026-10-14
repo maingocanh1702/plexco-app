@@ -23,8 +23,15 @@ import {
  * is refused as an unknown key. Responses carry the coarse outcome only: no person ids, counters or
  * blocking-table names, and "no such code" / "wrong code" / "already used" are all the same LINK_CODE_INVALID (existence
  * oracle). Merging a Person that holds real data is refused (MERGE_REQUIRES_REVIEW), never done.
+ * A deadlock / serialization failure inside the link transaction rolled back whole (nothing written)
+ * and is the retryable LINK_UNAVAILABLE, like a missing key.
  * commandId is validated for parity with the other command routes but nothing is stored under it:
  * the code is single-use at the DB, so a replay is simply an invalid code.
+ *
+ * The two 429s say what is true for each: RATE_LIMITED is the 60 per 60 s actor ceiling;
+ * LINK_CODE_RATE_LIMITED is BOTH an app bucket (600 s windows) and the DB attempt cap (that code is
+ * dead), so its copy holds for both: wait 10 minutes, then use a new code (by then the old code's
+ * 10-minute TTL has run out anyway).
  */
 const MAX_BODY_BYTES = 1024;
 const MAX_CODE_CHARS = 40;
@@ -38,6 +45,12 @@ const invalidCode = () =>
     t("Mã liên kết không đúng hoặc đã hết hạn.", "That code is not valid or has expired."),
     400,
   );
+const linkUnavailable = () =>
+  err(
+    "LINK_UNAVAILABLE",
+    t("Liên kết Zalo tạm thời không khả dụng.", "Zalo linking is temporarily unavailable."),
+    503,
+  );
 
 export async function POST(request: Request): Promise<Response> {
   const session = await currentSession();
@@ -46,14 +59,21 @@ export async function POST(request: Request): Promise<Response> {
     return err("CSRF_INVALID", t("Yêu cầu không hợp lệ.", "Invalid request."), 403);
   }
   const tooMany = () =>
-    err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429);
+    err(
+      "RATE_LIMITED",
+      t(
+        "Bạn gửi quá nhiều yêu cầu. Hãy đợi 1 phút rồi thử lại.",
+        "Too many requests. Wait a minute and try again.",
+      ),
+      429,
+    );
   if (await actorThrottled(session.accountId)) return tooMany();
   const linkTooMany = () =>
     err(
       "LINK_CODE_RATE_LIMITED",
       t(
-        "Bạn đã thử quá nhiều lần. Hãy thử lại sau ít phút.",
-        "Too many attempts. Try again in a few minutes.",
+        "Bạn đã thử quá nhiều lần. Hãy đợi 10 phút, rồi gửi /link cho bot để lấy mã mới và thử lại.",
+        "Too many attempts. Wait 10 minutes, then send /link to the bot for a new code and try again.",
       ),
       429,
     );
@@ -99,11 +119,7 @@ export async function POST(request: Request): Promise<Response> {
   const keys = linkCodeKeys();
   if (!keys) {
     log.error("me_link_unconfigured", { accountId: session.accountId });
-    return err(
-      "LINK_UNAVAILABLE",
-      t("Liên kết Zalo tạm thời không khả dụng.", "Zalo linking is temporarily unavailable."),
-      503,
-    );
+    return linkUnavailable();
   }
 
   const { outcome } = await linkZaloToAccount(appDb().pool, code, session.accountId, keys);
@@ -123,6 +139,8 @@ export async function POST(request: Request): Promise<Response> {
       );
     case "rate_limited":
       return linkTooMany();
+    case "unavailable": // 40P01 / 40001: rolled back whole, nothing written; a retry may pass
+      return linkUnavailable();
     case "invalid":
     case "unsupported": // never reveal the issuer shape
       return invalidCode();

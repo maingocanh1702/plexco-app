@@ -53,6 +53,7 @@ export function describeSettingsError(error: unknown, t: TFn): ErrorView {
         "none",
       );
     case "COMMAND_ID_CONFLICT":
+    case "CONNECT_SUPERSEDED":
       return view(
         t(
           "Thao tác này đã được xử lý hoặc bị thay thế. Tải lại rồi thử lại.",

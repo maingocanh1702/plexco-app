@@ -14,6 +14,9 @@ describe("stateFromLinkResponse", () => {
     [400, { error: { code: "LINK_CODE_INVALID" } }, "invalid", false],
     [400, { error: { code: "INVALID_BODY" } }, "invalid", false],
     [429, { error: { code: "LINK_CODE_RATE_LIMITED" } }, "rate_limited", false],
+    // The actor ceiling is a different promise (60 s, code untouched) than the link bucket / cap.
+    [429, { error: { code: "RATE_LIMITED" } }, "throttled", false],
+    [429, null, "rate_limited", false],
     [401, { error: { code: "AUTH_REQUIRED" } }, "signed_out", false],
     [403, { error: { code: "CSRF_INVALID" } }, "error", false],
     [503, { error: { code: "LINK_UNAVAILABLE" } }, "unavailable", true],

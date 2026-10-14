@@ -1,51 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import {
-  connectZalo,
-  getZaloState,
-  type ZaloStateDto,
-  type ZaloStatus,
-} from "../../lib/club-settings-client";
-import { useLang, useT, type TFn } from "../../lib/i18n-client";
-import { isForbidden } from "../../lib/settings-error-ui";
+import { connectZalo, getZaloState, type ZaloStateDto } from "../../lib/club-settings-client";
+import { useLang, useT } from "../../lib/i18n-client";
+import { describeSettingsError, isForbidden } from "../../lib/settings-error-ui";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
-import { Badge, type BadgeTone } from "../ui/badge";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { TextField } from "../ui/text-field";
 import { FormFeedback } from "./form-feedback";
+import { connectOutcome, statusLabel, statusTone } from "./zalo-connect-status";
 import styles from "./settings-layout.module.css";
 
-const TONE: Record<ZaloStatus, BadgeTone> = {
-  not_connected: "neutral",
-  connecting: "info",
-  registered: "warning",
-  active: "success",
-  drift: "warning",
-  error: "error",
-  revoked: "error",
-};
-
-function statusLabel(status: ZaloStatus, t: TFn): string {
-  switch (status) {
-    case "not_connected":
-      return t("Chưa kết nối", "Not connected");
-    case "connecting":
-      return t("Đang kết nối", "Connecting");
-    case "registered":
-      return t("Đã đăng ký webhook, chờ xác minh", "Webhook registered, awaiting verification");
-    case "active":
-      return t("Đang hoạt động", "Active");
-    case "drift":
-      return t("Cần đăng ký lại webhook", "Webhook needs re-registering");
-    case "error":
-      return t("Lỗi kết nối", "Connection error");
-    case "revoked":
-      return t("Đã thu hồi", "Revoked");
-  }
-}
+/** Same bound as POST /api/onboarding/zalo/connect (botToken 1..200 characters). */
+const TOKEN_MAX = 200;
 
 type Card =
   | { phase: "loading" }
@@ -55,9 +25,15 @@ type Card =
 
 /**
  * Zalo bot connect card. Authority is connector.secret_manage (owner; an admin only with an
- * explicit grant), enforced by the routes: a 403 renders ONE uniform "not permitted" note. The bot
- * token is write-only: it lives in this component's state only while typed, goes out in one POST
- * and is cleared right after the submit, success or failure. It is never rendered back.
+ * explicit grant), enforced by the routes: a 403 renders ONE uniform "not permitted" note.
+ *
+ * The bot token is write-only and never persisted: it lives only in this component's state (no
+ * storage, URL, log, DTO or error object), goes out in the POST body and is never rendered back.
+ * It is cleared after any 200, after a non-retryable failure (a wrong token, a refusal, a conflict)
+ * and when the card turns "not permitted"; React drops it with the component on unmount. After a
+ * RETRYABLE failure (network, 5xx, AUTH_UNAVAILABLE, rate limit) it stays in the field so "Try again"
+ * resends the same token under the same commandId: the key survives an uncertain failure, and the
+ * route replays a processed key instead of connecting twice. A newly typed token is a new command.
  */
 export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csrfToken: string }) {
   const t = useT();
@@ -69,7 +45,9 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
   const [token, setToken] = useState("");
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<{ message: string; tone: "success" | "warning" } | null>(
+    null,
+  );
   const [busy, setBusy] = useState(false);
   const [focusKey, setFocusKey] = useState(0);
   const [nonce, setNonce] = useState(0);
@@ -80,19 +58,30 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
       (state) => !controller.signal.aborted && setCard({ phase: "ready", state }),
       (failure: unknown) => {
         if (controller.signal.aborted) return;
-        setCard(isForbidden(failure) ? { phase: "forbidden" } : { phase: "error", error: failure });
+        if (isForbidden(failure)) {
+          // Final for this page: no form will come back, so no secret or key is kept for it.
+          setToken("");
+          command.reset();
+          setCard({ phase: "forbidden" });
+        } else {
+          setCard({ phase: "error", error: failure }); // retryable: the form returns as it was
+        }
       },
     );
     return () => controller.abort();
-  }, [tenantId, nonce]);
+  }, [tenantId, nonce, command]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
-    setMessage(null);
+    setOutcome(null);
     const typed = token.trim();
-    if (typed.length === 0 || typed.length > 200) {
-      setTokenError(t("Nhập token bot Zalo.", "Enter the Zalo bot token."));
+    if (typed.length === 0 || typed.length > TOKEN_MAX) {
+      setTokenError(
+        typed.length === 0
+          ? t("Nhập token bot Zalo.", "Enter the Zalo bot token.")
+          : t("Token tối đa 200 ký tự.", "The token is at most 200 characters."),
+      );
       formRef.current?.querySelector("input")?.focus();
       return;
     }
@@ -104,14 +93,15 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
         { botToken: typed, commandId: command.get() },
       );
       command.settle();
+      setToken(""); // the server holds it now, whatever status it answered
       setCard({ phase: "ready", state });
-      setMessage(t("Đã gửi token và đăng ký webhook.", "Token sent and webhook registered."));
+      setOutcome(connectOutcome(state.status, t));
     } catch (failure) {
       command.settle(failure);
+      if (describeSettingsError(failure, t).action !== "retry") setToken("");
       setError(failure);
       setNonce((n) => n + 1); // outcome may be uncertain: show the real state
     } finally {
-      setToken(""); // write-only: never keep the secret after the submit
       setBusy(false);
       setFocusKey((n) => n + 1);
     }
@@ -146,7 +136,7 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
     <div className={styles.stack}>
       <div className={styles.itemMain}>
         <div className={styles.badges}>
-          <Badge tone={TONE[state.status]}>{statusLabel(state.status, t)}</Badge>
+          <Badge tone={statusTone(state.status)}>{statusLabel(state.status, t)}</Badge>
         </div>
         {when(state.verifiedAt) ? (
           <span className={styles.caption}>
@@ -168,7 +158,16 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
             "Enter it only to connect or change the bot. The token is never shown again.",
           )}
           type="password"
-          autoComplete="off"
+          // Browsers ignore autocomplete="off" on a password field and offer to save it. Chromium's
+          // password manager treats a "one-time-code" field as not-a-password (never offered for
+          // saving, never filled); the data-* opt-outs cover the 1Password / LastPass / Bitwarden
+          // extensions.
+          autoComplete="one-time-code"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-bwignore="true"
+          autoCapitalize="none"
+          autoCorrect="off"
           spellCheck={false}
           value={token}
           error={tokenError}
@@ -181,8 +180,13 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
         <FormFeedback
           focusKey={focusKey}
           error={error}
-          message={message}
+          message={outcome?.message ?? null}
+          tone={outcome?.tone}
           onRetry={() => formRef.current?.requestSubmit()}
+          onReload={() => {
+            setError(null);
+            setNonce((n) => n + 1);
+          }}
         />
         <div className={styles.actions}>
           <Button type="submit" disabled={busy || !online} aria-busy={busy ? true : undefined}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLang, useT } from "../../lib/i18n-client";
 import {
   detachMyChannel,
@@ -18,10 +18,16 @@ import { ApiErrorNotice } from "../sessions/api-error-notice";
 import styles from "../settings/settings-layout.module.css";
 
 /**
- * Linked channels with UNLINK. Unlink moves the channel off this account (the channel user becomes
- * a stranger again); the account's clubs, charges and history stay. The confirm dialog says so.
- * Detach is naturally idempotent server-side, so there is no commandId: a repeat answers
- * CHANNEL_NOT_LINKED and the list simply reloads.
+ * Linked channels with UNLINK. Unlink moves the channel off this account: the bot then treats that
+ * channel account as a new stranger (no name, no clubs), while the account's clubs, charges and
+ * history stay. The confirm dialog says so. Detach is naturally idempotent server-side, so there is
+ * no commandId: a repeat answers CHANNEL_NOT_LINKED and the list simply reloads. An INACTIVE row is
+ * listed but has no unlink action (the unlink rule moves active channels only; 0055 header).
+ *
+ * Focus: the native dialog returns focus to its opener when it closes, and after an unlink (or a
+ * 409 whose reload dropped the row) that opener is a removed row, which would leave focus on
+ * <body>. So the outcome region (FormFeedback, whose live region is always mounted and announces
+ * the text) takes focus once the dialog has closed.
  */
 export function SettingsChannelsList({
   channels,
@@ -41,6 +47,16 @@ export function SettingsChannelsList({
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState(0);
+  const focusOutcome = useRef(false);
+
+  // Runs after the commit that closed the dialog (ConfirmDialog's own close effect, a child effect,
+  // has already returned focus to the opener), so this focus is the one that sticks.
+  useEffect(() => {
+    if (target === null && focusOutcome.current) {
+      focusOutcome.current = false;
+      setFocusKey((n) => n + 1);
+    }
+  }, [target]);
 
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString(lang === "en" ? "en-GB" : "vi-VN");
@@ -57,8 +73,8 @@ export function SettingsChannelsList({
           `${platformLabel(target.platform)} unlinked.`,
         ),
       );
+      focusOutcome.current = true;
       setTarget(null);
-      setFocusKey((n) => n + 1);
       onChanged();
     } catch (failure) {
       setError(failure);
@@ -69,6 +85,7 @@ export function SettingsChannelsList({
     }
   }
 
+  const platform = platformLabel(target?.platform ?? "zalo");
   return (
     <>
       <FormFeedback focusKey={focusKey} message={done} />
@@ -95,12 +112,22 @@ export function SettingsChannelsList({
                   <Badge tone={channel.status === "active" ? "success" : "neutral"}>
                     {channel.status === "active"
                       ? t("Đang liên kết", "Linked")
-                      : t("Đã ngắt", "Disconnected")}
+                      : t("Tạm ngưng", "Inactive")}
                   </Badge>
                 </div>
+                {/* channel_identities.created_at: when Plexco first saw this channel account, not
+                    when it was linked to this account (no link time is stored). */}
                 <span className={styles.caption}>
-                  {t("Liên kết ngày", "Linked on")} {formatDate(channel.createdAt)}
+                  {t("Ghi nhận từ ngày", "Known since")} {formatDate(channel.createdAt)}
                 </span>
+                {channel.status === "active" ? null : (
+                  <span className={styles.caption}>
+                    {t(
+                      "Kênh đang tạm ngưng nên chưa thể gỡ liên kết.",
+                      "This channel is inactive, so it cannot be unlinked for now.",
+                    )}
+                  </span>
+                )}
               </div>
               {channel.status === "active" ? (
                 <Button
@@ -135,8 +162,8 @@ export function SettingsChannelsList({
         body={
           <p>
             {t(
-              "Kênh này sẽ không còn gắn với tài khoản của bạn. Câu lạc bộ, lịch sử chơi và các khoản nợ của bạn vẫn ở trong tài khoản này. Bạn có thể liên kết lại bằng mã bất cứ lúc nào.",
-              "This channel will no longer be tied to your account. Your clubs, play history and balances stay in this account. You can link it again with a code at any time.",
+              `Sau khi gỡ, bot sẽ coi tài khoản ${platform} này là một người lạ mới: không có tên và không thuộc câu lạc bộ nào. Câu lạc bộ, lịch sử chơi và các khoản nợ của bạn vẫn ở trong tài khoản này. Bạn có thể liên kết lại bằng mã bất cứ lúc nào.`,
+              `After unlinking, the bot treats this ${platform} account as a new stranger, with no name and no club. Your clubs, play history and balances stay in this account. You can link it again with a code at any time.`,
             )}
           </p>
         }
@@ -144,6 +171,12 @@ export function SettingsChannelsList({
         confirmLabel={t("Gỡ liên kết", "Unlink")}
         onConfirm={() => void confirm()}
         onCancel={() => {
+          // After a 409 the reload may already have removed this row, and with it the dialog's
+          // opener: land on the outcome region instead of <body>.
+          if (target && !channels.some((c) => c.id === target.id && c.status === "active")) {
+            setDone(t("Danh sách kênh đã được tải lại.", "The channel list has been reloaded."));
+            focusOutcome.current = true;
+          }
           setTarget(null);
           setError(null);
         }}

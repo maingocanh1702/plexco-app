@@ -70,7 +70,10 @@ export function ClubProfileForm({
     }
     setBusy(true);
     try {
-      await patchClubConfig({ tenantId, csrfToken }, { ...patch, commandId: command.get() });
+      // The key is bound to this exact patch: an edit after an uncertain failure is a new command
+      // (the route would replay the old key as a no-change 200), an identical retry replays.
+      const commandId = command.get(JSON.stringify(patch));
+      await patchClubConfig({ tenantId, csrfToken }, { ...patch, commandId });
       command.settle();
       setMessage(t("Đã lưu thông tin câu lạc bộ.", "Club details saved."));
       onSaved();

@@ -14,6 +14,7 @@ describe("describeSettingsError", () => {
     ["ZALO_TOKEN_INVALID", "none", /not valid/],
     ["AUTH_UNAVAILABLE", "retry", /temporarily unavailable/],
     ["COMMAND_ID_CONFLICT", "reload", /superseded/],
+    ["CONNECT_SUPERSEDED", "reload", /superseded/],
   ])("%s is a known code with its own wording", (code, action, text) => {
     const view = describeSettingsError(err(code, 409), en);
     expect(view.known).toBe(true);

@@ -5,8 +5,9 @@ import type pg from "pg";
  * Tenant-less and account-scoped: `persons` / `channel_identities` are global protected tables, so
  * everything goes through the 0055 SECURITY DEFINER functions keyed by the ACCOUNT id taken from the
  * session. No function takes a person id; no encrypted platform id, username or lookup hash is ever
- * selected. Detach is naturally idempotent: the second call finds the identity inactive/foreign and
- * answers `invalid` (the route maps it to 409), so no command id is stored.
+ * selected. Detach is naturally idempotent: a repeat finds the identity owned by the fresh Person the
+ * first call minted (not "inactive": detach leaves the status as it was) and answers `invalid` (the
+ * route maps it to 409), so no command id is stored.
  */
 export const DISPLAY_NAME_MAX = 120;
 
@@ -69,7 +70,11 @@ export async function updateMyProfile(
   return row ? { displayName: row.display_name } : null;
 }
 
-/** Every identity of the account's Person (active and inactive), newest first. */
+/**
+ * Every identity of the account's Person (active and inactive), newest first. Inactive rows are
+ * listed so the account sees everything still tied to it, but `detachMyChannel` refuses them (the
+ * signed unlink rule moves active identities only; 0055 header, INACTIVE IDENTITIES).
+ */
 export async function listMyChannels(pool: pg.Pool, accountId: string): Promise<MyChannel[]> {
   const { rows } = await pool.query<{
     channel_identity_id: string;
@@ -89,9 +94,10 @@ export async function listMyChannels(pool: pg.Pool, accountId: string): Promise<
 }
 
 /**
- * UNLINK: moves the identity onto a fresh empty Person (the Zalo user becomes a stranger again).
- * Never merges, tombstones or deletes the Person that owns memberships/charges. `invalid` covers
- * "not yours", "unknown" and "already detached" alike (no existence oracle).
+ * UNLINK: moves the identity onto a fresh empty Person with no name (the Zalo user becomes a nameless
+ * stranger to the bot; nothing is copied from the account's Person). Never merges, tombstones or
+ * deletes the Person that owns memberships/charges. `invalid` covers "not yours", "unknown",
+ * "already detached" (now owned by that fresh Person) and "inactive" alike (no existence oracle).
  */
 export async function detachMyChannel(
   pool: pg.Pool,
