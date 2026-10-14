@@ -439,6 +439,47 @@ export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>):
   }
 }
 
+/**
+ * identity_definer is cluster-global and NAMED by identity-link-web.test.ts (GRANT ... TO it, ALTER
+ * ROLE it, catalog checks by name), while migrate.test.ts's 0054 step-1 cases hide it, re-create it
+ * with drifted attributes or re-grant it, each for one migrate() call. "shared" = a reader,
+ * "exclusive" = that window. A key of its own, NOT the job/chat locks: readers then never queue
+ * behind a sibling suite's migration. Acquire it BEFORE the chat or job lock, never while holding
+ * either: the window holds it while it waits for the chat lock, and a chat holder waiting for this
+ * lock would close a cycle (and would sit on the chat lock every setupRlsTestContext waits for).
+ */
+const IDENTITY_DEFINER_NAME_LOCK_KEY = 0x69646e6d; // "idnm" — distinct from jobd/chad/plxc/jdlk/cdlk/idlk
+
+export async function withIdentityDefinerNameLock<T>(
+  base: string,
+  mode: "shared" | "exclusive",
+  fn: () => Promise<T>,
+): Promise<T> {
+  const suffix = mode === "shared" ? "_shared" : "";
+  const lockClient = new pg.Client({ connectionString: base });
+  let tearingDown = false;
+  guardClientErrors(lockClient, () => tearingDown);
+  try {
+    await lockClient.connect();
+    await lockClient.query(`SELECT pg_advisory_lock${suffix}($1)`, [
+      IDENTITY_DEFINER_NAME_LOCK_KEY,
+    ]);
+  } catch (error) {
+    tearingDown = true;
+    await lockClient.end().catch(() => {});
+    throw error; // identity preserved — the pg error code is the diagnosis
+  }
+  try {
+    return await fn();
+  } finally {
+    tearingDown = true;
+    await lockClient
+      .query(`SELECT pg_advisory_unlock${suffix}($1)`, [IDENTITY_DEFINER_NAME_LOCK_KEY])
+      .catch(() => {});
+    await lockClient.end();
+  }
+}
+
 export interface RlsTestContext {
   /** superuser/owner connection INTO the test db (setup + assertions only) */
   owner: pg.Client;

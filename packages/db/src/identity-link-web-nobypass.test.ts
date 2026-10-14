@@ -104,13 +104,13 @@ describe("0054 under a NOBYPASSRLS migration owner", () => {
     expect(Number(audit.rows[0].n)).toBe(1);
   });
 
-  it("a Person with a membership is requires_review: the owner reads 0 memberships, the definer counts 1, nothing moves", async () => {
+  it("a Person with a membership is requires_review because the definer COUNTS it (the owner reads 0): gone, the same Person links", async () => {
     const tenant = (
       await su.query(
         `INSERT INTO tenants (name, slug, status) VALUES ('NB Club', 'nb-club', 'active') RETURNING id`,
       )
     ).rows[0].id as string;
-    const { accountId, zalo, ciId } = await seedLinkPair("nb");
+    const { web, accountId, zalo, ciId } = await seedLinkPair("nb");
     await su.query(`INSERT INTO memberships (tenant_id, person_id) VALUES ($1, $2)`, [
       tenant,
       zalo,
@@ -138,6 +138,16 @@ describe("0054 under a NOBYPASSRLS migration owner", () => {
       [accountId],
     );
     expect(audit.rows).toHaveLength(1);
-    expect(audit.rows[0].detail.blocking_tables).toContain("memberships.person_id");
+    // Counted, not merely refused. Had the definer been unable to read through FORCE RLS, every
+    // FORCE-RLS reference onto persons would be listed as unprovable (not just memberships), and the
+    // refusal would survive the row's removal below. Exactly one blocker, which then disappears:
+    expect(audit.rows[0].detail.blocking_tables).toEqual(["memberships.person_id"]);
+    await su.query(`DELETE FROM memberships WHERE person_id = $1`, [zalo]);
+    const again = await issueLinkCode(app, { channelIdentityId: ciId }, keys);
+    expect(await linkZaloToAccount(app, again.code, accountId, keys)).toEqual({
+      outcome: "linked",
+    });
+    const moved = await su.query(`SELECT person_id FROM channel_identities WHERE id = $1`, [ciId]);
+    expect(moved.rows[0].person_id).toBe(web);
   });
 });

@@ -25,6 +25,7 @@ import {
   revokeStaleDefinerMembership,
   setupNonSuperuserOwnerContext,
   withChatDefinerLock,
+  withIdentityDefinerNameLock,
   withJobDefinerLock,
 } from "./test-harness.js";
 
@@ -1165,6 +1166,186 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
       await ctx.teardown();
     }
   }, 60_000);
+});
+
+const LINK_REPARENT_MIGRATION = "0054_link_code_reparent_empty_person.sql";
+
+/** Rename the real identity_definer away for one case; whatever the case created under its name goes. */
+async function hideRealIdentityDefiner(
+  superuser: pg.Client,
+  fn: () => Promise<void>,
+): Promise<void> {
+  await superuser.query(`ALTER ROLE identity_definer RENAME TO identity_definer_hidden_for_test`);
+  try {
+    await fn();
+  } finally {
+    // Reached only with the real role safely renamed, so this drops a scratch role or nothing.
+    await superuser.query(`DROP ROLE IF EXISTS identity_definer`);
+    await superuser.query(`ALTER ROLE identity_definer_hidden_for_test RENAME TO identity_definer`);
+  }
+}
+
+describe("0054 step 1 fails closed on identity_definer preconditions (JCL-2/JCL-3 for 0054, plus 03's member-of and one-member rules)", () => {
+  it("each broken precondition aborts 0054 before any grant and records nothing; restored, 0054 applies", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0054_step1");
+    const su = ctx.superuser;
+    const owner = ctx.ownerRole;
+    const scratch = `plexco_migrate_0054_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    // ctx.dbName, read as superuser: grants/functions in THIS database only.
+    let inDb: pg.Client | undefined;
+    const expectNothingFrom0054 = async (label: string) => {
+      const recorded = await inDb!.query(`SELECT 1 FROM schema_migrations WHERE name = $1`, [
+        LINK_REPARENT_MIGRATION,
+      ]);
+      expect(recorded.rows, `${label}: 0054 recorded`).toEqual([]);
+      const leftovers = await inDb!.query(
+        `SELECT to_regprocedure('link_code_reparent_empty_person(uuid, uuid)') AS fn,
+                has_any_column_privilege('identity_definer', 'link_codes', 'SELECT') AS granted`,
+      );
+      expect(leftovers.rows[0], `${label}: 0054 left something behind`).toEqual({
+        fn: null,
+        granted: false,
+      });
+    };
+    // One case per check; every run below has only 0054 pending.
+    const cases: {
+      name: string;
+      error: RegExp;
+      broken: (check: () => Promise<void>) => Promise<void>;
+    }[] = [
+      {
+        name: "JCL-3: not granted to the migration role",
+        error: /migration role \S+ is not a member of identity_definer/,
+        broken: async (check) => {
+          await su.query(`REVOKE identity_definer FROM ${owner}`);
+          try {
+            await check();
+          } finally {
+            await su.query(`GRANT identity_definer TO ${owner}`);
+          }
+        },
+      },
+      {
+        name: "JCL-2a: absent",
+        error: /identity_definer role does not exist/,
+        broken: (check) => hideRealIdentityDefiner(su, check),
+      },
+      {
+        name: "JCL-2b: drifted to LOGIN",
+        error: /identity_definer has unexpected attributes/,
+        broken: (check) =>
+          hideRealIdentityDefiner(su, async () => {
+            await su.query(
+              `CREATE ROLE identity_definer LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+            );
+            await check();
+          }),
+      },
+      {
+        name: "JCL-2b: drifted to NOBYPASSRLS",
+        error: /identity_definer has unexpected attributes/,
+        broken: (check) =>
+          hideRealIdentityDefiner(su, async () => {
+            await su.query(
+              `CREATE ROLE identity_definer NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+            );
+            await check();
+          }),
+      },
+      {
+        name: "JCL-3b: granted to a runtime role",
+        error: /identity_definer must not be granted to app\/app_worker\/readonly/,
+        broken: async (check) => {
+          await su.query(`GRANT identity_definer TO app_worker`);
+          try {
+            await check();
+          } finally {
+            await su.query(`REVOKE identity_definer FROM app_worker`);
+          }
+        },
+      },
+      {
+        name: "03 step 2: identity_definer is a member of another role",
+        error: new RegExp(`identity_definer is a member of role ${scratch}`),
+        broken: async (check) => {
+          await su.query(`CREATE ROLE ${scratch} NOLOGIN`);
+          try {
+            await su.query(`GRANT ${scratch} TO identity_definer`);
+            await check();
+          } finally {
+            await su.query(`DROP ROLE IF EXISTS ${scratch}`); // drops the membership with it
+          }
+        },
+      },
+      {
+        name: "03 step 3: a second member besides the migration role",
+        error: new RegExp(`identity_definer must have exactly one member.*${scratch}`),
+        broken: async (check) => {
+          await su.query(`CREATE ROLE ${scratch} NOLOGIN`);
+          try {
+            await su.query(`GRANT identity_definer TO ${scratch}`);
+            await check();
+          } finally {
+            await su.query(`DROP ROLE IF EXISTS ${scratch}`);
+          }
+        },
+      },
+    ];
+    const originalReaddir = readdirImpl;
+    try {
+      inDb = await connect(url(ctx.dbName));
+      // 0000..0053 by the SUPERUSER under no harness lock (BR-1/BR-2 migrate the same way), so no
+      // lock is held across a full migration. Step 1 is about the MIGRATION ROLE, which stays the
+      // non-superuser owner: it runs 0054 alone and only has to read the ledger.
+      readdirImpl = async (dir) =>
+        (await originalReaddir(dir)).filter((file) => file !== LINK_REPARENT_MIGRATION);
+      try {
+        expect((await migrate(url(ctx.dbName))).applied.at(-1)).toBe("0053_zalo_ingress.sql");
+      } finally {
+        readdirImpl = originalReaddir;
+      }
+      await inDb.query(`GRANT SELECT ON schema_migrations TO ${owner}`);
+      // ONE short window for every case. Exclusive identity_definer name lock FIRST (the shared
+      // side is what identity-link-web.test.ts takes whenever it names that role), then the chat
+      // lock, which every migration reaching 0054 holds, so no other suite migrates while a case has
+      // identity_definer broken. In this order the chat lock is never held while waiting for a
+      // reader, and only for these runs: every setupRlsTestContext holds the job lock while it
+      // waits for the chat lock, so a longer hold here starved rls-invariants JCL-4 (30 s timeout)
+      // in three measured full runs. No job lock: nothing here touches job_definer.
+      await withIdentityDefinerNameLock(BASE!, "exclusive", () =>
+        withChatDefinerLock(BASE!, async () => {
+          // bootstrapChatDefinerForOwner's one-member hand-off, inside the window only: `owner`
+          // becomes identity_definer's single member, and whoever held it gets it back.
+          const revoked = await revokeStaleDefinerMembership(su, "identity_definer", owner);
+          try {
+            await su.query(`GRANT identity_definer TO ${owner}`);
+            for (const c of cases) {
+              await c.broken(async () => {
+                await expect(ctx.runMigration(), c.name).rejects.toThrow(c.error);
+              });
+              await expectNothingFrom0054(c.name);
+            }
+            // Every precondition restored. The SUPERUSER applies 0054 while `owner` still holds
+            // the slot: the one-member rule's superuser branch (its member is not the migration role).
+            const res = await migrate(url(ctx.dbName));
+            expect(res.applied).toEqual([LINK_REPARENT_MIGRATION]);
+          } finally {
+            await ensureDefinerMembershipRevoked(su, "identity_definer", owner);
+            await restoreDefinerMembership(su, "identity_definer", revoked);
+          }
+        }),
+      );
+      const owned = await inDb.query(
+        `SELECT pg_get_userbyid(proowner) AS owner FROM pg_proc
+          WHERE oid = 'link_code_reparent_empty_person(uuid, uuid)'::regprocedure`,
+      );
+      expect(owned.rows).toEqual([{ owner: "identity_definer" }]);
+    } finally {
+      readdirImpl = originalReaddir;
+      await inDb?.end();
+      await ctx.teardown();
+    }
+  }, 300_000);
 });
 
 describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", () => {

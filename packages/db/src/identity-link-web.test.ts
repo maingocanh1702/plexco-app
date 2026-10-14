@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
+import type pg from "pg";
 import {
   issueLinkCode,
   formatLinkCode,
@@ -7,7 +8,11 @@ import {
   normalizeLinkCode,
 } from "./identity.js";
 import { linkZaloToAccount } from "./identity-link-web.js";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import {
+  setupRlsTestContext,
+  withIdentityDefinerNameLock,
+  type RlsTestContext,
+} from "./test-harness.js";
 
 /**
  * Real-Postgres tests for 0054 link_code_reparent_empty_person + linkZaloToAccount (lane M3b).
@@ -51,6 +56,17 @@ async function zaloUser(): Promise<{ personId: string; ciId: string }> {
   return { personId, ciId };
 }
 
+/**
+ * Statements that NAME identity_definer (GRANT ... TO it, ALTER ROLE it, catalog reads by name) hold
+ * the shared identity_definer name lock: migrate.test.ts's 0054 step-1 cases hide, re-create or
+ * re-grant that cluster-global role under its exclusive side (rls-invariants JCL-12 does the same
+ * for job_definer with the job lock). Calling the function needs no lock: a definer runs as its
+ * owner's OID, never by name. A writer window can last one full migration, hence the timeout.
+ */
+const definerNameStable = <T>(fn: () => Promise<T>): Promise<T> =>
+  withIdentityDefinerNameLock(process.env.DATABASE_URL_TEST!, "shared", fn);
+const LOCK_WAIT_MS = 120_000;
+
 /** Issue a channel code the way the bot's /link does. */
 const issueFor = (ciId: string) => issueLinkCode(ctx.appPool, { channelIdentityId: ciId }, keys);
 
@@ -60,6 +76,36 @@ async function reparent(codeId: string, accountId: string): Promise<string> {
     [codeId, accountId],
   );
   return (rows[0] as { outcome: string }).outcome;
+}
+
+const codeRow = async (id: string) =>
+  (await ctx.owner.query(`SELECT consumed_at, failed_attempts FROM link_codes WHERE id = $1`, [id]))
+    .rows[0] as { consumed_at: Date | null; failed_attempts: number };
+
+/**
+ * ctx.appPool, except that the re-parent statement fails with `error` without reaching the server:
+ * consume has really run, uncommitted, when it lands, exactly like a connection lost (or a deadlock
+ * victim) between the two statements. pool.query fails the same way, so a version that ran the two
+ * steps as separate pool calls (two transactions) meets the identical fault with its consume already
+ * committed.
+ */
+function poolFailingReparent(error: Error): pg.Pool {
+  const failing = <T extends object>(target: T, extra: Partial<Record<PropertyKey, unknown>>): T =>
+    new Proxy(target, {
+      get(t, prop) {
+        if (Object.hasOwn(extra, prop)) return extra[prop];
+        const value: unknown = Reflect.get(t, prop, t);
+        if (prop === "query" && typeof value === "function") {
+          return (...args: unknown[]) =>
+            typeof args[0] === "string" && args[0].includes("link_code_reparent_empty_person")
+              ? Promise.reject(error)
+              : (value as (...a: unknown[]) => unknown).apply(t, args);
+        }
+        return typeof value === "function" ? (value as () => unknown).bind(t) : value;
+      },
+    });
+  const pool = ctx.appPool;
+  return failing(pool, { connect: async () => failing(await pool.connect(), {}) });
 }
 
 const personRow = async (id: string) =>
@@ -145,6 +191,8 @@ describe("linkZaloToAccount - empty Zalo person", () => {
     ]);
     expect(revoked.rows[0].revoked_at).not.toBeNull();
     expect(await auditCount("identity.link_reparented", web.accountId)).toBe(1);
+    // committed together with the decision it enabled
+    expect((await codeRow(issued.linkCodeId)).consumed_at).not.toBeNull();
   });
 
   it("re-calling the definer with the same consumed code is same_person and writes nothing more", async () => {
@@ -211,130 +259,205 @@ describe("linkZaloToAccount - refusals", () => {
       )
     ).rows[0].detail;
     expect(detail.blocking_tables).toContain("memberships.person_id");
+    // requires_review is a decision, so it commits: the code is spent and support has its row.
+    expect((await codeRow(issued.linkCodeId)).consumed_at).not.toBeNull();
   });
 
-  it("a table added after 0054 that references persons blocks until it grants identity_definer its FK column, then counts rows (dynamic scan)", async () => {
-    await ctx.owner.query(
-      `CREATE TABLE zz_future_person_ref (id serial PRIMARY KEY, person_id uuid NOT NULL REFERENCES persons(id))`,
-    );
-    try {
-      // No grant yet: unprovable, so even with ZERO rows the Person is not "empty".
-      const web = await webUser();
-      const zalo = await zaloUser();
-      const issued = await issueFor(zalo.ciId);
-      expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
-        outcome: "requires_review",
-      });
-      expect(await blockingTables(web.accountId)).toContain("zz_future_person_ref.person_id");
-      await expectNothingMoved(zalo);
+  it(
+    "a table added after 0054 that references persons blocks until it grants identity_definer its FK column, then counts rows (dynamic scan)",
+    async () =>
+      definerNameStable(async () => {
+        await ctx.owner.query(
+          `CREATE TABLE zz_future_person_ref (id serial PRIMARY KEY, person_id uuid NOT NULL REFERENCES persons(id))`,
+        );
+        try {
+          // No grant yet: unprovable, so even with ZERO rows the Person is not "empty".
+          const web = await webUser();
+          const zalo = await zaloUser();
+          const issued = await issueFor(zalo.ciId);
+          expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+            outcome: "requires_review",
+          });
+          expect(await blockingTables(web.accountId)).toContain("zz_future_person_ref.person_id");
+          await expectNothingMoved(zalo);
 
-      // The grant a later migration owes: now an empty Person links, and a row blocks again.
-      await ctx.owner.query(`GRANT SELECT (person_id) ON zz_future_person_ref TO identity_definer`);
-      const web2 = await webUser();
-      const empty = await zaloUser();
-      expect(
-        await linkZaloToAccount(
-          ctx.appPool,
-          (await issueFor(empty.ciId)).code,
-          web2.accountId,
-          keys,
-        ),
-      ).toEqual({ outcome: "linked" });
-      const web3 = await webUser();
-      const used = await zaloUser();
-      await ctx.owner.query(`INSERT INTO zz_future_person_ref (person_id) VALUES ($1)`, [
-        used.personId,
-      ]);
-      expect(
-        await linkZaloToAccount(
-          ctx.appPool,
-          (await issueFor(used.ciId)).code,
-          web3.accountId,
-          keys,
-        ),
-      ).toEqual({ outcome: "requires_review" });
-      await expectNothingMoved(used);
-    } finally {
-      await ctx.owner.query(`DROP TABLE zz_future_person_ref`);
-    }
-  });
+          // The grant a later migration owes: now an empty Person links, and a row blocks again.
+          await ctx.owner.query(
+            `GRANT SELECT (person_id) ON zz_future_person_ref TO identity_definer`,
+          );
+          const web2 = await webUser();
+          const empty = await zaloUser();
+          expect(
+            await linkZaloToAccount(
+              ctx.appPool,
+              (await issueFor(empty.ciId)).code,
+              web2.accountId,
+              keys,
+            ),
+          ).toEqual({ outcome: "linked" });
+          const web3 = await webUser();
+          const used = await zaloUser();
+          await ctx.owner.query(`INSERT INTO zz_future_person_ref (person_id) VALUES ($1)`, [
+            used.personId,
+          ]);
+          expect(
+            await linkZaloToAccount(
+              ctx.appPool,
+              (await issueFor(used.ciId)).code,
+              web3.accountId,
+              keys,
+            ),
+          ).toEqual({ outcome: "requires_review" });
+          await expectNothingMoved(used);
+        } finally {
+          await ctx.owner.query(`DROP TABLE zz_future_person_ref`);
+        }
+      }),
+    LOCK_WAIT_MS,
+  );
 
-  it("a composite FK onto persons is unprovable even when readable and empty", async () => {
-    await ctx.owner.query(
-      `ALTER TABLE persons ADD CONSTRAINT zz_persons_id_status_key UNIQUE (id, status)`,
-    );
-    try {
-      await ctx.owner.query(
-        `CREATE TABLE zz_composite_person_ref (person_id uuid, person_status text,
+  it(
+    "a composite FK onto persons is unprovable even when readable and empty",
+    async () =>
+      definerNameStable(async () => {
+        await ctx.owner.query(
+          `ALTER TABLE persons ADD CONSTRAINT zz_persons_id_status_key UNIQUE (id, status)`,
+        );
+        try {
+          await ctx.owner.query(
+            `CREATE TABLE zz_composite_person_ref (person_id uuid, person_status text,
            FOREIGN KEY (person_id, person_status) REFERENCES persons (id, status))`,
-      );
-      await ctx.owner.query(`GRANT SELECT ON zz_composite_person_ref TO identity_definer`);
-      const web = await webUser();
-      const zalo = await zaloUser();
-      const issued = await issueFor(zalo.ciId);
-      expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
-        outcome: "requires_review",
-      });
-      expect(await blockingTables(web.accountId)).toContain("zz_composite_person_ref.person_id");
-      await expectNothingMoved(zalo);
-    } finally {
-      await ctx.owner.query(`DROP TABLE IF EXISTS zz_composite_person_ref`);
-      await ctx.owner.query(`ALTER TABLE persons DROP CONSTRAINT zz_persons_id_status_key`);
-    }
-  });
+          );
+          await ctx.owner.query(`GRANT SELECT ON zz_composite_person_ref TO identity_definer`);
+          const web = await webUser();
+          const zalo = await zaloUser();
+          const issued = await issueFor(zalo.ciId);
+          expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+            outcome: "requires_review",
+          });
+          expect(await blockingTables(web.accountId)).toContain(
+            "zz_composite_person_ref.person_id",
+          );
+          await expectNothingMoved(zalo);
+        } finally {
+          await ctx.owner.query(`DROP TABLE IF EXISTS zz_composite_person_ref`);
+          await ctx.owner.query(`ALTER TABLE persons DROP CONSTRAINT zz_persons_id_status_key`);
+        }
+      }),
+    LOCK_WAIT_MS,
+  );
 
-  it("a referencing table the definer cannot reach (no schema USAGE) fails closed: the call raises, nothing moves, no audit row", async () => {
-    // The column grant makes the prediction say "provable", but schema USAGE is missing, so the
-    // count itself is a read error. The definer has no exception handler: the call aborts whole.
-    await ctx.owner.query(`CREATE SCHEMA zz_unreachable`);
-    try {
-      await ctx.owner.query(
-        `CREATE TABLE zz_unreachable.person_ref (person_id uuid REFERENCES public.persons (id))`,
-      );
-      await ctx.owner.query(
-        `GRANT SELECT (person_id) ON zz_unreachable.person_ref TO identity_definer`,
-      );
-      const web = await webUser();
-      const zalo = await zaloUser();
-      const issued = await issueFor(zalo.ciId);
-      await expect(
-        linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys),
-      ).rejects.toMatchObject({ code: "42501" });
-      await expectNothingMoved(zalo);
-      expect(await auditCount("identity.link_requires_review", web.accountId)).toBe(0);
-      expect(await auditCount("identity.link_reparented", web.accountId)).toBe(0);
-    } finally {
-      await ctx.owner.query(`DROP SCHEMA zz_unreachable CASCADE`);
-    }
-  });
+  it(
+    "a referencing table the definer cannot reach (no schema USAGE) fails closed: the call raises, nothing moves, no audit row, and the consume rolls back with it",
+    async () =>
+      definerNameStable(async () => {
+        // The column grant makes the prediction say "provable", but schema USAGE is missing, so the
+        // count itself is a read error. The definer has no exception handler: the call aborts whole,
+        // and since consume ran in the same transaction (SF1) the code is NOT spent.
+        const web = await webUser();
+        const zalo = await zaloUser();
+        const issued = await issueFor(zalo.ciId);
+        await ctx.owner.query(`CREATE SCHEMA zz_unreachable`);
+        try {
+          await ctx.owner.query(
+            `CREATE TABLE zz_unreachable.person_ref (person_id uuid REFERENCES public.persons (id))`,
+          );
+          await ctx.owner.query(
+            `GRANT SELECT (person_id) ON zz_unreachable.person_ref TO identity_definer`,
+          );
+          await expect(
+            linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys),
+          ).rejects.toMatchObject({ code: "42501" });
+          await expectNothingMoved(zalo);
+          expect(await auditCount("identity.link_requires_review", web.accountId)).toBe(0);
+          expect(await auditCount("identity.link_reparented", web.accountId)).toBe(0);
+          expect(await codeRow(issued.linkCodeId)).toEqual({
+            consumed_at: null,
+            failed_attempts: 0,
+          });
+        } finally {
+          await ctx.owner.query(`DROP SCHEMA zz_unreachable CASCADE`);
+        }
+        // The user's retry with the SAME code links: nothing was burned.
+        expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+          outcome: "linked",
+        });
+      }),
+    LOCK_WAIT_MS,
+  );
 
-  it("defence branch: an identity_definer without BYPASSRLS finds FORCE-RLS references unprovable and moves nothing", async () => {
+  it("SF1: a re-parent call lost after a good consume (connection dropped) rolls the consume back: code live, nothing moved", async () => {
     const web = await webUser();
     const zalo = await zaloUser();
     const issued = await issueFor(zalo.ciId);
-    await ctx.owner.query(`UPDATE link_codes SET consumed_at = now() WHERE id = $1`, [
-      issued.linkCodeId,
-    ]);
-    // ALTER ROLE is transactional: the drift exists only inside this rolled-back transaction, so no
-    // other connection (or parallel test file) ever sees identity_definer without BYPASSRLS.
-    await ctx.owner.query("BEGIN");
-    try {
-      await ctx.owner.query("ALTER ROLE identity_definer NOBYPASSRLS");
-      const { rows } = await ctx.owner.query(
-        `SELECT outcome FROM link_code_reparent_empty_person($1, $2)`,
-        [issued.linkCodeId, web.accountId],
-      );
-      expect(rows[0].outcome).toBe("requires_review");
-      expect(await blockingTables(web.accountId)).toContain("memberships.person_id");
-    } finally {
-      await ctx.owner.query("ROLLBACK");
-    }
+    const lost = new Error("Connection terminated unexpectedly");
+    await expect(
+      linkZaloToAccount(poolFailingReparent(lost), issued.code, web.accountId, keys),
+    ).rejects.toBe(lost);
+    expect(await codeRow(issued.linkCodeId)).toEqual({ consumed_at: null, failed_attempts: 0 });
     await expectNothingMoved(zalo);
-    const role = await ctx.owner.query(
-      `SELECT rolbypassrls FROM pg_roles WHERE rolname = 'identity_definer'`,
-    );
-    expect(role.rows[0].rolbypassrls).toBe(true);
+    expect(await auditCount("identity.link_reparented", web.accountId)).toBe(0);
+    expect(await auditCount("identity.link_requires_review", web.accountId)).toBe(0);
+    // A consumed-but-unacted code is exactly what must not exist: the definer refuses it as never consumed.
+    expect(await reparent(issued.linkCodeId, web.accountId)).toBe("invalid");
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "linked",
+    });
   });
+
+  it.each(["40P01", "40001"])(
+    "SF1: a %s on the re-parent call is unavailable (retryable), the whole transaction rolled back",
+    async (code) => {
+      const web = await webUser();
+      const zalo = await zaloUser();
+      const issued = await issueFor(zalo.ciId);
+      const retryable = Object.assign(new Error(`injected ${code}`), { code });
+      expect(
+        await linkZaloToAccount(poolFailingReparent(retryable), issued.code, web.accountId, keys),
+      ).toEqual({ outcome: "unavailable" });
+      expect(await codeRow(issued.linkCodeId)).toEqual({ consumed_at: null, failed_attempts: 0 });
+      await expectNothingMoved(zalo);
+      expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+        outcome: "linked",
+      });
+    },
+  );
+
+  it(
+    "defence branch: an identity_definer without BYPASSRLS finds FORCE-RLS references unprovable and moves nothing",
+    async () =>
+      definerNameStable(async () => {
+        const web = await webUser();
+        const zalo = await zaloUser();
+        const issued = await issueFor(zalo.ciId);
+        await ctx.owner.query(`UPDATE link_codes SET consumed_at = now() WHERE id = $1`, [
+          issued.linkCodeId,
+        ]);
+        // ALTER ROLE is transactional: the drift exists only inside this rolled-back transaction, so no
+        // other connection (or parallel test file) ever sees identity_definer without BYPASSRLS.
+        await ctx.owner.query("BEGIN");
+        try {
+          await ctx.owner.query("ALTER ROLE identity_definer NOBYPASSRLS");
+          // Called as the real caller, app (EXECUTE only), still inside the rolled-back transaction.
+          await ctx.owner.query("SET LOCAL ROLE app");
+          const { rows } = await ctx.owner.query(
+            `SELECT current_user AS caller, outcome FROM link_code_reparent_empty_person($1, $2)`,
+            [issued.linkCodeId, web.accountId],
+          );
+          await ctx.owner.query("RESET ROLE");
+          expect(rows[0]).toEqual({ caller: "app", outcome: "requires_review" });
+          expect(await blockingTables(web.accountId)).toContain("memberships.person_id");
+        } finally {
+          await ctx.owner.query("ROLLBACK");
+        }
+        await expectNothingMoved(zalo);
+        const role = await ctx.owner.query(
+          `SELECT rolbypassrls FROM pg_roles WHERE rolname = 'identity_definer'`,
+        );
+        expect(role.rows[0].rolbypassrls).toBe(true);
+      }),
+    LOCK_WAIT_MS,
+  );
 
   it("a source person that already owns an account is requires_review", async () => {
     const web = await webUser();
@@ -419,6 +542,8 @@ describe("linkZaloToAccount - refusals", () => {
     expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
       outcome: "unsupported",
     });
+    // A refusal writes nothing: the consume rolled back, so the code still works where it belongs.
+    expect((await codeRow(issued.linkCodeId)).consumed_at).toBeNull();
   });
 
   it("unknown code and wrong tail are both invalid; the cap is rate_limited", async () => {
@@ -441,6 +566,8 @@ describe("linkZaloToAccount - refusals", () => {
     // attempts 1-4 are the generic invalid; the 5th reaches the cap; later ones hit a terminal row.
     expect(seen).toEqual(["invalid", "invalid", "invalid", "invalid", "rate_limited", "invalid"]);
     expect(await ciPerson(zalo.ciId)).toBe(zalo.personId);
+    // every wrong attempt was COMMITTED by its own link transaction, so the cap really counted them
+    expect(await codeRow(issued.linkCodeId)).toEqual({ consumed_at: null, failed_attempts: 5 });
   });
 
   it("definer refuses a stale consumed code (older than 10 minutes) and a non-consumed one", async () => {
@@ -487,6 +614,63 @@ describe("concurrency", () => {
       [zalo.personId],
     );
     expect(Number(n.rows[0].n)).toBe(1);
+  });
+
+  it("two accounts racing one code: exactly one links, the other is refused (or retryable), nothing half-written", async () => {
+    const webA = await webUser();
+    const webB = await webUser();
+    const zalo = await zaloUser();
+    const issued = await issueFor(zalo.ciId);
+    // Both transactions take accounts -> persons (UUID order, the source shared) -> identity -> code,
+    // so whichever locks the source Person first finishes; the other re-derives and finds it moved.
+    const [a, b] = await Promise.all([
+      linkZaloToAccount(ctx.appPool, issued.code, webA.accountId, keys),
+      linkZaloToAccount(ctx.appPool, issued.code, webB.accountId, keys),
+    ]);
+    const outcomes = [a.outcome, b.outcome];
+    expect(outcomes.filter((o) => o === "linked")).toHaveLength(1);
+    expect(outcomes.filter((o) => o !== "linked")[0]).toMatch(/^(invalid|unavailable)$/);
+    const winner = a.outcome === "linked" ? webA : webB;
+    expect(await ciPerson(zalo.ciId)).toBe(winner.personId);
+    const tombs = await ctx.owner.query(
+      `SELECT canonical_person_id FROM merge_tombstones WHERE old_person_id = $1`,
+      [zalo.personId],
+    );
+    expect(tombs.rows).toEqual([{ canonical_person_id: winner.personId }]);
+    expect(await auditCount("identity.link_reparented", winner.accountId)).toBe(1);
+    const loser = winner === webA ? webB : webA;
+    expect(await auditCount("identity.link_reparented", loser.accountId)).toBe(0);
+    expect(await auditCount("identity.link_requires_review", loser.accountId)).toBe(0);
+  });
+
+  it("a bot /link re-issue racing the web link (supersede is the revoke path): no deadlock, one serial order wins", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    const issued = await issueFor(zalo.ciId);
+    // link: accounts -> persons(source, target) -> identity -> code; issue: persons(source) ->
+    // identity -> the source's live codes. Both reach every shared row through persons(source).
+    const [link, reissue] = await Promise.allSettled([
+      linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys),
+      issueFor(zalo.ciId),
+    ]);
+    expect(link.status).toBe("fulfilled"); // never a deadlock victim, never mapped to unavailable
+    const outcome = (link as PromiseFulfilledResult<{ outcome: string }>).value.outcome;
+    expect(outcome).toMatch(/^(linked|invalid)$/);
+    if (reissue.status === "rejected") {
+      // issue derived the Zalo Person before the link committed, then refused under its own lock
+      expect(reissue.reason).toMatchObject({ code: "42501" });
+      expect(outcome).toBe("linked");
+    }
+    if (outcome === "linked") {
+      expect(await ciPerson(zalo.ciId)).toBe(web.personId);
+    } else {
+      // the re-issue superseded the web user's code first; nothing moved
+      await expectNothingMoved(zalo);
+      const r = await ctx.owner.query(`SELECT revoked_at FROM link_codes WHERE id = $1`, [
+        issued.linkCodeId,
+      ]);
+      expect(r.rows[0].revoked_at).not.toBeNull();
+    }
   });
 
   it("two simultaneous definer calls on one consumed code: one consumed, one same_person", async () => {
@@ -585,79 +769,259 @@ describe("0054 definer ACL and hardening", () => {
     expect(rows[0].proconfig).toContain("search_path=pg_catalog, public, pg_temp");
   });
 
-  it("is owned by identity_definer, which owns nothing else and keeps no schema CREATE", async () => {
-    // pg_shdepend 'o' rows = every object a role owns: here (this database + shared objects) only
-    // the function. Other test databases on the cluster own their own copy, hence the dbid filter.
-    const owned = await ctx.owner.query(
-      `SELECT pg_describe_object(d.classid, d.objid, d.objsubid) AS obj
+  it(
+    "is owned by identity_definer, which owns nothing else and keeps no schema CREATE",
+    async () =>
+      definerNameStable(async () => {
+        // pg_shdepend 'o' rows = every object a role owns: here (this database + shared objects) only
+        // the function. Other test databases on the cluster own their own copy, hence the dbid filter.
+        const owned = await ctx.owner.query(
+          `SELECT pg_describe_object(d.classid, d.objid, d.objsubid) AS obj
          FROM pg_shdepend d
         WHERE d.refclassid = 'pg_authid'::regclass AND d.deptype = 'o'
           AND d.refobjid = 'identity_definer'::regrole
           AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))`,
-    );
-    expect(owned.rows).toEqual([{ obj: "function link_code_reparent_empty_person(uuid,uuid)" }]);
-    const { rows } = await ctx.owner.query(
-      `SELECT has_schema_privilege('identity_definer', 'public', 'CREATE') AS can_create`,
-    );
-    expect(rows[0].can_create).toBe(false);
-  });
+        );
+        expect(owned.rows).toEqual([
+          { obj: "function link_code_reparent_empty_person(uuid,uuid)" },
+        ]);
+        const { rows } = await ctx.owner.query(
+          `SELECT has_schema_privilege('identity_definer', 'public', 'CREATE') AS can_create`,
+        );
+        expect(rows[0].can_create).toBe(false);
+      }),
+    LOCK_WAIT_MS,
+  );
 
-  it("identity_definer is NOLOGIN BYPASSRLS NOINHERIT and unreachable from the runtime roles", async () => {
-    const attrs = await ctx.owner.query(
-      `SELECT rolsuper, rolcanlogin, rolbypassrls, rolinherit, rolcreaterole, rolcreatedb, rolreplication
+  it(
+    "identity_definer is NOLOGIN BYPASSRLS NOINHERIT and unreachable from the runtime roles",
+    async () =>
+      definerNameStable(async () => {
+        const attrs = await ctx.owner.query(
+          `SELECT rolsuper, rolcanlogin, rolbypassrls, rolinherit, rolcreaterole, rolcreatedb, rolreplication
          FROM pg_roles WHERE rolname = 'identity_definer'`,
-    );
-    expect(attrs.rows[0]).toEqual({
-      rolsuper: false,
-      rolcanlogin: false,
-      rolbypassrls: true,
-      rolinherit: false,
-      rolcreaterole: false,
-      rolcreatedb: false,
-      rolreplication: false,
-    });
-    const reach = await ctx.owner.query(
-      `SELECT r AS role, pg_has_role(r, 'identity_definer', 'MEMBER') AS member
+        );
+        expect(attrs.rows[0]).toEqual({
+          rolsuper: false,
+          rolcanlogin: false,
+          rolbypassrls: true,
+          rolinherit: false,
+          rolcreaterole: false,
+          rolcreatedb: false,
+          rolreplication: false,
+        });
+        const reach = await ctx.owner.query(
+          `SELECT r AS role, pg_has_role(r, 'identity_definer', 'MEMBER') AS member
          FROM unnest(ARRAY['app', 'app_worker', 'readonly']) AS r ORDER BY r`,
-    );
-    expect(reach.rows).toEqual([
-      { role: "app", member: false },
-      { role: "app_worker", member: false },
-      { role: "readonly", member: false },
-    ]);
-    // ...and identity_definer itself inherits nothing: it is a member of no role.
-    const memberOf = await ctx.owner.query(
-      `SELECT count(*)::int AS n FROM pg_auth_members WHERE member = 'identity_definer'::regrole`,
-    );
-    expect(memberOf.rows[0].n).toBe(0);
-    const app = await ctx.appPool.connect();
-    try {
-      await expect(app.query(`SET ROLE identity_definer`)).rejects.toMatchObject({
-        code: "42501",
-      });
-    } finally {
-      app.release();
-    }
-    // The function is the ONLY path: app holds no direct privilege on anything the definer touches.
-    const direct = await ctx.owner.query(
-      `SELECT t FROM unnest(ARRAY['persons', 'accounts', 'channel_identities', 'link_codes',
+        );
+        expect(reach.rows).toEqual([
+          { role: "app", member: false },
+          { role: "app_worker", member: false },
+          { role: "readonly", member: false },
+        ]);
+        // ...and identity_definer itself inherits nothing: it is a member of no role.
+        const memberOf = await ctx.owner.query(
+          `SELECT count(*)::int AS n FROM pg_auth_members WHERE member = 'identity_definer'::regrole`,
+        );
+        expect(memberOf.rows[0].n).toBe(0);
+        const app = await ctx.appPool.connect();
+        try {
+          await expect(app.query(`SET ROLE identity_definer`)).rejects.toMatchObject({
+            code: "42501",
+          });
+        } finally {
+          app.release();
+        }
+        // The function is the ONLY path: app holds no direct privilege on anything the definer touches.
+        const direct = await ctx.owner.query(
+          `SELECT t FROM unnest(ARRAY['persons', 'accounts', 'channel_identities', 'link_codes',
                                   'merge_audit', 'merge_tombstones', 'routing_audit']) AS t
         WHERE has_any_column_privilege('app', t, 'SELECT, INSERT, UPDATE, REFERENCES')
            OR has_table_privilege('app', t, 'DELETE, TRUNCATE, TRIGGER')`,
-    );
-    expect(direct.rows).toEqual([]);
-  });
+        );
+        expect(direct.rows).toEqual([]);
+      }),
+    LOCK_WAIT_MS,
+  );
 
-  it("can read the FK column of every single-column FK onto persons (a later migration owes its own grant)", async () => {
-    const { rows } = await ctx.owner.query(
-      `SELECT c.relname || '.' || a.attname AS fk
+  it(
+    "identity_definer holds COLUMN grants only, exactly what the body reads or writes: never a code hash, salt, lookup hash or *_enc column",
+    async () =>
+      definerNameStable(async () => {
+        const tables = [
+          "accounts",
+          "persons",
+          "channel_identities",
+          "link_codes",
+          "merge_audit",
+          "merge_tombstones",
+          "routing_audit",
+        ];
+        const tableLevel = await ctx.owner.query(
+          `SELECT t || ':' || p AS g FROM unnest($1::text[]) AS t
+           CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE',
+                                   'REFERENCES', 'TRIGGER']) AS p
+          WHERE has_table_privilege('identity_definer', t, p)`,
+          [tables],
+        );
+        expect(tableLevel.rows).toEqual([]);
+        // Pinned: the body's own column lists, plus SELECT on the FK columns onto persons (the scan).
+        const columns = await ctx.owner.query(
+          `SELECT table_name || '.' || column_name || ':' || privilege_type AS g
+           FROM information_schema.column_privileges
+          WHERE grantee = 'identity_definer' AND table_schema = 'public' AND table_name = ANY ($1)
+          ORDER BY 1`,
+          [tables],
+        );
+        expect(columns.rows.map((r) => r.g as string)).toEqual([
+          "accounts.id:SELECT",
+          "accounts.id:UPDATE",
+          "accounts.person_id:SELECT",
+          "channel_identities.id:SELECT",
+          "channel_identities.person_id:SELECT",
+          "channel_identities.person_id:UPDATE",
+          "channel_identities.platform:SELECT",
+          "channel_identities.status:SELECT",
+          "link_codes.action:SELECT",
+          "link_codes.consumed_at:SELECT",
+          "link_codes.id:SELECT",
+          "link_codes.revoked_at:SELECT",
+          "link_codes.revoked_at:UPDATE",
+          "link_codes.source_account_id:SELECT",
+          "link_codes.source_channel_identity_id:SELECT",
+          "link_codes.source_person_id:SELECT",
+          "merge_audit.actor_id:INSERT",
+          "merge_audit.actor_type:INSERT",
+          "merge_audit.after_snapshot_enc:INSERT",
+          "merge_audit.before_snapshot_enc:INSERT",
+          "merge_audit.canonical_person_id:INSERT",
+          "merge_audit.id:SELECT",
+          "merge_audit.method:INSERT",
+          "merge_audit.reason_code:INSERT",
+          "merge_audit.source_person_id:INSERT",
+          "merge_audit.target_person_id:INSERT",
+          "merge_tombstones.canonical_person_id:INSERT",
+          "merge_tombstones.canonical_person_id:SELECT",
+          "merge_tombstones.merge_audit_id:INSERT",
+          "merge_tombstones.old_person_id:INSERT",
+          "persons.id:SELECT",
+          "persons.merged_into_person_id:SELECT",
+          "persons.merged_into_person_id:UPDATE",
+          "persons.status:SELECT",
+          "persons.status:UPDATE",
+          "routing_audit.action:INSERT",
+          "routing_audit.actor_id:INSERT",
+          "routing_audit.detail:INSERT",
+          "routing_audit.tenant_id:INSERT",
+        ]);
+        // The secrets, spelled out, and one read actually attempted AS the owner role.
+        const secrets = await ctx.owner.query(
+          `SELECT c FROM unnest(ARRAY['link_codes.code_hash', 'link_codes.salt',
+                                    'link_codes.code_lookup_hash',
+                                    'channel_identities.platform_user_id_enc',
+                                    'channel_identities.username_enc',
+                                    'channel_identities.platform_user_lookup_hash',
+                                    'persons.display_name', 'persons.phone_enc',
+                                    'merge_audit.before_snapshot_enc']) AS c
+          WHERE has_column_privilege('identity_definer', split_part(c, '.', 1),
+                                     split_part(c, '.', 2), 'SELECT')`,
+        );
+        expect(secrets.rows).toEqual([]);
+        await ctx.owner.query("BEGIN");
+        try {
+          await ctx.owner.query("SET LOCAL ROLE identity_definer");
+          await expect(
+            ctx.owner.query(`SELECT code_hash, salt FROM link_codes LIMIT 1`),
+          ).rejects.toMatchObject({ code: "42501" });
+        } finally {
+          await ctx.owner.query("ROLLBACK");
+        }
+      }),
+    LOCK_WAIT_MS,
+  );
+
+  it(
+    "can read the FK column of every single-column FK onto persons (a later migration owes its own grant)",
+    async () =>
+      definerNameStable(async () => {
+        const { rows } = await ctx.owner.query(
+          `SELECT c.relname || '.' || a.attname AS fk
          FROM pg_constraint con
          JOIN pg_class c ON c.oid = con.conrelid
          JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
         WHERE con.contype = 'f' AND con.confrelid = 'public.persons'::regclass
           AND array_length(con.conkey, 1) = 1
           AND NOT has_column_privilege('identity_definer', c.oid, a.attnum, 'SELECT')`,
+        );
+        expect(rows).toEqual([]);
+      }),
+    LOCK_WAIT_MS,
+  );
+});
+
+describe("FK-only emptiness: the person references the scan cannot see", () => {
+  it("are pinned: every FK-less uuid column named for a person or an actor is on this list (catalog tripwire)", async () => {
+    // A new FK-less person reference fails this until its author decides: add an FK (the scan then
+    // counts it) or list it here with the reason it implies a counted reference. Blind spot: a
+    // column named for neither; tenant_admins' web person uuid is text, so it is pinned by name.
+    const { rows } = await ctx.owner.query(
+      `SELECT c.relname || '.' || a.attname AS col
+         FROM pg_class c
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+          AND a.atttypid = 'uuid'::regtype AND a.attname ~ '(person|actor|_by$)'
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint k
+                           WHERE k.contype = 'f' AND k.conrelid = c.oid AND a.attnum = ANY (k.conkey))
+        ORDER BY 1`,
     );
-    expect(rows).toEqual([]);
+    expect(rows.map((r) => r.col as string)).toEqual([
+      "bank_accounts.pending_change_by", // 0020: actor id, no FK by design; no writer yet
+      "billing_overrides.actor_id", // no writer yet
+      "merge_audit.actor_id", // audit trail: deliberately not counted
+      "merge_audit.canonical_person_id",
+      "merge_audit.source_person_id",
+      "merge_audit.target_person_id",
+      "merge_tombstones.old_person_id", // the tombstone itself (a merged person is never a source)
+      "oauth_transactions.created_by", // create_oauth_transaction; no runtime caller yet
+      "payment_allocations.created_by", // 0020: written only for an actor authorize() accepts
+      "routing_audit.actor_id", // audit trail
+    ]);
+    const ta = await ctx.owner.query(
+      `SELECT format_type(a.atttypid, a.atttypmod) AS type,
+              EXISTS (SELECT 1 FROM pg_constraint k WHERE k.contype = 'f'
+                         AND k.conrelid = a.attrelid AND a.attnum = ANY (k.conkey)) AS has_fk
+         FROM pg_attribute a
+        WHERE a.attrelid = 'public.tenant_admins'::regclass AND a.attname = 'platform_user_lookup_hash'`,
+    );
+    expect(ta.rows).toEqual([{ type: "text", has_fk: false }]);
+  });
+
+  it("the tenant-side ones imply a COUNTED membership: a web admin row is written only with the person's membership, and that blocks", async () => {
+    // payment_allocations.created_by is written only for an actor authorize() accepts, i.e. one with
+    // an active web tenant_admins row (platform_user_lookup_hash = the person uuid as text). Every
+    // function that can write such a row also writes the person's memberships row...
+    const writers = await ctx.owner.query(
+      `SELECT p.oid::regprocedure::text AS fn,
+              p.prosrc ~* 'insert\\s+into\\s+(public\\.)?memberships' AS writes_membership
+         FROM pg_proc p
+        WHERE p.prosrc ~* 'insert\\s+into\\s+(public\\.)?tenant_admins'
+        ORDER BY 1`,
+    );
+    expect(writers.rows).toEqual([
+      { fn: "tenant_provision(text,text,text,text,uuid)", writes_membership: true },
+    ]);
+    // ...and the scan COUNTS that membership, while the FK-less admin row itself adds nothing.
+    const web = await webUser();
+    const zalo = await zaloUser();
+    await ctx.appPool.query(`SELECT tenant_provision($1, 'Zalo Club', NULL, NULL, $2)`, [
+      `zl-${zalo.personId.slice(0, 8)}`,
+      zalo.personId,
+    ]);
+    const issued = await issueFor(zalo.ciId);
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "requires_review",
+    });
+    expect(await blockingTables(web.accountId)).toEqual(["memberships.person_id"]);
+    await expectNothingMoved(zalo);
   });
 });

@@ -8,14 +8,21 @@
 -- tombstoned. Anything else is `requires_review`: refused, and recorded for support. The real merge
 -- (Person with memberships / players / debt) stays P0 - prepared, NOT executed (DD-14/15/50).
 --
+-- ONE TRANSACTION WITH THE CONSUME: the web caller (packages/db/src/identity-link-web.ts) runs
+-- link_code_consume and this function on ONE connection inside ONE transaction and commits only a
+-- decision (consumed / same_person / requires_review) or a counted wrong-code attempt. A raise in
+-- here, a refusal (invalid / unsupported) or a connection lost between the two calls rolls the
+-- consume back with it: the code stays live and nothing is written. The 10-minute window below
+-- therefore bounds only a re-call after a consume that WAS committed (an idempotent same_person
+-- re-call, or a requires_review code).
+--
 -- DECISION TABLE (anything not listed is refused; ALWAYS returns exactly one row)
 --   p_link_code_id / p_account_id NULL                         RAISE invalid_parameter_value
 --   code row missing                                           invalid
 --   code is account-issued (no source channel identity)        unsupported
 --   code not consumed / revoked / action <> merge_identity /
---     consumed more than 10 minutes ago                        invalid  (the app calls this right after
---                                                                consume; the window bounds replay of
---                                                                an old consumed code id)
+--     consumed more than 10 minutes ago                        invalid  (the window bounds a re-call
+--                                                                of an already committed consume)
 --   account has no active Person                               invalid
 --   channel identity not active zalo                           invalid
 --   channel identity already belongs to the target Person      same_person (idempotent re-call; nothing written)
@@ -25,7 +32,8 @@
 --   source Person referenced by ANY row beyond its one Zalo
 --     identity (and its own link_codes), or by a column the
 --     owner cannot provably read (see EMPTINESS)               requires_review + one routing_audit row
---   a referencing table the owner cannot reach (read error)    RAISE (the call aborts, nothing written)
+--   a referencing table the owner cannot reach (read error)    RAISE: nothing written, and the web
+--                                                                caller's consume rolls back with it
 --   otherwise                                                  consumed: identity moved, source tombstoned
 --                                                              (persons.status merged + merged_into),
 --                                                              merge_audit + merge_tombstones rows,
@@ -33,16 +41,20 @@
 --
 -- OWNER: identity_definer (NOLOGIN NOSUPERUSER BYPASSRLS NOINHERIT), pre-provisioned outside the
 -- runner by infra/postgres-init/03-identity-definer.sql (`pnpm db:bootstrap`). Step 1 below only
--- ASSERTS it; the function is created inside a SET ROLE identity_definer bracket (the 0022/0032
--- idiom: works for a NOINHERIT migration role too), so BYPASSRLS belongs to the function owner and
--- never depends on what the migration role happens to be. Rule: DD-127 / DD-131 OD-3 (decisions.md,
--- pending in PR #51), option (a), signed 2026-10-14. R1 (a managed host refusing a BYPASSRLS role)
--- is out of scope per that same OD-3.
--- identity_definer's privileges are only what the body uses: table-level SELECT/UPDATE on the four
--- tables it reads and locks (accounts, persons, channel_identities, link_codes), INSERT on the three
--- audit tables (+ SELECT (id) on merge_audit for RETURNING), and SELECT on the FK column of every
--- single-column FK onto persons as of this migration (the emptiness scan, granted dynamically in
--- step 2). Nothing is owned by it but this function; `app` only gets EXECUTE and is never a member.
+-- ASSERTS it, with every check 0022 step 1 makes for job_definer plus the two 03 makes at bootstrap
+-- (identity_definer is a member of nothing; it has no member besides the migration role). The
+-- function is created inside a SET ROLE identity_definer bracket (the 0022/0032 idiom: works for a
+-- NOINHERIT migration role too), so BYPASSRLS belongs to the function owner and never depends on
+-- what the migration role happens to be. Rule: DD-127 / DD-131 OD-3 (decisions.md, pending in PR
+-- #51), option (a), signed 2026-10-14. R1 (a managed host refusing a BYPASSRLS role) is out of scope
+-- per that same OD-3.
+-- identity_definer's privileges are COLUMN-level and only what the body reads or writes (step 2
+-- lists them): it can never read link_codes.code_hash / salt / code_lookup_hash, any *_enc column or
+-- persons' phone and name columns, and its only UPDATEs are the columns step (5) writes plus
+-- accounts (id), the one column a FOR UPDATE row lock requires and the body never updates. It also
+-- gets SELECT on the FK column of every single-column FK onto persons as of this migration (the
+-- emptiness scan, granted dynamically in step 2). Nothing is owned by it but this function; `app`
+-- only gets EXECUTE and is never a member.
 --
 -- EMPTINESS IS DYNAMIC. Every foreign key whose referenced table is persons is read from pg_constraint
 -- and counted with EXECUTE format(). A table added in a later migration that references persons makes
@@ -55,30 +67,60 @@
 -- BYPASSRLS: a count would silently read 0). FORCE RLS is no obstacle to a BYPASSRLS owner: a
 -- tenant-table reference is COUNTED, never guessed. A read the prediction does not cover (e.g. a
 -- referencing table in a schema the owner has no USAGE on) RAISES: there is no exception handler, so
--- the call aborts with nothing written. The function also pins `row_security = off`, so a table
--- wrongly predicted "provable" RAISES (a row-security error) instead of silently counting 0.
+-- nothing is written and the web caller's consume rolls back with it. The function also pins
+-- `row_security = off`, so a table wrongly predicted "provable" RAISES (a row-security error)
+-- instead of silently counting 0.
 -- The RLS branch is the documented DEFENCE branch, no longer the expected shape: it is reached only
 -- if identity_definer loses BYPASSRLS, and then every Person with a FORCE-RLS reference reads
 -- non-empty (requires_review), never a false "empty"; it keeps its own regression test.
+-- KNOWN LIMIT, FK-ONLY: a person id stored WITHOUT a foreign key is invisible to the scan. As of this
+-- migration those are bank_accounts.pending_change_by and payment_allocations.created_by (actor ids,
+-- no FK by design, 0020), oauth_transactions.created_by, billing_overrides.actor_id, tenant_admins'
+-- platform_user_lookup_hash for platform 'web' (the person uuid as text), the audit trails
+-- (routing_audit, merge_audit, merge_tombstones.old_person_id) and ids inside jsonb payloads. Today
+-- each tenant-side one implies a COUNTED reference: payment_allocations.created_by is written only
+-- for an actor authorize() accepts, i.e. one with an active web tenant_admins row, and the only
+-- writer of such a row (tenant_provision) inserts that person's memberships row with it; the other
+-- three have no runtime writer yet. The identity-link-web suite pins the list (a catalog tripwire on
+-- FK-less person/actor columns) and the tenant_admins -> memberships implication. A future FK-less
+-- person reference without such an implication must add an FK or its own check here.
 --
 -- LOCK ORDER matches 0043: accounts -> persons (UUID-sorted) -> channel_identities -> link_codes.
+-- In the web caller's transaction link_code_consume already holds exactly these rows, so the locks
+-- below are re-entrant; the only new row locks are the source's other live link_codes (revoke step),
+-- and every other writer of those rows (link_code_issue's supersede, another consume) takes
+-- persons(source) first, so no cycle forms. A residual 40P01/40001 is rolled back whole by the
+-- caller and answered as a retryable LINK_UNAVAILABLE.
 -- merge_audit snapshots are NOT NULL; this path stores ids + reason only (no PII), as plain JSON
 -- bytes, not encrypted. The real merge planner owns encrypted snapshots.
 -- merge_audit rows with reason_code = 'link_code_empty_reparent' carry plaintext id-only JSON snapshots.
 -- routing_audit is written directly: routing_audit_append (0053) allowlists a single action and
 -- demands a tenant GUC, and linking is tenant-less.
--- Edited in place on 2026-10-14 (OD-3) instead of superseded: the earlier text was never applied
--- outside local/CI databases (never on main, and no deploy path runs migrations), so P17's
--- forward-only rule protects no shared database. A local database that applied the earlier text
--- fails migrate()'s sha256 guard: reset it with `pnpm db:reset:test`.
+-- Edited in place on 2026-10-14 (OD-3; again for the PR #49 security review round 1) instead of
+-- superseded: the earlier texts were never applied outside local/CI databases (never on main, and
+-- no deploy path runs migrations), so P17's forward-only rule protects no shared database. A local
+-- database that applied an earlier text fails migrate()'s sha256 guard. A *_test database: `pnpm
+-- db:reset:test`. Any other local database (db:reset:test refuses it, it only drops *_test): drop
+-- and recreate it through the compose container, then migrate:
+--   docker compose -f infra/docker-compose.yml exec -T postgres psql -U plexco -d postgres
+--     -c 'DROP DATABASE <db> WITH (FORCE)' -c 'CREATE DATABASE <db> TEMPLATE template0'
+--   DATABASE_URL_MIGRATION=postgres://plexco:plexco_dev@localhost:5432/<db> pnpm --filter @plexco/db migrate
+-- Measured 2026-10-14 on a non-test database holding the previous text: the guard refused it,
+-- db:reset:test refused the name, and the recreated database applied 0000..0054. Never edit
+-- schema_migrations instead.
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- Step 1: assert identity_definer (exists, exact attributes, the migration role is a member, no
--- runtime role is) BEFORE any grant below. Mirrors 0022 step 1 for job_definer.
+-- Step 1: assert identity_definer BEFORE any grant below: it exists with the exact attributes, the
+-- migration role is a member and no runtime role is (0022 step 1 for job_definer), it is a member of
+-- nothing (03 step 2), and it has no member besides the migration role (03 step 3's one-member rule).
 -- ---------------------------------------------------------------------------
 DO $$
-DECLARE r record;
+DECLARE
+  r          record;
+  v_super    boolean;
+  v_member_of text;
+  v_members  text[];
 BEGIN
   SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolreplication
     INTO r
@@ -107,17 +149,55 @@ BEGIN
       'link_code_reparent_empty_person: identity_definer must not be granted to app/app_worker/readonly — review and revoke it before proceeding'
       USING ERRCODE = 'insufficient_privilege';
   END IF;
+  -- Member of anything: the function body would run with a path into that role's privileges.
+  SELECT g.rolname INTO v_member_of
+    FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
+   WHERE m.member = 'identity_definer'::regrole
+   ORDER BY g.rolname LIMIT 1;
+  IF v_member_of IS NOT NULL THEN
+    RAISE EXCEPTION
+      'link_code_reparent_empty_person: identity_definer is a member of role % — it must be a member of nothing; revoke it before proceeding',
+      v_member_of
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  -- A second member could SET ROLE identity_definer and act as this BYPASSRLS function's owner.
+  -- The bootstrap grants exactly one role, the migration role. A superuser migration role needs no
+  -- membership (it can SET ROLE to anything), so under one the single member may be whichever role
+  -- the bootstrap targeted; distinct members, because PG16 keeps one row per grantor.
+  SELECT rolsuper INTO v_super FROM pg_roles WHERE rolname = current_user;
+  SELECT array_agg(DISTINCT mr.rolname ORDER BY mr.rolname) INTO v_members
+    FROM pg_auth_members m JOIN pg_roles mr ON mr.oid = m.member
+   WHERE m.roleid = 'identity_definer'::regrole;
+  IF cardinality(v_members) > 1
+     OR (cardinality(v_members) = 1 AND v_members[1] <> current_user AND NOT v_super) THEN
+    RAISE EXCEPTION
+      'link_code_reparent_empty_person: identity_definer must have exactly one member, the migration role (here %), but its members are % — revoke the extra membership before proceeding',
+      current_user, array_to_string(v_members, ', ')
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
 END
 $$;
 
 -- ---------------------------------------------------------------------------
 -- Step 2: the privileges the body uses (see OWNER), granted by the migration role, which owns
--- every table. Schema CREATE is transient: revoked right after the bracket (step 3).
+-- every table. Column-level, each list = the columns step (1)-(5) of the body read or write. Schema
+-- CREATE is transient: revoked right after the bracket (step 3).
 -- ---------------------------------------------------------------------------
 GRANT USAGE, CREATE ON SCHEMA public TO identity_definer;
-GRANT SELECT, UPDATE ON accounts, persons, channel_identities, link_codes TO identity_definer;
-GRANT INSERT ON merge_audit, merge_tombstones, routing_audit TO identity_definer;
-GRANT SELECT (id) ON merge_audit TO identity_definer;
+GRANT SELECT (id, person_id) ON accounts TO identity_definer;
+GRANT UPDATE (id) ON accounts TO identity_definer; -- FOR UPDATE needs UPDATE on one column; never written
+GRANT SELECT (id, status) ON persons TO identity_definer;
+GRANT UPDATE (status, merged_into_person_id) ON persons TO identity_definer;
+GRANT SELECT (id, person_id, platform, status) ON channel_identities TO identity_definer;
+GRANT UPDATE (person_id) ON channel_identities TO identity_definer;
+GRANT SELECT (id, source_person_id, source_channel_identity_id, source_account_id, action,
+              consumed_at, revoked_at) ON link_codes TO identity_definer;
+GRANT UPDATE (revoked_at) ON link_codes TO identity_definer;
+GRANT INSERT (source_person_id, target_person_id, canonical_person_id, method, actor_type, actor_id,
+              reason_code, before_snapshot_enc, after_snapshot_enc) ON merge_audit TO identity_definer;
+GRANT SELECT (id) ON merge_audit TO identity_definer; -- RETURNING id
+GRANT INSERT (old_person_id, canonical_person_id, merge_audit_id) ON merge_tombstones TO identity_definer;
+GRANT INSERT (action, actor_id, tenant_id, detail) ON routing_audit TO identity_definer;
 DO $$
 DECLARE f record;
 BEGIN
@@ -150,21 +230,29 @@ SET row_security = off
 AS $$
 #variable_conflict use_column
 DECLARE
-  v_source   uuid;
-  v_ci_id    uuid;
-  v_src_acct uuid;
-  v_target   uuid;
-  v_lock     uuid;
-  lc         public.link_codes%ROWTYPE;
-  ci         public.channel_identities%ROWTYPE;
-  v_re_tgt   uuid;
-  v_bypass   boolean;
-  v_owner    oid;
-  f          record;
-  v_cnt      bigint;
-  v_blocking text[] := ARRAY[]::text[];
-  v_audit    uuid;
-  v_snap     bytea;
+  v_source      uuid;
+  v_ci_id       uuid;
+  v_src_acct    uuid;
+  v_target      uuid;
+  v_lock        uuid;
+  -- the code row under lock: exactly the columns step (3) judges (never code_hash / salt)
+  v_consumed_at timestamptz;
+  v_revoked_at  timestamptz;
+  v_action      text;
+  v_lc_ci       uuid;
+  v_lc_person   uuid;
+  -- the channel identity: never its encrypted platform user id
+  v_ci_status   text;
+  v_ci_platform text;
+  v_ci_person   uuid;
+  v_re_tgt      uuid;
+  v_bypass      boolean;
+  v_owner       oid;
+  f             record;
+  v_cnt         bigint;
+  v_blocking    text[] := ARRAY[]::text[];
+  v_audit       uuid;
+  v_snap        bytea;
 BEGIN
   IF p_link_code_id IS NULL OR p_account_id IS NULL THEN
     RAISE EXCEPTION 'link_code_reparent_empty_person: code id and account id are required'
@@ -194,29 +282,32 @@ BEGIN
     PERFORM 1 FROM public.persons WHERE id = v_lock FOR UPDATE;
   END LOOP;
   PERFORM 1 FROM public.channel_identities WHERE id = v_ci_id FOR UPDATE;
-  SELECT * INTO lc FROM public.link_codes l WHERE l.id = p_link_code_id FOR UPDATE;
+  SELECT l.consumed_at, l.revoked_at, l.action, l.source_channel_identity_id, l.source_person_id
+    INTO v_consumed_at, v_revoked_at, v_action, v_lc_ci, v_lc_person
+    FROM public.link_codes l WHERE l.id = p_link_code_id FOR UPDATE;
 
   -- ---- (3) re-derive under lock ---------------------------------------------------
   SELECT a.person_id INTO v_re_tgt
     FROM public.accounts a JOIN public.persons p ON p.id = a.person_id
    WHERE a.id = p_account_id AND p.status = 'active';
   IF v_re_tgt IS DISTINCT FROM v_target
-     OR lc.consumed_at IS NULL
-     OR lc.revoked_at IS NOT NULL
-     OR lc.action <> 'merge_identity'
-     OR lc.source_channel_identity_id IS DISTINCT FROM v_ci_id
-     OR lc.source_person_id IS DISTINCT FROM v_source
-     OR lc.consumed_at < clock_timestamp() - interval '10 minutes' THEN
+     OR v_consumed_at IS NULL
+     OR v_revoked_at IS NOT NULL
+     OR v_action IS DISTINCT FROM 'merge_identity'
+     OR v_lc_ci IS DISTINCT FROM v_ci_id
+     OR v_lc_person IS DISTINCT FROM v_source
+     OR v_consumed_at < clock_timestamp() - interval '10 minutes' THEN
     RETURN QUERY SELECT 'invalid'::text, NULL::uuid; RETURN;
   END IF;
-  SELECT * INTO ci FROM public.channel_identities c WHERE c.id = v_ci_id;
-  IF NOT FOUND OR ci.status <> 'active' OR ci.platform <> 'zalo' THEN
+  SELECT c.status, c.platform, c.person_id INTO v_ci_status, v_ci_platform, v_ci_person
+    FROM public.channel_identities c WHERE c.id = v_ci_id;
+  IF NOT FOUND OR v_ci_status <> 'active' OR v_ci_platform <> 'zalo' THEN
     RETURN QUERY SELECT 'invalid'::text, NULL::uuid; RETURN;
   END IF;
-  IF ci.person_id = v_target THEN
+  IF v_ci_person = v_target THEN
     RETURN QUERY SELECT 'same_person'::text, v_ci_id; RETURN;
   END IF;
-  IF ci.person_id <> v_source
+  IF v_ci_person <> v_source
      OR NOT EXISTS (SELECT 1 FROM public.persons p WHERE p.id = v_source AND p.status = 'active') THEN
     RETURN QUERY SELECT 'invalid'::text, NULL::uuid; RETURN;
   END IF;

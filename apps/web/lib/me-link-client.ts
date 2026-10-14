@@ -12,6 +12,7 @@ export type LinkUiState =
   | "requires_review"
   | "invalid"
   | "rate_limited"
+  | "throttled"
   | "unavailable"
   | "offline"
   | "signed_out"
@@ -28,7 +29,13 @@ interface Envelope {
   error?: { code?: unknown } | null;
 }
 
-/** Map one POST /api/me/link response onto a UI state. Anything unrecognised is the generic error. */
+/**
+ * Map one POST /api/me/link response onto a UI state. Anything unrecognised is the generic error.
+ * The two 429s are different promises: RATE_LIMITED is the route's 60 per 60 s actor ceiling
+ * (`throttled`: wait a minute); LINK_CODE_RATE_LIMITED is a 10-minute link bucket OR the code's own
+ * attempt cap, after which that code is dead (`rate_limited`: wait 10 minutes, then a new code). A
+ * 429 with any other code gets the longer, always-safe `rate_limited` advice.
+ */
 export function stateFromLinkResponse(status: number, body: Envelope | null): LinkAttemptResult {
   const code = body?.error?.code;
   const done = (state: LinkUiState, keepCommandId = false): LinkAttemptResult => ({
@@ -42,7 +49,7 @@ export function stateFromLinkResponse(status: number, body: Envelope | null): Li
   }
   if (status === 401) return done("signed_out");
   if (status === 409 && code === "MERGE_REQUIRES_REVIEW") return done("requires_review");
-  if (status === 429) return done("rate_limited");
+  if (status === 429) return done(code === "RATE_LIMITED" ? "throttled" : "rate_limited");
   if (status === 400 && (code === "LINK_CODE_INVALID" || code === "INVALID_BODY")) {
     return done("invalid");
   }

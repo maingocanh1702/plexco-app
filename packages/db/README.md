@@ -542,8 +542,18 @@ no owner yet.
 `infra/postgres-init/03-identity-definer.sql` provisions it via `pnpm db:bootstrap` (right after
 `02-chat-definer.sql`), and migration `0054` only asserts it, then owns
 `link_code_reparent_empty_person` through a `SET ROLE identity_definer` bracket so the emptiness scan
-reads the FORCE-RLS tenant tables for real (DD-127 / DD-131 OD-3, `decisions.md`, pending in PR #51). A
-local database that applied the earlier `0054` must run `pnpm db:bootstrap`, then `pnpm db:reset:test`.
+reads the FORCE-RLS tenant tables for real (DD-127 / DD-131 OD-3, `decisions.md`, pending in PR #51).
+Its privileges are column-level (exactly what the body reads or writes: never a code hash, salt or
+`*_enc` column), and `0054` step 1 also refuses an `identity_definer` that is a member of any role or
+has a member besides the migration role. `linkZaloToAccount` runs `link_code_consume` and the definer
+in ONE transaction on one client: a failed re-parent rolls the consume back (the code stays live), a
+wrong code still counts toward the attempt cap, and a 40P01/40001 is the retryable `unavailable`.
+A local database that applied an earlier `0054` text fails the sha256 guard: run `pnpm db:bootstrap`,
+then `pnpm db:reset:test` for a `*_test` database; any other database (`db:reset:test` refuses it)
+must be dropped and recreated through the compose container (`docker compose -f
+infra/docker-compose.yml exec -T postgres psql -U plexco -d postgres -c 'DROP DATABASE <db> WITH
+(FORCE)' -c 'CREATE DATABASE <db> TEMPLATE template0'`), then migrated (`pnpm --filter @plexco/db
+migrate`), never patched through `schema_migrations` (0054's header records the measurement).
 
 ## Chat DM safety config single-read (DD-102, `0032` — CODE DARK)
 

@@ -73,6 +73,29 @@ describe("POST /api/me/link gates", () => {
     expect(linkZaloToAccount).not.toHaveBeenCalled();
   });
 
+  it("429 RATE_LIMITED on the 60/60 s actor ceiling: its own code and copy, never the 10-minute link text", async () => {
+    vi.mocked(rateLimited).mockImplementation(async (key) =>
+      String(key).startsWith("session-actor:"),
+    );
+    const res = await POST(req(good));
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("RATE_LIMITED");
+    expect(body.error.message).not.toMatch(/10/);
+    expect(linkZaloToAccount).not.toHaveBeenCalled();
+  });
+
+  it("LINK_CODE_RATE_LIMITED copy holds for both its causes (bucket and dead-code cap): 10 minutes, then a new code", async () => {
+    vi.mocked(rateLimited).mockImplementation(async (key) => String(key).startsWith("me-link:"));
+    const bucket = (await (await POST(req(good))).json()) as { error: { message: string } };
+    vi.mocked(rateLimited).mockResolvedValue(false);
+    vi.mocked(linkZaloToAccount).mockResolvedValue({ outcome: "rate_limited" });
+    const cap = (await (await POST(req(good))).json()) as { error: { message: string } };
+    expect(cap.error.message).toBe(bucket.error.message);
+    expect(bucket.error.message).toMatch(/10 (minutes|phút)/);
+    expect(bucket.error.message).toMatch(/new code|mã mới/);
+  });
+
   it("429 when the per-IP bucket is spent; the consume never runs", async () => {
     vi.mocked(rateLimited).mockImplementation(async (key) => String(key).startsWith("me-link-ip:"));
     const res = await POST(req(good));
@@ -129,6 +152,8 @@ describe("POST /api/me/link outcomes", () => {
     ["invalid", 400, "LINK_CODE_INVALID"],
     ["unsupported", 400, "LINK_CODE_INVALID"],
     ["rate_limited", 429, "LINK_CODE_RATE_LIMITED"],
+    // a 40P01 / 40001 the service rolled back whole: the retryable 503, never a 500 or an "invalid"
+    ["unavailable", 503, "LINK_UNAVAILABLE"],
   ] as const)("%s -> %i %s", async (outcome, status, code) => {
     vi.mocked(linkZaloToAccount).mockResolvedValue({ outcome });
     const res = await POST(req(good));
@@ -171,7 +196,13 @@ describe("POST /api/me/link outcomes", () => {
   });
 
   it("never echoes person ids, counters or blocking tables", async () => {
-    for (const outcome of ["linked", "requires_review", "invalid", "rate_limited"] as const) {
+    for (const outcome of [
+      "linked",
+      "requires_review",
+      "invalid",
+      "rate_limited",
+      "unavailable",
+    ] as const) {
       vi.mocked(linkZaloToAccount).mockResolvedValue({ outcome });
       const text = await (await POST(req(good))).text();
       expect(text).not.toContain(PERSON_ID);
