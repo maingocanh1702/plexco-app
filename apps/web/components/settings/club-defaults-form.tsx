@@ -5,13 +5,17 @@ import { patchClubConfig, type ClubConfigDto } from "../../lib/club-settings-cli
 import {
   buildDefaultsPatch,
   defaultsValues,
+  unsureAfter,
+  type ClubPatchField,
   type DefaultsFormValues,
 } from "../../lib/club-settings-model";
 import { useLang, useT } from "../../lib/i18n-client";
 import { formatVndInput } from "../../lib/money";
+import { isDefiniteFailure } from "../../lib/session-error-ui";
 import type { SportDto } from "../../lib/sessions-api";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
+import { useSessionContext } from "../../lib/use-session";
 import { Button } from "../ui/button";
 import { Select } from "../ui/select";
 import { TextField } from "../ui/text-field";
@@ -36,6 +40,7 @@ export function ClubDefaultsForm({
   const lang = useLang();
   const online = useOnlineStatus();
   const command = useCommandId();
+  const { refresh: refreshSession } = useSessionContext();
   const formRef = useRef<HTMLFormElement>(null);
   const [values, setValues] = useState<DefaultsFormValues>(() =>
     defaultsValues(club, (n) => formatVndInput(n, lang)),
@@ -46,12 +51,16 @@ export function ClubDefaultsForm({
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [focusKey, setFocusKey] = useState(0);
+  // Fields an uncertain failure may have saved, against the `club` it was read from: see `unsure`
+  // in club-settings-model.ts. A new `club` (any reload) is the server's truth and ends it.
+  const unsure = useRef<{ club: ClubConfigDto; fields: Set<ClubPatchField> } | null>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
     setMessage(null);
-    const { patch, problem } = buildDefaultsPatch(club, values);
+    const pending = unsure.current?.club === club ? unsure.current.fields : undefined;
+    const { patch, problem } = buildDefaultsPatch(club, values, pending);
     setSportError(null);
     setPriceError(null);
     if (problem === "sport_required") {
@@ -84,15 +93,27 @@ export function ClubDefaultsForm({
       const commandId = command.get(JSON.stringify(patch));
       await patchClubConfig({ tenantId, csrfToken }, { ...patch, commandId });
       command.settle();
+      unsure.current = null;
       setMessage(t("Đã lưu mặc định buổi chơi.", "Session defaults saved."));
       onSaved();
     } catch (failure) {
       command.settle(failure);
+      if (!isDefiniteFailure(failure))
+        unsure.current = { club, fields: unsureAfter(pending, patch) };
       setError(failure);
     } finally {
       setBusy(false);
       setFocusKey((n) => n + 1);
     }
+  }
+
+  /**
+   * The error's "reload" action refetches the club AND the session: the session holds the
+   * csrfToken, so after a CSRF_INVALID a reload of the data alone would fail the retry again.
+   */
+  function reload() {
+    onSaved();
+    void refreshSession();
   }
 
   return (
@@ -137,7 +158,7 @@ export function ClubDefaultsForm({
         error={error}
         message={message}
         onRetry={() => formRef.current?.requestSubmit()}
-        onReload={onSaved}
+        onReload={reload}
       />
       <div className={styles.actions}>
         <Button type="submit" disabled={busy || !online} aria-busy={busy ? true : undefined}>

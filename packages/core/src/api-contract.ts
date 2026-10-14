@@ -70,8 +70,8 @@
  * leaves the committed decision (the link included) in place behind that 500.
  *
  * CHANNEL_NOT_LINKED (409) arrived with POST /api/me/channels/:id/detach (M4): one answer for "not yours",
- * "unknown" and "already detached" (no existence oracle). feature_user_settings_tech.md does not pin it;
- * proposed for the ledger PR (DD-131 candidate).
+ * "unknown", "already detached" and "inactive" (no existence oracle). Pinned in
+ * feature_user_settings_tech.md section 4, signed by the owner as OD-6 (2026-10-14).
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",

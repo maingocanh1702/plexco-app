@@ -4,12 +4,15 @@ import { useRef, useState, type FormEvent } from "react";
 import { patchClubConfig, type ClubConfigDto } from "../../lib/club-settings-client";
 import {
   buildProfilePatch,
+  clubNameProblem,
   profileValues,
   timezoneOptions,
+  unsureAfter,
+  type ClubPatchField,
   type ProfileFormValues,
 } from "../../lib/club-settings-model";
 import { useT } from "../../lib/i18n-client";
-import { displayNameProblem } from "../../lib/me-settings-client";
+import { isDefiniteFailure } from "../../lib/session-error-ui";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
 import { Button } from "../ui/button";
@@ -18,7 +21,11 @@ import { TextField } from "../ui/text-field";
 import { FormFeedback } from "./form-feedback";
 import styles from "./settings-layout.module.css";
 
-/** Club name / timezone / language (tenants.locale, DD-118: the ONLY language source). */
+/**
+ * Club name / timezone / language (tenants.locale, DD-118: the ONLY language source). The name check
+ * mirrors the route's own count (UTF-16 units, club-config-validation.ts), so a name the route would
+ * refuse is pinned to the field instead of coming back as a generic INVALID_BODY.
+ */
 export function ClubProfileForm({
   tenantId,
   csrfToken,
@@ -41,18 +48,24 @@ export function ClubProfileForm({
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [focusKey, setFocusKey] = useState(0);
+  // Fields an uncertain failure may have saved, against the `club` it was read from: see `unsure`
+  // in club-settings-model.ts. A new `club` (any reload) is the server's truth and ends it.
+  const unsure = useRef<{ club: ClubConfigDto; fields: Set<ClubPatchField> } | null>(null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
     setMessage(null);
-    const problem = displayNameProblem(values.name);
+    const problem = clubNameProblem(values.name);
     if (problem) {
       setNameError(
         problem === "empty"
           ? t("Nhập tên câu lạc bộ.", "Enter the club name.")
           : problem === "too_long"
-            ? t("Tên tối đa 120 ký tự.", "The name is at most 120 characters.")
+            ? t(
+                "Tên tối đa 120 ký tự (một số biểu tượng cảm xúc được tính là 2 ký tự).",
+                "The name is at most 120 characters (some emoji count as 2).",
+              )
             : t(
                 "Tên không được chứa ký tự điều khiển hoặc ký tự ẩn.",
                 "The name cannot contain control or hidden characters.",
@@ -62,7 +75,8 @@ export function ClubProfileForm({
       return;
     }
     setNameError(null);
-    const patch = buildProfilePatch(club, values);
+    const pending = unsure.current?.club === club ? unsure.current.fields : undefined;
+    const patch = buildProfilePatch(club, values, pending);
     if (patch === null) {
       setMessage(t("Chưa có thay đổi nào để lưu.", "Nothing has changed."));
       setFocusKey((n) => n + 1);
@@ -75,10 +89,13 @@ export function ClubProfileForm({
       const commandId = command.get(JSON.stringify(patch));
       await patchClubConfig({ tenantId, csrfToken }, { ...patch, commandId });
       command.settle();
+      unsure.current = null;
       setMessage(t("Đã lưu thông tin câu lạc bộ.", "Club details saved."));
       onSaved();
     } catch (failure) {
       command.settle(failure);
+      if (!isDefiniteFailure(failure))
+        unsure.current = { club, fields: unsureAfter(pending, patch) };
       setError(failure);
     } finally {
       setBusy(false);

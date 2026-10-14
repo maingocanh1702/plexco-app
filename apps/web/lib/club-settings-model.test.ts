@@ -3,9 +3,11 @@ import type { ClubConfigDto } from "./club-settings-client";
 import {
   buildDefaultsPatch,
   buildProfilePatch,
+  clubNameProblem,
   defaultsValues,
   profileValues,
   timezoneOptions,
+  unsureAfter,
 } from "./club-settings-model";
 
 const club: ClubConfigDto = {
@@ -18,6 +20,27 @@ const club: ClubConfigDto = {
   defaultVisibility: "private",
 };
 const fmt = (n: number) => String(n);
+const ch = (cp: number) => String.fromCodePoint(cp);
+
+describe("clubNameProblem (same count as club-config-validation.ts: UTF-16 units)", () => {
+  it.each([
+    ["CLB Cầu lông", null],
+    ["x".repeat(120), null],
+    ["x".repeat(121), "too_long"],
+    // An astral emoji is 2 UTF-16 units: 60 fit, 61 are 122 units and the route refuses them.
+    [ch(0x1f3f8).repeat(60), null],
+    [ch(0x1f3f8).repeat(61), "too_long"],
+    ["", "empty"],
+    ["   ", "empty"],
+    ["a" + ch(0x09) + "b", "invalid_chars"],
+    ["a" + ch(0x200b) + "b", "invalid_chars"],
+    ["a" + ch(0x202e) + "b", "invalid_chars"],
+    // The club route refuses only Cc/Cf: the client mirrors it and refuses nothing more.
+    ["a" + ch(0x2028) + "b", null],
+  ])("%j -> %s", (input, expected) => {
+    expect(clubNameProblem(input)).toBe(expected);
+  });
+});
 
 describe("buildProfilePatch", () => {
   it("unchanged form sends nothing (a PATCH needs >= 1 field)", () => {
@@ -30,6 +53,28 @@ describe("buildProfilePatch", () => {
   });
   it("a whitespace-only edit of the name is not a change", () => {
     expect(buildProfilePatch(club, { ...profileValues(club), name: " CLB Cầu lông " })).toBeNull();
+  });
+  it("after an uncertain failure, a field changed back to the loaded value is SENT, never 'nothing changed'", () => {
+    // {name: "CLB Mới"} failed uncertainly: the server may hold it, so reverting must reach it.
+    const unsure = unsureAfter(undefined, { name: "CLB Mới" });
+    expect(buildProfilePatch(club, profileValues(club), unsure)).toEqual({ name: "CLB Cầu lông" });
+    // ...and alongside a real edit, the unsure field still travels.
+    expect(buildProfilePatch(club, { ...profileValues(club), locale: "en" }, unsure)).toEqual({
+      name: "CLB Cầu lông",
+      locale: "en",
+    });
+  });
+});
+
+describe("unsureAfter", () => {
+  it("accumulates the fields of every uncertain attempt", () => {
+    const first = unsureAfter(undefined, { name: "A" });
+    expect([...unsureAfter(first, { timezone: "UTC", locale: "en" })].sort()).toEqual([
+      "locale",
+      "name",
+      "timezone",
+    ]);
+    expect([...first]).toEqual(["name"]); // the earlier set is not mutated
   });
 });
 
@@ -77,6 +122,26 @@ describe("buildDefaultsPatch", () => {
       patch: null,
       problem: null,
     });
+  });
+  it("after an uncertain failure the unsure defaults are sent back as the form holds them", () => {
+    const unsure = unsureAfter(undefined, {
+      defaultPriceAmount: 60000,
+      defaultVisibility: "public",
+    });
+    expect(buildDefaultsPatch(club, base, unsure)).toEqual({
+      patch: { defaultPriceAmount: 50000, defaultVisibility: "private" },
+      problem: null,
+    });
+  });
+  it("an unsure sport or price counts as saved: blanking it is a problem, not 'nothing changed'", () => {
+    const empty: ClubConfigDto = { ...club, defaultSportKey: null, defaultPriceAmount: null };
+    const values = defaultsValues(empty, fmt);
+    expect(
+      buildDefaultsPatch(empty, values, unsureAfter(undefined, { defaultSportKey: "badminton" })),
+    ).toEqual({ patch: null, problem: "sport_required" });
+    expect(
+      buildDefaultsPatch(empty, values, unsureAfter(undefined, { defaultPriceAmount: 1000 })),
+    ).toEqual({ patch: null, problem: "price_required" });
   });
   it("a never-set club with an untouched form sends nothing", () => {
     const empty: ClubConfigDto = {

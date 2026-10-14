@@ -8,6 +8,7 @@ import {
   type LinkedChannelDto,
 } from "../../lib/me-settings-client";
 import { useOnlineStatus } from "../../lib/use-online-status";
+import { useSessionContext } from "../../lib/use-session";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
@@ -27,7 +28,10 @@ import styles from "../settings/settings-layout.module.css";
  * Focus: the native dialog returns focus to its opener when it closes, and after an unlink (or a
  * 409 whose reload dropped the row) that opener is a removed row, which would leave focus on
  * <body>. So the outcome region (FormFeedback, whose live region is always mounted and announces
- * the text) takes focus once the dialog has closed.
+ * the text) takes focus once the dialog has closed. When the dialog closes BEFORE the 409's reload
+ * lands, the opener is still listed and gets focus back; if the reload then removes it (or leaves
+ * it inactive, without the button), the list announces the reload and, when focus fell to <body>
+ * with the removed button, moves it to the outcome region.
  */
 export function SettingsChannelsList({
   channels,
@@ -42,12 +46,17 @@ export function SettingsChannelsList({
   const t = useT();
   const lang = useLang();
   const online = useOnlineStatus();
+  const { refresh: refreshSession } = useSessionContext();
   const [target, setTarget] = useState<LinkedChannelDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const focusOutcome = useRef(false);
+  /** A 409 asked for a reload that has not landed yet. */
+  const reloadPending = useRef(false);
+  /** The row whose dialog closed while that reload was pending: its opener may still vanish. */
+  const orphan = useRef<string | null>(null);
 
   // Runs after the commit that closed the dialog (ConfirmDialog's own close effect, a child effect,
   // has already returned focus to the opener), so this focus is the one that sticks.
@@ -57,6 +66,20 @@ export function SettingsChannelsList({
       setFocusKey((n) => n + 1);
     }
   }, [target]);
+
+  // A new list arrived (the reload landed). Runs after the commit that removed any vanished row, so
+  // focus has already fallen to <body> if it sat on that row's button.
+  useEffect(() => {
+    reloadPending.current = false;
+    const id = orphan.current;
+    orphan.current = null;
+    if (id === null || target !== null) return; // a dialog open again handles its own close
+    if (channels.some((c) => c.id === id && c.status === "active")) return; // opener still there
+    setDone(t("Danh sách kênh đã được tải lại.", "The channel list has been reloaded."));
+    const active = document.activeElement;
+    if (active === null || active === document.body) setFocusKey((n) => n + 1);
+    // Keyed on the list only: `target` and `t` are read as of the render that brought it.
+  }, [channels]);
 
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString(lang === "en" ? "en-GB" : "vi-VN");
@@ -78,8 +101,13 @@ export function SettingsChannelsList({
       onChanged();
     } catch (failure) {
       setError(failure);
-      // The row may already be gone (409): reload the list behind the dialog.
-      if (describeSettingsError(failure, t).action === "reload") onChanged();
+      // The row may already be gone (409): reload the list behind the dialog. The session is
+      // refetched too: it holds the csrfToken, so after a CSRF_INVALID confirming again needs it.
+      if (describeSettingsError(failure, t).action === "reload") {
+        reloadPending.current = true;
+        onChanged();
+        void refreshSession();
+      }
     } finally {
       setBusy(false);
     }
@@ -171,11 +199,15 @@ export function SettingsChannelsList({
         confirmLabel={t("Gỡ liên kết", "Unlink")}
         onConfirm={() => void confirm()}
         onCancel={() => {
-          // After a 409 the reload may already have removed this row, and with it the dialog's
-          // opener: land on the outcome region instead of <body>.
           if (target && !channels.some((c) => c.id === target.id && c.status === "active")) {
+            // After a 409 the reload already removed this row, and with it the dialog's opener:
+            // land on the outcome region instead of <body>.
             setDone(t("Danh sách kênh đã được tải lại.", "The channel list has been reloaded."));
             focusOutcome.current = true;
+          } else if (target && reloadPending.current) {
+            // The reload has not landed: the opener takes focus back now, and the list effect
+            // above handles it if that reload then removes the row.
+            orphan.current = target.id;
           }
           setTarget(null);
           setError(null);

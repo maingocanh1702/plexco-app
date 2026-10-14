@@ -2,11 +2,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ClubConfigDto } from "../../lib/club-settings-client";
 import { LangProvider, makeT } from "../../lib/i18n-client";
+import { SessionProvider } from "../../lib/use-session";
 import { ClubDefaultsForm } from "./club-defaults-form";
 import { ClubProfileForm } from "./club-profile-form";
 import { FormFeedback } from "./form-feedback";
 import { ZaloConnectCard } from "./zalo-connect-card";
-import { connectOutcome, statusLabel, statusTone } from "./zalo-connect-status";
+import {
+  connectOutcome,
+  reloadedNote,
+  revokedNote,
+  statusLabel,
+  statusTone,
+} from "./zalo-connect-status";
 
 const club: ClubConfigDto = {
   slug: "clb",
@@ -17,8 +24,14 @@ const club: ClubConfigDto = {
   defaultPriceAmount: 50000,
   defaultVisibility: "public",
 };
+// The forms reload through the session context (a CSRF_INVALID needs its fresh csrfToken); a
+// static render runs no effect, so the provider never fetches here.
 const wrap = (node: React.ReactNode, lang: "vi" | "en" = "en") =>
-  renderToStaticMarkup(<LangProvider lang={lang}>{node}</LangProvider>);
+  renderToStaticMarkup(
+    <LangProvider lang={lang}>
+      <SessionProvider>{node}</SessionProvider>
+    </LangProvider>,
+  );
 
 describe("ClubProfileForm", () => {
   it("prefills name/timezone/language and says the language is club-wide (DD-118)", () => {
@@ -89,6 +102,14 @@ describe("Zalo connect status copy", () => {
     expect(failed.message).toMatch(/did not accept the webhook registration/);
     expect(failed.message).not.toMatch(/webhook registered/);
     expect(connectOutcome("something_new", en).tone).toBe("warning");
+  });
+
+  it("a revoked bot's note says it is terminal (the card offers no reconnect for it, see e2e)", () => {
+    expect(statusLabel("revoked", en)).toBe("Revoked");
+    expect(revokedNote(en)).toMatch(/cannot be reconnected/);
+    expect(revokedNote(en)).toMatch(/not even with a different bot token/);
+    expect(revokedNote(makeT("vi"))).toContain("Không thể kết nối lại từ trang này");
+    expect(reloadedNote(makeT("vi"))).toBe("Đã tải lại trạng thái kết nối Zalo.");
   });
 });
 
