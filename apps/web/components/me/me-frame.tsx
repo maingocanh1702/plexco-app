@@ -19,6 +19,8 @@ import styles from "./me-frame.module.css";
  * already proved "someone is signed in"; this client gate resolves the session for the CSRF secret
  * and the club list. No tenant is routed here, so the language is the DD-118 pre-tenant default
  * (`vi`) until the last club language remembered on this device (plx-lang) is read after mount.
+ * This LangProvider is the ONE language source for every /me page, chrome and body alike: pages
+ * render their text through useT()/useLang() under it, and none reads Accept-Language (DD-118).
  *
  * `div#main-content` is the skip-link target and NOT a <main>: each /me page owns its own <main>
  * landmark (M3b's /me/link does), and nesting two would be invalid.
@@ -76,14 +78,12 @@ function MeGate({ children }: { children: ReactNode }) {
   }
 
   const { session } = state;
-  const firstClub = session.tenants[0];
   const nav = [
     { href: "/me/settings", label: t("Cài đặt", "Settings") },
     { href: "/me/link", label: t("Liên kết Zalo", "Link Zalo") },
-    {
-      href: firstClub ? `/c/${firstClub.tenantId}` : "/",
-      label: t("Về câu lạc bộ", "Back to clubs"),
-    },
+    // "/" is the club router (WorkspaceRedirect): one club opens it, several show the chooser, none
+    // goes to create-a-club. Linking to tenants[0] would skip the chooser for a multi-club account.
+    { href: "/", label: t("Về câu lạc bộ", "Back to clubs") },
   ];
   return (
     <div className={styles.frame}>

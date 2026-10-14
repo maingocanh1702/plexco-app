@@ -57,9 +57,12 @@ export function SettingsProfileForm({
     }
     setBusy(true);
     try {
+      const displayName = value.trim();
+      // Bound to the value like the club forms (use-command-id.ts), although PATCH /api/me/profile
+      // stores nothing under the key today (it is idempotent by value).
       const profile = await patchMyProfile(csrfToken, {
-        displayName: value.trim(),
-        commandId: command.get(),
+        displayName,
+        commandId: command.get(JSON.stringify({ displayName })),
       });
       command.settle();
       setValue(profile.displayName ?? "");

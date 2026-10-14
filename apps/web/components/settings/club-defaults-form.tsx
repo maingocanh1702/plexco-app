@@ -40,6 +40,7 @@ export function ClubDefaultsForm({
   const [values, setValues] = useState<DefaultsFormValues>(() =>
     defaultsValues(club, (n) => formatVndInput(n, lang)),
   );
+  const [sportError, setSportError] = useState<string | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -51,6 +52,18 @@ export function ClubDefaultsForm({
     setError(null);
     setMessage(null);
     const { patch, problem } = buildDefaultsPatch(club, values);
+    setSportError(null);
+    setPriceError(null);
+    if (problem === "sport_required") {
+      setSportError(
+        t(
+          "Môn mặc định đã lưu không thể bỏ trống. Hãy chọn một môn.",
+          "A saved default sport cannot be cleared. Choose a sport.",
+        ),
+      );
+      formRef.current?.querySelector("select")?.focus();
+      return;
+    }
     if (problem) {
       setPriceError(
         problem === "price_invalid"
@@ -60,7 +73,6 @@ export function ClubDefaultsForm({
       formRef.current?.querySelector<HTMLInputElement>('input[inputmode="numeric"]')?.focus();
       return;
     }
-    setPriceError(null);
     if (patch === null) {
       setMessage(t("Chưa có thay đổi nào để lưu.", "Nothing has changed."));
       setFocusKey((n) => n + 1);
@@ -68,7 +80,9 @@ export function ClubDefaultsForm({
     }
     setBusy(true);
     try {
-      await patchClubConfig({ tenantId, csrfToken }, { ...patch, commandId: command.get() });
+      // Bound to this exact patch (see use-command-id.ts): an edit gets a new key, a retry replays.
+      const commandId = command.get(JSON.stringify(patch));
+      await patchClubConfig({ tenantId, csrfToken }, { ...patch, commandId });
       command.settle();
       setMessage(t("Đã lưu mặc định buổi chơi.", "Session defaults saved."));
       onSaved();
@@ -90,10 +104,14 @@ export function ClubDefaultsForm({
           { value: "", label: t("Chưa chọn", "Not set") },
           ...sports.map((sport) => ({ value: sport.key, label: sport.name })),
         ]}
-        onChange={(e) => setValues({ ...values, sportKey: e.target.value })}
+        error={sportError}
+        onChange={(e) => {
+          setValues({ ...values, sportKey: e.target.value });
+          setSportError(null);
+        }}
       />
       <TextField
-        label={t("Giá mặc định (₫)", "Default price (₫)")}
+        label={t("Giá mặc định (đ)", "Default price (đ)")}
         hint={t("Tiền Việt, không có phần lẻ.", "Vietnamese dong, no decimals.")}
         inputMode="numeric"
         value={values.price}

@@ -69,13 +69,17 @@ export function defaultsValues(club: ClubConfigDto, formatPrice: (n: number) => 
   } satisfies DefaultsFormValues;
 }
 
-export type DefaultsProblem = "price_invalid" | "price_required";
+export type DefaultsProblem = "sport_required" | "price_invalid" | "price_required";
 
 export function buildDefaultsPatch(
   club: ClubConfigDto,
   values: DefaultsFormValues,
 ): { patch: ClubPatchBody | null; problem: DefaultsProblem | null } {
   const patch: ClubPatchBody = {};
+  if (values.sportKey === "" && club.defaultSportKey !== null) {
+    // The route only accepts a sport key (it has no "unset"): a saved sport can be changed, not cleared.
+    return { patch: null, problem: "sport_required" };
+  }
   if (values.sportKey !== "" && values.sportKey !== club.defaultSportKey) {
     patch.defaultSportKey = values.sportKey;
   }

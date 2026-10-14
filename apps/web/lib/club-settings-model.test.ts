@@ -58,6 +58,26 @@ describe("buildDefaultsPatch", () => {
   it("a saved price cannot be blanked", () => {
     expect(buildDefaultsPatch(club, { ...base, price: "" }).problem).toBe("price_required");
   });
+  it("a saved sport cannot be cleared: 'Not set' is a problem, never a silent 'nothing changed'", () => {
+    expect(buildDefaultsPatch(club, { ...base, sportKey: "" })).toEqual({
+      patch: null,
+      problem: "sport_required",
+    });
+    // ...even when another field changed in the same submit.
+    expect(buildDefaultsPatch(club, { ...base, sportKey: "", visibility: "public" }).problem).toBe(
+      "sport_required",
+    );
+  });
+  it("a changed sport is sent; a never-set sport may stay unset", () => {
+    expect(buildDefaultsPatch(club, { ...base, sportKey: "pickleball" }).patch).toEqual({
+      defaultSportKey: "pickleball",
+    });
+    const noSport: ClubConfigDto = { ...club, defaultSportKey: null };
+    expect(buildDefaultsPatch(noSport, defaultsValues(noSport, fmt))).toEqual({
+      patch: null,
+      problem: null,
+    });
+  });
   it("a never-set club with an untouched form sends nothing", () => {
     const empty: ClubConfigDto = {
       ...club,

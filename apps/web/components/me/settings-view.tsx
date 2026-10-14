@@ -16,6 +16,8 @@ import styles from "../settings/settings-layout.module.css";
  * /me/settings: minimal profile (display name), linked channels with unlink, and two read-only
  * sections. UI language is NOT a personal setting: DD-118 makes the club's `tenants.locale` the only
  * language source, so there is no member-level switch to build; the section says where it comes from.
+ * Reminder preferences are deferred (OD-6) and the MVP sends no automatic reminders (OD-0), so that
+ * section only says so.
  */
 export function SettingsView() {
   const t = useT();
@@ -83,7 +85,10 @@ export function SettingsView() {
         <section className={styles.section} aria-labelledby="me-reminders">
           <h2 id="me-reminders">{t("Nhắc nợ", "Payment reminders")}</h2>
           <p className={styles.caption}>
-            {t("Nhắc tự động đến ở M7.", "Automatic reminders arrive in M7.")}
+            {t(
+              "Plexco chưa gửi nhắc nợ tự động, nên ở đây chưa có gì để cài đặt.",
+              "Plexco does not send automatic payment reminders yet, so there is nothing to set here.",
+            )}
           </p>
         </section>
       </Card>

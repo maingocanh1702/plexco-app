@@ -119,44 +119,138 @@ describe("person_profile_read / person_profile_update", () => {
     expect((await personRow(b.personId)).display_name).toBe("B");
   });
 
-  // TS and SQL must agree on every boundary: the TS validator runs first, the definer is the backstop.
+  // TS and SQL must agree on every boundary: the TS validator runs first, the definer is the backstop
+  // for any other app caller. Characters are built at runtime so this file holds no invisible bytes.
+  const ch = (cp: number) => String.fromCodePoint(cp);
+  const hex = (cp: number) => `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
+  const VI = "Nguyễn Thị Ánh";
+  const E_CIRCUMFLEX_TILDE_NFD = ch(0x1ec5).normalize("NFD"); // e + U+0302 + U+0303: 3 code points
+
+  /** TS verdict: the trimmed name, or null when validateDisplayName refuses it. */
+  const tsVerdict = (input: string): string | null => {
+    try {
+      return validateDisplayName(input);
+    } catch {
+      return null;
+    }
+  };
+  /** Definer verdict: the stored name, or the SQLSTATE it raised. */
+  async function sqlVerdict(
+    accountId: string,
+    input: string,
+  ): Promise<{ stored: string | null } | { code: string }> {
+    try {
+      const { rows } = await ctx.appPool.query<{ display_name: string | null }>(
+        `SELECT display_name FROM person_profile_update($1, $2)`,
+        [accountId, input],
+      );
+      return { stored: rows[0]?.display_name ?? null };
+    } catch (error) {
+      return { code: String((error as { code?: string }).code) };
+    }
+  }
+
+  // Walked from the RUNTIME's Unicode tables, never a hand-kept copy: a Node whose Unicode grows Cc,
+  // Cf or the ECMAScript trim set fails the two sweeps below until 0055's enumerated lists grow too.
+  const CONTROL_OR_FORMAT: number[] = [];
+  const TRIMMED: number[] = [];
+  for (let cp = 0; cp <= 0x10ffff; cp++) {
+    if (cp >= 0xd800 && cp <= 0xdfff) continue; // surrogates are not scalar values
+    if (/^[\p{Cc}\p{Cf}]$/u.test(ch(cp))) CONTROL_OR_FORMAT.push(cp);
+    if (ch(cp).trim() === "") TRIMMED.push(cp);
+  }
+
   const CORPUS: [string, string, boolean][] = [
     ["plain", "Lan", true],
-    ["vietnamese diacritics", "Nguyễn Thị Ánh", true],
+    ["vietnamese diacritics, NFC", VI.normalize("NFC"), true],
+    ["vietnamese diacritics, NFD (combining marks are Mn, not Cf)", VI.normalize("NFD"), true],
     ["max length (120)", "x".repeat(120), true],
     ["over max (121)", "x".repeat(121), false],
-    ["120 emoji = 120 code points", "\u{1F600}".repeat(120), true],
-    ["121 emoji", "\u{1F600}".repeat(121), false],
+    ["120 emoji = 120 code points", ch(0x1f600).repeat(120), true],
+    ["121 emoji", ch(0x1f600).repeat(121), false],
+    ["NFD length is code points: 40 x 3 = 120", E_CIRCUMFLEX_TILDE_NFD.repeat(40), true],
+    ["NFD length is code points: 41 x 3 = 123", E_CIRCUMFLEX_TILDE_NFD.repeat(41), false],
     ["blank", "   ", false],
     ["empty", "", false],
-    ["NEL control (U+0085)", "a\u0085b", false],
-    ["tab control", "a\tb", false],
-    ["newline control", "a\nb", false],
-    ["DEL", "a\u007fb", false],
-    ["zero-width space (Cf)", "a​b", false],
-    ["bidi override (Cf)", "a‮b", false],
-    ["BOM (Cf)", "a﻿b", false],
-    ["soft hyphen (Cf)", "a­b", false],
-    ["tag char (Cf, astral)", "a\u{e0041}b", false],
-    ["ZWJ in emoji sequence is a format char", "\u{1F468}‍\u{1F469}", false],
+    ["NBSP only (blank once trimmed)", ch(0xa0).repeat(3), false],
+    ["NBSP at both edges is trimmed", ch(0xa0) + "Lan" + ch(0xa0), true],
+    ["NBSP inside is kept", "Lan" + ch(0xa0) + "Anh", true],
+    ["ideographic space at the edges is trimmed", ch(0x3000) + "Lan" + ch(0x3000), true],
+    ["tab + newline at the edges are trimmed", ch(0x09) + "Lan" + ch(0x0a), true],
+    ["BOM at the edge is trimmed (JS trim removes U+FEFF)", ch(0xfeff) + "Lan", true],
+    ["NEL at the edge: Cc, and JS trim keeps it", "Lan" + ch(0x85), false],
+    ["Mongolian vowel separator at the edge: Cf, no longer a space", ch(0x180e) + "Lan", false],
+    ["zero-width space at the edge: Cf, not trimmed", "Lan" + ch(0x200b), false],
+    ["NEL control inside (U+0085)", "a" + ch(0x85) + "b", false],
+    ["tab control inside", "a" + ch(0x09) + "b", false],
+    ["newline control inside", "a" + ch(0x0a) + "b", false],
+    ["DEL inside", "a" + ch(0x7f) + "b", false],
+    ["zero-width space inside (Cf)", "a" + ch(0x200b) + "b", false],
+    ["bidi override inside (Cf)", "a" + ch(0x202e) + "b", false],
+    ["BOM inside (Cf)", "a" + ch(0xfeff) + "b", false],
+    ["soft hyphen inside (Cf)", "a" + ch(0xad) + "b", false],
+    ["Arabic pound mark above (Cf, U+0890)", "a" + ch(0x890) + "b", false],
+    ["Arabic disputed end of ayah (Cf, U+08E2)", "a" + ch(0x8e2) + "b", false],
+    ["tag char (Cf, astral)", "a" + ch(0xe0041) + "b", false],
+    ["ZWJ in emoji sequence is a format char", ch(0x1f468) + ch(0x200d) + ch(0x1f469), false],
   ];
   it.each(CORPUS)("validation parity TS/SQL: %s", async (_label, input, ok) => {
-    let tsOk = true;
-    try {
-      validateDisplayName(input);
-    } catch {
-      tsOk = false;
-    }
-    expect(tsOk).toBe(ok);
+    const ts = tsVerdict(input);
+    expect(ts !== null).toBe(ok);
     const u = await webUser("seed");
-    let sqlOk = true;
-    try {
-      await ctx.appPool.query(`SELECT * FROM person_profile_update($1, $2)`, [u.accountId, input]);
-    } catch (error) {
-      sqlOk = false;
-      expect((error as { code?: string }).code).toBe("22023"); // invalid_parameter_value
+    const sql = await sqlVerdict(u.accountId, input);
+    if (ok) {
+      expect(sql).toEqual({ stored: ts }); // same trim, and the stored bytes are TS's (no normalisation)
+    } else {
+      expect(sql).toEqual({ code: "22023" }); // invalid_parameter_value
     }
-    expect(sqlOk).toBe(ok);
+  });
+
+  it("every Cc/Cf code point the runtime knows is refused by TS AND by the definer (mid-name)", async () => {
+    expect(CONTROL_OR_FORMAT.length).toBeGreaterThanOrEqual(235); // 65 Cc + 170 Cf (Unicode 17.0)
+    expect(CONTROL_OR_FORMAT).toEqual(
+      expect.arrayContaining([0x0, 0x85, 0xad, 0x890, 0x891, 0x8e2, 0x180e, 0xfeff, 0xe007f]),
+    );
+    const u = await webUser("seed");
+    const wrong: string[] = [];
+    for (const cp of CONTROL_OR_FORMAT) {
+      const input = "a" + ch(cp) + "b";
+      if (tsVerdict(input) !== null) wrong.push(`TS accepts ${hex(cp)}`);
+      // U+0000 never reaches the definer: Postgres refuses a NUL byte in a text parameter (22021).
+      const expected = cp === 0 ? "22021" : "22023";
+      const sql = await sqlVerdict(u.accountId, input);
+      if (!("code" in sql) || sql.code !== expected) {
+        wrong.push(`SQL ${hex(cp)} -> ${JSON.stringify(sql)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+    expect((await personRow(u.personId)).display_name).toBe("seed");
+  });
+
+  it("the definer trims exactly what String.prototype.trim removes, and agrees with TS mid-name", async () => {
+    expect(TRIMMED).toEqual(
+      expect.arrayContaining([
+        0x09, 0x0d, 0x20, 0xa0, 0x1680, 0x2000, 0x200a, 0x2028, 0x3000, 0xfeff,
+      ]),
+    );
+    const u = await webUser("seed");
+    const wrong: string[] = [];
+    for (const cp of TRIMMED) {
+      const edges = ch(cp) + ch(cp) + "Lan" + ch(cp);
+      if (tsVerdict(edges) !== "Lan") wrong.push(`TS keeps ${hex(cp)}`);
+      const atEdges = await sqlVerdict(u.accountId, edges);
+      if (!("stored" in atEdges) || atEdges.stored !== "Lan") {
+        wrong.push(`SQL edges ${hex(cp)} -> ${JSON.stringify(atEdges)}`);
+      }
+      const middle = "Lan" + ch(cp) + "Anh";
+      const ts = tsVerdict(middle);
+      const inside = await sqlVerdict(u.accountId, middle);
+      const stored = "stored" in inside ? inside.stored : null;
+      if (stored !== ts || ("code" in inside && inside.code !== "22023")) {
+        wrong.push(`middle ${hex(cp)}: TS ${JSON.stringify(ts)}, SQL ${JSON.stringify(inside)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 
   it("NULL arguments are refused", async () => {
@@ -209,6 +303,7 @@ describe("channel_identity_detach (the UNLINK rule)", () => {
     const moved = await ciRow(ci);
     expect(moved.person_id).not.toBe(u.personId);
     expect(moved.status).toBe("active"); // status unchanged: the Zalo user is a stranger again
+    // ...a NAMELESS one: nothing is copied from the account's Person (that would move its PII).
     expect(await personRow(moved.person_id)).toEqual({
       display_name: null,
       status: "active",
@@ -268,11 +363,15 @@ describe("channel_identity_detach (the UNLINK rule)", () => {
     expect((await ciRow(ci)).person_id).toBe(u.personId);
   });
 
-  it("already inactive -> invalid, nothing written", async () => {
+  it("inactive: listed, but not detachable (OD-6 moves active identities only) -> invalid, nothing written", async () => {
     const u = await webUser();
     const ci = await identityFor(u.personId, "zalo", "inactive");
+    expect((await listMyChannels(ctx.appPool, u.accountId)).map((c) => c.status)).toEqual([
+      "inactive",
+    ]);
     expect(await detachMyChannel(ctx.appPool, u.accountId, ci)).toEqual({ outcome: "invalid" });
-    expect((await ciRow(ci)).person_id).toBe(u.personId);
+    expect(await ciRow(ci)).toEqual({ person_id: u.personId, status: "inactive" });
+    expect(await detachAudit(u.accountId)).toEqual([]);
   });
 
   it("account whose Person is not active -> invalid", async () => {
@@ -297,7 +396,14 @@ describe("channel_identity_detach (the UNLINK rule)", () => {
     const u = await webUser();
     const ci = await identityFor(u.personId);
     expect((await detachMyChannel(ctx.appPool, u.accountId, ci)).outcome).toBe("detached");
+    // The repeat is refused because the identity now belongs to the fresh Person, NOT because it is
+    // inactive: detach leaves the status as it was.
+    const moved = await ciRow(ci);
+    expect(moved.status).toBe("active");
+    expect(moved.person_id).not.toBe(u.personId);
     expect((await detachMyChannel(ctx.appPool, u.accountId, ci)).outcome).toBe("invalid");
+    expect(await ciRow(ci)).toEqual(moved);
+    expect(await detachAudit(u.accountId)).toHaveLength(1);
   });
 
   it("NULL arguments are refused", async () => {

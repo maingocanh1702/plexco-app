@@ -48,10 +48,40 @@ describe("SettingsChannelsList", () => {
     expect(html).toContain("Zalo");
     expect(html).toContain("Messenger");
     expect(html).toContain("Linked");
-    expect(html).toContain("Disconnected");
+    expect(html).toContain("Inactive");
+    // the inactive row says why it has no unlink action (detach moves active channels only)
+    expect(html).toContain("cannot be unlinked for now");
     expect(html.match(/Unlink/g)?.length).toBeGreaterThanOrEqual(1);
     // one Unlink trigger button (the active row) + the dialog's confirm label
     expect(html.match(/<button[^>]*>Unlink<span/g)?.length).toBe(1);
+  });
+
+  it("the date is labelled as when the channel was first seen, not as a link time", () => {
+    const html = wrap(
+      <SettingsChannelsList channels={CHANNELS} csrfToken="x" onChanged={vi.fn()} />,
+      "vi",
+    );
+    expect(html).toContain("Ghi nhận từ ngày");
+    expect(html).not.toContain("Liên kết ngày");
+  });
+
+  it("the confirm copy says the bot will treat the channel account as a new stranger", () => {
+    const viHtml = wrap(
+      <SettingsChannelsList channels={CHANNELS} csrfToken="x" onChanged={vi.fn()} />,
+      "vi",
+    );
+    expect(viHtml).toContain("bot sẽ coi tài khoản Zalo này là một người lạ mới");
+    const enHtml = wrap(
+      <SettingsChannelsList channels={CHANNELS} csrfToken="x" onChanged={vi.fn()} />,
+    );
+    expect(enHtml).toContain("the bot treats this Zalo account as a new stranger");
+  });
+
+  it("the outcome live region is mounted before any unlink (so the result is announced)", () => {
+    const html = wrap(
+      <SettingsChannelsList channels={CHANNELS} csrfToken="x" onChanged={vi.fn()} />,
+    );
+    expect(html).toContain('role="status"');
   });
 
   it("never renders an id, token or raw platform identifier", () => {
