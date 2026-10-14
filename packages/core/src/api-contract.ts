@@ -65,7 +65,9 @@
  * and is proposed as DD-127 (ledger PR). It covers two cases: the link-code lookup key is not configured,
  * or the link transaction hit a deadlock / serialization failure (40P01 / 40001) and was rolled back
  * whole (nothing written, the code still live). Any other failure, a lost connection included, is not
- * mapped to it: it propagates (its transaction rolls back too).
+ * mapped to it: it propagates (the route answers 500) and its outcome is UNKNOWN: a failure before
+ * COMMIT rolls the transaction back, but a connection that drops after the server applied COMMIT
+ * leaves the committed decision (the link included) in place behind that 500.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",

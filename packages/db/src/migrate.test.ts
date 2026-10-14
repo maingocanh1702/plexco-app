@@ -1199,11 +1199,20 @@ async function hideRealIdentityDefiner(
  * name reader is live meanwhile; a healthy cluster costs one catalog read and takes no lock. While
  * the real role is parked only a scratch can hold the name, and DROP ROLE refuses a role that owns
  * or holds anything in any database, so nothing beyond a scratch is ever dropped. A refusal means
- * a bootstrap created a second identity_definer after the kill and a migration used it. Manual
- * repair then: drop the (test) databases the refusal lists, then run, as the compose superuser,
- *   docker compose -f infra/docker-compose.yml exec -T postgres psql -U plexco -d postgres
- *     -c 'DROP ROLE IF EXISTS identity_definer'
- *     -c 'ALTER ROLE identity_definer_hidden_for_test RENAME TO identity_definer'
+ * a bootstrap created a second identity_definer after the kill and a migration used it; its DETAIL
+ * lists the databases holding that new role's objects. Manual repair, after the run ends (a live
+ * suite's throwaway database goes with its teardown), as the compose superuser:
+ *   docker compose -f infra/docker-compose.yml exec -T postgres psql -U plexco -d postgres -c '...'
+ * - It lists only TEST databases (plexco_test, a suite's plexco_<suite>): drop them (plexco_test:
+ *   `pnpm db:reset:test`), then -c 'DROP ROLE IF EXISTS identity_definer'
+ *   -c 'ALTER ROLE identity_definer_hidden_for_test RENAME TO identity_definer'.
+ * - It lists any other database (the dev database plexco, say): never drop that one. It uses the
+ *   new role, so keep that role and retire the parked one: drop the test databases that
+ *   -c 'DROP ROLE identity_definer_hidden_for_test' lists, then run it again. Measured on
+ *   postgres:16 with these migrations: REASSIGN OWNED BY the parked role moves its function but not
+ *   its column grants (calls then fail 42501) and DROP OWNED drops the function, so neither keeps a
+ *   database working. If that second refusal lists a non-test database too, each role is in use by
+ *   a database you keep and neither can go without breaking one: ask the owner.
  */
 async function healHiddenIdentityDefiner(superuser: pg.Client): Promise<void> {
   const parked = async () =>
@@ -1334,17 +1343,25 @@ describe("0054 step 1 fails closed on identity_definer preconditions (JCL-2/JCL-
       },
     ];
     const originalReaddir = readdirImpl;
+    // Cascade-safe: no run below sees a migration numbered after 0054 (a later branch adds 0055+;
+    // names sort by their 4-digit ordinal), so the base run ends right before 0054 and every later
+    // run has exactly 0054 pending, whatever the branch carries after it.
+    const visibleThrough0054 = async (dir: string) =>
+      (await originalReaddir(dir)).filter((file) => file <= LINK_REPARENT_MIGRATION);
     try {
       inDb = await connect(url(ctx.dbName));
-      // 0000..0053 by the SUPERUSER under no harness lock (BR-1/BR-2 migrate the same way), so no
-      // lock is held across a full migration. Step 1 is about the MIGRATION ROLE, which stays the
-      // non-superuser owner: it runs 0054 alone and only has to read the ledger.
+      // Every migration before 0054, by the SUPERUSER under no harness lock (BR-1/BR-2 migrate the
+      // same way), so no lock is held across a full migration. Step 1 is about the MIGRATION ROLE,
+      // which stays the non-superuser owner: it runs 0054 alone and only has to read the ledger.
+      const before0054 = (await originalReaddir(MIGRATIONS_DIR))
+        .filter((file) => file.endsWith(".sql") && file < LINK_REPARENT_MIGRATION)
+        .sort();
       readdirImpl = async (dir) =>
-        (await originalReaddir(dir)).filter((file) => file !== LINK_REPARENT_MIGRATION);
+        (await originalReaddir(dir)).filter((file) => file < LINK_REPARENT_MIGRATION);
       try {
-        expect((await migrate(url(ctx.dbName))).applied.at(-1)).toBe("0053_zalo_ingress.sql");
+        expect((await migrate(url(ctx.dbName))).applied).toEqual(before0054);
       } finally {
-        readdirImpl = originalReaddir;
+        readdirImpl = visibleThrough0054; // reset to the real listing by the outer finally
       }
       await inDb.query(`GRANT SELECT ON schema_migrations TO ${owner}`);
       // ONE short window for every case. Exclusive identity_definer name lock FIRST (the shared
