@@ -7,7 +7,7 @@
  * package plus future service modules — controllers/adapters must never query
  * tenant tables directly (HR1).
  */
-export { createDb, type Db, type DbHandle } from "./client.js";
+export { createDb, type Db, type DbHandle, type Tx } from "./client.js";
 export {
   assertTenantId,
   tenantLocale,
@@ -34,6 +34,29 @@ export {
   type UpdateClubConfigParams,
   type UpdateClubConfigResult,
 } from "./club-config.js";
+export { pgErrorChainText, pgErrorHasCode } from "./pg-error.js";
+export {
+  ZALO_CONNECTOR_ACTION,
+  ZaloConnectError,
+  appendSecretDecryptAudit,
+  beginZaloConnect,
+  finishInboundEvent,
+  finishZaloConnect,
+  getZaloOnboardingState,
+  markBotVerifiedActive,
+  probeZaloConnectReplay,
+  readZaloBotTokenEnc,
+  resolveZaloBotByToken,
+  resolveZaloIdentity,
+  storeInboundEvent,
+  type BeginZaloConnectResult,
+  type ZaloBotRef,
+  type ZaloBotSecretsInput,
+  type ZaloBotStatus,
+  type ZaloConnectErrorCode,
+  type ZaloIdentity,
+  type ZaloOnboardingState,
+} from "./zalo-ingress.js";
 export {
   authorize,
   type AuthorizeDecision,

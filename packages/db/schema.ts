@@ -62,9 +62,17 @@ export const channelIdentities = pgTable("channel_identities", {
   usernameEnc: bytea("username_enc"),
   status: text("status").notNull().default("active"), // active|inactive
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // 0053 (DD-15 / DD-67): HMAC("channel-scope:zalo:"+bot_id); NULL for legacy rows.
+  providerScopeLookupHash: text("provider_scope_lookup_hash"),
+  zaloBotId: uuid("zalo_bot_id").references(() => zaloBots.id),
 }, (t) => ({
+  // 0053: partial -- only UNSCOPED (legacy) rows keep the 2-part invariant; scoped rows use the 3-part key.
   platformUq: uniqueIndex("channel_identities_platform_uid_uq")
-    .on(t.platform, t.platformUserLookupHash),
+    .on(t.platform, t.platformUserLookupHash)
+    .where(sql`${t.providerScopeLookupHash} IS NULL`),
+  scopedUq: uniqueIndex("channel_identities_scoped_uq")
+    .on(t.platform, t.providerScopeLookupHash, t.platformUserLookupHash)
+    .where(sql`${t.providerScopeLookupHash} IS NOT NULL`),
   personIdx: index("idx_channel_identities_person").on(t.personId),
   platformChk: check("channel_identities_platform_chk",
     sql`${t.platform} IN ('telegram','zalo','messenger')`),
@@ -1313,9 +1321,12 @@ export const oauthTransactions = pgTable("oauth_transactions", {
 export const zaloBots = pgTable("zalo_bots", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id).unique(),
+  // base64url(iv || tag || ciphertext) AES-256-GCM (0053); decrypted only in the web process that calls Zalo.
   botTokenEnc: text("bot_token_enc").notNull(),
   webhookToken: text("webhook_token").notNull(),
-  secret: text("secret"),
+  // 0053: ciphertext of the setWebhook secret_token; replaces the dropped plaintext `secret`.
+  webhookSecretEnc: bytea("webhook_secret_enc"),
+  keyVersion: text("key_version"),
   status: text("status").notNull().default("connecting"),
   autoRegistered: boolean("auto_registered").notNull().default(false),
   rotationPending: boolean("rotation_pending").notNull().default(false),
@@ -1326,12 +1337,43 @@ export const zaloBots = pgTable("zalo_bots", {
   webhookTokenUq: uniqueIndex("idx_zalo_bots_webhook_token").on(t.webhookToken),
   statusChk: check("zalo_bots_status_chk",
     sql`${t.status} IN ('connecting','registered','active','drift','error','revoked')`),
+  secretShapeChk: check("zalo_bots_secret_shape_chk",
+    sql`${t.webhookSecretEnc} IS NOT NULL OR ${t.status} IN ('connecting','error','revoked')`),
   // Non-money tenant-integrity (migration 0021): candidate key targeted by the
   // same-tenant composite FK zalo_reply_contexts.bot_id -> zalo_bots. id is
   // already the PK, so this strict-superset UNIQUE is additive (tenant_id
   // alone is already unique from the column-level constraint above, but a
   // composite FK still requires a unique constraint on its exact column list).
   tenantIdCandidateKey: unique("zalo_bots_tenant_id_candidate_key").on(t.tenantId, t.id),
+}));
+
+/** Store-before-process ledger for inbound channel webhooks (0053, BRD NFR-S4). Tenant-scoped RLS. */
+export const channelInboundEvents = pgTable("channel_inbound_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  platform: text("platform").notNull(), // zalo|messenger
+  botId: uuid("bot_id").notNull(),
+  externalEventId: text("external_event_id").notNull(),
+  // AES-256-GCM, AAD = tenant_id|bot_id|external_event_id; never plaintext (HR2).
+  rawPayloadEnc: bytea("raw_payload_enc").notNull(),
+  keyVersion: text("key_version").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+  status: text("status").notNull().default("received"), // received|processed|failed|ignored
+  errorCode: text("error_code"),
+}, (t) => ({
+  platformChk: check("channel_inbound_events_platform_chk", sql`${t.platform} IN ('zalo','messenger')`),
+  statusChk: check("channel_inbound_events_status_chk",
+    sql`${t.status} IN ('received','processed','failed','ignored')`),
+  eventIdChk: check("channel_inbound_events_event_id_chk",
+    sql`char_length(${t.externalEventId}) BETWEEN 1 AND 200`),
+  tenantBotFk: foreignKey({
+    columns: [t.tenantId, t.botId],
+    foreignColumns: [zaloBots.tenantId, zaloBots.id],
+    name: "channel_inbound_events_tenant_bot_fk",
+  }),
+  dedupUq: unique("channel_inbound_events_dedup_uq").on(t.tenantId, t.botId, t.externalEventId),
+  statusIdx: index("idx_channel_inbound_events_status").on(t.tenantId, t.status, t.receivedAt),
 }));
 
 export const zaloReplyContexts = pgTable("zalo_reply_contexts", {

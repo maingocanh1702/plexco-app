@@ -52,6 +52,13 @@
  * CHARGE_ALREADY_SETTLED, REVERSAL_EXCEEDS_EFFECTIVE (payment_reconcile BE/FE specs); and five codes
  * the specs do NOT pin, proposed in the lane report for decisions.md: ALLOCATION_NOT_FOUND,
  * REMOVE_REQUIRES_REVIEW, CHARGE_NOT_PAYABLE, MARK_PAID_TOTAL_MISMATCH, REVERSAL_NOT_SUPPORTED.
+ *
+ * INVALID_WEBHOOK_SECRET, WEBHOOK_PAYLOAD_MALFORMED, WEBHOOK_RATE_LIMITED and ZALO_TOKEN_INVALID
+ * arrived with the Zalo connect and webhook routes (M3a), transcribed from
+ * feature_connector_onboarding_tech.md section 3 / feature_zalo_channel_tech.md, not chosen here.
+ * CONNECT_SUPERSEDED (409: a newer connect replaced this attempt's webhook token) is the owner's own
+ * code for that case (DD-126, signed as OD-2), pinned in feature_connector_onboarding_tech.md
+ * section 3; COMMAND_ID_CONFLICT stays reserved for a commandId owned by another command.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -67,12 +74,14 @@ export const API_ERROR_CODES = [
   "CHARGE_ALREADY_SETTLED",
   "CHARGE_NOT_PAYABLE",
   "COMMAND_ID_CONFLICT",
+  "CONNECT_SUPERSEDED",
   "CSRF_INVALID",
   "FORBIDDEN",
   "GUEST_NOTE_LIMIT_REACHED",
   "GUEST_NOTE_NOT_FOUND",
   "INVALID_BODY",
   "INVALID_TIME_RANGE",
+  "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
   "LOGIN_RATE_LIMITED",
   "MARK_PAID_TOTAL_MISMATCH",
@@ -94,6 +103,9 @@ export const API_ERROR_CODES = [
   "SPORT_INACTIVE",
   "STALE_VERSION",
   "TENANT_SUSPENDED",
+  "WEBHOOK_PAYLOAD_MALFORMED",
+  "WEBHOOK_RATE_LIMITED",
+  "ZALO_TOKEN_INVALID",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

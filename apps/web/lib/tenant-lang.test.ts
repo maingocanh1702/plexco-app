@@ -116,6 +116,12 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (a) — club configuration (M1b): both delegate to resolveClubGate, which proves authorize()
   // before it resolves language; the PATCH body runs inside runWithLang.
   "app/api/onboarding/club/route.ts": "a",
+  // M3a: connector routes are gated by authorize(connector.secret_manage) before language resolves;
+  // the webhook is authenticated by the per-bot secret and the bot belongs to exactly ONE tenant,
+  // so its locale is that tenant's (DD-118) -- replies before authentication stay Vietnamese.
+  "app/api/onboarding/zalo/route.ts": "a",
+  "app/api/onboarding/zalo/connect/route.ts": "a",
+  "app/api/webhooks/zalo/[token]/route.ts": "a",
   "lib/club-config-route.ts": "a",
   // (a) — already wired upstream: all five delegate to handleSessionCommand, whose handler body
   // runs inside runWithLang. They emit only ok(...).
@@ -174,6 +180,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/read-bounded-body.ts": "c",
   "lib/tenant-lang.ts": "c",
   "lib/auth-secrets.ts": "c",
+  "lib/connector-secrets.ts": "c",
+  "lib/link-code-keys.ts": "c",
   "lib/google-oidc.ts": "c",
   "lib/oauth-transaction.ts": "c",
   // (b) — RECLASSIFIED 2026-09-06 (audit W-4): buildCompletionLanding renders a user-facing

@@ -165,3 +165,22 @@ describe("keyedHash", () => {
     expect(keyed).not.toBe(unkeyed);
   });
 });
+
+describe("resolveConnectorSecretRoot (M3a, DD-122 O4)", () => {
+  it("falls back to the auth secret when no connector pepper / not aws-kms", async () => {
+    process.env.ENCRYPTION_KEY = Buffer.from("a".repeat(32)).toString("base64");
+    process.env.KMS_ENCRYPTED_CONNECTOR_PEPPER = Buffer.from("b".repeat(32)).toString("base64");
+    const { resolveConnectorSecretRoot } = await import("./auth-secrets");
+    expect((await resolveConnectorSecretRoot()).toString()).toBe("a".repeat(32));
+    delete process.env.KMS_ENCRYPTED_CONNECTOR_PEPPER;
+  });
+
+  it("fails closed when aws-kms is on and the connector pepper cannot be resolved (no silent fallback)", async () => {
+    process.env.KMS_PROVIDER = "aws-kms";
+    process.env.KMS_ENCRYPTED_CONNECTOR_PEPPER = "AAAA";
+    delete process.env.AWS_REGION;
+    const { resolveConnectorSecretRoot } = await import("./auth-secrets");
+    await expect(resolveConnectorSecretRoot()).rejects.toThrow(/AWS_REGION/);
+    delete process.env.KMS_ENCRYPTED_CONNECTOR_PEPPER;
+  });
+});
