@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import type pg from "pg";
 import {
@@ -22,6 +22,29 @@ import {
  */
 let ctx: RlsTestContext;
 const keys = { lookupHmacKey: randomBytes(32) };
+
+/**
+ * node:crypto, except that an armed probe sees each scrypt start and finish: the N1 test records
+ * what the link flow holds open while the slow hash runs. Disarmed, a plain pass-through.
+ */
+const scryptProbe = vi.hoisted(() => ({ record: null as null | ((event: string) => void) }));
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  const realScrypt = actual.scrypt as unknown as (...args: unknown[]) => void;
+  return {
+    ...actual,
+    scrypt: (...args: unknown[]) => {
+      const record = scryptProbe.record;
+      if (!record) return realScrypt(...args);
+      const callback = args.pop() as (...result: unknown[]) => void;
+      record("scrypt:start");
+      return realScrypt(...args, (...result: unknown[]) => {
+        record("scrypt:done");
+        callback(...result);
+      });
+    },
+  };
+});
 
 beforeAll(async () => {
   ctx = await setupRlsTestContext("plexco_identity_link_web");
@@ -82,6 +105,46 @@ const codeRow = async (id: string) =>
   (await ctx.owner.query(`SELECT consumed_at, failed_attempts FROM link_codes WHERE id = $1`, [id]))
     .rows[0] as { consumed_at: Date | null; failed_attempts: number };
 
+type QueryHook = (
+  on: "pool" | "client",
+  text: string,
+  run: () => Promise<pg.QueryResult>,
+) => Promise<pg.QueryResult>;
+
+/**
+ * ctx.appPool with every text statement routed through `hook`, on pool.query and on each client it
+ * checks out alike: the hook gets where the statement runs, its text, and a thunk that runs it for
+ * real. `onConnect` fires on each explicit pool.connect() (pool.query's own checkout is internal).
+ */
+function interceptedPool(hook: QueryHook, onConnect: () => void = () => {}): pg.Pool {
+  const wrap = <T extends object>(
+    target: T,
+    on: "pool" | "client",
+    extra: Partial<Record<PropertyKey, unknown>>,
+  ): T =>
+    new Proxy(target, {
+      get(t, prop) {
+        if (Object.hasOwn(extra, prop)) return extra[prop];
+        const value: unknown = Reflect.get(t, prop, t);
+        if (prop === "query" && typeof value === "function") {
+          return (...args: unknown[]) => {
+            const run = () =>
+              (value as (...a: unknown[]) => Promise<pg.QueryResult>).apply(t, args);
+            return typeof args[0] === "string" ? hook(on, args[0], run) : run();
+          };
+        }
+        return typeof value === "function" ? (value as () => unknown).bind(t) : value;
+      },
+    });
+  const pool = ctx.appPool;
+  return wrap(pool, "pool", {
+    connect: async () => {
+      onConnect();
+      return wrap(await pool.connect(), "client", {});
+    },
+  });
+}
+
 /**
  * ctx.appPool, except that the re-parent statement fails with `error` without reaching the server:
  * consume has really run, uncommitted, when it lands, exactly like a connection lost (or a deadlock
@@ -90,22 +153,9 @@ const codeRow = async (id: string) =>
  * committed.
  */
 function poolFailingReparent(error: Error): pg.Pool {
-  const failing = <T extends object>(target: T, extra: Partial<Record<PropertyKey, unknown>>): T =>
-    new Proxy(target, {
-      get(t, prop) {
-        if (Object.hasOwn(extra, prop)) return extra[prop];
-        const value: unknown = Reflect.get(t, prop, t);
-        if (prop === "query" && typeof value === "function") {
-          return (...args: unknown[]) =>
-            typeof args[0] === "string" && args[0].includes("link_code_reparent_empty_person")
-              ? Promise.reject(error)
-              : (value as (...a: unknown[]) => unknown).apply(t, args);
-        }
-        return typeof value === "function" ? (value as () => unknown).bind(t) : value;
-      },
-    });
-  const pool = ctx.appPool;
-  return failing(pool, { connect: async () => failing(await pool.connect(), {}) });
+  return interceptedPool((_on, text, run) =>
+    text.includes("link_code_reparent_empty_person") ? Promise.reject(error) : run(),
+  );
 }
 
 const personRow = async (id: string) =>
@@ -228,6 +278,58 @@ describe("linkZaloToAccount - empty Zalo person", () => {
   });
 });
 
+describe("N1: no transaction is open while the slow hash runs", () => {
+  const STEPS: [fn: string, name: string][] = [
+    ["link_code_salt", "salt"],
+    ["link_code_consume", "consume"],
+    ["link_code_reparent_empty_person", "reparent"],
+  ];
+  const step = (text: string) => STEPS.find(([fn]) => text.includes(fn))?.[1] ?? text.trim();
+  /** Every statement as `<pool|client>:<step>`, plus `connect` for each explicit checkout. */
+  const recordingPool = (events: string[]) =>
+    interceptedPool(
+      (on, text, run) => {
+        events.push(`${on}:${step(text)}`);
+        return run();
+      },
+      () => events.push("connect"),
+    );
+
+  it("the salt read and the scrypt finish before any client is checked out; consume and re-parent then share one transaction", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    const issued = await issueFor(zalo.ciId); // its own scrypt runs before the probe is armed
+    const events: string[] = [];
+    const pool = recordingPool(events);
+    scryptProbe.record = (event) => events.push(event);
+    try {
+      expect(await linkZaloToAccount(pool, issued.code, web.accountId, keys)).toEqual({
+        outcome: "linked",
+      });
+    } finally {
+      scryptProbe.record = null;
+    }
+    expect(events).toEqual([
+      "pool:salt", // one autocommit statement on a checkout of its own
+      "scrypt:start",
+      "scrypt:done",
+      "connect", // the transaction's client, only after the slow hash
+      "client:BEGIN",
+      "client:consume",
+      "client:reparent",
+      "client:COMMIT",
+    ]);
+  });
+
+  it("input that cannot be a code is invalid without a single DB call", async () => {
+    const events: string[] = [];
+    expect(
+      await linkZaloToAccount(recordingPool(events), "not-a-code", randomUUID(), keys),
+    ).toEqual({ outcome: "invalid" });
+    expect(events).toEqual([]);
+  });
+});
+
 describe("linkZaloToAccount - refusals", () => {
   it("a Zalo person with a membership is requires_review: nothing moves, one audit row, no blocking list leaked", async () => {
     const web = await webUser();
@@ -261,6 +363,36 @@ describe("linkZaloToAccount - refusals", () => {
     expect(detail.blocking_tables).toContain("memberships.person_id");
     // requires_review is a decision, so it commits: the code is spent and support has its row.
     expect((await codeRow(issued.linkCodeId)).consumed_at).not.toBeNull();
+  });
+
+  it("N2: requires_review revokes the code, so re-calling the definer with it, as this or any account, moves nothing even once the source empties", async () => {
+    const web = await webUser();
+    const other = await webUser();
+    const zalo = await zaloUser();
+    await ctx.owner.query(`INSERT INTO memberships (tenant_id, person_id) VALUES ($1, $2)`, [
+      ctx.tenantA,
+      zalo.personId,
+    ]);
+    const issued = await issueFor(zalo.ciId);
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "requires_review",
+    });
+    const code = await ctx.owner.query(
+      `SELECT consumed_at, revoked_at FROM link_codes WHERE id = $1`,
+      [issued.linkCodeId],
+    );
+    expect(code.rows[0].consumed_at).not.toBeNull();
+    expect(code.rows[0].revoked_at).not.toBeNull();
+    // An app-role caller re-calls the definer inside the 10-minute window, naming any account...
+    expect(await reparent(issued.linkCodeId, web.accountId)).toBe("invalid");
+    expect(await reparent(issued.linkCodeId, other.accountId)).toBe("invalid");
+    // ...and again once the blocker is gone, i.e. the source Person is empty now.
+    await ctx.owner.query(`DELETE FROM memberships WHERE person_id = $1`, [zalo.personId]);
+    expect(await reparent(issued.linkCodeId, other.accountId)).toBe("invalid");
+    await expectNothingMoved(zalo);
+    expect(await auditCount("identity.link_requires_review", web.accountId)).toBe(1);
+    expect(await auditCount("identity.link_requires_review", other.accountId)).toBe(0);
+    expect(await auditCount("identity.link_reparented", other.accountId)).toBe(0);
   });
 
   it(
@@ -422,6 +554,33 @@ describe("linkZaloToAccount - refusals", () => {
       });
     },
   );
+
+  it("N3: a consume outcome this module does not know fails closed even with a code id: rolled back, the re-parent never called", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    const issued = await issueFor(zalo.ciId);
+    const sent: string[] = [];
+    // A later link_code_consume answering with an outcome this module was never taught: the claim
+    // underneath is real (and uncommitted), and the row still carries the code id.
+    const pool = interceptedPool(async (_on, text, run) => {
+      sent.push(text.trim());
+      const res = await run();
+      if (!text.includes("link_code_consume")) return res;
+      expect(res.rows[0]).toMatchObject({ outcome: "consumed", link_code_id: issued.linkCodeId });
+      return { ...res, rows: [{ ...res.rows[0], outcome: "consumed_pending_plan" }] };
+    });
+    expect(await linkZaloToAccount(pool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "invalid",
+    });
+    expect(sent.filter((s) => s.includes("link_code_reparent_empty_person"))).toEqual([]);
+    expect(sent.at(-1)).toBe("ROLLBACK");
+    expect(await codeRow(issued.linkCodeId)).toEqual({ consumed_at: null, failed_attempts: 0 });
+    await expectNothingMoved(zalo);
+    // Nothing was burned: the real flow still links with the same code.
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "linked",
+    });
+  });
 
   it(
     "defence branch: an identity_definer without BYPASSRLS finds FORCE-RLS references unprovable and moves nothing",

@@ -13,8 +13,8 @@
 -- decision (consumed / same_person / requires_review) or a counted wrong-code attempt. A raise in
 -- here, a refusal (invalid / unsupported) or a connection lost between the two calls rolls the
 -- consume back with it: the code stays live and nothing is written. The 10-minute window below
--- therefore bounds only a re-call after a consume that WAS committed (an idempotent same_person
--- re-call, or a requires_review code).
+-- therefore bounds only a re-call after a consume that WAS committed and left the code unrevoked
+-- (an idempotent same_person re-call): requires_review revokes the code it judged.
 --
 -- DECISION TABLE (anything not listed is refused; ALWAYS returns exactly one row)
 --   p_link_code_id / p_account_id NULL                         RAISE invalid_parameter_value
@@ -31,7 +31,9 @@
 --   source Person = target Person                              same_person
 --   source Person referenced by ANY row beyond its one Zalo
 --     identity (and its own link_codes), or by a column the
---     owner cannot provably read (see EMPTINESS)               requires_review + one routing_audit row
+--     owner cannot provably read (see EMPTINESS)               requires_review: the code is revoked
+--                                                                (a re-call is invalid) + one
+--                                                                routing_audit row
 --   a referencing table the owner cannot reach (read error)    RAISE: nothing written, and the web
 --                                                                caller's consume rolls back with it
 --   otherwise                                                  consumed: identity moved, source tombstoned
@@ -50,8 +52,9 @@
 -- per that same OD-3.
 -- identity_definer's privileges are COLUMN-level and only what the body reads or writes (step 2
 -- lists them): it can never read link_codes.code_hash / salt / code_lookup_hash, any *_enc column or
--- persons' phone and name columns, and its only UPDATEs are the columns step (5) writes plus
--- accounts (id), the one column a FOR UPDATE row lock requires and the body never updates. It also
+-- persons' phone and name columns, and its only UPDATEs are the columns step (5) writes (the
+-- requires_review branch writes one of them, link_codes.revoked_at) plus accounts (id), the one
+-- column a FOR UPDATE row lock requires and the body never updates. It also
 -- gets SELECT on the FK column of every single-column FK onto persons as of this migration (the
 -- emptiness scan, granted dynamically in step 2). Nothing is owned by it but this function; `app`
 -- only gets EXECUTE and is never a member.
@@ -96,8 +99,8 @@
 -- merge_audit rows with reason_code = 'link_code_empty_reparent' carry plaintext id-only JSON snapshots.
 -- routing_audit is written directly: routing_audit_append (0053) allowlists a single action and
 -- demands a tenant GUC, and linking is tenant-less.
--- Edited in place on 2026-10-14 (OD-3; again for the PR #49 security review round 1) instead of
--- superseded: the earlier texts were never applied outside local/CI databases (never on main, and
+-- Edited in place on 2026-10-14 (OD-3; again for the PR #49 security review rounds 1 and 2) instead
+-- of superseded: the earlier texts were never applied outside local/CI databases (never on main, and
 -- no deploy path runs migrations), so P17's forward-only rule protects no shared database. A local
 -- database that applied an earlier text fails migrate()'s sha256 guard. A *_test database: `pnpm
 -- db:reset:test`. Any other local database (db:reset:test refuses it, it only drops *_test): drop
@@ -347,7 +350,10 @@ BEGIN
   END LOOP;
 
   IF cardinality(v_blocking) > 0 THEN
-    -- "Prepared, not executed": evidence for support, never shown to the user.
+    -- "Prepared, not executed": evidence for support, never shown to the user. The judged code is
+    -- revoked under its row lock, so step (3) refuses every re-call of it: no second audit row
+    -- naming another p_account_id, and no re-parent if the source Person empties later.
+    UPDATE public.link_codes SET revoked_at = clock_timestamp() WHERE id = p_link_code_id;
     INSERT INTO public.routing_audit (action, actor_id, tenant_id, detail)
       VALUES ('identity.link_requires_review', p_account_id, NULL,
               jsonb_build_object('link_code_id', p_link_code_id, 'source_person_id', v_source,

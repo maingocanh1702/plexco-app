@@ -85,6 +85,8 @@ let admin: pg.Client;
 
 beforeAll(async () => {
   admin = await connect(BASE!);
+  // A previous run killed inside the 0054 step-1 window left identity_definer parked: put it back.
+  await healHiddenIdentityDefiner(admin);
 
   await bootstrapJobDefiner(admin);
 }, 120_000);
@@ -1170,19 +1172,59 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
 
 const LINK_REPARENT_MIGRATION = "0054_link_code_reparent_empty_person.sql";
 
+/** Where hideRealIdentityDefiner parks the real role while a case owns the name. */
+const HIDDEN_IDENTITY_DEFINER = "identity_definer_hidden_for_test";
+
 /** Rename the real identity_definer away for one case; whatever the case created under its name goes. */
 async function hideRealIdentityDefiner(
   superuser: pg.Client,
   fn: () => Promise<void>,
 ): Promise<void> {
-  await superuser.query(`ALTER ROLE identity_definer RENAME TO identity_definer_hidden_for_test`);
+  await superuser.query(`ALTER ROLE identity_definer RENAME TO ${HIDDEN_IDENTITY_DEFINER}`);
   try {
     await fn();
   } finally {
     // Reached only with the real role safely renamed, so this drops a scratch role or nothing.
     await superuser.query(`DROP ROLE IF EXISTS identity_definer`);
-    await superuser.query(`ALTER ROLE identity_definer_hidden_for_test RENAME TO identity_definer`);
+    await superuser.query(`ALTER ROLE ${HIDDEN_IDENTITY_DEFINER} RENAME TO identity_definer`);
   }
+}
+
+/**
+ * Self-heal for a run killed inside hideRealIdentityDefiner (SIGKILL, OOM, a second Ctrl-C): its
+ * finally never ran, so the real role is still parked under HIDDEN_IDENTITY_DEFINER, maybe beside a
+ * LOGIN / NOBYPASSRLS scratch holding the name, and every later bootstrap or 0054 step 1 fails
+ * closed on it. Called first in this file's beforeAll, and acts only under the 0054 step-1 window's
+ * own locks in its order (exclusive name lock, then the chat lock), so no window, bootstrap or
+ * name reader is live meanwhile; a healthy cluster costs one catalog read and takes no lock. While
+ * the real role is parked only a scratch can hold the name, and DROP ROLE refuses a role that owns
+ * or holds anything in any database, so nothing beyond a scratch is ever dropped. A refusal means
+ * a bootstrap created a second identity_definer after the kill and a migration used it. Manual
+ * repair then: drop the (test) databases the refusal lists, then run, as the compose superuser,
+ *   docker compose -f infra/docker-compose.yml exec -T postgres psql -U plexco -d postgres
+ *     -c 'DROP ROLE IF EXISTS identity_definer'
+ *     -c 'ALTER ROLE identity_definer_hidden_for_test RENAME TO identity_definer'
+ */
+async function healHiddenIdentityDefiner(superuser: pg.Client): Promise<void> {
+  const parked = async () =>
+    (await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [HIDDEN_IDENTITY_DEFINER]))
+      .rows.length > 0;
+  if (!(await parked())) return;
+  await withIdentityDefinerNameLock(BASE!, "exclusive", () =>
+    withChatDefinerLock(BASE!, async () => {
+      if (!(await parked())) return; // a live window elsewhere put it back while this waited
+      try {
+        await superuser.query(`DROP ROLE IF EXISTS identity_definer`);
+      } catch (error) {
+        throw new Error(
+          `${HIDDEN_IDENTITY_DEFINER} is parked but identity_definer is more than a scratch; ` +
+            "manual repair: see healHiddenIdentityDefiner in migrate.test.ts",
+          { cause: error },
+        );
+      }
+      await superuser.query(`ALTER ROLE ${HIDDEN_IDENTITY_DEFINER} RENAME TO identity_definer`);
+    }),
+  );
 }
 
 describe("0054 step 1 fails closed on identity_definer preconditions (JCL-2/JCL-3 for 0054, plus 03's member-of and one-member rules)", () => {

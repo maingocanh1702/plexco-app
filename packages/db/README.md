@@ -545,9 +545,16 @@ no owner yet.
 reads the FORCE-RLS tenant tables for real (DD-127 / DD-131 OD-3, `decisions.md`, pending in PR #51).
 Its privileges are column-level (exactly what the body reads or writes: never a code hash, salt or
 `*_enc` column), and `0054` step 1 also refuses an `identity_definer` that is a member of any role or
-has a member besides the migration role. `linkZaloToAccount` runs `link_code_consume` and the definer
-in ONE transaction on one client: a failed re-parent rolls the consume back (the code stays live), a
-wrong code still counts toward the attempt cap, and a 40P01/40001 is the retryable `unavailable`.
+has a member besides the migration role. `linkZaloToAccount` reads the salt (one autocommit statement) and
+runs the scrypt first, outside any transaction (no pooled client is held through the slow hash), then
+runs `link_code_consume` and the definer in
+ONE transaction on one client: a failed re-parent rolls the consume back (the code stays live), a
+wrong code still counts toward the attempt cap, a `requires_review` revokes the code it judged (a
+re-call of the definer with it is `invalid`), and a 40P01/40001 is the retryable `unavailable`.
+A test run killed inside `migrate.test.ts`'s 0054 step-1 window leaves the real role renamed to
+`identity_definer_hidden_for_test` (maybe beside a scratch `identity_definer`); the next run of that
+file puts it back under the window's own locks (`healHiddenIdentityDefiner`, which also documents the
+manual repair for the one case it refuses).
 A local database that applied an earlier `0054` text fails the sha256 guard: run `pnpm db:bootstrap`,
 then `pnpm db:reset:test` for a `*_test` database; any other database (`db:reset:test` refuses it)
 must be dropped and recreated through the compose container (`docker compose -f

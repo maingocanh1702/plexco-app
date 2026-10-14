@@ -254,11 +254,40 @@ const INVALID: LinkCodeConsumeResult = {
   lockedUntil: null,
 };
 
+/** What a consume sends to SQL: hashes only, never the plaintext. */
+export interface PreparedLinkCode {
+  lookupHash: string;
+  verifier: Buffer;
+}
+
+/**
+ * Consume step 1, everything before the locking call: normalize, read the
+ * candidate's salt with link_code_salt() (read-only, no lock, no authority; a
+ * missing candidate yields NULL and we hash against a dummy salt so the work
+ * is the same either way), then the slow hash. null = the input cannot be a
+ * code (no DB call made). Run it OUTSIDE any transaction: the scrypt is the
+ * slow part, and a caller that opened its transaction first would hold a
+ * pooled connection idle in transaction through it (identity-link-web.ts).
+ */
+export async function prepareLinkCodeConsume(
+  pool: pg.Pool,
+  rawCode: string,
+  keys: LinkCodeKeys,
+): Promise<PreparedLinkCode | null> {
+  const canonical = normalizeLinkCode(rawCode);
+  if (canonical === null) return null;
+  const lookupHash = deriveLinkCodeLookupHash(canonical, keys);
+  const saltRes = await pool.query(`SELECT link_code_salt($1) AS salt`, [lookupHash]);
+  const storedSalt = (saltRes.rows[0] as { salt: Buffer | null } | undefined)?.salt ?? null;
+  const salt =
+    Buffer.isBuffer(storedSalt) && storedSalt.length >= SALT_BYTES ? storedSalt : DUMMY_SALT;
+  return { lookupHash, verifier: await deriveLinkCodeVerifier(canonical, salt) };
+}
+
 /**
  * Consume a code presented by the authenticated TARGET (channel identity XOR
- * account). Two SQL calls, per the 0043 design: link_code_salt() (read-only;
- * a missing candidate yields NULL and we hash against a dummy salt so the
- * work is the same either way) then link_code_consume(), which locks in the
+ * account). Two SQL calls, per the 0043 design: link_code_salt() (step 1,
+ * prepareLinkCodeConsume) then link_code_consume(), which locks in the
  * canonical order, re-derives both bindings, applies the terminal checks,
  * compares the verifier and claims — all inside the function's transaction.
  * The result is a redacted merge intent. The caller maps BOTH `invalid` and
@@ -275,20 +304,35 @@ export async function consumeLinkCode(
   keys: LinkCodeKeys,
   opts: { cooldownSeconds?: number } = {},
 ): Promise<LinkCodeConsumeResult> {
+  partyArgs(target); // a malformed target throws before any DB call
+  const prepared = await prepareLinkCodeConsume(pool, rawCode, keys);
+  if (prepared === null) return { ...INVALID };
+  return consumePreparedLinkCode(pool, prepared, target, opts);
+}
+
+/**
+ * Consume step 2: link_code_consume() with a prepared code. `db` is a pool,
+ * or a client inside the caller's own transaction (the web link flow commits
+ * the consume only together with the decision it enables).
+ */
+export async function consumePreparedLinkCode(
+  db: pg.Pool | pg.PoolClient,
+  prepared: PreparedLinkCode,
+  target: LinkCodeParty,
+  opts: { cooldownSeconds?: number } = {},
+): Promise<LinkCodeConsumeResult> {
   const [channel, account] = partyArgs(target);
-  const canonical = normalizeLinkCode(rawCode);
-  if (canonical === null) return { ...INVALID };
-  const lookupHash = deriveLinkCodeLookupHash(canonical, keys);
-  const saltRes = await pool.query(`SELECT link_code_salt($1) AS salt`, [lookupHash]);
-  const storedSalt = (saltRes.rows[0] as { salt: Buffer | null } | undefined)?.salt ?? null;
-  const salt =
-    Buffer.isBuffer(storedSalt) && storedSalt.length >= SALT_BYTES ? storedSalt : DUMMY_SALT;
-  const verifier = await deriveLinkCodeVerifier(canonical, salt);
-  const { rows } = await pool.query(
+  const { rows } = await db.query(
     `SELECT outcome, link_code_id, source_person_id, target_person_id, issuer_kind,
             failed_attempts, max_attempts, locked_until
        FROM link_code_consume($1, $2, $3, $4, make_interval(secs => $5))`,
-    [lookupHash, verifier, channel, account, opts.cooldownSeconds ?? LINK_CODE_COOLDOWN_SECONDS],
+    [
+      prepared.lookupHash,
+      prepared.verifier,
+      channel,
+      account,
+      opts.cooldownSeconds ?? LINK_CODE_COOLDOWN_SECONDS,
+    ],
   );
   const r = rows[0] as
     | {

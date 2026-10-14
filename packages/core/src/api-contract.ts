@@ -61,8 +61,11 @@
  * section 3; COMMAND_ID_CONFLICT stays reserved for a commandId owned by another command.
  *
  * LINK_CODE_INVALID, LINK_CODE_RATE_LIMITED and MERGE_REQUIRES_REVIEW arrived with POST /api/me/link (M3b),
- * named by feature_identity_tech.md section 7; LINK_UNAVAILABLE (503, key not configured) is not pinned by
- * the spec and is proposed as DD-127 (ledger PR).
+ * named by feature_identity_tech.md section 7; LINK_UNAVAILABLE (503, retryable) is not pinned by the spec
+ * and is proposed as DD-127 (ledger PR). It covers two cases: the link-code lookup key is not configured,
+ * or the link transaction hit a deadlock / serialization failure (40P01 / 40001) and was rolled back
+ * whole (nothing written, the code still live). Any other failure, a lost connection included, is not
+ * mapped to it: it propagates (its transaction rolls back too).
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
