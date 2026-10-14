@@ -317,6 +317,8 @@ Chọn **next available monotonic number** sau khi sync mọi prerequisite đã 
 | 401 | `INVALID_WEBHOOK_SECRET` | — (không trả nội dung) | verify webhook fail |
 | 429 | `RATE_LIMITED` | "Thao tác quá nhanh, thử lại sau" | vượt BL-SEC-5 |
 
+> Zalo receiver (`POST /api/webhooks/zalo/:token`): 403 theo OD-2/DD-126 (2026-10-14); các hàng 401 ở trên giữ nguyên cho SePay (ngoài phạm vi MVP, OD-0).
+
 ### Request/Response Examples
 
 > Minh hoạ theo contract đã pin; envelope chuẩn DD-60 (`../../standards/api-reference-convention.md` §1.1) áp cho **app-facing routes** (`/api/onboarding/*`). Payload request/response của `apipay/provision` đã pin nguyên khối ở trên — không lặp lại; field name DTO chưa pin sẽ chốt ở build slice.

@@ -144,9 +144,9 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     ["wrong", "wrong"],
     ["missing header", null],
     ["prefix of the real one", SECRET.slice(0, 10)],
-  ])("bad secret (%s) -> 401 INVALID_WEBHOOK_SECRET and nothing stored", async (_n, secret) => {
+  ])("bad secret (%s) -> 403 INVALID_WEBHOOK_SECRET and nothing stored", async (_n, secret) => {
     const res = await call({ secret });
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
     expect((await env(res)).error?.code).toBe("INVALID_WEBHOOK_SECRET");
     expect(storeInboundEvent).not.toHaveBeenCalled();
   });
@@ -230,10 +230,10 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(rateLimited).toHaveBeenCalledWith(`zalo-webhook-auth:${BOT}:local`, 30, 60);
   });
 
-  it("key version mismatch fails closed: 401, no audit, nothing stored", async () => {
+  it("key version mismatch fails closed: 403, no audit, nothing stored", async () => {
     vi.mocked(resolveZaloBotByToken).mockResolvedValue({ ...bot, keyVersion: "old-key" });
     const res = await call();
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
     expect(audit).not.toHaveBeenCalled();
     expect(storeInboundEvent).not.toHaveBeenCalled();
   });

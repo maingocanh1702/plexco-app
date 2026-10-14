@@ -34,10 +34,12 @@ export const runtime = "nodejs";
  * ORDER: token -> status -> secret (cached decrypt) -> [failed attempt: per bot+IP bucket] ->
  * per-bot bucket -> body -> parse -> [verified] -> store -> process -> 200 {message:"Success"}.
  * Processing failures are recorded on the event row and still answer 200 so Zalo does not retry
- * forever; only a failed STORE answers 5xx (nothing durable yet). Two open follow-ups against the
+ * forever; only a failed STORE answers 5xx (nothing durable yet). One open follow-up against the
  * DD-126 shape, recorded in its note in feature_zalo_channel_tech.md section 3: processing runs
- * after the durable store but BEFORE the ack (DD-126: ack first, then process asynchronously), and a
- * wrong secret answers 401 as feature_connector_onboarding_tech.md section 3 pins it (DD-126: 403).
+ * after the durable store but BEFORE the ack (DD-126: ack first, then process asynchronously).
+ * Every failed secret check (missing header, wrong value, unreadable stored secret) answers the
+ * same 403 INVALID_WEBHOOK_SECRET per OD-2/DD-126 (2026-10-14); the 401 that
+ * feature_connector_onboarding_tech.md section 3 pins stays for SePay (out of the MVP, OD-0).
  * Logs carry event names and ids only, never payloads, tokens or secrets.
  */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -76,14 +78,14 @@ export async function POST(
     );
   } catch (error) {
     log.error("zalo_webhook_secret_unreadable", { botId, error });
-    return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 401);
+    return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 403);
   }
   if (!safeEqual(header, expected)) {
     // Failed attempts only are bucketed, per bot AND caller, so guessing cannot lock out Zalo itself.
     if (await rateLimited(`zalo-webhook-auth:${botId}:${clientIp(request)}`, 30, 60)) {
       return err("WEBHOOK_RATE_LIMITED", t("Quá nhiều yêu cầu.", "Too many requests."), 429);
     }
-    return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 401);
+    return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 403);
   }
 
   return runWithLang(lang, async () => {
