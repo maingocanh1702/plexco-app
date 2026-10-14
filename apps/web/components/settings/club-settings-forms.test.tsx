@@ -6,7 +6,13 @@ import { ClubDefaultsForm } from "./club-defaults-form";
 import { ClubProfileForm } from "./club-profile-form";
 import { FormFeedback } from "./form-feedback";
 import { ZaloConnectCard } from "./zalo-connect-card";
-import { connectOutcome, statusLabel, statusTone } from "./zalo-connect-status";
+import {
+  connectOutcome,
+  reloadedNote,
+  revokedNote,
+  statusLabel,
+  statusTone,
+} from "./zalo-connect-status";
 
 const club: ClubConfigDto = {
   slug: "clb",
@@ -89,6 +95,14 @@ describe("Zalo connect status copy", () => {
     expect(failed.message).toMatch(/did not accept the webhook registration/);
     expect(failed.message).not.toMatch(/webhook registered/);
     expect(connectOutcome("something_new", en).tone).toBe("warning");
+  });
+
+  it("a revoked bot's note says it is terminal (the card offers no reconnect for it, see e2e)", () => {
+    expect(statusLabel("revoked", en)).toBe("Revoked");
+    expect(revokedNote(en)).toMatch(/cannot be reconnected/);
+    expect(revokedNote(en)).toMatch(/not even with a different bot token/);
+    expect(revokedNote(makeT("vi"))).toContain("Không thể kết nối lại từ trang này");
+    expect(reloadedNote(makeT("vi"))).toBe("Đã tải lại trạng thái kết nối Zalo.");
   });
 });
 

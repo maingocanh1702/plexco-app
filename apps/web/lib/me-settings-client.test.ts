@@ -14,6 +14,16 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     ["a\tb", "invalid_chars"],
     ["a​b", "invalid_chars"],
     ["a‮b", "invalid_chars"],
+    // N6: line breaks and blank-looking characters, same set as validateDisplayName / 0055.
+    ["Lan" + String.fromCodePoint(0x2028) + "Anh", "invalid_chars"],
+    ["Lan" + String.fromCodePoint(0x2029) + "Anh", "invalid_chars"],
+    [String.fromCodePoint(0x3164), "invalid_chars"],
+    ["a" + String.fromCodePoint(0x115f, 0x1160, 0xffa0) + "b", "invalid_chars"],
+    [String.fromCodePoint(0x2800), "invalid_chars"],
+    ["a" + String.fromCodePoint(0x34f) + "b", "invalid_chars"],
+    [String.fromCodePoint(0x17b4, 0x17b5), "invalid_chars"],
+    [String.fromCodePoint(0x2028) + "Lan" + String.fromCodePoint(0x2029), null], // trimmed edges
+    [String.fromCodePoint(0x2764, 0xfe0f) + " Lan", null], // variation selectors stay allowed
   ])("%j -> %s", (input, expected) => {
     expect(displayNameProblem(input)).toBe(expected);
   });

@@ -12,7 +12,9 @@
 --                                        NULL account                            zero rows
 --   person_profile_update(account, name) account or name NULL                    RAISE invalid_parameter_value
 --                                        name after trim not 1..120 code points,
---                                        or holds a control/format character     RAISE invalid_parameter_value
+--                                        or holds a hidden character (control,
+--                                        format, line/paragraph separator,
+--                                        blank-looking; see Hardening)           RAISE invalid_parameter_value
 --                                        account missing / person not active     zero rows
 --                                        otherwise                               ONLY persons.display_name is written
 --   account_linked_channels(account)     account/person active                   every identity of that Person
@@ -50,14 +52,19 @@
 -- Hardening: SET search_path = pg_catalog, public, pg_temp, every relation public.-qualified (0048
 -- lesson); EXECUTE for app only. LOCK ORDER matches 0043/0054: accounts -> persons ->
 -- channel_identities. Display-name rule = TypeScript validateDisplayName (me-settings.ts): trimmed of
--- exactly what JavaScript's String.prototype.trim removes, then 1..120 CODE POINTS and no control (Cc)
--- or format (Cf) character. PostgreSQL regexes have no Unicode property classes, and their whitespace
--- class shorthand follows the database locale (NBSP is not a space under C), so both sets are
--- enumerated by hand, in E'' strings so the escapes never depend on the caller's
--- standard_conforming_strings. Cf = the 170 code points Node 20.20 and 25.6 (Unicode 17.0) report.
--- me-settings.test.ts walks every code point Node classifies Cc/Cf and every one trim() removes, so a
--- Node whose Unicode adds one fails the suite until these lists grow. The TS validator runs first in
--- the web route; this is the backstop for every other app caller.
+-- exactly what JavaScript's String.prototype.trim removes, then 1..120 CODE POINTS and no hidden
+-- character anywhere: control (Cc), format (Cf), the line / paragraph separators (Zl U+2028, Zp
+-- U+2029: a line break inside a name), the default-ignorable code points that are not variation
+-- selectors (the marks U+034F, U+17B4, U+17B5 and the Hangul fillers U+115F, U+1160, U+3164, U+FFA0:
+-- they render as nothing, so a name of them looks empty) and U+2800 BRAILLE PATTERN BLANK. Variation
+-- selectors stay allowed (emoji presentation and ideographic variants need them). PostgreSQL regexes
+-- have no Unicode property classes, and their whitespace class shorthand follows the database locale
+-- (NBSP is not a space under C), so both sets are enumerated by hand, in E'' strings so the escapes
+-- never depend on the caller's standard_conforming_strings. Cf = the 170 code points Node 20.20 and
+-- 25.6 (Unicode 17.0) report. me-settings.test.ts walks every code point the runtime's Unicode tables
+-- put in the refused set and every one trim() removes, so a Node whose Unicode adds one fails the
+-- suite until these lists grow. The TS validator runs first in the web route; this is the backstop
+-- for every other app caller.
 -- No schema.ts change (no new table/column).
 -- ============================================================================
 
@@ -89,13 +96,17 @@ DECLARE
   v_person uuid;
   -- ECMAScript WhiteSpace + LineTerminator: exactly the set String.prototype.trim removes.
   c_space  CONSTANT text := E'[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]';
-  -- Cc (U+0000 never reaches a text parameter) and Cf; see the header for where the list comes from.
+  -- Cc (U+0000 never reaches a text parameter), Cf, Zl/Zp, the default-ignorable code points that are
+  -- not variation selectors, and U+2800; see the header for where each list comes from.
   c_reject CONSTANT text := '['
     || E'\u0001-\u001f\u007f-\u009f'
     || E'\u00ad\u0600-\u0605\u061c\u06dd\u070f\u0890\u0891\u08e2\u180e'
     || E'\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\ufff9-\ufffb'
     || E'\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3'
     || E'\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f'
+    || E'\u2028\u2029'
+    || E'\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0'
+    || E'\u2800'
     || ']';
 BEGIN
   IF p_account_id IS NULL OR p_display_name IS NULL THEN

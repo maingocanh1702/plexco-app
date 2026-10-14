@@ -14,6 +14,14 @@ import { isDefiniteFailure } from "./session-error-ui";
  * dropping the edit. `settle(error)` drops the key on success or a definite 4xx failure, so the next
  * attempt is a new command. `reset()` drops it explicitly.
  *
+ * Sticky uncertainty: once an attempt under the key was uncertain it may have committed, so from then
+ * on only a 2xx, `reset()` or a different payload drops the key. A later 4xx (RATE_LIMITED,
+ * CSRF_INVALID, any gate refusal) is answered BEFORE the route's replay lookup, so it proves nothing
+ * about the earlier attempt; dropping the key there would turn the next identical retry into a second
+ * command (a second Zalo connect rotates the webhook secret and resets verification). The keeper
+ * learns of the uncertainty only through `settle(error)`: a caller that never settles an uncertain
+ * failure (#53's useRosterCommand tracks it itself and skips `settle` for it) sees the plain rule.
+ *
  * A caller whose body carries a secret (the Zalo bot token) must not use the body as the fingerprint:
  * it calls `get()` with no payload and `reset()` on every edit instead, which is equivalent.
  */
@@ -26,14 +34,19 @@ export interface CommandIdKeeper {
 export function createCommandIdKeeper(
   mint: () => string = () => crypto.randomUUID(),
 ): CommandIdKeeper {
-  let current: { id: string; payload: string | undefined } | null = null;
+  let current: { id: string; payload: string | undefined; uncertain: boolean } | null = null;
   return {
     get: (payload) => {
-      if (current === null || current.payload !== payload) current = { id: mint(), payload };
+      if (current === null || current.payload !== payload) {
+        current = { id: mint(), payload, uncertain: false };
+      }
       return current.id;
     },
     settle: (error) => {
-      if (error === undefined || isDefiniteFailure(error)) current = null;
+      if (current === null) return; // reset() while the attempt was in flight: a new command anyway
+      if (error === undefined) current = null;
+      else if (!isDefiniteFailure(error)) current.uncertain = true;
+      else if (!current.uncertain) current = null; // definite, and no attempt under it was uncertain
     },
     reset: () => {
       current = null;

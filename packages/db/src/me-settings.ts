@@ -19,14 +19,27 @@ export class DisplayNameError extends Error {
 }
 
 /**
- * Same rule as 0055 person_profile_update: trimmed, 1..120 CODE POINTS, no control (Cc) or format
- * (Cf, e.g. bidi override / zero-width) character. Returns the trimmed value or throws.
+ * Refused ANYWHERE in a display name; 0055 person_profile_update enumerates the same set (c_reject):
+ * control (Cc) and format (Cf, e.g. bidi override / zero-width) characters; the line and paragraph
+ * separators (Zl U+2028, Zp U+2029: a line break inside a name); the default-ignorable code points
+ * that are not variation selectors, i.e. the marks U+034F, U+17B4, U+17B5 and the Hangul filler
+ * letters U+115F, U+1160, U+3164, U+FFA0 (they render as nothing, so a name of them looks empty);
+ * and U+2800 BRAILLE PATTERN BLANK (a blank glyph). Variation selectors stay allowed: emoji
+ * presentation (U+2764 U+FE0F) and ideographic variants need them. me-settings.test.ts derives this
+ * set from the runtime's Unicode tables. (Marks before letters: a letter followed by a combining mark
+ * inside a class is what no-misleading-character-class refuses.)
+ */
+const HIDDEN_CHAR = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0\u2800]/u;
+
+/**
+ * Same rule as 0055 person_profile_update: trimmed, 1..120 CODE POINTS, no HIDDEN_CHAR. Returns the
+ * trimmed value or throws.
  */
 export function validateDisplayName(raw: unknown): string {
   if (typeof raw !== "string") throw new DisplayNameError();
   const name = raw.trim();
   const length = [...name].length;
-  if (length < 1 || length > DISPLAY_NAME_MAX || /[\p{Cc}\p{Cf}]/u.test(name)) {
+  if (length < 1 || length > DISPLAY_NAME_MAX || HIDDEN_CHAR.test(name)) {
     throw new DisplayNameError();
   }
   return name;

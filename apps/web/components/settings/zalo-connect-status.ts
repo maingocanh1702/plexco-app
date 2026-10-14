@@ -3,9 +3,10 @@ import type { TFn } from "../../lib/i18n-client";
 import type { BadgeTone } from "../ui/badge";
 
 /**
- * Zalo connect card copy, split out of zalo-connect-card.tsx: the badge for a connector status
- * and the outcome message for a 200 from POST /api/onboarding/zalo/connect. Pure, so the vitest
- * suite can pin every branch, including the fail-closed one for a status this build does not know.
+ * Zalo connect card copy, split out of zalo-connect-card.tsx: the badge for a connector status,
+ * the outcome message for a 200 from POST /api/onboarding/zalo/connect, and the revoked / reloaded
+ * notes. Pure, so the vitest suite can pin every branch, including the fail-closed one for a status
+ * this build does not know.
  */
 const TONE: Record<ZaloStatus, BadgeTone> = {
   not_connected: "neutral",
@@ -41,6 +42,23 @@ export function statusLabel(status: string, t: TFn): string {
     default:
       return t("Không rõ trạng thái", "Unknown status");
   }
+}
+
+/**
+ * The note that replaces the connect form for a revoked bot. Revoked is terminal (0053): the upsert
+ * refuses ANY connect for a club whose bot row is revoked (a different token included) and the route
+ * answers 403, so the card offers no reconnect and says why instead.
+ */
+export function revokedNote(t: TFn): string {
+  return t(
+    "Kết nối Zalo của câu lạc bộ này đã bị thu hồi. Không thể kết nối lại từ trang này, kể cả bằng token bot khác.",
+    "This club's Zalo connection was revoked. It cannot be reconnected from this page, not even with a different bot token.",
+  );
+}
+
+/** Announced after a reload the user asked for has landed (the reload button is gone by then). */
+export function reloadedNote(t: TFn): string {
+  return t("Đã tải lại trạng thái kết nối Zalo.", "The Zalo connection status was reloaded.");
 }
 
 /**

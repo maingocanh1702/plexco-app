@@ -150,14 +150,24 @@ describe("person_profile_read / person_profile_update", () => {
     }
   }
 
-  // Walked from the RUNTIME's Unicode tables, never a hand-kept copy: a Node whose Unicode grows Cc,
-  // Cf or the ECMAScript trim set fails the two sweeps below until 0055's enumerated lists grow too.
-  const CONTROL_OR_FORMAT: number[] = [];
+  // Walked from the RUNTIME's Unicode tables, never a hand-kept copy: a Node whose Unicode grows the
+  // refused set or the ECMAScript trim set fails the two sweeps below until BOTH validators' lists
+  // grow (validateDisplayName's HIDDEN_CHAR and 0055's c_reject). Refused anywhere in a name: Cc, Cf,
+  // Zl, Zp, every assigned default-ignorable code point that is not a variation selector (renders as
+  // nothing), and U+2800 BRAILLE PATTERN BLANK.
+  const HIDDEN: number[] = [];
   const TRIMMED: number[] = [];
   for (let cp = 0; cp <= 0x10ffff; cp++) {
     if (cp >= 0xd800 && cp <= 0xdfff) continue; // surrogates are not scalar values
-    if (/^[\p{Cc}\p{Cf}]$/u.test(ch(cp))) CONTROL_OR_FORMAT.push(cp);
-    if (ch(cp).trim() === "") TRIMMED.push(cp);
+    const c = ch(cp);
+    if (
+      /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]$/u.test(c) ||
+      /^(?![\p{VS}\p{Cn}])\p{DI}$/u.test(c) ||
+      cp === 0x2800
+    ) {
+      HIDDEN.push(cp);
+    }
+    if (c.trim() === "") TRIMMED.push(cp);
   }
 
   const CORPUS: [string, string, boolean][] = [
@@ -193,6 +203,18 @@ describe("person_profile_read / person_profile_update", () => {
     ["Arabic disputed end of ayah (Cf, U+08E2)", "a" + ch(0x8e2) + "b", false],
     ["tag char (Cf, astral)", "a" + ch(0xe0041) + "b", false],
     ["ZWJ in emoji sequence is a format char", ch(0x1f468) + ch(0x200d) + ch(0x1f469), false],
+    ["line separator inside (Zl): a line break in the name", "Lan" + ch(0x2028) + "Anh", false],
+    ["paragraph separator inside (Zp)", "Lan" + ch(0x2029) + "Anh", false],
+    ["line / paragraph separators at the edges are trimmed", ch(0x2028) + "Lan" + ch(0x2029), true],
+    ["Hangul filler alone: looks empty", ch(0x3164), false],
+    ["Hangul fillers inside", "Lan" + ch(0x115f) + ch(0x1160) + ch(0xffa0) + "Anh", false],
+    ["Braille pattern blank alone: looks empty", ch(0x2800).repeat(3), false],
+    ["Braille pattern blank inside", "Lan" + ch(0x2800) + "Anh", false],
+    ["combining grapheme joiner (default-ignorable mark)", "a" + ch(0x34f) + "b", false],
+    ["Khmer inherent vowel (default-ignorable mark)", ch(0x17b4), false],
+    ["emoji + variation selector-16 is kept", ch(0x2764) + ch(0xfe0f) + " Lan", true],
+    ["Korean syllables are kept (only the fillers are refused)", "김민지", true],
+    ["a non-blank Braille pattern is kept", "Lan " + ch(0x2801), true],
   ];
   it.each(CORPUS)("validation parity TS/SQL: %s", async (_label, input, ok) => {
     const ts = tsVerdict(input);
@@ -206,14 +228,21 @@ describe("person_profile_read / person_profile_update", () => {
     }
   });
 
-  it("every Cc/Cf code point the runtime knows is refused by TS AND by the definer (mid-name)", async () => {
-    expect(CONTROL_OR_FORMAT.length).toBeGreaterThanOrEqual(235); // 65 Cc + 170 Cf (Unicode 17.0)
-    expect(CONTROL_OR_FORMAT).toEqual(
-      expect.arrayContaining([0x0, 0x85, 0xad, 0x890, 0x891, 0x8e2, 0x180e, 0xfeff, 0xe007f]),
+  it("every hidden code point the runtime knows is refused by TS AND by the definer (mid-name)", async () => {
+    // 65 Cc + 170 Cf (Unicode 17.0) + Zl + Zp + 7 default-ignorable non-selectors + U+2800
+    expect(HIDDEN.length).toBeGreaterThanOrEqual(245);
+    expect(HIDDEN).toEqual(
+      expect.arrayContaining([
+        0x0, 0x85, 0xad, 0x890, 0x891, 0x8e2, 0x180e, 0xfeff, 0xe007f, 0x2028, 0x2029, 0x34f,
+        0x115f, 0x1160, 0x17b4, 0x17b5, 0x3164, 0xffa0, 0x2800,
+      ]),
     );
+    // Variation selectors are default-ignorable but stay allowed (emoji / ideographic variants).
+    expect(HIDDEN).not.toContain(0xfe0f);
+    expect(HIDDEN).not.toContain(0xe0100);
     const u = await webUser("seed");
     const wrong: string[] = [];
-    for (const cp of CONTROL_OR_FORMAT) {
+    for (const cp of HIDDEN) {
       const input = "a" + ch(cp) + "b";
       if (tsVerdict(input) !== null) wrong.push(`TS accepts ${hex(cp)}`);
       // U+0000 never reaches the definer: Postgres refuses a NUL byte in a text parameter (22021).

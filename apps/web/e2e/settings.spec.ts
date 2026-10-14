@@ -10,6 +10,7 @@ import { TENANT_ID, signIn } from "./support/session-api-mock";
  * The mock keeps the routes' idempotency semantics where a test depends on them: PATCH club and
  * POST connect REPLAY a processed commandId (apply nothing, answer the current state), and
  * `loseResponseNext` applies a request and then drops its response, the "uncertain failure" case.
+ * `holdNext` parks the next matching request until the test releases it (a reload that lands late).
  */
 interface Call {
   method: string;
@@ -45,6 +46,8 @@ interface World {
   failNext: Map<string, { code: string; status: number; message?: string }>;
   /** "METHOD path": the request IS applied, then its response is lost (the connection drops). */
   loseResponseNext: Set<string>;
+  /** "METHOD path": the next such request waits for this promise before it is answered. */
+  holdNext: Map<string, Promise<void>>;
   zaloForbidden: boolean;
   /** commandIds already processed by PATCH club / POST connect (a repeat is a replay). */
   clubCommands: Set<string>;
@@ -78,6 +81,7 @@ async function install(page: Page): Promise<World> {
     connectStatus: "registered",
     failNext: new Map(),
     loseResponseNext: new Set(),
+    holdNext: new Map(),
     zaloForbidden: false,
     clubCommands: new Set(),
     connectCommands: new Set(),
@@ -94,6 +98,11 @@ async function install(page: Page): Promise<World> {
     const path = url.pathname;
     world.calls.push({ method, path, body });
     const key = `${method} ${path}`;
+    const held = world.holdNext.get(key);
+    if (held) {
+      world.holdNext.delete(key);
+      await held; // answered below with the world as it is once released
+    }
     const injected = world.failNext.get(key);
     if (injected) {
       world.failNext.delete(key);
@@ -183,6 +192,18 @@ async function install(page: Page): Promise<World> {
   return world;
 }
 
+/** Parks the next "METHOD path" request; call the returned function to let it through. */
+function hold(world: World, key: string): () => void {
+  let release = () => {};
+  world.holdNext.set(
+    key,
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  return () => release();
+}
+
 const callsTo = (world: World, method: string, path: string) =>
   world.calls.filter((c) => c.method === method && c.path === path);
 const countOf = (world: World, method: string, path: string) => () =>
@@ -268,6 +289,34 @@ test.describe("/me/settings", () => {
     await dialog.getByRole("button", { name: "Quay lại" }).click();
     await expect(dialog).toBeHidden();
     const outcome = section.locator('[role="status"]');
+    await expect(outcome).toHaveText("Danh sách kênh đã được tải lại.");
+    await expect(outcome.locator("xpath=..")).toBeFocused();
+  });
+
+  test("409, then 'Quay lại' BEFORE the reload lands: the opener gets focus back, and when the reload removes it the list says so and focus lands on the outcome", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    world.failNext.set(`POST ${DETACH_ZALO}`, { code: "CHANNEL_NOT_LINKED", status: 409 });
+    await page.goto("/me/settings");
+    const section = page.locator('section[aria-labelledby="me-channels"]');
+    const opener = section.getByRole("button", { name: "Gỡ liên kết Zalo" });
+    await opener.click();
+    world.channels = world.channels.filter((c) => c.id !== ZALO_ID); // gone in another tab
+    const release = hold(world, "GET /api/me/channels");
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Gỡ liên kết" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("không còn liên kết");
+    await expect.poll(countOf(world, "GET", "/api/me/channels")).toBe(2); // sent, parked
+
+    await dialog.getByRole("button", { name: "Quay lại" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(opener).toBeFocused(); // still listed: the dialog handed focus back to it
+    const outcome = section.locator('[role="status"]');
+    await expect(outcome).toHaveText("");
+
+    release();
+    await expect(section.getByText("Đang liên kết")).toHaveCount(0); // the reload removed the row
     await expect(outcome).toHaveText("Danh sách kênh đã được tải lại.");
     await expect(outcome.locator("xpath=..")).toBeFocused();
   });
@@ -411,6 +460,42 @@ test.describe("/c/[tenantId]/settings", () => {
     expect(world.clubCommands.size).toBe(1);
   });
 
+  test("after a lost response, changing the name BACK to the loaded value is saved, never 'nothing changed'", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    world.loseResponseNext.add("PATCH /api/onboarding/club");
+    await page.goto(URL_);
+    const form = profileForm(page);
+    const name = page.getByLabel("Tên câu lạc bộ");
+    await name.fill("CLB Một");
+    await form.getByRole("button", { name: "Lưu" }).click();
+    await expect(form.getByRole("alert")).toContainText("Không có kết nối mạng");
+    expect(world.club.name).toBe("CLB Một"); // applied; the form's loaded baseline is now stale
+
+    await name.fill("CLB Cầu Lông Test"); // the value the form loaded
+    await form.getByRole("button", { name: "Lưu" }).click();
+    await expect(form.getByRole("status")).toHaveText("Đã lưu thông tin câu lạc bộ.");
+    await expect(page.getByText("Chưa có thay đổi nào để lưu.")).toHaveCount(0);
+    const patches = callsTo(world, "PATCH", "/api/onboarding/club");
+    expect(patches.map((c) => c.body?.name)).toEqual(["CLB Một", "CLB Cầu Lông Test"]);
+    expect(patches[1]!.body?.commandId).not.toBe(patches[0]!.body?.commandId);
+    expect(world.club.name).toBe("CLB Cầu Lông Test");
+  });
+
+  test("a club name over 120 UTF-16 units (61 emoji) is refused on the field, as the route counts; nothing is sent", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    await page.goto(URL_);
+    const name = page.getByLabel("Tên câu lạc bộ");
+    await name.fill(String.fromCodePoint(0x1f3f8).repeat(61)); // 61 code points, 122 units
+    await profileForm(page).getByRole("button", { name: "Lưu" }).click();
+    await expect(page.getByText("Tên tối đa 120 ký tự")).toBeVisible();
+    await expect(name).toBeFocused();
+    expect(callsTo(world, "PATCH", "/api/onboarding/club")).toHaveLength(0);
+  });
+
   test("defaults form saves price and visibility in ONE PATCH; the price is labelled in đ", async ({
     page,
   }) => {
@@ -524,6 +609,96 @@ test.describe("/c/[tenantId]/settings", () => {
     expect(world.connectCommands.size).toBe(1);
   });
 
+  test("a lost connect response, then a 429 on Retry: the next Retry still replays the SAME commandId (one connect)", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    world.loseResponseNext.add("POST /api/onboarding/zalo/connect");
+    await page.goto(URL_);
+    const token = page.getByLabel("Token bot Zalo");
+    await token.fill(TOKEN);
+    await page.getByRole("button", { name: "Kết nối Zalo" }).click();
+    const form = zaloForm(page);
+    await expect(form.getByRole("alert")).toContainText("Không có kết nối mạng");
+    world.failNext.set("POST /api/onboarding/zalo/connect", { code: "RATE_LIMITED", status: 429 });
+    await form.getByRole("button", { name: "Thử lại" }).click();
+    await expect(form.getByRole("alert")).toContainText("Bạn thao tác quá nhanh");
+    await expect(token).toHaveValue(TOKEN);
+    await form.getByRole("button", { name: "Thử lại" }).click();
+    await expect(form.getByRole("status")).toContainText("Đã gửi token và đăng ký webhook.");
+    const posts = callsTo(world, "POST", "/api/onboarding/zalo/connect");
+    expect(posts).toHaveLength(3);
+    expect(new Set(posts.map((c) => c.body?.commandId)).size).toBe(1);
+    expect(world.connectCommands.size).toBe(1); // the 429 did not turn the retry into a 2nd connect
+  });
+
+  test("a failed connect whose refetch also fails: the error note replaces the form and takes focus", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    await page.goto(URL_);
+    const token = page.getByLabel("Token bot Zalo");
+    await token.fill(TOKEN);
+    world.failNext.set("POST /api/onboarding/zalo/connect", {
+      code: "AUTH_UNAVAILABLE",
+      status: 503,
+    });
+    world.failNext.set("GET /api/onboarding/zalo", { code: "RATE_LIMITED", status: 429 });
+    await page.getByRole("button", { name: "Kết nối Zalo" }).click();
+    const card = page.locator('section[aria-labelledby="club-zalo"]');
+    const alert = card.getByRole("alert");
+    await expect(alert).toContainText("Bạn thao tác quá nhanh");
+    await expect(card.getByLabel("Token bot Zalo")).toHaveCount(0);
+    await expect(alert.locator("xpath=..")).toBeFocused();
+    // Its Retry brings the form back with the token kept, and the reload is announced.
+    await alert.getByRole("button", { name: "Thử lại" }).click();
+    await expect(zaloForm(page).getByRole("status")).toHaveText(
+      "Đã tải lại trạng thái kết nối Zalo.",
+    );
+    await expect(zaloForm(page).getByRole("status").locator("xpath=..")).toBeFocused();
+    await expect(page.getByLabel("Token bot Zalo")).toHaveValue(TOKEN);
+  });
+
+  test("a revoked bot: the status says so, and there is no token field and no reconnect", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    world.zalo = { ...world.zalo, status: "revoked" };
+    await page.goto(URL_);
+    const card = page.locator('section[aria-labelledby="club-zalo"]');
+    await expect(card.getByText("Đã thu hồi")).toBeVisible();
+    await expect(card.getByRole("status")).toHaveText(
+      "Kết nối Zalo của câu lạc bộ này đã bị thu hồi. Không thể kết nối lại từ trang này, kể cả bằng token bot khác.",
+    );
+    await expect(card.getByLabel("Token bot Zalo")).toHaveCount(0);
+    await expect(card.getByRole("button")).toHaveCount(0);
+    await expect(page.getByLabel("Tên câu lạc bộ")).toBeVisible(); // the club forms still work
+  });
+
+  test("a bot revoked meanwhile: the connect's 403 is followed by the revoked note, focused, and the token is gone", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    world.zalo = { ...world.zalo, status: "active" };
+    await page.goto(URL_);
+    await page.getByLabel("Token bot Zalo").fill(TOKEN);
+    world.zalo = { ...world.zalo, status: "revoked" }; // revoked after the card loaded
+    world.failNext.set("POST /api/onboarding/zalo/connect", {
+      code: "FORBIDDEN",
+      status: 403,
+      message: "Bot này đã bị thu hồi.",
+    });
+    await page.getByRole("button", { name: "Kết nối lại" }).click();
+    const card = page.locator('section[aria-labelledby="club-zalo"]');
+    const note = card.getByRole("status");
+    await expect(note).toContainText("đã bị thu hồi");
+    await expect(note.locator("xpath=..")).toBeFocused();
+    await expect(card.getByLabel("Token bot Zalo")).toHaveCount(0);
+    await expect(card.getByRole("button", { name: /Kết nối/ })).toHaveCount(0);
+    expect(await page.content()).not.toContain(TOKEN);
+    expect(callsTo(world, "POST", "/api/onboarding/zalo/connect")).toHaveLength(1);
+  });
+
   test("ZALO_TOKEN_INVALID clears the token and says so; no retry is offered", async ({ page }) => {
     const world = await install(page);
     world.failNext.set("POST /api/onboarding/zalo/connect", {
@@ -562,6 +737,9 @@ test.describe("/c/[tenantId]/settings", () => {
     await form.getByRole("button", { name: "Tải lại dữ liệu" }).click();
     await expect.poll(countOf(world, "GET", "/api/onboarding/zalo")).toBe(3);
     await expect(form.getByRole("alert")).toHaveCount(0);
+    // The reload button is gone with the error: the outcome region announces the reload, focused.
+    await expect(form.getByRole("status")).toHaveText("Đã tải lại trạng thái kết nối Zalo.");
+    await expect(form.getByRole("status").locator("xpath=..")).toBeFocused();
   });
 
   test("an unknown error code fails closed (generic copy + reference, no raw text); the token stays for Retry", async ({

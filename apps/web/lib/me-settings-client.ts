@@ -62,13 +62,18 @@ export function platformLabel(platform: string): string {
 export type DisplayNameProblem = "empty" | "too_long" | "invalid_chars";
 
 /**
- * Client-side mirror of the display-name rule (the server and 0055 enforce it): trimmed, 1..120
- * code points, no control (Cc) or format (Cf) character. Returns the first problem or null.
+ * Client-side mirror of the display-name rule (validateDisplayName in @plexco/db me-settings.ts and
+ * 0055 enforce it; same set, same order): trimmed, 1..120 code points, no hidden character anywhere:
+ * control (Cc), format (Cf), line / paragraph separator (Zl, Zp), a default-ignorable code point that
+ * is not a variation selector (the marks U+034F, U+17B4, U+17B5 and the Hangul fillers U+115F,
+ * U+1160, U+3164, U+FFA0) or U+2800 BRAILLE PATTERN BLANK. Returns the first problem or null.
  */
 export function displayNameProblem(raw: string): DisplayNameProblem | null {
   const name = raw.trim();
   const length = [...name].length;
   if (length < 1) return "empty";
   if (length > 120) return "too_long";
-  return /[\p{Cc}\p{Cf}]/u.test(name) ? "invalid_chars" : null;
+  return /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0\u2800]/u.test(name)
+    ? "invalid_chars"
+    : null;
 }
