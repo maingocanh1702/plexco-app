@@ -10,7 +10,8 @@ import { resolveTenantLang } from "../../../../lib/tenant-lang";
  * Each tenant carries its `locale` (DD-118) so the shell can pick the UI language without a
  * second round trip. Every tenant listed is one the caller is a proven member of, so resolving
  * its locale here discloses nothing the caller could not already see. `name`/`slug`/`timezone`
- * come from M1b's `tenant_profile_read` definer (0052), fail-open per tenant (null on failure).
+ * come from the profile reader (0052 definer; null when a club's profile cannot be read). Its raw
+ * `locale` is replaced, never duplicated: the one served value is `resolveTenantLang` (DD-118).
  */
 export async function GET(): Promise<Response> {
   const session = await currentSession();
@@ -18,16 +19,14 @@ export async function GET(): Promise<Response> {
     return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
   }
   const handle = appDb();
-  const profiled = await tenantsForPersonWithProfile(handle, session.personId);
-  const tenants = await Promise.all(
+  const memberships = await tenantsForPersonWithProfile(handle, session.personId);
+  // One at a time, like the profile reads: a person in many clubs must not take the whole pool.
+  const tenants: SessionDto["tenants"] = [];
+  for (const m of memberships) {
     // Spread, never `m.role`: this route serialises the caller's OWN memberships back to them and
-    // must not DECIDE on a role (DD-56 clause 2 allowlist; session-command-route.test.ts scans for it).
-    // M1b's profile read is fail-open per tenant (locale null) -> fall back to the DD-118 seam.
-    profiled.map(async (m) => ({
-      ...m,
-      locale: m.locale ?? (await resolveTenantLang(handle.db, m.tenantId)),
-    })),
-  );
+    // must not DECIDE on a role (DD-56; this file is exempt from lib/role-read-guard.test.ts).
+    tenants.push({ ...m, locale: await resolveTenantLang(handle.db, m.tenantId) });
+  }
   const dto: SessionDto = {
     personId: session.personId,
     expiresAt: session.expiresAt.toISOString(),

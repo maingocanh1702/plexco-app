@@ -13,9 +13,22 @@ export function recoveryTarget(location: Pick<Location, "pathname" | "search" | 
   return location.pathname + location.search + location.hash;
 }
 
-/** Same-origin path only: exactly one leading "/" ("//" and "/\\" are protocol-relative). */
-export function safeReturnTo(candidate: unknown): string {
-  return typeof candidate === "string" && /^\/(?![/\\])/.test(candidate) ? candidate : "/";
+/**
+ * Same-origin path only: exactly one leading "/" ("//" and "/\\" are protocol-relative), no C0
+ * control or DEL character (the URL parser drops TAB/LF/CR, so "/\t/evil.com" becomes
+ * "//evil.com"), and it must still resolve to `origin` (default: this page's). Else "/".
+ */
+export function safeReturnTo(candidate: unknown, origin?: string): string {
+  const base = origin ?? (typeof window === "undefined" ? undefined : window.location.origin);
+  if (typeof candidate !== "string" || !base || !/^\/(?![/\\])/.test(candidate)) return "/";
+  // eslint-disable-next-line no-control-regex -- matching control characters is the point
+  if (/[\u0000-\u001F\u007F]/.test(candidate)) return "/";
+  try {
+    const url = new URL(candidate, base);
+    return url.origin === base && /^https?:$/.test(url.protocol) ? candidate : "/";
+  } catch {
+    return "/";
+  }
 }
 
 function OfflineBody() {

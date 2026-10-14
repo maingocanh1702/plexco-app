@@ -5,6 +5,8 @@
 > v2.0 · 2026-10-13 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
 > **Design System:** xem `design-system.md` (v1.0, 07/08/2026) cho component catalog, usage tokens, layout patterns, motion, a11y, và responsive grid — document đó reference values từ file này.
 > **Authority boundary (v2.0):** value set **target C — Energetic Orange + Sora/Inter đã ACTIVE** (DD-81 chọn, DD-122 D1 kích hoạt ngày 12/10/2026, thay cho cổng `design.pen`; xem `channels/web/theme-direction-2026-07.md` §5–§6). Code đọc đúng các giá trị này từ `apps/web/app/globals.css` — file duy nhất được chứa literal màu; `apps/web/app/tokens-only.test.ts` fail nếu component CSS/TSX chứa hex/rgba hoặc dùng `var(--x)` chưa định nghĩa. Nhu cầu token: `token-needs-matrix.md`.
+>
+> ⚠️ **2026-10-12 — DD-122 D1 (owner):** gate `design.pen`/exporter/drift-proof **không còn áp dụng**; agent triển khai **được activate** target C (Orange `#FF5A1F` · `--on-primary #22100A` · Sora/Inter) vào `apps/web` và cập nhật giá trị trong file này trong PR FE đầu tiên (M1) theo bước 2 §6 `../channels/web/theme-direction-2026-07.md`. Cho tới PR đó, giá trị bên dưới vẫn là Indigo/Outfit (chưa đổi).
 
 ---
 

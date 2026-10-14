@@ -2,11 +2,11 @@
 export interface SessionTenantDto {
   tenantId: string;
   role: string;
-  /** Club profile fields (M1b reader, 0052); null when that read failed (shell falls back). */
+  /** Club profile from M1b's reader: null when unreadable (the shell falls back). */
   name?: string | null;
   slug?: string | null;
   timezone?: string | null;
-  locale?: string | null;
+  locale?: string;
 }
 
 export interface SessionDto {
