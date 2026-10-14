@@ -11,6 +11,7 @@ const STATES: LinkUiState[] = [
   "requires_review",
   "invalid",
   "rate_limited",
+  "throttled",
   "unavailable",
   "offline",
   "signed_out",
@@ -59,10 +60,37 @@ describe("LinkCodeView", () => {
   it("an empty code disables submit; failures mark the input invalid", () => {
     expect(render("idle", "en", "")).toMatch(/<button[^>]*disabled/);
     expect(render("invalid")).toContain('aria-invalid="true"');
-    for (const s of ["offline", "unavailable", "signed_out", "error", "rate_limited"] as const) {
+    for (const s of [
+      "offline",
+      "unavailable",
+      "signed_out",
+      "error",
+      "rate_limited",
+      "throttled",
+    ] as const) {
       expect(render(s)).not.toContain("aria-invalid");
     }
     expect(render("linked")).not.toContain("aria-invalid");
+  });
+
+  it("rate_limited (LINK_CODE_RATE_LIMITED) is true for the 600 s buckets AND the dead-code attempt cap: 10 minutes, then a new code", () => {
+    const en = render("rate_limited", "en");
+    const vi = render("rate_limited", "vi");
+    expect(en).toContain("Wait 10 minutes");
+    expect(en).toContain("for a new code");
+    expect(vi).toContain("đợi 10 phút");
+    expect(vi).toContain("lấy mã mới");
+  });
+
+  it("throttled (RATE_LIMITED, the 60 per 60 s actor ceiling) says a minute, never 10 minutes or a new code", () => {
+    const en = render("throttled", "en");
+    const vi = render("throttled", "vi");
+    expect(en).toContain("Wait a minute");
+    expect(vi).toContain("đợi 1 phút");
+    for (const html of [en, vi]) {
+      expect(html).not.toMatch(/10 (minutes|phút)/);
+      expect(html).not.toMatch(/new code|mã mới/);
+    }
   });
 
   it("requires_review explains support must merge", () => {

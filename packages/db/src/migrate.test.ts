@@ -14,13 +14,18 @@ import {
 import {
   acquireChatDefinerLock,
   bootstrapChatDefiner,
+  bootstrapIdentityDefiner,
   bootstrapJobDefiner,
   ensureChatDefinerMembershipRevoked,
+  ensureDefinerMembershipRevoked,
   restoreChatDefinerMembership,
+  restoreDefinerMembership,
   revokeAllChatDefinerMembers,
   revokeStaleChatDefinerMembership,
+  revokeStaleDefinerMembership,
   setupNonSuperuserOwnerContext,
   withChatDefinerLock,
+  withIdentityDefinerNameLock,
   withJobDefinerLock,
 } from "./test-harness.js";
 
@@ -80,6 +85,8 @@ let admin: pg.Client;
 
 beforeAll(async () => {
   admin = await connect(BASE!);
+  // A previous run killed inside the 0054 step-1 window left identity_definer parked: put it back.
+  await healHiddenIdentityDefiner(admin);
 
   await bootstrapJobDefiner(admin);
 }, 120_000);
@@ -363,6 +370,7 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
     await admin.query(`CREATE ROLE ${owner} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD 'x'`);
     await admin.query(`CREATE DATABASE ${db} OWNER ${owner}`);
     let revokedChatDefinerMembers: string[] = [];
+    let revokedIdentityDefinerMembers: string[] = [];
     // Held from the revoke below through the restore in the outer finally, as ONE continuous
     // critical section (codex round-05 [P1] — two separate withChatDefinerLock calls, one for
     // revoke+bootstrap+migrate and a second, later one for the restore, left a real window in
@@ -398,6 +406,19 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       } finally {
         await admin.query(`RESET chat_definer_bootstrap.migration_role`);
       }
+      // 0054 creates its function inside SET ROLE identity_definer: same one-member dance, same lock
+      // (setupNonSuperuserOwnerContext does the identical thing in bootstrapChatDefinerForOwner).
+      revokedIdentityDefinerMembers = await revokeStaleDefinerMembership(
+        admin,
+        "identity_definer",
+        owner,
+      );
+      await admin.query(`SET identity_definer_bootstrap.migration_role = '${owner}'`);
+      try {
+        await bootstrapIdentityDefiner(admin);
+      } finally {
+        await admin.query(`RESET identity_definer_bootstrap.migration_role`);
+      }
       const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
@@ -422,9 +443,18 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
           // restoring, so a failed DROP ROLE can never leave both owner AND the restored
           // predecessor as simultaneous members (mirrors the identical fix in test-harness.ts's
           // teardown()).
-          await ensureChatDefinerMembershipRevoked(admin, owner);
-          if (revokedChatDefinerMembers.length > 0) {
-            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+          try {
+            await ensureChatDefinerMembershipRevoked(admin, owner);
+            if (revokedChatDefinerMembers.length > 0) {
+              await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+            }
+          } finally {
+            await ensureDefinerMembershipRevoked(admin, "identity_definer", owner);
+            await restoreDefinerMembership(
+              admin,
+              "identity_definer",
+              revokedIdentityDefinerMembers,
+            );
           }
         }
       } finally {
@@ -1138,6 +1168,226 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
       await ctx.teardown();
     }
   }, 60_000);
+});
+
+const LINK_REPARENT_MIGRATION = "0054_link_code_reparent_empty_person.sql";
+
+/** Where hideRealIdentityDefiner parks the real role while a case owns the name. */
+const HIDDEN_IDENTITY_DEFINER = "identity_definer_hidden_for_test";
+
+/** Rename the real identity_definer away for one case; whatever the case created under its name goes. */
+async function hideRealIdentityDefiner(
+  superuser: pg.Client,
+  fn: () => Promise<void>,
+): Promise<void> {
+  await superuser.query(`ALTER ROLE identity_definer RENAME TO ${HIDDEN_IDENTITY_DEFINER}`);
+  try {
+    await fn();
+  } finally {
+    // Reached only with the real role safely renamed, so this drops a scratch role or nothing.
+    await superuser.query(`DROP ROLE IF EXISTS identity_definer`);
+    await superuser.query(`ALTER ROLE ${HIDDEN_IDENTITY_DEFINER} RENAME TO identity_definer`);
+  }
+}
+
+/**
+ * Self-heal for a run killed inside hideRealIdentityDefiner (SIGKILL, OOM, a second Ctrl-C): its
+ * finally never ran, so the real role is still parked under HIDDEN_IDENTITY_DEFINER, maybe beside a
+ * LOGIN / NOBYPASSRLS scratch holding the name, and every later bootstrap or 0054 step 1 fails
+ * closed on it. Called first in this file's beforeAll, and acts only under the 0054 step-1 window's
+ * own locks in its order (exclusive name lock, then the chat lock), so no window, bootstrap or
+ * name reader is live meanwhile; a healthy cluster costs one catalog read and takes no lock. While
+ * the real role is parked only a scratch can hold the name, and DROP ROLE refuses a role that owns
+ * or holds anything in any database, so nothing beyond a scratch is ever dropped. A refusal means
+ * a bootstrap created a second identity_definer after the kill and a migration used it. Manual
+ * repair then: drop the (test) databases the refusal lists, then run, as the compose superuser,
+ *   docker compose -f infra/docker-compose.yml exec -T postgres psql -U plexco -d postgres
+ *     -c 'DROP ROLE IF EXISTS identity_definer'
+ *     -c 'ALTER ROLE identity_definer_hidden_for_test RENAME TO identity_definer'
+ */
+async function healHiddenIdentityDefiner(superuser: pg.Client): Promise<void> {
+  const parked = async () =>
+    (await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [HIDDEN_IDENTITY_DEFINER]))
+      .rows.length > 0;
+  if (!(await parked())) return;
+  await withIdentityDefinerNameLock(BASE!, "exclusive", () =>
+    withChatDefinerLock(BASE!, async () => {
+      if (!(await parked())) return; // a live window elsewhere put it back while this waited
+      try {
+        await superuser.query(`DROP ROLE IF EXISTS identity_definer`);
+      } catch (error) {
+        throw new Error(
+          `${HIDDEN_IDENTITY_DEFINER} is parked but identity_definer is more than a scratch; ` +
+            "manual repair: see healHiddenIdentityDefiner in migrate.test.ts",
+          { cause: error },
+        );
+      }
+      await superuser.query(`ALTER ROLE ${HIDDEN_IDENTITY_DEFINER} RENAME TO identity_definer`);
+    }),
+  );
+}
+
+describe("0054 step 1 fails closed on identity_definer preconditions (JCL-2/JCL-3 for 0054, plus 03's member-of and one-member rules)", () => {
+  it("each broken precondition aborts 0054 before any grant and records nothing; restored, 0054 applies", async () => {
+    const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_0054_step1");
+    const su = ctx.superuser;
+    const owner = ctx.ownerRole;
+    const scratch = `plexco_migrate_0054_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    // ctx.dbName, read as superuser: grants/functions in THIS database only.
+    let inDb: pg.Client | undefined;
+    const expectNothingFrom0054 = async (label: string) => {
+      const recorded = await inDb!.query(`SELECT 1 FROM schema_migrations WHERE name = $1`, [
+        LINK_REPARENT_MIGRATION,
+      ]);
+      expect(recorded.rows, `${label}: 0054 recorded`).toEqual([]);
+      const leftovers = await inDb!.query(
+        `SELECT to_regprocedure('link_code_reparent_empty_person(uuid, uuid)') AS fn,
+                has_any_column_privilege('identity_definer', 'link_codes', 'SELECT') AS granted`,
+      );
+      expect(leftovers.rows[0], `${label}: 0054 left something behind`).toEqual({
+        fn: null,
+        granted: false,
+      });
+    };
+    // One case per check; every run below has only 0054 pending.
+    const cases: {
+      name: string;
+      error: RegExp;
+      broken: (check: () => Promise<void>) => Promise<void>;
+    }[] = [
+      {
+        name: "JCL-3: not granted to the migration role",
+        error: /migration role \S+ is not a member of identity_definer/,
+        broken: async (check) => {
+          await su.query(`REVOKE identity_definer FROM ${owner}`);
+          try {
+            await check();
+          } finally {
+            await su.query(`GRANT identity_definer TO ${owner}`);
+          }
+        },
+      },
+      {
+        name: "JCL-2a: absent",
+        error: /identity_definer role does not exist/,
+        broken: (check) => hideRealIdentityDefiner(su, check),
+      },
+      {
+        name: "JCL-2b: drifted to LOGIN",
+        error: /identity_definer has unexpected attributes/,
+        broken: (check) =>
+          hideRealIdentityDefiner(su, async () => {
+            await su.query(
+              `CREATE ROLE identity_definer LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+            );
+            await check();
+          }),
+      },
+      {
+        name: "JCL-2b: drifted to NOBYPASSRLS",
+        error: /identity_definer has unexpected attributes/,
+        broken: (check) =>
+          hideRealIdentityDefiner(su, async () => {
+            await su.query(
+              `CREATE ROLE identity_definer NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+            );
+            await check();
+          }),
+      },
+      {
+        name: "JCL-3b: granted to a runtime role",
+        error: /identity_definer must not be granted to app\/app_worker\/readonly/,
+        broken: async (check) => {
+          await su.query(`GRANT identity_definer TO app_worker`);
+          try {
+            await check();
+          } finally {
+            await su.query(`REVOKE identity_definer FROM app_worker`);
+          }
+        },
+      },
+      {
+        name: "03 step 2: identity_definer is a member of another role",
+        error: new RegExp(`identity_definer is a member of role ${scratch}`),
+        broken: async (check) => {
+          await su.query(`CREATE ROLE ${scratch} NOLOGIN`);
+          try {
+            await su.query(`GRANT ${scratch} TO identity_definer`);
+            await check();
+          } finally {
+            await su.query(`DROP ROLE IF EXISTS ${scratch}`); // drops the membership with it
+          }
+        },
+      },
+      {
+        name: "03 step 3: a second member besides the migration role",
+        error: new RegExp(`identity_definer must have exactly one member.*${scratch}`),
+        broken: async (check) => {
+          await su.query(`CREATE ROLE ${scratch} NOLOGIN`);
+          try {
+            await su.query(`GRANT identity_definer TO ${scratch}`);
+            await check();
+          } finally {
+            await su.query(`DROP ROLE IF EXISTS ${scratch}`);
+          }
+        },
+      },
+    ];
+    const originalReaddir = readdirImpl;
+    try {
+      inDb = await connect(url(ctx.dbName));
+      // 0000..0053 by the SUPERUSER under no harness lock (BR-1/BR-2 migrate the same way), so no
+      // lock is held across a full migration. Step 1 is about the MIGRATION ROLE, which stays the
+      // non-superuser owner: it runs 0054 alone and only has to read the ledger.
+      readdirImpl = async (dir) =>
+        (await originalReaddir(dir)).filter((file) => file !== LINK_REPARENT_MIGRATION);
+      try {
+        expect((await migrate(url(ctx.dbName))).applied.at(-1)).toBe("0053_zalo_ingress.sql");
+      } finally {
+        readdirImpl = originalReaddir;
+      }
+      await inDb.query(`GRANT SELECT ON schema_migrations TO ${owner}`);
+      // ONE short window for every case. Exclusive identity_definer name lock FIRST (the shared
+      // side is what identity-link-web.test.ts takes whenever it names that role), then the chat
+      // lock, which every migration reaching 0054 holds, so no other suite migrates while a case has
+      // identity_definer broken. In this order the chat lock is never held while waiting for a
+      // reader, and only for these runs: every setupRlsTestContext holds the job lock while it
+      // waits for the chat lock, so a longer hold here starved rls-invariants JCL-4 (30 s timeout)
+      // in three measured full runs. No job lock: nothing here touches job_definer.
+      await withIdentityDefinerNameLock(BASE!, "exclusive", () =>
+        withChatDefinerLock(BASE!, async () => {
+          // bootstrapChatDefinerForOwner's one-member hand-off, inside the window only: `owner`
+          // becomes identity_definer's single member, and whoever held it gets it back.
+          const revoked = await revokeStaleDefinerMembership(su, "identity_definer", owner);
+          try {
+            await su.query(`GRANT identity_definer TO ${owner}`);
+            for (const c of cases) {
+              await c.broken(async () => {
+                await expect(ctx.runMigration(), c.name).rejects.toThrow(c.error);
+              });
+              await expectNothingFrom0054(c.name);
+            }
+            // Every precondition restored. The SUPERUSER applies 0054 while `owner` still holds
+            // the slot: the one-member rule's superuser branch (its member is not the migration role).
+            const res = await migrate(url(ctx.dbName));
+            expect(res.applied).toEqual([LINK_REPARENT_MIGRATION]);
+          } finally {
+            await ensureDefinerMembershipRevoked(su, "identity_definer", owner);
+            await restoreDefinerMembership(su, "identity_definer", revoked);
+          }
+        }),
+      );
+      const owned = await inDb.query(
+        `SELECT pg_get_userbyid(proowner) AS owner FROM pg_proc
+          WHERE oid = 'link_code_reparent_empty_person(uuid, uuid)'::regprocedure`,
+      );
+      expect(owned.rows).toEqual([{ owner: "identity_definer" }]);
+    } finally {
+      readdirImpl = originalReaddir;
+      await inDb?.end();
+      await ctx.teardown();
+    }
+  }, 300_000);
 });
 
 describe("DD29-1/DD29-2 0028 expand fails closed on plan_key data anomalies", () => {
@@ -3038,6 +3288,48 @@ const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   "postgres-init",
   "02-chat-definer.sql",
 );
+
+describe("03-identity-definer.sql mirrors 02-chat-definer.sql (DD-127 / DD-131 OD-3)", () => {
+  it("is 02 statement for statement, with only the role name, GUC and in-script lock key swapped", async () => {
+    // Comments dropped and whitespace trimmed; the GUC is `<role>_bootstrap.migration_role`, so the
+    // role swap covers it. Equal text means every 02 bootstrap test in this file also covers 03.
+    // A `--` only starts a comment OUTSIDE a single-quoted literal: several RAISE texts contain
+    // " -- ", and a plain /--.*$/ would cut them (and their closing quote) out of the comparison.
+    const stripComment = (line: string) => {
+      let quoted = false;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === "'") quoted = !quoted;
+        else if (!quoted && line.startsWith("--", i)) return line.slice(0, i);
+      }
+      return line;
+    };
+    const norm = (sql: string, role: string, lockKey: string) =>
+      sql
+        .split("\n")
+        .map((line) => stripComment(line).trim())
+        .filter(Boolean)
+        .join("\n")
+        .replaceAll(role, "DEFINER")
+        .replaceAll(lockKey, "LOCK_KEY");
+    const chat = norm(
+      await actualFsPromises.readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8"),
+      "chat_definer",
+      "1667525739",
+    );
+    const identity = norm(
+      await actualFsPromises.readFile(
+        path.join(path.dirname(CHAT_DEFINER_BOOTSTRAP_SQL_PATH), "03-identity-definer.sql"),
+        "utf8",
+      ),
+      "identity_definer",
+      "1768189035",
+    );
+    expect(identity).toContain("CREATE ROLE DEFINER");
+    // Proves the literal-aware stripping kept a RAISE text whole past its own " -- ".
+    expect(identity).toContain("DEGRADED -- cannot acquire the cluster-wide serialization lock");
+    expect(identity).toBe(chat);
+  });
+});
 
 async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
   const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`);

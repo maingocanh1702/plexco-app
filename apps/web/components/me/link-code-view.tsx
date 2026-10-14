@@ -55,11 +55,22 @@ function statusText(state: LinkUiState, pick: (vi: string, en: string) => string
         ),
       ];
     case "rate_limited":
+      // LINK_CODE_RATE_LIMITED: a 10-minute bucket OR the code's attempt cap (that code is dead).
+      // True for both: after 10 minutes the bucket has room and the old code has expired anyway.
       return [
         problem,
         pick(
-          "Bạn đã thử quá nhiều lần. Hãy đợi vài phút rồi thử lại.",
-          "Too many attempts. Wait a few minutes and try again.",
+          "Bạn đã thử quá nhiều lần. Hãy đợi 10 phút, rồi gửi /link cho bot để lấy mã mới và thử lại.",
+          "Too many attempts. Wait 10 minutes, then send /link to the bot for a new code and try again.",
+        ),
+      ];
+    case "throttled":
+      // RATE_LIMITED: the route's 60 requests per 60 s actor ceiling; the code itself is untouched.
+      return [
+        problem,
+        pick(
+          "Bạn gửi quá nhiều yêu cầu. Hãy đợi 1 phút rồi thử lại.",
+          "Too many requests. Wait a minute and try again.",
         ),
       ];
     case "unavailable":
