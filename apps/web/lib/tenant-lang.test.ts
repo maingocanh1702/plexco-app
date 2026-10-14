@@ -152,6 +152,12 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/auth/session/route.ts": "b",
   // (b) — account-scoped linking (M3b): the Zalo identity is global, no tenant is routed; Vietnamese default.
   "app/api/me/link/route.ts": "b",
+  // (b) — account-scoped settings (M4): the profile and the linked channels belong to the ACCOUNT, no
+  // tenant is routed, so no tenant language applies; every message is Vietnamese (DD-118 b).
+  "app/api/me/profile/route.ts": "b",
+  "app/api/me/channels/route.ts": "b",
+  "app/api/me/channels/[id]/detach/route.ts": "b",
+  "lib/me-route-gate.ts": "b",
   "app/api/auth/logout/route.ts": "b",
   "app/api/auth/logout-all/route.ts": "b",
   // (b) — authenticated, but the payload is the GLOBAL sports directory: no tenant is routed, so no
@@ -219,6 +225,13 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/session-time.ts": "c",
   "lib/sessions-api.ts": "c",
   "lib/lang-storage.ts": "c",
+  // (c) — browser-side settings screens (M4). Typed fetch wrappers + pure form models; user-facing
+  // text comes from the `t` the caller passes from useT() (settings-error-ui, display-name rules).
+  "lib/club-settings-client.ts": "c",
+  "lib/club-settings-model.ts": "c",
+  "lib/me-settings-client.ts": "c",
+  "lib/settings-error-ui.ts": "c",
+  "lib/use-command-id.ts": "c",
   // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation
   // screens (landing `?auth_error`, create-club form), which render Vietnamese by DD-118 bucket b.
   "lib/auth-error-message.ts": "b",

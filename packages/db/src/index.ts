@@ -210,3 +210,16 @@ export {
 } from "./identity.js";
 // Web account <-> Zalo link (M3b): consume + re-parent an EMPTY Zalo-side Person (0054).
 export { linkZaloToAccount, type LinkZaloOutcome } from "./identity-link-web.js";
+// Web MVP lane M4: the signed-in user's own profile + linked channels (0055 definers).
+export {
+  DisplayNameError,
+  DISPLAY_NAME_MAX,
+  detachMyChannel,
+  listMyChannels,
+  readMyProfile,
+  updateMyProfile,
+  validateDisplayName,
+  type DetachOutcome,
+  type MyChannel,
+  type MyProfile,
+} from "./me-settings.js";

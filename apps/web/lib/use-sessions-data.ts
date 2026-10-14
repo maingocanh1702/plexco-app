@@ -35,7 +35,7 @@ export type Loadable<T> =
  * the current data on screen (used after a command so focus is not lost to a skeleton swap).
  * Aborts the in-flight request on change/unmount.
  */
-function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: unknown[]) {
+export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: unknown[]) {
   const [state, setState] = useState<Loadable<T>>({ status: "loading" });
   const [nonce, setNonce] = useState(0);
   const silent = useRef(false);

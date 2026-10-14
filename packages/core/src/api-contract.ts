@@ -68,6 +68,10 @@
  * mapped to it: it propagates (the route answers 500) and its outcome is UNKNOWN: a failure before
  * COMMIT rolls the transaction back, but a connection that drops after the server applied COMMIT
  * leaves the committed decision (the link included) in place behind that 500.
+ *
+ * CHANNEL_NOT_LINKED (409) arrived with POST /api/me/channels/:id/detach (M4): one answer for "not yours",
+ * "unknown", "already detached" and "inactive" (no existence oracle). Pinned in
+ * feature_user_settings_tech.md section 4, signed by the owner as OD-6 (2026-10-14).
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -80,6 +84,7 @@ export const API_ERROR_CODES = [
   "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_OCCUPANCY",
   "CAPACITY_BELOW_ROSTER",
+  "CHANNEL_NOT_LINKED",
   "CHARGE_ALREADY_SETTLED",
   "CHARGE_NOT_PAYABLE",
   "COMMAND_ID_CONFLICT",

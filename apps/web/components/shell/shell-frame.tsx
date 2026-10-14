@@ -5,6 +5,7 @@ import { useEffect, type ReactNode } from "react";
 import { useT, useLang } from "../../lib/i18n-client";
 import { storeLang } from "../../lib/lang-storage";
 import type { SessionDto, SessionTenantDto } from "../../lib/session-dto";
+import { Button } from "../ui/button";
 import { SkipLink } from "../ui/skip-link";
 import { OfflineBanner } from "./offline-banner";
 import { ShellNav } from "./shell-nav";
@@ -44,6 +45,9 @@ export function ShellFrame({
         </div>
         <div className={styles.actions}>
           <TenantSwitcher tenants={session.tenants} currentId={tenant.tenantId} />
+          <Button href="/me/settings" variant="ghost">
+            {t("Tài khoản", "Account")}
+          </Button>
           <SignOutButton csrfToken={session.csrfToken} />
         </div>
       </header>
