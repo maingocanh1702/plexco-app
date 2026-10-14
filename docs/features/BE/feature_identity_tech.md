@@ -1,7 +1,7 @@
 # Feature: Identity Directory & Merge — Backend Tech Spec
 
 > **Canonical phase:** P3.5
-> **Version:** 1.15 · 2026-08-25
+> **Version:** 1.16 · 2026-10-14
 > **Status:** Identity implementation contract; DD-32 Account-backed channel link predicate added. Endpoint-scoped schema/code pending identity/channel build slices
 > **Implementation:** In progress (code dark) — bảng `link_codes`/`merge_*` có sẵn; **`0034`** person-account resolver (SECURITY DEFINER, REVOKE khỏi app/app_worker/readonly) và **`0043`** `link_code_issue`/`link_code_salt`/`link_code_consume` + `_link_code_retention` 30 ngày **đã merge**, kèm wrapper `packages/db/src/identity.ts` (mã 18 ký tự Crockford **tách đôi**: 8 ký tự lookup HMAC, verifier scrypt **async** phủ toàn bộ ⇒ attempt cap mới có hiệu lực thật). **0 caller production**, env `LINK_CODE_LOOKUP_HMAC_KEY` chưa đặt vì 0 reader; merge service/route `/link` chưa build (đo 2026-09-15 tại `e235ea4`) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_identity.md`
@@ -302,6 +302,14 @@ Cross-tenant merge capability is isolated from normal HTTP role and audited per 
 | `resolvePersonSelf` | Verified session/magic link | Returns authenticated person only |
 | `supportRecoverMerge` | Restricted support role | Runbook + dual confirmation recommended |
 
+> **Quy tắc MVP — link web ⇄ Zalo khi Person rỗng (DD-127 / DD-131 OD-3 — `decisions.md`, đang chờ merge ở PR #51; chọn (a), ký 2026-10-14):** `POST /api/me/link` (account đã đăng nhập nhập mã do bot Zalo cấp) chỉ re-parent channel identity Zalo sang Person của account khi Person phía Zalo **rỗng**: đúng 1 channel identity đó, không dòng nào khác tham chiếu `persons` (quét động từ `pg_constraint`). Mọi trường hợp còn lại — kể cả FK composite, hay cột FK mà owner hàm không có quyền `SELECT` (bảng do migration sau thêm, tới khi migration đó `GRANT SELECT (<cột>) ON <bảng> TO identity_definer`) — trả `MERGE_REQUIRES_REVIEW` (409), ghi 1 dòng `routing_audit` cho support và không move gì; lỗi đọc mà dự đoán không bắt được (vd. bảng ở schema owner không có `USAGE`) làm cả lời gọi RAISE, không ghi gì (fail closed); merge thật (planner/commit §5) vẫn P0. Cửa sổ replay 10 phút sau consume.
+>
+> **Owner definer + bracket BYPASSRLS:** owner của `link_code_reparent_empty_person` (migration `0054`) là role riêng **`identity_definer`** (NOLOGIN NOSUPERUSER **BYPASSRLS** NOINHERIT, không là member của role nào). `0054` chỉ **assert** role này (tồn tại, đúng thuộc tính, migration role là member, `app`/`app_worker`/`readonly` không là member), rồi tạo hàm trong bracket `SET ROLE identity_definer … RESET ROLE` — cùng pattern `job_definer` (`0022`) / `chat_definer` (`0032`) — nên BYPASSRLS thuộc owner hàm, không phụ thuộc migration role. Hệ quả: bảng tenant FORCE RLS được **đếm thật** (không còn "unprovable"), nên dưới migration owner NOBYPASSRLS link hợp lệ không còn rơi về `requires_review`; nhánh "owner không đọc xuyên RLS được ⇒ blocking" chỉ còn là phòng thủ nếu role mất BYPASSRLS. `identity_definer` chỉ có quyền thân hàm cần (SELECT/UPDATE 4 bảng khoá, INSERT 3 bảng audit, SELECT cột FK của mọi FK một cột trỏ `persons`), chỉ sở hữu đúng hàm này; `app` chỉ có `EXECUTE`, không là member, không `SET ROLE identity_definer` được. R1 (DO Managed PG từ chối role BYPASSRLS) ngoài scope theo chính OD-3.
+>
+> **Bước bootstrap:** role là cluster-global, tạo **ngoài** migration runner bởi `infra/postgres-init/03-identity-definer.sql` (mirror từng câu của `02-chat-definer.sql`), chạy qua `pnpm db:bootstrap` (01 → 02 → 03, idempotent; CI chạy ở bước "Bootstrap definer roles" trước `pnpm -w test`; volume Docker mới tinh thì init mount tự chạy). Thiếu role ⇒ `0054` dừng ngay ở bước assert (`undefined_object`, thông báo nhắc chạy `pnpm db:bootstrap`), không ghi gì. **DB local đã apply bản `0054` cũ** (trước 2026-10-14) sẽ bị guard sha256 (P17) của `migrate.ts` từ chối: reset bằng `pnpm db:reset:test`, không sửa `schema_migrations`. `0054` được sửa tại chỗ (không thêm migration mới) vì bản cũ chưa từng apply ngoài local/CI (không có trên `main`, không có đường deploy chạy migration).
+>
+> Rate limit `me-link` 5/10 phút per account + `me-link-ip` 20/10 phút; copy UI ghi đúng **10 phút**. Cài đặt: `0054` + `infra/postgres-init/03-identity-definer.sql` + `packages/db/src/identity-link-web.ts` + `apps/web/app/api/me/link/route.ts`.
+
 P4.6 `/myclubs` consumes `resolvePersonSelf`; it is not part of P3.5 rollout.
 
 ### Request/Response Examples
@@ -477,6 +485,7 @@ Metrics: person/channel creation, merge success/failure by method, claim rejecti
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-14 | v1.16 | **DD-127 / DD-131 OD-3 (`decisions.md`, đang chờ merge ở PR #51), chọn (a):** §7 thêm quy tắc MVP link web ⇄ Zalo khi Person rỗng (bản đề xuất đã gỡ khỏi spec ở PR #49 round 1 vì chưa ký). Owner definer `0054` = role mới `identity_definer` (BYPASSRLS qua bracket `SET ROLE`, `infra/postgres-init/03-identity-definer.sql` qua `pnpm db:bootstrap`, cùng pattern `job_definer`/`chat_definer`); `0054` sửa tại chỗ, DB local đã apply bản cũ phải `pnpm db:reset:test`; R1 trên DO ngoài scope; copy UI rate-limit ghi 10 phút. Không thêm bảng/cột. |
 | 2026-08-25 | v1.15 | **Vá wording theo DD-50 amendment (owner 2026-08-25; bản vá được amendment xếp hàng cho phiên docs — lane `identity-account-link-core` cố ý không tự sửa spec Reviewed):** §Account-backed link resolver bước 3 — predicate "verified Account" phase-1 = **≥1 `account_emails.verified_at IS NOT NULL`** (verified email theo DD-50), **KHÔNG** phải literal cũ "≥1 verified account identity" (wording drift từ trước DD-37/trước khi `account_emails` migration `0016` tồn tại; legacy `account_identities` chỉ do luồng Telegram cũ ghi, không tính). Correction của quyết định đã chốt, không phải quyết định mới — theo tiền lệ `docs-billing-authz-signature-reconcile`. Shape truy cập giữ nguyên §2/§4 (SECURITY DEFINER function-only). |
 | 2026-08-10 | v1.14 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/identity model. |
 | 2026-07-28 | v1.13 | Mirror DD-32 Option D: add narrow Account-backed channel-link resolver, binding-version recheck and explicit provider-subject separation for pay-later qualification. No runtime/migration. |

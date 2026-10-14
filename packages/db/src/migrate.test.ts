@@ -14,11 +14,15 @@ import {
 import {
   acquireChatDefinerLock,
   bootstrapChatDefiner,
+  bootstrapIdentityDefiner,
   bootstrapJobDefiner,
   ensureChatDefinerMembershipRevoked,
+  ensureDefinerMembershipRevoked,
   restoreChatDefinerMembership,
+  restoreDefinerMembership,
   revokeAllChatDefinerMembers,
   revokeStaleChatDefinerMembership,
+  revokeStaleDefinerMembership,
   setupNonSuperuserOwnerContext,
   withChatDefinerLock,
   withJobDefinerLock,
@@ -363,6 +367,7 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
     await admin.query(`CREATE ROLE ${owner} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD 'x'`);
     await admin.query(`CREATE DATABASE ${db} OWNER ${owner}`);
     let revokedChatDefinerMembers: string[] = [];
+    let revokedIdentityDefinerMembers: string[] = [];
     // Held from the revoke below through the restore in the outer finally, as ONE continuous
     // critical section (codex round-05 [P1] — two separate withChatDefinerLock calls, one for
     // revoke+bootstrap+migrate and a second, later one for the restore, left a real window in
@@ -398,6 +403,19 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
       } finally {
         await admin.query(`RESET chat_definer_bootstrap.migration_role`);
       }
+      // 0054 creates its function inside SET ROLE identity_definer: same one-member dance, same lock
+      // (setupNonSuperuserOwnerContext does the identical thing in bootstrapChatDefinerForOwner).
+      revokedIdentityDefinerMembers = await revokeStaleDefinerMembership(
+        admin,
+        "identity_definer",
+        owner,
+      );
+      await admin.query(`SET identity_definer_bootstrap.migration_role = '${owner}'`);
+      try {
+        await bootstrapIdentityDefiner(admin);
+      } finally {
+        await admin.query(`RESET identity_definer_bootstrap.migration_role`);
+      }
       const res = await migrate(url(db, owner, "x"));
       expect(res.applied.length).toBe(MIGRATION_COUNT);
     } finally {
@@ -422,9 +440,18 @@ describe("BR-3 role ensure is gated + only creates genuinely-absent roles", () =
           // restoring, so a failed DROP ROLE can never leave both owner AND the restored
           // predecessor as simultaneous members (mirrors the identical fix in test-harness.ts's
           // teardown()).
-          await ensureChatDefinerMembershipRevoked(admin, owner);
-          if (revokedChatDefinerMembers.length > 0) {
-            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+          try {
+            await ensureChatDefinerMembershipRevoked(admin, owner);
+            if (revokedChatDefinerMembers.length > 0) {
+              await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+            }
+          } finally {
+            await ensureDefinerMembershipRevoked(admin, "identity_definer", owner);
+            await restoreDefinerMembership(
+              admin,
+              "identity_definer",
+              revokedIdentityDefinerMembers,
+            );
           }
         }
       } finally {
@@ -3038,6 +3065,48 @@ const CHAT_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   "postgres-init",
   "02-chat-definer.sql",
 );
+
+describe("03-identity-definer.sql mirrors 02-chat-definer.sql (DD-127 / DD-131 OD-3)", () => {
+  it("is 02 statement for statement, with only the role name, GUC and in-script lock key swapped", async () => {
+    // Comments dropped and whitespace trimmed; the GUC is `<role>_bootstrap.migration_role`, so the
+    // role swap covers it. Equal text means every 02 bootstrap test in this file also covers 03.
+    // A `--` only starts a comment OUTSIDE a single-quoted literal: several RAISE texts contain
+    // " -- ", and a plain /--.*$/ would cut them (and their closing quote) out of the comparison.
+    const stripComment = (line: string) => {
+      let quoted = false;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === "'") quoted = !quoted;
+        else if (!quoted && line.startsWith("--", i)) return line.slice(0, i);
+      }
+      return line;
+    };
+    const norm = (sql: string, role: string, lockKey: string) =>
+      sql
+        .split("\n")
+        .map((line) => stripComment(line).trim())
+        .filter(Boolean)
+        .join("\n")
+        .replaceAll(role, "DEFINER")
+        .replaceAll(lockKey, "LOCK_KEY");
+    const chat = norm(
+      await actualFsPromises.readFile(CHAT_DEFINER_BOOTSTRAP_SQL_PATH, "utf8"),
+      "chat_definer",
+      "1667525739",
+    );
+    const identity = norm(
+      await actualFsPromises.readFile(
+        path.join(path.dirname(CHAT_DEFINER_BOOTSTRAP_SQL_PATH), "03-identity-definer.sql"),
+        "utf8",
+      ),
+      "identity_definer",
+      "1768189035",
+    );
+    expect(identity).toContain("CREATE ROLE DEFINER");
+    // Proves the literal-aware stripping kept a RAISE text whole past its own " -- ".
+    expect(identity).toContain("DEGRADED -- cannot acquire the cluster-wide serialization lock");
+    expect(identity).toBe(chat);
+  });
+});
 
 async function hideRealChatDefiner(superuser: pg.Client, fn: () => Promise<void>): Promise<void> {
   const existing = await superuser.query(`SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`);

@@ -68,6 +68,23 @@ const personRow = async (id: string) =>
 const ciPerson = async (id: string) =>
   (await ctx.owner.query(`SELECT person_id FROM channel_identities WHERE id = $1`, [id])).rows[0]
     .person_id as string;
+const blockingTables = async (accountId: string) =>
+  (
+    await ctx.owner.query(
+      `SELECT detail FROM routing_audit WHERE action = 'identity.link_requires_review' AND actor_id = $1`,
+      [accountId],
+    )
+  ).rows[0].detail.blocking_tables as string[];
+/** requires_review moved nothing: identity still on the Zalo person, which is active and untombstoned. */
+async function expectNothingMoved(zalo: { personId: string; ciId: string }) {
+  expect(await ciPerson(zalo.ciId)).toBe(zalo.personId);
+  expect((await personRow(zalo.personId)).status).toBe("active");
+  const n = await ctx.owner.query(
+    `SELECT count(*) AS n FROM merge_tombstones WHERE old_person_id = $1`,
+    [zalo.personId],
+  );
+  expect(Number(n.rows[0].n)).toBe(0);
+}
 const auditCount = async (action: string, accountId: string) =>
   Number(
     (
@@ -196,20 +213,127 @@ describe("linkZaloToAccount - refusals", () => {
     expect(detail.blocking_tables).toContain("memberships.person_id");
   });
 
-  it("a table that only exists in the future and references persons also blocks (dynamic scan)", async () => {
+  it("a table added after 0054 that references persons blocks until it grants identity_definer its FK column, then counts rows (dynamic scan)", async () => {
     await ctx.owner.query(
-      `CREATE TABLE IF NOT EXISTS zz_future_person_ref (id serial PRIMARY KEY, person_id uuid NOT NULL REFERENCES persons(id))`,
+      `CREATE TABLE zz_future_person_ref (id serial PRIMARY KEY, person_id uuid NOT NULL REFERENCES persons(id))`,
     );
+    try {
+      // No grant yet: unprovable, so even with ZERO rows the Person is not "empty".
+      const web = await webUser();
+      const zalo = await zaloUser();
+      const issued = await issueFor(zalo.ciId);
+      expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+        outcome: "requires_review",
+      });
+      expect(await blockingTables(web.accountId)).toContain("zz_future_person_ref.person_id");
+      await expectNothingMoved(zalo);
+
+      // The grant a later migration owes: now an empty Person links, and a row blocks again.
+      await ctx.owner.query(`GRANT SELECT (person_id) ON zz_future_person_ref TO identity_definer`);
+      const web2 = await webUser();
+      const empty = await zaloUser();
+      expect(
+        await linkZaloToAccount(
+          ctx.appPool,
+          (await issueFor(empty.ciId)).code,
+          web2.accountId,
+          keys,
+        ),
+      ).toEqual({ outcome: "linked" });
+      const web3 = await webUser();
+      const used = await zaloUser();
+      await ctx.owner.query(`INSERT INTO zz_future_person_ref (person_id) VALUES ($1)`, [
+        used.personId,
+      ]);
+      expect(
+        await linkZaloToAccount(
+          ctx.appPool,
+          (await issueFor(used.ciId)).code,
+          web3.accountId,
+          keys,
+        ),
+      ).toEqual({ outcome: "requires_review" });
+      await expectNothingMoved(used);
+    } finally {
+      await ctx.owner.query(`DROP TABLE zz_future_person_ref`);
+    }
+  });
+
+  it("a composite FK onto persons is unprovable even when readable and empty", async () => {
+    await ctx.owner.query(
+      `ALTER TABLE persons ADD CONSTRAINT zz_persons_id_status_key UNIQUE (id, status)`,
+    );
+    try {
+      await ctx.owner.query(
+        `CREATE TABLE zz_composite_person_ref (person_id uuid, person_status text,
+           FOREIGN KEY (person_id, person_status) REFERENCES persons (id, status))`,
+      );
+      await ctx.owner.query(`GRANT SELECT ON zz_composite_person_ref TO identity_definer`);
+      const web = await webUser();
+      const zalo = await zaloUser();
+      const issued = await issueFor(zalo.ciId);
+      expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+        outcome: "requires_review",
+      });
+      expect(await blockingTables(web.accountId)).toContain("zz_composite_person_ref.person_id");
+      await expectNothingMoved(zalo);
+    } finally {
+      await ctx.owner.query(`DROP TABLE IF EXISTS zz_composite_person_ref`);
+      await ctx.owner.query(`ALTER TABLE persons DROP CONSTRAINT zz_persons_id_status_key`);
+    }
+  });
+
+  it("a referencing table the definer cannot reach (no schema USAGE) fails closed: the call raises, nothing moves, no audit row", async () => {
+    // The column grant makes the prediction say "provable", but schema USAGE is missing, so the
+    // count itself is a read error. The definer has no exception handler: the call aborts whole.
+    await ctx.owner.query(`CREATE SCHEMA zz_unreachable`);
+    try {
+      await ctx.owner.query(
+        `CREATE TABLE zz_unreachable.person_ref (person_id uuid REFERENCES public.persons (id))`,
+      );
+      await ctx.owner.query(
+        `GRANT SELECT (person_id) ON zz_unreachable.person_ref TO identity_definer`,
+      );
+      const web = await webUser();
+      const zalo = await zaloUser();
+      const issued = await issueFor(zalo.ciId);
+      await expect(
+        linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys),
+      ).rejects.toMatchObject({ code: "42501" });
+      await expectNothingMoved(zalo);
+      expect(await auditCount("identity.link_requires_review", web.accountId)).toBe(0);
+      expect(await auditCount("identity.link_reparented", web.accountId)).toBe(0);
+    } finally {
+      await ctx.owner.query(`DROP SCHEMA zz_unreachable CASCADE`);
+    }
+  });
+
+  it("defence branch: an identity_definer without BYPASSRLS finds FORCE-RLS references unprovable and moves nothing", async () => {
     const web = await webUser();
     const zalo = await zaloUser();
-    await ctx.owner.query(`INSERT INTO zz_future_person_ref (person_id) VALUES ($1)`, [
-      zalo.personId,
-    ]);
     const issued = await issueFor(zalo.ciId);
-    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
-      outcome: "requires_review",
-    });
-    expect((await personRow(zalo.personId)).status).toBe("active");
+    await ctx.owner.query(`UPDATE link_codes SET consumed_at = now() WHERE id = $1`, [
+      issued.linkCodeId,
+    ]);
+    // ALTER ROLE is transactional: the drift exists only inside this rolled-back transaction, so no
+    // other connection (or parallel test file) ever sees identity_definer without BYPASSRLS.
+    await ctx.owner.query("BEGIN");
+    try {
+      await ctx.owner.query("ALTER ROLE identity_definer NOBYPASSRLS");
+      const { rows } = await ctx.owner.query(
+        `SELECT outcome FROM link_code_reparent_empty_person($1, $2)`,
+        [issued.linkCodeId, web.accountId],
+      );
+      expect(rows[0].outcome).toBe("requires_review");
+      expect(await blockingTables(web.accountId)).toContain("memberships.person_id");
+    } finally {
+      await ctx.owner.query("ROLLBACK");
+    }
+    await expectNothingMoved(zalo);
+    const role = await ctx.owner.query(
+      `SELECT rolbypassrls FROM pg_roles WHERE rolname = 'identity_definer'`,
+    );
+    expect(role.rows[0].rolbypassrls).toBe(true);
   });
 
   it("a source person that already owns an account is requires_review", async () => {
@@ -332,6 +456,18 @@ describe("linkZaloToAccount - refusals", () => {
     expect(await reparent(randomUUID(), web.accountId)).toBe("invalid");
     expect(await ciPerson(zalo.ciId)).toBe(zalo.personId);
   });
+
+  it("a code consumed 9 minutes ago is still inside the 10 minute replay window and links", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    const issued = await issueFor(zalo.ciId);
+    await ctx.owner.query(
+      `UPDATE link_codes SET consumed_at = now() - interval '9 minutes' WHERE id = $1`,
+      [issued.linkCodeId],
+    );
+    expect(await reparent(issued.linkCodeId, web.accountId)).toBe("consumed");
+    expect(await ciPerson(zalo.ciId)).toBe(web.personId);
+  });
 });
 
 describe("concurrency", () => {
@@ -368,6 +504,66 @@ describe("concurrency", () => {
   });
 });
 
+/** app's own view of memberships for one person: tenant GUC set (SET LOCAL semantics) or none. */
+async function appMembershipCount(personId: string, tenantId: string | null): Promise<number> {
+  const c = await ctx.appPool.connect();
+  try {
+    await c.query("BEGIN");
+    if (tenantId) await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+    const { rows } = await c.query(
+      `SELECT count(*)::int AS n FROM memberships WHERE person_id = $1`,
+      [personId],
+    );
+    await c.query("COMMIT");
+    return rows[0].n as number;
+  } catch (error) {
+    await c.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    c.release();
+  }
+}
+
+describe("cross-tenant RLS is unchanged by the BYPASSRLS definer owner", () => {
+  it("the definer counts a tenant-B membership (requires_review), while app reads it only inside tenant B and still cannot write across", async () => {
+    const web = await webUser();
+    const zalo = await zaloUser();
+    await ctx.owner.query(`INSERT INTO memberships (tenant_id, person_id) VALUES ($1, $2)`, [
+      ctx.tenantB,
+      zalo.personId,
+    ]);
+    const issued = await issueFor(zalo.ciId);
+    expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+      outcome: "requires_review",
+    });
+    await expectNothingMoved(zalo);
+
+    // The bypass lives in the function owner only: app is still bound by tenant isolation.
+    expect(await appMembershipCount(zalo.personId, ctx.tenantB)).toBe(1);
+    expect(await appMembershipCount(zalo.personId, ctx.tenantA)).toBe(0);
+    expect(await appMembershipCount(zalo.personId, null)).toBe(0);
+    const c = await ctx.appPool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      await expect(
+        c.query(`INSERT INTO memberships (tenant_id, person_id) VALUES ($1, $2)`, [
+          ctx.tenantB,
+          zalo.personId,
+        ]),
+      ).rejects.toThrow(/row-level security/i);
+    } finally {
+      await c.query("ROLLBACK");
+      c.release();
+    }
+    const flags = await ctx.owner.query(
+      `SELECT relrowsecurity AS rls, relforcerowsecurity AS force FROM pg_class
+        WHERE oid = 'public.memberships'::regclass`,
+    );
+    expect(flags.rows[0]).toEqual({ rls: true, force: true });
+  });
+});
+
 describe("0054 definer ACL and hardening", () => {
   const sig = "link_code_reparent_empty_person(uuid, uuid)";
   it("EXECUTE for app only; not PUBLIC, app_worker or readonly", async () => {
@@ -387,5 +583,81 @@ describe("0054 definer ACL and hardening", () => {
     );
     expect(rows[0].prosecdef).toBe(true);
     expect(rows[0].proconfig).toContain("search_path=pg_catalog, public, pg_temp");
+  });
+
+  it("is owned by identity_definer, which owns nothing else and keeps no schema CREATE", async () => {
+    // pg_shdepend 'o' rows = every object a role owns: here (this database + shared objects) only
+    // the function. Other test databases on the cluster own their own copy, hence the dbid filter.
+    const owned = await ctx.owner.query(
+      `SELECT pg_describe_object(d.classid, d.objid, d.objsubid) AS obj
+         FROM pg_shdepend d
+        WHERE d.refclassid = 'pg_authid'::regclass AND d.deptype = 'o'
+          AND d.refobjid = 'identity_definer'::regrole
+          AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))`,
+    );
+    expect(owned.rows).toEqual([{ obj: "function link_code_reparent_empty_person(uuid,uuid)" }]);
+    const { rows } = await ctx.owner.query(
+      `SELECT has_schema_privilege('identity_definer', 'public', 'CREATE') AS can_create`,
+    );
+    expect(rows[0].can_create).toBe(false);
+  });
+
+  it("identity_definer is NOLOGIN BYPASSRLS NOINHERIT and unreachable from the runtime roles", async () => {
+    const attrs = await ctx.owner.query(
+      `SELECT rolsuper, rolcanlogin, rolbypassrls, rolinherit, rolcreaterole, rolcreatedb, rolreplication
+         FROM pg_roles WHERE rolname = 'identity_definer'`,
+    );
+    expect(attrs.rows[0]).toEqual({
+      rolsuper: false,
+      rolcanlogin: false,
+      rolbypassrls: true,
+      rolinherit: false,
+      rolcreaterole: false,
+      rolcreatedb: false,
+      rolreplication: false,
+    });
+    const reach = await ctx.owner.query(
+      `SELECT r AS role, pg_has_role(r, 'identity_definer', 'MEMBER') AS member
+         FROM unnest(ARRAY['app', 'app_worker', 'readonly']) AS r ORDER BY r`,
+    );
+    expect(reach.rows).toEqual([
+      { role: "app", member: false },
+      { role: "app_worker", member: false },
+      { role: "readonly", member: false },
+    ]);
+    // ...and identity_definer itself inherits nothing: it is a member of no role.
+    const memberOf = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM pg_auth_members WHERE member = 'identity_definer'::regrole`,
+    );
+    expect(memberOf.rows[0].n).toBe(0);
+    const app = await ctx.appPool.connect();
+    try {
+      await expect(app.query(`SET ROLE identity_definer`)).rejects.toMatchObject({
+        code: "42501",
+      });
+    } finally {
+      app.release();
+    }
+    // The function is the ONLY path: app holds no direct privilege on anything the definer touches.
+    const direct = await ctx.owner.query(
+      `SELECT t FROM unnest(ARRAY['persons', 'accounts', 'channel_identities', 'link_codes',
+                                  'merge_audit', 'merge_tombstones', 'routing_audit']) AS t
+        WHERE has_any_column_privilege('app', t, 'SELECT, INSERT, UPDATE, REFERENCES')
+           OR has_table_privilege('app', t, 'DELETE, TRUNCATE, TRIGGER')`,
+    );
+    expect(direct.rows).toEqual([]);
+  });
+
+  it("can read the FK column of every single-column FK onto persons (a later migration owes its own grant)", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT c.relname || '.' || a.attname AS fk
+         FROM pg_constraint con
+         JOIN pg_class c ON c.oid = con.conrelid
+         JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+        WHERE con.contype = 'f' AND con.confrelid = 'public.persons'::regclass
+          AND array_length(con.conkey, 1) = 1
+          AND NOT has_column_privilege('identity_definer', c.oid, a.attnum, 'SELECT')`,
+    );
+    expect(rows).toEqual([]);
   });
 });

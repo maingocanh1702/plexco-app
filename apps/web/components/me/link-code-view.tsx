@@ -58,8 +58,8 @@ function statusText(state: LinkUiState, pick: (vi: string, en: string) => string
       return [
         problem,
         pick(
-          "Bạn đã thử quá nhiều lần. Hãy đợi vài phút rồi thử lại.",
-          "Too many attempts. Wait a few minutes and try again.",
+          "Bạn đã thử quá nhiều lần. Hãy đợi 10 phút rồi thử lại.",
+          "Too many attempts. Wait 10 minutes and try again.",
         ),
       ];
     case "unavailable":

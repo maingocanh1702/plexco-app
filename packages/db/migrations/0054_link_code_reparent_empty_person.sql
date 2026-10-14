@@ -23,37 +23,122 @@
 --     or source Person not active                              invalid
 --   source Person = target Person                              same_person
 --   source Person referenced by ANY row beyond its one Zalo
---     identity (and its own link_codes)                        requires_review + one routing_audit row
+--     identity (and its own link_codes), or by a column the
+--     owner cannot provably read (see EMPTINESS)               requires_review + one routing_audit row
+--   a referencing table the owner cannot reach (read error)    RAISE (the call aborts, nothing written)
 --   otherwise                                                  consumed: identity moved, source tombstoned
 --                                                              (persons.status merged + merged_into),
 --                                                              merge_audit + merge_tombstones rows,
 --                                                              source's live codes revoked, audit row
 --
+-- OWNER: identity_definer (NOLOGIN NOSUPERUSER BYPASSRLS NOINHERIT), pre-provisioned outside the
+-- runner by infra/postgres-init/03-identity-definer.sql (`pnpm db:bootstrap`). Step 1 below only
+-- ASSERTS it; the function is created inside a SET ROLE identity_definer bracket (the 0022/0032
+-- idiom: works for a NOINHERIT migration role too), so BYPASSRLS belongs to the function owner and
+-- never depends on what the migration role happens to be. Rule: DD-127 / DD-131 OD-3 (decisions.md,
+-- pending in PR #51), option (a), signed 2026-10-14. R1 (a managed host refusing a BYPASSRLS role)
+-- is out of scope per that same OD-3.
+-- identity_definer's privileges are only what the body uses: table-level SELECT/UPDATE on the four
+-- tables it reads and locks (accounts, persons, channel_identities, link_codes), INSERT on the three
+-- audit tables (+ SELECT (id) on merge_audit for RETURNING), and SELECT on the FK column of every
+-- single-column FK onto persons as of this migration (the emptiness scan, granted dynamically in
+-- step 2). Nothing is owned by it but this function; `app` only gets EXECUTE and is never a member.
+--
 -- EMPTINESS IS DYNAMIC. Every foreign key whose referenced table is persons is read from pg_constraint
 -- and counted with EXECUTE format(). A table added in a later migration that references persons makes
 -- the Person non-empty (fail closed) without anyone remembering to edit this function. Allowed rows:
 -- channel_identities.person_id = exactly 1 (the identity being moved) and link_codes.source_person_id
--- (any, revoked). A composite FK onto persons, or a table whose RLS this function's owner cannot
--- read through (FORCE RLS, owner neither superuser nor BYPASSRLS: a count would silently read 0),
--- is UNPROVABLE and therefore blocking. The function also pins `row_security = off`, so a table
+-- (any, revoked). UNPROVABLE, therefore blocking: a composite FK onto persons; an FK column the owner
+-- has no SELECT on (every FK a LATER migration adds, until that migration runs `GRANT SELECT (<col>)
+-- ON <table> TO identity_definer`; the identity-link-web suite's grant-coverage test stays red until
+-- it does); and a table whose RLS the owner cannot read through (owner neither superuser nor
+-- BYPASSRLS: a count would silently read 0). FORCE RLS is no obstacle to a BYPASSRLS owner: a
+-- tenant-table reference is COUNTED, never guessed. A read the prediction does not cover (e.g. a
+-- referencing table in a schema the owner has no USAGE on) RAISES: there is no exception handler, so
+-- the call aborts with nothing written. The function also pins `row_security = off`, so a table
 -- wrongly predicted "provable" RAISES (a row-security error) instead of silently counting 0.
--- ponytail: with a NOBYPASSRLS owner every Person is non-empty (tenant tables are FORCE RLS), so
--- linking degrades to requires_review everywhere until the migration owner can bypass RLS or a
--- per-tenant scan is added; that is fail closed, never a false "empty". Measured: the test suite
--- migrates as a superuser, so the bypass branch is the one proven by default; the fail-closed branch
--- has its own regression test (setupNonSuperuserOwnerContext). Current production shape: the managed
--- host's admin role is documented as "Bypass RLS" and able to create BYPASSRLS roles
--- (infra/postgres-init/01-job-definer.sql, confirmed 2026-08-05), so the bypass branch is the real
--- one there; the fail-closed branch is documented defence.
+-- The RLS branch is the documented DEFENCE branch, no longer the expected shape: it is reached only
+-- if identity_definer loses BYPASSRLS, and then every Person with a FORCE-RLS reference reads
+-- non-empty (requires_review), never a false "empty"; it keeps its own regression test.
 --
 -- LOCK ORDER matches 0043: accounts -> persons (UUID-sorted) -> channel_identities -> link_codes.
 -- merge_audit snapshots are NOT NULL; this path stores ids + reason only (no PII), as plain JSON
 -- bytes, not encrypted. The real merge planner owns encrypted snapshots.
--- The empty-Person rule is proposed as DD-127 (ledger PR), pending owner sign-off.
 -- merge_audit rows with reason_code = 'link_code_empty_reparent' carry plaintext id-only JSON snapshots.
 -- routing_audit is written directly: routing_audit_append (0053) allowlists a single action and
 -- demands a tenant GUC, and linking is tenant-less.
+-- Edited in place on 2026-10-14 (OD-3) instead of superseded: the earlier text was never applied
+-- outside local/CI databases (never on main, and no deploy path runs migrations), so P17's
+-- forward-only rule protects no shared database. A local database that applied the earlier text
+-- fails migrate()'s sha256 guard: reset it with `pnpm db:reset:test`.
 -- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- Step 1: assert identity_definer (exists, exact attributes, the migration role is a member, no
+-- runtime role is) BEFORE any grant below. Mirrors 0022 step 1 for job_definer.
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE r record;
+BEGIN
+  SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolreplication
+    INTO r
+    FROM pg_roles WHERE rolname = 'identity_definer';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION
+      'link_code_reparent_empty_person: identity_definer role does not exist — run `pnpm db:bootstrap` first'
+      USING ERRCODE = 'undefined_object';
+  END IF;
+  IF r.rolsuper OR r.rolcanlogin OR NOT r.rolbypassrls OR r.rolcreatedb
+     OR r.rolcreaterole OR r.rolinherit OR r.rolreplication THEN
+    RAISE EXCEPTION
+      'link_code_reparent_empty_person: identity_definer has unexpected attributes (need exactly NOLOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION)'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF NOT pg_has_role(current_user, 'identity_definer', 'MEMBER') THEN
+    RAISE EXCEPTION
+      'link_code_reparent_empty_person: migration role % is not a member of identity_definer — run `pnpm db:bootstrap` first',
+      current_user
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF pg_has_role('app', 'identity_definer', 'MEMBER')
+     OR pg_has_role('app_worker', 'identity_definer', 'MEMBER')
+     OR pg_has_role('readonly', 'identity_definer', 'MEMBER') THEN
+    RAISE EXCEPTION
+      'link_code_reparent_empty_person: identity_definer must not be granted to app/app_worker/readonly — review and revoke it before proceeding'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Step 2: the privileges the body uses (see OWNER), granted by the migration role, which owns
+-- every table. Schema CREATE is transient: revoked right after the bracket (step 3).
+-- ---------------------------------------------------------------------------
+GRANT USAGE, CREATE ON SCHEMA public TO identity_definer;
+GRANT SELECT, UPDATE ON accounts, persons, channel_identities, link_codes TO identity_definer;
+GRANT INSERT ON merge_audit, merge_tombstones, routing_audit TO identity_definer;
+GRANT SELECT (id) ON merge_audit TO identity_definer;
+DO $$
+DECLARE f record;
+BEGIN
+  FOR f IN
+    SELECT con.conrelid::regclass AS rel, a.attname AS col
+      FROM pg_catalog.pg_constraint con
+      JOIN pg_catalog.pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+     WHERE con.contype = 'f' AND con.confrelid = 'public.persons'::regclass
+       AND array_length(con.conkey, 1) = 1
+  LOOP
+    EXECUTE format('GRANT SELECT (%I) ON %s TO identity_definer', f.col, f.rel);
+  END LOOP;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Step 3: create the function AS identity_definer (it becomes the owner), then restore least
+-- privilege. ACL statements run inside the bracket: only the owner may change them, and a
+-- NOINHERIT migration role does not hold the owner's privileges.
+-- ---------------------------------------------------------------------------
+SET ROLE identity_definer;
 
 CREATE FUNCTION link_code_reparent_empty_person(p_link_code_id uuid, p_account_id uuid)
 RETURNS TABLE (outcome text, channel_identity_id uuid)
@@ -145,7 +230,8 @@ BEGIN
   FOR f IN
     SELECT n.nspname AS sch, c.relname AS rel, a.attname AS col,
            array_length(con.conkey, 1) AS ncols,
-           (c.relrowsecurity AND NOT v_bypass AND (c.relforcerowsecurity OR c.relowner <> v_owner)) AS unprovable
+           ((c.relrowsecurity AND NOT v_bypass AND (c.relforcerowsecurity OR c.relowner <> v_owner))
+            OR NOT pg_catalog.has_column_privilege(c.oid, a.attnum, 'SELECT')) AS unprovable
       FROM pg_catalog.pg_constraint con
       JOIN pg_catalog.pg_class c ON c.oid = con.conrelid
       JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -202,3 +288,5 @@ END;
 $$;
 REVOKE ALL ON FUNCTION link_code_reparent_empty_person(uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION link_code_reparent_empty_person(uuid, uuid) TO app;
+RESET ROLE;
+REVOKE CREATE ON SCHEMA public FROM identity_definer;

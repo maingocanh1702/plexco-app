@@ -65,6 +65,11 @@ describe("LinkCodeView", () => {
     expect(render("linked")).not.toContain("aria-invalid");
   });
 
+  it("rate_limited states the real 10 minute window (me-link buckets are 600 s), not a vague wait", () => {
+    expect(render("rate_limited", "en")).toContain("Wait 10 minutes");
+    expect(render("rate_limited", "vi")).toContain("đợi 10 phút");
+  });
+
   it("requires_review explains support must merge", () => {
     expect(render("requires_review", "en")).toContain("cannot be linked automatically");
     expect(render("requires_review", "vi")).toContain("gộp thủ công");

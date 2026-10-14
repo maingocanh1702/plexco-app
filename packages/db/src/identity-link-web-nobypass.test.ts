@@ -10,10 +10,11 @@ import {
 } from "./test-harness.js";
 
 /**
- * 0054 measured under a NOSUPERUSER NOBYPASSRLS owner (the rest of the suite migrates as a
- * superuser, so only the bypass branch is proven there). Tenant tables are FORCE RLS, so a count
- * made by the definer with no tenant GUC would read 0 for a Person that HAS a membership: the
- * "never a false empty" proof is that the link is refused anyway.
+ * 0054 under a NOSUPERUSER NOBYPASSRLS migration owner (the rest of the suite migrates as a
+ * superuser). Tenant tables are FORCE RLS, so the migration owner itself, with no tenant GUC, reads
+ * 0 rows. The function is owned by identity_definer (BYPASSRLS, created inside 0054's SET ROLE
+ * bracket; DD-127 / DD-131 OD-3), so its scan reads those tables for real: an EMPTY Person links,
+ * and a Person with a membership is refused because the membership is COUNTED.
  */
 let ns: NonSuperuserOwnerContext;
 let app: pg.Pool;
@@ -40,26 +41,76 @@ afterAll(async () => {
   await ns?.teardown();
 });
 
-describe("0054 under a NOBYPASSRLS owner", () => {
-  it("a Person with a membership is requires_review: the owner cannot read memberships (0 rows) yet nothing moves", async () => {
+async function seedLinkPair(
+  tag: string,
+): Promise<{ web: string; accountId: string; zalo: string; ciId: string }> {
+  const web = (await su.query(`INSERT INTO persons (display_name) VALUES ('Web') RETURNING id`))
+    .rows[0].id as string;
+  const accountId = (
+    await su.query(`INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`, [web])
+  ).rows[0].id as string;
+  const zalo = (await su.query(`INSERT INTO persons (display_name) VALUES ('Zalo') RETURNING id`))
+    .rows[0].id as string;
+  const ciId = randomUUID();
+  await su.query(
+    `INSERT INTO channel_identities (id, person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
+     VALUES ($1, $2, 'zalo', $3, $4, 'active')`,
+    [ciId, zalo, Buffer.from("x"), `${tag}-${ciId}`],
+  );
+  return { web, accountId, zalo, ciId };
+}
+
+describe("0054 under a NOBYPASSRLS migration owner", () => {
+  it("an EMPTY Zalo Person links: the identity moves, the source is tombstoned, audit rows are written", async () => {
+    // The premise, measured: neither the migration owner nor the caller can bypass RLS.
+    const roles = await su.query(
+      `SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname IN ($1, 'app') ORDER BY rolname`,
+      [ns.ownerRole],
+    );
+    expect(roles.rows).toEqual([
+      { rolname: "app", rolsuper: false, rolbypassrls: false },
+      { rolname: ns.ownerRole, rolsuper: false, rolbypassrls: false },
+    ]);
+    const { web, accountId, zalo, ciId } = await seedLinkPair("nb-empty");
+
+    // Behaviour first: under the pre-OD-3 owner (the NOBYPASSRLS migration role) this was
+    // requires_review, because every FORCE-RLS reference onto persons was unprovable.
+    const issued = await issueLinkCode(app, { channelIdentityId: ciId }, keys);
+    expect(await linkZaloToAccount(app, issued.code, accountId, keys)).toEqual({
+      outcome: "linked",
+    });
+    const owner = await su.query(
+      `SELECT pg_get_userbyid(proowner) AS owner FROM pg_proc
+        WHERE oid = 'link_code_reparent_empty_person(uuid, uuid)'::regprocedure`,
+    );
+    expect(owner.rows[0].owner).toBe("identity_definer");
+
+    const ci = await su.query(`SELECT person_id FROM channel_identities WHERE id = $1`, [ciId]);
+    expect(ci.rows[0].person_id).toBe(web);
+    const p = await su.query(`SELECT status, merged_into_person_id FROM persons WHERE id = $1`, [
+      zalo,
+    ]);
+    expect(p.rows[0]).toEqual({ status: "merged", merged_into_person_id: web });
+    const tomb = await su.query(
+      `SELECT a.reason_code FROM merge_tombstones t JOIN merge_audit a ON a.id = t.merge_audit_id
+        WHERE t.old_person_id = $1`,
+      [zalo],
+    );
+    expect(tomb.rows).toEqual([{ reason_code: "link_code_empty_reparent" }]);
+    const audit = await su.query(
+      `SELECT count(*) AS n FROM routing_audit WHERE action = 'identity.link_reparented' AND actor_id = $1`,
+      [accountId],
+    );
+    expect(Number(audit.rows[0].n)).toBe(1);
+  });
+
+  it("a Person with a membership is requires_review: the owner reads 0 memberships, the definer counts 1, nothing moves", async () => {
     const tenant = (
       await su.query(
         `INSERT INTO tenants (name, slug, status) VALUES ('NB Club', 'nb-club', 'active') RETURNING id`,
       )
     ).rows[0].id as string;
-    const web = (await su.query(`INSERT INTO persons (display_name) VALUES ('Web') RETURNING id`))
-      .rows[0].id as string;
-    const accountId = (
-      await su.query(`INSERT INTO accounts (person_id) VALUES ($1) RETURNING id`, [web])
-    ).rows[0].id as string;
-    const zalo = (await su.query(`INSERT INTO persons (display_name) VALUES ('Zalo') RETURNING id`))
-      .rows[0].id as string;
-    const ciId = randomUUID();
-    await su.query(
-      `INSERT INTO channel_identities (id, person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
-       VALUES ($1, $2, 'zalo', $3, $4, 'active')`,
-      [ciId, zalo, Buffer.from("x"), `nb-${ciId}`],
-    );
+    const { accountId, zalo, ciId } = await seedLinkPair("nb");
     await su.query(`INSERT INTO memberships (tenant_id, person_id) VALUES ($1, $2)`, [
       tenant,
       zalo,
