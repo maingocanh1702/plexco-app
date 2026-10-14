@@ -6,6 +6,7 @@ import { useLang, useT } from "../../lib/i18n-client";
 import { describeSettingsError, isForbidden } from "../../lib/settings-error-ui";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
+import { useSessionContext } from "../../lib/use-session";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
@@ -56,6 +57,7 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
   const lang = useLang();
   const online = useOnlineStatus();
   const command = useCommandId();
+  const { refresh: refreshSession } = useSessionContext();
   const formRef = useRef<HTMLFormElement>(null);
   const [card, setCard] = useState<Card>({ phase: "loading" });
   const [token, setToken] = useState("");
@@ -112,6 +114,8 @@ export function ZaloConnectCard({ tenantId, csrfToken }: { tenantId: string; csr
     setOutcome(null);
     userReload.current = true;
     setNonce((n) => n + 1);
+    // The session holds the csrfToken: after a CSRF_INVALID the next connect needs a fresh one.
+    void refreshSession();
   }
 
   async function submit(event: FormEvent) {

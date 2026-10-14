@@ -32,14 +32,30 @@ export class DisplayNameError extends Error {
 const HIDDEN_CHAR = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0\u2800]/u;
 
 /**
- * Same rule as 0055 person_profile_update: trimmed, 1..120 CODE POINTS, no HIDDEN_CHAR. Returns the
- * trimmed value or throws.
+ * A name needs at least one VISIBLE code point: one that is neither whitespace (`\s`, the very set
+ * trim() removes, so only an inner space is left) nor Default_Ignorable_Code_Point (`\p{DI}`, which
+ * holds every variation selector and every unassigned default-ignorable). Both render as nothing, and
+ * HIDDEN_CHAR lets variation selectors through for the character before them, so a name of them
+ * alone (U+FE0F, U+E0100, U+180B) would otherwise show blank. A combining mark draws a glyph, so it
+ * counts as visible. 0055 enumerates the same two sets (c_ws, c_visible): Default_Ignorable_Code_Point
+ * is the same 17 ranges in Unicode 16 and 17.
+ */
+const VISIBLE_CHAR = /[^\s\p{DI}]/u;
+
+/**
+ * Same rule as 0055 person_profile_update: trimmed, 1..120 CODE POINTS, no HIDDEN_CHAR, at least one
+ * VISIBLE_CHAR. Returns the trimmed value or throws.
  */
 export function validateDisplayName(raw: unknown): string {
   if (typeof raw !== "string") throw new DisplayNameError();
   const name = raw.trim();
   const length = [...name].length;
-  if (length < 1 || length > DISPLAY_NAME_MAX || HIDDEN_CHAR.test(name)) {
+  if (
+    length < 1 ||
+    length > DISPLAY_NAME_MAX ||
+    HIDDEN_CHAR.test(name) ||
+    !VISIBLE_CHAR.test(name)
+  ) {
     throw new DisplayNameError();
   }
   return name;

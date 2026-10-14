@@ -2,11 +2,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { LangProvider } from "../../lib/i18n-client";
 import type { LinkedChannelDto } from "../../lib/me-settings-client";
+import { SessionProvider } from "../../lib/use-session";
 import { SettingsChannelsList } from "./settings-channels-list";
 import { SettingsProfileForm } from "./settings-profile-form";
 
+// The channel list reloads through the session context (a CSRF_INVALID needs its fresh csrfToken);
+// a static render runs no effect, so the provider never fetches here.
 const wrap = (node: React.ReactNode, lang: "vi" | "en" = "en") =>
-  renderToStaticMarkup(<LangProvider lang={lang}>{node}</LangProvider>);
+  renderToStaticMarkup(
+    <LangProvider lang={lang}>
+      <SessionProvider>{node}</SessionProvider>
+    </LangProvider>,
+  );
 
 const CHANNELS: LinkedChannelDto[] = [
   { id: "c1", platform: "zalo", status: "active", createdAt: "2026-10-01T00:00:00Z" },

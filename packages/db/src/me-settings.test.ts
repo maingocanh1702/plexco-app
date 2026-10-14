@@ -151,12 +151,15 @@ describe("person_profile_read / person_profile_update", () => {
   }
 
   // Walked from the RUNTIME's Unicode tables, never a hand-kept copy: a Node whose Unicode grows the
-  // refused set or the ECMAScript trim set fails the two sweeps below until BOTH validators' lists
-  // grow (validateDisplayName's HIDDEN_CHAR and 0055's c_reject). Refused anywhere in a name: Cc, Cf,
-  // Zl, Zp, every assigned default-ignorable code point that is not a variation selector (renders as
-  // nothing), and U+2800 BRAILLE PATTERN BLANK.
+  // refused set, the ECMAScript trim set or the blank set fails the sweeps below until BOTH
+  // validators' lists grow (validateDisplayName's HIDDEN_CHAR / VISIBLE_CHAR and 0055's c_reject /
+  // c_visible). Refused anywhere in a name: Cc, Cf, Zl, Zp, every assigned default-ignorable code
+  // point that is not a variation selector (renders as nothing), and U+2800 BRAILLE PATTERN BLANK.
   const HIDDEN: number[] = [];
   const TRIMMED: number[] = [];
+  // Whitespace or Default_Ignorable_Code_Point: renders as nothing, so a name needs one code point
+  // outside this set (0055's c_visible is its complement).
+  const INVISIBLE: number[] = [];
   for (let cp = 0; cp <= 0x10ffff; cp++) {
     if (cp >= 0xd800 && cp <= 0xdfff) continue; // surrogates are not scalar values
     const c = ch(cp);
@@ -168,7 +171,12 @@ describe("person_profile_read / person_profile_update", () => {
       HIDDEN.push(cp);
     }
     if (c.trim() === "") TRIMMED.push(cp);
+    if (/^[\s\p{DI}]$/u.test(c)) INVISIBLE.push(cp);
   }
+  const hiddenSet = new Set(HIDDEN);
+  // Invisible yet not refused, so allowed after a visible character but never alone: inner
+  // whitespace, every variation selector and every unassigned default-ignorable.
+  const BLANK = INVISIBLE.filter((cp) => !hiddenSet.has(cp));
 
   const CORPUS: [string, string, boolean][] = [
     ["plain", "Lan", true],
@@ -215,6 +223,17 @@ describe("person_profile_read / person_profile_update", () => {
     ["emoji + variation selector-16 is kept", ch(0x2764) + ch(0xfe0f) + " Lan", true],
     ["Korean syllables are kept (only the fillers are refused)", "김민지", true],
     ["a non-blank Braille pattern is kept", "Lan " + ch(0x2801), true],
+    // At least one visible code point: variation selectors, unassigned default-ignorables and
+    // whitespace render as nothing, so a name of them alone would show blank.
+    ["variation selector-16 alone", ch(0xfe0f), false],
+    ["ideographic variation selector alone (astral)", ch(0xe0100), false],
+    ["Mongolian free variation selector alone", ch(0x180b), false],
+    ["unassigned default-ignorables alone", ch(0x2065) + ch(0xfff0) + ch(0xe0fff), false],
+    ["variation selectors around an inner space", ch(0xfe0f) + " " + ch(0xfe0f), false],
+    ["emoji + variation selector-16 alone is kept", ch(0x2764) + ch(0xfe0f), true],
+    ["CJK ideograph + ideographic variation selector is kept", ch(0x845b) + ch(0xe0100), true],
+    ["a variation selector before a visible character is kept", ch(0xfe0f) + "Lan", true],
+    ["a lone combining mark draws a glyph, so it is visible", ch(0x301), true],
   ];
   it.each(CORPUS)("validation parity TS/SQL: %s", async (_label, input, ok) => {
     const ts = tsVerdict(input);
@@ -278,6 +297,56 @@ describe("person_profile_read / person_profile_update", () => {
       if (stored !== ts || ("code" in inside && inside.code !== "22023")) {
         wrong.push(`middle ${hex(cp)}: TS ${JSON.stringify(ts)}, SQL ${JSON.stringify(inside)}`);
       }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("a name needs one visible code point: blank ones alone are refused by TS AND the definer, kept after one", async () => {
+    // 17 Zs + 260 variation selectors + 3,769 unassigned default-ignorables (Unicode 16 and 17)
+    expect(BLANK.length).toBeGreaterThanOrEqual(4046);
+    expect(BLANK).toEqual(
+      expect.arrayContaining([
+        0x20, 0xa0, 0x3000, 0x180b, 0x180f, 0xfe0f, 0xe0100, 0xe01ef, 0x2065, 0xfff0, 0xe0000,
+        0xe0fff,
+      ]),
+    );
+    expect(BLANK).not.toContain(0x301); // a combining mark draws a glyph
+    const u = await webUser("seed");
+    const wrong: string[] = [];
+    const refused = async (label: string, input: string) => {
+      if (tsVerdict(input) !== null) wrong.push(`TS accepts ${label}`);
+      const sql = await sqlVerdict(u.accountId, input);
+      if (!("code" in sql) || sql.code !== "22023") {
+        wrong.push(`SQL ${label} -> ${JSON.stringify(sql)}`);
+      }
+    };
+    const kept = async (label: string, input: string) => {
+      if (tsVerdict(input) !== input) wrong.push(`TS refuses ${label}`);
+      const sql = await sqlVerdict(u.accountId, input);
+      if (!("stored" in sql) || sql.stored !== input) {
+        wrong.push(`SQL ${label} -> ${JSON.stringify(sql)}`);
+      }
+    };
+    // trim() removes whitespace at the edges, so each one sits between two variation selectors.
+    for (const cp of BLANK.filter((c) => ch(c).trim() === "")) {
+      await refused(`VS ${hex(cp)} VS`, ch(0xfe0f) + ch(cp) + ch(0xfe0f));
+    }
+    // The rest in names of 119 code points: refused alone, stored as typed behind "a" (120 in all).
+    const rest = BLANK.filter((c) => ch(c).trim() !== "");
+    for (let i = 0; i < rest.length; i += 119) {
+      const batch = rest.slice(i, i + 119);
+      const span = `${hex(batch[0]!)}..${hex(batch[batch.length - 1]!)}`;
+      const blank = batch.map(ch).join("");
+      await refused(span, blank);
+      await kept(`a + ${span}`, "a" + blank);
+    }
+    // The code point next to each run of whitespace / default-ignorables is visible unless refused:
+    // alone it is a name on both sides, so no hand-typed 0055 range reaches past its run.
+    const invisible = new Set(INVISIBLE);
+    for (const cp of new Set(INVISIBLE.flatMap((c) => [c - 1, c + 1]))) {
+      if (cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) continue;
+      if (invisible.has(cp) || hiddenSet.has(cp)) continue;
+      await kept(hex(cp), ch(cp));
     }
     expect(wrong).toEqual([]);
   });

@@ -15,6 +15,7 @@ import { isDefiniteFailure } from "../../lib/session-error-ui";
 import type { SportDto } from "../../lib/sessions-api";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
+import { useSessionContext } from "../../lib/use-session";
 import { Button } from "../ui/button";
 import { Select } from "../ui/select";
 import { TextField } from "../ui/text-field";
@@ -39,6 +40,7 @@ export function ClubDefaultsForm({
   const lang = useLang();
   const online = useOnlineStatus();
   const command = useCommandId();
+  const { refresh: refreshSession } = useSessionContext();
   const formRef = useRef<HTMLFormElement>(null);
   const [values, setValues] = useState<DefaultsFormValues>(() =>
     defaultsValues(club, (n) => formatVndInput(n, lang)),
@@ -105,6 +107,15 @@ export function ClubDefaultsForm({
     }
   }
 
+  /**
+   * The error's "reload" action refetches the club AND the session: the session holds the
+   * csrfToken, so after a CSRF_INVALID a reload of the data alone would fail the retry again.
+   */
+  function reload() {
+    onSaved();
+    void refreshSession();
+  }
+
   return (
     <form ref={formRef} className={styles.form} onSubmit={(e) => void submit(e)} noValidate>
       <Select
@@ -147,7 +158,7 @@ export function ClubDefaultsForm({
         error={error}
         message={message}
         onRetry={() => formRef.current?.requestSubmit()}
-        onReload={onSaved}
+        onReload={reload}
       />
       <div className={styles.actions}>
         <Button type="submit" disabled={busy || !online} aria-busy={busy ? true : undefined}>

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { ClubConfigDto } from "../../lib/club-settings-client";
 import { LangProvider, makeT } from "../../lib/i18n-client";
+import { SessionProvider } from "../../lib/use-session";
 import { ClubDefaultsForm } from "./club-defaults-form";
 import { ClubProfileForm } from "./club-profile-form";
 import { FormFeedback } from "./form-feedback";
@@ -23,8 +24,14 @@ const club: ClubConfigDto = {
   defaultPriceAmount: 50000,
   defaultVisibility: "public",
 };
+// The forms reload through the session context (a CSRF_INVALID needs its fresh csrfToken); a
+// static render runs no effect, so the provider never fetches here.
 const wrap = (node: React.ReactNode, lang: "vi" | "en" = "en") =>
-  renderToStaticMarkup(<LangProvider lang={lang}>{node}</LangProvider>);
+  renderToStaticMarkup(
+    <LangProvider lang={lang}>
+      <SessionProvider>{node}</SessionProvider>
+    </LangProvider>,
+  );
 
 describe("ClubProfileForm", () => {
   it("prefills name/timezone/language and says the language is club-wide (DD-118)", () => {

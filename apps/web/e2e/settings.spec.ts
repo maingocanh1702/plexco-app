@@ -11,11 +11,15 @@ import { TENANT_ID, signIn } from "./support/session-api-mock";
  * POST connect REPLAY a processed commandId (apply nothing, answer the current state), and
  * `loseResponseNext` applies a request and then drops its response, the "uncertain failure" case.
  * `holdNext` parks the next matching request until the test releases it (a reload that lands late).
+ * Like the routes' csrfOk, a non-GET request must carry the csrfToken the session route hands out
+ * (`csrfToken`), or it is refused 403 CSRF_INVALID before anything is applied.
  */
 interface Call {
   method: string;
   path: string;
   body: Record<string, unknown> | null;
+  /** The x-csrf-token header (apiFetch sets it on every non-GET request). */
+  csrf: string | null;
 }
 
 const envelope = (data: unknown) => ({ data, error: null, meta: { requestId: "req-e2e" } });
@@ -28,6 +32,9 @@ const failure = (code: string, statusCode: number, message = "x") => ({
 const ZALO_ID = "11111111-aaaa-4aaa-8aaa-111111111111";
 const DETACH_ZALO = `/api/me/channels/${ZALO_ID}/detach`;
 const TOKEN = "super-secret-token";
+/** The CSRF secret the session starts with, and the one a test rotates it to. */
+const CSRF = "e2e-csrf-secret";
+const ROTATED_CSRF = "e2e-csrf-rotated";
 
 interface World {
   calls: Call[];
@@ -36,6 +43,11 @@ interface World {
    * lib/role-read-guard.test.ts, which is also why this field is not called `role`): the API does.
    */
   sessionRole: string;
+  /**
+   * The CSRF secret GET /api/auth/session hands out NOW. A test changes it to model a session whose
+   * secret moved on (a sign-in in another tab) while the page still holds the old one.
+   */
+  csrfToken: string;
   profile: { displayName: string | null };
   channels: { id: string; platform: string; status: string; createdAt: string }[];
   club: Record<string, unknown>;
@@ -58,6 +70,7 @@ async function install(page: Page): Promise<World> {
   const world: World = {
     calls: [],
     sessionRole: "owner",
+    csrfToken: CSRF,
     profile: { displayName: "Lan Nguyễn" },
     channels: [
       { id: ZALO_ID, platform: "zalo", status: "active", createdAt: "2026-10-01T00:00:00.000Z" },
@@ -96,7 +109,8 @@ async function install(page: Page): Promise<World> {
     const raw = request.postData();
     const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
     const path = url.pathname;
-    world.calls.push({ method, path, body });
+    const csrf = request.headers()["x-csrf-token"] ?? null;
+    world.calls.push({ method, path, body, csrf });
     const key = `${method} ${path}`;
     const held = world.holdNext.get(key);
     if (held) {
@@ -112,6 +126,9 @@ async function install(page: Page): Promise<World> {
         failure(injected.code, injected.status, injected.message),
       );
     }
+    if (method !== "GET" && csrf !== world.csrfToken) {
+      return json(route, 403, failure("CSRF_INVALID", 403));
+    }
     const answer = (status: number, payload: unknown) =>
       world.loseResponseNext.delete(key)
         ? route.abort("internetdisconnected")
@@ -123,7 +140,7 @@ async function install(page: Page): Promise<World> {
         envelope({
           personId: "p-e2e",
           expiresAt: "2099-01-01T00:00:00.000Z",
-          csrfToken: "e2e-csrf-secret",
+          csrfToken: world.csrfToken,
           tenants: [
             {
               tenantId: TENANT_ID,
@@ -208,6 +225,11 @@ const callsTo = (world: World, method: string, path: string) =>
   world.calls.filter((c) => c.method === method && c.path === path);
 const countOf = (world: World, method: string, path: string) => () =>
   callsTo(world, method, path).length;
+/** Resolves once the browser has the answer to the next GET /api/auth/session (the csrfToken). */
+const sessionRefetch = (page: Page) =>
+  page.waitForResponse((r) => new URL(r.url()).pathname === "/api/auth/session", {
+    timeout: 5_000,
+  });
 
 test.beforeEach(async ({ context }) => {
   await signIn(context);
@@ -291,6 +313,26 @@ test.describe("/me/settings", () => {
     const outcome = section.locator('[role="status"]');
     await expect(outcome).toHaveText("Danh sách kênh đã được tải lại.");
     await expect(outcome.locator("xpath=..")).toBeFocused();
+  });
+
+  test("CSRF_INVALID on unlink: the session is refetched with the list, so confirming again carries the fresh csrfToken", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    await page.goto("/me/settings");
+    const section = page.locator('section[aria-labelledby="me-channels"]');
+    await section.getByRole("button", { name: "Gỡ liên kết Zalo" }).click();
+    world.csrfToken = ROTATED_CSRF; // the session's secret moved on; the page still holds the old one
+    const refetched = sessionRefetch(page);
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "Gỡ liên kết" }).click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Yêu cầu không hợp lệ. Tải lại trang rồi thử lại.",
+    );
+    await refetched;
+    await dialog.getByRole("button", { name: "Gỡ liên kết" }).click();
+    await expect(section.locator('[role="status"]')).toHaveText("Đã gỡ liên kết Zalo.");
+    expect(callsTo(world, "POST", DETACH_ZALO).map((c) => c.csrf)).toEqual([CSRF, ROTATED_CSRF]);
   });
 
   test("409, then 'Quay lại' BEFORE the reload lands: the opener gets focus back, and when the reload removes it the list says so and focus lands on the outcome", async ({
@@ -697,6 +739,58 @@ test.describe("/c/[tenantId]/settings", () => {
     await expect(card.getByRole("button", { name: /Kết nối/ })).toHaveCount(0);
     expect(await page.content()).not.toContain(TOKEN);
     expect(callsTo(world, "POST", "/api/onboarding/zalo/connect")).toHaveLength(1);
+  });
+
+  test("CSRF_INVALID on the defaults form: 'Tải lại dữ liệu' refetches the session too, so the retry carries the fresh csrfToken", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    await page.goto(URL_);
+    const price = page.getByLabel("Giá mặc định (đ)");
+    const form = page.locator("form").filter({ has: price });
+    await price.fill("60.000");
+    world.csrfToken = ROTATED_CSRF; // the session's secret moved on; the page still holds the old one
+    await form.getByRole("button", { name: "Lưu" }).click();
+    const alert = form.getByRole("alert");
+    await expect(alert).toContainText("Yêu cầu không hợp lệ. Tải lại trang rồi thử lại.");
+    const refetched = sessionRefetch(page);
+    await alert.getByRole("button", { name: "Tải lại dữ liệu" }).click();
+    await refetched;
+    await form.getByRole("button", { name: "Lưu" }).click();
+    await expect(form.getByRole("status")).toHaveText("Đã lưu mặc định buổi chơi.");
+    expect(callsTo(world, "PATCH", "/api/onboarding/club").map((c) => c.csrf)).toEqual([
+      CSRF,
+      ROTATED_CSRF,
+    ]);
+    expect(world.club.defaultPriceAmount).toBe(60000);
+  });
+
+  test("CSRF_INVALID on a Zalo connect: 'Tải lại dữ liệu' refetches the session too, so the next connect carries the fresh csrfToken", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    await page.goto(URL_);
+    const token = page.getByLabel("Token bot Zalo");
+    await token.fill(TOKEN);
+    world.csrfToken = ROTATED_CSRF; // the session's secret moved on; the page still holds the old one
+    await page.getByRole("button", { name: "Kết nối Zalo" }).click();
+    const form = zaloForm(page);
+    const alert = form.getByRole("alert");
+    await expect(alert).toContainText("Yêu cầu không hợp lệ. Tải lại trang rồi thử lại.");
+    await expect(token).toHaveValue(""); // not retryable as is: the token is not kept
+    const refetched = sessionRefetch(page);
+    await alert.getByRole("button", { name: "Tải lại dữ liệu" }).click();
+    await refetched;
+    await expect(form.getByRole("status")).toHaveText("Đã tải lại trạng thái kết nối Zalo.");
+    await token.fill(TOKEN);
+    await page.getByRole("button", { name: "Kết nối Zalo" }).click();
+    await expect(form.getByRole("status")).toHaveText(
+      "Đã gửi token và đăng ký webhook. Đang chờ Zalo xác minh.",
+    );
+    expect(callsTo(world, "POST", "/api/onboarding/zalo/connect").map((c) => c.csrf)).toEqual([
+      CSRF,
+      ROTATED_CSRF,
+    ]);
   });
 
   test("ZALO_TOKEN_INVALID clears the token and says so; no retry is offered", async ({ page }) => {

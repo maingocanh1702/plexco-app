@@ -24,6 +24,19 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     [String.fromCodePoint(0x17b4, 0x17b5), "invalid_chars"],
     [String.fromCodePoint(0x2028) + "Lan" + String.fromCodePoint(0x2029), null], // trimmed edges
     [String.fromCodePoint(0x2764, 0xfe0f) + " Lan", null], // variation selectors stay allowed
+    // No visible code point (only variation selectors, unassigned default-ignorables, whitespace):
+    // it renders blank, so it reads as empty. Same rule as validateDisplayName / 0055 c_visible.
+    [String.fromCodePoint(0xfe0f), "empty"],
+    [String.fromCodePoint(0xe0100), "empty"],
+    [String.fromCodePoint(0x180b), "empty"],
+    [String.fromCodePoint(0x2065, 0xfff0, 0xe0fff), "empty"],
+    [String.fromCodePoint(0xfe0f, 0x20, 0xfe0f), "empty"],
+    [String.fromCodePoint(0xfe0f).repeat(121), "too_long"], // length is checked first
+    [String.fromCodePoint(0x2764, 0xfe0f), null], // emoji + VS16 alone
+    [String.fromCodePoint(0x845b, 0xe0100), null], // CJK ideograph + ideographic variation selector
+    ["Nguyễn Thị Ánh".normalize("NFD"), null], // combining marks after their base letters
+    [String.fromCodePoint(0xfe0f) + "Lan", null],
+    [String.fromCodePoint(0x301), null], // a lone combining mark draws a glyph
   ])("%j -> %s", (input, expected) => {
     expect(displayNameProblem(input)).toBe(expected);
   });

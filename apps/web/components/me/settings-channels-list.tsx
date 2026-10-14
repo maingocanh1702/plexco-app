@@ -8,6 +8,7 @@ import {
   type LinkedChannelDto,
 } from "../../lib/me-settings-client";
 import { useOnlineStatus } from "../../lib/use-online-status";
+import { useSessionContext } from "../../lib/use-session";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm-dialog";
@@ -45,6 +46,7 @@ export function SettingsChannelsList({
   const t = useT();
   const lang = useLang();
   const online = useOnlineStatus();
+  const { refresh: refreshSession } = useSessionContext();
   const [target, setTarget] = useState<LinkedChannelDto | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -99,10 +101,12 @@ export function SettingsChannelsList({
       onChanged();
     } catch (failure) {
       setError(failure);
-      // The row may already be gone (409): reload the list behind the dialog.
+      // The row may already be gone (409): reload the list behind the dialog. The session is
+      // refetched too: it holds the csrfToken, so after a CSRF_INVALID confirming again needs it.
       if (describeSettingsError(failure, t).action === "reload") {
         reloadPending.current = true;
         onChanged();
+        void refreshSession();
       }
     } finally {
       setBusy(false);
