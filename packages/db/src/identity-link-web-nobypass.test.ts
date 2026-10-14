@@ -79,6 +79,13 @@ describe("0054 under a NOBYPASSRLS migration owner", () => {
     expect(await linkZaloToAccount(app, issued.code, accountId, keys)).toEqual({
       outcome: "linked",
     });
+    // Read by name WITHOUT the identity_definer name lock, on purpose. This suite holds the chat
+    // lock from beforeAll's bootstrapChatDefinerForOwner until teardown (measured: 1 holder during
+    // this read), and migrate.test.ts renames identity_definer only inside that lock, so the name
+    // cannot move under this read. Taking the shared name lock here would deadlock: the 0054
+    // step-1 window holds the exclusive side while it waits for this suite's chat lock, a cycle
+    // across sessions Postgres never detects (test-harness.ts: the name lock comes before the chat
+    // lock, never while holding it).
     const owner = await su.query(
       `SELECT pg_get_userbyid(proowner) AS owner FROM pg_proc
         WHERE oid = 'link_code_reparent_empty_person(uuid, uuid)'::regprocedure`,

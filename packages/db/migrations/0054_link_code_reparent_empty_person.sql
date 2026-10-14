@@ -13,8 +13,14 @@
 -- decision (consumed / same_person / requires_review) or a counted wrong-code attempt. A raise in
 -- here, a refusal (invalid / unsupported) or a connection lost between the two calls rolls the
 -- consume back with it: the code stays live and nothing is written. The 10-minute window below
--- therefore bounds only a re-call after a consume that WAS committed and left the code unrevoked
--- (an idempotent same_person re-call): requires_review revokes the code it judged.
+-- therefore bounds only a re-call after a consume that WAS committed and left the code consumed but
+-- unrevoked: this function's `consumed`, or link_code_consume's own `same_person` (the web caller
+-- then never calls this function). After `consumed` a re-call is idempotent: same_person for the
+-- account that consumed the code, invalid for any other, nothing written. After consume's
+-- same_person it is NOT: for those 10 minutes an app-role re-call naming another account (with an
+-- active Person) is requires_review, because the source Person is the first account's own and
+-- never empty. That writes ONE identity.link_requires_review audit row and revokes the code (every
+-- later re-call is invalid); nothing is ever moved. requires_review revokes the code it judged.
 --
 -- DECISION TABLE (anything not listed is refused; ALWAYS returns exactly one row)
 --   p_link_code_id / p_account_id NULL                         RAISE invalid_parameter_value
@@ -99,7 +105,7 @@
 -- merge_audit rows with reason_code = 'link_code_empty_reparent' carry plaintext id-only JSON snapshots.
 -- routing_audit is written directly: routing_audit_append (0053) allowlists a single action and
 -- demands a tenant GUC, and linking is tenant-less.
--- Edited in place on 2026-10-14 (OD-3; again for the PR #49 security review rounds 1 and 2) instead
+-- Edited in place on 2026-10-14 (OD-3; again for the PR #49 security review rounds 1 to 3) instead
 -- of superseded: the earlier texts were never applied outside local/CI databases (never on main, and
 -- no deploy path runs migrations), so P17's forward-only rule protects no shared database. A local
 -- database that applied an earlier text fails migrate()'s sha256 guard. A *_test database: `pnpm
@@ -352,7 +358,11 @@ BEGIN
   IF cardinality(v_blocking) > 0 THEN
     -- "Prepared, not executed": evidence for support, never shown to the user. The judged code is
     -- revoked under its row lock, so step (3) refuses every re-call of it: no second audit row
-    -- naming another p_account_id, and no re-parent if the source Person empties later.
+    -- naming another p_account_id, and no re-parent if the source Person empties later. The one row
+    -- can be spurious: a code link_code_consume answered same_person stays consumed and unrevoked
+    -- (the web caller never calls this function for it), so an app-role re-call naming another
+    -- account within the 10 minutes lands here (the source Person is the first account's own, never
+    -- empty): one row, the code revoked, nothing moved.
     UPDATE public.link_codes SET revoked_at = clock_timestamp() WHERE id = p_link_code_id;
     INSERT INTO public.routing_audit (action, actor_id, tenant_id, detail)
       VALUES ('identity.link_requires_review', p_account_id, NULL,
