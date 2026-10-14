@@ -9,6 +9,16 @@
     "incremental": true,
     "plugins": [{ "name": "next" }]
   },
-  "include": ["next-env.d.ts", "app", "lib", "middleware.ts", ".next/types/**/*.ts"],
+  "include": [
+    "next-env.d.ts",
+    "app",
+    "lib",
+    "components",
+    "e2e",
+    "middleware.ts",
+    "playwright.config.ts",
+    "vitest.config.ts",
+    ".next/types/**/*.ts"
+  ],
   "exclude": ["node_modules"]
 }

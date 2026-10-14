@@ -5117,15 +5117,16 @@ notes: |
 
 ## task: web-pwa-manifest-and-service-worker
 title: manifest.json + service worker + installable shell 375px — điều kiện DD-113 để được dùng lại chữ "PWA"
-status: planned
+status: in-flight
 risk: P2
 change_class: web-feature
 depends_on: []
 invariants: [web-app, design-tokens]
 scope: []
 manifest: null
-merged_probe: none — chưa build; probe do lane viết (vd. file `apps/web/app/manifest.ts` — path không phải symbol, lane phải chọn identifier)
+merged_probe: apps/web/components/pwa/register-sw.tsx :: RegisterSw
 notes: |
+  M1a (PR #44, feat/mvp-m1a-shell): manifest, service worker (version stamped per build), /offline, icons landed in code; chưa merge nên `in-flight`. Device install verification pending (owner, staging): Android Chrome + iOS Safari chưa kiểm — chỉ Chromium headless đã kiểm.
   Nguồn: audit §4 gap #10 · DD-113:2126-2128 ("chưa có installable shell thì cấm dùng chữ PWA") · DD-69. Audit 06/09 đã đổi "PWA"→"web app" ở BRD/PRD/ROADMAP; row này là thứ đảo lại lệnh cấm. `web-app-shell` (idea) không nhắc PWA — fold vào đây hoặc ngược lại khi FE PENDING (DD-116) được gỡ. Lưu ý CSP: service worker + manifest phải sống với header A6 (không `script-src` ⇒ không vấn đề hôm nay; sẽ cần nonce/hash khi `web-csp-script-src-nonce` land).
 
 ## task: web-csp-script-src-nonce
