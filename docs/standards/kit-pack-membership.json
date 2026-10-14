@@ -147,6 +147,16 @@
       "path": "docs/autopilot-templates/level3-workflow.md",
       "overwrite_path": "kit-sync",
       "note": "The ONE target measured as diverged: 205 consumer-only lines, 2 canonical-only. It carries section 6.1 autonomous_to_ready, which canonical does not define. That is a decision->code gap inside the consumer (DD-107 ratified the mode; no code implements it), NOT consumer drift — framing it as drift aims the fix at the wrong target."
+    },
+    {
+      "path": "scripts/generate-pwa-icons.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy (repo-local web build tooling, M1a)."
+    },
+    {
+      "path": "scripts/stamp-sw.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy (repo-local web build tooling, M1a)."
     }
   ],
   "pack_pairs_verbatim": [

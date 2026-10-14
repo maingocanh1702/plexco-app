@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import type { Db, Tx } from "./client.js";
 import {
   channelInboundEvents,
@@ -73,7 +73,16 @@ export async function appendSecretDecryptAudit(
   );
 }
 
-/** Store-before-process. `duplicate` = this (bot, event id) was already stored. */
+/**
+ * Store-before-process. `duplicate` = this (bot, event id) is already stored and must only be acked.
+ *
+ * A duplicate delivery re-claims the stored row instead (returns its id, `duplicate: false`) when the
+ * earlier processing failed, or when the row has sat in 'received' past the window (a crash or
+ * timeout between store and finish). Retry-driven, no background job: the one conditional UPDATE is
+ * the compare-and-set. Concurrent duplicates serialise on the row lock and the loser re-checks the
+ * predicate against the winner's fresh received_at (READ COMMITTED), so exactly one processes.
+ * received_at doubles as the claim time. processed / ignored / in-flight rows stay duplicates.
+ */
 export async function storeInboundEvent(
   tx: Tx,
   p: {
@@ -102,7 +111,34 @@ export async function storeInboundEvent(
       ],
     })
     .returning({ id: channelInboundEvents.id });
-  return rows.length === 0 ? { id: null, duplicate: true } : { id: rows[0]!.id, duplicate: false };
+  if (rows.length > 0) return { id: rows[0]!.id, duplicate: false };
+  // ponytail: retry-driven recovery, no reclaimer; the window is the only in-flight-vs-dead heuristic
+  const reclaimed = await tx
+    .update(channelInboundEvents)
+    .set({
+      status: "received",
+      errorCode: null,
+      processedAt: null,
+      receivedAt: sql`clock_timestamp()`,
+    })
+    .where(
+      and(
+        eq(channelInboundEvents.tenantId, p.tenantId),
+        eq(channelInboundEvents.botId, p.botId),
+        eq(channelInboundEvents.externalEventId, p.externalEventId),
+        or(
+          eq(channelInboundEvents.status, "failed"),
+          and(
+            eq(channelInboundEvents.status, "received"),
+            lt(channelInboundEvents.receivedAt, sql`clock_timestamp() - interval '5 minutes'`),
+          ),
+        ),
+      ),
+    )
+    .returning({ id: channelInboundEvents.id });
+  return reclaimed.length > 0
+    ? { id: reclaimed[0]!.id, duplicate: false }
+    : { id: null, duplicate: true };
 }
 
 export async function finishInboundEvent(
@@ -179,13 +215,15 @@ export async function readZaloBotTokenEnc(
  * verified_at once. Bound to the token that authenticated the request: the row is locked FOR UPDATE
  * (serialises against zalo_bot_upsert_for_tenant) and a rotated token means the evidence is for the
  * OLD secret, so nothing flips. `drift` is never cleared here (onboarding tech doc: Tier-2 CAS).
+ * "activated" only when the compare-and-set changed the row; a skipped CAS (active, drift, error)
+ * returns "unchanged".
  */
 export async function markBotVerifiedActive(
   tx: Tx,
   tenantId: string,
   botId: string,
   verifiedToken: string,
-): Promise<"activated" | "token_rotated"> {
+): Promise<"activated" | "token_rotated" | "unchanged"> {
   const res = await tx.execute(
     sql`SELECT webhook_token FROM zalo_bots WHERE id = ${botId}::uuid AND tenant_id = ${tenantId}::uuid FOR UPDATE`,
   );
@@ -193,10 +231,11 @@ export async function markBotVerifiedActive(
   if (stored !== verifiedToken) {
     return "token_rotated";
   }
-  await tx.execute(
+  // touch_setwebhook = false: set_status returns a row only when its CAS actually wrote.
+  const set = await tx.execute(
     sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${botId}::uuid, 'active', true, false, ARRAY['connecting','registered']::text[])`,
   );
-  return "activated";
+  return set.rows.length > 0 ? "activated" : "unchanged";
 }
 
 export interface ZaloBotSecretsInput {
@@ -364,7 +403,11 @@ export async function beginZaloConnect(
  *
  * SUPERSEDED guard: `webhookToken` is the token THIS request registered. If the row now holds another
  * token, a concurrent connect replaced it; this attempt records step `error` / SUPERSEDED, skips the
- * status update and does NOT mark the command processed. RESIDUAL: the Zalo-side webhook may already
+ * status update and does NOT mark the command processed. The compare runs under the row lock
+ * (FOR UPDATE, as markBotVerifiedActive): set_status's CAS checks the status only, so without the lock
+ * a newer connect committing between compare and write (READ COMMITTED) would receive this attempt's
+ * outcome. The token alone identifies the attempt: the upsert is the only writer of key_version and
+ * always writes a fresh token with it. RESIDUAL: the Zalo-side webhook may already
  * point at the loser's URL/secret (setWebhook calls can invert); the winner's own setWebhook normally
  * lands last, but a per-tenant in-flight lease (backlog proposal) is the real fix.
  */
@@ -381,6 +424,8 @@ export async function finishZaloConnect(
 ): Promise<{ state: ZaloOnboardingState; superseded: boolean }> {
   const { tenantId } = p;
   return withTenant(db, tenantId, async (tx) => {
+    // A concurrent zalo_bot_upsert_for_tenant now waits for this transaction; readState sees the locked row.
+    await tx.execute(sql`SELECT 1 FROM zalo_bots WHERE tenant_id = ${tenantId}::uuid FOR UPDATE`);
     const current = await readState(tx, tenantId);
     if (current.webhookToken !== p.webhookToken) {
       const [run] = await tx

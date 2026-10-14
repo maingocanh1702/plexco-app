@@ -74,6 +74,40 @@ describe("zalo client", () => {
     expect(e.message).not.toContain(TOKEN);
   });
 
+  // Envelope {ok, result, description, error_code} (DD-126; payment bot src/zalo/zalo.ts callApi).
+  it("ok:true succeeds; a full ok:false envelope is rejected and echoes neither token nor description", async () => {
+    fetchMock.mockResolvedValueOnce(json({ ok: true, result: { id: "1" } }));
+    await expect(getMe(TOKEN)).resolves.toBeUndefined();
+    fetchMock.mockResolvedValueOnce(
+      json({ ok: false, error_code: 401, description: `Unauthorized: bot${TOKEN} is invalid` }),
+    );
+    const e = (await getMe(TOKEN).catch((x) => x)) as ZaloApiError;
+    expect(e.kind).toBe("rejected");
+    const seen = JSON.stringify({ ...e, message: e.message });
+    expect(seen).not.toContain(TOKEN);
+    expect(seen).not.toContain("Unauthorized");
+  });
+
+  it.each([
+    ["missing ok", { result: { id: "1" } }],
+    ["empty object", {}],
+    ["non-boolean ok", { ok: "true" }],
+    ["array", []],
+    ["string", "ok"],
+    ["null", null],
+  ])(
+    "a 2xx body with no readable verdict (%s) is bad_response, never success",
+    async (_n, body) => {
+      fetchMock.mockResolvedValueOnce(json(body));
+      expect(await kindOf(getMe(TOKEN))).toBe("bad_response");
+    },
+  );
+
+  it("a non-2xx is rejected even when its body claims ok:true", async () => {
+    fetchMock.mockResolvedValueOnce(json({ ok: true, result: {} }, 502));
+    expect(await kindOf(getMe(TOKEN))).toBe("rejected");
+  });
+
   it("refuses a secret_token outside 8-256 chars", async () => {
     expect(await kindOf(setWebhook(TOKEN, "https://x.test", "short"))).toBe("rejected");
   });

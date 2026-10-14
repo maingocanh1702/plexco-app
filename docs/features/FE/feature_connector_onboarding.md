@@ -669,6 +669,7 @@ function verifySepay(request: Request, rawBody: Buffer): boolean {
 | 401 | `SEPAY_OAUTH_DENIED` | "Bạn chưa cấp quyền cho Plexco" | OAuth deny/timeout |
 | 400 | `OAUTH_STATE_INVALID` | "Phiên kết nối hết hạn, thử lại" | `state` không khớp/đã dùng/hết hạn |
 | 400 | `ZALO_TOKEN_INVALID` 🟡 | "Token bot không hợp lệ" | `getMe` fail |
+| 409 | `CONNECT_SUPERSEDED` | "Một lần kết nối mới hơn đã thay thế lần này." | `zalo/connect`: một lần connect mới hơn đã thay webhook token của lần này (DD-126; `COMMAND_ID_CONFLICT` chỉ dành cho `commandId` đã thuộc command khác) |
 | 409 | `BANK_ALREADY_BOUND` | "TK ngân hàng đã gắn ở CLB khác" | fingerprint trùng tenant khác |
 
 ### Idempotency

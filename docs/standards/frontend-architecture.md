@@ -8,6 +8,8 @@
 >
 > **Status boundary:** DD-57 là governance cho FE mới hoặc materially changed, không phải bằng chứng FE đã implement. FE vẫn HOLD tới khi canonical `design.pen` được track + owner duyệt và gate per-screen của DD-58 đóng.
 >
+> ⚠️ **2026-10-12 — DD-122 (owner):** FE HOLD/PENDING **đã gỡ** cho full MVP; gate `design.pen` + per-screen `.pen` node của DD-58 **không còn áp dụng**. §0 FE-INV-1..6 **giữ nguyên hiệu lực**; phần còn lại của file này là default, lane được lệch khi ghi lý do (RUN doc §Shared contract). Acceptance bar thay thế: 375px + desktop · light/dark · 5 state · WCAG 2.2 AA · tokens-only · `t(vi,en)`.
+>
 > **Cập nhật 06/08:** 12 FE design spec đã commit tại `../channels/web/FE/`. Chúng **không** đổi status boundary trên: spec Draft ≠ FE implemented, trục FE/UI vẫn 0 màn, `design.pen` vẫn untracked. Checklist §DD-58 dưới đây vẫn còn ô "canonical `design.pen` đã được track + owner duyệt" chưa tick.
 
 Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải design tokens (xem `design-tokens.md`) và không phải screen spec (xem `../features/FE/feature_*.md` §Screens & States + `../channels/web/design-brief.md`).
@@ -20,7 +22,7 @@ Tài liệu này định nghĩa **cách cấu trúc code FE** — không phải 
 |---|---|---|
 | **FE-INV-1** | **4-state rule** — mọi screen data-driven PHẢI xử lý đủ `loading / ready / empty / error`. Không có "happy-path only". | Tránh UI trắng/treo khi mạng lỗi hoặc list rỗng. |
 | **FE-INV-2** | **Tokens-only** — không hardcode hex/rgba/px. Luôn `var(--token)` (xem `design-tokens.md`). | 1 nguồn design; đổi theme không sửa component. |
-| **FE-INV-3** | **Client không chạm DB** — Client Component không import/gọi `@plexco/db`, `tenantRepo` hoặc DB; chỉ đi qua web boundary đã auth. Server Component/Route Handler được gọi canonical authenticated application service trực tiếp, không self-HTTP. Service sở hữu authz, DTO whitelist, tenant/RLS context và repository. | Không rò rỉ cross-tenant, không tạo hai đường nghiệp vụ. |
+| **FE-INV-3** | **Client không chạm DB** — Client Component không import/gọi `@plexco/db`, `tenantRepo` hoặc DB; chỉ đi qua web boundary đã auth. Server Component/Route Handler được gọi canonical authenticated application service trực tiếp, không self-HTTP. Service sở hữu authz, DTO whitelist, tenant/RLS context và repository. | Không rò rỉ cross-tenant, không tạo hai đường nghiệp vụ. Ghi chú: mọi file dưới `apps/web/app/c/**` chỉ nhận `tenantId` và chỉ được import `currentSession` từ `lib/session-cookies`; dữ liệu tenant đi qua `/api` sau khi client chứng minh membership (`app/c/server-boundary.test.ts` kiểm bằng text: reach trực tiếp và reach qua import tương đối bắc cầu; KHÔNG theo đường package như `@plexco/*`, và `lib/session-cookies` là seam duy nhất được phép nên không bị duyệt sâu). |
 | **FE-INV-4** | **i18n bắt buộc** — mọi chuỗi user-facing = `t(vi, en)` (HARD RULE 5). Không hardcode 1 thứ tiếng trong JSX. | Song ngữ vi/en. |
 | **FE-INV-5** | **Không tiền/PII vào client bundle hoặc public route** — discovery UI đọc `public_sessions` (field-whitelist, HARD RULE 2). Roster/nợ/SĐT/email chỉ trong route đã auth + RLS. | Bất biến rò rỉ. |
 | **FE-INV-6** | **API envelope chuẩn** — client parse `{ data, error, meta.requestId }`; khi lỗi đọc `error.{code,message,statusCode}` (xem `apps/web/lib/api-envelope.ts`), không đọc raw exception. | Error model thống nhất FE↔BE. |
