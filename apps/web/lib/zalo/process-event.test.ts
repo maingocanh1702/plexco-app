@@ -1,5 +1,11 @@
+import type { DbHandle } from "@plexco/db";
 import { describe, expect, it } from "vitest";
-import { classifyProcessingError, extractZaloEvent } from "./process-event";
+import {
+  classifyProcessingError,
+  extractZaloEvent,
+  isDirectZaloChat,
+  processZaloEvent,
+} from "./process-event";
 import { ZaloApiError } from "./client";
 
 // The DD-126 (OD-2) body, no update_id: payment bot src/zalo/zalo.ts ZaloUpdate, chatbot parseZaloUpdate.
@@ -79,6 +85,37 @@ describe("extractZaloEvent", () => {
     expect(
       extractZaloEvent(signed({ text: undefined, photo: "https://x.test/p.jpg" }))?.text,
     ).toBeNull();
+  });
+});
+
+describe("DM gate (DD-126 / OD-2: only a 1:1 chat is served)", () => {
+  const ev = (chat: Record<string, unknown>) => extractZaloEvent(signed({ chat }))!;
+
+  it.each([
+    ["PRIVATE, chat.id == from.id", { id: "u-7", chat_type: "PRIVATE" }, true],
+    ["no chat_type, chat.id == from.id", { id: "u-7" }, true],
+    ["no chat_type, chat.id != from.id (a group omitting chat_type)", { id: "g-1" }, false],
+    ["PRIVATE but chat.id != from.id", { id: "g-1", chat_type: "PRIVATE" }, false],
+    ["GROUP", { id: "u-7", chat_type: "GROUP" }, false],
+    ["unknown chat_type", { id: "u-7", chat_type: "OA" }, false],
+  ])("%s -> DM = %s", (_n, chat, dm) => {
+    expect(isDirectZaloChat(ev(chat))).toBe(dm);
+  });
+
+  it("processZaloEvent ignores a non-DM before any identity, DB or Zalo call", async () => {
+    const bot = {
+      botId: "b",
+      tenantId: "t",
+      status: "active",
+      webhookSecretEnc: null,
+      keyVersion: null,
+      locale: "vi",
+    } as const;
+    // An empty handle: any DB/identity/Zalo step would throw instead of returning "ignored".
+    const run = (chat: Record<string, unknown>) =>
+      processZaloEvent({ handle: {} as DbHandle, bot, event: ev(chat) });
+    await expect(run({ id: "g-1" })).resolves.toBe("ignored");
+    await expect(run({ id: "u-7", chat_type: "GROUP" })).resolves.toBe("ignored");
   });
 });
 

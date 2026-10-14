@@ -10,7 +10,6 @@ import {
   type Db,
   type DbHandle,
   type ZaloBotRef,
-  type ZaloIdentity,
 } from "@plexco/db";
 import { keyedHash } from "../auth-secrets";
 import { decryptConnectorSecret, encryptConnectorSecret, textToBlob } from "../connector-secrets";
@@ -76,6 +75,14 @@ export function extractZaloEvent(payload: unknown): ZaloEventFields | null {
 
 export type ProcessOutcome = "processed" | "ignored";
 
+/**
+ * DD-126 (OD-2): only a 1:1 chat with the bot is served. GROUP, any other present chat_type than
+ * PRIVATE, or a chat whose id is not the sender's (a group that omits chat_type) is not a DM; an
+ * absent chat_type stays allowed when chat.id == from.id, as the payment bot allows it for 1:1 chats.
+ */
+export const isDirectZaloChat = (e: ZaloEventFields): boolean =>
+  (e.chatType === null || e.chatType === "PRIVATE") && e.chatId === e.fromId;
+
 export async function processZaloEvent(args: {
   handle: DbHandle;
   bot: ZaloBotRef;
@@ -83,50 +90,40 @@ export async function processZaloEvent(args: {
 }): Promise<ProcessOutcome> {
   const { handle, bot, event } = args;
   const db: Db = handle.db;
-  // DD-126 (OD-2): a GROUP chat is ignored outright (no identity, no reply, no link code). Any other
-  // present chat_type than PRIVATE is an unknown chat kind and gets the same (fail closed); an absent
-  // chat_type stays allowed, as the payment bot allows it for 1:1 chats.
-  if (event.text === null || (event.chatType !== null && event.chatType !== "PRIVATE")) {
-    return "ignored";
-  }
+  // A non-DM is ignored outright: no identity, no reply, no link code. The webhook already drops it
+  // before the store (no payload persisted); this is the same rule at the processor, fail closed.
+  if (event.text === null || !isDirectZaloChat(event)) return "ignored";
   const { fromId, chatId, text } = event;
 
-  // Parse and classify BEFORE touching identity: a chat whose id is not the sender's never creates a
-  // Person or channel identity; it only gets a help / "message the bot directly" reply.
-  const isDirect = chatId === fromId;
   const cmd = parseZaloCommand(text);
-  let identity: ZaloIdentity | null = null;
-  if (isDirect) {
-    const scopeHash = await keyedHash(`channel-scope:zalo:${bot.botId}`);
-    const userHash = await keyedHash(`channel-user:zalo:${fromId}`);
-    // ponytail: encrypted per DM event (cheap AES); a read-first definer would avoid it for known users.
-    const userIdEnc = (
-      await encryptConnectorSecret(fromId, {
-        tenantId: bot.tenantId,
-        botId: bot.botId,
-        purpose: "channel_user",
-      })
-    ).enc;
-    identity = await withTenant(db, bot.tenantId, (tx) =>
-      resolveZaloIdentity(tx, {
-        tenantId: bot.tenantId,
-        botId: bot.botId,
-        scopeHash,
-        userHash,
-        userIdEnc,
-        displayName: event.displayName,
-      }),
-    );
-  }
+  const scopeHash = await keyedHash(`channel-scope:zalo:${bot.botId}`);
+  const userHash = await keyedHash(`channel-user:zalo:${fromId}`);
+  // ponytail: encrypted per DM event (cheap AES); a read-first definer would avoid it for known users.
+  const userIdEnc = (
+    await encryptConnectorSecret(fromId, {
+      tenantId: bot.tenantId,
+      botId: bot.botId,
+      purpose: "channel_user",
+    })
+  ).enc;
+  const identity = await withTenant(db, bot.tenantId, (tx) =>
+    resolveZaloIdentity(tx, {
+      tenantId: bot.tenantId,
+      botId: bot.botId,
+      scopeHash,
+      userHash,
+      userIdEnc,
+      displayName: event.displayName,
+    }),
+  );
 
   const lang = bot.locale === "en" ? "en" : "vi"; // DD-118: the bot's tenant locale, fail-closed vi
   const reply = await runWithLang(lang, () =>
     buildZaloReply(cmd, {
-      displayName: identity?.displayName ?? null,
-      hasAccount: identity?.hasAccount ?? false,
-      isDirect,
+      displayName: identity.displayName,
+      hasAccount: identity.hasAccount,
+      isDirect: true,
       issueLinkCode: async (): Promise<LinkIssueResult> => {
-        if (identity === null) return { ok: false, reason: "unavailable" }; // unreachable: groups never issue
         const keys = linkCodeKeys();
         if (!keys) {
           log.error("zalo_link_key_missing");

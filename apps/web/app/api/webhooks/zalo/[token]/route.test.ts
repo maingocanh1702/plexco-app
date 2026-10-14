@@ -168,24 +168,42 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(entries[0]!.includes(Buffer.from(SECRET))).toBe(false);
   });
 
-  it("a chat whose id is not the sender's (no GROUP chat_type) creates no identity and gets a reply", async () => {
+  it("a chat whose id is not the sender's (a group without chat_type) is ignored: no store, no identity, no reply", async () => {
     const res = await call({ body: update("/start", 9300, { id: "group-9" }) });
     expect(res.status).toBe(200);
-    expect(resolveZaloIdentity).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("a GROUP chat_type payload is ignored: 200, no identity, no reply, no link code", async () => {
-    const res = await call({ body: update("/link", 9301, { id: "group-9", chat_type: "GROUP" }) });
-    expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ message: "Success" });
+    expect(storeInboundEvent).not.toHaveBeenCalled();
     expect(resolveZaloIdentity).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(issueLinkCode).not.toHaveBeenCalled();
-    expect(finishInboundEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ status: "ignored" }),
-    );
+  });
+
+  it("a GROUP payload is acked and NOTHING is persisted: no other member's name or text is written", async () => {
+    const name = "Other Member Display Name";
+    const text = "/link private group chatter";
+    const res = await call({
+      body: update(
+        text,
+        9301,
+        { id: "group-9", chat_type: "GROUP" },
+        { id: "zuser-2", display_name: name },
+      ),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ message: "Success" });
+    expect(storeInboundEvent).not.toHaveBeenCalled();
+    expect(finishInboundEvent).not.toHaveBeenCalled();
+    const written = JSON.stringify([
+      vi.mocked(storeInboundEvent).mock.calls,
+      vi.mocked(finishInboundEvent).mock.calls,
+      vi.mocked(resolveZaloIdentity).mock.calls,
+      audit.mock.calls,
+    ]);
+    expect(written).not.toContain(name);
+    expect(written).not.toContain("private group chatter");
+    expect(resolveZaloIdentity).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(issueLinkCode).not.toHaveBeenCalled();
   });
 
   // chat_type values pinned from the payment bot (src/zalo/zalo.ts ZaloChat: "PRIVATE" | "GROUP").
@@ -198,6 +216,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     const chat =
       chatType === undefined ? { id: "zuser-1" } : { id: "zuser-1", chat_type: chatType };
     expect((await call({ body: update("/me", 9302, chat) })).status).toBe(200);
+    expect(vi.mocked(storeInboundEvent).mock.calls.length).toBe(dm ? 1 : 0);
     expect(vi.mocked(resolveZaloIdentity).mock.calls.length).toBe(dm ? 1 : 0);
     expect(vi.mocked(sendMessage).mock.calls.length).toBe(dm ? 1 : 0);
   });
@@ -238,6 +257,47 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(storeInboundEvent).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "tampered",
+      async () => Buffer.from(bot.webhookSecretEnc!.map((b, i) => (i === 20 ? b ^ 1 : b))),
+    ],
+    [
+      "AAD-mismatched (sealed for another bot)",
+      async () =>
+        (
+          await encryptConnectorSecret(SECRET, {
+            tenantId: TENANT,
+            botId: "33333333-3333-4333-8333-333333333333",
+            purpose: "webhook_secret",
+          })
+        ).enc,
+    ],
+  ])(
+    "a %s stored ciphertext -> 403 INVALID_WEBHOOK_SECRET on the wrong-secret bucket, nothing stored",
+    async (_n, enc) => {
+      vi.mocked(resolveZaloBotByToken).mockResolvedValue({ ...bot, webhookSecretEnc: await enc() });
+      const res = await call();
+      expect(res.status).toBe(403);
+      expect((await env(res)).error?.code).toBe("INVALID_WEBHOOK_SECRET");
+      expect(storeInboundEvent).not.toHaveBeenCalled();
+      expect(rateLimited).toHaveBeenCalledWith(`zalo-webhook-auth:${BOT}:local`, 30, 60);
+    },
+  );
+
+  it("an unreadable stored secret answers 429 over the failure limit, exactly like a wrong secret", async () => {
+    vi.mocked(rateLimited).mockImplementation(async (k) => k.startsWith("zalo-webhook-auth:"));
+    const wrong = await call({ secret: "wrong" });
+    vi.mocked(resolveZaloBotByToken).mockResolvedValue({
+      ...bot,
+      webhookSecretEnc: Buffer.alloc(8),
+    });
+    const unreadable = await call();
+    expect([wrong.status, unreadable.status]).toEqual([429, 429]);
+    expect((await env(unreadable)).error).toEqual((await env(wrong)).error); // meta.requestId differs
+    expect(storeInboundEvent).not.toHaveBeenCalled();
+  });
+
   it("a numeric message_id above 2^53 -> 400 (digits already lost)", async () => {
     const raw =
       '{"message":{"message_id":9007199254740993,"chat":{"id":"zuser-1"},"from":{"id":"zuser-1"},"text":"x"}}';
@@ -256,10 +316,11 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(vi.mocked(storeInboundEvent).mock.calls[0]![1].keyVersion).toBe("local");
   });
 
-  it("/link outside a DM (chat.id != from.id) posts no code and issues none", async () => {
+  it("/link outside a DM (chat.id != from.id) posts nothing and issues no code", async () => {
     await call({ body: update("/link", 9200, { id: "group-9" }) });
-    expect(vi.mocked(sendMessage).mock.calls[0]![2]).toContain("message the bot directly");
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(issueLinkCode).not.toHaveBeenCalled();
+    expect(storeInboundEvent).not.toHaveBeenCalled();
   });
 
   it("/me for a linked person says linked", async () => {
@@ -337,12 +398,14 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       expect(finishInboundEvent).toHaveBeenCalledTimes(1);
     });
 
-    it("the same message_id with a different chat.id is processed as a distinct event", async () => {
+    it("the same message_id in another DM (other chat.id and from.id) is processed as a distinct event", async () => {
       await call({ body: update("/start", "m-1") });
-      await call({ body: update("/start", "m-1", { id: "chat-2", chat_type: "PRIVATE" }) });
+      await call({
+        body: update("/start", "m-1", { id: "zuser-2", chat_type: "PRIVATE" }, { id: "zuser-2" }),
+      });
       const keys = vi.mocked(storeInboundEvent).mock.calls.map((c) => c[1].externalEventId);
       expect(new Set(keys).size).toBe(2);
-      expect(vi.mocked(sendMessage).mock.calls.map((c) => c[1])).toEqual(["zuser-1", "chat-2"]);
+      expect(vi.mocked(sendMessage).mock.calls.map((c) => c[1])).toEqual(["zuser-1", "zuser-2"]);
       expect(finishInboundEvent).toHaveBeenCalledTimes(2);
     });
   });

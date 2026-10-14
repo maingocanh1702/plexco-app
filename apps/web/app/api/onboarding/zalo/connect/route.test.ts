@@ -208,6 +208,40 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect(getMe).not.toHaveBeenCalled();
   });
 
+  it("an unmapped DB error is rethrown sanitized (name + SQLSTATE), never with the query params", async () => {
+    let webhookToken = "";
+    vi.mocked(beginZaloConnect).mockImplementationOnce(async (_db, p) => {
+      const s = await p.prepare("22222222-2222-4222-8222-222222222222");
+      webhookToken = s.webhookToken;
+      // drizzle-orm 0.45 DrizzleQueryError: params in the message AND on `.params`, pg error on `.cause`.
+      const params = [s.botTokenEnc, s.webhookToken, s.webhookSecretEnc.toString("hex")];
+      throw Object.assign(
+        new Error(
+          `Failed query: SELECT bot_id FROM zalo_bot_upsert_for_tenant($1)\nparams: ${params}`,
+        ),
+        {
+          query: "SELECT ...",
+          params,
+          cause: Object.assign(new Error("deadlock"), { code: "40P01" }),
+        },
+      );
+    });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const thrown = await POST(req({ commandId: "c1", botToken: BOT_TOKEN })).then(
+      () => new Error("expected a rejection"),
+      (e: unknown) => e as Error,
+    );
+    const logLines = JSON.stringify(logged.mock.calls); // read before mockRestore() clears them
+    logged.mockRestore();
+    expect(webhookToken.length).toBeGreaterThan(16);
+    expect(thrown.message).toBe("zalo_connect_failed: Error 40P01");
+    expect(thrown.cause).toBeUndefined();
+    expect(JSON.stringify({ ...thrown, m: thrown.message, s: thrown.stack })).not.toContain(
+      webhookToken,
+    );
+    expect(logLines).not.toContain(webhookToken);
+  });
+
   it("a revoked bot cannot be re-connected: 403", async () => {
     vi.mocked(beginZaloConnect).mockRejectedValueOnce(new ZaloConnectError("BOT_REVOKED", "x"));
     expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);

@@ -52,6 +52,22 @@ function validBaseUrl(raw: string | undefined): string | null {
 
 const invalid = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
 
+/**
+ * An unmapped error must not reach Next's logger as-is: drizzle's DrizzleQueryError carries the query
+ * params (the plaintext webhook token, both ciphertexts) in its message and on `.params`. Rethrow a
+ * fresh Error holding only the error name and the first code on the cause chain (SQLSTATE), no cause.
+ */
+function sanitizedConnectError(error: unknown): Error {
+  let code = "";
+  for (let c = error, i = 0; !code && c && typeof c === "object" && i < 8; i++) {
+    const v = (c as { code?: unknown }).code;
+    if (typeof v === "string" && /^[0-9A-Z_]{1,32}$/.test(v)) code = v;
+    c = (c as { cause?: unknown }).cause;
+  }
+  const name = error instanceof Error ? error.name.slice(0, 64) : typeof error;
+  return new Error(`zalo_connect_failed: ${name}${code ? ` ${code}` : ""}`);
+}
+
 export async function POST(request: Request): Promise<Response> {
   const gate = await resolveClubGate(request, {
     csrf: true,
@@ -198,7 +214,7 @@ export async function POST(request: Request): Promise<Response> {
             return err("NOT_FOUND", t("Chưa có onboarding run.", "No onboarding run yet."), 404);
         }
       }
-      throw error;
+      throw sanitizedConnectError(error);
     }
   });
 }

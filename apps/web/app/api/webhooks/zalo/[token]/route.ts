@@ -16,6 +16,7 @@ import { appDb, clientIp, rateLimited } from "../../../../../lib/session-cookies
 import {
   classifyProcessingError,
   extractZaloEvent,
+  isDirectZaloChat,
   processZaloEvent,
 } from "../../../../../lib/zalo/process-event";
 import { readWebhookSecret } from "../../../../../lib/zalo/webhook-secret-cache";
@@ -27,18 +28,19 @@ export const runtime = "nodejs";
  *
  * The path token resolves the bot, hence the tenant: provider payload is NEVER tenant authority.
  * Verification = static secret equality (webhook-verification-matrix, Zalo Bot row: no body
- * signature by design), compared timing-safe over SHA-256 digests so lengths never leak. Raw event
+ * signature by design), compared timing-safe over SHA-256 digests so lengths never leak. A DM event
  * is stored (encrypted) BEFORE processing, idempotent on (bot, keyed HMAC of message_id + chat.id +
  * from.id) (BRD NFR-S4, DD-126); the HMAC keeps raw provider ids out of the lookup column (DD-67).
  *
  * ORDER: token -> status -> secret (cached decrypt) -> [failed attempt: per bot+IP bucket] ->
- * per-bot bucket -> body -> parse -> [verified] -> store -> process -> 200 {message:"Success"}.
+ * per-bot bucket -> body -> parse -> [verified] -> [non-DM: ack, nothing stored] -> store (a
+ * redelivery re-claims a failed or stale row, see storeInboundEvent) -> process -> 200 {message:"Success"}.
  * Processing failures are recorded on the event row and still answer 200 so Zalo does not retry
  * forever; only a failed STORE answers 5xx (nothing durable yet). One open follow-up against the
  * DD-126 shape, recorded in its note in feature_zalo_channel_tech.md section 3: processing runs
  * after the durable store but BEFORE the ack (DD-126: ack first, then process asynchronously).
- * Every failed secret check (missing header, wrong value, unreadable stored secret) answers the
- * same 403 INVALID_WEBHOOK_SECRET per OD-2/DD-126 (2026-10-14); the 401 that
+ * Every failed secret check (missing header, wrong value, unreadable stored secret) spends the same
+ * per bot+IP bucket and answers the same 403 INVALID_WEBHOOK_SECRET per OD-2/DD-126 (2026-10-14); the 401 that
  * feature_connector_onboarding_tech.md section 3 pins stays for SePay (out of the MVP, OD-0).
  * Logs carry event names and ids only, never payloads, tokens or secrets.
  */
@@ -71,16 +73,16 @@ export async function POST(
 
   // Secret check FIRST: the decrypt is cached (one audit row per fill), so an unauthenticated caller
   // who only knows the path token cannot spend decrypts, audit rows or the bot's buckets.
-  let expected: Buffer;
+  let expected: Buffer | null = null;
   try {
     expected = await readWebhookSecret({ ...bot, webhookSecretEnc: bot.webhookSecretEnc }, (fn) =>
       withTenant(db, tenantId, fn),
     );
   } catch (error) {
     log.error("zalo_webhook_secret_unreadable", { botId, error });
-    return err("INVALID_WEBHOOK_SECRET", t("Yêu cầu không hợp lệ.", "Invalid request."), 403);
   }
-  if (!safeEqual(header, expected)) {
+  // An unreadable stored secret takes the wrong-secret path (same bucket, same 403/429): indistinguishable.
+  if (expected === null || !safeEqual(header, expected)) {
     // Failed attempts only are bucketed, per bot AND caller, so guessing cannot lock out Zalo itself.
     if (await rateLimited(`zalo-webhook-auth:${botId}:${clientIp(request)}`, 30, 60)) {
       return err("WEBHOOK_RATE_LIMITED", t("Quá nhiều yêu cầu.", "Too many requests."), 429);
@@ -116,6 +118,10 @@ export async function POST(
         log.error("zalo_bot_activate_failed", { botId, error });
       }
     }
+
+    // DD-126 (OD-2): a non-DM payload is ignored BEFORE the durable store, so other members' names and
+    // texts are never persisted (channel_inbound_events has no retention in the MVP).
+    if (!isDirectZaloChat(event)) return ack();
 
     // The AAD binds the stored key, so a row can be decrypted from its own columns.
     const externalEventId = await keyedHash(`channel-inbound-event:zalo:${event.eventId}`);
