@@ -8,6 +8,7 @@ import {
   withTenant,
 } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
+import { keyedHash } from "../../../../../lib/auth-secrets";
 import { encryptConnectorSecret } from "../../../../../lib/connector-secrets";
 import { log } from "../../../../../lib/log";
 import { readBoundedBody } from "../../../../../lib/read-bounded-body";
@@ -27,11 +28,16 @@ export const runtime = "nodejs";
  * The path token resolves the bot, hence the tenant: provider payload is NEVER tenant authority.
  * Verification = static secret equality (webhook-verification-matrix, Zalo Bot row: no body
  * signature by design), compared timing-safe over SHA-256 digests so lengths never leak. Raw event
- * is stored (encrypted) BEFORE processing, idempotent on (bot, event id) (BRD NFR-S4).
+ * is stored (encrypted) BEFORE processing, idempotent on (bot, keyed HMAC of message_id + chat.id +
+ * from.id) (BRD NFR-S4, DD-126); the HMAC keeps raw provider ids out of the lookup column (DD-67).
  *
  * ORDER: token -> status -> secret (cached decrypt) -> [failed attempt: per bot+IP bucket] ->
- * per-bot bucket -> body -> parse -> [verified] -> store -> process -> 200. Processing failures are recorded on the event row and still
- * answer 200 so Zalo does not retry forever; only a failed STORE answers 5xx (nothing durable yet).
+ * per-bot bucket -> body -> parse -> [verified] -> store -> process -> 200 {message:"Success"}.
+ * Processing failures are recorded on the event row and still answer 200 so Zalo does not retry
+ * forever; only a failed STORE answers 5xx (nothing durable yet). Two open follow-ups against the
+ * DD-126 shape, recorded in its note in feature_zalo_channel_tech.md section 3: processing runs
+ * after the durable store but BEFORE the ack (DD-126: ack first, then process asynchronously), and a
+ * wrong secret answers 401 as feature_connector_onboarding_tech.md section 3 pins it (DD-126: 403).
  * Logs carry event names and ids only, never payloads, tokens or secrets.
  */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -41,7 +47,8 @@ const DUMMY_DIGEST = createHash("sha256").update("0".repeat(43)).digest();
 const digest = (v: string) => createHash("sha256").update(v, "utf8").digest();
 const safeEqual = (a: string, expectedDigest: Buffer) => timingSafeEqual(digest(a), expectedDigest);
 const notFound = () => Response.json({}, { status: 404, headers: { "cache-control": "no-store" } });
-const ack = () => Response.json({ ok: true }, { headers: { "cache-control": "no-store" } });
+const ack = () =>
+  Response.json({ message: "Success" }, { headers: { "cache-control": "no-store" } });
 
 export async function POST(
   request: Request,
@@ -108,16 +115,18 @@ export async function POST(
       }
     }
 
+    // The AAD binds the stored key, so a row can be decrypted from its own columns.
+    const externalEventId = await keyedHash(`channel-inbound-event:zalo:${event.eventId}`);
     const raw = await encryptConnectorSecret(read.text, {
       tenantId,
       botId,
-      purpose: `inbound_event:${event.eventId}`,
+      purpose: `inbound_event:${externalEventId}`,
     });
     const stored = await withTenant(db, tenantId, (tx) =>
       storeInboundEvent(tx, {
         tenantId,
         botId,
-        externalEventId: event.eventId,
+        externalEventId,
         rawPayloadEnc: raw.enc,
         keyVersion: raw.keyVersion,
       }),

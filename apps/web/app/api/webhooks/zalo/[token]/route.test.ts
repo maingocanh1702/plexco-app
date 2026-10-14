@@ -9,8 +9,12 @@ import {
   type ZaloBotRef,
 } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
-import { encryptConnectorSecret, blobToText } from "../../../../../lib/connector-secrets";
+import { __resetAuthSecretCacheForTest, keyedHash } from "../../../../../lib/auth-secrets";
+import {
+  blobToText,
+  decryptConnectorSecret,
+  encryptConnectorSecret,
+} from "../../../../../lib/connector-secrets";
 import { rateLimited } from "../../../../../lib/session-cookies";
 import {
   __cacheEntriesForTest,
@@ -68,12 +72,15 @@ const call = (
     }),
     { params: Promise.resolve({ token: over.token ?? "tok" }) },
   );
-const update = (text: string, id: number | string = 9001) => ({
-  update_id: id,
-  result: {
-    event_name: "message.text.received",
-    message: { text, from: { id: "zuser-1", display_name: "An" }, chat: { id: "zuser-1" } },
-  },
+// DD-126 (OD-2) body: payment bot src/zalo/zalo.ts ZaloUpdate. No update_id, no `result`.
+const update = (
+  text: string,
+  id: number | string = 9001,
+  chat: Record<string, unknown> = { id: "zuser-1", chat_type: "PRIVATE" },
+  from: Record<string, unknown> = { id: "zuser-1", display_name: "An" },
+) => ({
+  event_name: "message.text.received",
+  message: { message_id: String(id), date: 1_760_000_000_000, text, from, chat },
 });
 const env = async (r: Response) => (await r.json()) as { error?: { code: string } | null };
 
@@ -161,13 +168,38 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(entries[0]!.includes(Buffer.from(SECRET))).toBe(false);
   });
 
-  it("a GROUP message creates no identity and gets a reply", async () => {
-    const body = update("/start", 9300);
-    (body.result.message.chat as { id: string }).id = "group-9";
-    const res = await call({ body });
+  it("a chat whose id is not the sender's (no GROUP chat_type) creates no identity and gets a reply", async () => {
+    const res = await call({ body: update("/start", 9300, { id: "group-9" }) });
     expect(res.status).toBe(200);
     expect(resolveZaloIdentity).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a GROUP chat_type payload is ignored: 200, no identity, no reply, no link code", async () => {
+    const res = await call({ body: update("/link", 9301, { id: "group-9", chat_type: "GROUP" }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ message: "Success" });
+    expect(resolveZaloIdentity).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(issueLinkCode).not.toHaveBeenCalled();
+    expect(finishInboundEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: "ignored" }),
+    );
+  });
+
+  // chat_type values pinned from the payment bot (src/zalo/zalo.ts ZaloChat: "PRIVATE" | "GROUP").
+  it.each([
+    ["PRIVATE", true],
+    [undefined, true],
+    ["GROUP", false],
+    ["OA", false],
+  ])("chat_type %s with chat.id == from.id: DM identity resolved = %s", async (chatType, dm) => {
+    const chat =
+      chatType === undefined ? { id: "zuser-1" } : { id: "zuser-1", chat_type: chatType };
+    expect((await call({ body: update("/me", 9302, chat) })).status).toBe(200);
+    expect(vi.mocked(resolveZaloIdentity).mock.calls.length).toBe(dm ? 1 : 0);
+    expect(vi.mocked(sendMessage).mock.calls.length).toBe(dm ? 1 : 0);
   });
 
   it("an inactive Person -> event row failed with PERSON_INACTIVE, still 200", async () => {
@@ -206,8 +238,10 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(storeInboundEvent).not.toHaveBeenCalled();
   });
 
-  it("a numeric update_id above 2^53 -> 400 (digits already lost)", async () => {
-    const res = await call({ raw: '{"update_id": 9007199254740993, "result": {}}' });
+  it("a numeric message_id above 2^53 -> 400 (digits already lost)", async () => {
+    const raw =
+      '{"message":{"message_id":9007199254740993,"chat":{"id":"zuser-1"},"from":{"id":"zuser-1"},"text":"x"}}';
+    const res = await call({ raw });
     expect(res.status).toBe(400);
   });
 
@@ -222,10 +256,8 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     expect(vi.mocked(storeInboundEvent).mock.calls[0]![1].keyVersion).toBe("local");
   });
 
-  it("/link in a GROUP chat posts no code and issues none", async () => {
-    const body = update("/link", 9200);
-    (body.result.message.chat as { id: string }).id = "group-9";
-    await call({ body });
+  it("/link outside a DM (chat.id != from.id) posts no code and issues none", async () => {
+    await call({ body: update("/link", 9200, { id: "group-9" }) });
     expect(vi.mocked(sendMessage).mock.calls[0]![2]).toContain("message the bot directly");
     expect(issueLinkCode).not.toHaveBeenCalled();
   });
@@ -238,9 +270,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       displayName: "An",
       hasAccount: true,
     });
-    const body = update("/me", 9201);
-    (body.result.message.chat as { id: string }).id = "zuser-1";
-    await call({ body });
+    await call({ body: update("/me", 9201) });
     expect(vi.mocked(sendMessage).mock.calls[0]![2]).toContain("Plexco account linked");
   });
 
@@ -256,6 +286,13 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     ["not json", "{nope"],
     ["array", "[]"],
     ["no event id", '{"result":{"message":{"text":"hi"}}}'],
+    [
+      "update_id but no message_id",
+      '{"update_id":5,"message":{"chat":{"id":"u"},"from":{"id":"u"}}}',
+    ],
+    ["result-wrapped", JSON.stringify({ result: update("/start") })],
+    ["no chat.id", '{"message":{"message_id":"m","from":{"id":"u"},"text":"x"}}'],
+    ["no from.id", '{"message":{"message_id":"m","chat":{"id":"u"},"text":"x"}}'],
   ])("malformed payload (%s) -> 400 WEBHOOK_PAYLOAD_MALFORMED", async (_n, raw) => {
     const res = await call({ raw });
     expect(res.status).toBe(400);
@@ -264,7 +301,9 @@ describe("POST /api/webhooks/zalo/[token]", () => {
   });
 
   it("oversized body (> 64 KiB) -> 400 before parsing", async () => {
-    const res = await call({ raw: JSON.stringify({ update_id: 1, pad: "x".repeat(70 * 1024) }) });
+    const res = await call({
+      raw: JSON.stringify({ ...update("/start"), pad: "x".repeat(70 * 1024) }),
+    });
     expect(res.status).toBe(400);
   });
 
@@ -272,15 +311,60 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     vi.mocked(storeInboundEvent).mockResolvedValue({ id: null, duplicate: true });
     const res = await call();
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ message: "Success" });
     expect(resolveZaloIdentity).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  describe("dedupe on (message_id, chat.id, from.id) with no update_id (DD-126)", () => {
+    // Stands in for UNIQUE (tenant_id, bot_id, external_event_id) of channel_inbound_events.
+    beforeEach(() => {
+      const seen = new Set<string>();
+      vi.mocked(storeInboundEvent).mockImplementation(async (_tx, p) => {
+        if (seen.has(p.externalEventId)) return { id: null, duplicate: true };
+        seen.add(p.externalEventId);
+        return { id: `evt-${seen.size}`, duplicate: false };
+      });
+    });
+
+    it("the same triple twice -> the second delivery is a 200 ack and nothing is processed", async () => {
+      expect((await call({ body: update("/me", "m-1") })).status).toBe(200);
+      const again = await call({ body: update("/me", "m-1") });
+      expect(again.status).toBe(200);
+      expect(await again.json()).toEqual({ message: "Success" });
+      expect(resolveZaloIdentity).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(finishInboundEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it("the same message_id with a different chat.id is processed as a distinct event", async () => {
+      await call({ body: update("/start", "m-1") });
+      await call({ body: update("/start", "m-1", { id: "chat-2", chat_type: "PRIVATE" }) });
+      const keys = vi.mocked(storeInboundEvent).mock.calls.map((c) => c[1].externalEventId);
+      expect(new Set(keys).size).toBe(2);
+      expect(vi.mocked(sendMessage).mock.calls.map((c) => c[1])).toEqual(["zuser-1", "chat-2"]);
+      expect(finishInboundEvent).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("stores the event ENCRYPTED before processing, then marks it processed", async () => {
     const res = await call();
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ message: "Success" });
     const stored = vi.mocked(storeInboundEvent).mock.calls[0]![1];
-    expect(stored.externalEventId).toBe("9001");
+    // A keyed HMAC of the composed triple: no raw provider id in the lookup column (DD-67).
+    expect(stored.externalEventId).toBe(
+      await keyedHash('channel-inbound-event:zalo:["9001","zuser-1","zuser-1"]'),
+    );
+    expect(stored.externalEventId).not.toContain("zuser-1");
+    // The ciphertext AAD binds the stored key: the row alone is enough to decrypt it.
+    const plain = await decryptConnectorSecret(
+      {} as Parameters<typeof decryptConnectorSecret>[0],
+      stored.rawPayloadEnc,
+      { tenantId: TENANT, botId: BOT, purpose: `inbound_event:${stored.externalEventId}` },
+      stored.keyVersion,
+    );
+    expect(JSON.parse(plain)).toEqual(update("/start"));
     expect(stored.rawPayloadEnc.toString("utf8")).not.toContain("/start");
     expect(vi.mocked(storeInboundEvent).mock.invocationCallOrder[0]!).toBeLessThan(
       vi.mocked(resolveZaloIdentity).mock.invocationCallOrder[0]!,
@@ -329,7 +413,16 @@ describe("POST /api/webhooks/zalo/[token]", () => {
 
   it("non-text event -> stored then 'ignored', no reply", async () => {
     await call({
-      body: { update_id: 77, result: { event_name: "message.image.received", message: {} } },
+      body: {
+        event_name: "message.image.received",
+        message: {
+          message_id: "m-77",
+          date: 1_760_000_000_000,
+          photo: "https://x.test/p.jpg",
+          from: { id: "zuser-1" },
+          chat: { id: "zuser-1", chat_type: "PRIVATE" },
+        },
+      },
     });
     expect(sendMessage).not.toHaveBeenCalled();
     expect(finishInboundEvent).toHaveBeenCalledWith(

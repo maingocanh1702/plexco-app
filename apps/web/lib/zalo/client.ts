@@ -4,9 +4,10 @@
  * is taken from docs/research/player-side-saas-reconciliation.md section 4 (verified there against
  * bot.zapps.me/docs); override with env ZALO_BOT_API_BASE.
  *
- * AWAIT-verify (not pinned in repo docs): the exact JSON envelope of responses (`{ ok, result }` is
- * assumed Telegram-style and tolerated loosely), the bot token charset, and the HTTP status Zalo returns
- * for a bad token. Any non-2xx or `ok: false` is treated as failure.
+ * Response envelope `{ ok, result, description, error_code }` (DD-126, read the way the payment bot's
+ * src/zalo/zalo.ts callApi reads it): success only on `ok: true`; `ok: false` is `rejected`; a 2xx
+ * body without a boolean `ok` has no readable verdict (`bad_response`, never success); any non-2xx is
+ * `rejected`. AWAIT-verify: the bot token charset and the HTTP status Zalo returns for a bad token.
  *
  * The token is part of the URL, so errors NEVER carry the URL or the response body: callers only see a
  * stable `kind`. Every call has a 5 s timeout and a 64 KiB response cap.
@@ -67,10 +68,9 @@ async function call(
   } catch {
     throw new ZaloApiError("bad_response");
   }
-  if (json === null || typeof json !== "object" || (json as { ok?: unknown }).ok === false) {
-    throw new ZaloApiError("rejected");
-  }
-  return json;
+  const verdict = json !== null && typeof json === "object" ? (json as { ok?: unknown }).ok : null;
+  if (verdict === true) return json;
+  throw new ZaloApiError(verdict === false ? "rejected" : "bad_response");
 }
 
 /** Validates the bot token. Resolves on success, throws ZaloApiError otherwise. */

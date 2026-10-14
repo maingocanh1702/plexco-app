@@ -165,8 +165,10 @@ export async function POST(request: Request): Promise<Response> {
         reason,
       });
       if (superseded) {
+        // A newer connect replaced this one's webhook token: its own code (OD-2 / DD-126), not a
+        // reused commandId.
         return err(
-          "COMMAND_ID_CONFLICT",
+          "CONNECT_SUPERSEDED",
           t(
             "Một lần kết nối mới hơn đã thay thế lần này.",
             "A newer connect superseded this attempt.",

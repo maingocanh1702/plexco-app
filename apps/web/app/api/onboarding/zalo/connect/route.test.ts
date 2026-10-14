@@ -198,11 +198,13 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect(beginZaloConnect).not.toHaveBeenCalled();
   });
 
-  it("a commandId owned by another command -> 409 before any Zalo call", async () => {
+  it("a commandId owned by another command -> 409 COMMAND_ID_CONFLICT before any Zalo call", async () => {
     vi.mocked(probeZaloConnectReplay).mockRejectedValue(
       new ZaloConnectError("COMMAND_ID_CONFLICT", "x"),
     );
-    expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(409);
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(res.status).toBe(409);
+    expect((await env(res)).error?.code).toBe("COMMAND_ID_CONFLICT");
     expect(getMe).not.toHaveBeenCalled();
   });
 
@@ -211,10 +213,15 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);
   });
 
-  it("a superseded attempt (a newer connect replaced the token) -> 409, not success", async () => {
+  it("a superseded attempt (a newer connect replaced the token) -> 409 CONNECT_SUPERSEDED, not success", async () => {
     vi.mocked(finishZaloConnect).mockResolvedValue({ state: registered, superseded: true });
     const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
     expect(res.status).toBe(409);
+    const body = (await res.json()) as { data: unknown; error: { code: string; message: string } };
+    // OD-2 / DD-126: its own code; COMMAND_ID_CONFLICT is reserved for a reused commandId.
+    expect(body.error.code).toBe("CONNECT_SUPERSEDED");
+    expect(body.error.message).toBe("A newer connect superseded this attempt.");
+    expect(body.data).toBeNull();
     expect(vi.mocked(finishZaloConnect).mock.calls[0]![1].webhookToken).toBe(
       registered.webhookToken,
     );
