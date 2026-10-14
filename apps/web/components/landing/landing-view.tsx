@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect } from "react";
 import { authErrorMessage } from "../../lib/auth-error-message";
 import { useT } from "../../lib/i18n-client";
+import { clearSessionSnapshots } from "../../lib/session-snapshot";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { InlineError } from "../ui/inline-error";
@@ -15,6 +17,9 @@ import styles from "./landing-view.module.css";
 export function LandingView({ authError }: { authError: string | null }) {
   const t = useT();
   const error = authErrorMessage(authError, t);
+  // Signed-out surface: an expired cookie lands here via a server redirect (no API call to notice
+  // it), so wipe the offline session-list snapshots here too.
+  useEffect(() => clearSessionSnapshots(), []);
   return (
     <>
       <SkipLink />

@@ -1,0 +1,83 @@
+.form {
+  display: grid;
+  gap: var(--space-5);
+  max-width: var(--container-sm);
+}
+
+.group {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--border-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.group legend {
+  padding: 0 var(--space-2);
+  font-family: var(--font-heading);
+  font-weight: var(--font-bold);
+}
+
+.summary:empty {
+  display: none;
+}
+
+.summary:focus {
+  outline: var(--border-width-2) solid var(--focus-ring);
+  outline-offset: var(--space-1);
+}
+
+.errors {
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--error);
+  border-radius: var(--radius-md);
+  background: var(--error-subtle);
+  color: var(--error-text);
+}
+
+.errors ul {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+}
+
+.notice {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--info-subtle);
+}
+
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--touch-target);
+}
+
+.check input {
+  width: var(--space-5);
+  height: var(--space-5);
+}
+
+.fieldError {
+  color: var(--error-text);
+  font-size: var(--text-sm);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-2);
+}
+
+@media (min-width: 769px) {
+  .actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+}

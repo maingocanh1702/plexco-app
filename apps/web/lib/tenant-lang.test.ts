@@ -146,6 +146,10 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/auth/session/route.ts": "b",
   "app/api/auth/logout/route.ts": "b",
   "app/api/auth/logout-all/route.ts": "b",
+  // (b) — authenticated, but the payload is the GLOBAL sports directory: no tenant is routed, so no
+  // tenant language applies. Errors are Vietnamese server-side; the browser maps AUTH_REQUIRED /
+  // RATE_LIMITED from its own t() (lib/session-error-ui.ts).
+  "app/api/sports/route.ts": "b",
   // (c) — liveness probe: {ok:true}, no DB, no auth.
   "app/healthz/route.ts": "c",
 
@@ -190,6 +194,18 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/session-dto.ts": "c",
   "lib/theme-colors.ts": "c",
   "lib/use-online-status.ts": "c",
+  "lib/use-sessions-data.ts": "c",
+  "lib/use-tenant-context.ts": "c",
+  // (c) — browser-side session screens (M2b). Pure formatters/builders; any user-facing text is
+  // produced with the `t` the caller passes from useT() (tenant language), never a server response.
+  "lib/money.ts": "c",
+  "lib/session-actions.ts": "c",
+  "lib/session-error-ui.ts": "c",
+  "lib/session-form-model.ts": "c",
+  "lib/session-list-streams.ts": "c",
+  "lib/session-snapshot.ts": "c",
+  "lib/session-time.ts": "c",
+  "lib/sessions-api.ts": "c",
   "lib/lang-storage.ts": "c",
   // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation
   // screens (landing `?auth_error`, create-club form), which render Vietnamese by DD-118 bucket b.

@@ -48,9 +48,11 @@ export {
   SESSION_STATUSES,
   type ListSessionsParams,
   type SessionDetail,
+  type SessionListItem,
   type SessionListPage,
   type SessionScalars,
 } from "./session-read.js";
+export { listActiveSports, type ActiveSport } from "./sports-read.js";
 // Web MVP lane M2c: host roster writer + manual mark-paid (DD-40) + reversal.
 export {
   addMemberToSession,
