@@ -122,6 +122,28 @@ pnpm --filter @plexco/bot start:worker
 | `DATABASE_URL_MIGRATION=... pnpm --filter @plexco/bot provision:queue` | Provision pg-boss schema/queues sau migrations |
 | `pnpm --filter @plexco/db exec drizzle-kit studio` | Drizzle Studio (dev only) |
 | `pnpm lint` | Lint toàn monorepo |
+| `pnpm dev:seed` | Tạo CLB "Dev Club" + 3 persona dev (chỉ DB local, idempotent) — xem Dev-login |
+
+### Dev-login (chỉ máy local, không cần Google OAuth)
+
+Đăng nhập bằng persona giả (owner/host, co_admin, player của CLB "Dev Club", email `@dev.invalid`) qua
+**đúng đường của Google sign-in** (account → Person → `issueSession()`, cùng cookie/CSRF/`authorize()`/RLS).
+Chỉ mở khi đủ: `next dev` (NODE_ENV=development) · `PLEXCO_DEV_LOGIN=1` · `TRUSTED_INGRESS_PROVIDER=direct` ·
+`DATABASE_URL` trỏ localhost/127.0.0.1/[::1]/`postgres` · Host loopback, không header forwarding · dev
+server không lộ ra mạng (`-H 127.0.0.1`). Thiếu một điều kiện ⇒ 404 như route không tồn tại.
+
+```bash
+export ENCRYPTION_KEY="$(openssl rand -base64 32)"   # tạo MỘT lần, dùng chung cho seed và dev server
+DATABASE_URL=postgres://app:plexco_dev_app@localhost:5432/plexco pnpm dev:seed
+PLEXCO_DEV_LOGIN=1 TRUSTED_INGRESS_PROVIDER=direct DB_EXPECTED_ROLE=app \
+  DATABASE_URL=postgres://app:plexco_dev_app@localhost:5432/plexco \
+  pnpm --filter @plexco/web exec next dev -H 127.0.0.1 -p 3000
+# mở http://localhost:3000/dev-login
+```
+
+⚠️ Chỉ truyền `PLEXCO_DEV_LOGIN` trên dòng lệnh `next dev`, đừng đặt vào `.env*`: có mặt (kể cả giá trị rỗng)
+khi NODE_ENV khác `development` ⇒ `next build`/`next start` từ chối khởi động; CI (`pnpm guard:dev-login`, chạy
+trong `pnpm test`) chặn biến này trong `infra/`, `.github/workflows/`, `app*.yaml` và `Dockerfile*`.
 
 ---
 

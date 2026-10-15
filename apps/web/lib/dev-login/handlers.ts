@@ -1,0 +1,156 @@
+import { randomUUID } from "node:crypto";
+import { t } from "@plexco/core/i18n";
+import { err } from "../api-envelope";
+import { log } from "../log";
+import { readBoundedBody } from "../read-bounded-body";
+import {
+  appDb,
+  issueSession,
+  sameOriginRequest,
+  SessionReauthRequiredError,
+} from "../session-cookies";
+import {
+  clearDevLoginCsrfCookie,
+  DEV_LOGIN_CSRF_FIELD,
+  devLoginCsrfTokensMatch,
+  newDevLoginCsrfToken,
+  readDevLoginCsrfCookie,
+  setDevLoginCsrfCookie,
+} from "./csrf";
+import { devLoginNotFound, evaluateDevLoginGate, readDevLoginEnv } from "./gate";
+import { devServerLoopbackOnly } from "./network-exposure";
+import { buildDevLoginDocument, normalizeDevLoginPageError } from "./page-document";
+import { resolveDevPersonaAccount } from "./persona-account";
+import { devPersonaByKey } from "./personas";
+import { DEV_LOGIN_PAGE_PATH } from "./routing";
+
+/**
+ * Logic of the two dev-login route handlers (app/internal-dev-login/{page,session}/route.dev.ts),
+ * kept here because an App Router route module may export only HTTP verbs.
+ *
+ * Both handlers open with the full per-request gate (again, after the middleware router's check on
+ * the public paths; alone for a direct request to the implementation path), then the
+ * network-exposure probe. Either false => the bare 404 of devLoginNotFound(), before any cookie,
+ * body read or database call.
+ */
+
+/** `persona=<key>&csrf=<43 chars>` is ~70 bytes; 1 KiB is ~15x that. */
+const MAX_LOGIN_BODY_BYTES = 1024;
+
+async function gateRefusal(request: Request): Promise<Response | null> {
+  const decision = evaluateDevLoginGate(readDevLoginEnv(), request.headers);
+  if (!decision.open) {
+    log.warn("auth.dev_login.gate_closed", { reason: decision.reason });
+    return devLoginNotFound();
+  }
+  if (!(await devServerLoopbackOnly())) {
+    log.warn("auth.dev_login.gate_closed", {
+      reason: "network_exposed",
+      remedy: "bind the dev server to loopback: next dev -H 127.0.0.1",
+    });
+    return devLoginNotFound();
+  }
+  return null;
+}
+
+function seeOther(location: string): Response {
+  return new Response(null, {
+    status: 303,
+    headers: { location, "cache-control": "no-store", "referrer-policy": "no-referrer" },
+  });
+}
+
+/** GET /dev-login (307 from the middleware): the persona form with a fresh double-submit token. */
+export async function handleDevLoginPage(request: Request): Promise<Response> {
+  const refused = await gateRefusal(request);
+  if (refused) return refused;
+
+  const token = newDevLoginCsrfToken();
+  await setDevLoginCsrfCookie(token);
+  const error = normalizeDevLoginPageError(new URL(request.url).searchParams.get("error"));
+  const document = buildDevLoginDocument({ csrfToken: token, error });
+  return new Response(document.body, { status: 200, headers: document.headers });
+}
+
+/**
+ * Every HTTP method the implementation route does not serve. Exported for all of them by the route
+ * files, so Next never answers 405 / 204 `Allow` on its own: a closed gate is the same bare 404 for
+ * every method, and an open gate says 405 with the one method that route accepts.
+ */
+export async function handleDevLoginOtherMethod(
+  request: Request,
+  allow: "GET" | "POST",
+): Promise<Response> {
+  const refused = await gateRefusal(request);
+  if (refused) return refused;
+  return new Response(null, { status: 405, headers: { allow, "cache-control": "no-store" } });
+}
+
+const csrfInvalid = () => err("CSRF_INVALID", t("Yêu cầu không hợp lệ.", "Invalid request."), 403);
+const invalidBody = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
+
+/**
+ * POST /api/dev/login (307 from the middleware). Order: gate -> same-origin -> bounded form body ->
+ * double-submit token -> closed-set persona -> consume the token -> persona account via the Google
+ * login definer -> issueSession() -> audit log -> 303 to the app root (relative, so the browser stays
+ * on the exact loopback host whose cookie was just set).
+ */
+export async function handleDevLoginSession(request: Request): Promise<Response> {
+  const refused = await gateRefusal(request);
+  if (refused) return refused;
+  try {
+    return await signInPersona(request);
+  } catch (error) {
+    // Never a bare 500 page; the log says which dependency failed (no request data, no secrets).
+    log.error("auth.dev_login.unhandled", { error });
+    return seeOther(`${DEV_LOGIN_PAGE_PATH}?error=unavailable`);
+  }
+}
+
+async function signInPersona(request: Request): Promise<Response> {
+  if (!sameOriginRequest(request)) return csrfInvalid();
+
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
+    return invalidBody();
+  }
+  const read = await readBoundedBody(request, MAX_LOGIN_BODY_BYTES);
+  if (!read.ok) return invalidBody();
+  const form = new URLSearchParams(read.text);
+
+  if (!devLoginCsrfTokensMatch(await readDevLoginCsrfCookie(), form.get(DEV_LOGIN_CSRF_FIELD))) {
+    return csrfInvalid();
+  }
+  const persona = devPersonaByKey(form.get("persona"));
+  if (persona === null) return invalidBody();
+  await clearDevLoginCsrfCookie();
+
+  const requestRef = `dev_login_${randomUUID()}`;
+  const login = await resolveDevPersonaAccount(appDb().pool, persona, requestRef);
+  if (login.outcome !== "login_success") {
+    // identity_conflict: a dev email verified on another account. Fail closed, like the callback.
+    log.warn("auth.dev_login.refused", { outcome: login.outcome, requestRef });
+    return err("AUTH_INVALID", t("Xác thực không hợp lệ.", "Invalid authentication."), 403);
+  }
+
+  try {
+    // THE session issuer, unchanged: rotate when a session cookie is present (persona switch),
+    // else create. Same cookie, same web_sessions row shape, same CSRF secret as Google sign-in.
+    await issueSession(login.accountId);
+  } catch (error) {
+    if (error instanceof SessionReauthRequiredError) {
+      return seeOther(`${DEV_LOGIN_PAGE_PATH}?error=reauth`);
+    }
+    throw error;
+  }
+
+  // Structured audit event (ids only; no email, no name). The DB row for this login is the
+  // definer's login_success row written above under the same requestRef.
+  log.info("auth.dev_login", {
+    accountId: login.accountId,
+    personId: login.personId,
+    persona: persona.key,
+    requestRef,
+  });
+  return seeOther("/");
+}

@@ -8,7 +8,7 @@
   "scripts": {
     "typecheck": "pnpm -r run typecheck",
     "lint": "eslint .",
-    "test": "pnpm run kit:check && pnpm run test:review-readiness && pnpm -r run test",
+    "test": "pnpm run kit:check && pnpm run guard:dev-login && pnpm run test:review-readiness && pnpm -r run test",
     "test:core": "pnpm --filter @plexco/core run test",
     "test:db": "pnpm --filter @plexco/db run test",
     "test:web": "pnpm --filter @plexco/web run test",
@@ -16,7 +16,7 @@
     "check:quick": "pnpm run lint && pnpm run test:core",
     "progress": "node tools/progress.mjs",
     "smoke:predeploy": "node scripts/smoke-predeploy.mjs",
-    "test:review-readiness": "node --test scripts/check-review-readiness.test.mjs scripts/autopilot-ephemeral-review-worktree.test.mjs scripts/check-kit-pack-membership.test.mjs scripts/db-reset-test.test.mjs",
+    "test:review-readiness": "node --test scripts/check-review-readiness.test.mjs scripts/autopilot-ephemeral-review-worktree.test.mjs scripts/check-kit-pack-membership.test.mjs scripts/db-reset-test.test.mjs scripts/check-dev-login-exclusion.test.mjs",
     "review:check": "node scripts/check-review-readiness.mjs --all",
     "review:check:changed": "node scripts/check-review-readiness.mjs --changed",
     "build": "pnpm -r run typecheck && pnpm -r run build",
@@ -24,7 +24,9 @@
     "format:check": "prettier --check .",
     "db:bootstrap": "mr=\"${MIGRATION_ROLE:-}\"; case \"$mr\" in \"\") ;; *[!a-zA-Z0-9_]*) echo \"MIGRATION_ROLE must be a plain identifier: letters, digits, underscore only\" >&2; exit 1 ;; esac; psql \"${DATABASE_URL_MIGRATION:?DATABASE_URL_MIGRATION is required}\" -v ON_ERROR_STOP=1 -c \"SET job_definer_bootstrap.migration_role = '$mr'\" -f infra/postgres-init/01-job-definer.sql && psql \"${DATABASE_URL_MIGRATION:?DATABASE_URL_MIGRATION is required}\" -v ON_ERROR_STOP=1 -c \"SET chat_definer_bootstrap.migration_role = '$mr'\" -f infra/postgres-init/02-chat-definer.sql && psql \"${DATABASE_URL_MIGRATION:?DATABASE_URL_MIGRATION is required}\" -v ON_ERROR_STOP=1 -c \"SET identity_definer_bootstrap.migration_role = '$mr'\" -f infra/postgres-init/03-identity-definer.sql",
     "db:reset:test": "node scripts/db-reset-test.mjs",
+    "dev:seed": "pnpm --filter @plexco/db exec tsx ../../apps/web/lib/dev-login/seed-cli.ts",
     "kit:check": "node scripts/check-kit-pack-membership.mjs --audit",
+    "guard:dev-login": "node scripts/check-dev-login-exclusion.mjs",
     "kit:generate": "node scripts/check-kit-pack-membership.mjs --generate --write"
   },
   "devDependencies": {
