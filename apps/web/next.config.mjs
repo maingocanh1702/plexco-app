@@ -1,7 +1,27 @@
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+  assertDevLoginBootSafe,
+  assertNoDevLoginInProductionCompile,
+  pageExtensionsFor,
+} from "./lib/dev-login/env-policy.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+/**
+ * Dev-login boot fail-closed (lib/dev-login/env-policy.mjs). next dev, next build and next start all
+ * evaluate this file before doing anything else, so PLEXCO_DEV_LOGIN present with ANY value while
+ * NODE_ENV is not "development" stops the process here, with the reason on stderr.
+ */
+assertDevLoginBootSafe(process.env);
+
+/**
+ * `route.dev.ts` files are routes only for a development server with every process-level dev-login
+ * condition true; every other build and start uses Next's default extensions, so the dev-login route
+ * modules are never compiled into a production build.
+ */
+const pageExtensions = pageExtensionsFor(process.env);
 
 /**
  * Baseline security headers on EVERY response (audit 2026-09-06 W-2: none were
@@ -46,6 +66,7 @@ export const SECURITY_HEADERS = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  pageExtensions,
   async headers() {
     return [{ source: "/(.*)", headers: SECURITY_HEADERS }];
   },
@@ -54,7 +75,10 @@ const nextConfig = {
   outputFileTracingRoot: repoRoot,
   // Workspace packages are consumed as TypeScript source (see their `exports`).
   transpilePackages: ["@plexco/core", "@plexco/db"],
-  webpack: (config) => {
+  webpack: (config, { dev }) => {
+    // `dev` is false for every `next build` compilation, whatever NODE_ENV says: a production
+    // compilation with the dev-login flag present or its routes enabled stops here.
+    assertNoDevLoginInProductionCompile({ dev, pageExtensions, env: process.env });
     // The workspace packages are NodeNext ESM: relative imports use ".js"
     // specifiers that resolve to ".ts" sources (required by tsc/tsx/vitest).
     // Teach webpack the same extension aliasing so `next build` resolves them.

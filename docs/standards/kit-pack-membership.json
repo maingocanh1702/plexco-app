@@ -157,6 +157,16 @@
       "path": "scripts/stamp-sw.mjs",
       "overwrite_path": "none",
       "note": "No canonical copy (repo-local web build tooling, M1a)."
+    },
+    {
+      "path": "scripts/check-dev-login-exclusion.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config; the scanned globs are listed once, in the script header."
+    },
+    {
+      "path": "scripts/check-dev-login-exclusion.test.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy. Tests the guard on planted occurrences, a clean tree, the git listing and this repository."
     }
   ],
   "pack_pairs_verbatim": [

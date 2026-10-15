@@ -142,6 +142,8 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/smoke-predeploy.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/generate-pwa-icons.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/stamp-sw.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/check-dev-login-exclusion.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/check-dev-login-exclusion.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 
 - **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69.
 - **`scripts/autopilot-ephemeral-review-worktree.test.mjs`** — No canonical copy.
@@ -159,6 +161,8 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/smoke-predeploy.mjs`** — No canonical copy.
 - **`scripts/generate-pwa-icons.mjs`** — No canonical copy (repo-local web build tooling, M1a).
 - **`scripts/stamp-sw.mjs`** — No canonical copy (repo-local web build tooling, M1a).
+- **`scripts/check-dev-login-exclusion.mjs`** — No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config; the scanned globs are listed once, in the script header.
+- **`scripts/check-dev-login-exclusion.test.mjs`** — No canonical copy. Tests the guard on planted occurrences, a clean tree, the git listing and this repository.
 
 ---
 
