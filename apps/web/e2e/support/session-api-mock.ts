@@ -41,6 +41,8 @@ export interface MockError {
   code: string;
   message: string;
   statusCode: number;
+  /** Optional structured payload of the envelope's error (CLOSE_BLOCKED_OPEN_DEBT's player list). */
+  details?: unknown;
 }
 export interface RecordedCall {
   method: string;

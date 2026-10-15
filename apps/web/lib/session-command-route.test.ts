@@ -806,45 +806,54 @@ describe("CRITERION 3 (structure) — the try/catch lives INSIDE the runWithLang
   });
 });
 
+// DD-131 OD-1: the players a close refusal names (ids + display names only).
+const OWING = [
+  { playerId: "4c3a2e9e-0000-4000-8000-000000000001", displayName: "Lan" },
+  { playerId: "4c3a2e9e-0000-4000-8000-000000000002", displayName: null },
+] as const;
+
+/** Every typed domain error the mapper pins, with its wire code and status (one row per literal). */
+const MAPPED_CASES: ReadonlyArray<readonly [Error, string, number]> = [
+  [new SessionCommandError("INVALID_TIME_RANGE", "internal"), "INVALID_TIME_RANGE", 400],
+  [new SessionCommandError("SPORT_INACTIVE", "internal"), "SPORT_INACTIVE", 400],
+  [new SessionCommandError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
+  [new SessionPublishError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
+  [new SessionPublishError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
+  [new SessionPublishError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
+  [
+    new SessionPublishError("MISSING_DISCOVERY_FIELDS", "internal"),
+    "MISSING_DISCOVERY_FIELDS",
+    400,
+  ],
+  [new SessionUpdateError("CAPACITY_BELOW_ROSTER", "internal"), "CAPACITY_BELOW_ROSTER", 409],
+  [new SessionUpdateError("CAPACITY_BELOW_OCCUPANCY", "internal"), "CAPACITY_BELOW_OCCUPANCY", 409],
+  [
+    new SessionUpdateError("PRICE_CHANGE_REQUIRES_POLICY", "internal"),
+    "PRICE_CHANGE_REQUIRES_POLICY",
+    400,
+  ],
+  [new SessionCloseError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
+  [new SessionCloseError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
+  [new SessionCloseError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
+  [new SessionCloseError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
+  [
+    new SessionCloseError("CLOSE_BLOCKED_OPEN_DEBT", "internal", OWING),
+    "CLOSE_BLOCKED_OPEN_DEBT",
+    409,
+  ],
+  [new SessionCancelError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
+  [new SessionCancelError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
+  [new SessionCancelError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
+  [new SessionCancelError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
+  [new SessionCancelError("CANCEL_REQUIRES_REVIEW", "internal"), "CANCEL_REQUIRES_REVIEW", 400],
+  [new SessionPublishAuthorizationError(), "TENANT_SUSPENDED", 403],
+  [new SessionUpdateAuthorizationError(), "TENANT_SUSPENDED", 403],
+  [new SessionCloseAuthorizationError(), "TENANT_SUSPENDED", 403],
+  [new SessionCancelAuthorizationError(), "TENANT_SUSPENDED", 403],
+];
+
 describe("mapSessionCommandError", () => {
-  it.each([
-    [new SessionCommandError("INVALID_TIME_RANGE", "internal"), "INVALID_TIME_RANGE", 400],
-    [new SessionCommandError("SPORT_INACTIVE", "internal"), "SPORT_INACTIVE", 400],
-    [new SessionCommandError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
-    [new SessionPublishError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
-    [new SessionPublishError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
-    [new SessionPublishError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
-    [
-      new SessionPublishError("MISSING_DISCOVERY_FIELDS", "internal"),
-      "MISSING_DISCOVERY_FIELDS",
-      400,
-    ],
-    [new SessionUpdateError("CAPACITY_BELOW_ROSTER", "internal"), "CAPACITY_BELOW_ROSTER", 409],
-    [
-      new SessionUpdateError("CAPACITY_BELOW_OCCUPANCY", "internal"),
-      "CAPACITY_BELOW_OCCUPANCY",
-      409,
-    ],
-    [
-      new SessionUpdateError("PRICE_CHANGE_REQUIRES_POLICY", "internal"),
-      "PRICE_CHANGE_REQUIRES_POLICY",
-      400,
-    ],
-    [new SessionCloseError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
-    [new SessionCloseError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
-    [new SessionCloseError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
-    [new SessionCloseError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
-    [new SessionCloseError("CANCEL_REQUIRES_REVIEW", "internal"), "CANCEL_REQUIRES_REVIEW", 400],
-    [new SessionCancelError("SESSION_NOT_FOUND", "internal"), "SESSION_NOT_FOUND", 404],
-    [new SessionCancelError("SESSION_NOT_OPEN", "internal"), "SESSION_NOT_OPEN", 409],
-    [new SessionCancelError("STALE_VERSION", "internal"), "STALE_VERSION", 409],
-    [new SessionCancelError("COMMAND_ID_CONFLICT", "internal"), "COMMAND_ID_CONFLICT", 409],
-    [new SessionCancelError("CANCEL_REQUIRES_REVIEW", "internal"), "CANCEL_REQUIRES_REVIEW", 400],
-    [new SessionPublishAuthorizationError(), "TENANT_SUSPENDED", 403],
-    [new SessionUpdateAuthorizationError(), "TENANT_SUSPENDED", 403],
-    [new SessionCloseAuthorizationError(), "TENANT_SUSPENDED", 403],
-    [new SessionCancelAuthorizationError(), "TENANT_SUSPENDED", 403],
-  ])("maps %s onto the pinned code+status", async (error, code, statusCode) => {
+  it.each(MAPPED_CASES)("maps %s onto the pinned code+status", async (error, code, statusCode) => {
     const response = mapSessionCommandError(error);
     expect(response).not.toBeNull();
     expect(response!.status).toBe(statusCode);
@@ -995,6 +1004,84 @@ describe("mapSessionCommandError", () => {
       return (await envelope(response!)).error!.message;
     });
     expect(en).toBe("Invalid payload.");
+  });
+});
+
+// DD-131 OD-1 (pending in PR #51): close's open-debt refusal is the ONE error carrying a payload.
+describe("mapSessionCommandError — CLOSE_BLOCKED_OPEN_DEBT details", () => {
+  type Detailed = {
+    error: {
+      code: string;
+      message: string;
+      statusCode: number;
+      details?: { openBalancePlayers: unknown[] };
+    } | null;
+  };
+  const detailed = async (response: Response) => (await response.json()) as Detailed;
+
+  it("answers 409 with the open-balance list: ids + display names, in the command's order", async () => {
+    const response = mapSessionCommandError(
+      new SessionCloseError("CLOSE_BLOCKED_OPEN_DEBT", "2 charges owe 240000", OWING),
+    );
+    expect(response!.status).toBe(409);
+    const { error } = await detailed(response!);
+    expect(error).toEqual({
+      code: "CLOSE_BLOCKED_OPEN_DEBT",
+      message: "Còn người chơi chưa trả đủ tiền — thu đủ trước khi đóng kèo.",
+      statusCode: 409,
+      details: { openBalancePlayers: [...OWING] },
+    });
+    // The domain message (with its amount) is never echoed.
+    expect(JSON.stringify(error)).not.toMatch(/240000|charges owe/);
+  });
+
+  it("re-projects every entry: a key beyond playerId/displayName never reaches the wire", async () => {
+    const leaky = [{ ...OWING[0], amountDue: 120000, membershipId: "m-1", phone: "0900" }];
+    const response = mapSessionCommandError(
+      new SessionCloseError("CLOSE_BLOCKED_OPEN_DEBT", "internal", leaky),
+    );
+    const { error } = await detailed(response!);
+    expect(error?.details?.openBalancePlayers).toEqual([OWING[0]]);
+    expect(JSON.stringify(error)).not.toMatch(/120000|amountDue|membershipId|0900/);
+  });
+
+  it.each([
+    ["no list", undefined],
+    ["an empty list", []],
+  ] as const)("fails closed (null, so the route answers 500) on a refusal with %s", (_c, list) => {
+    expect(
+      mapSessionCommandError(new SessionCloseError("CLOSE_BLOCKED_OPEN_DEBT", "internal", list)),
+    ).toBeNull();
+  });
+
+  it("no OTHER mapped error grows a details key: each keeps exactly code, message, statusCode", async () => {
+    for (const [error, code] of MAPPED_CASES) {
+      if (code === "CLOSE_BLOCKED_OPEN_DEBT") continue;
+      const { error: mapped } = await detailed(mapSessionCommandError(error)!);
+      expect(Object.keys(mapped!), code).toEqual(["code", "message", "statusCode"]);
+    }
+  });
+
+  it("a close error of ANOTHER code never emits a list, even if one were attached", async () => {
+    const { error } = await detailed(
+      mapSessionCommandError(new SessionCloseError("STALE_VERSION", "internal", OWING))!,
+    );
+    expect(Object.keys(error!)).toEqual(["code", "message", "statusCode"]);
+  });
+
+  it.each([
+    ["vi", "Còn người chơi chưa trả đủ tiền — thu đủ trước khi đóng kèo."],
+    [
+      "en",
+      "Some players have not paid in full — collect their payments before closing the session.",
+    ],
+  ] as const)("resolves the refusal message in %s, per request", async (lang, message) => {
+    await runWithLang(lang, async () => {
+      const response = mapSessionCommandError(
+        new SessionCloseError("CLOSE_BLOCKED_OPEN_DEBT", "internal", OWING),
+      );
+      expect((await detailed(response!)).error?.message).toBe(message);
+    });
   });
 });
 

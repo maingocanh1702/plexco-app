@@ -51,6 +51,23 @@ export function chargeStatusFor(amountDue: number, effectiveAllocated: number): 
   return "partial";
 }
 
+/**
+ * THE remaining (open) balance of a charge, from its stored status and its net allocated amount
+ * (effectiveByCharge: the ledger SUM, reversals negative). The ONE formula behind the host roster's
+ * `remaining` (session-read.ts getSessionDetail), close's open-debt guard (session-service.ts:
+ * open balance <=> `> 0`) and mark-paid's per-line balance (planLines below), so close can never
+ * succeed while the roster still shows a charge with remaining > 0. A `void` charge (removed
+ * player) owes nothing; a free price-0 charge is 0. Not clamped: applyEffective keeps net allocated
+ * within [0, amount_due], so the value is never negative on a consistent ledger.
+ */
+export function chargeRemaining(
+  amountDue: number,
+  effectiveAllocated: number,
+  status: string,
+): number {
+  return status === "void" ? 0 : amountDue - effectiveAllocated;
+}
+
 /** THE single writer of charges.amount_allocated/status: recomputes from the ledger and fails
  *  closed (internal fault, never a client code) if the ledger ever leaves [0, amount_due]. */
 export async function applyEffective(
@@ -208,7 +225,9 @@ async function planLines(tx: Tx, sessionId: string, params: MarkPaidParams, lock
       return fail("CHARGE_NOT_PAYABLE", "only an active player's open charge can be paid");
     }
     const before = effective.get(charge.chargeId) ?? 0;
-    const remaining = charge.amountDue - before;
+    // The roster's formula (chargeRemaining); status is non-null here: the charge row exists
+    // (chargeId !== null) and charges.status is NOT NULL.
+    const remaining = chargeRemaining(charge.amountDue, before, charge.chargeStatus as string);
     if (remaining <= 0) return fail("CHARGE_ALREADY_SETTLED", "charge is already fully paid");
     const amount = item.amount ?? remaining;
     if (amount > remaining) return fail("ALLOCATION_EXCEEDS_FUNDS", "amount exceeds the balance");

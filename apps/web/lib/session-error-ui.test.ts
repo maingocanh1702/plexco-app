@@ -5,6 +5,7 @@ import {
   describeSessionError,
   errorField,
   isDefiniteFailure,
+  openBalancePlayersOf,
 } from "./session-error-ui";
 
 const en = (_vi: string, e: string) => e;
@@ -27,6 +28,7 @@ describe("describeSessionError", () => {
   it("every code in the BE catalog is known and carries its own message", () => {
     for (const code of [
       "CANCEL_REQUIRES_REVIEW",
+      "CLOSE_BLOCKED_OPEN_DEBT",
       "CAPACITY_BELOW_OCCUPANCY",
       "CAPACITY_BELOW_ROSTER",
       "COMMAND_ID_CONFLICT",
@@ -155,5 +157,102 @@ describe("roster / payment errors", () => {
     expect(describeReverseError(err("REVERSAL_NOT_SUPPORTED", "nope", 409), en).message).toBe(
       "nope",
     );
+  });
+});
+
+describe("CLOSE_BLOCKED_OPEN_DEBT (DD-131 OD-1)", () => {
+  const debt = (details?: unknown) =>
+    new ApiClientError(
+      "CLOSE_BLOCKED_OPEN_DEBT",
+      "Còn người chơi chưa trả đủ tiền.",
+      409,
+      "req-1",
+      details as never,
+    );
+  const two = {
+    openBalancePlayers: [
+      { playerId: "p2", displayName: "Minh Trần" },
+      { playerId: "p5", displayName: null },
+    ],
+  };
+
+  it("is a known domain code: the server message, stay in place (no reload, no retry)", () => {
+    expect(describeSessionError(debt(two), en)).toMatchObject({
+      code: "CLOSE_BLOCKED_OPEN_DEBT",
+      message: "Còn người chơi chưa trả đủ tiền.",
+      action: "none",
+      known: true,
+    });
+    expect(isDefiniteFailure(debt(two))).toBe(true); // 409: a fresh command key next time
+  });
+
+  it("lists the players by id and name, a missing name stays null", () => {
+    expect(openBalancePlayersOf(debt(two))).toEqual([
+      { playerId: "p2", displayName: "Minh Trần" },
+      { playerId: "p5", displayName: null },
+    ]);
+    expect(
+      openBalancePlayersOf(debt({ openBalancePlayers: [{ playerId: "p1", displayName: "  " }] })),
+    ).toEqual([{ playerId: "p1", displayName: null }]);
+  });
+
+  it("never reads anything but id + name: an amount the server might add is dropped", () => {
+    const withAmount = {
+      openBalancePlayers: [{ playerId: "p2", displayName: "Minh", remaining: 30000 }],
+    };
+    expect(openBalancePlayersOf(debt(withAmount))).toEqual([
+      { playerId: "p2", displayName: "Minh" },
+    ]);
+  });
+
+  it("repeated playerId is shown once (unique React key)", () => {
+    const dup = {
+      openBalancePlayers: [
+        { playerId: "p2", displayName: "Minh" },
+        { playerId: "p2", displayName: "Minh" },
+      ],
+    };
+    expect(openBalancePlayersOf(debt(dup))).toHaveLength(1);
+  });
+
+  it("missing / empty / malformed details -> [] (generic message only, fail closed)", () => {
+    const bad: unknown[] = [
+      undefined,
+      {},
+      { openBalancePlayers: [] },
+      { openBalancePlayers: "p2" },
+      { openBalancePlayers: {} },
+      { openBalancePlayers: [null] },
+      { openBalancePlayers: ["p2"] },
+      { openBalancePlayers: [{ displayName: "x" }] },
+      { openBalancePlayers: [{ playerId: "", displayName: "x" }] },
+      { openBalancePlayers: [{ playerId: 7, displayName: "x" }] },
+      { openBalancePlayers: [{ playerId: "p1", displayName: 7 }] },
+      // one bad entry voids the whole list: a partial list would read as "only these owe"
+      { openBalancePlayers: [{ playerId: "p1", displayName: "ok" }, { displayName: "x" }] },
+    ];
+    for (const details of bad) {
+      expect(openBalancePlayersOf(debt(details)), JSON.stringify(details)).toEqual([]);
+    }
+  });
+
+  it("only CLOSE_BLOCKED_OPEN_DEBT carries a list: other codes and non-API errors give []", () => {
+    const other = new ApiClientError("CANCEL_REQUIRES_REVIEW", "m", 400, "r", two as never);
+    expect(openBalancePlayersOf(other)).toEqual([]);
+    expect(openBalancePlayersOf(new Error("x"))).toEqual([]);
+    expect(openBalancePlayersOf(null)).toEqual([]);
+  });
+
+  it("CANCEL_REQUIRES_REVIEW stays a known domain code carrying the server's (cancel-only) message", () => {
+    expect(
+      describeSessionError(
+        err("CANCEL_REQUIRES_REVIEW", "Kèo này cần được xem xét trước khi huỷ.", 400),
+        en,
+      ),
+    ).toMatchObject({
+      message: "Kèo này cần được xem xét trước khi huỷ.",
+      action: "none",
+      known: true,
+    });
   });
 });

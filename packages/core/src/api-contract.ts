@@ -34,10 +34,16 @@
  * and this entry discharges it. Status 400 is transcribed verbatim from
  * docs/features/BE/feature_session_management_tech.md §3, not chosen here.
  *
- * It is the money path's public face: both commands fail CLOSED with this code when
- * a session carries ANY charge (including a `void` one) or, on cancel, a non-zero
- * active roster — DD-117 / edge #5. Registering it is what lets the route return the
- * real refusal instead of a generic 500.
+ * Since DD-131 OD-1 (pending in PR #51) only CANCEL emits it: an open session with a
+ * non-zero active roster (owner gate #3), a charge carrying recorded money (net
+ * allocated > 0), a live charge with no active player, or a draft anomaly. The `void`
+ * charge of a removed, unpaid player no longer blocks.
+ *
+ * CLOSE_BLOCKED_OPEN_DEBT (409) replaces it on CLOSE (DD-131 OD-1, reversing DD-117 D3's
+ * close half): some charge still has an open balance. It is the ONE code that carries
+ * `error.details` — `openBalancePlayers`, ids + display names only, never amounts. Pinned
+ * in feature_session_management_tech.md §3; the status is 409 because the caller can
+ * resolve it (collect the payments, then close again).
  *
  * The six guest-note codes (GUEST_NOTE_LIMIT_REACHED, GUEST_NOTE_NOT_FOUND, INVITE_NOT_ALLOWED,
  * NOT_NOTE_CREATOR, PLAYER_NOT_ACTIVE, SESSION_FULL) arrived the same way, with the
@@ -87,6 +93,7 @@ export const API_ERROR_CODES = [
   "CHANNEL_NOT_LINKED",
   "CHARGE_ALREADY_SETTLED",
   "CHARGE_NOT_PAYABLE",
+  "CLOSE_BLOCKED_OPEN_DEBT",
   "COMMAND_ID_CONFLICT",
   "CONNECT_SUPERSEDED",
   "CSRF_INVALID",
@@ -128,10 +135,27 @@ export const API_ERROR_CODES = [
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
+/** One entry of CLOSE_BLOCKED_OPEN_DEBT's list: a player whose charge still has an open balance.
+ *  Id + display name ONLY (DD-131 OD-1): never an amount, a membership/person id or a contact. */
+export interface OpenBalancePlayerDto {
+  playerId: string;
+  displayName: string | null;
+}
+
+/**
+ * Optional structured payload of an error. Present ONLY on a code that defines one — today exactly
+ * CLOSE_BLOCKED_OPEN_DEBT (POST /api/sessions/:id/close). Every other error omits the key entirely,
+ * so its body is byte-identical to the pre-`details` envelope.
+ */
+export interface ApiErrorDetails {
+  openBalancePlayers: OpenBalancePlayerDto[];
+}
+
 export interface ApiError {
   code: ApiErrorCode;
   message: string;
   statusCode: number;
+  details?: ApiErrorDetails;
 }
 
 export interface ApiMeta {

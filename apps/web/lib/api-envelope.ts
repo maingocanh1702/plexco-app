@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { ApiEnvelope, ApiErrorCode } from "@plexco/core";
+import type { ApiEnvelope, ApiErrorCode, ApiErrorDetails } from "@plexco/core";
 
 /**
  * Every API envelope is `Cache-Control: no-store` (audit 2026-09-06 W-14): no route returns
@@ -28,11 +28,24 @@ export function ok(data: unknown, init?: ResponseInit): Response {
   );
 }
 
-export function err(code: ApiErrorCode, message: string, statusCode: number): Response {
+/**
+ * `details` (docs/channels/web/README.md §7) is written ONLY when a caller passes it — today only
+ * CLOSE_BLOCKED_OPEN_DEBT does. Without it the error object is exactly `{ code, message, statusCode }`,
+ * so every other error body stays byte-identical.
+ */
+export function err(
+  code: ApiErrorCode,
+  message: string,
+  statusCode: number,
+  details?: ApiErrorDetails,
+): Response {
   return Response.json(
     {
       data: null,
-      error: { code, message, statusCode },
+      error:
+        details === undefined
+          ? { code, message, statusCode }
+          : { code, message, statusCode, details },
       meta: { requestId: `req_${randomUUID()}` },
     } satisfies ApiEnvelope<never>,
     withNoStore({ status: statusCode }),

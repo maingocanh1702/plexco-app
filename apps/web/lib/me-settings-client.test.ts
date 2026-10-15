@@ -12,8 +12,8 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     ["x".repeat(121), "too_long"],
     ["\u{1F600}".repeat(121), "too_long"],
     ["a\tb", "invalid_chars"],
-    ["a​b", "invalid_chars"],
-    ["a‮b", "invalid_chars"],
+    ["a\u200Bb", "invalid_chars"],
+    ["a\u202Eb", "invalid_chars"],
     // N6: line breaks and blank-looking characters, same set as validateDisplayName / 0055.
     ["Lan" + String.fromCodePoint(0x2028) + "Anh", "invalid_chars"],
     ["Lan" + String.fromCodePoint(0x2029) + "Anh", "invalid_chars"],

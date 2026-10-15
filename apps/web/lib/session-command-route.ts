@@ -1,4 +1,4 @@
-import { isApiErrorCode, type ApiErrorCode } from "@plexco/core";
+import { isApiErrorCode, type ApiErrorCode, type ApiErrorDetails } from "@plexco/core";
 import { runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
   RosterMoneyError,
@@ -67,8 +67,13 @@ import { resolveTenantLang } from "./tenant-lang";
  * is not a signed-in tenant member -- a bot transport, a webhook, a public link, a service token --
  * every sentence above is void, because all of it assumes `currentSession()` identified a person
  * and `authorize()` bounded it. Also void if a command starts MOVING money rather than
- * refusing when money is present: the guards behind `CANCEL_REQUIRES_REVIEW` are refusals, not
- * settlement, and a settlement path needs its own model.
+ * refusing when money is present: the guards behind `CANCEL_REQUIRES_REVIEW` and
+ * `CLOSE_BLOCKED_OPEN_DEBT` are refusals, not settlement, and a settlement path needs its own model.
+ *
+ * `CLOSE_BLOCKED_OPEN_DEBT` is the one response carrying roster data (`error.details`: the players
+ * who still owe, ids + display names only — DD-131 OD-1). It is reachable only through the gate
+ * above (an authorized `session.manage` holder, who can already read that roster) and after the
+ * command's own billing, status and version checks; the mapper re-projects it to those two keys.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -451,13 +456,15 @@ const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   ["REVERSAL_EXCEEDS_EFFECTIVE", 409],
   ["REVERSAL_NOT_SUPPORTED", 409],
   // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
-  // (feature_session_management_tech.md:285), which is authority here — this route does not get
-  // to pick a status for a spec-pinned code. It is a refusal to act while money or an active
-  // roster is present (DD-117 / edge #5), and the client's remedy is a review workflow that does
-  // not exist yet, so nothing about it is retryable.
+  // (feature_session_management_tech.md §3), which is authority here — this route does not get
+  // to pick a status for a spec-pinned code. Since DD-131 OD-1 only cancel emits it: a refusal to
+  // act while an active roster, recorded money or an anomaly is present (gate #3 / edge #5 / #28).
   ["CANCEL_REQUIRES_REVIEW", 400],
   ["CAPACITY_BELOW_OCCUPANCY", 409],
   ["CAPACITY_BELOW_ROSTER", 409],
+  // 409, pinned in the §3 catalog with DD-131 OD-1: like REMOVE_REQUIRES_REVIEW, the caller resolves
+  // it itself (collect the open balances, then close again), so it is a state conflict, not a 400.
+  ["CLOSE_BLOCKED_OPEN_DEBT", 409],
   ["COMMAND_ID_CONFLICT", 409],
   ["INVALID_TIME_RANGE", 400],
   ["MISSING_DISCOVERY_FIELDS", 400],
@@ -554,14 +561,14 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
     ],
   ],
   [
-    // Says what happened and who must act, without leaking WHY. The refusal fires for a charge
-    // (including a `void` one) or, on cancel, a non-zero active roster — telling an unauthorized-
-    // but-authenticated caller which of those it was would turn an error body into a probe for a
-    // session's payment state. §3 pins the code and status, not this wording.
+    // Says what happened and who must act, without leaking WHY. Since DD-131 OD-1 only cancel emits
+    // it — for an active roster, recorded money, a live charge with no active player or a draft
+    // anomaly — and one wording covers all four, so the body does not say which fired. §3 pins the
+    // code and status, not this wording.
     "CANCEL_REQUIRES_REVIEW",
     [
-      "Kèo này cần được xem xét trước khi đóng hoặc huỷ.",
-      "This session needs review before it can be closed or cancelled.",
+      "Kèo này cần được xem xét trước khi huỷ.",
+      "This session needs review before it can be cancelled.",
     ],
   ],
   [
@@ -571,6 +578,14 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
   [
     "CAPACITY_BELOW_ROSTER",
     ["Sức chứa nhỏ hơn số người đã tham gia.", "Capacity is below the current roster."],
+  ],
+  [
+    // The WHO is in error.details.openBalancePlayers; the message only says what to do. No amount.
+    "CLOSE_BLOCKED_OPEN_DEBT",
+    [
+      "Còn người chơi chưa trả đủ tiền — thu đủ trước khi đóng kèo.",
+      "Some players have not paid in full — collect their payments before closing the session.",
+    ],
   ],
   [
     "COMMAND_ID_CONFLICT",
@@ -661,8 +676,29 @@ export function mapSessionCommandError(error: unknown): Response | null {
   // A domain code that is in neither table is a contract gap, not a client error: fail closed
   // by rethrowing rather than guessing a status.
   if (status === undefined || message === undefined) return null;
+  let details: ApiErrorDetails | undefined;
+  if (code === "CLOSE_BLOCKED_OPEN_DEBT") {
+    details = openBalanceDetails(error);
+    // The list IS this code's contract: a refusal that cannot say who owes is a contract gap,
+    // never a 409 with an empty or absent list.
+    if (details === undefined) return null;
+  }
   // t() resolved HERE, inside the request, so the caller's language applies.
-  return err(code, t(message[0], message[1]), status);
+  return err(code, t(message[0], message[1]), status, details);
+}
+
+/**
+ * CLOSE_BLOCKED_OPEN_DEBT's payload, re-projected key by key (an allowlist): whatever the domain
+ * error holds, only `playerId` and `displayName` reach the wire — never an amount (DD-131 OD-1).
+ * Undefined when the error is not a close refusal or carries no list.
+ */
+function openBalanceDetails(error: unknown): ApiErrorDetails | undefined {
+  if (!(error instanceof SessionCloseError)) return undefined;
+  const players = error.openBalancePlayers;
+  if (players === undefined || players.length === 0) return undefined;
+  return {
+    openBalancePlayers: players.map(({ playerId, displayName }) => ({ playerId, displayName })),
+  };
 }
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useT } from "../../lib/i18n-client";
 import { describeSessionError, type ErrorView } from "../../lib/session-error-ui";
 import type { TFn } from "../../lib/i18n-client";
@@ -18,6 +18,7 @@ export function ApiErrorNotice({
   onReload,
   onRetry,
   describe = describeSessionError,
+  children,
 }: {
   error: unknown;
   /** Refetch the data this screen shows (STALE_VERSION, CSRF_INVALID). */
@@ -26,6 +27,8 @@ export function ApiErrorNotice({
   onRetry?: () => void;
   /** Error -> view mapping; settings screens pass their own (it falls back to the session one). */
   describe?: (error: unknown, t: TFn) => ErrorView;
+  /** Extra detail rendered INSIDE the alert region, so a screen reader announces it with the message. */
+  children?: ReactNode;
 }) {
   const t = useT();
   const router = useRouter();
@@ -38,6 +41,7 @@ export function ApiErrorNotice({
   return (
     <div role="alert" className={styles.notice}>
       <p className={styles.message}>{view.message}</p>
+      {children}
       {!view.known && view.requestId ? (
         <p className={styles.ref}>
           {t("Mã tham chiếu", "Reference")}: <code>{view.requestId}</code>
