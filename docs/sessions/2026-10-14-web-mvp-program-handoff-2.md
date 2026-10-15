@@ -130,7 +130,7 @@ Delivered and closed in the backlog by this PR: `identity-definer-bypassrls-owne
   `/internal-dev-login` prefix may answer an empty 404 when only per-request checks fail; (2) migration `auth_audit_dev_login` is NOT authorised: dev logins stay recorded as
   `login_success` / `google`, a known limitation.
 - Owner notes: the OD-4(b) format shows `1.500đ` in the English UI too, so English screen readers may read it as a decimal (owner-signed
-  format); `docker compose up -d postgres` from a different checkout path recreates `plexco-postgres-1` (data persists in the volume).
+  format); the compose re-bind behaviour is in section 6.
 - Still open proposals (owner-open, not decided): (a) accept synchronous processing then ack in #47 for the MVP (DD-131 OD-2 described
   ack first, then asynchronous processing); (b) wave A exits when local Playwright `e2e-web` is GREEN on the stack tip (DD-132
   removed the "E2E staging" gate and named no replacement).
@@ -148,8 +148,10 @@ Delivered and closed in the backlog by this PR: `identity-definer-bypassrls-owne
 - The GitNexus index is stale (last indexed `dd5375f`): re-run `node .gitnexus/run.cjs analyze` from the owner's root checkout before
   trusting impact results for M2c and later symbols; until then use `git grep`.
 - Sandbox must be OFF for `git fetch/push`, `gh`, `git worktree add`, Docker socket access and local port binding (Playwright, `next dev`).
-- Compose from another checkout path recreates `plexco-postgres-1` (the postgres-init mount path changes); data persists in the
-  `plexco_pgdata` volume. Never run `docker compose down -v`.
+- Running `docker compose -f infra/docker-compose.yml up -d postgres` from a different checkout path (e.g. a PR worktree) recreates
+  `plexco-postgres-1` with its init-script bind mount pointing at that checkout. The data persists in the `plexco_pgdata` volume and
+  the init scripts only run on an empty volume, so it is harmless; running the same command once from the main checkout re-binds it.
+  Never run `docker compose down -v`.
 - Shell is zsh: in `git show origin/x:path` write `${ref}:path` when `ref` is a variable (`$ref:path` is a zsh modifier and breaks).
 - The repo root checkout is stale (main @ 0db92b9) and holds owner-local edits: read current main with `git show origin/main:<path>`,
   work only in a worktree, and cascade with `git merge --no-ff` (never rebase a pushed branch).

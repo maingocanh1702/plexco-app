@@ -83,8 +83,10 @@ Ghi lúc 18:39 Asia/Saigon, **không** mang số DD mới:
 
 - Formatter VND của OD-4(b) hiển thị `1.500đ` cả ở UI tiếng Anh, nên trình đọc màn hình tiếng Anh có thể đọc thành số thập phân.
   Đây là format owner đã ký.
-- `docker compose up -d postgres` chạy từ một đường dẫn checkout khác sẽ **tạo lại** container `plexco-postgres-1` (dữ liệu vẫn còn
-  trong volume). Không bao giờ `docker compose down -v`.
+- `docker compose -f infra/docker-compose.yml up -d postgres` chạy từ một đường dẫn checkout khác (ví dụ một worktree của PR) sẽ
+  **tạo lại** container `plexco-postgres-1` với bind mount của init script trỏ vào checkout đó. Volume dữ liệu vẫn còn và init script
+  chỉ chạy khi volume còn trống, nên việc này vô hại; chạy lại đúng lệnh đó một lần từ checkout chính sẽ gắn lại mount. Không bao giờ
+  `docker compose down -v`.
 
 ## Việc kế tiếp
 
