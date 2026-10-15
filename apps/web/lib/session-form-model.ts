@@ -109,7 +109,7 @@ export function validateForm(v: SessionFormValues, tz: string, t: TFn): FormErro
 
 const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
 
-/** POST body minus commandId. venueAddress is NOT part of the create vocabulary (route drops it). */
+/** POST body minus commandId. Optional text fields are sent only when non-empty (DD-128 OD-4a: venueAddress included). */
 export function buildCreateBody(
   v: SessionFormValues,
   tz: string,
@@ -126,8 +126,10 @@ export function buildCreateBody(
   };
   const area = textOrNull(v.area);
   const venueName = textOrNull(v.venueName);
+  const venueAddress = textOrNull(v.venueAddress);
   if (area !== null) body.area = area;
   if (venueName !== null) body.venueName = venueName;
+  if (venueAddress !== null) body.venueAddress = venueAddress;
   return body;
 }
 

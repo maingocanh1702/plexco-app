@@ -81,9 +81,9 @@ describe("validateForm", () => {
 });
 
 describe("buildCreateBody", () => {
-  it("sends explicit-offset ISO, tenant zone, null slots for unlimited, and no venueAddress", () => {
+  it("sends explicit-offset ISO, tenant zone, null slots for unlimited, and the trimmed venueAddress", () => {
     const body = buildCreateBody(
-      base({ venueName: " Sân A ", venueAddress: "ignored", price: "50.000" }),
+      base({ venueName: " Sân A ", venueAddress: " 1 Nguyễn Văn Linh ", price: "50.000" }),
       TZ,
     );
     expect(body).toEqual({
@@ -96,7 +96,12 @@ describe("buildCreateBody", () => {
       visibility: "private",
       joinPolicy: "open",
       venueName: "Sân A",
+      venueAddress: "1 Nguyễn Văn Linh",
     });
+  });
+
+  it("omits a blank venueAddress", () => {
+    const body = buildCreateBody(base({ venueAddress: "   " }), TZ);
     expect("venueAddress" in body).toBe(false);
   });
 });

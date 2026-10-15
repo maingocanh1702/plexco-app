@@ -293,6 +293,7 @@ test.describe("create", () => {
   }) => {
     const mock = await open(page, "/new");
     await fillValid(page);
+    await page.getByLabel("Địa chỉ").fill("1 Nguyễn Văn Linh");
     await page.getByRole("button", { name: "Tạo bản nháp" }).click();
     await expect(page).toHaveURL(new RegExp(`${BASE}/new-1$`));
     await expect(page.getByRole("heading", { level: 1, name: "Cầu lông" })).toBeVisible();
@@ -307,8 +308,8 @@ test.describe("create", () => {
       slotsMax: null,
       visibility: "private",
       venueName: "Sân A",
+      venueAddress: "1 Nguyễn Văn Linh",
     });
-    expect(call!.body).not.toHaveProperty("venueAddress");
     expect(String(call!.body!.commandId)).toMatch(/^[0-9a-f-]{36}$/);
   });
 

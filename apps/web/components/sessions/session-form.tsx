@@ -172,14 +172,12 @@ export function SessionForm(props: SessionFormProps) {
           maxLength={200}
           onChange={(e) => set("venueName", e.target.value)}
         />
-        {mode === "edit" ? (
-          <TextField
-            label={t("Địa chỉ", "Address")}
-            value={values.venueAddress}
-            maxLength={300}
-            onChange={(e) => set("venueAddress", e.target.value)}
-          />
-        ) : null}
+        <TextField
+          label={t("Địa chỉ", "Address")}
+          value={values.venueAddress}
+          maxLength={200}
+          onChange={(e) => set("venueAddress", e.target.value)}
+        />
         <TextField
           label={t("Khu vực", "Area")}
           value={values.area}

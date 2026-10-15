@@ -70,6 +70,8 @@ export interface CreateSessionInputPayload {
   slotsMax?: number | null;
   area?: string | null;
   venueName?: string | null;
+  /** Private plain text (DD-06; DD-128 OD-4a), max VENUE_ADDRESS_MAX characters. NEVER in an outbox payload. */
+  venueAddress?: string | null;
   joinPolicy?: "open" | "approval";
 }
 
@@ -104,6 +106,10 @@ const isInt4 = (value: unknown, min: number): boolean =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= INT4_MAX;
 const isOptionalText = (value: unknown): boolean =>
   value === undefined || value === null || (typeof value === "string" && !value.includes("\u0000")); // PG text rejects NUL
+/** DD-128 OD-4a: venue_address is optional plain text capped at 200 characters (create AND update). */
+const VENUE_ADDRESS_MAX = 200;
+const isOptionalVenueAddress = (value: unknown): boolean =>
+  isOptionalText(value) && (typeof value !== "string" || value.length <= VENUE_ADDRESS_MAX);
 const isEnum = (value: unknown, ...allowed: readonly string[]): boolean =>
   value === undefined || (typeof value === "string" && allowed.includes(value));
 const isValidTimezone = (tz: string): boolean => {
@@ -197,6 +203,12 @@ function validateInput(input: CreateSessionInputPayload): void {
   if (!isOptionalText(input.area) || !isOptionalText(input.venueName)) {
     fail("INVALID_TEXT_FIELD", "area and venue_name must be a string or null");
   }
+  if (!isOptionalVenueAddress(input.venueAddress)) {
+    fail(
+      "INVALID_TEXT_FIELD",
+      `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters or null`,
+    );
+  }
 }
 
 export async function createSession(
@@ -271,6 +283,7 @@ export async function createSession(
         slotsMax: input.slotsMax ?? null,
         area: input.area ?? null,
         venueName: input.venueName ?? null,
+        venueAddress: input.venueAddress ?? null,
         visibility,
         joinPolicy: input.joinPolicy ?? "open",
         status: "draft",
@@ -1232,14 +1245,13 @@ export async function updateSession(
     if (input.slotsMax !== undefined && input.slotsMax !== null && !isInt4(input.slotsMax, 1)) {
       failUpdate("INVALID_SLOTS", "slots_max must be an integer in [1, 2147483647] or null");
     }
-    if (
-      !isOptionalText(input.area) ||
-      !isOptionalText(input.venueName) ||
-      !isOptionalText(input.venueAddress)
-    ) {
+    if (!isOptionalText(input.area) || !isOptionalText(input.venueName)) {
+      failUpdate("INVALID_TEXT_FIELD", "area and venue_name must be a string or null");
+    }
+    if (!isOptionalVenueAddress(input.venueAddress)) {
       failUpdate(
         "INVALID_TEXT_FIELD",
-        "area, venue_name and venue_address must be a string or null",
+        `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters or null`,
       );
     }
 
