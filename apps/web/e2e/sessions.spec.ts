@@ -544,7 +544,13 @@ test.describe("detail", () => {
         statusCode: 400,
       });
       await page.getByRole("button", { name: "Huỷ buổi" }).click();
-      await page.getByRole("dialog").getByRole("button", { name: "Huỷ buổi" }).click();
+      // The confirm body states the OD-1 remedy up front, without the stale "must be reviewed" copy.
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toContainText(
+        "hãy hoàn tác các khoản thanh toán đó và gỡ người chơi trước khi huỷ",
+      );
+      await expect(dialog).not.toContainText("xem xét");
+      await dialog.getByRole("button", { name: "Huỷ buổi" }).click();
       const alert = page.getByRole("dialog").getByRole("alert");
       await expect(alert).toContainText("Kèo này cần được xem xét trước khi huỷ.");
       await expect(alert).toContainText("Gỡ từng người chơi khỏi danh sách");

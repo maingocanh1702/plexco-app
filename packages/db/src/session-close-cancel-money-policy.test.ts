@@ -1,10 +1,11 @@
 import { inspect } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { markPaid } from "./payment-manual.js";
+import { chargeRemaining, chargeStatusFor, markPaid } from "./payment-manual.js";
 import { reversePaymentAllocation } from "./payment-reversal.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession, removePlayerFromSession } from "./roster-service.js";
+import { getSessionDetail } from "./session-read.js";
 import {
   cancelSession,
   closeSession,
@@ -20,7 +21,8 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
  * an open balance with CLOSE_BLOCKED_OPEN_DEBT naming who owes; cancel keeps owner gate #3 and
  * refuses only recorded money (net allocated > 0). The decision table these rows realize lives in
  * docs/features/BE/feature_session_management_tech.md §4 "Close / Cancel money policy".
- * States no writer can produce are forged with the owner connection and say so.
+ * States no writer can produce are forged with the owner connection and say so. AG-* pin that the
+ * close guard and the host roster read model share ONE remaining formula (chargeRemaining).
  */
 let ctx: RlsTestContext;
 const fx = fixtures(() => ctx);
@@ -506,5 +508,106 @@ describe("concurrency — the money check runs under the session row lock", () =
     const after = (await fx.counts(w.tenantId)) as Record<string, number>;
     expect(after.players).toBe((before as Record<string, number>).players);
     expect(after.charges).toBe((before as Record<string, number>).charges);
+  });
+});
+
+describe("close guard <=> host roster read model — ONE remaining formula (chargeRemaining)", () => {
+  /** The host roster's `remaining` per player id (getSessionDetail): every row carrying a charge. */
+  async function rosterRemaining(w: World): Promise<Map<string, number>> {
+    const detail = await getSessionDetail(ctx.appDb.db, {
+      tenantId: w.tenantId,
+      sessionId: w.sessionId,
+    });
+    expect(detail).not.toBeNull();
+    return new Map(
+      detail!.players.flatMap((p) =>
+        p.charge === null ? [] : [[p.id, p.charge.remaining] as const],
+      ),
+    );
+  }
+
+  /** Close on the SAME committed state: the player ids it refuses on, or [] once it closed. */
+  async function closeGuardOwing(w: World): Promise<string[]> {
+    try {
+      expect(await close(w, await version(w.sessionId))).toMatchObject({ status: "closed" });
+      return [];
+    } catch (error) {
+      if (error instanceof SessionCloseError && error.code === "CLOSE_BLOCKED_OPEN_DEBT") {
+        return error.openBalancePlayers!.map((p) => p.playerId);
+      }
+      throw error;
+    }
+  }
+
+  /** The pinned property: close refuses exactly the players the roster shows with remaining > 0. */
+  async function expectAgreement(w: World): Promise<Map<string, number>> {
+    const remaining = await rosterRemaining(w);
+    const owing = await closeGuardOwing(w);
+    const rosterOwing = [...remaining].filter(([, r]) => r > 0).map(([id]) => id);
+    expect([...owing].sort()).toEqual([...rosterOwing].sort());
+    return remaining;
+  }
+
+  it("AG-1: void, unpaid, partly paid, fully paid, fully reversed and reversed-back-to-partial charges — close lists exactly the roster rows with remaining > 0", async () => {
+    const w = await world();
+    const voided = await join(w, "Rời");
+    const unpaid = await join(w, "Chưa trả");
+    const partial = await join(w, "Một phần");
+    const full = await join(w, "Đủ");
+    const reversed = await join(w, "Đảo hết");
+    const reversedToPartial = await join(w, "Đảo một phần");
+    await remove(w, voided.playerId);
+    await pay(w, partial.playerId, 30000);
+    await pay(w, full.playerId, 100000);
+    await reverse(w, await pay(w, reversed.playerId, 100000));
+    await pay(w, reversedToPartial.playerId, 40000);
+    await reverse(w, await pay(w, reversedToPartial.playerId, 60000));
+    expect(Object.fromEntries(await expectAgreement(w))).toEqual({
+      [voided.playerId]: 0,
+      [unpaid.playerId]: 100000,
+      [partial.playerId]: 70000,
+      [full.playerId]: 0,
+      [reversed.playerId]: 100000,
+      [reversedToPartial.playerId]: 60000,
+    });
+    expect(await status(w.sessionId)).toBe("open");
+  });
+
+  it("AG-2: a free price-0 charge, and a settled session (fully paid, void, reversed then paid again) — the roster shows remaining 0 on every row and close succeeds", async () => {
+    const free = await world({ priceAmount: 0 });
+    const freePlayer = await join(free, "Miễn phí");
+    expect(Object.fromEntries(await expectAgreement(free))).toEqual({ [freePlayer.playerId]: 0 });
+    expect(await status(free.sessionId)).toBe("closed");
+
+    const settled = await world();
+    const full = await join(settled, "Đủ");
+    const voided = await join(settled, "Rời");
+    const repaid = await join(settled, "Trả lại");
+    await pay(settled, full.playerId, 100000);
+    await remove(settled, voided.playerId);
+    await reverse(settled, await pay(settled, repaid.playerId, 100000));
+    await pay(settled, repaid.playerId, 100000);
+    expect(Object.fromEntries(await expectAgreement(settled))).toEqual({
+      [full.playerId]: 0,
+      [voided.playerId]: 0,
+      [repaid.playerId]: 0,
+    });
+    expect(await status(settled.sessionId)).toBe("closed");
+  });
+
+  it("AG-3: chargeRemaining itself — 0 for void (even with forged money), due - net otherwise; > 0 exactly when a non-void charge's derived status is not `paid` (INV-7)", () => {
+    expect(chargeRemaining(100000, 0, "void")).toBe(0);
+    expect(chargeRemaining(100000, 50000, "void")).toBe(0);
+    expect(chargeRemaining(100000, 0, "open")).toBe(100000);
+    expect(chargeRemaining(100000, 30000, "partial")).toBe(70000);
+    expect(chargeRemaining(100000, 100000, "paid")).toBe(0);
+    expect(chargeRemaining(0, 0, "paid")).toBe(0);
+    for (const due of [0, 1, 100000]) {
+      for (const net of [0, 1, 99999, 100000]) {
+        if (net > due) continue; // applyEffective keeps net allocated within [0, amount_due]
+        const derived = chargeStatusFor(due, net);
+        expect(chargeRemaining(due, net, derived) > 0).toBe(derived !== "paid");
+      }
+    }
   });
 });

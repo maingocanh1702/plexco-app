@@ -13,7 +13,7 @@ import { authorizeTenantAction } from "./authorization.js";
 import type { Db, Tx } from "./client.js";
 // Import cycle (payment-manual -> roster-money-shared -> this module) is benign: both bindings are
 // hoisted function declarations used only inside command bodies, never at module evaluation.
-import { chargeStatusFor } from "./payment-manual.js";
+import { chargeRemaining } from "./payment-manual.js";
 import { raisePublicSessionFence } from "./public-session-fence.js";
 import { effectiveByCharge } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
@@ -1614,7 +1614,7 @@ export interface OpenBalancePlayer {
 /** The money posture of one charge, as both obligation-termination guards read it. */
 interface ChargeBalance extends OpenBalancePlayer {
   isVoid: boolean;
-  /** A non-void charge the canonical paid-state derivation does not call `paid`. */
+  /** chargeRemaining > 0: exactly a host roster row showing remaining > 0. */
   openBalance: boolean;
   /** Net allocated (ledger SUM, reversals negative) > 0. */
   recordedMoney: boolean;
@@ -1623,12 +1623,12 @@ interface ChargeBalance extends OpenBalancePlayer {
 /**
  * Every charge on a session with its money posture — the ONE read behind close's open-debt guard
  * and cancel's recorded-money guard (DD-131 OD-1 / DD-132, pending in PR #51). Composition only, no
- * second formula:
- *  - net allocated = effectiveByCharge, the ledger SUM the host roster read model shows as
- *    `effectiveAllocated` (session-read.ts getSessionDetail);
- *  - open balance = non-`void` AND chargeStatusFor (INV-7, THE paid-state derivation) is not `paid`,
- *    i.e. exactly the read model's `remaining > 0` (a void charge has remaining 0; a free price-0
- *    charge is `paid` with zero money — the "exempt" case, charges_status_chk has no 'exempt');
+ * second formula — the same helpers the host roster read model (session-read.ts getSessionDetail)
+ * calls, so close cannot succeed while that roster still shows remaining > 0:
+ *  - net allocated = effectiveByCharge, the ledger SUM the roster shows as `effectiveAllocated`;
+ *  - open balance = chargeRemaining (payment-manual.ts, THE remaining formula the roster shows as
+ *    `remaining`) > 0 — a void charge has remaining 0; a free price-0 charge is 0 too (`paid` with
+ *    zero money — the "exempt" case, charges_status_chk has no 'exempt');
  *  - recorded money = net allocated > 0, on ANY charge, void included.
  * LEFT JOINs keep a charge whose player row is not visible (fail-closed: it still counts). Order =
  * the roster read model's (joined_at, player id), so the open-balance list is deterministic. Plain
@@ -1663,12 +1663,11 @@ async function sessionChargeBalances(
   );
   return rows.map((r) => {
     const net = effective.get(r.chargeId) ?? 0;
-    const isVoid = r.status === "void";
     return {
       playerId: r.playerId,
       displayName: r.displayName,
-      isVoid,
-      openBalance: !isVoid && chargeStatusFor(r.amountDue, net) !== "paid",
+      isVoid: r.status === "void",
+      openBalance: chargeRemaining(r.amountDue, net, r.status) > 0,
       recordedMoney: net > 0,
     };
   });
