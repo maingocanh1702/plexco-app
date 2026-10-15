@@ -5752,7 +5752,7 @@ notes: |
   source: PR #47 · DD-126
 
 ## task: channel-inbound-events-retention-reclaimer
-title: Retention cho `channel_inbound_events` + reclaimer cho row `received` mắc kẹt
+title: Reclaimer cho row `received` mắc kẹt trong `channel_inbound_events` (khoá dedupe giữ vĩnh viễn, không có job retention trong MVP)
 status: idea
 risk: P1
 change_class: schema-migration
@@ -5762,12 +5762,13 @@ scope: []
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — chờ owner chọn retention (DD-126) và mô hình reclaimer.
+_readiness: NOT_CODE_READY — retention đã chốt ở DD-131 OD-2 (khoá dedupe giữ vĩnh viễn; không job retention cho `routing_audit` trong MVP); còn chờ owner chọn mô hình reclaimer (S3 A1: PR #47 xử lý đồng bộ rồi ack, không ack-rồi-xử-lý-bất-đồng-bộ như OD-2 mô tả).
 notes: |
-  Bảng mới của migration 0053 (PR #47) lưu raw payload đã mã hoá, UNIQUE (tenant_id, bot_id, external_event_id), chưa có
-  retention và chưa có job nào quét row `received` (store-before-process: crash giữa chừng để lại row chưa xử lý).
-  Ràng buộc: giữ dedup key đủ lâu để Zalo retry không xử lý trùng.
-  source: PR #47 (M3a) · DD-126
+  Bảng mới của migration 0053 (PR #47) lưu raw payload đã mã hoá, UNIQUE (tenant_id, bot_id, external_event_id) và chưa có job nào quét
+  row `received` (store-before-process: crash giữa chừng để lại row chưa xử lý). Phần "retention" của row gốc đã được trả lời bởi
+  DD-131 OD-2: khoá dedupe (`message.message_id` kèm `from.id`, `chat.id`) giữ vĩnh viễn, nên không còn việc xoá khoá. Retention của payload
+  thô chưa có quyết định riêng; không thêm job xoá trước khi owner chốt. Phần còn lại của lane là reclaimer cho row `received`.
+  source: PR #47 (M3a) · DD-126 · DD-131 OD-2
 
 ## task: routing-audit-retention
 title: Retention cho `routing_audit` — tăng theo mỗi lần nạp cache secret và mỗi lần decrypt token
@@ -5930,3 +5931,293 @@ notes: |
   PR #48 (M2b) owner note: hai format VND cùng tồn tại (web `50.000 ₫`, bot `110.000đ`). Chưa có decision chọn một. Khi chọn, chuẩn hoá
   ở helper dùng chung thay vì sửa hai nơi.
   source: PR #48 (M2b) owner notes · DD-128
+
+## task: app-worker-test-password-clash-flake
+title: Flake CI `password authentication failed for user app_worker`: hai mật khẩu test khác nhau cho cùng role cluster-global
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.ts, apps/bot/src/dispatcher.test.ts, apps/bot/src/preflight.test.ts, apps/bot/src/schedule.test.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main 7fe5525; chưa chọn hướng sửa.
+notes: |
+  `packages/db/src/test-harness.ts:90` đặt `ROLE_PW.app_worker = "plexco_test_worker"`, còn `apps/bot/src/{dispatcher,preflight,schedule}.test.ts`
+  (dòng 25 / 24 / 35) đặt `APP_WORKER_PASSWORD = "plexco_test_worker_jrd"`. Role `app_worker` là cluster-global; suite web và bot chạy song song sau
+  `packages/db`, và mỗi `setupRlsTestContext` của web đặt lại mật khẩu, nên `dispatcher.test.ts` có lúc bị `password authentication failed for user app_worker`
+  (thấy trên CI của PR #56: 2/4 lần chạy, xanh khi chạy lại). Hướng sửa: một mật khẩu dùng chung cho cả hai nơi, hoặc tuần tự hoá các lần chạy.
+  source: S5 (conductor) · PR #56 CI
+
+## task: db-test-harness-cluster-role-password-reset
+title: Harness DB test đặt lại mật khẩu role cluster-global, làm hỏng đăng nhập `app:plexco_dev_app` trong README sau mỗi lần chạy test
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chưa chọn hướng sửa (cô lập cluster test hay khôi phục mật khẩu).
+notes: |
+  `setupRlsTestContext` gọi `setRolePasswordRaceSafe` cho `app`/`app_worker`/`readonly` với mật khẩu test (`test-harness.ts:88-92`, vòng lặp ở ~`:530`);
+  role là cluster-global, nên sau một lần chạy test trên cluster dev dùng chung, `DATABASE_URL=postgres://app:plexco_dev_app@...` trong `README.md:143` không còn đăng nhập được.
+  S5 còn báo database theo pid (`plexco_*_${process.pid}`) không bị drop; trên main `teardown` có `DROP DATABASE ... WITH (FORCE)` (`test-harness.ts` ~`:897`), nên chỉ lần chạy
+  bị ngắt trước teardown mới để lại database — đo lại trước khi sửa phần này.
+  source: S5
+
+## task: db-test-unhandled-57p01-and-load-timeouts
+title: Test DB: `appPool` thiếu listener `error` (57P01 khi teardown) và các timeout/unhandled rejection khi máy tải nặng
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/tenant-capability-authority.test.ts, packages/db/src/roster-service.test.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; phần timeout chỉ quan sát cục bộ, chưa có đo lặp lại.
+notes: |
+  `packages/db/src/tenant-capability-authority.test.ts:466` tạo `appPool = new pg.Pool(...)` không gắn `on("error")` (`:454` khai báo, `:508` `appPool?.end()` rồi `nsCtx.teardown()`),
+  nên `DROP DATABASE ... WITH (FORCE)` của teardown có thể gây 57P01 unhandled. Cùng họ với `db-test-harness-teardown-57p01` (đã merged) nhưng khác file.
+  Quan sát cục bộ khi tải nặng (S4/S5/S6, chưa re-measure): unhandled rejection quanh `packages/db/src/roster-service.test.ts:235-241` (vòng SESSION_NOT_OPEN);
+  timeout ở bot JSO-2/JSO-5, rls-invariants JCL-4/JCL-12, migrate BR-5.
+  source: S4 · S5 · S6
+
+## task: e2e-web-pwa-offline-online-flake
+title: Flake `e2e-web`: test offline → online của `pwa.spec.ts` (cục bộ fail 3/8, qua khi chạy lại)
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [apps/web/e2e/pwa.spec.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chưa có nguyên nhân gốc; cần đo lặp lại trên stack tip.
+notes: |
+  `apps/web/e2e/pwa.spec.ts:39` (test "once the service worker controls the page, an offline navigation shows /offline"; đoạn `setOffline(false)` + `toHaveURL` ở ~`:62-64`)
+  fail 3/8 lần chạy cục bộ (S3/S6), qua khi chạy lại. Trang `/offline` tự điều hướng khi nghe `online` nên có race giữa emulation mạng và điều hướng đang đo.
+  Cần đo lặp lại trước khi sửa; không nới timeout cho tới khi có nguyên nhân.
+  source: S3 · S6
+
+## task: next-config-route-header-precedence-claim
+title: Comment trong `next.config.mjs` nói header của route thắng `headers()`: đo dưới `next dev` là sai, CSP riêng của trang OAuth landing có thể không được phát
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: [auth, web-app]
+scope: [apps/web/next.config.mjs, apps/web/lib/session-cookies.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — cần đo dưới `next start` (build production) trước khi kết luận.
+notes: |
+  `apps/web/next.config.mjs:44-47` ghi rằng header CSP của route-level thay header toàn cục ("Next applies config headers first, the response's own header wins").
+  S5 đo dưới `next dev` thấy điều này không đúng, nên CSP nonce riêng của OAuth landing (`apps/web/lib/session-cookies.ts`) có thể không được phát; chưa đo dưới `next start`.
+  Việc cần làm: đo hai chế độ, rồi sửa comment hoặc sửa cách phát header cho đúng.
+  source: S5 · DD-123
+
+## task: dockerignore-env-nested-files
+title: `.dockerignore` chỉ loại `.env`/`.env.*` ở gốc repo, file `.env` lồng sâu vẫn vào build context
+status: idea
+risk: P3
+change_class: build-config
+depends_on: []
+invariants: [build-config]
+scope: [.dockerignore]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chưa kiểm repo có `.env` lồng thật hay không; sửa một dòng.
+notes: |
+  `.dockerignore` hiện ghi `.env` và `.env.*` (không có tiền tố `**/`); theo ngữ nghĩa Docker, hai mẫu này chỉ khớp ở thư mục gốc context. File `.env*` trong
+  `apps/*` hoặc `packages/*` sẽ vào build context. Đề xuất `**/.env` và `**/.env.*` (giữ ngoại lệ cho file mẫu nếu có).
+  source: S5
+
+## task: docs-drift-sessions-fe-zalo-tech-readme-pins
+title: Docs lệch thực tế sau M2–M4: route `/dashboard/sessions`, shape webhook Zalo cũ, pin phiên bản identity trong README
+status: idea
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/channels/web/FE/feature_sessions_fe.md, docs/features/BE/feature_zalo_channel_tech.md, docs/features/README.md, docs/standards/BUILD-STATUS.md]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main 7fe5525; sửa từng file qua đường review docs của repo.
+notes: |
+  (1) `docs/channels/web/FE/feature_sessions_fe.md:3` (và Flows 1-3, ~`:36-50`) vẫn ghi `/dashboard/sessions`; bản build là `/c/[tenantId]/sessions`.
+  (2) `docs/features/BE/feature_zalo_channel_tech.md` §3: hàng Error Codes (`WEBHOOK_SIGNATURE_INVALID` 400, ~`:158-164`) và ví dụ signature còn mô tả shape OA cũ; ghi chú DD-126 (~`:154`) đã thay shape.
+  (3) `docs/features/README.md:77` pin `BE/feature_identity_tech.md` v1.13, file hiện là v1.19 (FE v1.11 ở cùng hàng chưa đo).
+  (4) `docs/standards/BUILD-STATUS.md` chưa cập nhật cho M4 trở đi (T12b có thể sửa mục này; bỏ khỏi lane nếu đã sửa).
+  source: S6 · S3 · S4
+
+## task: web-command-id-persistence-and-conflict-copy
+title: Web: giữ `commandId` qua reload/Cancel (cửa sổ double-apply của thanh toán một phần và thêm theo tên) và sửa copy `COMMAND_ID_CONFLICT`
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [money-model, web-app]
+scope: [apps/web/components/sessions/edit-session-view.tsx, apps/web/lib/session-command-route.ts, apps/web/lib/use-roster-command.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — cần quyết định phạm vi (sessionStorage theo ý định) trước khi sửa.
+notes: |
+  (1) Residual đã chấp nhận ở S2 vòng 3: `commandId` chỉ sống trong ref, nên reload hoặc Cancel rồi gửi lại tạo `commandId` mới và có thể áp hai lần cho thanh toán một phần / thêm theo tên.
+  Hướng: lưu `commandId` theo ý định trong `sessionStorage`. (2) `apps/web/components/sessions/edit-session-view.tsx:92` (`commandId.current ??= crypto.randomUUID()`) giữ `commandId` qua các lần sửa.
+  (3) Copy `COMMAND_ID_CONFLICT` hiện chữ "commandId" ra người dùng (`apps/web/lib/session-command-route.ts:591-595`, không phải `:576-580` như S2/S4 ghi).
+  source: S2 · S4
+
+## task: web-api-client-timeout-and-refresh-notice-focus
+title: Web: `apiFetch` không có timeout phía client; refresh trang lỗi hiện `ApiErrorNotice` không được focus
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/api-client.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; phần focus của ApiErrorNotice chưa đo lại ở đây.
+notes: |
+  `apps/web/lib/api-client.ts:55-72`: `apiFetch` gọi `fetch` không `AbortSignal`/timeout, nên một request treo giữ modal ở trạng thái busy mãi.
+  S2/S4 còn báo: khi refresh trang thất bại, `ApiErrorNotice` hiện ra nhưng không nhận focus (chưa re-measure trong lane này).
+  source: S2 · S4
+
+## task: club-name-rule-unicode-separators
+title: Quy tắc tên CLB nhận ký tự Zl/Zp và ký tự trắng/filler
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: [schema]
+scope: [packages/db/src/club-config-validation.ts, packages/db/migrations/0052_tenant_profile_definers.sql]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chưa chốt tập ký tự bị cấm; migration mới nếu muốn ép ở DB.
+notes: |
+  `packages/db/src/club-config-validation.ts:64` chỉ loại `\p{Cc}` và `\p{Cf}`; migration 0052 chỉ kiểm độ dài 1..120 sau trim (`char_length`).
+  Vì vậy tên CLB có thể chứa U+2028/U+2029 (Zl/Zp) hoặc ký tự filler/khoảng trắng vô hình, hiển thị như tên rỗng. Đề xuất: chốt tập cấm ở TypeScript trước; chỉ thêm ràng buộc DB nếu owner muốn.
+  source: S4 · DD-124
+
+## task: list-sessions-occupied-count-single-source
+title: `listSessions` tính lại `occupiedCount` bằng SQL thay vì dùng chung một công thức với `sessionOccupancy`
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [core-api]
+scope: [packages/db/src/session-read.ts, packages/db/src/session-read.test.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chưa chọn helper hay view.
+notes: |
+  `packages/db/src/session-read.ts:209` tính `occupiedCount = activeCount + count(session_guest_notes)` trong SQL, nhân đôi công thức của `sessionOccupancy`; chỉ một test
+  bằng nhau (`session-read.test.ts:228`) ghim hai nơi cho một fixture. Vi phạm single-source: đi qua một helper hoặc một view duy nhất, giữ test tương đương cho nhiều fixture
+  (player waitlisted/left, guest note).
+  source: S1
+
+## task: zalo-connect-bot-revoked-error-mapping
+title: Onboarding Zalo connect: `BOT_REVOKED` ra `FORBIDDEN` 403; `finishZaloConnect` để lọt 22023 thành 500
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [auth, transport-zalo]
+scope: [apps/web/app/api/onboarding/zalo/connect/route.ts, packages/db/src/zalo-ingress.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; cần chọn mã lỗi API cho bot đã thu hồi.
+notes: |
+  `apps/web/app/api/onboarding/zalo/connect/route.ts:199-200` map `BOT_REVOKED` sang `FORBIDDEN` 403 (nhầm với thiếu quyền). `beginZaloConnect` đã bắt 22023 "bot is revoked" (`zalo-ingress.ts:394`),
+  nhưng `finishZaloConnect` (`:414`) không có try/catch quanh `zalo_bot_set_status` (~`:455`), mà migration 0053 raise 22023 khi bot đã `revoked`, nên lỗi đó thoát ra thành 500.
+  Cần: bắt 22023 ở `finishZaloConnect` thành `ZaloConnectError("BOT_REVOKED")` và chọn mã/HTTP riêng cho bot đã thu hồi.
+  source: S4 · DD-126
+
+## task: identity-link-hardening-consumer-column
+title: Cứng hoá link định danh: cột consumer trên `link_codes` và các residual của definer 0054 (cần quyết định schema của owner)
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema, auth, identity]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chờ owner quyết schema; không bắt đầu trước đó.
+notes: |
+  (1) Thêm cột consumer trên `link_codes` để definer biết tài khoản đã consume và đóng cửa sổ same_person 10 phút (`0054_link_code_reparent_empty_person.sql`, ~`:20-30`, `:308`);
+  hiện tối đa một dòng audit thừa. (2) Có sẵn từ trước: một insert FK-child từ bot đua với link chờ `FOR UPDATE` rồi gắn vào Person nguồn đã tombstone.
+  (3) Worker test crash giữa revoke/restore có thể để role test LOGIN có thể `SET ROLE identity_definer`. (1) cần owner quyết định schema; (2)-(3) chỉ ghi nhận.
+  source: S4 · DD-127 / DD-131 OD-3
+
+## task: dev-login-residuals-pr-56
+title: Dev-login (PR #56): các residual đã ghi trong PR body, A2 đã được owner waive
+status: idea
+risk: P3
+change_class: security-posture
+depends_on: []
+invariants: [auth, web-app]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — residual để theo dõi; không phải việc chặn MVP.
+notes: |
+  Theo body PR #56: (a) S5 A2 được owner waive (tiền tố `/internal-dev-login` có thể trả 404 rỗng khi chỉ per-request check fail); (b) relay TCP thô tới `127.0.0.1:PORT`;
+  (c) image Docker mang source dev-login không hoạt động (inert); (d) chưa đo Firefox/WebKit; (e) chưa đo hoàn tất Google dưới `next start`.
+  Migration `auth_audit_dev_login` KHÔNG được owner cho phép: dev login vẫn ghi `login_success/google` (giới hạn đã biết).
+  source: S5 · PR #56
+
+## task: small-code-hygiene-reversal-zalo-roster-comment
+title: Dọn nhỏ: reversal trên session đã cancel trả `SESSION_NOT_OPEN`; nhánh `isDirect=false` của Zalo không với tới được; comment cũ
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [packages/db/src/payment-manual.ts, apps/web/lib/zalo/commands.ts, apps/web/lib/use-roster-command.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — mức thấp; gom vào một lane khi có người đụng các file này.
+notes: |
+  (1) Reversal gọi `lockSession` (`payment-reversal.ts:114`), mà `payment-manual.ts:248-258` trả `SESSION_NOT_OPEN` cho session không `open|closed`; DD-131 OD-6 (5) nói không có guard
+  session-status cho reversal (không thể có gì để reverse trên session đã cancel vì cancel đòi 0 tiền ghi nhận): mức thấp. (2) `apps/web/lib/zalo/commands.ts:59` nhánh `!deps.isDirect`
+  không với tới được: chỗ gọi duy nhất (`process-event.ts:125`) luôn truyền `isDirect: true`. (3) Comment ~`apps/web/lib/use-roster-command.ts:66` bị S6 đánh dấu cũ (chưa đánh giá lại ở đây).
+  source: S6 · S3 · S4
+
+## task: osv-full-scan-red-on-main-2026-10
+title: OSV full dependency scan đỏ trên main: 9 advisory (1 Critical, 5 High, 3 Medium)
+status: idea
+risk: P1
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: [package.json, pnpm-lock.yaml, osv-scanner.toml]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — cần đo lại lockfile trên base hiện tại trước khi chọn floor; ghi nhận Security run chứ chưa sửa.
+notes: |
+  Security run 38456110453 (push lên main, 2026-10-13): `Total 6 packages affected by 9 known vulnerabilities (1 Critical, 5 High, 3 Medium)`, "8 vulnerabilities can be fixed".
+  Advisory: shell-quote GHSA-pqg4-j6r4-53mv; sharp GHSA-wq5f-xc86-pv6w; source-map-js GHSA-68fv-2mgg-jv7q; braces GHSA-vfj7-8cjw-p6xm;
+  brace-expansion GHSA-6j4f-fj2g-mc7p / GHSA-qhr7-859c-m2p7 / GHSA-q2hr-2g5m-vwhr; next GHSA-4jqv-mc3x-m676 / GHSA-mcj8-r9mp-w47p.
+  S2 báo scan đỏ từ 2026-09-30 (chưa đo lại ngày bắt đầu). Cách sửa theo tiền lệ AP-51 (`deps-osv-transitive-floors`): nâng floor qua override trong `pnpm-workspace.yaml`, rồi chạy lại scan.
+  source: S2 · Security run 38456110453
