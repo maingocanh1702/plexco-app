@@ -156,11 +156,11 @@ describe("POST /api/sessions/:id/close", () => {
 
   // A1: one case per member of CloseSessionErrorCode, not one happy path. Each asserts the REAL
   // code reaches the client — before this route existed, every one of these was a 500.
+  // CLOSE_BLOCKED_OPEN_DEBT has its own cases below: its contract includes the list.
   it.each([
     ["SESSION_NOT_FOUND", 404],
     ["SESSION_NOT_OPEN", 409],
     ["STALE_VERSION", 409],
-    ["CANCEL_REQUIRES_REVIEW", 400],
     ["COMMAND_ID_CONFLICT", 409],
   ] as const)("maps %s onto %i", async (code, status) => {
     vi.mocked(closeSession).mockRejectedValue(new SessionCloseError(code, "internal detail"));
@@ -168,6 +168,8 @@ describe("POST /api/sessions/:id/close", () => {
     expect(response.status).toBe(status);
     const { error } = await envelope(response);
     expect(error).toMatchObject({ code, statusCode: status });
+    // No other close error grows a payload: the envelope keeps its three keys.
+    expect(Object.keys(error!)).toEqual(["code", "message", "statusCode"]);
   });
 
   it("maps the billing gate's denial onto TENANT_SUSPENDED 403", async () => {
@@ -178,18 +180,43 @@ describe("POST /api/sessions/:id/close", () => {
     expect(error).toMatchObject({ code: "TENANT_SUSPENDED", statusCode: 403 });
   });
 
-  // The money refusal is the reason this slice is P1, so its BODY is pinned too, not just its
-  // status. The command distinguishes a charge (including a `void` one) from an active roster;
-  // the response deliberately does not, because a caller who cannot already read the roster must
-  // not learn a session's payment state from an error string. The command's own message
-  // ("internal detail" here) is never echoed.
-  it("never leaks WHY a close was refused for review", async () => {
+  // DD-131 OD-1 (pending in PR #51): close refuses an open debt with CLOSE_BLOCKED_OPEN_DEBT (409)
+  // and names who still owes — ids + display names only. Pinned body, not just the status.
+  const OWING = [
+    { playerId: "44444444-4444-4444-8444-444444444441", displayName: "Lan" },
+    { playerId: "44444444-4444-4444-8444-444444444442", displayName: null },
+  ];
+
+  it("maps an open-debt refusal onto 409 with the open-balance list in error.details", async () => {
     vi.mocked(closeSession).mockRejectedValue(
-      new SessionCloseError("CANCEL_REQUIRES_REVIEW", "session has 3 charges totalling 450000"),
+      new SessionCloseError("CLOSE_BLOCKED_OPEN_DEBT", "2 charges owe 240000", OWING),
     );
-    const response = await POST(req({ commandId: "cmd_1" }), ctx());
-    const { error } = await envelope(response);
-    expect(error?.message).not.toMatch(/charge|roster|450000|internal/i);
-    expect(error?.message).toBe("Kèo này cần được xem xét trước khi đóng hoặc huỷ.");
+    const response = await POST(req({ commandId: "cmd_1", expectedVersion: 2 }), ctx());
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      data: unknown;
+      error: Record<string, unknown>;
+    };
+    expect(body.data).toBeNull();
+    expect(body.error).toEqual({
+      code: "CLOSE_BLOCKED_OPEN_DEBT",
+      message: "Còn người chơi chưa trả đủ tiền — thu đủ trước khi đóng kèo.",
+      statusCode: 409,
+      details: { openBalancePlayers: OWING },
+    });
+    // The command's own message (here with an amount) is never echoed.
+    expect(JSON.stringify(body)).not.toMatch(/240000|charges owe|internal/);
+  });
+
+  it("a caller without session.manage is refused 403 before the command: no list is ever computed", async () => {
+    vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "not_a_member" });
+    vi.mocked(closeSession).mockRejectedValue(
+      new SessionCloseError("CLOSE_BLOCKED_OPEN_DEBT", "internal", OWING),
+    );
+    const response = await POST(req({ commandId: "cmd_1", expectedVersion: 2 }), ctx());
+    expect(response.status).toBe(403);
+    expect(closeSession).not.toHaveBeenCalled();
+    const raw = await response.text();
+    expect(raw).not.toMatch(/details|openBalancePlayers|Lan|44444444/);
   });
 });

@@ -26,7 +26,12 @@ export interface ClubGateContext {
 
 export async function resolveClubGate(
   request: Request,
-  options: { csrf: boolean; tenantBucket?: { bucket: string; limit: number } },
+  options: {
+    csrf: boolean;
+    tenantBucket?: { bucket: string; limit: number; windowSeconds?: number };
+    /** Capability to authorize; defaults to content.manage. Connector routes pass connector.secret_manage. */
+    action?: string;
+  },
 ): Promise<Response | ClubGateContext> {
   const session = await currentSession();
   if (!session) return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
@@ -41,7 +46,11 @@ export async function resolveClubGate(
     return err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429);
   }
   const decision = await withTenant(appDb().db, tenantId, (tx) =>
-    authorize(tx, { tenantId, action: CLUB_ACTION, actorPersonId: session.personId }),
+    authorize(tx, {
+      tenantId,
+      action: options.action ?? CLUB_ACTION,
+      actorPersonId: session.personId,
+    }),
   );
   if (!decision.allowed) {
     return err(
@@ -54,8 +63,8 @@ export async function resolveClubGate(
   // this actor. Every `err(` above stays Vietnamese (ratified), never an oracle for tenant locale.
   const lang = await resolveTenantLang(appDb().db, tenantId);
   if (options.tenantBucket) {
-    const { bucket, limit } = options.tenantBucket;
-    if (await rateLimited(`${bucket}:${tenantId}`, limit, 60)) {
+    const { bucket, limit, windowSeconds = 60 } = options.tenantBucket;
+    if (await rateLimited(`${bucket}:${tenantId}`, limit, windowSeconds)) {
       return runWithLang(lang, async () =>
         err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429),
       );

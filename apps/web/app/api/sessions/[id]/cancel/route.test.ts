@@ -179,13 +179,15 @@ describe("POST /api/sessions/:id/cancel", () => {
   });
 
   // The money refusal is the reason this slice is P1, so its BODY is pinned too, not just its
-  // status. Cancel reaches CANCEL_REQUIRES_REVIEW by three distinct routes — any charge (edge #5),
-  // a non-zero active roster on an open session (gate #3), and a draft carrying players or charges
-  // at all (edge #28) — and the response must be identical for all three. Telling them apart would
-  // let a caller who cannot read the roster infer a session's payment state from an error string.
+  // status. Cancel reaches CANCEL_REQUIRES_REVIEW by four distinct routes — recorded money on a
+  // charge (DD-131 OD-1), a non-zero active roster on an open session (gate #3), a live charge with
+  // no active player (an anomaly), and a draft carrying players or charges at all (edge #28) — and
+  // the response must be identical for all of them. Telling them apart would let a caller who cannot
+  // read the roster infer a session's payment state from an error string.
   it.each([
-    ["a charge", "session has 3 charges totalling 450000"],
+    ["recorded money", "session has 3 charges carrying 450000"],
     ["an active roster", "session has 7 active players"],
+    ["a live charge without an active player", "1 open charge on a left player"],
     ["a draft anomaly", "draft carries players and charges"],
   ])("never leaks that the refusal came from %s", async (_case, detail) => {
     vi.mocked(cancelSession).mockRejectedValue(
@@ -195,6 +197,8 @@ describe("POST /api/sessions/:id/cancel", () => {
     expect(response.status).toBe(400);
     const { error } = await envelope(response);
     expect(error?.message).not.toMatch(/charge|roster|player|draft|450000|internal/i);
-    expect(error?.message).toBe("Kèo này cần được xem xét trước khi đóng hoặc huỷ.");
+    expect(error?.message).toBe("Kèo này cần được xem xét trước khi huỷ.");
+    // Cancel never carries a payload (only close's open-debt refusal does, DD-131 OD-1).
+    expect(Object.keys(error!)).toEqual(["code", "message", "statusCode"]);
   });
 });

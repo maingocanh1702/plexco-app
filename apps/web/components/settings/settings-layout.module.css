@@ -1,0 +1,97 @@
+.page {
+  display: grid;
+  gap: var(--space-6);
+  max-width: var(--container-sm);
+}
+
+.section {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.section h2 {
+  font-size: var(--text-lg);
+}
+
+.caption {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.form {
+  display: grid;
+  gap: var(--space-4);
+  max-width: var(--container-form);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.feedback:focus {
+  outline: var(--border-width-2) solid var(--focus-ring);
+  outline-offset: var(--space-1);
+}
+
+.saved,
+.warning {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-weight: var(--font-medium);
+}
+
+.saved {
+  background: var(--success-subtle);
+  color: var(--success-text);
+}
+
+.warning {
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+}
+
+.list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--border-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.itemMain {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mono {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.stack {
+  display: grid;
+  gap: var(--space-6);
+}

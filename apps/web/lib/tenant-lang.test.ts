@@ -116,6 +116,12 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (a) — club configuration (M1b): both delegate to resolveClubGate, which proves authorize()
   // before it resolves language; the PATCH body runs inside runWithLang.
   "app/api/onboarding/club/route.ts": "a",
+  // M3a: connector routes are gated by authorize(connector.secret_manage) before language resolves;
+  // the webhook is authenticated by the per-bot secret and the bot belongs to exactly ONE tenant,
+  // so its locale is that tenant's (DD-118) -- replies before authentication stay Vietnamese.
+  "app/api/onboarding/zalo/route.ts": "a",
+  "app/api/onboarding/zalo/connect/route.ts": "a",
+  "app/api/webhooks/zalo/[token]/route.ts": "a",
   "lib/club-config-route.ts": "a",
   // (a) — already wired upstream: all five delegate to handleSessionCommand, whose handler body
   // runs inside runWithLang. They emit only ok(...).
@@ -144,8 +150,20 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (b) — authenticated but NO single tenant is routed. /session returns a LIST of tenants, so no
   // one tenant's locale applies; logout and logout-all are account-scoped.
   "app/api/auth/session/route.ts": "b",
+  // (b) — account-scoped linking (M3b): the Zalo identity is global, no tenant is routed; Vietnamese default.
+  "app/api/me/link/route.ts": "b",
+  // (b) — account-scoped settings (M4): the profile and the linked channels belong to the ACCOUNT, no
+  // tenant is routed, so no tenant language applies; every message is Vietnamese (DD-118 b).
+  "app/api/me/profile/route.ts": "b",
+  "app/api/me/channels/route.ts": "b",
+  "app/api/me/channels/[id]/detach/route.ts": "b",
+  "lib/me-route-gate.ts": "b",
   "app/api/auth/logout/route.ts": "b",
   "app/api/auth/logout-all/route.ts": "b",
+  // (b) — authenticated, but the payload is the GLOBAL sports directory: no tenant is routed, so no
+  // tenant language applies. Errors are Vietnamese server-side; the browser maps AUTH_REQUIRED /
+  // RATE_LIMITED from its own t() (lib/session-error-ui.ts).
+  "app/api/sports/route.ts": "b",
   // (c) — liveness probe: {ok:true}, no DB, no auth.
   "app/healthz/route.ts": "c",
 
@@ -170,6 +188,10 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/read-bounded-body.ts": "c",
   "lib/tenant-lang.ts": "c",
   "lib/auth-secrets.ts": "c",
+  "lib/connector-secrets.ts": "c",
+  "lib/link-code-keys.ts": "c",
+  // (c) — browser-side state mapping for /me/link (M3b): no t(), no response body; strings live in the view.
+  "lib/me-link-client.ts": "c",
   "lib/google-oidc.ts": "c",
   "lib/oauth-transaction.ts": "c",
   // (b) — RECLASSIFIED 2026-09-06 (audit W-4): buildCompletionLanding renders a user-facing
@@ -183,6 +205,43 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/log.ts": "c",
   // (c) — pure routing/CSP policy consumed by middleware.ts; no response body of its own.
   "lib/request-policy.ts": "c",
+  // Browser-side modules (M1a web shell). None renders a server response, so the ALS seam does not
+  // apply to them: client strings come from `useT()` under <LangProvider> (lib/i18n-client.tsx).
+  // (c) — no translatable output of their own.
+  "lib/api-client.ts": "c",
+  "lib/session-dto.ts": "c",
+  "lib/theme-colors.ts": "c",
+  "lib/use-online-status.ts": "c",
+  "lib/use-sessions-data.ts": "c",
+  "lib/use-tenant-context.ts": "c",
+  // (c) — browser-side session screens (M2b). Pure formatters/builders; any user-facing text is
+  // produced with the `t` the caller passes from useT() (tenant language), never a server response.
+  "lib/money.ts": "c",
+  "lib/session-actions.ts": "c",
+  "lib/session-error-ui.ts": "c",
+  "lib/session-form-model.ts": "c",
+  "lib/session-list-streams.ts": "c",
+  "lib/session-snapshot.ts": "c",
+  "lib/session-time.ts": "c",
+  "lib/sessions-api.ts": "c",
+  "lib/lang-storage.ts": "c",
+  // (c) — browser-side settings screens (M4). Typed fetch wrappers + pure form models; user-facing
+  // text comes from the `t` the caller passes from useT() (settings-error-ui, display-name rules).
+  "lib/club-settings-client.ts": "c",
+  "lib/club-settings-model.ts": "c",
+  "lib/me-settings-client.ts": "c",
+  "lib/settings-error-ui.ts": "c",
+  "lib/use-command-id.ts": "c",
+  // (c) — host roster / manual-payment screens (M2c-fe): pure UI rules and the command hook; every
+  // user-facing string comes from the `t` the caller passes from useT().
+  "lib/mark-paid-model.ts": "c",
+  "lib/roster-payments-api.ts": "c",
+  "lib/roster-rules.ts": "c",
+  "lib/use-roster-command.ts": "c",
+  // (b) — these take the caller's `t` and are only reached from pre-authentication / tenant-creation
+  // screens (landing `?auth_error`, create-club form), which render Vietnamese by DD-118 bucket b.
+  "lib/auth-error-message.ts": "b",
+  "lib/new-club-form.ts": "b",
 };
 
 function discoverRouteFiles(dir: string, prefix: string): string[] {

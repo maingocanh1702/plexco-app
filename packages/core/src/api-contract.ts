@@ -34,10 +34,16 @@
  * and this entry discharges it. Status 400 is transcribed verbatim from
  * docs/features/BE/feature_session_management_tech.md §3, not chosen here.
  *
- * It is the money path's public face: both commands fail CLOSED with this code when
- * a session carries ANY charge (including a `void` one) or, on cancel, a non-zero
- * active roster — DD-117 / edge #5. Registering it is what lets the route return the
- * real refusal instead of a generic 500.
+ * Since DD-131 OD-1 (pending in PR #51) only CANCEL emits it: an open session with a
+ * non-zero active roster (owner gate #3), a charge carrying recorded money (net
+ * allocated > 0), a live charge with no active player, or a draft anomaly. The `void`
+ * charge of a removed, unpaid player no longer blocks.
+ *
+ * CLOSE_BLOCKED_OPEN_DEBT (409) replaces it on CLOSE (DD-131 OD-1, reversing DD-117 D3's
+ * close half): some charge still has an open balance. It is the ONE code that carries
+ * `error.details` — `openBalancePlayers`, ids + display names only, never amounts. Pinned
+ * in feature_session_management_tech.md §3; the status is 409 because the caller can
+ * resolve it (collect the payments, then close again).
  *
  * The six guest-note codes (GUEST_NOTE_LIMIT_REACHED, GUEST_NOTE_NOT_FOUND, INVITE_NOT_ALLOWED,
  * NOT_NOTE_CREATOR, PLAYER_NOT_ACTIVE, SESSION_FULL) arrived the same way, with the
@@ -50,8 +56,28 @@
  * Web MVP lane M2c (host roster + manual mark-paid + reversal) registers: ALREADY_JOINED,
  * PLAYER_NOT_FOUND, REJOIN_REQUIRES_REVIEW (spec §3 catalog); ALLOCATION_EXCEEDS_FUNDS,
  * CHARGE_ALREADY_SETTLED, REVERSAL_EXCEEDS_EFFECTIVE (payment_reconcile BE/FE specs); and five codes
- * the specs do NOT pin, proposed in the lane report for decisions.md: ALLOCATION_NOT_FOUND,
+ * the specs do NOT pin, proposed as DD-127 (ledger PR) for decisions.md: ALLOCATION_NOT_FOUND,
  * REMOVE_REQUIRES_REVIEW, CHARGE_NOT_PAYABLE, MARK_PAID_TOTAL_MISMATCH, REVERSAL_NOT_SUPPORTED.
+ *
+ * INVALID_WEBHOOK_SECRET, WEBHOOK_PAYLOAD_MALFORMED, WEBHOOK_RATE_LIMITED and ZALO_TOKEN_INVALID
+ * arrived with the Zalo connect and webhook routes (M3a), transcribed from
+ * feature_connector_onboarding_tech.md section 3 / feature_zalo_channel_tech.md, not chosen here.
+ * CONNECT_SUPERSEDED (409: a newer connect replaced this attempt's webhook token) is the owner's own
+ * code for that case (DD-126, signed as OD-2), pinned in feature_connector_onboarding_tech.md
+ * section 3; COMMAND_ID_CONFLICT stays reserved for a commandId owned by another command.
+ *
+ * LINK_CODE_INVALID, LINK_CODE_RATE_LIMITED and MERGE_REQUIRES_REVIEW arrived with POST /api/me/link (M3b),
+ * named by feature_identity_tech.md section 7; LINK_UNAVAILABLE (503, retryable) is not pinned by the spec
+ * and is proposed as DD-127 (ledger PR). It covers two cases: the link-code lookup key is not configured,
+ * or the link transaction hit a deadlock / serialization failure (40P01 / 40001) and was rolled back
+ * whole (nothing written, the code still live). Any other failure, a lost connection included, is not
+ * mapped to it: it propagates (the route answers 500) and its outcome is UNKNOWN: a failure before
+ * COMMIT rolls the transaction back, but a connection that drops after the server applied COMMIT
+ * leaves the committed decision (the link included) in place behind that 500.
+ *
+ * CHANNEL_NOT_LINKED (409) arrived with POST /api/me/channels/:id/detach (M4): one answer for "not yours",
+ * "unknown", "already detached" and "inactive" (no existence oracle). Pinned in
+ * feature_user_settings_tech.md section 4, signed by the owner as OD-6 (2026-10-14).
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -64,18 +90,26 @@ export const API_ERROR_CODES = [
   "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_OCCUPANCY",
   "CAPACITY_BELOW_ROSTER",
+  "CHANNEL_NOT_LINKED",
   "CHARGE_ALREADY_SETTLED",
   "CHARGE_NOT_PAYABLE",
+  "CLOSE_BLOCKED_OPEN_DEBT",
   "COMMAND_ID_CONFLICT",
+  "CONNECT_SUPERSEDED",
   "CSRF_INVALID",
   "FORBIDDEN",
   "GUEST_NOTE_LIMIT_REACHED",
   "GUEST_NOTE_NOT_FOUND",
   "INVALID_BODY",
   "INVALID_TIME_RANGE",
+  "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
+  "LINK_CODE_INVALID",
+  "LINK_CODE_RATE_LIMITED",
+  "LINK_UNAVAILABLE",
   "LOGIN_RATE_LIMITED",
   "MARK_PAID_TOTAL_MISMATCH",
+  "MERGE_REQUIRES_REVIEW",
   "MISSING_DISCOVERY_FIELDS",
   "NOT_FOUND",
   "NOT_NOTE_CREATOR",
@@ -94,14 +128,34 @@ export const API_ERROR_CODES = [
   "SPORT_INACTIVE",
   "STALE_VERSION",
   "TENANT_SUSPENDED",
+  "WEBHOOK_PAYLOAD_MALFORMED",
+  "WEBHOOK_RATE_LIMITED",
+  "ZALO_TOKEN_INVALID",
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
+
+/** One entry of CLOSE_BLOCKED_OPEN_DEBT's list: a player whose charge still has an open balance.
+ *  Id + display name ONLY (DD-131 OD-1): never an amount, a membership/person id or a contact. */
+export interface OpenBalancePlayerDto {
+  playerId: string;
+  displayName: string | null;
+}
+
+/**
+ * Optional structured payload of an error. Present ONLY on a code that defines one — today exactly
+ * CLOSE_BLOCKED_OPEN_DEBT (POST /api/sessions/:id/close). Every other error omits the key entirely,
+ * so its body is byte-identical to the pre-`details` envelope.
+ */
+export interface ApiErrorDetails {
+  openBalancePlayers: OpenBalancePlayerDto[];
+}
 
 export interface ApiError {
   code: ApiErrorCode;
   message: string;
   statusCode: number;
+  details?: ApiErrorDetails;
 }
 
 export interface ApiMeta {

@@ -7,7 +7,7 @@
  * package plus future service modules — controllers/adapters must never query
  * tenant tables directly (HR1).
  */
-export { createDb, type Db, type DbHandle } from "./client.js";
+export { createDb, type Db, type DbHandle, type Tx } from "./client.js";
 export {
   assertTenantId,
   tenantLocale,
@@ -34,6 +34,29 @@ export {
   type UpdateClubConfigParams,
   type UpdateClubConfigResult,
 } from "./club-config.js";
+export { pgErrorChainText, pgErrorHasCode } from "./pg-error.js";
+export {
+  ZALO_CONNECTOR_ACTION,
+  ZaloConnectError,
+  appendSecretDecryptAudit,
+  beginZaloConnect,
+  finishInboundEvent,
+  finishZaloConnect,
+  getZaloOnboardingState,
+  markBotVerifiedActive,
+  probeZaloConnectReplay,
+  readZaloBotTokenEnc,
+  resolveZaloBotByToken,
+  resolveZaloIdentity,
+  storeInboundEvent,
+  type BeginZaloConnectResult,
+  type ZaloBotRef,
+  type ZaloBotSecretsInput,
+  type ZaloBotStatus,
+  type ZaloConnectErrorCode,
+  type ZaloIdentity,
+  type ZaloOnboardingState,
+} from "./zalo-ingress.js";
 export {
   authorize,
   type AuthorizeDecision,
@@ -48,9 +71,11 @@ export {
   SESSION_STATUSES,
   type ListSessionsParams,
   type SessionDetail,
+  type SessionListItem,
   type SessionListPage,
   type SessionScalars,
 } from "./session-read.js";
+export { listActiveSports, type ActiveSport } from "./sports-read.js";
 // Web MVP lane M2c: host roster writer + manual mark-paid (DD-40) + reversal.
 export {
   addMemberToSession,
@@ -183,3 +208,18 @@ export {
   type LinkCodeKeys,
   type LinkCodeParty,
 } from "./identity.js";
+// Web account <-> Zalo link (M3b): consume + re-parent an EMPTY Zalo-side Person (0054).
+export { linkZaloToAccount, type LinkZaloOutcome } from "./identity-link-web.js";
+// Web MVP lane M4: the signed-in user's own profile + linked channels (0055 definers).
+export {
+  DisplayNameError,
+  DISPLAY_NAME_MAX,
+  detachMyChannel,
+  listMyChannels,
+  readMyProfile,
+  updateMyProfile,
+  validateDisplayName,
+  type DetachOutcome,
+  type MyChannel,
+  type MyProfile,
+} from "./me-settings.js";

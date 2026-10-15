@@ -153,6 +153,31 @@ export async function bootstrapChatDefiner(client: pg.Client): Promise<void> {
 }
 
 /**
+ * Canonical identity_definer bootstrap (DD-127 / DD-131 OD-3: the BYPASSRLS owner of 0054's
+ * link_code_reparent_empty_person). Mirrors bootstrapChatDefiner: 03-identity-definer.sql is
+ * 02-chat-definer.sql with only the role name, GUC and in-script lock key swapped (migrate.test.ts
+ * asserts that), so it shares 02's one-non-runtime-member rule and the revoke/restore helpers below.
+ */
+const IDENTITY_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
+  path.dirname(CHAT_DEFINER_BOOTSTRAP_SQL_PATH),
+  "03-identity-definer.sql",
+);
+
+export async function bootstrapIdentityDefiner(client: pg.Client): Promise<void> {
+  const sql = await readFile(IDENTITY_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
+  try {
+    await client.query(sql);
+  } catch (error) {
+    // Same BEGIN/COMMIT-wrapped file shape as 02: leave no aborted transaction on `client`.
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+/** The two definers whose bootstrap refuses a second non-runtime member (02 and 03). */
+export type OneMemberDefiner = "chat_definer" | "identity_definer";
+
+/**
  * Unlike job_definer's own bootstrap (01-job-definer.sql's re-run guard only refuses a RUNTIME-role
  * re-target, so a different non-runtime target silently ACCUMULATES as an additional member),
  * chat_definer's bootstrap (02-chat-definer.sql, chat-definer-role-provisioning, merged) explicitly
@@ -177,12 +202,21 @@ export async function revokeStaleChatDefinerMembership(
   client: pg.Client,
   keepTarget: string,
 ): Promise<string[]> {
+  return revokeStaleDefinerMembership(client, "chat_definer", keepTarget);
+}
+
+/** revokeStaleChatDefinerMembership for either one-member definer (identity_definer too). */
+export async function revokeStaleDefinerMembership(
+  client: pg.Client,
+  definer: OneMemberDefiner,
+  keepTarget: string,
+): Promise<string[]> {
   const { rows } = await client.query(
     `SELECT r.rolname FROM pg_auth_members m
        JOIN pg_roles r ON r.oid = m.member
        JOIN pg_roles g ON g.oid = m.roleid
-      WHERE g.rolname = 'chat_definer' AND r.rolname <> $1`,
-    [keepTarget],
+      WHERE g.rolname = $2 AND r.rolname <> $1`,
+    [keepTarget, definer],
   );
   const revoked = (rows as { rolname: string }[]).map((r) => r.rolname);
   for (const rolname of revoked) {
@@ -191,7 +225,9 @@ export async function revokeStaleChatDefinerMembership(
     // this file itself just chose) — rolname here is catalog-sourced, so a role created with a
     // quoted identifier containing a space/quote/statement terminator would otherwise break or
     // misparse the REVOKE statement.
-    await client.query(`REVOKE chat_definer FROM ${client.escapeIdentifier(rolname)}`);
+    await client.query(
+      `REVOKE ${client.escapeIdentifier(definer)} FROM ${client.escapeIdentifier(rolname)}`,
+    );
   }
   return revoked;
 }
@@ -211,9 +247,20 @@ export async function restoreChatDefinerMembership(
   client: pg.Client,
   roleNames: string[],
 ): Promise<void> {
+  return restoreDefinerMembership(client, "chat_definer", roleNames);
+}
+
+/** restoreChatDefinerMembership for either one-member definer. */
+export async function restoreDefinerMembership(
+  client: pg.Client,
+  definer: OneMemberDefiner,
+  roleNames: string[],
+): Promise<void> {
   for (const rolname of roleNames) {
     try {
-      await client.query(`GRANT chat_definer TO ${client.escapeIdentifier(rolname)}`);
+      await client.query(
+        `GRANT ${client.escapeIdentifier(definer)} TO ${client.escapeIdentifier(rolname)}`,
+      );
     } catch (error) {
       if ((error as { code?: string }).code !== "42704") throw error;
     }
@@ -235,8 +282,19 @@ export async function ensureChatDefinerMembershipRevoked(
   client: pg.Client,
   roleName: string,
 ): Promise<void> {
+  return ensureDefinerMembershipRevoked(client, "chat_definer", roleName);
+}
+
+/** ensureChatDefinerMembershipRevoked for either one-member definer (42704 also covers a missing definer). */
+export async function ensureDefinerMembershipRevoked(
+  client: pg.Client,
+  definer: OneMemberDefiner,
+  roleName: string,
+): Promise<void> {
   try {
-    await client.query(`REVOKE chat_definer FROM ${client.escapeIdentifier(roleName)}`);
+    await client.query(
+      `REVOKE ${client.escapeIdentifier(definer)} FROM ${client.escapeIdentifier(roleName)}`,
+    );
   } catch (error) {
     if ((error as { code?: string }).code !== "42704") throw error;
   }
@@ -377,6 +435,47 @@ export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>):
   } finally {
     tearingDown = true;
     await lockClient.query("SELECT pg_advisory_unlock($1)", [JOB_DEFINER_LOCK_KEY]).catch(() => {});
+    await lockClient.end();
+  }
+}
+
+/**
+ * identity_definer is cluster-global and NAMED by identity-link-web.test.ts (GRANT ... TO it, ALTER
+ * ROLE it, catalog checks by name), while migrate.test.ts's 0054 step-1 cases hide it, re-create it
+ * with drifted attributes or re-grant it, each for one migrate() call. "shared" = a reader,
+ * "exclusive" = that window. A key of its own, NOT the job/chat locks: readers then never queue
+ * behind a sibling suite's migration. Acquire it BEFORE the chat or job lock, never while holding
+ * either: the window holds it while it waits for the chat lock, and a chat holder waiting for this
+ * lock would close a cycle (and would sit on the chat lock every setupRlsTestContext waits for).
+ */
+const IDENTITY_DEFINER_NAME_LOCK_KEY = 0x69646e6d; // "idnm" — distinct from jobd/chad/plxc/jdlk/cdlk/idlk
+
+export async function withIdentityDefinerNameLock<T>(
+  base: string,
+  mode: "shared" | "exclusive",
+  fn: () => Promise<T>,
+): Promise<T> {
+  const suffix = mode === "shared" ? "_shared" : "";
+  const lockClient = new pg.Client({ connectionString: base });
+  let tearingDown = false;
+  guardClientErrors(lockClient, () => tearingDown);
+  try {
+    await lockClient.connect();
+    await lockClient.query(`SELECT pg_advisory_lock${suffix}($1)`, [
+      IDENTITY_DEFINER_NAME_LOCK_KEY,
+    ]);
+  } catch (error) {
+    tearingDown = true;
+    await lockClient.end().catch(() => {});
+    throw error; // identity preserved — the pg error code is the diagnosis
+  }
+  try {
+    return await fn();
+  } finally {
+    tearingDown = true;
+    await lockClient
+      .query(`SELECT pg_advisory_unlock${suffix}($1)`, [IDENTITY_DEFINER_NAME_LOCK_KEY])
+      .catch(() => {});
     await lockClient.end();
   }
 }
@@ -570,13 +669,18 @@ export interface NonSuperuserOwnerContext {
    *  call more than once, sequentially OR concurrently: every call after the first, however soon it
    *  arrives, awaits the SAME in-flight or completed bootstrap rather than starting a second one
    *  (codex round-04/round-05 [P2] of this registration — a boolean "already ran" guard alone
-   *  raced across the internal `await`; a synchronously-assigned memoized promise does not). */
+   *  raced across the internal `await`; a synchronously-assigned memoized promise does not).
+   *  ALSO bootstraps identity_definer for ownerRole (0054, DD-127 / DD-131 OD-3) inside the same
+   *  lock-held critical section, restored in teardown() the same way: every non-superuser run that
+   *  reaches 0030 reaches 0054 too, and 03-identity-definer.sql has 02's one-member rule. */
   bootstrapChatDefinerForOwner: () => Promise<void>;
   /** run the real migration runner AS the non-superuser owner (never superuser) */
   runMigration: () => Promise<MigrateResult>;
   /** call AFTER a successful runMigration(): ensures app_worker's test password (superuser-backed,
    *  since the role may have just been created by migrate()) and returns a pool connected as it */
   connectAsWorker: () => Promise<pg.Pool>;
+  /** same as connectAsWorker but for the HTTP runtime role `app` (the only grantee of the identity definers) */
+  connectAsApp: () => Promise<pg.Pool>;
   teardown: () => Promise<void>;
 }
 
@@ -632,6 +736,8 @@ export async function setupNonSuperuserOwnerContext(
   // Populated by bootstrapChatDefinerForOwner if/when it runs; restored in teardown() (codex
   // round-03 [P1]) — empty means either it never ran, or chat_definer had no pre-existing member.
   let revokedChatDefinerMembers: string[] = [];
+  // Same, for identity_definer (bootstrapped inside bootstrapChatDefinerForOwner's critical section).
+  let revokedIdentityDefinerMembers: string[] = [];
   // Held from bootstrapChatDefinerForOwner's own revoke through teardown's own restore, as ONE
   // continuous critical section (codex round-05 [P1] — releasing and re-acquiring between those two
   // points left a real window for another test to occupy the slot in between; see
@@ -699,9 +805,35 @@ export async function setupNonSuperuserOwnerContext(
         } finally {
           await admin.query(`RESET chat_definer_bootstrap.migration_role`);
         }
+        // identity_definer (0054) rides this SAME lock-held critical section rather than a second
+        // advisory key: every caller here migrates past 0054, and 03-identity-definer.sql refuses a
+        // second non-runtime member exactly like 02, so it needs the identical revoke -> bootstrap
+        // -> restore lifecycle. One lock means no acquisition order to get wrong.
+        revokedIdentityDefinerMembers = await revokeStaleDefinerMembership(
+          admin,
+          "identity_definer",
+          ownerRole,
+        );
+        await admin.query(`SET identity_definer_bootstrap.migration_role = '${ownerRole}'`);
+        try {
+          await bootstrapIdentityDefiner(admin);
+        } finally {
+          await admin.query(`RESET identity_definer_bootstrap.migration_role`);
+        }
       })();
     }
     return chatDefinerBootstrapPromise;
+  };
+
+  const connectAsApp = async (): Promise<pg.Pool> => {
+    await setRolePasswordRaceSafe(admin, "app", ROLE_PW.app!, /* allowMissing */ false);
+    const pool = new pg.Pool({
+      connectionString: testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app }),
+      max: 4,
+    });
+    guardPoolErrors(pool, () => tearingDown);
+    workerPools.push(pool);
+    return pool;
   };
 
   const connectAsWorker = async (): Promise<pg.Pool> => {
@@ -733,6 +865,7 @@ export async function setupNonSuperuserOwnerContext(
     bootstrapChatDefinerForOwner,
     runMigration: () => migrate(ownerUrl),
     connectAsWorker,
+    connectAsApp,
     teardown: async () => {
       tearingDown = true;
       // codex round-06 [P2]: the whole post-acquisition cleanup sequence now runs under ONE outer
@@ -769,13 +902,24 @@ export async function setupNonSuperuserOwnerContext(
           // unconditionally before restoring, so a failed DROP ROLE can never leave both ownerRole
           // AND the restored predecessor as simultaneous members. ensureChatDefinerMembershipRevoked
           // tolerates ownerRole already being gone (the common case, when DROP ROLE succeeded).
-          await ensureChatDefinerMembershipRevoked(admin, ownerRole);
-          // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still
-          // under the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in
-          // between (codex round-05 [P1]), so no other test can occupy the slot between the DROP
-          // ROLE above (which vacates it) and this restore. Empty array is a no-op.
-          if (revokedChatDefinerMembers.length > 0) {
-            await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+          try {
+            await ensureChatDefinerMembershipRevoked(admin, ownerRole);
+            // Restore whatever bootstrapChatDefinerForOwner revoked (codex round-03 [P1]), still
+            // under the SAME lock acquired back in bootstrapChatDefinerForOwner — never released in
+            // between (codex round-05 [P1]), so no other test can occupy the slot between the DROP
+            // ROLE above (which vacates it) and this restore. Empty array is a no-op.
+            if (revokedChatDefinerMembers.length > 0) {
+              await restoreChatDefinerMembership(admin, revokedChatDefinerMembers);
+            }
+          } finally {
+            // identity_definer, same rules, still under the same lock; runs even if the chat
+            // restore threw.
+            await ensureDefinerMembershipRevoked(admin, "identity_definer", ownerRole);
+            await restoreDefinerMembership(
+              admin,
+              "identity_definer",
+              revokedIdentityDefinerMembers,
+            );
           }
         }
       } finally {

@@ -62,10 +62,10 @@ function resolveFromEnvFallback(): Buffer {
   return Buffer.from(raw, "base64");
 }
 
-async function resolveFromAwsKms(): Promise<Buffer> {
-  const encrypted = process.env.KMS_ENCRYPTED_AUTH_PEPPER;
+async function resolveFromAwsKms(envName = "KMS_ENCRYPTED_AUTH_PEPPER"): Promise<Buffer> {
+  const encrypted = process.env[envName];
   if (!encrypted) {
-    throw new Error("KMS_ENCRYPTED_AUTH_PEPPER is required when KMS_PROVIDER=aws-kms");
+    throw new Error(`${envName} is required when KMS_PROVIDER=aws-kms`);
   }
   // codex round-13 [P1]: AWS SDK v3 does NOT infer region from the key ARN —
   // an unconfigured client throws "Region is missing" only when it actually
@@ -90,6 +90,29 @@ async function resolveFromAwsKms(): Promise<Buffer> {
   return Buffer.from(result.Plaintext);
 }
 
+let cachedConnectorRoot: Buffer | null = null;
+
+/**
+ * Root key material for connector secrets (DD-122 O4: dedicated key). With KMS_PROVIDER=aws-kms
+ * and KMS_ENCRYPTED_CONNECTOR_PEPPER set, that separate pepper is the root, so an auth-pepper
+ * leak does not expose Zalo secrets. Otherwise it falls back to resolveAuthSecretKey(); callers
+ * still HKDF with a connector-specific `info`, so the derived AES key is distinct either way.
+ */
+export async function resolveConnectorSecretRoot(): Promise<Buffer> {
+  if (process.env.KMS_PROVIDER !== "aws-kms" || !process.env.KMS_ENCRYPTED_CONNECTOR_PEPPER) {
+    return resolveAuthSecretKey();
+  }
+  if (cachedConnectorRoot) return cachedConnectorRoot;
+  const key = await resolveFromAwsKms("KMS_ENCRYPTED_CONNECTOR_PEPPER");
+  if (key.length < MIN_KEY_BYTES) {
+    throw new Error(
+      `Connector pepper is ${key.length} bytes, below the required ${MIN_KEY_BYTES} — check KMS_ENCRYPTED_CONNECTOR_PEPPER.`,
+    );
+  }
+  cachedConnectorRoot = key;
+  return key;
+}
+
 /** Keyed HMAC-SHA256 — the ONLY way to hash low-entropy auth-surface identifiers. */
 export async function keyedHash(value: string): Promise<string> {
   const key = await resolveAuthSecretKey();
@@ -99,4 +122,5 @@ export async function keyedHash(value: string): Promise<string> {
 /** Test-only: force re-resolution on the next call (env vars changed mid-suite). */
 export function __resetAuthSecretCacheForTest(): void {
   cachedKey = null;
+  cachedConnectorRoot = null;
 }
