@@ -579,7 +579,7 @@ test.describe("detail", () => {
       expect(mock.state.find((s) => s.id === "s-open")!.status).toBe("open");
     });
 
-    test("CANCEL_REQUIRES_REVIEW: a generic hint (remove players, reverse payments), no claim which applies", async ({
+    test("CANCEL_REQUIRES_REVIEW: a generic hint (reverse payments, remove players), no claim which applies", async ({
       page,
     }) => {
       const mock = await open(page, "/s-open");
@@ -712,6 +712,27 @@ test.describe("detail", () => {
           return box.top >= ul.top - 1 && box.bottom <= ul.bottom + 1 && box.right <= ul.right + 1;
         });
         expect(inside, "the last name sits inside the list's own box").toBe(true);
+        // A block <li> never grows past its <ul>, so the box checks above stay green even when the
+        // unbroken name is merely clipped behind a horizontal scrollbar inside the list. scrollWidth
+        // is what exposes that: neither the list nor any item may have content wider than its box.
+        // Strict <= (no sub-pixel tolerance): scrollWidth/clientWidth are both integer-rounded.
+        const horizontal = await list.evaluate((ul) => ({
+          list: { scrollWidth: ul.scrollWidth, clientWidth: ul.clientWidth },
+          items: Array.from(ul.querySelectorAll("li")).map((li) => ({
+            scrollWidth: li.scrollWidth,
+            clientWidth: li.clientWidth,
+          })),
+        }));
+        expect(
+          horizontal.list.scrollWidth,
+          "the list has no horizontal scroll (overflow-wrap breaks the unbroken name)",
+        ).toBeLessThanOrEqual(horizontal.list.clientWidth);
+        expect(horizontal.items).toHaveLength(31);
+        for (const item of horizontal.items) {
+          expect(item.scrollWidth, "no item's content is wider than its box").toBeLessThanOrEqual(
+            item.clientWidth,
+          );
+        }
         await expectDialogFits(page);
         await expect(dialog.getByRole("heading", { name: "Đóng buổi này?" })).toBeInViewport();
       });
