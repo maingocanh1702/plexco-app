@@ -55,7 +55,7 @@ describe("ClubDefaultsForm", () => {
       />,
     );
     expect(html).toContain("Badminton");
-    expect(html).toContain('value="50,000"');
+    expect(html).toContain('value="50.000"'); // dot grouping in every language (DD-128 OD-4b)
     expect(html).toContain('inputMode="numeric"');
     expect(html).toContain("Private");
     expect(html).toContain("Public");

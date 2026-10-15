@@ -109,14 +109,14 @@ describe("buildCreateBody", () => {
 describe("buildUpdateBody", () => {
   it("an unusable stored zone round-trips in the fallback zone instead of throwing", () => {
     const odd = { ...session, timezone: "Mars/Olympus_Mons" };
-    expect(buildUpdateBody(valuesFromSession(odd, "vi"), odd)).toBeNull();
+    expect(buildUpdateBody(valuesFromSession(odd), odd)).toBeNull();
   });
   it("returns null when nothing changed (round-trip of the loaded session)", () => {
-    expect(buildUpdateBody(valuesFromSession(session, "vi"), session)).toBeNull();
+    expect(buildUpdateBody(valuesFromSession(session), session)).toBeNull();
   });
   it("sends only changed fields; null clears", () => {
     const v = {
-      ...valuesFromSession(session, "vi"),
+      ...valuesFromSession(session),
       price: "60.000",
       area: "",
       venueAddress: "1 Nguyễn Văn Linh",
@@ -129,11 +129,11 @@ describe("buildUpdateBody", () => {
   });
   it("does not report untouched times as changed when the stored value carries seconds", () => {
     const withSeconds = { ...session, startsAt: "2026-10-20T11:30:42.123Z" };
-    expect(buildUpdateBody(valuesFromSession(withSeconds, "vi"), withSeconds)).toBeNull();
+    expect(buildUpdateBody(valuesFromSession(withSeconds), withSeconds)).toBeNull();
   });
   it("detects a slots change to unlimited and a time change", () => {
     const v = {
-      ...valuesFromSession(session, "vi"),
+      ...valuesFromSession(session),
       slotsUnlimited: true,
       endsAt: "2026-10-20T21:00",
     };

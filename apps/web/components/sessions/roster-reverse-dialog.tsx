@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
 import { describeReverseError } from "../../lib/session-error-ui";
 import { reversePayment } from "../../lib/roster-payments-api";
@@ -34,7 +34,6 @@ export function RosterReverseDialog({
   onReload: () => void;
 }) {
   const t = useT();
-  const lang = useLang();
   const [reason, setReason] = useState("");
   const [invalid, setInvalid] = useState(false);
   const cmd = useRosterCommand();
@@ -58,8 +57,8 @@ export function RosterReverseDialog({
     if (result) {
       onReversed(
         t(
-          `Đã hoàn tác ${formatVnd(target.amount, lang)} của ${target.name}`,
-          `Reversed ${formatVnd(target.amount, lang)} for ${target.name}`,
+          `Đã hoàn tác ${formatVnd(target.amount)} của ${target.name}`,
+          `Reversed ${formatVnd(target.amount)} for ${target.name}`,
         ),
       );
     }

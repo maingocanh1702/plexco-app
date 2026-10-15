@@ -16,7 +16,7 @@ export function DetailsTab({ session }: { session: SessionDetailDto }) {
     [t("Địa điểm", "Venue"), session.venueName ?? dash],
     [t("Địa chỉ", "Address"), session.venueAddress ?? dash],
     [t("Khu vực", "Area"), session.area ?? dash],
-    [t("Giá mỗi người", "Price per player"), formatVnd(session.priceAmount, lang)],
+    [t("Giá mỗi người", "Price per player"), formatVnd(session.priceAmount)],
     [
       t("Số chỗ", "Slots"),
       session.slotsMax === null ? t("Không giới hạn", "Unlimited") : String(session.slotsMax),

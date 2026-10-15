@@ -1,4 +1,4 @@
-import type { TFn, ClientLang } from "./i18n-client";
+import type { TFn } from "./i18n-client";
 import { INT4_MAX, formatVndInput, parseVndInput } from "./money";
 import { isoToLocalInput, localInputToIso, resolveTimeZone } from "./session-time";
 import type { SessionDetailDto, SessionFieldsBody } from "./sessions-api";
@@ -38,7 +38,7 @@ export const emptyFormValues = (): SessionFormValues => ({
   joinPolicy: "open",
 });
 
-export function valuesFromSession(s: SessionDetailDto, lang: ClientLang): SessionFormValues {
+export function valuesFromSession(s: SessionDetailDto): SessionFormValues {
   return {
     sportId: s.sportId,
     startsAt: isoToLocalInput(s.startsAt, resolveTimeZone(s.timezone)),
@@ -46,7 +46,7 @@ export function valuesFromSession(s: SessionDetailDto, lang: ClientLang): Sessio
     venueName: s.venueName ?? "",
     venueAddress: s.venueAddress ?? "",
     area: s.area ?? "",
-    price: formatVndInput(s.priceAmount, lang),
+    price: formatVndInput(s.priceAmount),
     slotsUnlimited: s.slotsMax === null,
     slotsMax: s.slotsMax === null ? "" : String(s.slotsMax),
     visibility: s.visibility === "public" ? "public" : "private",

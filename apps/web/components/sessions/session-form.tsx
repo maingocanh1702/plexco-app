@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ApiClientError } from "../../lib/api-client";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { formatVndInput, parseVndInput } from "../../lib/money";
 import {
   validateForm,
@@ -50,7 +50,6 @@ const SERVER_FIELD_TO_FORM = {
 export function SessionForm(props: SessionFormProps) {
   const { mode, initial, timezone, sports, sportsLoading, submitLabel, cancelHref } = props;
   const t = useT();
-  const lang = useLang();
   const [values, setValues] = useState(initial);
   const [errors, setErrors] = useState<FormErrors>({});
   const [serverError, setServerError] = useState<unknown>(null);
@@ -200,11 +199,7 @@ export function SessionForm(props: SessionFormProps) {
             const parsed = parseVndInput(e.target.value);
             set(
               "price",
-              parsed === null
-                ? ""
-                : Number.isNaN(parsed)
-                  ? e.target.value
-                  : formatVndInput(parsed, lang),
+              parsed === null ? "" : Number.isNaN(parsed) ? e.target.value : formatVndInput(parsed),
             );
           }}
         />

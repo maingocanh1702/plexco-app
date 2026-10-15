@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { buildConfirmBody, initialAmounts, type AmountMap } from "../../lib/mark-paid-model";
 import { formatVndInput } from "../../lib/money";
 import {
@@ -46,7 +46,6 @@ export function MarkPaidSheet({
   onReload: () => void;
 }) {
   const t = useT();
-  const lang = useLang();
   const [step, setStep] = useState<Step>("method");
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [note, setNote] = useState("");
@@ -85,7 +84,7 @@ export function MarkPaidSheet({
     setLines(res.lines);
     setRaw(
       Object.fromEntries(
-        Object.entries(initialAmounts(res.lines)).map(([id, a]) => [id, formatVndInput(a, lang)]),
+        Object.entries(initialAmounts(res.lines)).map(([id, a]) => [id, formatVndInput(a)]),
       ),
     );
     confirmCmd.reset();
@@ -157,7 +156,7 @@ export function MarkPaidSheet({
               const value = parseAmount(digits);
               setRaw((r) => ({
                 ...r,
-                [id]: value === null ? digits : formatVndInput(value, lang),
+                [id]: value === null ? digits : formatVndInput(value),
               }));
               confirmCmd.reset(); // a changed amount is a new command
             }}

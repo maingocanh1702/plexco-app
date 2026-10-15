@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { blockedReason } from "../../lib/session-actions";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
 import { resolveTimeZone } from "../../lib/session-time";
@@ -19,7 +19,6 @@ import { SessionForm } from "./session-form";
 /** /sessions/[id]/edit: prefilled form; PUT sends only changed fields + expectedVersion. */
 export function EditSessionView({ tenantId, sessionId }: { tenantId: string; sessionId: string }) {
   const t = useT();
-  const lang = useLang();
   const router = useRouter();
   const ctx = useTenantContext(tenantId);
   const { state, reload } = useSessionDetail(tenantId, sessionId);
@@ -76,7 +75,7 @@ export function EditSessionView({ tenantId, sessionId }: { tenantId: string; ses
         // A reload after STALE_VERSION re-keys the form so it re-prefills from the fresh version.
         key={`${session.id}:${session.version}`}
         mode="edit"
-        initial={valuesFromSession(session, lang)}
+        initial={valuesFromSession(session)}
         timezone={resolveTimeZone(session.timezone)}
         sports={[{ id: session.sportId, name: session.sportName }]}
         openNotice={session.status === "open"}

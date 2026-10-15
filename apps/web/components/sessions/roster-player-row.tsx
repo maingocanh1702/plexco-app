@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
 import { displayNameOf } from "../../lib/roster-rules";
 import type { RosterPlayerDto } from "../../lib/sessions-api";
@@ -41,7 +41,6 @@ export function RosterPlayerRow({
   onReverse: (allocationId: string, amount: number) => void;
 }) {
   const t = useT();
-  const lang = useLang();
   const checkId = useId();
   const name = displayNameOf(player.displayName, t);
   const { charge } = player;
@@ -86,10 +85,10 @@ export function RosterPlayerRow({
           <span className={styles.charge}>
             <span className={styles.money}>
               {charge.status === "void"
-                ? formatVnd(charge.amountDue, lang)
+                ? formatVnd(charge.amountDue)
                 : t(
-                    `Còn ${formatVnd(charge.remaining, lang)} / ${formatVnd(charge.amountDue, lang)}`,
-                    `${formatVnd(charge.remaining, lang)} left of ${formatVnd(charge.amountDue, lang)}`,
+                    `Còn ${formatVnd(charge.remaining)} / ${formatVnd(charge.amountDue)}`,
+                    `${formatVnd(charge.remaining)} left of ${formatVnd(charge.amountDue)}`,
                   )}
             </span>
             <Badge tone={chargeBadge(charge.status)[0]}>{chargeBadge(charge.status)[1]}</Badge>
