@@ -9,6 +9,8 @@ import {
   rosterRow,
   screenshotter,
 } from "./support/golden-path-helpers";
+import { COMPILE_TIMEOUT_MS } from "./support/golden-path-timeouts";
+import { warmUpDevServer } from "./support/golden-path-warmup";
 
 /**
  * OPT-IN, LOCAL ONLY golden path of the Web MVP: a host signs in with dev-login, creates a club
@@ -20,8 +22,16 @@ import {
  *
  * Re-runnable without cleanup: the club, its address and the player names carry a per-run suffix.
  * All assertions are on the real vi copy (the club's locale is vi).
+ *
+ * A PASS means the whole path ran, club creation included. Club creation is limited to 3 per
+ * account per hour; when it is refused the spec FAILS by default. Only the explicit opt-in
+ * GOLDEN_PATH_ALLOW_SEEDED_CLUB=1 continues in the seeded Dev Club, and then prints a loud line
+ * (the list reporter shows stdout, not annotations) that club creation was NOT proven.
  */
 const BASE = process.env.GOLDEN_PATH_BASE_URL;
+const ALLOW_SEEDED_CLUB = process.env.GOLDEN_PATH_ALLOW_SEEDED_CLUB === "1";
+const NOT_PROVEN =
+  "!!! GOLDEN PATH: club creation was NOT proven (tenant-create limit hit); the rest of the path ran in the seeded Dev Club !!!";
 test.skip(!BASE, "opt-in: set GOLDEN_PATH_BASE_URL to a dev server with dev-login enabled");
 test.use({ baseURL: BASE });
 
@@ -37,6 +47,8 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
   const shot = screenshotter(page);
   await paceSessionApi(page); // keep under the per-account API ceiling, also across back-to-back runs
   let sessionUrl = "";
+  let devTenantId = "";
+  let clubCreationProven = true;
 
   await test.step("sign in as the host persona (dev-login)", async () => {
     await page.goto("/dev-login");
@@ -49,8 +61,11 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
     // web never reads a role property, DD-56), not from a role field.
     await expect
       .poll(async () => {
-        const body = await (await page.request.get("/api/auth/session")).json();
-        return (body?.data?.tenants ?? []).map((t: { name: string | null }) => t.name);
+        const res = await page.request.get("/api/auth/session", { timeout: COMPILE_TIMEOUT_MS });
+        const body = await res.json();
+        const tenants: { tenantId: string; name: string | null }[] = body?.data?.tenants ?? [];
+        devTenantId = tenants.find((t) => t.name === "Dev Club")?.tenantId ?? "";
+        return tenants.map((t) => t.name);
       })
       .toContain("Dev Club");
     // The post-login page first shows only a spinner while the session loads; the screenshot is of
@@ -63,6 +78,11 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
     await shot("signed-in");
   });
 
+  await test.step("warm up the dev server (compile every route the flow uses)", async () => {
+    expect(devTenantId, "the seeded Dev Club's tenant id").toBeTruthy();
+    await warmUpDevServer(page, devTenantId);
+  });
+
   await test.step("create a club through onboarding", async () => {
     await page.goto("/onboarding/new-club");
     await expect(page.getByRole("heading", { name: "Tạo câu lạc bộ" })).toBeVisible();
@@ -73,24 +93,30 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
     );
     await shot("new-club-filled");
     await page.getByRole("button", { name: "Tạo câu lạc bộ" }).click();
-    // POST /api/onboarding/start allows 3 clubs per account per hour (tenant-create bucket). Runs
-    // 4+ inside the hour are refused with the rate-limit copy; that refusal is asserted, then the
-    // run continues in the seeded Dev Club so the money path is still exercised.
+    // POST /api/onboarding/start allows 3 clubs per account per hour (tenant-create bucket); the 4th
+    // is refused with the rate-limit copy. A refusal means club creation was NOT proven, so it fails
+    // the run unless GOLDEN_PATH_ALLOW_SEEDED_CLUB=1 opts into the seeded Dev Club.
     const welcome = page.getByRole("heading", { name: "Chào mừng bạn!" });
     const throttled = page.getByText("Bạn thử quá nhiều lần. Vui lòng đợi một lát rồi thử lại.");
     await expect(welcome.or(throttled)).toBeVisible();
     if (await throttled.isVisible()) {
+      await shot("new-club-throttled");
+      if (!ALLOW_SEEDED_CLUB) {
+        throw new Error(
+          "Club creation was refused by the tenant-create limit (3 per account per hour), so the " +
+            "full golden path was NOT proven. Wait for the hour window to pass, or use a fresh " +
+            "scratch database (runbook steps 2-6), or set GOLDEN_PATH_ALLOW_SEEDED_CLUB=1 to " +
+            "continue in the seeded Dev Club WITHOUT proving club creation.",
+        );
+      }
+      clubCreationProven = false;
+      console.log(NOT_PROVEN);
       test.info().annotations.push({
         type: "club-create-throttled",
         description: "tenant-create limit (3/hour/account) hit: continued in the seeded Dev Club",
       });
-      await shot("new-club-throttled");
-      const body = await (await page.request.get("/api/auth/session")).json();
-      const dev = (body.data.tenants as { tenantId: string; name: string }[]).find(
-        (tenant) => tenant.name === "Dev Club",
-      );
-      expect(dev, "the seeded Dev Club is in the owner's session").toBeTruthy();
-      await page.goto(`/c/${dev!.tenantId}`);
+      expect(devTenantId, "the seeded Dev Club is in the owner's session").toBeTruthy();
+      await page.goto(`/c/${devTenantId}`);
     }
     await expect(welcome).toBeVisible();
     await expect(page).toHaveURL(/\/c\/[0-9a-f-]{36}$/);
@@ -212,4 +238,6 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
     await page.goto(sessionUrl);
     await expect(page.getByText("Đã đóng", { exact: true })).toBeVisible();
   });
+
+  if (!clubCreationProven) console.log(NOT_PROVEN); // repeated last, where the reporter output ends
 });

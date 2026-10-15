@@ -11,7 +11,7 @@
 - Chỉ làm việc trên database `plexco_smoke`. **Không** `DROP`/`ALTER` bất kỳ database nào khác (`plexco`, `plexco_test`, ...).
 - **Không bao giờ** `docker compose down -v`: cờ `-v` xoá volume `plexco_pgdata`, mất toàn bộ database local.
 - `ALTER DATABASE ... plexco.dev_login = 'on'` chỉ chạy trên DB local chuyên dụng này, không bao giờ trên DB dùng chung.
-- Cổng 3000 phải trống (`lsof -iTCP:3000 -sTCP:LISTEN` không in gì). Nếu bận, đổi `-p 3000` ở bước 7 và `GOLDEN_PATH_BASE_URL` ở bước 10.
+- Cổng 3000 phải trống (`lsof -iTCP:3000 -sTCP:LISTEN` không in gì). Nếu bận, đổi **cả hai** chỗ cho cùng một số cổng: `-p 3000` ở bước 7 và `GOLDEN_PATH_BASE_URL=http://localhost:3000` ở bước 10 (và địa chỉ ở bước 8). Bước 7 có `-p` tường minh nên Next báo lỗi `EADDRINUSE` thay vì tự chuyển sang 3001 trong khi trình duyệt và spec vẫn nhắm 3000.
 
 ## 1. Khởi động Postgres
 
@@ -82,29 +82,42 @@ không suite nào khôi phục. Quên bước này, dev-login/seed báo lỗi đ
 docker compose -f infra/docker-compose.yml exec -T postgres \
   psql -U plexco -d plexco_smoke -v ON_ERROR_STOP=1 \
     -c "ALTER DATABASE plexco_smoke SET plexco.dev_login = 'on'"
-export ENCRYPTION_KEY="$(openssl rand -base64 32)"   # MỘT lần, dùng chung cho seed (lệnh dưới) và dev server (bước 7)
+```
+
+Khoá `ENCRYPTION_KEY` quyết định danh tính persona (định danh persona băm theo khoá, `apps/web/lib/dev-login/persona-account.ts`), nên
+phải là **một khoá cố định** cho cả đời DB `plexco_smoke`: seed và dev server phải dùng đúng cùng khoá, ở mọi terminal, mọi ngày.
+Lưu khoá **một lần** vào file local **ngoài repo**, quyền 600, rồi nạp lại bằng đúng khối lệnh này ở **mỗi terminal mới**
+(khối idempotent: lần đầu tạo file, các lần sau chỉ đọc):
+
+```bash
+KEY_FILE="$HOME/.plexco-smoke-encryption-key"
+[ -s "$KEY_FILE" ] || (umask 077 && openssl rand -base64 32 > "$KEY_FILE")
+chmod 600 "$KEY_FILE"
+export ENCRYPTION_KEY="$(cat "$KEY_FILE")"
 DATABASE_URL=postgres://app:plexco_dev_app@localhost:5432/plexco_smoke pnpm dev:seed
 ```
 
-Seed tạo CLB "Dev Club" và 3 persona `@dev.invalid`: owner ("Chủ CLB"), co_admin, player. Idempotent, chạy lại không hại.
-Giữ **cùng một terminal** (cùng `ENCRYPTION_KEY`) cho bước 6 và bước 7. Mở terminal mới thì phải seed lại với khoá mới
-hoặc `export` lại đúng khoá cũ.
+Seed tạo CLB "Dev Club" và 3 persona `@dev.invalid`: owner ("Chủ CLB"), co_admin, player. Idempotent **khi dùng đúng khoá cũ**: chạy lại không hại.
+Ngày hôm sau / terminal mới: chạy lại khối trên (nó nạp đúng khoá đã lưu; `dev:seed` chạy lại thành công, không cần seed lại) rồi sang bước 7.
+**Không** tự sinh khoá mới bằng `openssl rand` cho DB đã seed: seed bị từ chối (`slug dev-club belongs to a club the persona does not own`)
+và **mỗi lần thử bị từ chối còn để lại thêm 3 tài khoản persona mồ côi**. Nếu file khoá đã **mất**, cách duy nhất là xoá và tạo lại **chỉ** `plexco_smoke`:
+dừng server, làm mục "Dọn dẹp" (bước 2 `DROP DATABASE plexco_smoke`), rồi làm lại bước 2 → 6 (xoá file khoá cũ nếu còn, khối trên sẽ tạo khoá mới).
 
 ## 7. Chạy web app (terminal này giữ nguyên, để chạy nền)
 
 ```bash
 PLEXCO_DEV_LOGIN=1 TRUSTED_INGRESS_PROVIDER=direct DB_EXPECTED_ROLE=app KMS_PROVIDER=local \
   DATABASE_URL=postgres://app:plexco_dev_app@localhost:5432/plexco_smoke \
-  pnpm --filter @plexco/web dev -H 127.0.0.1
+  pnpm --filter @plexco/web dev -H 127.0.0.1 -p 3000
 ```
 
-Bắt buộc `-H 127.0.0.1` (không `localhost`, không bỏ `-H`). Chỉ truyền `PLEXCO_DEV_LOGIN` trên dòng lệnh, **không** đặt vào `.env*`.
+Terminal này phải đã chạy khối nạp `ENCRYPTION_KEY` ở bước 6. Bắt buộc `-H 127.0.0.1` (không `localhost`, không bỏ `-H`); `-p 3000` để tường minh cổng (đổi thì đổi cả bước 10). Chỉ truyền `PLEXCO_DEV_LOGIN` trên dòng lệnh, **không** đặt vào `.env*`.
 Server sẵn sàng khi console in `Ready in ...`. Kiểm nhanh (terminal khác): `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/dev-login`
 phải ra `307` (404 = cổng đóng, xem mục "Xử lý sự cố").
 
 ## 8. Mở trình duyệt
 
-Mở **`http://localhost:3000/dev-login`** (Next chuyển hướng về `localhost` dù server bind `127.0.0.1`; mở thẳng `127.0.0.1` cũng được).
+Mở **`http://localhost:3000/dev-login`** (cổng = `-p` ở bước 7) (Next chuyển hướng về `localhost` dù server bind `127.0.0.1`; mở thẳng `127.0.0.1` cũng được).
 Trang phải có ghi chú "CHỈ DÀNH CHO DEV" và 3 nút persona.
 
 ## 9. Click path golden path (làm tay)
@@ -141,11 +154,16 @@ GOLDEN_PATH_SCREENSHOT_DIR=/tmp/golden-path-shots GOLDEN_PATH_BASE_URL=http://lo
 ```
 
 - Chạy lại được nhiều lần mà không cần dọn: tên CLB, slug và tên người chơi có hậu tố riêng mỗi lần chạy.
-- Giới hạn của sản phẩm mà spec tôn trọng: **tạo CLB tối đa 3 lần/giờ/tài khoản** (`tenant-create`, trả `RATE_LIMITED` ở lần thứ 4). Từ lần thứ 4
-  trong cùng một giờ, spec kiểm câu từ chối "Bạn thử quá nhiều lần. ..." rồi đi tiếp trong "Dev Club" (ghi annotation `club-create-throttled`),
-  phần tiền vẫn được chạy đủ. Muốn tạo CLB mới lại ngay: dùng DB smoke mới (bộ đếm nằm trong DB).
+- Biến môi trường của spec: `GOLDEN_PATH_BASE_URL` (bắt buộc, gồm cả cổng, khớp `-p` ở bước 7; thiếu thì spec tự skip), `GOLDEN_PATH_SCREENSHOT_DIR` (tuỳ chọn),
+  `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1` (tuỳ chọn, xem dưới).
+- **Một lần PASS nghĩa là cả đường đi đã được chứng minh, gồm cả tạo CLB.** Sản phẩm giới hạn **tạo CLB tối đa 3 lần/giờ/tài khoản** (`tenant-create`, trả
+  `RATE_LIMITED` ở lần thứ 4). Từ lần thứ 4 trong cùng một giờ, spec mặc định **FAIL** với thông báo "Club creation was refused by the tenant-create limit ...":
+  đợi hết giờ, hoặc dùng DB smoke mới (bộ đếm nằm trong DB; làm lại bước 2 → 6), hoặc chủ động chạy với `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1`:
+  khi đó spec đi tiếp trong "Dev Club" cho phần tiền và in ra dòng lớn `!!! GOLDEN PATH: club creation was NOT proven ... !!!` (cả lúc xảy ra lẫn ở cuối log;
+  list reporter chỉ hiện stdout, không hiện annotation). Lần chạy kiểu này **không** được tính là đã kiểm tra tạo CLB.
 - Mỗi tài khoản chỉ được ~60 lời gọi `/api/sessions...` mỗi 60 giây; spec tự giãn nhịp để chạy hai lần liên tiếp không bị `429` ("Bạn thao tác quá nhanh").
   Lần chạy thứ hai ngay sau lần đầu có thể chờ tới ~1 phút ở đầu: bình thường, không phải treo.
+- Timeout rộng có chủ ý (`apps/web/e2e/support/golden-path-timeouts.ts`: cả bài 20 phút, mỗi assertion/điều hướng 4 phút, mỗi thao tác 2 phút). `next dev` biên dịch từng route ở lần gọi đầu và **bỏ trang rảnh sau ~60 giây**, nên **mọi lần chạy** đều biên dịch lại một phần, không chỉ lần đầu; máy đang tải nặng có route mất tới ~113 giây. Đầu mỗi lần chạy spec có bước "warm up the dev server" gọi trước mọi trang và API route của luồng (log `[warm-up] ... in N ms`); log đứng lâu ở bước đó là bình thường, không phải treo.
 - Spec **không chạy trong CI**: `apps/web/playwright.config.ts` loại nó bằng `testIgnore`, không workflow nào nhắc tới nó. Thiếu `GOLDEN_PATH_BASE_URL` thì nó tự skip.
 - Spec dùng config riêng và **không** tự bật web server (giống `dev-login-browser`): server bước 7 phải đang chạy.
 - Lỗi sản phẩm ở một bước: spec dừng tại bước đó (xem `test.step` trong log) và giữ trace `apps/web/test-results/`; mở bằng `pnpm --filter @plexco/web exec playwright show-trace <trace.zip>`.
@@ -159,10 +177,11 @@ GOLDEN_PATH_SCREENSHOT_DIR=/tmp/golden-path-shots GOLDEN_PATH_BASE_URL=http://lo
 | `migrate` lỗi thiếu role `identity_definer` | Bỏ qua/đảo thứ tự bước 3 | Chạy bước 3 rồi bước 4 lại |
 | `password authentication failed for user "app"` | Một lần chạy test đã đổi password cluster-global | Chạy lại bước 5 |
 | `pnpm db:bootstrap`: `psql: command not found` | Máy host không có `psql` | Dùng cách `psql` trong container ở bước 3 |
-| Server báo cổng 3000 bận | Tiến trình khác đang giữ cổng | Dừng nó hoặc đổi `-p`; nhớ đổi `GOLDEN_PATH_BASE_URL` |
+| Server báo `EADDRINUSE` (cổng bận) | Tiến trình khác đang giữ cổng | Dừng nó, hoặc đổi `-p` ở bước 7 **và** `GOLDEN_PATH_BASE_URL` ở bước 10 sang cùng cổng khác |
 | Màn "Bạn thao tác quá nhanh. Đợi một lát rồi thử lại." | Quá ~60 lời gọi API buổi chơi/phút cho một tài khoản (bấm tay quá nhanh, hoặc chạy spec song song/ngoài spec) | Đợi 1 phút rồi bấm **Thử lại** |
-| Spec đứng lâu ở lần chạy đầu | `next dev` biên dịch từng route lần đầu | Bình thường; timeout của spec là 240 giây |
-| Đăng nhập xong nhưng mất phiên giữa chừng | Đổi `ENCRYPTION_KEY` giữa seed và server | Seed lại (bước 6) bằng đúng khoá server đang dùng |
+| Spec đứng lâu (bất kỳ lần chạy nào) | `next dev` biên dịch route ở lần gọi đầu và bỏ trang rảnh sau ~60 giây | Bình thường, đặc biệt khi máy tải nặng; timeout rộng (bài 20 phút, assertion 4 phút). Xem log `[warm-up]` |
+| Spec FAIL "Club creation was refused by the tenant-create limit" | Đã tạo 3 CLB trong giờ qua bằng persona này | Đợi hết giờ, hoặc DB smoke mới, hoặc `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1` (không chứng minh tạo CLB) |
+| Đăng nhập xong nhưng mất phiên giữa chừng; hoặc `dev:seed` báo `slug dev-club belongs to a club the persona does not own` | `ENCRYPTION_KEY` của terminal này khác khoá đã dùng để seed (terminal mới, quên nạp) | **Không** sinh khoá mới và **không** seed lại. Chạy lại khối nạp khoá ở bước 6 (đọc `~/.plexco-smoke-encryption-key`) rồi khởi động lại server. Chỉ khi file khoá đã mất: xoá và tạo lại `plexco_smoke` (bước 6) |
 
 ## Dọn dẹp
 
