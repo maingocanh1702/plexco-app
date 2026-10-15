@@ -49,6 +49,24 @@ describe("heading font = Be Vietnam Pro with a vietnamese subset (DD-123 OD-7)",
     expect(/var\((--[a-z0-9-]+)/.exec(headingValue(globals) ?? "")?.[1]).toBe(declared);
   });
 
+  it("the global h1-h4 rule uses var(--font-heading), not the body face", () => {
+    const rule = /(?:^|\})\s*h1\s*,\s*h2\s*,\s*h3\s*,\s*h4\s*\{([^}]*)\}/.exec(globals)?.[1] ?? "";
+    expect(rule, "an `h1, h2, h3, h4 { ... }` rule in globals.css").not.toBe("");
+    expect(/font-family:\s*([^;]+);/.exec(rule)?.[1]?.trim()).toBe("var(--font-heading)");
+  });
+
+  it("--font-heading is declared exactly once in the app CSS (no later :root override)", () => {
+    // headingValue() reads only the first declaration, so a later one would win in the browser unseen.
+    const declaredIn = walk(WEB_ROOT)
+      .filter((f) => f.endsWith(".css"))
+      .flatMap((f) =>
+        [...readFileSync(f, "utf8").matchAll(/--font-heading\s*:/g)].map(() =>
+          relative(WEB_ROOT, f),
+        ),
+      );
+    expect(declaredIn).toEqual(["app/globals.css"]);
+  });
+
   it("design-tokens.md --font-heading equals globals.css", () => {
     expect(headingValue(doc)).toBeTruthy();
     expect(headingValue(doc)).toBe(headingValue(globals));

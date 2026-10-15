@@ -69,6 +69,16 @@ function slotsOf(v: SessionFormValues): number | null {
   return n >= 1 && n <= INT4_MAX ? n : Number.NaN;
 }
 
+const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
+
+/**
+ * The venue address in the form the server stores and the command compares: trimmed, blank = null.
+ * validateForm's legacy exemption and buildUpdateBody's "changed?" diff BOTH compare in this form,
+ * so an address exempted as untouched is also never sent (a legacy over-cap address with
+ * surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).
+ */
+const addressKey = (raw: string | null | undefined): string | null => textOrNull(raw ?? "");
+
 /**
  * `initial` (edit mode) lets the address check skip an address the host did not touch: a legacy
  * 201-300 character one (the old edit limit was 300, with no server cap) is never sent by
@@ -99,7 +109,10 @@ export function validateForm(
   }
 
   const address = v.venueAddress.trim();
-  if (address.length > VENUE_ADDRESS_MAX && address !== (initial?.venueAddress ?? "").trim()) {
+  if (
+    address.length > VENUE_ADDRESS_MAX &&
+    addressKey(v.venueAddress) !== addressKey(initial?.venueAddress)
+  ) {
     e.venueAddress = t(
       `Địa chỉ tối đa ${VENUE_ADDRESS_MAX} ký tự.`,
       `The address is at most ${VENUE_ADDRESS_MAX} characters.`,
@@ -131,8 +144,6 @@ export function validateForm(
   }
   return e;
 }
-
-const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
 
 /** POST body minus commandId. Optional text fields are sent only when non-empty (DD-128 OD-4a: venueAddress included). */
 export function buildCreateBody(
@@ -187,7 +198,7 @@ export function buildUpdateBody(
   if (area !== original.area) body.area = area;
   const venueName = textOrNull(v.venueName);
   if (venueName !== original.venueName) body.venueName = venueName;
-  const venueAddress = textOrNull(v.venueAddress);
-  if (venueAddress !== original.venueAddress) body.venueAddress = venueAddress;
+  const venueAddress = addressKey(v.venueAddress);
+  if (venueAddress !== addressKey(original.venueAddress)) body.venueAddress = venueAddress;
   return Object.keys(body).length === 0 ? null : body;
 }

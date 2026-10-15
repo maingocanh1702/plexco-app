@@ -19,12 +19,27 @@ const html = (mode: "create" | "edit", lang: "vi" | "en") =>
     </LangProvider>,
   );
 
-/** The <input> that the "Địa chỉ" / "Address" label points at, plus its hint paragraph. */
+/** The text of `markup` from `start` up to and including the first ">" after it ("" when absent). */
+function openingTag(markup: string, start: number) {
+  const end = markup.indexOf(">", start);
+  return start < 0 || end < 0 ? "" : markup.slice(start, end + 1);
+}
+
+/**
+ * The <input> that the "Địa chỉ" / "Address" label points at, plus its hint paragraph. Plain string
+ * search on purpose (no RegExp built from the label/ids: Semgrep detect-non-literal-regexp).
+ */
 function addressField(markup: string, label: string) {
-  const forId = new RegExp(`<label for="([^"]+)"[^>]*>${label}</label>`).exec(markup)?.[1];
+  const labelEnd = markup.indexOf(`>${label}</label>`);
+  const labelStart = labelEnd < 0 ? -1 : markup.lastIndexOf('<label for="', labelEnd);
+  const idStart = labelStart < 0 ? -1 : labelStart + '<label for="'.length;
+  const forId = idStart < 0 ? undefined : markup.slice(idStart, markup.indexOf('"', idStart));
   expect(forId, "address label").toBeTruthy();
-  const input = new RegExp(`<input id="${forId}"[^>]*>`).exec(markup)?.[0] ?? "";
-  const hint = new RegExp(`<p id="${forId}-hint"[^>]*>([^<]*)</p>`).exec(markup)?.[1];
+  const input = openingTag(markup, markup.indexOf(`<input id="${forId}"`));
+  const hintStart = markup.indexOf(`<p id="${forId}-hint"`);
+  const hintBodyStart = hintStart + openingTag(markup, hintStart).length;
+  const hint =
+    hintStart < 0 ? undefined : markup.slice(hintBodyStart, markup.indexOf("<", hintBodyStart));
   return { input, hint, forId: forId! };
 }
 

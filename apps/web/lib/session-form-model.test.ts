@@ -158,6 +158,24 @@ describe("buildUpdateBody", () => {
       venueAddress: "1 Nguyễn Văn Linh",
     });
   });
+  it("a legacy over-cap address with surrounding spaces is exempted AND not sent (same comparison)", () => {
+    const stored = `  ${"x".repeat(250)}  `;
+    const legacy = { ...session, venueAddress: stored };
+    const form = { ...valuesFromSession(legacy), venueName: "Sân B" };
+    expect(validateForm(form, TZ, en, valuesFromSession(legacy))).toEqual({});
+    expect(buildUpdateBody(form, legacy)).toEqual({ venueName: "Sân B" });
+    expect(buildUpdateBody(valuesFromSession(legacy), legacy)).toBeNull();
+  });
+  it("an address edited from a legacy over-cap value is still sent and still capped", () => {
+    const legacy = { ...session, venueAddress: "x".repeat(250) };
+    const edited = { ...valuesFromSession(legacy), venueAddress: "y".repeat(230) };
+    expect(Object.keys(validateForm(edited, TZ, en, valuesFromSession(legacy)))).toEqual([
+      "venueAddress",
+    ]);
+    expect(buildUpdateBody(edited, legacy)).toEqual({ venueAddress: "y".repeat(230) });
+    const cleared = { ...valuesFromSession(legacy), venueAddress: "  " };
+    expect(buildUpdateBody(cleared, legacy)).toEqual({ venueAddress: null });
+  });
   it("does not report untouched times as changed when the stored value carries seconds", () => {
     const withSeconds = { ...session, startsAt: "2026-10-20T11:30:42.123Z" };
     expect(buildUpdateBody(valuesFromSession(withSeconds), withSeconds)).toBeNull();
