@@ -111,12 +111,20 @@ export function SessionDetailView({
         session.status === "draft"
           ? t("Huỷ bản nháp này?", "Discard this draft?")
           : t("Huỷ buổi này?", "Cancel this session?"),
-      // DD-131 OD-1: cancel is refused while active players or recorded payments remain; the copy
-      // names the remedy without claiming which condition applies to this session.
-      body: t(
-        "Buổi sẽ chuyển sang Đã huỷ và không thể hoàn tác. Nếu buổi còn người chơi đang tham gia hoặc khoản thanh toán đã ghi, hãy hoàn tác các khoản thanh toán đó và gỡ người chơi trước khi huỷ.",
-        "The session becomes Cancelled and this cannot be undone. If it still has active players or recorded payments, reverse those payments and remove the players before cancelling.",
-      ),
+      // DD-131 OD-1: cancelling an OPEN session is refused while active players or recorded payments
+      // remain; its copy names the remedy without claiming which condition applies to this session.
+      // A draft carries no players or payments by design (its cancel is a discard), so its copy only
+      // confirms the discard.
+      body:
+        session.status === "draft"
+          ? t(
+              "Bản nháp sẽ chuyển sang Đã huỷ và không thể hoàn tác.",
+              "The draft becomes Cancelled and this cannot be undone.",
+            )
+          : t(
+              "Buổi sẽ chuyển sang Đã huỷ và không thể hoàn tác. Nếu buổi còn người chơi đang tham gia hoặc khoản thanh toán đã ghi, hãy hoàn tác các khoản thanh toán đó và gỡ người chơi trước khi huỷ.",
+              "The session becomes Cancelled and this cannot be undone. If it still has active players or recorded payments, reverse those payments and remove the players before cancelling.",
+            ),
       confirm:
         session.status === "draft"
           ? t("Huỷ nháp", "Discard draft")

@@ -638,6 +638,36 @@ test.describe("detail", () => {
       await expect(statusBadge(page, "Nháp")).toBeVisible();
     });
 
+    test("the cancel confirm body is status-aware: open states the OD-1 remedy, a draft only confirms the discard", async ({
+      page,
+    }) => {
+      await open(page, "/s-open");
+      await page.getByRole("button", { name: "Huỷ buổi" }).click();
+      await expect(page.getByRole("dialog")).toContainText(
+        "Buổi sẽ chuyển sang Đã huỷ và không thể hoàn tác. Nếu buổi còn người chơi đang tham gia hoặc khoản thanh toán đã ghi, hãy hoàn tác các khoản thanh toán đó và gỡ người chơi trước khi huỷ.",
+      );
+
+      // a draft cannot carry players or payments by design: its discard copy never mentions them
+      await open(page, "/s-draft");
+      await page.getByRole("button", { name: "Huỷ nháp" }).click();
+      const draftDialog = page.getByRole("dialog");
+      await expect(draftDialog.getByRole("heading", { name: "Huỷ bản nháp này?" })).toBeVisible();
+      await expect(draftDialog).toContainText(
+        "Bản nháp sẽ chuyển sang Đã huỷ và không thể hoàn tác.",
+      );
+      await expect(draftDialog).not.toContainText("người chơi");
+      await expect(draftDialog).not.toContainText("thanh toán");
+
+      await open(page, "/s-draft", fixtures(), "en");
+      await page.getByRole("button", { name: "Discard draft" }).click();
+      const draftDialogEn = page.getByRole("dialog");
+      await expect(draftDialogEn).toContainText(
+        "The draft becomes Cancelled and this cannot be undone.",
+      );
+      await expect(draftDialogEn).not.toContainText("players");
+      await expect(draftDialogEn).not.toContainText("payments");
+    });
+
     for (const viewport of [
       { width: 375, height: 667 },
       { width: 1280, height: 800 },

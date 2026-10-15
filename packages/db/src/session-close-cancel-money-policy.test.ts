@@ -21,8 +21,13 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
  * an open balance with CLOSE_BLOCKED_OPEN_DEBT naming who owes; cancel keeps owner gate #3 and
  * refuses only recorded money (net allocated > 0). The decision table these rows realize lives in
  * docs/features/BE/feature_session_management_tech.md §4 "Close / Cancel money policy".
- * States no writer can produce are forged with the owner connection and say so. AG-* pin that the
- * close guard and the host roster read model share ONE remaining formula (chargeRemaining).
+ * States no writer can produce are forged with the owner connection and say so. AG-* pin what the
+ * close guard and the host roster read model (getSessionDetail `remaining`) agree on: AG-1/AG-2 —
+ * close refuses exactly the roster rows with remaining > 0 on states the writers produce (where the
+ * stored charges.status/amount_allocated always equal the ledger-derived ones); AG-4 — on forged
+ * STALE stored columns both still follow the ledger SUM (effectiveByCharge), so a guard or a roster
+ * re-derived from the stored status/amount_allocated fails; AG-3 — chargeRemaining's values. That
+ * both call the one helper (chargeRemaining) is a code property no test can pin.
  */
 let ctx: RlsTestContext;
 const fx = fixtures(() => ctx);
@@ -511,7 +516,7 @@ describe("concurrency — the money check runs under the session row lock", () =
   });
 });
 
-describe("close guard <=> host roster read model — ONE remaining formula (chargeRemaining)", () => {
+describe("close guard <=> host roster read model — the same remaining, derived from the ledger", () => {
   /** The host roster's `remaining` per player id (getSessionDetail): every row carrying a charge. */
   async function rosterRemaining(w: World): Promise<Map<string, number>> {
     const detail = await getSessionDetail(ctx.appDb.db, {
@@ -547,6 +552,25 @@ describe("close guard <=> host roster read model — ONE remaining formula (char
     expect([...owing].sort()).toEqual([...rosterOwing].sort());
     return remaining;
   }
+
+  /** AG-4, owner connection only: rewrite a charge's STORED status/amount_allocated; the ledger
+   *  (payment_allocations) is left untouched. */
+  const forgeStored = (chargeId: string, stored: "open" | "partial" | "paid", allocated: number) =>
+    ctx.owner.query(`UPDATE charges SET status = $2, amount_allocated = $3 WHERE id = $1`, [
+      chargeId,
+      stored,
+      allocated,
+    ]);
+  /** The ledger truth: SUM of payment_allocations (reversals negative), read by the owner. */
+  const ledgerNet = async (chargeId: string): Promise<number> =>
+    Number(
+      (
+        await fx.row(
+          `SELECT COALESCE(SUM(amount), 0) AS net FROM payment_allocations WHERE charge_id = $1`,
+          [chargeId],
+        )
+      ).net,
+    );
 
   it("AG-1: void, unpaid, partly paid, fully paid, fully reversed and reversed-back-to-partial charges — close lists exactly the roster rows with remaining > 0", async () => {
     const w = await world();
@@ -609,5 +633,47 @@ describe("close guard <=> host roster read model — ONE remaining formula (char
         expect(chargeRemaining(due, net, derived) > 0).toBe(derived !== "paid");
       }
     }
+  });
+
+  // Unreachable through the writers: applyEffective, the single writer of amount_allocated/status,
+  // re-derives both from the ledger, so on AG-1/AG-2 states stored == derived and a guard or roster
+  // reading the stored columns stays green. Here the owner connection forges the STORED columns out
+  // of step with the ledger (in both directions), which only the ledger-following reads survive.
+  it("AG-4: forged STALE stored charges — stored `paid` over an empty ledger still owes the full price, stored `open`/`partial` over a fully paid ledger owe nothing; close and the roster both follow the ledger, never the stored status/amount_allocated", async () => {
+    const owes = await world();
+    const stalePaid = await join(owes, "Lệch đã trả");
+    await forgeStored(stalePaid.chargeId!, "paid", 100000);
+    expect(await chargeOf(stalePaid.chargeId!)).toMatchObject({
+      status: "paid",
+      amount_allocated: 100000,
+    });
+    expect(await ledgerNet(stalePaid.chargeId!)).toBe(0);
+    expect(Object.fromEntries(await expectAgreement(owes))).toEqual({
+      [stalePaid.playerId]: 100000,
+    });
+    expect(await status(owes.sessionId)).toBe("open");
+
+    const settled = await world();
+    const staleOpen = await join(settled, "Lệch chưa trả");
+    const stalePartial = await join(settled, "Lệch một phần");
+    await pay(settled, staleOpen.playerId, 100000);
+    await pay(settled, stalePartial.playerId, 100000);
+    await forgeStored(staleOpen.chargeId!, "open", 0);
+    await forgeStored(stalePartial.chargeId!, "partial", 30000);
+    expect(await chargeOf(staleOpen.chargeId!)).toMatchObject({
+      status: "open",
+      amount_allocated: 0,
+    });
+    expect(await chargeOf(stalePartial.chargeId!)).toMatchObject({
+      status: "partial",
+      amount_allocated: 30000,
+    });
+    expect(await ledgerNet(staleOpen.chargeId!)).toBe(100000);
+    expect(await ledgerNet(stalePartial.chargeId!)).toBe(100000);
+    expect(Object.fromEntries(await expectAgreement(settled))).toEqual({
+      [staleOpen.playerId]: 0,
+      [stalePartial.playerId]: 0,
+    });
+    expect(await status(settled.sessionId)).toBe("closed");
   });
 });
