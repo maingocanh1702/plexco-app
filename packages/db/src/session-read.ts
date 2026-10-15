@@ -9,6 +9,7 @@ import {
   sports,
 } from "../schema.js";
 import type { Db } from "./client.js";
+import { chargeRemaining } from "./payment-manual.js";
 import { effectiveByCharge } from "./roster-money-shared.js";
 import { sessionOccupancy } from "./session-service.js";
 import { withTenant } from "./tenant.js";
@@ -128,7 +129,8 @@ export interface SessionDetail extends SessionScalars {
       status: string;
       /** SUM of the ledger (reversals are negative rows) -- the host-view truth for what is paid. */
       effectiveAllocated: number;
-      /** amount_due - effectiveAllocated for a payable charge; 0 for a void one. */
+      /** chargeRemaining (payment-manual.ts): amount_due - effectiveAllocated for a payable charge,
+       *  0 for a void one -- the same value close's open-debt guard refuses on when > 0. */
       remaining: number;
       allocations: {
         id: string;
@@ -348,8 +350,12 @@ export async function getSessionDetail(
                 amountAllocated: r.amountAllocated as number,
                 status: r.chargeStatus as string,
                 effectiveAllocated,
-                remaining:
-                  r.chargeStatus === "void" ? 0 : (r.amountDue as number) - effectiveAllocated,
+                // THE remaining formula, shared with close's open-debt guard (never inlined here)
+                remaining: chargeRemaining(
+                  r.amountDue as number,
+                  effectiveAllocated,
+                  r.chargeStatus as string,
+                ),
                 allocations: rows.map(({ chargeId: _c, ...a }) => a),
               };
             })(),
