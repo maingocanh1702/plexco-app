@@ -22,7 +22,7 @@ không nhắc tự động, không deploy DigitalOcean, không cấp phát secre
 | M2a | A | `authorize()` (0049) thay cổng tạm + route GET session (list/detail) | ✅ Đã merge `b2391ff` (2026-10-13 18:59Z) | [#43](https://github.com/maingocanh1702/plexco-app/pull/43) | Backlog `session-commands-actor-recheck-under-lock` còn mở |
 | M2b | A | Host workspace UI: list/detail/create/edit/publish/close/cancel | ✅ Đã merge `802e051` (2026-10-14 04:00Z) | [#48](https://github.com/maingocanh1702/plexco-app/pull/48) | `venueAddress` lúc tạo + formatter VND: đang trong #57 (OD-4) |
 | M2c | A | Roster host-add + thủ công DD-40 (cash/transfer, partial, reversal): BE (#46) và UI (#53) | ✅ BE: #46 merge `10774d6` vào nhánh cha đã chết, nội dung lên `main` qua #54 (`9c07a33`). UI: #53 merge `d962b0c` (2026-10-14 20:45Z) | [#46](https://github.com/maingocanh1702/plexco-app/pull/46), [#53](https://github.com/maingocanh1702/plexco-app/pull/53), [#54](https://github.com/maingocanh1702/plexco-app/pull/54) | Backlog `m2c-round3-nits-follow-up`, `web-command-id-persistence-and-conflict-copy` |
-| M3 | A | Zalo webhook durable + link CLB⇄bot (M3a) + link account⇄Zalo (M3b) | ✅ M3a: #47 merge `2339c8a` (2026-10-14 07:44Z). M3b: #49 merge `561086a` (2026-10-14 20:29Z), role `identity_definer` (0054) | [#47](https://github.com/maingocanh1702/plexco-app/pull/47), [#49](https://github.com/maingocanh1702/plexco-app/pull/49) | Owner còn mở: A3 (xử lý đồng bộ rồi ack, mục "Proposal đang mở"). |
+| M3 | A | Zalo webhook durable + link CLB⇄bot (M3a) + link account⇄Zalo (M3b) | ✅ M3a: #47 merge `2339c8a` (2026-10-14 07:44Z). M3b: #49 merge `561086a` (2026-10-14 20:29Z), role `identity_definer` (0054) | [#47](https://github.com/maingocanh1702/plexco-app/pull/47), [#49](https://github.com/maingocanh1702/plexco-app/pull/49) | Owner còn mở: đề xuất chấp nhận xử lý đồng bộ rồi ack của #47 (mục "Proposal đang mở"). |
 | M4 | A | Settings tối thiểu (profile · linked channels · locale CLB) (`/me/settings`, club settings, 0055) | ✅ Đã merge `b06f33f` (2026-10-14 20:38Z) | [#52](https://github.com/maingocanh1702/plexco-app/pull/52) | — |
 | M5 | A | Staging DO App Platform + Managed PG VPC, log, PITR drill, E2E, runbook tenant #1 | 🧊 **Đóng băng**: #50 vẫn mở (head `f3ceab7`), chỉ owner, **ngoài phạm vi MVP** theo DD-132 / OD-0 | [#50](https://github.com/maingocanh1702/plexco-app/pull/50) | Owner-only: tài khoản DO + secret staging (DD-129 không ký). Deploy production = owner (P0) |
 | M6 | B | Projector thật, DLQ replay, SLO sync, scheduler, auto-expiry, toggle public/private | ⬜ chưa có PR | — | M3 đã xong; owner bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED` |
@@ -61,21 +61,21 @@ DB_EXPECTED_ROLE opt-in · C4 staging-only · O2 uỷ quyền · Tier C #2 per-c
 
 DD-123 → DD-128 và DD-130 đã được đóng bởi DD-131 (owner ký 14/10); DD-129 đóng băng theo OD-0 + DD-132. Còn mở:
 
-- **A3 — Zalo ingress xử lý đồng bộ rồi mới ack** (DD-131 OD-2, PR #47). OD-2 mô tả "trả Success ngay rồi xử lý bất đồng bộ";
+- **Zalo ingress xử lý đồng bộ rồi mới ack** (đề xuất ack đồng bộ; DD-131 OD-2, PR #47). OD-2 mô tả "trả Success ngay rồi xử lý bất đồng bộ";
   #47 xử lý trong request rồi ack. *Đề xuất (chưa quyết):* chấp nhận xử lý đồng bộ cho MVP. Backlog liên quan:
   `channel-inbound-events-retention-reclaimer`.
-- **A4 — Cổng thoát đợt A** (DD-132). DD-132 gỡ cổng "E2E staging" và không nêu cổng thay thế. *Đề xuất (chưa quyết):* đợt A thoát
+- **Cổng thoát đợt A** (đề xuất cổng thoát; DD-132). DD-132 gỡ cổng "E2E staging" và không nêu cổng thay thế. *Đề xuất (chưa quyết):* đợt A thoát
   khi Playwright `e2e-web` chạy **local** XANH trên tip của stack.
-- **Cột consumer trên `link_codes`** (R15, tuỳ chọn, hardening; cần owner quyết schema): ràng buộc tài khoản tiêu thụ trong
+- **Cột consumer trên `link_codes`** (tuỳ chọn, hardening; cần owner quyết schema): ràng buộc tài khoản tiêu thụ trong
   definer và đóng cửa sổ `same_person` 10 phút (hiện tối đa một dòng audit thừa). Đi kèm hai rủi ro có sẵn: insert con FK phía bot
   chạy đua với link có thể gắn vào Person nguồn đã tombstone; worker test chết giữa lúc revoke/restore có thể để một LOGIN role
   test `SET ROLE identity_definer` được. Backlog: `identity-link-hardening-consumer-column`.
 
-## Quyết định owner 2026-10-15 (A5)
+## Quyết định owner 2026-10-15
 
 Ghi lúc 18:39 Asia/Saigon, **không** mang số DD mới:
 
-- **Waive A2 của dev-login (S5):** prefix `/internal-dev-login` được phép trả 404 rỗng khi chỉ các kiểm tra theo từng request thất bại.
+- **Waive finding A2 của review PR #56 (dev-login):** prefix `/internal-dev-login` được phép trả 404 rỗng khi chỉ các kiểm tra theo từng request thất bại.
 - **Migration `auth_audit_dev_login` KHÔNG được cấp phép.** Đăng nhập dev vẫn được ghi là `login_success`/`google`: giới hạn đã biết,
   không phải lỗi cần sửa trong MVP.
 
@@ -93,8 +93,8 @@ Ghi lúc 18:39 Asia/Saigon, **không** mang số DD mới:
 3. **Test local:** sau khi #57 vào `main`, làm theo `docs/runbooks/local-mvp-smoke.md` (Postgres local + dev-login + golden path
    click tay hoặc Playwright). File này đi cùng #57, chưa có trên `main` tại thời điểm ghi.
 4. **Lane flake (backlog, mỗi cái một lane):** `app-worker-test-password-clash-flake` · `db-test-unhandled-57p01-and-load-timeouts` ·
-   `e2e-web-pwa-offline-online-flake` · `db-test-harness-cluster-role-password-reset`. CI đỏ do flake đã biết: chạy lại một lần.
+   `e2e-web-pwa-offline-online-flake` · `dev-app-worker-password-not-restored` (hai row password `app_worker` liên quan nhau: làm cùng nhau hoặc theo thứ tự, không sửa chồng). CI đỏ do flake đã biết: chạy lại một lần.
 5. **OSV:** Security run `38456110453` trên `main` có 9 advisory (backlog `osv-full-scan-red-on-main-2026-10`); owner quyết lúc nào nâng.
-6. **Owner quyết:** A3 và A4 ở mục "Proposal đang mở".
+6. **Owner quyết** hai đề xuất ở mục "Proposal đang mở" (ack đồng bộ của #47; cổng thoát đợt A).
 7. **Phiên lập kế hoạch kế tiếp:** đợt B/C trong phạm vi MVP còn lại là M6, M9, M10 (M9 chỉ phụ thuộc M6). Handoff cho agent:
    `2026-10-14-web-mvp-program-handoff-2.md`.

@@ -22,7 +22,9 @@
   SendMessage in the SAME session only — a new session must re-launch from this file.
 
 ## 2. PR stack — state at handoff (all heads pushed; CI = latest run)
-Superseded by docs/sessions/2026-10-14-web-mvp-program-handoff-2.md (2026-10-15).
+
+Superseded by `docs/sessions/2026-10-14-web-mvp-program-handoff-2.md` (2026-10-15).
+
 Merge order (migrations are contiguous, `migrate.ts` refuses gaps): **#42 → #43 → #46 → #45 → #47 → #49 → #52 → #53**, and
 **#44 → #48** (#48 also carries #43), **#44 → #50**, **#51 last** (docs; carries #42+#43 merged).
 
@@ -61,7 +63,9 @@ session) — the GitHub PR bodies are the durable copy.
   player-side find/join (web/Zalo/Messenger), player debts view, in-app chat, Messenger, email/password, hardening, pen-test.
 
 ## 4. Open review findings (exact text lives in the PR bodies; summarized here)
-Superseded by docs/sessions/2026-10-14-web-mvp-program-handoff-2.md (2026-10-15).
+
+Superseded by `docs/sessions/2026-10-14-web-mvp-program-handoff-2.md` (2026-10-15).
+
 **#53 round 1 (writer: fix as ONE commit, then round 2):**
 - BLOCKING: remove dialog sends `note` the server never reads (`players/[playerId]/route.ts` forwards no note; `RemovePlayerParams` has
   none) → delete the field + body type + e2e assertion (a server slice may add it later).

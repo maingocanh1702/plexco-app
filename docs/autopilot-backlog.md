@@ -2073,7 +2073,7 @@ change_class: dev-ergonomics
 depends_on: []
 invariants: []
 scope: []
-notes: **Có sẵn TRƯỚC slice 2b; slice 2b chỉ làm nó lộ ra.** `app_worker` là role cluster-global. Mọi suite chạm DB — `packages/db`'s suite sẵn có VÀ hai file test mới của `apps/bot` — tự `ALTER ROLE app_worker` sang password riêng khi chạy, và **không suite nào khôi phục** khi xong. Trước 2b không ai để ý vì không có gì local dùng `app_worker`. Từ `fca314e`, `worker.ts` chạy preflight fail-closed đòi kết nối bằng `app_worker`, nên sau MỖI lần `pnpm -w test` developer phải chạy lại `ALTER ROLE app_worker WITH PASSWORD 'plexco_dev_worker'` trước khi start worker local. Đã tài liệu hoá trong `.env.example`. **Một cách sửa đã thử và bị REVERT trong slice 2b:** `afterAll` tự khôi phục — nó đua sống với connection pool của file test anh em đang chạy song song, gây auth failure thật, tệ hơn vấn đề định sửa. Nên lời giải KHÔNG phải per-file restore; cần một cơ chế ở tầng khác (per-test-database role thay vì cluster-global, hoặc global teardown chạy sau toàn bộ suite).
+notes: **Có sẵn TRƯỚC slice 2b; slice 2b chỉ làm nó lộ ra.** `app_worker` là role cluster-global. Mọi suite chạm DB — `packages/db`'s suite sẵn có VÀ hai file test mới của `apps/bot` — tự `ALTER ROLE app_worker` sang password riêng khi chạy, và **không suite nào khôi phục** khi xong. Trước 2b không ai để ý vì không có gì local dùng `app_worker`. Từ `fca314e`, `worker.ts` chạy preflight fail-closed đòi kết nối bằng `app_worker`, nên sau MỖI lần `pnpm -w test` developer phải chạy lại `ALTER ROLE app_worker WITH PASSWORD 'plexco_dev_worker'` trước khi start worker local. Đã tài liệu hoá trong `.env.example`. **Một cách sửa đã thử và bị REVERT trong slice 2b:** `afterAll` tự khôi phục — nó đua sống với connection pool của file test anh em đang chạy song song, gây auth failure thật, tệ hơn vấn đề định sửa. Nên lời giải KHÔNG phải per-file restore; cần một cơ chế ở tầng khác (per-test-database role thay vì cluster-global, hoặc global teardown chạy sau toàn bộ suite). **Cập nhật 2026-10-15 (đo trên origin/main 7fe5525; gộp từ một row trùng cơ chế đã bỏ):** `setupRlsTestContext` (`packages/db/src/test-harness.ts:551`) gọi `setRolePasswordRaceSafe` cho cả ba role `app`, `app_worker`, `readonly` với mật khẩu test (`ROLE_PW`, `:88-92`; vòng lặp ở `:570-571` và `:596-597`), không chỉ `app_worker`. Hệ quả thêm: sau một lần chạy test trên cluster dev dùng chung, `DATABASE_URL=postgres://app:plexco_dev_app@...` trong `README.md:143` (lệnh `pnpm dev:seed` và `next dev` của mục Dev-login) không còn đăng nhập được; cách khắc phục hiện tại là chạy lại `ALTER ROLE app WITH PASSWORD 'plexco_dev_app'` (và tương tự cho `app_worker`). Quan sát local 2026-10-15 khi verify PR #56: database theo pid (`plexco_*_${process.pid}`) còn sót lại; trên main `teardown` có `DROP DATABASE ... WITH (FORCE)` (`test-harness.ts:566`, `:720`, `:897`), nên chỉ lần chạy bị ngắt trước teardown mới để lại database; đo lại trước khi sửa phần này. Liên quan: `app-worker-test-password-clash-flake` (cùng cơ chế, symptom là flake CI do hai mật khẩu test khác nhau; xem ghi chú trong row đó để tránh hai lane sửa chồng nhau).
 
 ## task: job-schedule-outbox-dispatch
 title: Job-infra slice 3a — đăng ký schedule cho outbox dispatch + đóng lỗ fence __pgboss__send-it
@@ -5762,7 +5762,7 @@ scope: []
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — retention đã chốt ở DD-131 OD-2 (khoá dedupe giữ vĩnh viễn; không job retention cho `routing_audit` trong MVP); còn chờ owner chọn mô hình reclaimer (S3 A1: PR #47 xử lý đồng bộ rồi ack, không ack-rồi-xử-lý-bất-đồng-bộ như OD-2 mô tả).
+_readiness: NOT_CODE_READY — retention đã chốt ở DD-131 OD-2 (khoá dedupe giữ vĩnh viễn; không job retention cho `routing_audit` trong MVP); còn chờ owner chọn mô hình reclaimer (PR #47 xử lý đồng bộ rồi ack, không ack-rồi-xử-lý-bất-đồng-bộ như OD-2 mô tả; đề xuất chấp nhận xử lý đồng bộ cho MVP đang chờ owner, xem `docs/sessions/web-mvp-program-status.md` mục "Proposal đang mở").
 notes: |
   Bảng mới của migration 0053 (PR #47) lưu raw payload đã mã hoá, UNIQUE (tenant_id, bot_id, external_event_id) và chưa có job nào quét
   row `received` (store-before-process: crash giữa chừng để lại row chưa xử lý). Phần "retention" của row gốc đã được trả lời bởi
@@ -5801,8 +5801,9 @@ scope: []
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — chờ owner quyết câu hỏi mở của DD-125 (ràng buộc DD-117 cho close/cancel nhánh paid/retry-root).
+_readiness: MERGED 2026-10-15 (PR #55, DD-131 OD-1). Lịch sử: lúc tác giả (2026-10-13) là `NOT_CODE_READY` vì chờ owner quyết câu hỏi mở của DD-125 (ràng buộc DD-117 cho close/cancel nhánh paid/retry-root); owner đã quyết ngày 2026-10-14.
 notes: |
+  **Đã giải quyết bởi PR #55 (xem `note_merged` ở trên). Phần dưới là lịch sử lúc tác giả (2026-10-13), không còn là trạng thái hiện tại.**
   PR #46 (M2c): `closeSession` từ chối `CANCEL_REQUIRES_REVIEW` cho mọi charge (kể cả void); `cancelSession` từ chối khi còn active roster/charge.
   Hệ quả: một session đã có một người được thêm thì không close/cancel được tới khi review_policy land. Đây là câu hỏi mở quan trọng
   nhất của wave Web MVP. `roster-add-mark-paid-m2c` là slug tham chiếu, chưa phải row backlog — dùng khi PR #46 có row riêng.
@@ -5884,7 +5885,7 @@ notes: |
 ## task: identity-definer-bypassrls-ownership-0054
 title: Chọn mô hình owner cho definer `link_code_reparent_empty_person` (0054) dưới NOBYPASSRLS
 status: merged
-note_merged: delivered by PR #49 (merge `561086a`, 2026-10-14), hand-reconciled 2026-10-15 (the row sat at `idea`, which `autopilot-backlog-reconcile` never examines; merged_probe stays null). Owner chose option (a), DD-131 OD-3 (= DD-127): dedicated role `identity_definer` (NOLOGIN, BYPASSRLS) owns the 0054 definer through a `SET ROLE` bracket (`infra/postgres-init/03-identity-definer.sql`, wired into `pnpm db:bootstrap`); consume + re-parent run in ONE transaction. R1 on DO is out of scope (DD-132 removed DO from the MVP). Optional hardening is tracked in `identity-link-hardening-consumer-column`. Was: idea
+note_merged: delivered by PR #49 (merge `561086a`, 2026-10-14), hand-reconciled 2026-10-15 (the row sat at `idea`, which `autopilot-backlog-reconcile` never examines; merged_probe stays null). Owner chose option (a), DD-131 OD-3 (= DD-127): dedicated role `identity_definer` (NOLOGIN, BYPASSRLS) owns the 0054 definer through a `SET ROLE` bracket (`infra/postgres-init/03-identity-definer.sql`, wired into `pnpm db:bootstrap`); consume + re-parent run in ONE transaction. PR #50's risk R1 (BYPASSRLS role on DO Managed PG) is out of scope (DD-132 removed DO from the MVP). Optional hardening is tracked in `identity-link-hardening-consumer-column`. Was: idea
 risk: P1
 change_class: security-posture
 depends_on: []
@@ -5893,8 +5894,9 @@ scope: []
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — phụ thuộc quyết định owner DD-127 (bracket BYPASSRLS hay giữ fail-closed). Không bắt đầu trước đó.
+_readiness: MERGED 2026-10-14 (PR #49, DD-131 OD-3 = DD-127). Lịch sử: lúc tác giả (2026-10-13) là `NOT_CODE_READY` vì chờ quyết định owner DD-127 (bracket BYPASSRLS hay giữ fail-closed); owner đã chọn phương án (a) ngày 2026-10-14.
 notes: |
+  **Đã giải quyết bởi PR #49 (xem `note_merged` ở trên). Phần dưới là lịch sử lúc tác giả (2026-10-13), không còn là trạng thái hiện tại.**
   PR #49 (M3b): dưới migration owner NOBYPASSRLS, emptiness scan không đọc được bảng FORCE-RLS ⇒ mọi link thành `requires_review`
   (fail-closed, không sai, nhưng vô dụng cho người dùng). Hướng sửa đã biết trong repo: bracket `SET ROLE` tới role BYPASSRLS NOLOGIN
   (kiểu `job_definer` / `chat_definer`). Ràng buộc: R1 của PR #50 — role BYPASSRLS có thể bị DO Managed PG từ chối.
@@ -5953,26 +5955,8 @@ notes: |
   (dòng 25 / 24 / 35) đặt `APP_WORKER_PASSWORD = "plexco_test_worker_jrd"`. Role `app_worker` là cluster-global; suite web và bot chạy song song sau
   `packages/db`, và mỗi `setupRlsTestContext` của web đặt lại mật khẩu, nên `dispatcher.test.ts` có lúc bị `password authentication failed for user app_worker`
   (thấy trên CI của PR #56: 2/4 lần chạy, xanh khi chạy lại). Hướng sửa: một mật khẩu dùng chung cho cả hai nơi, hoặc tuần tự hoá các lần chạy.
-  source: S5 (conductor) · PR #56 CI
-
-## task: db-test-harness-cluster-role-password-reset
-title: Harness DB test đặt lại mật khẩu role cluster-global, làm hỏng đăng nhập `app:plexco_dev_app` trong README sau mỗi lần chạy test
-status: idea
-risk: P3
-change_class: test-infra
-depends_on: []
-invariants: [test-chain]
-scope: [packages/db/src/test-harness.ts]
-manifest: null
-merged_probe: null
-_probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — chưa chọn hướng sửa (cô lập cluster test hay khôi phục mật khẩu).
-notes: |
-  `setupRlsTestContext` gọi `setRolePasswordRaceSafe` cho `app`/`app_worker`/`readonly` với mật khẩu test (`test-harness.ts:88-92`, vòng lặp ở ~`:530`);
-  role là cluster-global, nên sau một lần chạy test trên cluster dev dùng chung, `DATABASE_URL=postgres://app:plexco_dev_app@...` trong `README.md:143` không còn đăng nhập được.
-  S5 còn báo database theo pid (`plexco_*_${process.pid}`) không bị drop; trên main `teardown` có `DROP DATABASE ... WITH (FORCE)` (`test-harness.ts` ~`:897`), nên chỉ lần chạy
-  bị ngắt trước teardown mới để lại database — đo lại trước khi sửa phần này.
-  source: S5
+  Liên quan: `dev-app-worker-password-not-restored` (cùng cơ chế mật khẩu cluster-global; hướng sửa khác: khôi phục/cô lập thay vì một mật khẩu chung). Hai lane không được sửa chồng nhau: nếu lane kia chọn role theo database test thì flake này tự hết; nếu chọn global teardown thì vẫn cần một mật khẩu chung, nên làm flake này trước hoặc cùng lane.
+  source: PR #56 CI (2/4 lần chạy đỏ, xanh khi chạy lại) · đo trên origin/main 7fe5525
 
 ## task: db-test-unhandled-57p01-and-load-timeouts
 title: Test DB: `appPool` thiếu listener `error` (57P01 khi teardown) và các timeout/unhandled rejection khi máy tải nặng
@@ -5989,9 +5973,9 @@ _readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; phần ti
 notes: |
   `packages/db/src/tenant-capability-authority.test.ts:466` tạo `appPool = new pg.Pool(...)` không gắn `on("error")` (`:454` khai báo, `:508` `appPool?.end()` rồi `nsCtx.teardown()`),
   nên `DROP DATABASE ... WITH (FORCE)` của teardown có thể gây 57P01 unhandled. Cùng họ với `db-test-harness-teardown-57p01` (đã merged) nhưng khác file.
-  Quan sát cục bộ khi tải nặng (S4/S5/S6, chưa re-measure): unhandled rejection quanh `packages/db/src/roster-service.test.ts:235-241` (vòng SESSION_NOT_OPEN);
+  Quan sát cục bộ khi tải nặng (các lần chạy test local 2026-10-14..15, chưa re-measure): unhandled rejection quanh `packages/db/src/roster-service.test.ts:235-241` (vòng SESSION_NOT_OPEN);
   timeout ở bot JSO-2/JSO-5, rls-invariants JCL-4/JCL-12, migrate BR-5.
-  source: S4 · S5 · S6
+  source: các lần chạy test local 2026-10-14..15 khi tải nặng (chưa lặp lại) · đo trên origin/main 7fe5525
 
 ## task: e2e-web-pwa-offline-online-flake
 title: Flake `e2e-web`: test offline → online của `pwa.spec.ts` (cục bộ fail 3/8, qua khi chạy lại)
@@ -6007,9 +5991,9 @@ _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — chưa có nguyên nhân gốc; cần đo lặp lại trên stack tip.
 notes: |
   `apps/web/e2e/pwa.spec.ts:39` (test "once the service worker controls the page, an offline navigation shows /offline"; đoạn `setOffline(false)` + `toHaveURL` ở ~`:62-64`)
-  fail 3/8 lần chạy cục bộ (S3/S6), qua khi chạy lại. Trang `/offline` tự điều hướng khi nghe `online` nên có race giữa emulation mạng và điều hướng đang đo.
+  fail 3/8 lần chạy cục bộ (2026-10-14..15), qua khi chạy lại; PR #53 và PR #49 cũng ghi một lần đỏ ở `e2e-web` rồi xanh khi chạy lại. Trang `/offline` tự điều hướng khi nghe `online` nên có race giữa emulation mạng và điều hướng đang đo.
   Cần đo lặp lại trước khi sửa; không nới timeout cho tới khi có nguyên nhân.
-  source: S3 · S6
+  source: PR #53 body (flake khi tải song song, 2/2 khi chạy riêng) · PR #49 body · các lần chạy local 2026-10-14..15
 
 ## task: next-config-route-header-precedence-claim
 title: Comment trong `next.config.mjs` nói header của route thắng `headers()`: đo dưới `next dev` là sai, CSP riêng của trang OAuth landing có thể không được phát
@@ -6025,9 +6009,9 @@ _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — cần đo dưới `next start` (build production) trước khi kết luận.
 notes: |
   `apps/web/next.config.mjs:44-47` ghi rằng header CSP của route-level thay header toàn cục ("Next applies config headers first, the response's own header wins").
-  S5 đo dưới `next dev` thấy điều này không đúng, nên CSP nonce riêng của OAuth landing (`apps/web/lib/session-cookies.ts`) có thể không được phát; chưa đo dưới `next start`.
+  Đo dưới `next dev` khi verify PR #56 (2026-10-15) thấy điều này không đúng, nên CSP nonce riêng của OAuth landing (`apps/web/lib/session-cookies.ts`) có thể không được phát; chưa đo dưới `next start`.
   Việc cần làm: đo hai chế độ, rồi sửa comment hoặc sửa cách phát header cho đúng.
-  source: S5 · DD-123
+  source: PR #56 verification (local `next dev`, 2026-10-15) · DD-123
 
 ## task: dockerignore-env-nested-files
 title: `.dockerignore` chỉ loại `.env`/`.env.*` ở gốc repo, file `.env` lồng sâu vẫn vào build context
@@ -6044,7 +6028,7 @@ _readiness: NOT_CODE_READY — chưa kiểm repo có `.env` lồng thật hay kh
 notes: |
   `.dockerignore` hiện ghi `.env` và `.env.*` (không có tiền tố `**/`); theo ngữ nghĩa Docker, hai mẫu này chỉ khớp ở thư mục gốc context. File `.env*` trong
   `apps/*` hoặc `packages/*` sẽ vào build context. Đề xuất `**/.env` và `**/.env.*` (giữ ngoại lệ cho file mẫu nếu có).
-  source: S5
+  source: PR #56 verification (local, 2026-10-15; `.dockerignore` đọc trên origin/main 7fe5525)
 
 ## task: docs-drift-sessions-fe-zalo-tech-readme-pins
 title: Docs lệch thực tế sau M2–M4: route `/dashboard/sessions`, shape webhook Zalo cũ, pin phiên bản identity trong README
@@ -6062,11 +6046,11 @@ notes: |
   (1) `docs/channels/web/FE/feature_sessions_fe.md:3` (và Flows 1-3, ~`:36-50`) vẫn ghi `/dashboard/sessions`; bản build là `/c/[tenantId]/sessions`.
   (2) `docs/features/BE/feature_zalo_channel_tech.md` §3: hàng Error Codes (`WEBHOOK_SIGNATURE_INVALID` 400, ~`:158-164`) và ví dụ signature còn mô tả shape OA cũ; ghi chú DD-126 (~`:154`) đã thay shape.
   (3) `docs/features/README.md:77` pin `BE/feature_identity_tech.md` v1.13, file hiện là v1.19 (FE v1.11 ở cùng hàng chưa đo).
-  (4) `docs/standards/BUILD-STATUS.md` chưa cập nhật cho M4 trở đi (T12b có thể sửa mục này; bỏ khỏi lane nếu đã sửa).
+  (4) `docs/standards/BUILD-STATUS.md` chưa cập nhật cho M4 trở đi (kiểm lại trước khi làm: nếu một PR khác đã cập nhật thì bỏ mục này khỏi lane).
   (5) Font cũ và ký hiệu U+20AB còn trong docs sau PR #57 (OD-4(b) đổi VND sang `đ` U+0111, OD-7 đổi heading font Sora → Be Vietnam Pro; đo `git grep` trên `origin/feat/mvp-local-polish`, đo lại trên main sau khi #57 merge):
       font Sora — `docs/channels/web/theme-direction-2026-07.md` (8 dòng), `docs/standards/design-system.md` (10 dòng; ~`:38`, `:326`, `:336`, `:339`), `docs/channels/web/README.md` (3), `design-brief.md` (3), `designer-kickoff.md` (3), và comment `.github/workflows/ci.yml:126` ("downloads Sora + Inter");
-      U+20AB — `docs/features/FE/feature_*.md` (nhiều nhất `feature_payment_reconcile.md` 30, `feature_player_view.md` 21, `feature_session_management.md` 12), `docs/channels/web/FE/feature_home_fe.md` (3) và vài wireframe khác. Spec Reviewed: sửa qua đường review docs, không sửa hồi tố lịch sử; `docs/standards/design-tokens.md` đã được #57 cập nhật (v2.1).
-  source: S6 · S3 · S4 · S7 (T10)
+      U+20AB — `docs/features/FE/feature_*.md` (nhiều nhất `feature_payment_reconcile.md` 30, `feature_player_view.md` 21, `feature_session_management.md` 12), `docs/channels/web/FE/feature_home_fe.md` (3) và vài wireframe khác. Spec Reviewed: sửa qua đường review docs, không sửa hồi tố lịch sử; `docs/standards/design-tokens.md` do PR #57 cập nhật (chỉ trích theo số PR; head của #57 còn có thể đổi).
+  source: đo trên origin/main 7fe5525 và origin/feat/mvp-local-polish (PR #57) · PR #47 (ghi chú DD-126) · PR #52 · PR #53
 
 ## task: web-command-id-persistence-and-conflict-copy
 title: Web: giữ `commandId` qua reload/Cancel (cửa sổ double-apply của thanh toán một phần và thêm theo tên) và sửa copy `COMMAND_ID_CONFLICT`
@@ -6081,10 +6065,10 @@ merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — cần quyết định phạm vi (sessionStorage theo ý định) trước khi sửa.
 notes: |
-  (1) Residual đã chấp nhận ở S2 vòng 3: `commandId` chỉ sống trong ref, nên reload hoặc Cancel rồi gửi lại tạo `commandId` mới và có thể áp hai lần cho thanh toán một phần / thêm theo tên.
+  (1) Residual owner đã chấp nhận ở vòng 3 của PR #53: `commandId` chỉ sống trong ref, nên reload hoặc Cancel rồi gửi lại tạo `commandId` mới và có thể áp hai lần cho thanh toán một phần / thêm theo tên.
   Hướng: lưu `commandId` theo ý định trong `sessionStorage`. (2) `apps/web/components/sessions/edit-session-view.tsx:92` (`commandId.current ??= crypto.randomUUID()`) giữ `commandId` qua các lần sửa.
-  (3) Copy `COMMAND_ID_CONFLICT` hiện chữ "commandId" ra người dùng (`apps/web/lib/session-command-route.ts:591-595`, không phải `:576-580` như S2/S4 ghi).
-  source: S2 · S4
+  (3) Copy `COMMAND_ID_CONFLICT` hiện chữ "commandId" ra người dùng (`apps/web/lib/session-command-route.ts:591-595`, đo trên origin/main 7fe5525; các ghi chú review trước trỏ nhầm `:576-580`).
+  source: PR #53 body (residual đã chấp nhận, copy `COMMAND_ID_CONFLICT`) · PR #52 body (`edit-session-view.tsx:92`)
 
 ## task: web-api-client-timeout-and-refresh-notice-focus
 title: Web: `apiFetch` không có timeout phía client; refresh trang lỗi hiện `ApiErrorNotice` không được focus
@@ -6100,8 +6084,8 @@ _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; phần focus của ApiErrorNotice chưa đo lại ở đây.
 notes: |
   `apps/web/lib/api-client.ts:55-72`: `apiFetch` gọi `fetch` không `AbortSignal`/timeout, nên một request treo giữ modal ở trạng thái busy mãi.
-  S2/S4 còn báo: khi refresh trang thất bại, `ApiErrorNotice` hiện ra nhưng không nhận focus (chưa re-measure trong lane này).
-  source: S2 · S4
+  PR #52 body còn ghi: khi refresh trang thất bại, `ApiErrorNotice` hiện ra nhưng không nhận focus (chưa re-measure trong lane này).
+  source: PR #52 body (ngoài scope, owner note) · PR #53 body (`apiFetch` không có timeout)
 
 ## task: club-name-rule-unicode-separators
 title: Quy tắc tên CLB nhận ký tự Zl/Zp và ký tự trắng/filler
@@ -6118,7 +6102,7 @@ _readiness: NOT_CODE_READY — chưa chốt tập ký tự bị cấm; migration
 notes: |
   `packages/db/src/club-config-validation.ts:64` chỉ loại `\p{Cc}` và `\p{Cf}`; migration 0052 chỉ kiểm độ dài 1..120 sau trim (`char_length`).
   Vì vậy tên CLB có thể chứa U+2028/U+2029 (Zl/Zp) hoặc ký tự filler/khoảng trắng vô hình, hiển thị như tên rỗng. Đề xuất: chốt tập cấm ở TypeScript trước; chỉ thêm ràng buộc DB nếu owner muốn.
-  source: S4 · DD-124
+  source: PR #52 body (round-2 nits, ngoài scope) · DD-124
 
 ## task: list-sessions-occupied-count-single-source
 title: `listSessions` tính lại `occupiedCount` bằng SQL thay vì dùng chung một công thức với `sessionOccupancy`
@@ -6136,7 +6120,7 @@ notes: |
   `packages/db/src/session-read.ts:209` tính `occupiedCount = activeCount + count(session_guest_notes)` trong SQL, nhân đôi công thức của `sessionOccupancy`; chỉ một test
   bằng nhau (`session-read.test.ts:228`) ghim hai nơi cho một fixture. Vi phạm single-source: đi qua một helper hoặc một view duy nhất, giữ test tương đương cho nhiều fixture
   (player waitlisted/left, guest note).
-  source: S1
+  source: PR #48 body (SF-4: `occupiedCount` cho list row) · đo trên origin/main 7fe5525
 
 ## task: zalo-connect-bot-revoked-error-mapping
 title: Onboarding Zalo connect: `BOT_REVOKED` ra `FORBIDDEN` 403; `finishZaloConnect` để lọt 22023 thành 500
@@ -6154,7 +6138,7 @@ notes: |
   `apps/web/app/api/onboarding/zalo/connect/route.ts:199-200` map `BOT_REVOKED` sang `FORBIDDEN` 403 (nhầm với thiếu quyền). `beginZaloConnect` đã bắt 22023 "bot is revoked" (`zalo-ingress.ts:394`),
   nhưng `finishZaloConnect` (`:414`) không có try/catch quanh `zalo_bot_set_status` (~`:455`), mà migration 0053 raise 22023 khi bot đã `revoked`, nên lỗi đó thoát ra thành 500.
   Cần: bắt 22023 ở `finishZaloConnect` thành `ZaloConnectError("BOT_REVOKED")` và chọn mã/HTTP riêng cho bot đã thu hồi.
-  source: S4 · DD-126
+  source: PR #52 body (ngoài scope, owner note) · DD-126
 
 ## task: identity-link-hardening-consumer-column
 title: Cứng hoá link định danh: cột consumer trên `link_codes` và các residual của definer 0054 (cần quyết định schema của owner)
@@ -6172,7 +6156,7 @@ notes: |
   (1) Thêm cột consumer trên `link_codes` để definer biết tài khoản đã consume và đóng cửa sổ same_person 10 phút (`0054_link_code_reparent_empty_person.sql`, ~`:20-30`, `:308`);
   hiện tối đa một dòng audit thừa. (2) Có sẵn từ trước: một insert FK-child từ bot đua với link chờ `FOR UPDATE` rồi gắn vào Person nguồn đã tombstone.
   (3) Worker test crash giữa revoke/restore có thể để role test LOGIN có thể `SET ROLE identity_definer`. (1) cần owner quyết định schema; (2)-(3) chỉ ghi nhận.
-  source: S4 · DD-127 / DD-131 OD-3
+  source: PR #49 body (owner notes vòng 2, residual risks cho owner) · DD-127 / DD-131 OD-3
 
 ## task: dev-login-residuals-pr-56
 title: Dev-login (PR #56): các residual đã ghi trong PR body, A2 đã được owner waive
@@ -6187,10 +6171,10 @@ merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — residual để theo dõi; không phải việc chặn MVP.
 notes: |
-  Theo body PR #56: (a) S5 A2 được owner waive (tiền tố `/internal-dev-login` có thể trả 404 rỗng khi chỉ per-request check fail); (b) relay TCP thô tới `127.0.0.1:PORT`;
+  Theo body PR #56: (a) finding A2 của review PR #56 (vòng 1 reviewer A, vòng 2 "partly closed") được owner waive ngày 2026-10-15 (tiền tố `/internal-dev-login` có thể trả 404 rỗng khi chỉ per-request check fail); (b) relay TCP thô tới `127.0.0.1:PORT`;
   (c) image Docker mang source dev-login không hoạt động (inert); (d) chưa đo Firefox/WebKit; (e) chưa đo hoàn tất Google dưới `next start`.
   Migration `auth_audit_dev_login` KHÔNG được owner cho phép: dev login vẫn ghi `login_success/google` (giới hạn đã biết).
-  source: S5 · PR #56
+  source: PR #56 body (bảng review, owner-accepted residual)
 
 ## task: small-code-hygiene-reversal-zalo-roster-comment
 title: Dọn nhỏ: reversal trên session đã cancel trả `SESSION_NOT_OPEN`; nhánh `isDirect=false` của Zalo không với tới được; comment cũ
@@ -6207,8 +6191,8 @@ _readiness: NOT_CODE_READY — mức thấp; gom vào một lane khi có ngườ
 notes: |
   (1) Reversal gọi `lockSession` (`payment-reversal.ts:114`), mà `payment-manual.ts:248-258` trả `SESSION_NOT_OPEN` cho session không `open|closed`; DD-131 OD-6 (5) nói không có guard
   session-status cho reversal (không thể có gì để reverse trên session đã cancel vì cancel đòi 0 tiền ghi nhận): mức thấp. (2) `apps/web/lib/zalo/commands.ts:59` nhánh `!deps.isDirect`
-  không với tới được: chỗ gọi duy nhất (`process-event.ts:125`) luôn truyền `isDirect: true`. (3) Comment ~`apps/web/lib/use-roster-command.ts:66` bị S6 đánh dấu cũ (chưa đánh giá lại ở đây).
-  source: S6 · S3 · S4
+  không với tới được: chỗ gọi duy nhất (`process-event.ts:125`) luôn truyền `isDirect: true`. (3) Comment ~`apps/web/lib/use-roster-command.ts:66` nghi đã cũ (quan sát không kèm bằng chứng, chưa đánh giá lại: đọc code rồi mới sửa hoặc bỏ mục này).
+  source: PR #55 body (DD-131 OD-6 reversal) · đo trên origin/main 7fe5525 (`process-event.ts:125`)
 
 ## task: osv-full-scan-red-on-main-2026-10
 title: OSV full dependency scan đỏ trên main: 9 advisory (1 Critical, 5 High, 3 Medium)
@@ -6223,11 +6207,11 @@ merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — cần đo lại lockfile trên base hiện tại trước khi chọn floor; ghi nhận Security run chứ chưa sửa.
 notes: |
-  Security run 38456110453 (push lên main, 2026-10-13): `Total 6 packages affected by 9 known vulnerabilities (1 Critical, 5 High, 3 Medium)`, "8 vulnerabilities can be fixed".
+  Security run 38456110453 (push lên main tại `9c07a33`, 2026-10-13): `Total 6 packages affected by 9 known vulnerabilities (1 Critical, 5 High, 3 Medium)`, "8 vulnerabilities can be fixed".
   Advisory: shell-quote GHSA-pqg4-j6r4-53mv; sharp GHSA-wq5f-xc86-pv6w; source-map-js GHSA-68fv-2mgg-jv7q; braces GHSA-vfj7-8cjw-p6xm;
   brace-expansion GHSA-6j4f-fj2g-mc7p / GHSA-qhr7-859c-m2p7 / GHSA-q2hr-2g5m-vwhr; next GHSA-4jqv-mc3x-m676 / GHSA-mcj8-r9mp-w47p.
-  S2 báo scan đỏ từ 2026-09-30 (chưa đo lại ngày bắt đầu). Cách sửa theo tiền lệ AP-51 (`deps-osv-transitive-floors`): nâng floor qua override trong `pnpm-workspace.yaml`, rồi chạy lại scan.
-  source: S2 · Security run 38456110453
+  PR #54 body ghi scan đỏ trên main từ lần chạy theo lịch 2026-09-30 (chưa đo lại ngày bắt đầu). Cách sửa theo tiền lệ AP-51 (`deps-osv-transitive-floors`): nâng floor qua override trong `pnpm-workspace.yaml`, rồi chạy lại scan.
+  source: PR #54 body · Security run 38456110453 (đo tại main `9c07a33`)
 
 ## task: offline-page-csp-nonce-missing
 title: Trang `/offline` prerender không mang nonce: bật `CSP_SCRIPT_NONCE_ENABLED=true` sẽ chặn mọi script của trang này
@@ -6240,14 +6224,14 @@ scope: [apps/web/app/offline/page.tsx, apps/web/middleware.ts, apps/web/lib/requ
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — đo bằng trình duyệt thật do S7; cần đo lại sau khi chọn hướng sửa. Phải xong TRƯỚC khi bật cờ ở bất kỳ môi trường nào.
+_readiness: NOT_CODE_READY — đo bằng trình duyệt thật khi review vòng 1 của PR #57; cần đo lại sau khi chọn hướng sửa. Phải xong TRƯỚC khi bật cờ ở bất kỳ môi trường nào.
 notes: |
   Có sẵn từ trước PR #57, và chỉ xảy ra khi cờ bật (mặc định OFF). Với `CSP_SCRIPT_NONCE_ENABLED=true`, `/offline` ship script không có nonce:
-  S7 đo 18 vi phạm `script-src`, trang không hydrate và không đăng ký service worker từ trang đó. Code khớp: `apps/web/app/offline/page.tsx`
+  Review vòng 1 của PR #57 đo 18 vi phạm `script-src`, trang không hydrate và không đăng ký service worker từ trang đó. Code khớp: `apps/web/app/offline/page.tsx`
   là trang tĩnh (không `dynamic`, không đọc `headers()`) và còn script inline `CAPTURE_REQUESTED_URL`; middleware chỉ gắn nonce vào request/response,
   còn HTML prerender được dựng lúc build nên không thể mang nonce của request. Hướng sửa cần đo: chuyển trang sang render động để Next áp nonce,
   hoặc tách script inline thành file tĩnh cùng origin. Không nới CSP bằng `'unsafe-inline'`.
-  source: S7 (r1)
+  source: PR #57 review round 1 (PR body chưa ghi; đo lại khi #57 merge)
 
 ## task: session-text-fields-control-char-validation
 title: `area` / `venue_name` / `venue_address` của session nhận ký tự điều khiển C0 và bidi (ví dụ U+202E, xuống dòng) rồi hiện cho player
@@ -6266,7 +6250,7 @@ notes: |
   (`"\u0000"`); create và update dùng chung nó. `venue_address` thêm trần 200 ký tự và không có gì khác. Migration `0002_tenants_core.sql` khai ba cột là `text`
   trần, không CHECK. Hệ quả: U+202E hay xuống dòng đi qua service, lưu vào DB và hiện cho player (đổi chiều chữ, giả mạo tên địa điểm).
   Dùng lại một validator cho cả ba trường thay vì ba regex; kiểm tra kèm test ở route create/update.
-  source: S7 (r1)
+  source: PR #57 review round 1 (PR body chưa ghi; đo trên `origin/feat/mvp-local-polish`)
 
 ## task: session-venue-address-error-field-contract
 title: Lỗi validate `venue_address` bị ép về `400 INVALID_BODY` chung, không nói trường nào sai
@@ -6285,7 +6269,7 @@ notes: |
   `apps/web/lib/session-command-route.ts` (~`:477-485` trên `origin/feat/mvp-local-polish`) và bị gộp thành `400 INVALID_BODY` "Dữ liệu không hợp lệ."
   mà không kèm trường. Form web (PR #57) chặn trần 200 ở phía client nên người dùng bình thường không gặp; client khác (hoặc kiểm tra bị bỏ qua) chỉ thấy lỗi chung.
   Mang tên trường qua `error.details` cần đổi `api-contract.ts`, nên là một thay đổi contract có chủ đích, không sửa lặt vặt.
-  source: S7 (F1)
+  source: PR #57 review round 1, finding F1 (PR body chưa ghi; đo trên `origin/feat/mvp-local-polish`)
 
 ## task: local-smoke-toast-overlap-and-blank-band-measure
 title: Ảnh smoke local cho thấy toast chồng nhau và dải trống ~30 px phía trên header ở workspace session: đo trước khi sửa
@@ -6300,7 +6284,7 @@ merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — chưa đo, có thể chỉ là artifact của ảnh chụp; phải tái hiện bằng trình duyệt thật (không phải ảnh) trước khi có scope.
 notes: |
-  Quan sát của runner S7 trên ảnh chụp từ `docs/runbooks/local-mvp-smoke.md` (chưa xác minh, `scope: []` vì chưa biết file nào): toast chồng/đè lên nhau và một dải trống
+  Quan sát khi chạy local smoke 2026-10-15, trên ảnh chụp từ `docs/runbooks/local-mvp-smoke.md` (chưa xác minh, `scope: []` vì chưa biết file nào): toast chồng/đè lên nhau và một dải trống
   khoảng 30 px phía trên header ở màn workspace session. Cách đo: chạy golden path theo runbook, mở DevTools, đo `getBoundingClientRect()` của header và vùng toast
   ở 375 px và desktop; nếu không tái hiện được thì đóng row này là `superseded`.
-  source: S7 (runner, chưa xác minh)
+  source: local smoke run 2026-10-15 (PR #57; ảnh chụp, chưa xác minh)

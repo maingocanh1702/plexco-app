@@ -1843,7 +1843,7 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 - **OD-8 — DD-124 (cấu hình CLB, PR #45): ký nguyên trạng** (mapping club-config → `content.manage`; readiness cho
   owner/admin/co_admin; posture đọc `tenant_profile_read`; migration 0052). Đóng: **DD-124**.
 - **OD-9 — DD-130 (fix sau vòng 3). [DEFAULT]** Owner waive trần 3 vòng cho **đúng MỘT** vòng review nhắm riêng **#44** (fix
-  `fb386e0`) và **#47** (`940d77f` + delta S3); đọc xác nhận fix cho một finding BLOCKING của vòng đó tính là **cùng vòng**.
+  `fb386e0`) và **#47** (`940d77f` + delta OD-2 `70bad4a`); đọc xác nhận fix cho một finding BLOCKING của vòng đó tính là **cùng vòng**.
   Commit sau trần trên **#42** và **#43** là việc owner **tự đọc**. Đóng: **DD-130**.
 
 **Trạng thái sau DD-131:** DD-123 · 124 · 125 · 126 · 127 · 128 · 130 chuyển 🟡 → ✅ (DD-123 ✅ có điều kiện: xác minh subset
