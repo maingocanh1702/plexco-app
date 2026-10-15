@@ -50,6 +50,38 @@ describe("apiFetch", () => {
     });
   });
 
+  it("keeps the envelope's details on the ApiClientError (CLOSE_BLOCKED_OPEN_DEBT)", async () => {
+    const details = { openBalancePlayers: [{ playerId: "p2", displayName: "Minh Trần" }] };
+    mockFetch(
+      {
+        data: null,
+        error: { code: "CLOSE_BLOCKED_OPEN_DEBT", message: "Còn nợ.", statusCode: 409, details },
+        meta: { requestId: "req_d" },
+      },
+      409,
+    );
+    const error = await apiFetch("/api/x").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect((error as ApiClientError).details).toEqual(details);
+    expect(error).toMatchObject({ code: "CLOSE_BLOCKED_OPEN_DEBT", statusCode: 409 });
+  });
+
+  it("every other error stays details-free: absent, null, a string or an array never become details", async () => {
+    for (const details of [undefined, null, "oops", ["x"], 7]) {
+      mockFetch(
+        {
+          data: null,
+          error: { code: "STALE_VERSION", message: "m", statusCode: 409, details },
+          meta: { requestId: "r" },
+        },
+        409,
+      );
+      const error = (await apiFetch("/api/x").catch((e: unknown) => e)) as ApiClientError;
+      expect(error.details, String(details)).toBeUndefined();
+      expect(error).toMatchObject({ code: "STALE_VERSION", message: "m", requestId: "r" });
+    }
+  });
+
   it("a non-envelope response is CLIENT_BAD_RESPONSE, never a raw parse error", async () => {
     vi.stubGlobal(
       "fetch",

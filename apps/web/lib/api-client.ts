@@ -1,4 +1,4 @@
-import type { ApiEnvelope } from "@plexco/core";
+import type { ApiEnvelope, ApiErrorDetails } from "@plexco/core";
 
 /**
  * Browser-side API client (FE-INV-6). Every route answers the envelope `{data, error, meta}`;
@@ -10,12 +10,25 @@ export class ApiClientError extends Error {
   readonly code: string;
   readonly statusCode: number;
   readonly requestId: string | null;
-  constructor(code: string, message: string, statusCode: number, requestId: string | null = null) {
+  /**
+   * The envelope's optional structured payload (docs/channels/web/README.md §7), kept verbatim.
+   * Typed as the contract says, but it crossed the network: a reader must still validate it
+   * (see openBalancePlayersOf) and render the generic message when it is absent or malformed.
+   */
+  readonly details: ApiErrorDetails | undefined;
+  constructor(
+    code: string,
+    message: string,
+    statusCode: number,
+    requestId: string | null = null,
+    details?: ApiErrorDetails,
+  ) {
     super(message);
     this.name = "ApiClientError";
     this.code = code;
     this.statusCode = statusCode;
     this.requestId = requestId;
+    this.details = details;
   }
 }
 
@@ -28,6 +41,10 @@ export interface ApiFetchInit extends Omit<RequestInit, "body" | "credentials" |
   json?: unknown;
   /** CSRF secret from GET /api/auth/session; attached as x-csrf-token on non-GET requests. */
   csrfToken?: string | null;
+}
+
+function isPlainObject(value: unknown): value is ApiErrorDetails {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
@@ -63,6 +80,8 @@ export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promis
       envelope.error.message,
       envelope.error.statusCode ?? response.status,
       requestId,
+      // only a JSON object is kept; null / a string / an array never become `details`
+      isPlainObject(envelope.error.details) ? envelope.error.details : undefined,
     );
   }
   if (!response.ok || !envelope || envelope.data === undefined) {

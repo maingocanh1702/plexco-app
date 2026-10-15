@@ -453,12 +453,153 @@ test.describe("detail", () => {
 
     mock.failNext("cancel", {
       code: "CANCEL_REQUIRES_REVIEW",
-      message: "Kèo này cần được xem xét trước khi đóng hoặc huỷ.",
+      message: "Kèo này cần được xem xét trước khi huỷ.",
       statusCode: 400,
     });
     await page.getByRole("button", { name: "Huỷ buổi" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Huỷ buổi" }).click();
     await expect(page.getByRole("dialog").getByRole("alert")).toContainText("cần được xem xét");
+  });
+
+  test.describe("close / cancel refusals (DD-131 OD-1)", () => {
+    const DEBT = {
+      code: "CLOSE_BLOCKED_OPEN_DEBT",
+      message: "Còn người chơi chưa trả đủ tiền — thu đủ trước khi đóng kèo.",
+      statusCode: 409,
+      details: {
+        openBalancePlayers: [
+          { playerId: "p2", displayName: "Minh Trần" },
+          { playerId: "p9", displayName: null },
+        ],
+      },
+    };
+    const confirmClose = async (page: Page) => {
+      await page.getByRole("button", { name: "Đóng buổi" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Đóng buổi" }).click();
+    };
+
+    test("CLOSE_BLOCKED_OPEN_DEBT: names the players, stays in place, the roster button works", async ({
+      page,
+    }) => {
+      const mock = await open(page, "/s-open");
+      await page.getByRole("tab", { name: "Chi tiết" }).click(); // prove the button brings Roster forward
+      mock.failNext("close", DEBT);
+      await confirmClose(page);
+      const dialog = page.getByRole("dialog");
+      const alert = dialog.getByRole("alert");
+      await expect(alert).toContainText("Còn người chơi chưa trả đủ tiền");
+      await expect(alert).toContainText("Người chơi còn thiếu tiền:");
+      await expect(alert.getByRole("listitem")).toHaveText(["Minh Trần", "(chưa đặt tên)"]);
+      await expect(alert).not.toContainText("p2"); // ids are never text
+      await expect(alert).not.toContainText("₫"); // no amount is shown or invented
+      await expect(alert.getByRole("button")).toHaveCount(1); // domain code: no reload / retry
+      // stay in place: dialog open, command still available, server state untouched
+      await expect(dialog.getByRole("button", { name: "Đóng buổi" })).toBeEnabled();
+      expect(mock.state.find((s) => s.id === "s-open")!.status).toBe("open");
+      expect(mock.callsTo("POST", /\/s-open\/close$/)).toHaveLength(1);
+
+      await alert.getByRole("button", { name: "Mở danh sách người chơi" }).click();
+      await expect(dialog).toBeHidden();
+      await expect(page.getByRole("tab", { name: "Người chơi" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page.getByText("Minh Trần")).toBeVisible();
+      expect(mock.state.find((s) => s.id === "s-open")!.status).toBe("open");
+      expect(mock.callsTo("POST", /\/s-open\/close$/)).toHaveLength(1); // nothing was re-sent
+      await expect(page.getByText("Đã đóng buổi.")).toHaveCount(0);
+    });
+
+    test("a missing, empty or malformed list shows the generic message only (fail closed)", async ({
+      page,
+    }) => {
+      const mock = await open(page, "/s-open");
+      const bad: unknown[] = [
+        undefined,
+        { openBalancePlayers: [] },
+        { openBalancePlayers: [{ displayName: "no id" }] },
+        { openBalancePlayers: "Minh" },
+      ];
+      for (const details of bad) {
+        mock.failNext("close", { ...DEBT, details });
+        await confirmClose(page);
+        const alert = page.getByRole("dialog").getByRole("alert");
+        await expect(alert).toContainText("Còn người chơi chưa trả đủ tiền");
+        await expect(alert.getByRole("listitem")).toHaveCount(0);
+        await expect(alert).not.toContainText("Người chơi còn thiếu tiền");
+        await expect(alert.getByRole("button")).toHaveCount(0);
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("dialog")).toBeHidden();
+      }
+      expect(mock.state.find((s) => s.id === "s-open")!.status).toBe("open");
+    });
+
+    test("CANCEL_REQUIRES_REVIEW: a generic hint (remove players, reverse payments), no claim which applies", async ({
+      page,
+    }) => {
+      const mock = await open(page, "/s-open");
+      mock.failNext("cancel", {
+        code: "CANCEL_REQUIRES_REVIEW",
+        message: "Kèo này cần được xem xét trước khi huỷ.",
+        statusCode: 400,
+      });
+      await page.getByRole("button", { name: "Huỷ buổi" }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Huỷ buổi" }).click();
+      const alert = page.getByRole("dialog").getByRole("alert");
+      await expect(alert).toContainText("Kèo này cần được xem xét trước khi huỷ.");
+      await expect(alert).toContainText("Gỡ từng người chơi khỏi danh sách");
+      await expect(alert).toContainText("hoàn tác các khoản thanh toán đã ghi");
+      await expect(alert.getByRole("listitem")).toHaveCount(0);
+      expect(mock.state.find((s) => s.id === "s-open")!.status).toBe("open");
+      await alert.getByRole("button", { name: "Mở danh sách người chơi" }).click();
+      await expect(page.getByRole("dialog")).toBeHidden();
+      await expect(page.getByRole("tab", { name: "Người chơi" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
+
+    test("English club: the refusal copy has an English twin", async ({ page }) => {
+      const mock = await open(page, "/s-open", fixtures(), "en");
+      mock.failNext("close", { ...DEBT, message: "Some players have not paid in full." });
+      await page.getByRole("button", { name: "Close", exact: true }).click();
+      await page.getByRole("dialog").getByRole("button", { name: "Close session" }).click();
+      const alert = page.getByRole("dialog").getByRole("alert");
+      await expect(alert).toContainText("Players with an open balance:");
+      await expect(alert.getByRole("button", { name: "Open the roster" })).toBeVisible();
+      await expect(alert).not.toContainText("Người chơi");
+    });
+
+    for (const scheme of ["light", "dark"] as const) {
+      for (const viewport of [
+        { name: "375x812", width: 375, height: 812 },
+        { name: "1280x800", width: 1280, height: 800 },
+      ]) {
+        test(`axe + layout: close refusal open, ${scheme} ${viewport.name}`, async ({ page }) => {
+          await page.setViewportSize({ width: viewport.width, height: viewport.height });
+          await page.emulateMedia({ colorScheme: scheme });
+          const mock = await open(page, "/s-open");
+          mock.failNext("close", DEBT);
+          await confirmClose(page);
+          const alert = page.getByRole("dialog").getByRole("alert");
+          await expect(alert.getByRole("listitem")).toHaveCount(2);
+          // the notice fits the viewport (no horizontal overflow at 375)
+          expect(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+            ),
+          ).toBe(true);
+          const results = await new AxeBuilder({ page })
+            .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+            .analyze();
+          expect(
+            results.violations
+              .filter((v) => v.impact === "serious" || v.impact === "critical")
+              .map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target) })),
+          ).toEqual([]);
+        });
+      }
+    }
   });
 
   test("unknown error code fails closed: generic message + requestId, never raw server text", async ({

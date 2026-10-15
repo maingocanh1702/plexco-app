@@ -44,9 +44,12 @@ const DOMAIN_CODES = new Set([
   "REJOIN_REQUIRES_REVIEW",
   "REMOVE_REQUIRES_REVIEW",
   "REVERSAL_NOT_SUPPORTED",
+  // cancel-only since DD-131 OD-1 (a close refuses with CLOSE_BLOCKED_OPEN_DEBT instead)
   "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_OCCUPANCY",
   "CAPACITY_BELOW_ROSTER",
+  // the host collects the open balances and closes again: a domain refusal, never a reload
+  "CLOSE_BLOCKED_OPEN_DEBT",
   "COMMAND_ID_CONFLICT",
   "INVALID_TIME_RANGE",
   "MISSING_DISCOVERY_FIELDS",
@@ -55,6 +58,40 @@ const DOMAIN_CODES = new Set([
   "SPORT_INACTIVE",
   "TENANT_SUSPENDED",
 ]);
+
+/** One player of a CLOSE_BLOCKED_OPEN_DEBT list, validated for rendering. */
+export interface OpenBalancePlayerView {
+  playerId: string;
+  /** null when the player has no display name (the screen then shows its unnamed placeholder). */
+  displayName: string | null;
+}
+
+/**
+ * The players a CLOSE_BLOCKED_OPEN_DEBT refusal names, or [] when the error is any other code or its
+ * `details` is missing / empty / malformed. Fail closed: `details` crossed the network, so one bad
+ * entry (not an object, missing or non-string playerId, a displayName that is neither string nor
+ * null) voids the WHOLE list rather than showing a partial one a host could read as "only these owe";
+ * the screen then renders the generic server message only. Nothing but id + name is ever read, so an
+ * amount or any other key the server might add is never shown.
+ */
+export function openBalancePlayersOf(error: unknown): OpenBalancePlayerView[] {
+  if (!(error instanceof ApiClientError) || error.code !== "CLOSE_BLOCKED_OPEN_DEBT") return [];
+  const list: unknown = (error.details as { openBalancePlayers?: unknown } | undefined)
+    ?.openBalancePlayers;
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const players: OpenBalancePlayerView[] = [];
+  const seen = new Set<string>();
+  for (const entry of list as unknown[]) {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { playerId, displayName } = entry as { playerId?: unknown; displayName?: unknown };
+    if (typeof playerId !== "string" || playerId.length === 0) return [];
+    if (displayName !== null && typeof displayName !== "string") return [];
+    if (seen.has(playerId)) continue; // React key must be unique; a repeat adds no information
+    seen.add(playerId);
+    players.push({ playerId, displayName: displayName?.trim() ? displayName : null });
+  }
+  return players;
+}
 
 export function errorField(code: string): ErrorField | null {
   switch (code) {

@@ -15,6 +15,7 @@ import { Spinner } from "../ui/spinner";
 import { Tabs } from "../ui/tabs";
 import { Toast } from "../ui/toast";
 import { ApiErrorNotice } from "./api-error-notice";
+import { SessionActionErrorExtra } from "./session-action-error-extra";
 import { DetailsTab } from "./details-tab";
 import { RosterTab } from "./roster-tab";
 import { SessionActionBar } from "./session-action-bar";
@@ -209,7 +210,17 @@ export function SessionDetailView({
                 closeDialog();
                 refresh();
               }}
-            />
+            >
+              <SessionActionErrorExtra
+                error={actionError}
+                // the Roster tab is where payments are recorded and players removed: close the
+                // dialog (state untouched, no refetch) and bring that tab forward
+                onShowRoster={() => {
+                  closeDialog();
+                  setTab("roster");
+                }}
+              />
+            </ApiErrorNotice>
           ) : null
         }
         onConfirm={() => void confirm()}

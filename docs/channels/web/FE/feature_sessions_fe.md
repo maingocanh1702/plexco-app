@@ -2,7 +2,7 @@
 
 > **Route(s):** `/dashboard/sessions` · `/dashboard/sessions/new` · `/dashboard/sessions/:id`
 > **Source authority:** `../../../features/FE/feature_session_management.md` v2.17 + `../../../features/FE/feature_payment_reconcile.md` v1.10 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
-> **Source authority (BE error/policy tokens):** `../../../features/BE/feature_session_management_tech.md` — `CANCEL_REQUIRES_REVIEW` (§3 *Error Codes*) và `impact_policy` (§2 *Edge Cases* #4, price/capacity change có charges). Hai token này **không** nằm trong feature doc v2.17 ở trên; FE lấy nguyên văn từ BE tech doc, không tự đặt mã hay enum.
+> **Source authority (BE error/policy tokens):** `../../../features/BE/feature_session_management_tech.md` v2.31 · baseline `ba8693e85f5f715716ff6bcc4bfe9582d7cdd9fd` — `CANCEL_REQUIRES_REVIEW` (cancel-only) và `CLOSE_BLOCKED_OPEN_DEBT` (§3 *Error Codes*; payload `error.details.openBalancePlayers`, §3 close example; chính sách §4 "Close / Cancel money policy", DD-131 OD-1) và `impact_policy` (§2 *Edge Cases* #4, price/capacity change có charges). Các token này **không** nằm trong feature doc v2.17 ở trên; FE lấy nguyên văn từ BE tech doc, không tự đặt mã hay enum.
 > **Source authority (roster disambiguator):** `../../../standards/decisions.md` DD-85 (owner-chốt 2026-07-21) — `pay_code` là disambiguator mặc định khi ≥2 active/guest membership trong cùng tenant trùng `display_name` sau chuẩn-hoá `NFKC → trim → collapse whitespace → locale-safe casefold` (giữ dấu, không fuzzy/token-subset). Chỉ surface host/authenticated; không dùng phone (DD-50); avatar/gender ngoài phase-1.
 > **Source contract status:** Reviewed; payment renderer DTO và price-adjustment API chưa author
 > **Projection/API contract:** Session contract from Product/BE pair; payment widget + price adjustment `UNPINNED — omit/block`
@@ -57,7 +57,7 @@ Quản lý buổi chơi thể thao của CLB: tạo mới, xem danh sách, xem c
 
 1. Trên session detail (status=draft) → nút "Huỷ nháp"
 2. Confirm dialog → session cancelled
-3. Nếu server trả `CANCEL_REQUIRES_REVIEW` → dừng tại chỗ, hiện error generic và request ref; không invent review route/CTA
+3. Nếu server trả `CANCEL_REQUIRES_REVIEW` → dừng tại chỗ, hiện message của server + một gợi ý generic (gỡ từng người chơi, hoàn tác thanh toán đã ghi, rồi huỷ lại; không nói nhánh nào áp dụng); không invent review route/workflow — nút duy nhất dẫn về tab Roster đã có
 
 ---
 
@@ -354,7 +354,8 @@ Quản lý buổi chơi thể thao của CLB: tạo mới, xem danh sách, xem c
 | 409 | `CAPACITY_BELOW_OCCUPANCY` | Inline error ở field số chỗ trong form Sửa; không lưu hoặc tự giải phóng chỗ để lách giới hạn | `t("Sức chứa nhỏ hơn số chỗ đang được sử dụng.", "Capacity is below the occupied slots.")` |
 | 400 | `MISSING_DISCOVERY_FIELDS` | Đăng kèo bị chặn; inline error liệt kê field thiếu, status giữ `draft` | `t("Kèo công khai cần: môn, khu vực, thời gian, số chỗ", "Public sessions need sport, area, time and a slot count")` |
 | 400 | `PRICE_CHANGE_REQUIRES_POLICY` | Save ở form Sửa bị block; chỉ trình bày hai policy target, không tự chọn hộ | `t("Cần chọn chính sách áp dụng cho các khoản đã phát sinh", "Choose how existing charges are handled")` |
-| 400 | `CANCEL_REQUIRES_REVIEW` | Dừng tại chỗ: error generic + request ref; không invent review route/CTA | `t("Cần xác nhận huỷ — buổi chơi này phải được kiểm tra lại", "Cancellation needs review before it can proceed")` |
+| 400 | `CANCEL_REQUIRES_REVIEW` | **Cancel-only** (DD-131 OD-1; close không còn trả mã này). Dialog huỷ giữ nguyên, status giữ `open`/`draft`: message của server + một gợi ý generic, không nói nhánh nào áp dụng (còn người chơi active hay còn tiền đã ghi nhận); nút "Mở danh sách người chơi" chuyển sang tab Roster (đóng dialog, không refetch); không invent review route/workflow | message server `t("Kèo này cần được xem xét trước khi huỷ.", "This session needs review before it can be cancelled.")` + gợi ý `t("Gỡ từng người chơi khỏi danh sách và hoàn tác các khoản thanh toán đã ghi, rồi huỷ lại.", "Remove the players one by one and reverse any recorded payments first, then cancel again.")` |
+| 409 | `CLOSE_BLOCKED_OPEN_DEBT` | Dialog đóng giữ nguyên, status giữ `open`, không refetch, không retry ngầm: message server + danh sách **tên hiển thị** các người chơi còn dư nợ (`error.details.openBalancePlayers`; `playerId` chỉ làm React key, không hiện số tiền, không tự tính ở client) + nút "Mở danh sách người chơi" sang tab Roster (nơi ghi thanh toán). `details` thiếu/rỗng/sai kiểu (bất kỳ phần tử sai ⇒ bỏ cả danh sách) → chỉ message generic của server (fail closed). Chỉ hiện trong workspace host đã xác thực | message server `t("Còn người chơi chưa trả đủ tiền — thu đủ trước khi đóng kèo.", "Some players have not paid in full — collect their payments before closing the session.")` + tiêu đề danh sách `t("Người chơi còn thiếu tiền:", "Players with an open balance:")` · nút `t("Mở danh sách người chơi", "Open the roster")` |
 | 403 | `TENANT_SUSPENDED` | Banner đầu trang; mọi action mutation absent, detail còn read-only | `t("Club đang tạm ngưng", "This club is suspended")` |
 | 403 | `NOT_TENANT_ADMIN` | Detail không render; redirect về session list | `t("Bạn không có quyền quản lý buổi chơi này", "You don't have permission to manage this session")` |
 | — | `UNPINNED error catalog — omit active UI` | Tab Thanh toán: không fetch, không render error surface — tab absent hoàn toàn ở baseline | `N/A — surface omitted` |
@@ -477,7 +478,7 @@ Funnel tạo kèo (bám Flow 1 §2 + States/Submitting/Success §3):
 |---|---|---|
 | `draft` | `open` | "Đăng kèo" + confirm (Flow 1 §2; ActionBar §3). Chặn bởi `MISSING_DISCOVERY_FIELDS` (§3) và publish quá giờ (§5 #4) — state giữ `draft` |
 | `draft` | `cancelled` | "Huỷ nháp" + confirm (Flow 4 §2). `CANCEL_REQUIRES_REVIEW` → dừng tại chỗ, state giữ nguyên (§2/§3) |
-| `open` | `closed` | "Đóng" (ActionBar §3) hoặc tự động khi hết giờ (§1) |
+| `open` | `closed` | "Đóng" (ActionBar §3) hoặc tự động khi hết giờ (§1). `CLOSE_BLOCKED_OPEN_DEBT` → dừng tại chỗ, state giữ `open`, hiện danh sách người còn dư nợ (§3 Error mapping) |
 | `open` | `cancelled` | "Huỷ" (ActionBar §3); `CANCEL_REQUIRES_REVIEW` như trên |
 | `closed` / `cancelled` | — | Không có transition nào trong file — chỉ xem (§3). Reopen hoặc bất kỳ transition khác: TBD (UNPINNED) |
 
@@ -528,3 +529,5 @@ _FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 
 _Re-pin 2026-09-15 (cấu trúc, không bump version): as-built @ `e235ea4` theo `ROADMAP.md` v3.17 §📍 — 8 command session · 7 route nghiệp vụ · **0 màn FE**; FE PENDING (DD-116) không đổi, DD-119 vẫn 🟡 chưa ratify. Nội dung thiết kế không đổi._
 
 _FE Design Spec — 2026-09-16: mirror the landed `UpdateSession` capacity guard and exact route error pairs; correct the current runtime header and preserve Draft/PENDING plus UNPINNED omission. No future occupancy policy or runtime change._
+
+_FE Design Spec v0.4 · 2026-10-15 · Δ v0.3→v0.4: Error mapping thêm `CLOSE_BLOCKED_OPEN_DEBT` (409, danh sách người còn dư nợ) và `CANCEL_REQUIRES_REVIEW` thành cancel-only (DD-131 OD-1); Flow 4 và bảng Session status khớp; source-authority pin BE tech doc → v2.31 @ `ba8693e`. Draft/PENDING, UNPINNED omission và dòng fail-closed unknown/missing/timeout không đổi · Source: `feature_session_management_tech.md` v2.31_
