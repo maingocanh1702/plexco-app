@@ -45,12 +45,21 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
     // The landing differs by run: the first run drops the owner straight into the one club, later
     // runs (the owner now holds several clubs) land on the club chooser. Both are signed in, so
     // assert the session itself rather than the URL.
+    // The owner persona always holds the seeded Dev Club; that is read from the clubs' names (the
+    // web never reads a role property, DD-56), not from a role field.
     await expect
       .poll(async () => {
         const body = await (await page.request.get("/api/auth/session")).json();
-        return (body?.data?.tenants ?? []).map((t: { role: string }) => t.role);
+        return (body?.data?.tenants ?? []).map((t: { name: string | null }) => t.name);
       })
-      .toContain("owner");
+      .toContain("Dev Club");
+    // The post-login page first shows only a spinner while the session loads; the screenshot is of
+    // the real page: the club chooser (several clubs) or the club home (the one club).
+    await expect(
+      page
+        .getByRole("heading", { name: "Chọn câu lạc bộ" })
+        .or(page.getByRole("heading", { name: "Chào mừng bạn!" })),
+    ).toBeVisible();
     await shot("signed-in");
   });
 

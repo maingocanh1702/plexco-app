@@ -23,6 +23,8 @@ docker compose -f infra/docker-compose.yml ps postgres   # chờ STATUS = health
 Lưu ý: nếu container được tạo từ một thư mục repo khác, `up -d` tạo lại container (mount `postgres-init` đổi đường dẫn).
 Dữ liệu nằm trong volume `plexco_pgdata` nên không mất; chờ lại `healthy` rồi làm tiếp.
 
+Cảnh báo của compose `Found orphan containers ([plexco-queue-provision-1])` vô hại ở đây (container cũ không thuộc file compose này), cứ bỏ qua. Chạy compose từ một đường dẫn checkout khác sẽ tạo lại `plexco-postgres-1`; volume và dữ liệu vẫn còn.
+
 ## 2. Tạo database smoke riêng (bằng superuser `plexco`)
 
 ```bash
