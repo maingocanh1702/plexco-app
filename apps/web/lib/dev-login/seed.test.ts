@@ -86,9 +86,9 @@ describe("dev:seed refuses, after connecting but BEFORE any write, a database th
   it("not opted in by its owner (a port-forward to a shared database looks local by host string)", async () => {
     const { handle, query, close } = fakeHandle({
       database: "plexco",
-      opt_in: null,
-      superuser: false,
-      bypassrls: false,
+      opt_in: false,
+      current_bypasses: false,
+      session_bypasses: false,
     });
     await expect(
       runDevSeed({ DATABASE_URL: LOCAL, ENCRYPTION_KEY: KEY }, { connect: () => handle }),
@@ -100,10 +100,14 @@ describe("dev:seed refuses, after connecting but BEFORE any write, a database th
   });
 
   it.each([
-    ["superuser", { superuser: true, bypassrls: true }],
-    ["BYPASSRLS", { superuser: false, bypassrls: true }],
-  ])("connecting as a %s role (RLS would not apply)", async (_, attrs) => {
-    const { handle, query } = fakeHandle({ database: "plexco", opt_in: "on", ...attrs });
+    ["superuser or BYPASSRLS current_user", { current_bypasses: true, session_bypasses: true }],
+    [
+      "superuser session_user behind `-c role=app`",
+      { current_bypasses: false, session_bypasses: true },
+    ],
+    ["role that cannot be found", { current_bypasses: null, session_bypasses: false }],
+  ])("connecting with a %s (RLS would not apply)", async (_, attrs) => {
+    const { handle, query } = fakeHandle({ database: "plexco", opt_in: true, ...attrs });
     await expect(
       runDevSeed({ DATABASE_URL: LOCAL, ENCRYPTION_KEY: KEY }, { connect: () => handle }),
     ).rejects.toThrow(/superuser or BYPASSRLS/);

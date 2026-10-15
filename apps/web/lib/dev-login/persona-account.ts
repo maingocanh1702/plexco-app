@@ -35,8 +35,9 @@ import { devPersonaSubjectInput, type DevPersona } from "./personas";
  *   dev_seed_<uuid>   a `pnpm dev:seed` run (one per persona per run, i.e. 3 rows for "logins"
  *                     that never happened). app has no read-only path to an identity (every
  *                     app-callable identity function writes), so the seed cannot skip the call.
- * A dedicated 'auth.dev_login' event type needs a migration (no grant lets app write the table);
- * the auth_audit_dev_login(uuid, text) proposal is in the PR description.
+ * A dedicated 'auth.dev_login' event type would need a migration (no grant lets app write the
+ * table); the owner declined that migration (auth_audit_dev_login) on 2026-10-15, so the shape above
+ * is a known limitation.
  */
 export async function resolveDevPersonaAccount(
   pool: DbHandle["pool"],

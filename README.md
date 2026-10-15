@@ -148,10 +148,23 @@ PLEXCO_DEV_LOGIN=1 TRUSTED_INGRESS_PROVIDER=direct DB_EXPECTED_ROLE=app KMS_PROV
 
 ⚠️ Chỉ truyền `PLEXCO_DEV_LOGIN` trên dòng lệnh `next dev`, đừng đặt vào `.env*`: có mặt (kể cả giá trị rỗng)
 khi NODE_ENV khác `development` ⇒ `next build`/`next start` từ chối khởi động; CI (`pnpm guard:dev-login`, chạy
-trong `pnpm test`) chặn biến này trong `infra/`, `.github/`, `app*.yaml`, `Dockerfile*`, `Containerfile*`,
-`fly*.toml` và `compose*.yaml`. Việc kiểm "DB là local" theo tên host chỉ là lọc sơ bộ: một port-forward
-(`ssh -L`, `kubectl port-forward`, `fly proxy`) tới DB dùng chung cũng có host `localhost`, nên opt-in phía
-database mới là điều kiện quyết định — đừng bao giờ chạy lệnh `ALTER DATABASE … plexco.dev_login` trên DB dùng chung.
+trong `pnpm test`) chặn biến này trong mọi file cấu hình deploy/container/CI (danh sách glob nằm ở đầu
+`scripts/check-dev-login-exclusion.mjs`). Việc kiểm "DB là local" theo tên host chỉ là lọc sơ bộ: một port-forward
+(`ssh -L`, `kubectl port-forward`, `fly proxy`) tới DB dùng chung cũng có host `localhost`, nên opt-in ở **cấp
+database** (đọc từ catalog, không phải giá trị session) mới là điều kiện quyết định — đừng bao giờ chạy lệnh
+`ALTER DATABASE … plexco.dev_login` trên DB dùng chung. `RESET` có hiệu lực ngay từ request kế tiếp.
+
+Khi `/dev-login` trả 404 dù đã đặt `PLEXCO_DEV_LOGIN`, log của dev server (chỉ console, không bao giờ trong response)
+có dòng `auth.dev_login.gate_closed` ghi lý do và cách sửa (`bind` = thiếu `-H 127.0.0.1`, `database_not_opted_in`, ...).
+
+Giới hạn đã biết:
+- **Residual owner đã chấp nhận** (owner, 2026-10-15, "S5 A2 waived"): khi dev-login đang bật, prefix
+  `/internal-dev-login` trả 404 rỗng thay cho trang 404 HTML của framework nếu chỉ các kiểm tra theo từng request
+  thất bại (Host không loopback, header forwarding, không có bằng chứng bind 127.0.0.1). Điều đó cho biết
+  dev-login đang bật, nhưng không ai đăng nhập được qua đó.
+- **Audit:** mỗi lần dev-login ghi dòng `auth_audit_events` của definer `login_success / success / google`, chỉ
+  `request_ref` `dev_login_<uuid>` đánh dấu là dev; mỗi lần chạy seed thêm 3 dòng `dev_seed_<uuid>`. Owner đã từ
+  chối migration `auth_audit_dev_login` (2026-10-15), nên đây là giới hạn đã biết.
 
 ---
 

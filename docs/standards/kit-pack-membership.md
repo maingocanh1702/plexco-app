@@ -161,7 +161,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/smoke-predeploy.mjs`** — No canonical copy.
 - **`scripts/generate-pwa-icons.mjs`** — No canonical copy (repo-local web build tooling, M1a).
 - **`scripts/stamp-sw.mjs`** — No canonical copy (repo-local web build tooling, M1a).
-- **`scripts/check-dev-login-exclusion.mjs`** — No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config (infra/, .github/, app*.y[a]ml, Dockerfile*, *.Dockerfile, Containerfile*, fly*.toml, compose*.y[a]ml; case-insensitive).
+- **`scripts/check-dev-login-exclusion.mjs`** — No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config; the scanned globs are listed once, in the script header.
 - **`scripts/check-dev-login-exclusion.test.mjs`** — No canonical copy. Tests the guard on planted occurrences, a clean tree, the git listing and this repository.
 
 ---

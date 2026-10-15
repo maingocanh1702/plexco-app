@@ -8,9 +8,9 @@
  *
  * Scanned (repo-relative, every file git tracks or would track, else a filesystem walk; every
  * pattern case-insensitive):
- *   infra/**, .github/** (workflows, composite actions, dependabot, ...),
+ *   infra/**, .github/** (workflows, composite actions, dependabot, ...), .do/**, k8s/** (any depth),
  *   anywhere: app*.y[a]ml, Dockerfile*, *.Dockerfile, Containerfile*, fly*.toml,
- *             compose*.y[a]ml, docker-compose*.y[a]ml
+ *             compose*.y[a]ml, docker-compose*.y[a]ml, render*.y[a]ml, Procfile*
  * Only this guard's own file is excluded. The flag name is assembled at runtime, so neither this
  * file nor the CI text has to contain it verbatim.
  *
@@ -37,6 +37,8 @@ const GUARDED_NAMES = [
   /^containerfile/,
   /^fly.*\.toml$/,
   /^(docker-)?compose.*\.ya?ml$/,
+  /^render.*\.ya?ml$/,
+  /^procfile/,
 ];
 
 /** true when a repo-relative POSIX path is one the guard must scan. */
@@ -47,6 +49,8 @@ export function isGuardedPath(relativePath) {
   return (
     lower.startsWith("infra/") ||
     lower.startsWith(".github/") ||
+    lower.startsWith(".do/") ||
+    /(^|\/)k8s\//.test(lower) ||
     GUARDED_NAMES.some((pattern) => pattern.test(base))
   );
 }
@@ -124,7 +128,7 @@ function main() {
     console.error(
       `guard:dev-login: the local-only dev-login flag must never appear in deploy, container or CI ` +
         `config (infra/**, .github/**, app*.y[a]ml, Dockerfile*, *.Dockerfile, Containerfile*, ` +
-        `fly*.toml, compose*.y[a]ml). Found:`,
+        `fly*.toml, compose*.y[a]ml, .do/**, k8s/**, render*.y[a]ml, Procfile*). Found:`,
     );
     for (const hit of hits) console.error(`  ${hit.file}:${hit.line}`);
     process.exit(1);

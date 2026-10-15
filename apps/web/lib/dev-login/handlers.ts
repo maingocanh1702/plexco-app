@@ -18,7 +18,7 @@ import {
   setDevLoginCsrfCookie,
 } from "./csrf";
 import { devLoginDatabaseVerdict, devLoginOptInCommand } from "./database-guard";
-import { devLoginNotFound, evaluateDevLoginGate, readDevLoginEnv } from "./gate";
+import { devLoginNotFound, evaluateDevLoginGate, gateClosedRemedy, readDevLoginEnv } from "./gate";
 import { devServerLoopbackOnly } from "./network-exposure";
 import { buildDevLoginDocument, normalizeDevLoginPageError } from "./page-document";
 import { resolveDevPersonaAccount } from "./persona-account";
@@ -42,9 +42,10 @@ const MAX_LOGIN_BODY_BYTES = 1024;
 async function gateRefusal(request: Request): Promise<Response | null> {
   const decision = evaluateDevLoginGate(readDevLoginEnv(), request.headers);
   if (!decision.open) {
+    const remedy = gateClosedRemedy(decision.reason);
     log.warn("auth.dev_login.gate_closed", {
       reason: decision.reason,
-      ...(decision.reason === "bind" ? { remedy: "start the dev server with -H 127.0.0.1" } : {}),
+      ...(remedy ? { remedy } : {}),
     });
     return devLoginNotFound();
   }
@@ -67,7 +68,7 @@ async function gateRefusal(request: Request): Promise<Response | null> {
       reason: database.reason,
       remedy:
         database.reason === "database_not_opted_in"
-          ? `as the database owner: ${devLoginOptInCommand(database.database)}; then restart next dev`
+          ? `as the database owner: ${devLoginOptInCommand(database.database)}`
           : "use the app role (NOBYPASSRLS) in DATABASE_URL, never the superuser",
     });
     return devLoginNotFound();

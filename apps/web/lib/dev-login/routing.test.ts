@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEV_LOGIN_API_PATH,
   DEV_LOGIN_API_ROUTE,
@@ -39,6 +39,65 @@ function req(
     }),
   };
 }
+
+// The default reporter writes to the server log; keep test output clean.
+beforeEach(() => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+});
+
+describe("server-log explanation of refusals the middleware answers itself (R2-A)", () => {
+  it("a wrong bind on the public page reports `bind` with its remedy and still 404s natively", () => {
+    const report = vi.fn();
+    const env = { ...OPEN_ENV, __NEXT_PRIVATE_ORIGIN: "http://localhost:3000" }; // -H 0.0.0.0 / none
+    expect(devLoginRouting(req(DEV_LOGIN_PAGE_PATH), env, report)).toBeNull();
+    expect(report).toHaveBeenCalledWith("bind");
+  });
+
+  it("the default reporter writes reason + remedy to the server console only", () => {
+    const warn = vi.mocked(console.warn);
+    warn.mockClear();
+    const env = { ...OPEN_ENV, __NEXT_PRIVATE_ORIGIN: "http://[::1]:3000" }; // -H :: or -H ::1
+    expect(devLoginRouting(req(DEV_LOGIN_PAGE_PATH), env)).toBeNull();
+    const line = JSON.parse(String(warn.mock.calls[0]?.[0])) as Record<string, unknown>;
+    expect(line).toMatchObject({ event: "auth.dev_login.gate_closed", reason: "bind" });
+    expect(String(line.remedy)).toContain("-H 127.0.0.1");
+  });
+
+  it("stays silent when PLEXCO_DEV_LOGIN is absent (a normal dev server)", () => {
+    const report = vi.fn();
+    expect(
+      devLoginRouting(
+        req(DEV_LOGIN_PAGE_PATH),
+        { ...OPEN_ENV, PLEXCO_DEV_LOGIN: undefined },
+        report,
+      ),
+    ).toBeNull();
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it("explains every process-level reason while the flag is present (routes not compiled)", () => {
+    const report = vi.fn();
+    devLoginRouting(
+      req(DEV_LOGIN_PAGE_PATH),
+      { ...OPEN_ENV, TRUSTED_INGRESS_PROVIDER: "fly" },
+      report,
+    );
+    devLoginRouting(
+      req(DEV_LOGIN_API_PATH),
+      { ...OPEN_ENV, DATABASE_URL: "postgres://a:b@db.x/p" },
+      report,
+    );
+    expect(report.mock.calls).toEqual([["ingress"], ["database_url"]]);
+  });
+
+  it("reports per-request refusals of the implementation paths too", () => {
+    const report = vi.fn();
+    expect(devLoginRouting(req(DEV_LOGIN_PAGE_ROUTE, "evil.test:3000"), OPEN_ENV, report)).toEqual({
+      kind: "not_found",
+    });
+    expect(report).toHaveBeenCalledWith("host");
+  });
+});
 
 describe("virtual public paths", () => {
   it("redirect to their implementation routes only when the gate is open", () => {

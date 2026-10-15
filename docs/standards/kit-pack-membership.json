@@ -161,7 +161,7 @@
     {
       "path": "scripts/check-dev-login-exclusion.mjs",
       "overwrite_path": "none",
-      "note": "No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config (infra/, .github/, app*.y[a]ml, Dockerfile*, *.Dockerfile, Containerfile*, fly*.toml, compose*.y[a]ml; case-insensitive)."
+      "note": "No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config; the scanned globs are listed once, in the script header."
     },
     {
       "path": "scripts/check-dev-login-exclusion.test.mjs",

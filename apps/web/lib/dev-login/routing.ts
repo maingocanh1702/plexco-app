@@ -1,5 +1,13 @@
-import { devLoginEnvironmentVerdict } from "./env-policy.mjs";
-import { evaluateDevLoginGate, readDevLoginEnv, type DevLoginEnv, type GateHeaders } from "./gate";
+import { log } from "../log";
+import { DEV_LOGIN_FLAG, devLoginEnvironmentVerdict } from "./env-policy.mjs";
+import {
+  evaluateDevLoginGate,
+  gateClosedRemedy,
+  readDevLoginEnv,
+  type DevLoginClosedReason,
+  type DevLoginEnv,
+  type GateHeaders,
+} from "./gate";
 
 /**
  * Dev-login URL layout, decided in middleware (Edge). Loaded by middleware.ts ONLY in development
@@ -74,20 +82,38 @@ export function isInternalDevLoginPath(pathname: string): boolean {
   });
 }
 
+/**
+ * Server-console explanation of a refusal the middleware answers itself (no handler runs, so the
+ * handlers' own gate_closed lines never fire for these): reason and remedy only, never in the
+ * response, no request data. Silent unless PLEXCO_DEV_LOGIN is present, i.e. unless the developer
+ * meant to use dev-login; a normal dev server stays quiet.
+ */
+export type GateClosedReporter = (reason: DevLoginClosedReason) => void;
+
+export function reportGateClosedToServerLog(reason: DevLoginClosedReason): void {
+  const remedy = gateClosedRemedy(reason);
+  log.warn("auth.dev_login.gate_closed", { reason, ...(remedy ? { remedy } : {}) });
+}
+
 /** What the middleware does with this request; null = leave it alone. */
 export function devLoginRouting(
   request: RoutableRequest,
   env: DevLoginEnv = readDevLoginEnv(),
+  report: GateClosedReporter = reportGateClosedToServerLog,
 ): DevLoginRouting {
   const { pathname, search } = request.nextUrl;
+  const intended = env[DEV_LOGIN_FLAG] !== undefined;
 
   if (isInternalDevLoginPath(pathname)) {
     // Not compiled (a process-level condition is false): the framework's own 404 is already exact.
     if (devLoginEnvironmentVerdict(env) !== null) return null;
+    const decision = evaluateDevLoginGate(env, request.headers);
+    if (!decision.open) report(decision.reason);
     const methodOk = ROUTE_METHODS.includes(request.method.toUpperCase());
-    return methodOk && evaluateDevLoginGate(env, request.headers).open
-      ? null
-      : { kind: "not_found" };
+    // Owner-accepted residual (owner, 2026-10-15, "S5 A2 waived"): with dev-login on, a request to
+    // the /internal-dev-login prefix that fails only the per-request checks gets this empty 404,
+    // not the framework's HTML 404. That reveals that dev-login is on; it cannot log anyone in.
+    return methodOk && decision.open ? null : { kind: "not_found" };
   }
 
   const route =
@@ -97,7 +123,11 @@ export function devLoginRouting(
         ? DEV_LOGIN_API_ROUTE
         : null;
   if (route === null) return null;
-  if (!evaluateDevLoginGate(env, request.headers).open) return null;
+  const decision = evaluateDevLoginGate(env, request.headers);
+  if (!decision.open) {
+    if (intended) report(decision.reason);
+    return null;
+  }
   // The gate just proved Host is exactly localhost / 127.0.0.1 / [::1] with an optional port and
   // that the request is plain http; Next re-serves the Location as http://localhost:<port>/….
   const host = request.headers.get("host")!;

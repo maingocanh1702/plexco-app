@@ -7,13 +7,18 @@ import type { DbHandle } from "@plexco/db";
  *  1. Positive per-database opt-in. `isLocalDatabaseUrl` (env-policy.mjs) only proves the URL NAMES
  *     this machine; an `ssh -L` / `kubectl port-forward` / `fly proxy` to a shared database, or a bare
  *     `postgres` resolved through a DNS search domain, would still pass it. So the database itself
- *     must carry `plexco.dev_login = 'on'`, a per-database default that only the database owner or a
- *     superuser can set:   ALTER DATABASE <db> SET plexco.dev_login = 'on';
- *     It is configuration, not schema (no migration, no table). The `app` role cannot set it, and no
- *     shared or deployed database has it. A new value reaches only NEW connections: restart the dev
- *     server after setting it.
+ *     must carry the DATABASE-LEVEL setting
+ *        ALTER DATABASE <db> SET plexco.dev_login = 'on';
+ *     which only the database owner or a superuser can write. It is read from the catalog
+ *     (pg_db_role_setting, setrole = 0, setdatabase = this database), never with current_setting():
+ *     the session value can be forged by any client (PGOPTIONS='-c plexco.dev_login=on', measured by
+ *     review round 2) and a role-level `ALTER ROLE … SET` belongs to the role, not to the database.
+ *     Read per request, so the owner's RESET takes effect on the next request (warm pooled
+ *     connections do not matter). Configuration, not schema: no migration, no table.
  *  2. An RLS-enforced role. A superuser or BYPASSRLS role would make every dev-persona request
- *     bypass RLS while dev-login promises RLS parity with real sign-in, so both are refused.
+ *     bypass RLS while dev-login promises RLS parity with real sign-in. Checked for BOTH
+ *     current_user and session_user (a superuser login plus `-c role=app` changes only
+ *     current_user), the same pair assertRuntimeDbRole (session-cookies.ts) compares.
  */
 export type DevLoginDatabaseVerdict =
   | { ok: true; database: string }
@@ -30,19 +35,34 @@ export async function devLoginDatabaseVerdict(
 ): Promise<DevLoginDatabaseVerdict> {
   const { rows } = await pool.query(
     `SELECT current_database() AS database,
-            current_setting('${DEV_LOGIN_DB_SETTING}', true) AS opt_in,
-            r.rolsuper AS superuser,
-            r.rolbypassrls AS bypassrls
-       FROM pg_catalog.pg_roles r
-      WHERE r.rolname = current_user`,
+            EXISTS (
+              SELECT 1
+                FROM pg_catalog.pg_db_role_setting s
+                JOIN pg_catalog.pg_database d ON d.oid = s.setdatabase
+               WHERE s.setrole = 0
+                 AND d.datname = current_database()
+                 AND $1 = ANY (s.setconfig)
+            ) AS opt_in,
+            (SELECT r.rolsuper OR r.rolbypassrls
+               FROM pg_catalog.pg_roles r WHERE r.rolname = current_user) AS current_bypasses,
+            (SELECT r.rolsuper OR r.rolbypassrls
+               FROM pg_catalog.pg_roles r WHERE r.rolname = session_user) AS session_bypasses`,
+    [`${DEV_LOGIN_DB_SETTING}=on`],
   );
   const row = rows[0] as
-    { database: string; opt_in: string | null; superuser: boolean; bypassrls: boolean } | undefined;
+    | {
+        database: string;
+        opt_in: boolean;
+        current_bypasses: boolean | null;
+        session_bypasses: boolean | null;
+      }
+    | undefined;
   if (!row) return { ok: false, reason: "role_bypasses_rls", database: "?" };
-  if (row.superuser !== false || row.bypassrls !== false) {
+  // A role that cannot be found counts as bypassing (fail closed).
+  if (row.current_bypasses !== false || row.session_bypasses !== false) {
     return { ok: false, reason: "role_bypasses_rls", database: row.database };
   }
-  if (row.opt_in !== "on") {
+  if (row.opt_in !== true) {
     return { ok: false, reason: "database_not_opted_in", database: row.database };
   }
   return { ok: true, database: row.database };

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createDb } from "@plexco/db";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   setupRlsTestContext,
@@ -168,6 +169,17 @@ afterAll(async () => {
       await ctx?.teardown();
     } finally {
       vi.unstubAllEnvs();
+      // The shared harness never drops its database; this suite names one per pid, so drop it here
+      // or every run leaves a plexco_dev_login_<pid> database behind.
+      const base = process.env.DATABASE_URL_TEST;
+      if (base) {
+        const admin = createDb(base, { max: 1 });
+        try {
+          await admin.pool.query(`DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE)`);
+        } finally {
+          await admin.close();
+        }
+      }
     }
   }
 }, 120_000);
@@ -429,6 +441,105 @@ describe("database-side refusals (no write, no session)", () => {
       );
       expect(page.status).toBe(404);
       expect(jar.sets).toEqual([]);
+    } finally {
+      vi.stubEnv("DATABASE_URL", appUrl);
+      vi.stubEnv("DB_EXPECTED_ROLE", "app");
+      await freshAppPool();
+    }
+  });
+});
+
+describe("the opt-in is the DATABASE's own setting, and both roles must honour RLS (R2-B)", () => {
+  const superuserUrl = () => {
+    const url = new URL(process.env.DATABASE_URL_TEST!);
+    url.pathname = `/${DB_NAME}`;
+    return url.toString();
+  };
+  async function pageStatus(): Promise<number> {
+    const page = await handleDevLoginPage(
+      new Request("http://localhost:3000/internal-dev-login/page", { headers: injected() }),
+    );
+    return page.status;
+  }
+  /** Run `fn` with PGOPTIONS set for NEW connections (node-postgres reads it at connect). */
+  async function withPgOptions<T>(options: string, fn: () => Promise<T>): Promise<T> {
+    vi.stubEnv("PGOPTIONS", options);
+    await freshAppPool();
+    try {
+      return await fn();
+    } finally {
+      vi.stubEnv("PGOPTIONS", "");
+      delete process.env.PGOPTIONS;
+      await freshAppPool();
+    }
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("the database-level opt-in is accepted", async () => {
+    expect(await pageStatus()).toBe(200);
+  });
+
+  it("an owner's RESET is refused on the very next request, through the same warm pool", async () => {
+    expect(await pageStatus()).toBe(200); // the pool is warm now
+    await optIn(false);
+    try {
+      expect(await pageStatus()).toBe(404);
+    } finally {
+      await optIn(true);
+    }
+    expect(await pageStatus()).toBe(200);
+  });
+
+  it("a forged session value (PGOPTIONS='-c plexco.dev_login=on') does not opt a database in", async () => {
+    await optIn(false);
+    try {
+      await withPgOptions("-c plexco.dev_login=on", async () => {
+        // The forgery is real: the session sees the value...
+        const { rows } = await appDb().pool.query(
+          "SELECT current_setting('plexco.dev_login', true) AS v",
+        );
+        expect(rows).toEqual([{ v: "on" }]);
+        // ...and it still counts for nothing.
+        expect(await pageStatus()).toBe(404);
+        await expect(runDevSeed(process.env)).rejects.toThrow(/not opted in to dev-login/);
+      });
+    } finally {
+      await optIn(true);
+    }
+  });
+
+  it("a role-level setting (ALTER ROLE app IN DATABASE … SET) does not opt a database in", async () => {
+    await optIn(false);
+    await ctx.owner.query(`ALTER ROLE app IN DATABASE ${DB_NAME} SET plexco.dev_login = 'on'`);
+    try {
+      await freshAppPool();
+      const { rows } = await appDb().pool.query(
+        "SELECT current_setting('plexco.dev_login', true) AS v",
+      );
+      expect(rows).toEqual([{ v: "on" }]); // the role-level default reached the session
+      expect(await pageStatus()).toBe(404);
+    } finally {
+      await ctx.owner.query(`ALTER ROLE app IN DATABASE ${DB_NAME} RESET plexco.dev_login`);
+      await optIn(true);
+      await freshAppPool();
+    }
+  });
+
+  it("a superuser login switched to `-c role=app` is refused (session_user is checked too)", async () => {
+    vi.stubEnv("DATABASE_URL", superuserUrl());
+    vi.stubEnv("DB_EXPECTED_ROLE", "");
+    try {
+      await withPgOptions("-c role=app", async () => {
+        const { rows } = await appDb().pool.query("SELECT current_user AS c, session_user AS s");
+        expect(rows).toEqual([{ c: "app", s: new URL(process.env.DATABASE_URL_TEST!).username }]);
+        expect(await pageStatus()).toBe(404);
+        await expect(runDevSeed({ ...process.env, DATABASE_URL: superuserUrl() })).rejects.toThrow(
+          /superuser or BYPASSRLS/,
+        );
+      });
     } finally {
       vi.stubEnv("DATABASE_URL", appUrl);
       vi.stubEnv("DB_EXPECTED_ROLE", "app");

@@ -141,6 +141,30 @@ export function evaluateDevLoginGate(env: DevLoginEnv, headers: GateHeaders): De
 }
 
 /**
+ * Owner-facing hint for a closed-gate reason, written to the SERVER log only (never a response):
+ * the 404 itself must stay indistinguishable from a missing route, so the console is the one place
+ * that says why. No request data, no PII.
+ */
+export function gateClosedRemedy(reason: string): string | undefined {
+  switch (reason) {
+    case "bind":
+      return "start the dev server with exactly -H 127.0.0.1 (not localhost, ::, ::1 or no -H)";
+    case "flag":
+      return "set PLEXCO_DEV_LOGIN=1 on the next dev command line";
+    case "ingress":
+      return "set TRUSTED_INGRESS_PROVIDER=direct";
+    case "database_url":
+      return "DATABASE_URL must name localhost, 127.0.0.1, [::1] or postgres, with no query string";
+    case "host":
+      return "open the page on localhost or 127.0.0.1 (raw Host must be loopback)";
+    case "forwarded":
+      return "do not reach the dev server through a proxy or tunnel";
+    default:
+      return undefined;
+  }
+}
+
+/**
  * The bare refusal (status 404, empty body: what next/navigation notFound() produces in a route
  * handler, measured). The documented public paths never get it: with the gate closed the middleware
  * leaves them alone and the framework answers its own 404. It answers requests to the

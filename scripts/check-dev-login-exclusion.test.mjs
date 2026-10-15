@@ -42,6 +42,12 @@ const PLANTED = {
   "deploy/docker-compose.override.yml": `x: ${FORBIDDEN_FLAG}\n`,
   ".github/actions/setup/action.yml": `runs:\n  env:\n    ${FORBIDDEN_FLAG}: 1\n`,
   ".github/dependabot.yml": `# ${FORBIDDEN_FLAG}\n`,
+  // Round-2 optional globs: platform specs only these rules catch.
+  ".do/deploy.template.yaml": `envs: [{ key: ${FORBIDDEN_FLAG} }]\n`,
+  "render.yaml": `envVars: [{ key: ${FORBIDDEN_FLAG}, value: "1" }]\n`,
+  Procfile: `web: ${FORBIDDEN_FLAG}=1 next start\n`,
+  "deploy/k8s/web.json": `{"name": "${FORBIDDEN_FLAG}"}\n`,
+  "k8s/configmap.txt": `${FORBIDDEN_FLAG}=1\n`,
 };
 // The flag is LEGITIMATE in these: app code, docs and the local env template are not deploy config.
 const ALLOWED = {
