@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { getLang, t } from "@plexco/core/i18n";
 import { DEV_LOGIN_CSRF_FIELD } from "./csrf";
 import { DEV_PERSONAS, DEV_CLUB, type DevPersonaKey } from "./personas";
@@ -11,8 +10,15 @@ import { DEV_LOGIN_API_PATH } from "./routing";
  *    server component cannot set cookies;
  *  - a route handler emits no client chunk under /_next/static and no RSC payload, so nothing about
  *    the page is served from anywhere but this gated handler.
- * Plain HTML form, no script at all, one nonce'd <style>: it renders unchanged under the global
- * nonce-free CSP and under the CSP_SCRIPT_NONCE_ENABLED policy, and sends its own strict CSP.
+ * Plain HTML form, no script at all, one inline <style>: it renders unchanged under the global
+ * nonce-free CSP and under the CSP_SCRIPT_NONCE_ENABLED policy (neither sets style-src).
+ *
+ * Headers: only content-type, cache-control and x-robots-tag are set here. next.config.mjs
+ * headers() apply to every path and REPLACE a route's own CSP, X-Frame-Options and Referrer-Policy
+ * (measured under next dev), so this document is served with the global set: frame-ancestors
+ * 'none', form-action 'self', X-Frame-Options DENY, Referrer-Policy
+ * strict-origin-when-cross-origin. The last one matters: under `no-referrer` a browser form POST
+ * carries `Origin: null` and sameOriginRequest() refuses the login.
  *
  * Pre-authentication surface, no tenant known: DD-118 bucket b, every string through t(vi, en) in
  * the request's (default Vietnamese) language.
@@ -73,7 +79,6 @@ export function buildDevLoginDocument(input: {
   csrfToken: string;
   error: DevLoginPageError | null;
 }): { body: string; headers: Record<string, string> } {
-  const nonce = randomBytes(16).toString("base64");
   const lang = getLang();
   const title = escapeHtml(t("Đăng nhập dev (chỉ local)", "Dev login (local only)"));
   const banner = escapeHtml(
@@ -110,7 +115,7 @@ export function buildDevLoginDocument(input: {
     `<!doctype html><html lang="${lang}"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<meta name="robots" content="noindex, nofollow">` +
-    `<title>${title}</title><style nonce="${nonce}">${STYLE}</style></head><body>` +
+    `<title>${title}</title><style>${STYLE}</style></head><body>` +
     `<p class="banner" role="note">${banner}</p>` +
     `<main><h1>${heading}</h1><p>${intro}</p>${alert}` +
     `<form method="post" action="${DEV_LOGIN_API_PATH}">` +
@@ -121,12 +126,7 @@ export function buildDevLoginDocument(input: {
   const headers = {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
-    "referrer-policy": "no-referrer",
-    "x-frame-options": "DENY",
     "x-robots-tag": "noindex, nofollow",
-    "content-security-policy":
-      `default-src 'none'; style-src 'nonce-${nonce}'; form-action 'self'; ` +
-      `base-uri 'none'; frame-ancestors 'none'`,
   };
   return { body, headers };
 }

@@ -129,21 +129,29 @@ pnpm --filter @plexco/bot start:worker
 Đăng nhập bằng persona giả (owner/host, co_admin, player của CLB "Dev Club", email `@dev.invalid`) qua
 **đúng đường của Google sign-in** (account → Person → `issueSession()`, cùng cookie/CSRF/`authorize()`/RLS).
 Chỉ mở khi đủ: `next dev` (NODE_ENV=development) · `PLEXCO_DEV_LOGIN=1` · `TRUSTED_INGRESS_PROVIDER=direct` ·
-`DATABASE_URL` trỏ localhost/127.0.0.1/[::1]/`postgres` · Host loopback, không header forwarding · dev
-server không lộ ra mạng (`-H 127.0.0.1`). Thiếu một điều kiện ⇒ 404 như route không tồn tại.
+dev server chạy **đúng** `-H 127.0.0.1` (bắt buộc; `localhost`, `::`, `::1` hay không `-H` đều bị từ chối) ·
+`DATABASE_URL` trỏ localhost/127.0.0.1/[::1]/`postgres` **và** database đã được owner của nó opt-in
+(`plexco.dev_login = 'on'`) · kết nối bằng role `app` (không superuser/BYPASSRLS) · Host loopback, không header
+forwarding. Thiếu một điều kiện ⇒ 404.
 
 ```bash
+# một lần, bằng role owner của DB (KHÔNG làm trên DB dùng chung/staging):
+docker compose -f infra/docker-compose.yml exec -T postgres \
+  psql -U plexco -d plexco -c "ALTER DATABASE plexco SET plexco.dev_login = 'on'"
 export ENCRYPTION_KEY="$(openssl rand -base64 32)"   # tạo MỘT lần, dùng chung cho seed và dev server
 DATABASE_URL=postgres://app:plexco_dev_app@localhost:5432/plexco pnpm dev:seed
-PLEXCO_DEV_LOGIN=1 TRUSTED_INGRESS_PROVIDER=direct DB_EXPECTED_ROLE=app \
+PLEXCO_DEV_LOGIN=1 TRUSTED_INGRESS_PROVIDER=direct DB_EXPECTED_ROLE=app KMS_PROVIDER=local \
   DATABASE_URL=postgres://app:plexco_dev_app@localhost:5432/plexco \
   pnpm --filter @plexco/web exec next dev -H 127.0.0.1 -p 3000
-# mở http://localhost:3000/dev-login
+# mở http://localhost:3000/dev-login (Next chuyển hướng về http://localhost:3000/... dù mở bằng 127.0.0.1)
 ```
 
 ⚠️ Chỉ truyền `PLEXCO_DEV_LOGIN` trên dòng lệnh `next dev`, đừng đặt vào `.env*`: có mặt (kể cả giá trị rỗng)
 khi NODE_ENV khác `development` ⇒ `next build`/`next start` từ chối khởi động; CI (`pnpm guard:dev-login`, chạy
-trong `pnpm test`) chặn biến này trong `infra/`, `.github/workflows/`, `app*.yaml` và `Dockerfile*`.
+trong `pnpm test`) chặn biến này trong `infra/`, `.github/`, `app*.yaml`, `Dockerfile*`, `Containerfile*`,
+`fly*.toml` và `compose*.yaml`. Việc kiểm "DB là local" theo tên host chỉ là lọc sơ bộ: một port-forward
+(`ssh -L`, `kubectl port-forward`, `fly proxy`) tới DB dùng chung cũng có host `localhost`, nên opt-in phía
+database mới là điều kiện quyết định — đừng bao giờ chạy lệnh `ALTER DATABASE … plexco.dev_login` trên DB dùng chung.
 
 ---
 

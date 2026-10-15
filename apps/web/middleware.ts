@@ -14,11 +14,11 @@ import {
  * never resolves the require, and no dev-login module is compiled into the build (the e2e
  * production spec scans .next for it).
  */
-const devLoginRedirectLocation: ((request: NextRequest) => string | null) | null =
+const devLoginRouting: typeof import("./lib/dev-login/routing").devLoginRouting | null =
   process.env.NODE_ENV === "development"
     ? // eslint-disable-next-line @typescript-eslint/no-require-imports -- build-time dead branch
       (require("./lib/dev-login/routing") as typeof import("./lib/dev-login/routing"))
-        .devLoginRedirectLocation
+        .devLoginRouting
     : null;
 
 /**
@@ -27,9 +27,11 @@ const devLoginRedirectLocation: ((request: NextRequest) => string | null) | null
  *
  * 1. PROCESS_ROLE=discovery serves only the discovery surface; everything else is a 404 with no
  *    body and no handler run.
- * 2. Development only: while the per-request dev-login gate is open, the two virtual dev-login
- *    paths answer a 307 with a relative Location to their implementation routes; otherwise the
- *    router changes nothing.
+ * 2. Development only: while the per-request dev-login gate is open (127.0.0.1 bind evidence
+ *    included), the two virtual dev-login paths answer a 307 to their implementation routes. The
+ *    Location is absolute and Next serves it as http://localhost:<port>/… for any loopback Host.
+ *    The implementation paths get a bare 404 here when the gate is closed or the method is not a
+ *    route method. Otherwise the router changes nothing.
  * 3. CSP_SCRIPT_NONCE_ENABLED="true" issues a per-request nonce, hands it to Next through the
  *    request's Content-Security-Policy + x-nonce headers (Next applies it to its inline
  *    bootstrap), and sets the same policy on the response. OFF by default — see request-policy.ts.
@@ -40,16 +42,17 @@ export function middleware(request: NextRequest): NextResponse {
     return new NextResponse(null, { status: 404, headers: { "cache-control": "no-store" } });
   }
 
-  const devLoginLocation = devLoginRedirectLocation ? devLoginRedirectLocation(request) : null;
-  if (devLoginLocation !== null) {
+  const devLogin = devLoginRouting ? devLoginRouting(request) : null;
+  if (devLogin?.kind === "redirect") {
+    // No Referrer-Policy: a redirect's policy becomes the policy of the re-sent POST, and a POST
+    // under `no-referrer` carries `Origin: null`, which sameOriginRequest() refuses.
     return new NextResponse(null, {
       status: 307,
-      headers: {
-        location: devLoginLocation,
-        "cache-control": "no-store",
-        "referrer-policy": "no-referrer",
-      },
+      headers: { location: devLogin.location, "cache-control": "no-store" },
     });
+  }
+  if (devLogin?.kind === "not_found") {
+    return new NextResponse(null, { status: 404, headers: { "cache-control": "no-store" } });
   }
 
   if (!cspNonceEnabled(process.env.CSP_SCRIPT_NONCE_ENABLED)) return NextResponse.next();

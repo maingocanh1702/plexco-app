@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createDb, provisionTenant, SlugTakenError, type DbHandle } from "@plexco/db";
 import { ensureDevClubMember } from "../../../../packages/db/scripts/dev-seed-club-members";
+import { devLoginDatabaseVerdict, devLoginOptInCommand } from "./database-guard";
 import { isLocalDatabaseUrl } from "./env-policy.mjs";
 import { resolveDevPersonaAccount } from "./persona-account";
 import { DEV_CLUB, DEV_PERSONAS, type DevPersonaKey } from "./personas";
@@ -16,14 +17,20 @@ import { DEV_CLUB, DEV_PERSONAS, type DevPersonaKey } from "./personas";
  *  - co_admin / player membership (+ co_admin admin row): no product entry point exists, so the
  *    narrowest existing DB entry point, documented in packages/db/scripts/dev-seed-club-members.ts.
  *
- * Refusals happen BEFORE any connection is opened: the database URL must name this machine
- * (env-policy isLocalDatabaseUrl, the same rule the request gate uses), and the auth pepper must be
- * the local ENCRYPTION_KEY (never a KMS-held production pepper).
+ * Refusals, in order:
+ *  - BEFORE any connection: the database URL must name this machine (env-policy
+ *    isLocalDatabaseUrl, the same rule the request gate uses) and the auth pepper must be the local
+ *    ENCRYPTION_KEY (never a KMS-held production pepper);
+ *  - after connecting, BEFORE any write (database-guard.ts, the same check the login handler runs):
+ *    the database must be opted in by its owner (plexco.dev_login = 'on'; a host-string check
+ *    cannot tell a local database from a port-forward to a shared one) and the role must be
+ *    RLS-enforced (not superuser, not BYPASSRLS).
  *
  * Idempotent: a second run creates no tenant/person/account/email/identity/membership/admin row and
- * returns the same ids. The one thing every run appends is the definer's own audit row per persona
- * (auth_audit_events: login_success / success / google / request_ref dev_seed_<uuid>): the definer
- * audits every resolution by design.
+ * returns the same ids. What every run DOES append: one definer audit row per persona
+ * (auth_audit_events login_success / success / google / request_ref dev_seed_<uuid>), i.e. 3 rows
+ * recording "logins" that never happened. There is no read-only path for app to find an identity
+ * (every app-callable identity function writes), so the seed cannot avoid calling the definer.
  */
 export class DevSeedRefusedError extends Error {
   constructor(message: string) {
@@ -82,6 +89,16 @@ export async function runDevSeed(
   const url = assertDevSeedEnvironment(env);
   const handle = deps.connect(url);
   try {
+    const database = await devLoginDatabaseVerdict(handle.pool);
+    if (!database.ok) {
+      throw new DevSeedRefusedError(
+        database.reason === "database_not_opted_in"
+          ? `dev:seed refused: database "${database.database}" is not opted in to dev-login. As its ` +
+              `owner run: ${devLoginOptInCommand(database.database)}`
+          : "dev:seed refused: DATABASE_URL connects as a superuser or BYPASSRLS role; use the app " +
+              "role (NOBYPASSRLS), the same role the web server runs as.",
+      );
+    }
     const accounts = {} as DevSeedResult["personas"];
     for (const persona of DEV_PERSONAS) {
       const login = await resolveDevPersonaAccount(

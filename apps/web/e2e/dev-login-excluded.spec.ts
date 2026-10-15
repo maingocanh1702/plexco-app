@@ -11,7 +11,8 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
  *     same status, content type, Allow header and body as a truly missing path of the same kind;
  *  2. no dev-login module was compiled into the build output (a marker scan of .next).
  */
-const METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
+// PROPFIND: a method no route module can export (an existing route answers it 400 in Next).
+const METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "PROPFIND"] as const;
 
 /**
  * Each control is a truly missing path of the SAME shape (segment count and lengths, an /api
@@ -79,16 +80,21 @@ test.describe("dev-login does not exist in the production build", () => {
     // Strings that exist only inside the dev-login modules (routing, gate, csrf, personas,
     // persona-account, handlers, page-document, the seed helper) and never in middleware.ts,
     // whose own source (a dead `require` branch) legitimately sits in middleware.js.map.
+    // String LITERALS survive minification; identifiers do not, so the identifiers below only
+    // catch unminified output (a source map's sourcesContent, a dev build in .next).
     const markers = [
       "internal-dev-login",
+      "/api/dev/login",
+      "PLEXCO_DEV_LOGIN",
+      "plexco.dev_login",
       "plx_dev_login_csrf",
       "plexco:web-auth:v1:dev-login:",
       "auth.dev_login",
       "@dev.invalid",
+      "DEV ONLY",
       "evaluateDevLoginGate",
       "resolveDevPersonaAccount",
       "ensureDevClubMember",
-      "DEV ONLY",
     ];
     // .next/cache holds compiler/type-check/lint caches (tsbuildinfo lists every source path,
     // dev-login files included); it is never served or executed, so it is not build output.
@@ -114,10 +120,14 @@ test.describe("dev-login does not exist in the production build", () => {
     });
     expect(hits).toEqual([]);
 
-    // The production middleware's executable code dropped the dev-login branch entirely.
+    // The production middleware dropped the dev-login branch entirely. If it survived (a NODE_ENV
+    // test webpack cannot inline), routing.ts, gate.ts and env-policy.mjs would be compiled in and
+    // their string literals with them: mutation-tested once (a dynamic process.env["NODE_" + "ENV"]
+    // check in middleware.ts made both this and the marker scan above fail).
     const compiled = readFileSync(middleware, "utf8");
-    expect(compiled).not.toContain("lib/dev-login");
-    expect(compiled).not.toContain("devLoginRewriteTarget");
+    for (const literal of ["/api/dev/login", "internal-dev-login", "PLEXCO_DEV_LOGIN"]) {
+      expect(compiled).not.toContain(literal);
+    }
 
     const manifest = JSON.parse(
       readFileSync(path.join(distDir, "server", "app-paths-manifest.json"), "utf8"),

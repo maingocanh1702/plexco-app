@@ -120,8 +120,25 @@ async function counts(): Promise<Record<string, number>> {
   return rows[0] as Record<string, number>;
 }
 
+const DB_NAME = `plexco_dev_login_${process.pid}`;
+const optIn = (on: boolean) =>
+  ctx.owner.query(
+    on
+      ? `ALTER DATABASE ${DB_NAME} SET plexco.dev_login = 'on'`
+      : `ALTER DATABASE ${DB_NAME} RESET plexco.dev_login`,
+  );
+/** A database setting reaches only NEW connections: drop the web pool so the next query reconnects. */
+async function freshAppPool(): Promise<void> {
+  await appDb()
+    .close()
+    .catch(() => {});
+  resetDbRoleViolationForTests();
+}
+
 beforeAll(async () => {
-  ctx = await setupRlsTestContext(`plexco_dev_login_${process.pid}`);
+  ctx = await setupRlsTestContext(DB_NAME);
+  // The database owner's deliberate opt-in (database-guard.ts), before any app connection exists.
+  await optIn(true);
   appUrl = String(ctx.appPool.options.connectionString);
   vi.stubEnv("DATABASE_URL", appUrl);
   vi.stubEnv("DB_EXPECTED_ROLE", "app");
@@ -131,6 +148,9 @@ beforeAll(async () => {
   vi.stubEnv("NODE_ENV", "development");
   vi.stubEnv("PLEXCO_DEV_LOGIN", "1");
   vi.stubEnv("TRUSTED_INGRESS_PROVIDER", "direct");
+  // Bind evidence as `next dev -H 127.0.0.1 -p 3000` writes it (measured shape).
+  vi.stubEnv("__NEXT_PRIVATE_ORIGIN", "http://127.0.0.1:3000");
+  vi.stubEnv("PORT", "3000");
   resetDbRoleViolationForTests();
   __resetAuthSecretCacheForTest();
   seeded = await runDevSeed(process.env);
@@ -361,5 +381,58 @@ describe("dev login takes the Google sign-in session path", () => {
         linked: true,
       },
     ]);
+  });
+});
+
+describe("database-side refusals (no write, no session)", () => {
+  const superuserUrl = () => {
+    const url = new URL(process.env.DATABASE_URL_TEST!);
+    url.pathname = `/${DB_NAME}`;
+    return url.toString();
+  };
+
+  it("the seed refuses the superuser URL even though its host is local", async () => {
+    await expect(runDevSeed({ ...process.env, DATABASE_URL: superuserUrl() })).rejects.toThrow(
+      /superuser or BYPASSRLS/,
+    );
+  });
+
+  it("the seed and dev login refuse a database whose owner has not opted in", async () => {
+    await optIn(false);
+    try {
+      await expect(runDevSeed(process.env)).rejects.toThrow(/not opted in to dev-login/);
+      await freshAppPool();
+      const sessionsBefore = (await counts()).web_sessions;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const page = await handleDevLoginPage(
+        new Request("http://localhost:3000/internal-dev-login/page", { headers: injected() }),
+      );
+      expect(page.status).toBe(404);
+      expect(jar.sets).toEqual([]); // not even the CSRF cookie
+      expect(JSON.stringify(warn.mock.calls)).toContain("database_not_opted_in");
+      warn.mockRestore();
+      expect((await counts()).web_sessions).toBe(sessionsBefore);
+    } finally {
+      await optIn(true);
+      await freshAppPool();
+    }
+  });
+
+  it("dev login refuses when the web process itself runs as the superuser", async () => {
+    vi.stubEnv("DATABASE_URL", superuserUrl());
+    vi.stubEnv("DB_EXPECTED_ROLE", "");
+    await freshAppPool();
+    try {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const page = await handleDevLoginPage(
+        new Request("http://localhost:3000/internal-dev-login/page", { headers: injected() }),
+      );
+      expect(page.status).toBe(404);
+      expect(jar.sets).toEqual([]);
+    } finally {
+      vi.stubEnv("DATABASE_URL", appUrl);
+      vi.stubEnv("DB_EXPECTED_ROLE", "app");
+      await freshAppPool();
+    }
   });
 });

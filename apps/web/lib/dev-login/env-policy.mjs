@@ -7,10 +7,14 @@
  *
  * Threat model (what this defends against, and what it does not):
  *  - DEFENDS: dev-login code or behaviour reaching any deployed or CI environment; a production build
- *    that carries the dev routes; the flag left on in a shell that then runs `next build`/`next start`;
- *    dev personas or their sessions being created against a database that is not on this machine.
+ *    that carries the dev routes; the flag left on in a shell that then runs `next build`/`next start`.
+ *  - PRE-FILTERS ONLY: "the database is on this machine". isLocalDatabaseUrl below checks the host
+ *    STRING, which an ssh -L / kubectl port-forward / fly proxy to a shared database, or a bare
+ *    `postgres` resolved through a DNS search domain, would also pass. The positive check is
+ *    database-side (database-guard.ts: the database owner's `plexco.dev_login = 'on'` opt-in, and
+ *    an RLS-enforced role), run by the seed and by every dev-login handler.
  *  - DOES NOT DEFEND: a malicious process on the developer's own machine (it can already read the env
- *    and the database). Per-request concerns (Host, forwarding headers) live in gate.ts.
+ *    and the database). Per-request concerns (bind evidence, Host, forwarding headers) are gate.ts.
  *
  * Runtime-agnostic: no Node built-ins (the per-request gate runs inside Edge middleware too). The URL
  * constructor is read from globalThis because this file is linted as plain JS with no browser/Node
@@ -70,7 +74,8 @@ export function assertDevLoginBootSafe(env) {
 }
 
 /**
- * Strict "this database is on this machine" check, shared by the gate and the seed. Accepts only
+ * Strict "this URL names this machine" pre-filter, shared by the gate and the seed (a host-string
+ * check; the database-side opt-in in database-guard.ts is the positive one). Accepts only
  * `postgres://` / `postgresql://` URLs whose host is exactly one of LOCAL_DATABASE_HOSTS, with no
  * query string and no fragment: node-postgres copies every query parameter into the connection
  * config (`?host=` would silently override the URL host), and it resolves a scheme-less string

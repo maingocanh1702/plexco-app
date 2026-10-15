@@ -6,10 +6,13 @@
  * could be started with it. The boot refusal in next.config.mjs would stop such a process, but
  * this guard keeps the flag from ever being committed there in the first place.
  *
- * Scanned (repo-relative, every file git tracks or would track, else a filesystem walk):
- *   infra/**, .github/workflows/**, any app*.yaml / app*.yml, any Dockerfile*
- * The guard's own files are excluded. The flag name is assembled at runtime so neither this file
- * nor the CI text has to contain it verbatim.
+ * Scanned (repo-relative, every file git tracks or would track, else a filesystem walk; every
+ * pattern case-insensitive):
+ *   infra/**, .github/** (workflows, composite actions, dependabot, ...),
+ *   anywhere: app*.y[a]ml, Dockerfile*, *.Dockerfile, Containerfile*, fly*.toml,
+ *             compose*.y[a]ml, docker-compose*.y[a]ml
+ * Only this guard's own file is excluded. The flag name is assembled at runtime, so neither this
+ * file nor the CI text has to contain it verbatim.
  *
  * Wired into `pnpm -w test` (root package.json `test`), which CI's `verify` job runs. Exit 0 = clean,
  * 1 = at least one hit (each printed as path:line), 2 = the scan itself failed.
@@ -23,21 +26,28 @@ import { fileURLToPath } from "node:url";
 /** The literal this guard forbids, assembled so this source never contains it verbatim. */
 export const FORBIDDEN_FLAG = ["PLEXCO", "DEV", "LOGIN"].join("_");
 
-const SELF = new Set([
-  "scripts/check-dev-login-exclusion.mjs",
-  "scripts/check-dev-login-exclusion.test.mjs",
-]);
+const SELF = "scripts/check-dev-login-exclusion.mjs";
 const SKIP_DIRS = new Set([".git", "node_modules", ".next", ".autopilot", ".pnpm-store"]);
+
+/** Deploy / container / CI file names, matched against the lowercased base name. */
+const GUARDED_NAMES = [
+  /^app.*\.ya?ml$/,
+  /^dockerfile/,
+  /\.dockerfile$/,
+  /^containerfile/,
+  /^fly.*\.toml$/,
+  /^(docker-)?compose.*\.ya?ml$/,
+];
 
 /** true when a repo-relative POSIX path is one the guard must scan. */
 export function isGuardedPath(relativePath) {
-  if (SELF.has(relativePath)) return false;
-  const base = relativePath.split("/").pop() ?? "";
+  if (relativePath === SELF) return false;
+  const lower = relativePath.toLowerCase();
+  const base = lower.split("/").pop() ?? "";
   return (
-    relativePath.startsWith("infra/") ||
-    relativePath.startsWith(".github/workflows/") ||
-    /^app.*\.ya?ml$/i.test(base) ||
-    /^dockerfile/i.test(base)
+    lower.startsWith("infra/") ||
+    lower.startsWith(".github/") ||
+    GUARDED_NAMES.some((pattern) => pattern.test(base))
   );
 }
 
@@ -112,15 +122,14 @@ function main() {
   }
   if (hits.length > 0) {
     console.error(
-      `guard:dev-login: the local-only dev-login flag must never appear in deploy or CI config ` +
-        `(infra/**, .github/workflows/**, app*.y[a]ml, Dockerfile*). Found:`,
+      `guard:dev-login: the local-only dev-login flag must never appear in deploy, container or CI ` +
+        `config (infra/**, .github/**, app*.y[a]ml, Dockerfile*, *.Dockerfile, Containerfile*, ` +
+        `fly*.toml, compose*.y[a]ml). Found:`,
     );
     for (const hit of hits) console.error(`  ${hit.file}:${hit.line}`);
     process.exit(1);
   }
-  console.log(
-    "guard:dev-login: clean (no dev-login flag in infra/, workflows, app specs or Dockerfiles)",
-  );
+  console.log("guard:dev-login: clean (no dev-login flag in deploy, container or CI config)");
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

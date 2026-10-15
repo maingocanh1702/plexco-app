@@ -26,9 +26,17 @@ import { devPersonaSubjectInput, type DevPersona } from "./personas";
  *
  * Side effects are the definer's own: the first resolution creates Person + Account + verified
  * account_emails + account_identities(platform 'google', dev-namespace hash); later ones mutate
- * nothing. EVERY call appends one auth_audit_events row: event_type 'login_success', outcome_class
- * 'success', actor_class 'google', request_ref = the caller's requestRef (dev_login_<uuid> from the
- * route, dev_seed_<uuid> from the seed). There is no 'auth.dev_login' event type without a migration.
+ * nothing.
+ *
+ * AUDIT, precisely. EVERY call appends one durable auth_audit_events row, written by the definer
+ * and indistinguishable in shape from a real Google login: event_type 'login_success',
+ * outcome_class 'success', actor_class 'google'. ONLY request_ref says it was a dev persona:
+ *   dev_login_<uuid>  a dev-login (one per successful POST);
+ *   dev_seed_<uuid>   a `pnpm dev:seed` run (one per persona per run, i.e. 3 rows for "logins"
+ *                     that never happened). app has no read-only path to an identity (every
+ *                     app-callable identity function writes), so the seed cannot skip the call.
+ * A dedicated 'auth.dev_login' event type needs a migration (no grant lets app write the table);
+ * the auth_audit_dev_login(uuid, text) proposal is in the PR description.
  */
 export async function resolveDevPersonaAccount(
   pool: DbHandle["pool"],

@@ -5,14 +5,19 @@ import { DEV_LOGIN_API_ROUTE } from "./routing";
 
 /**
  * CSRF for the dev-login POST. There is no session yet, so there is no session csrf_secret to echo
- * (csrfOk). Two independent layers instead, both required:
- *  1. sameOriginRequest() — the existing helper the Google completion hop uses (Origin, else Referer,
- *     must name this Host);
+ * (csrfOk). Two checks, both required, and they are NOT equally strong:
+ *  1. sameOriginRequest() — the existing helper the Google completion hop uses. The browser sets
+ *     Origin (else Referer) and page script cannot forge it; it must name exactly this Host
+ *     (scheme + host + port). `Origin: null` is refused. This is the check that carries the weight.
  *  2. a page-bound double-submit token: the dev-login page sets a random token in an HttpOnly,
  *     SameSite=Strict cookie scoped to the implementation POST path (the form posts to
- *     /api/dev/login, whose 307 re-sends it there) AND renders the same token in a hidden field.
- *     The POST must carry both, equal (constant-time). A cross-site page can neither read the token
- *     nor make the browser send the Strict cookie.
+ *     /api/dev/login, whose 307 re-sends it there) and renders the same token in a hidden field;
+ *     the POST must carry both, equal (constant-time). It stops a cross-SITE page, which can neither
+ *     read the token nor set a cookie for localhost. It does NOT stop a page served from another
+ *     port of the same host (http://localhost:4000): cookies ignore the port, so such a page can
+ *     overwrite plx_dev_login_csrf with a value it knows, post the matching field, and is
+ *     same-site, so the Strict cookie rides along. Only check 1 refuses it, because its Origin
+ *     names the other port.
  * The cookie is single-use: a successful login clears it.
  */
 export const DEV_LOGIN_CSRF_COOKIE = "plx_dev_login_csrf";

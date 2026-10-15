@@ -3,6 +3,7 @@ import {
   devLoginNotFound,
   evaluateDevLoginGate,
   forwardingHeadersDisqualify,
+  loopbackBindEvidence,
   parseLoopbackHost,
   readDevLoginEnv,
 } from "./gate";
@@ -12,6 +13,9 @@ const OPEN_ENV = {
   PLEXCO_DEV_LOGIN: "1",
   TRUSTED_INGRESS_PROVIDER: "direct",
   DATABASE_URL: "postgres://app:plexco_dev_app@localhost:5432/plexco",
+  // What next dev -H 127.0.0.1 -p 3311 stores (measured).
+  __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3311",
+  PORT: "3311",
 };
 
 /** Exactly what next@15.5.25 hands a handler for a direct curl to 127.0.0.1:3311 (measured). */
@@ -172,6 +176,24 @@ describe("evaluateDevLoginGate — the matrix: each condition false on its own c
     });
   });
 
+  it.each([
+    ["no -H / -H 0.0.0.0 (binds *)", { __NEXT_PRIVATE_ORIGIN: "http://localhost:3311" }],
+    [
+      "-H :: (binds *) and -H ::1 report the same origin",
+      { __NEXT_PRIVATE_ORIGIN: "http://[::1]:3311" },
+    ],
+    ["-H 192.168.1.20", { __NEXT_PRIVATE_ORIGIN: "http://192.168.1.20:3311" }],
+    ["origin not written yet", { __NEXT_PRIVATE_ORIGIN: undefined }],
+    ["origin port differs from the real port", { PORT: "3312" }],
+    ["no PORT", { PORT: undefined }],
+    ["https origin", { __NEXT_PRIVATE_ORIGIN: "https://127.0.0.1:3311" }],
+  ])("bind: closes without exact 127.0.0.1 bind evidence (%s)", (_, override) => {
+    expect(evaluateDevLoginGate({ ...OPEN_ENV, ...override }, directHeaders())).toEqual({
+      open: false,
+      reason: "bind",
+    });
+  });
+
   it.each(["localhost.evil.test:3311", "192.168.1.20:3311", "", "plexco.app"])(
     "host: closes for Host %j even with matching injected headers",
     (host) => {
@@ -209,10 +231,32 @@ describe("evaluateDevLoginGate — the matrix: each condition false on its own c
 });
 
 describe("helpers", () => {
-  it("readDevLoginEnv reads exactly the four variables", () => {
+  it("readDevLoginEnv reads exactly the gate's variables", () => {
     expect(Object.keys(readDevLoginEnv()).sort()).toEqual(
-      ["DATABASE_URL", "NODE_ENV", "PLEXCO_DEV_LOGIN", "TRUSTED_INGRESS_PROVIDER"].sort(),
+      [
+        "DATABASE_URL",
+        "NODE_ENV",
+        "PLEXCO_DEV_LOGIN",
+        "PORT",
+        "TRUSTED_INGRESS_PROVIDER",
+        "__NEXT_PRIVATE_ORIGIN",
+      ].sort(),
     );
+  });
+
+  it("loopbackBindEvidence accepts exactly http://127.0.0.1:<PORT>", () => {
+    expect(loopbackBindEvidence(OPEN_ENV)).toBe(true);
+    expect(loopbackBindEvidence({ ...OPEN_ENV, PORT: "03311" })).toBe(false);
+    expect(
+      loopbackBindEvidence({
+        ...OPEN_ENV,
+        PORT: "70000",
+        __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:70000",
+      }),
+    ).toBe(false);
+    expect(
+      loopbackBindEvidence({ ...OPEN_ENV, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3311/" }),
+    ).toBe(false);
   });
 
   it("the second-layer refusal is a bare 404 that never caches", async () => {

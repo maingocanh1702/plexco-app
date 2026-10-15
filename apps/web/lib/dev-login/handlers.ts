@@ -17,6 +17,7 @@ import {
   readDevLoginCsrfCookie,
   setDevLoginCsrfCookie,
 } from "./csrf";
+import { devLoginDatabaseVerdict, devLoginOptInCommand } from "./database-guard";
 import { devLoginNotFound, evaluateDevLoginGate, readDevLoginEnv } from "./gate";
 import { devServerLoopbackOnly } from "./network-exposure";
 import { buildDevLoginDocument, normalizeDevLoginPageError } from "./page-document";
@@ -28,10 +29,11 @@ import { DEV_LOGIN_PAGE_PATH } from "./routing";
  * Logic of the two dev-login route handlers (app/internal-dev-login/{page,session}/route.dev.ts),
  * kept here because an App Router route module may export only HTTP verbs.
  *
- * Both handlers open with the full per-request gate (again, after the middleware router's check on
- * the public paths; alone for a direct request to the implementation path), then the
- * network-exposure probe. Either false => the bare 404 of devLoginNotFound(), before any cookie,
- * body read or database call.
+ * Every handler opens with the same refusal chain, before any cookie, body read or write:
+ *   1. the full per-request gate (again: the middleware already checked it), bind evidence included;
+ *   2. the fail-closed network-exposure probe (network-exposure.ts), re-measured on every request;
+ *   3. the DB-side guard (database-guard.ts): the database opted in, the role RLS-enforced.
+ * Any false => the bare 404 of devLoginNotFound() and a server log line naming the reason.
  */
 
 /** `persona=<key>&csrf=<43 chars>` is ~70 bytes; 1 KiB is ~15x that. */
@@ -40,7 +42,10 @@ const MAX_LOGIN_BODY_BYTES = 1024;
 async function gateRefusal(request: Request): Promise<Response | null> {
   const decision = evaluateDevLoginGate(readDevLoginEnv(), request.headers);
   if (!decision.open) {
-    log.warn("auth.dev_login.gate_closed", { reason: decision.reason });
+    log.warn("auth.dev_login.gate_closed", {
+      reason: decision.reason,
+      ...(decision.reason === "bind" ? { remedy: "start the dev server with -H 127.0.0.1" } : {}),
+    });
     return devLoginNotFound();
   }
   if (!(await devServerLoopbackOnly())) {
@@ -50,14 +55,33 @@ async function gateRefusal(request: Request): Promise<Response | null> {
     });
     return devLoginNotFound();
   }
+  let database: Awaited<ReturnType<typeof devLoginDatabaseVerdict>>;
+  try {
+    database = await devLoginDatabaseVerdict(appDb().pool);
+  } catch (error) {
+    log.error("auth.dev_login.gate_closed", { reason: "database_unavailable", error });
+    return devLoginNotFound();
+  }
+  if (!database.ok) {
+    log.warn("auth.dev_login.gate_closed", {
+      reason: database.reason,
+      remedy:
+        database.reason === "database_not_opted_in"
+          ? `as the database owner: ${devLoginOptInCommand(database.database)}; then restart next dev`
+          : "use the app role (NOBYPASSRLS) in DATABASE_URL, never the superuser",
+    });
+    return devLoginNotFound();
+  }
   return null;
 }
 
+/**
+ * No Referrer-Policy here: `no-referrer` on a redirect becomes the policy of the request it
+ * triggers, and a form POST under `no-referrer` carries `Origin: null` (Fetch), which
+ * sameOriginRequest() rightly refuses. The global strict-origin-when-cross-origin applies.
+ */
 function seeOther(location: string): Response {
-  return new Response(null, {
-    status: 303,
-    headers: { location, "cache-control": "no-store", "referrer-policy": "no-referrer" },
-  });
+  return new Response(null, { status: 303, headers: { location, "cache-control": "no-store" } });
 }
 
 /** GET /dev-login (307 from the middleware): the persona form with a fresh double-submit token. */
@@ -92,8 +116,8 @@ const invalidBody = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ."
 /**
  * POST /api/dev/login (307 from the middleware). Order: gate -> same-origin -> bounded form body ->
  * double-submit token -> closed-set persona -> consume the token -> persona account via the Google
- * login definer -> issueSession() -> audit log -> 303 to the app root (relative, so the browser stays
- * on the exact loopback host whose cookie was just set).
+ * login definer -> issueSession() -> audit log -> 303 to `/` (a route-handler Location, relative;
+ * the browser resolves it against the page's own origin, where the session cookie was just set).
  */
 export async function handleDevLoginSession(request: Request): Promise<Response> {
   const refused = await gateRefusal(request);

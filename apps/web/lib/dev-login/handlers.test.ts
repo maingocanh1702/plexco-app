@@ -21,6 +21,10 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("./network-exposure", () => ({ devServerLoopbackOnly: vi.fn(async () => true) }));
 vi.mock("./persona-account", () => ({ resolveDevPersonaAccount: vi.fn() }));
+vi.mock("./database-guard", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./database-guard")>();
+  return { ...actual, devLoginDatabaseVerdict: vi.fn() };
+});
 vi.mock("../session-cookies", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../session-cookies")>();
   return { ...actual, issueSession: vi.fn(), appDb: vi.fn(() => ({ pool: { tag: "pool" } })) };
@@ -28,6 +32,7 @@ vi.mock("../session-cookies", async (importOriginal) => {
 
 import { issueSession, SessionReauthRequiredError } from "../session-cookies";
 import { DEV_LOGIN_CSRF_COOKIE } from "./csrf";
+import { devLoginDatabaseVerdict } from "./database-guard";
 import { handleDevLoginOtherMethod, handleDevLoginPage, handleDevLoginSession } from "./handlers";
 import { devServerLoopbackOnly } from "./network-exposure";
 import { resolveDevPersonaAccount } from "./persona-account";
@@ -38,6 +43,8 @@ const OPEN_ENV = {
   PLEXCO_DEV_LOGIN: "1",
   TRUSTED_INGRESS_PROVIDER: "direct",
   DATABASE_URL: "postgres://app:plexco_dev_app@localhost:5432/plexco",
+  __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3000", // next dev -H 127.0.0.1 -p 3000 (measured shape)
+  PORT: "3000",
 };
 
 function stubOpenEnv(override: Partial<Record<keyof typeof OPEN_ENV, string | undefined>> = {}) {
@@ -88,6 +95,9 @@ beforeEach(() => {
   vi.mocked(issueSession).mockReset().mockResolvedValue({ csrfToken: "session-csrf" });
   vi.mocked(resolveDevPersonaAccount).mockReset().mockResolvedValue(OWNER);
   vi.mocked(devServerLoopbackOnly).mockReset().mockResolvedValue(true);
+  vi.mocked(devLoginDatabaseVerdict)
+    .mockReset()
+    .mockResolvedValue({ ok: true, database: "plexco" });
   stubOpenEnv();
 });
 
@@ -102,6 +112,8 @@ describe("second-layer gate inside both handlers", () => {
     ["flag", { PLEXCO_DEV_LOGIN: undefined }],
     ["ingress", { TRUSTED_INGRESS_PROVIDER: "digitalocean" }],
     ["database url", { DATABASE_URL: "postgres://app:x@db.example.com:5432/plexco" }],
+    ["bind evidence (no -H: binds *)", { __NEXT_PRIVATE_ORIGIN: "http://localhost:3000" }],
+    ["bind evidence (-H ::)", { __NEXT_PRIVATE_ORIGIN: "http://[::1]:3000" }],
   ])("%s false => bare 404, no cookie, no persona resolution, no session", async (_, override) => {
     stubOpenEnv(override);
     const page = await handleDevLoginPage(pageRequest());
@@ -126,6 +138,32 @@ describe("second-layer gate inside both handlers", () => {
     expect((await handleDevLoginSession(loginRequest({ persona: "owner" }))).status).toBe(404);
     expect(jar.sets).toEqual([]);
     expect(resolveDevPersonaAccount).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "the database is not opted in",
+      { ok: false, reason: "database_not_opted_in", database: "plexco" },
+    ],
+    [
+      "the role bypasses RLS (superuser / BYPASSRLS)",
+      { ok: false, reason: "role_bypasses_rls", database: "plexco" },
+    ],
+  ] as const)("DB guard: %s => 404 before any cookie or write", async (_, verdict) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(devLoginDatabaseVerdict).mockResolvedValue(verdict);
+    expect((await handleDevLoginPage(pageRequest())).status).toBe(404);
+    expect((await handleDevLoginSession(loginRequest({ persona: "owner" }))).status).toBe(404);
+    expect(jar.sets).toEqual([]);
+    expect(resolveDevPersonaAccount).not.toHaveBeenCalled();
+    expect(String(warn.mock.calls[0]?.[0])).toContain(verdict.reason);
+  });
+
+  it("DB guard: an unreachable database => 404 (fail closed, never a 500)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(devLoginDatabaseVerdict).mockRejectedValue(new Error("connect ECONNREFUSED"));
+    expect((await handleDevLoginPage(pageRequest())).status).toBe(404);
+    expect(jar.sets).toEqual([]);
   });
 });
 

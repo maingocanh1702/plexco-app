@@ -18,17 +18,17 @@ describe("buildDevLoginDocument", () => {
     expect(body.match(/<button /g)).toHaveLength(DEV_PERSONAS.length);
   });
 
-  it("runs no script at all and nonces its only style; its own CSP allows nothing else", () => {
+  it("runs no script; sets only content-type, cache-control and x-robots-tag (no Referrer-Policy)", () => {
     const { body, headers } = buildDevLoginDocument({ csrfToken: TOKEN, error: null });
     expect(body).not.toMatch(/<script/i);
-    const nonce = /<style nonce="([^"]+)">/.exec(body)?.[1];
-    expect(nonce).toBeTruthy();
-    expect(headers["content-security-policy"]).toBe(
-      `default-src 'none'; style-src 'nonce-${nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
-    );
-    expect(headers["cache-control"]).toBe("no-store");
-    expect(headers["content-type"]).toBe("text/html; charset=utf-8");
-    expect(headers["x-frame-options"]).toBe("DENY");
+    expect(body).toContain("<style>");
+    // Never `no-referrer`: a form POST under it carries Origin: null and sameOriginRequest() refuses.
+    // CSP / X-Frame-Options / Referrer-Policy come from next.config headers() (served globally).
+    expect(headers).toEqual({
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "x-robots-tag": "noindex, nofollow",
+    });
   });
 
   it("speaks the request language through t(vi, en) — Vietnamese by default, English on request (DD-118 b)", () => {

@@ -16,10 +16,21 @@ import { DEV_LOGIN_FLAG, devLoginEnvironmentVerdict } from "./env-policy.mjs";
  * forwarding header closes the gate" would close it for every request; instead the four injected
  * headers must carry exactly the values Next itself would inject for a direct loopback connection,
  * and every other forwarding/proxy header closes the gate outright.
+ *
+ * Bind evidence (positive, per request): the raw Host proves nothing about who can CONNECT, so the
+ * gate also requires that the dev server itself is listening on 127.0.0.1 only. Measured on
+ * next@15.5.25 `next dev` (both middleware and handler read the same values):
+ *   -H 127.0.0.1 -> binds 127.0.0.1:P, __NEXT_PRIVATE_ORIGIN = http://127.0.0.1:P   (accepted)
+ *   -H ::        -> binds *:P,          __NEXT_PRIVATE_ORIGIN = http://[::1]:P
+ *   -H ::1       -> binds [::1]:P,      __NEXT_PRIVATE_ORIGIN = http://[::1]:P       (ambiguous)
+ *   no -H, -H 0.0.0.0 -> binds *:P,     __NEXT_PRIVATE_ORIGIN = http://localhost:P
+ *   -H localhost -> binds [::1]:P,      __NEXT_PRIVATE_ORIGIN = http://localhost:P   (ambiguous)
+ * So the only unambiguous loopback-only evidence is exactly `http://127.0.0.1:<PORT>`, where PORT is
+ * the port next/dist/server/lib/start-server.js stores alongside it. Anything else closes the gate.
  */
 
 export type DevLoginClosedReason =
-  "node_env" | "flag" | "ingress" | "database_url" | "host" | "forwarded";
+  "node_env" | "flag" | "ingress" | "database_url" | "bind" | "host" | "forwarded";
 
 export type DevLoginGateDecision = { open: true } | { open: false; reason: DevLoginClosedReason };
 
@@ -38,7 +49,19 @@ export function readDevLoginEnv(): DevLoginEnv {
     [DEV_LOGIN_FLAG]: process.env.PLEXCO_DEV_LOGIN,
     TRUSTED_INGRESS_PROVIDER: process.env.TRUSTED_INGRESS_PROVIDER,
     DATABASE_URL: process.env.DATABASE_URL,
+    // Written by next/dist/server/lib/start-server.js when the server starts listening.
+    __NEXT_PRIVATE_ORIGIN: process.env.__NEXT_PRIVATE_ORIGIN,
+    PORT: process.env.PORT,
   };
+}
+
+/** true only for a server Next itself reports as bound to 127.0.0.1 on its real port (see above). */
+export function loopbackBindEvidence(env: DevLoginEnv): boolean {
+  const port = env.PORT;
+  if (typeof port !== "string" || !/^[1-9][0-9]{0,4}$/.test(port) || Number(port) > 65535) {
+    return false;
+  }
+  return env.__NEXT_PRIVATE_ORIGIN === `http://127.0.0.1:${port}`;
 }
 
 /**
@@ -101,12 +124,13 @@ export function forwardingHeadersDisqualify(
 
 /**
  * Process-level conditions first (env-policy.mjs, shared with next.config.mjs and the seed), then
- * the raw Host, then the forwarding headers. Order only decides which reason is reported; every
- * condition must hold for `open: true`.
+ * the bind evidence, the raw Host and the forwarding headers. Order only decides which reason is
+ * reported; every condition must hold for `open: true`.
  */
 export function evaluateDevLoginGate(env: DevLoginEnv, headers: GateHeaders): DevLoginGateDecision {
   const environment = devLoginEnvironmentVerdict(env);
   if (environment !== null) return { open: false, reason: environment };
+  if (!loopbackBindEvidence(env)) return { open: false, reason: "bind" };
   const host = headers.get("host");
   const loopback = parseLoopbackHost(host);
   if (host === null || loopback === null) return { open: false, reason: "host" };
@@ -117,12 +141,12 @@ export function evaluateDevLoginGate(env: DevLoginEnv, headers: GateHeaders): De
 }
 
 /**
- * The refusal inside a dev-login handler (status 404, empty body: what next/navigation notFound()
- * produces in a route handler, measured). The documented public paths never reach it with a closed
- * gate (the middleware leaves them unrewritten, so the framework answers its own 404); it answers a
- * DIRECT request to an implementation path while the gate is closed per request (non-loopback Host,
- * forwarding headers, network-exposed server), and anything that ever bypassed the middleware. It
- * is a refusal, not the indistinguishable response: that residual is stated in the PR.
+ * The bare refusal (status 404, empty body: what next/navigation notFound() produces in a route
+ * handler, measured). The documented public paths never get it: with the gate closed the middleware
+ * leaves them alone and the framework answers its own 404. It answers requests to the
+ * IMPLEMENTATION paths, which exist only while every process-level condition holds, whenever the
+ * per-request gate is closed (from the middleware) or the handler's own checks fail (probe, DB
+ * guard). It is a refusal, NOT the framework's 404 body; that residual is stated in the PR.
  */
 export function devLoginNotFound(): Response {
   return new Response(null, { status: 404, headers: { "cache-control": "no-store" } });

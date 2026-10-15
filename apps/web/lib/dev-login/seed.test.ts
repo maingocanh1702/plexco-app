@@ -76,6 +76,41 @@ describe("dev:seed refuses BEFORE connecting", () => {
   });
 });
 
+describe("dev:seed refuses, after connecting but BEFORE any write, a database that is not safe", () => {
+  function fakeHandle(row: Record<string, unknown>) {
+    const query = vi.fn(async () => ({ rows: [row] }));
+    const close = vi.fn(async () => {});
+    return { handle: { pool: { query }, db: {}, close } as never, query, close };
+  }
+
+  it("not opted in by its owner (a port-forward to a shared database looks local by host string)", async () => {
+    const { handle, query, close } = fakeHandle({
+      database: "plexco",
+      opt_in: null,
+      superuser: false,
+      bypassrls: false,
+    });
+    await expect(
+      runDevSeed({ DATABASE_URL: LOCAL, ENCRYPTION_KEY: KEY }, { connect: () => handle }),
+    ).rejects.toThrow(
+      /not opted in to dev-login.*ALTER DATABASE plexco SET plexco\.dev_login = 'on'/,
+    );
+    expect(query).toHaveBeenCalledTimes(1); // the guard read only: no definer call, no write
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["superuser", { superuser: true, bypassrls: true }],
+    ["BYPASSRLS", { superuser: false, bypassrls: true }],
+  ])("connecting as a %s role (RLS would not apply)", async (_, attrs) => {
+    const { handle, query } = fakeHandle({ database: "plexco", opt_in: "on", ...attrs });
+    await expect(
+      runDevSeed({ DATABASE_URL: LOCAL, ENCRYPTION_KEY: KEY }, { connect: () => handle }),
+    ).rejects.toThrow(/superuser or BYPASSRLS/);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("the real `pnpm dev:seed` entry refuses a non-local URL (process level)", () => {
   // Same command the root package.json `dev:seed` script runs: tsx from @plexco/db on seed-cli.ts.
   const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));

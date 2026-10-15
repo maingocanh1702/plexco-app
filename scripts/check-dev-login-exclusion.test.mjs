@@ -33,6 +33,15 @@ const PLANTED = {
   "deploy/app-staging.yml": `x: ${FORBIDDEN_FLAG}\n`,
   Dockerfile: `FROM node:22\nENV ${FORBIDDEN_FLAG}=1\n`,
   "apps/bot/Dockerfile.worker": `ARG ${FORBIDDEN_FLAG}\n`,
+  // Round-1 review fixtures that the first globs missed:
+  "apps/web/web.Dockerfile": `ENV ${FORBIDDEN_FLAG}=1\n`,
+  Containerfile: `ENV ${FORBIDDEN_FLAG}=1\n`,
+  "fly.toml": `[env]\n  ${FORBIDDEN_FLAG} = "1"\n`,
+  "deploy/fly.staging.toml": `[env]\n  ${FORBIDDEN_FLAG} = "1"\n`,
+  "compose.yaml": `services: { web: { environment: [${FORBIDDEN_FLAG}=1] } }\n`,
+  "deploy/docker-compose.override.yml": `x: ${FORBIDDEN_FLAG}\n`,
+  ".github/actions/setup/action.yml": `runs:\n  env:\n    ${FORBIDDEN_FLAG}: 1\n`,
+  ".github/dependabot.yml": `# ${FORBIDDEN_FLAG}\n`,
 };
 // The flag is LEGITIMATE in these: app code, docs and the local env template are not deploy config.
 const ALLOWED = {
@@ -41,18 +50,53 @@ const ALLOWED = {
   "apps/web/lib/dev-login/env-policy.mjs": `export const F = "${FORBIDDEN_FLAG}";\n`,
   "docs/deploy.md": `${FORBIDDEN_FLAG}\n`,
   "infra-notes/x.yml": `${FORBIDDEN_FLAG}\n`,
+  "scripts/check-dev-login-exclusion.test.mjs": `// ${FORBIDDEN_FLAG}\n`,
 };
 
 test("the forbidden literal is the dev-login flag", () => {
   assert.equal(FORBIDDEN_FLAG, "PLEXCO" + "_DEV_LOGIN");
 });
 
-test("isGuardedPath: exactly infra/**, .github/workflows/**, app*.y[a]ml, Dockerfile*, minus the guard", () => {
+test("isGuardedPath: deploy, container and CI config anywhere, case-insensitive, minus only the guard", () => {
   for (const file of Object.keys(PLANTED)) assert.equal(isGuardedPath(file), true, file);
   for (const file of Object.keys(ALLOWED)) assert.equal(isGuardedPath(file), false, file);
   assert.equal(isGuardedPath("scripts/check-dev-login-exclusion.mjs"), false);
-  assert.equal(isGuardedPath("scripts/check-dev-login-exclusion.test.mjs"), false);
-  assert.equal(isGuardedPath("infra/postgres-init/01-job-definer.sql"), true);
+  for (const file of [
+    "infra/postgres-init/01-job-definer.sql",
+    "Infra/fly.toml",
+    "INFRA/x.yml",
+    ".GitHub/workflows/ci.yml",
+    "DOCKERFILE",
+    "x/App.Prod.YAML",
+    "x/Compose.yml",
+    "x/containerfile.dev",
+  ]) {
+    assert.equal(isGuardedPath(file), true, file);
+  }
+});
+
+test("upper-case directories are caught too (Infra/fly.toml)", () => {
+  // Separate fixture: on a case-insensitive file system Infra/ and infra/ are one directory.
+  const root = fixture({ "Infra/fly.toml": `[env]\n  ${FORBIDDEN_FLAG} = "1"\n` });
+  try {
+    assert.deepEqual(findDevLoginFlagLeaks(root), [{ file: "Infra/fly.toml", line: 2 }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("only the guard's own path is excluded: the same file name under infra/ is still scanned", () => {
+  const root = fixture({
+    "scripts/check-dev-login-exclusion.mjs": `const x = "${FORBIDDEN_FLAG}";\n`,
+    "infra/check-dev-login-exclusion.mjs": `const x = "${FORBIDDEN_FLAG}";\n`,
+  });
+  try {
+    assert.deepEqual(findDevLoginFlagLeaks(root), [
+      { file: "infra/check-dev-login-exclusion.mjs", line: 1 },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("a planted occurrence in every guarded location is found, with its line", () => {
