@@ -13,7 +13,9 @@
 >   of scope.
 > - Section 6 (final-report skeleton): its list of owner blockers is stale. DD-132 removed DigitalOcean resources/secrets, Google
 >   OAuth staging credentials and M7 from the MVP, and DD-131 decided DD-117 close/cancel, DD-127 definer ownership and the DD-123
->   heading font. Section 7 (lessons) stays valid.
+>   heading font. Old section 7 (lessons) stays valid.
+> - TL;DR block at the top of the old file ("12 open PRs, nothing merged"): stale. Use the PR state in this file instead.
+> - Worktree directory names in old sections 2 and 5 (e.g. `mvp-m0-decisions`, `mvp-m2c-fe`) are local to that run and may not exist.
 >
 > **Verified:** 2026-10-15 21:56 Asia/Saigon (PR state read from GitHub; `mergedAt` values below are UTC, Asia/Saigon = UTC+7).
 > **`origin/main` = `7fe55256df8af45ffac8c83a1b760bea5ea52322`** (merge of #56).

@@ -6269,7 +6269,7 @@ notes: |
   `apps/web/lib/session-command-route.ts` (~`:477-485` trên `origin/feat/mvp-local-polish`) và bị gộp thành `400 INVALID_BODY` "Dữ liệu không hợp lệ."
   mà không kèm trường. Form web (PR #57) chặn trần 200 ở phía client nên người dùng bình thường không gặp; client khác (hoặc kiểm tra bị bỏ qua) chỉ thấy lỗi chung.
   Mang tên trường qua `error.details` cần đổi `api-contract.ts`, nên là một thay đổi contract có chủ đích, không sửa lặt vặt.
-  source: PR #57 review round 1, finding F1 (PR body chưa ghi; đo trên `origin/feat/mvp-local-polish`)
+  source: PR #57 review round 1 (finding chưa có id trong PR body; đo trên `origin/feat/mvp-local-polish`)
 
 ## task: local-smoke-toast-overlap-and-blank-band-measure
 title: Ảnh smoke local cho thấy toast chồng nhau và dải trống ~30 px phía trên header ở workspace session: đo trước khi sửa

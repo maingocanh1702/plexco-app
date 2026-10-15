@@ -1800,7 +1800,7 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
     không — hiện `sessionHasCharges` (`packages/db/src/session-service.ts:1599`, gọi ở `:1806` cho close) **không lọc status**
     nên charge `void` vẫn chặn. Quy tắc phải để charge void của player chưa trả đã bị gỡ **không** chặn cancel. Không quyết được
     từ code ⇒ HALT lane đó với một câu hỏi + điều kiện resume nhị phân.
-  - **Tham chiếu hành vi (đọc, không copy mù):** payment bot `/Users/maingocanh/Projects/Bestminton Club Payment check bot` —
+  - **Tham chiếu hành vi (đọc, không copy mù):** repo payment bot `Bestminton Club Payment check bot` —
     `src/db.ts` `setSessionStatus` (`:3299`, guard nợ mở) và `deleteSession` (`:3325`, từ chối khi có tiền thật);
     `docs/product/business-rules.md` §13 (`:117`) và §15 (`:144`).
   - Đóng: câu hỏi mở ⚠️ của **DD-125** (hệ quả DD-117). Sửa: **DD-117 D3** (vế close). PR: #46 (roster/charge), lane close/cancel mới.
@@ -1811,7 +1811,7 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
   `chat.id`); giữ khoá dedupe **vĩnh viễn**. **Không** job retention cho `routing_audit` trong MVP (ghi 1 dòng backlog). Dùng mã
   riêng `CONNECT_SUPERSEDED`, **không** tái dùng `COMMAND_ID_CONFLICT`. Evidence: payment bot `src/zalo/zalo.ts`,
   `src/zalo/index.ts` (header + `Success`/403 ở `:27-45`), `src/db.ts` `zalo_seen_messages` (`:428`, insert `:7915`); chatbot repo
-  `/Users/maingocanh/Projects/bestminton-club-chatbot` `src/webhook/parser.js` (`message_id` `:151`, bỏ GROUP `:147`),
+  repo chatbot `bestminton-club-chatbot` `src/webhook/parser.js` (`message_id` `:151`, bỏ GROUP `:147`),
   `src/zalo/webhook.js`. Đóng: **DD-126** (PR #47, migration `0053_zalo_ingress.sql`).
 - **OD-3 — DD-127 (link web ⇄ Zalo, PR #49): chọn (a).** Owner definer của migration 0054 có BYPASSRLS qua bracket `SET ROLE`,
   theo đúng pattern `job_definer`/`chat_definer`: `infra/postgres-init/01-job-definer.sql`, `02-chat-definer.sql`. **R1 trên DO
