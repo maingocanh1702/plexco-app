@@ -5,6 +5,7 @@ import { patchClubConfig, type ClubConfigDto } from "../../lib/club-settings-cli
 import {
   buildDefaultsPatch,
   defaultsValues,
+  normalizePriceInput,
   unsureAfter,
   type ClubPatchField,
   type DefaultsFormValues,
@@ -137,7 +138,7 @@ export function ClubDefaultsForm({
         value={values.price}
         error={priceError}
         onChange={(e) => {
-          setValues({ ...values, price: e.target.value });
+          setValues({ ...values, price: normalizePriceInput(e.target.value) });
           setPriceError(null);
         }}
       />

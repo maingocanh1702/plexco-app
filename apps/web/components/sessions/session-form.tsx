@@ -5,6 +5,7 @@ import { ApiClientError } from "../../lib/api-client";
 import { useT } from "../../lib/i18n-client";
 import { formatVndInput, parseVndInput } from "../../lib/money";
 import {
+  VENUE_ADDRESS_MAX,
   validateForm,
   type FormErrors,
   type SessionFormValues,
@@ -70,7 +71,7 @@ export function SessionForm(props: SessionFormProps) {
     event.preventDefault();
     if (busy) return;
     setServerError(null);
-    const found = validateForm(values, timezone, t);
+    const found = validateForm(values, timezone, t, initial);
     setErrors(found);
     if (Object.keys(found).length > 0) {
       setFocusSummary((n) => n + 1);
@@ -174,7 +175,9 @@ export function SessionForm(props: SessionFormProps) {
         <TextField
           label={t("Địa chỉ", "Address")}
           value={values.venueAddress}
-          maxLength={200}
+          error={errors.venueAddress}
+          maxLength={VENUE_ADDRESS_MAX}
+          hint={t(`Tối đa ${VENUE_ADDRESS_MAX} ký tự`, `Up to ${VENUE_ADDRESS_MAX} characters`)}
           onChange={(e) => set("venueAddress", e.target.value)}
         />
         <TextField

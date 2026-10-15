@@ -1,5 +1,5 @@
 import type { ClubConfigDto, ClubPatchBody } from "./club-settings-client";
-import { INT4_MAX, parseVndInput } from "./money";
+import { INT4_MAX, formatVndInput, parseVndInput } from "./money";
 
 /**
  * Pure model of the club settings forms: option lists and "what changed" -> PATCH body. The route
@@ -102,6 +102,19 @@ export function defaultsValues(club: ClubConfigDto, formatPrice: (n: number) => 
     price: club.defaultPriceAmount === null ? "" : formatPrice(club.defaultPriceAmount),
     visibility: club.defaultVisibility === "public" ? "public" : "private",
   } satisfies DefaultsFormValues;
+}
+
+/**
+ * What the default-price box shows after each keystroke: the digits the host typed, re-rendered
+ * through formatVndInput, so the box always reads exactly what buildDefaultsPatch will save
+ * ("1,500.50" -> "150.050" saves 150050; "1.5" -> "15" saves 15). Empty stays empty; a value above
+ * int4 is left as typed so the submit shows price_invalid instead of silently clamping (same
+ * contract as session-form.tsx and mark-paid-sheet.tsx).
+ */
+export function normalizePriceInput(raw: string): string {
+  const parsed = parseVndInput(raw);
+  if (parsed === null) return "";
+  return Number.isNaN(parsed) ? raw : formatVndInput(parsed);
 }
 
 export type DefaultsProblem = "sport_required" | "price_invalid" | "price_required";

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  VENUE_ADDRESS_MAX,
   buildCreateBody,
   buildUpdateBody,
   emptyFormValues,
@@ -77,6 +78,36 @@ describe("validateForm", () => {
         en,
       ),
     ).toEqual({});
+  });
+});
+
+describe("validateForm venueAddress cap (DD-128 OD-4a, 200 UTF-16 code units)", () => {
+  const addr = (n: number) => "\u0111".repeat(n); // d-stroke: 1 code unit each
+  it("pins the cap at 200, the same number the input maxLength and hint use", () => {
+    expect(VENUE_ADDRESS_MAX).toBe(200);
+  });
+  it("accepts 200 and rejects 201 on create, pinned to the Address field only", () => {
+    expect(validateForm(base({ venueAddress: addr(200) }), TZ, en)).toEqual({});
+    const e = validateForm(base({ venueAddress: addr(201) }), TZ, en);
+    expect(Object.keys(e)).toEqual(["venueAddress"]);
+    expect(e.venueAddress).toContain("200");
+  });
+  it("counts the trimmed value (what the body sends), so padding never trips the cap", () => {
+    expect(validateForm(base({ venueAddress: `  ${addr(200)}  ` }), TZ, en)).toEqual({});
+  });
+  it("edit: an untouched legacy 250-char address does not block saving other fields", () => {
+    const legacy = base({ venueAddress: addr(250) });
+    expect(validateForm({ ...legacy, venueName: "Sân B" }, TZ, en, legacy)).toEqual({});
+  });
+  it("edit: once the legacy address is changed and still over 200, the Address field is flagged", () => {
+    const legacy = base({ venueAddress: addr(250) });
+    const e = validateForm({ ...legacy, venueAddress: addr(230) }, TZ, en, legacy);
+    expect(Object.keys(e)).toEqual(["venueAddress"]);
+    expect(validateForm({ ...legacy, venueAddress: addr(200) }, TZ, en, legacy)).toEqual({});
+  });
+  it("message is a vi/en pair", () => {
+    const vi = validateForm(base({ venueAddress: addr(201) }), TZ, (v) => v);
+    expect(vi.venueAddress).toBe("Địa chỉ tối đa 200 ký tự.");
   });
 });
 

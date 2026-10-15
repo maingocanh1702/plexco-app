@@ -87,6 +87,15 @@ describe("CSP nonce policy (flag-gated)", () => {
     );
   });
 
+  it("worker-src is exactly 'self': no blob:, data: or https: worker source", () => {
+    const directive = buildNonceCsp("n")
+      .split("; ")
+      .find((d) => d.startsWith("worker-src"));
+    expect(directive).toBe("worker-src 'self'");
+    expect(directive!.split(" ").slice(1)).toEqual(["'self'"]);
+    expect(directive).not.toMatch(/blob:|data:|https:|\*|unsafe/);
+  });
+
   it("newNonce is base64 of 16 bytes and differs per call", () => {
     const a = newNonce();
     const b = newNonce();

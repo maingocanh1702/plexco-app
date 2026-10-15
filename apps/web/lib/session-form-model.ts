@@ -22,6 +22,12 @@ export interface SessionFormValues {
   joinPolicy: "open" | "approval";
 }
 
+/**
+ * Max venue address length: the command caps it at 200 UTF-16 code units (DD-128 OD-4a), which is
+ * also the unit of the HTML maxLength attribute, so the input, the hint and this check agree.
+ */
+export const VENUE_ADDRESS_MAX = 200;
+
 export type FormErrors = Partial<Record<keyof SessionFormValues, string>>;
 
 export const emptyFormValues = (): SessionFormValues => ({
@@ -63,7 +69,18 @@ function slotsOf(v: SessionFormValues): number | null {
   return n >= 1 && n <= INT4_MAX ? n : Number.NaN;
 }
 
-export function validateForm(v: SessionFormValues, tz: string, t: TFn): FormErrors {
+/**
+ * `initial` (edit mode) lets the address check skip an address the host did not touch: a legacy
+ * 201-300 character one (the old edit limit was 300, with no server cap) is never sent by
+ * buildUpdateBody while unchanged, so it must not block saving other fields; once edited it is
+ * held to the cap here, pinned to the Address field instead of the generic INVALID_BODY summary.
+ */
+export function validateForm(
+  v: SessionFormValues,
+  tz: string,
+  t: TFn,
+  initial?: SessionFormValues,
+): FormErrors {
   const e: FormErrors = {};
   if (!v.sportId) e.sportId = t("Chọn môn thể thao.", "Choose a sport.");
 
@@ -78,6 +95,14 @@ export function validateForm(v: SessionFormValues, tz: string, t: TFn): FormErro
     e.endsAt = t(
       "Thời gian kết thúc phải sau thời gian bắt đầu.",
       "End time must be after start time.",
+    );
+  }
+
+  const address = v.venueAddress.trim();
+  if (address.length > VENUE_ADDRESS_MAX && address !== (initial?.venueAddress ?? "").trim()) {
+    e.venueAddress = t(
+      `Địa chỉ tối đa ${VENUE_ADDRESS_MAX} ký tự.`,
+      `The address is at most ${VENUE_ADDRESS_MAX} characters.`,
     );
   }
 

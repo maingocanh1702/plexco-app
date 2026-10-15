@@ -5,13 +5,15 @@ import { THEME_BG_DARK, THEME_BG_LIGHT } from "../lib/theme-colors";
 import { RegisterSw } from "../components/pwa/register-sw";
 import "./globals.css";
 
-// Headings use Be Vietnam Pro (DD-123 OD-7): unlike Sora it ships a "vietnamese" subset whose
-// unicode-range covers U+1EA0-1EF9, so stacked Vietnamese vowels render in the heading face, not
-// a fallback. It only has static weights; 700 is what every heading rule uses, 600 the semibold token.
+// Headings use Be Vietnam Pro (DD-123 OD-7): it ships a "vietnamese" subset whose unicode-range
+// covers U+1EA0-1EF9, so stacked Vietnamese vowels render in the heading face, not a fallback (the
+// previous heading face had no such subset). It only has static weights, and only 700 is loaded:
+// every --font-heading rule and h1-h4 use --font-bold (pinned by app/heading-font.test.ts), while
+// the 600 semibold token is only ever used on Inter. Add a weight here the day a heading needs it.
 // Self-hosted at build time by next/font; display swap + system fallbacks (see --font-* tokens).
 const beVietnamPro = Be_Vietnam_Pro({
   subsets: ["latin", "latin-ext", "vietnamese"],
-  weight: ["600", "700"],
+  weight: ["700"],
   variable: "--font-be-vietnam-pro",
   display: "swap",
 });

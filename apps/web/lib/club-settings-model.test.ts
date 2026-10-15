@@ -5,6 +5,7 @@ import {
   buildProfilePatch,
   clubNameProblem,
   defaultsValues,
+  normalizePriceInput,
   profileValues,
   timezoneOptions,
   unsureAfter,
@@ -153,6 +154,45 @@ describe("buildDefaultsPatch", () => {
     expect(buildDefaultsPatch(empty, defaultsValues(empty, fmt))).toEqual({
       patch: null,
       problem: null,
+    });
+  });
+});
+
+describe("normalizePriceInput (displayed default price === saved default price)", () => {
+  const savedFor = (typed: string) =>
+    buildDefaultsPatch(club, { ...defaultsValues(club, (n) => String(n)), price: typed }).patch
+      ?.defaultPriceAmount;
+
+  it.each([
+    ["1,500.50", "150.050", 150050],
+    ["1.5", "15", 15],
+    ["50000", "50.000", undefined], // equals the saved club price -> no patch
+    ["12 345", "12.345", 12345],
+    ["0", "0", 0],
+  ] as const)("typed %j shows %j and saves %j", (typed, shown, saved) => {
+    const display = normalizePriceInput(typed);
+    expect(display).toBe(shown);
+    // what the box shows, fed back through the patch builder, is what gets saved
+    expect(savedFor(display)).toBe(saved);
+    expect(savedFor(typed)).toBe(saved);
+  });
+
+  it("is idempotent, so re-rendering the shown value never changes it", () => {
+    for (const typed of ["1,500.50", "1.5", "007", "2147483647"]) {
+      const once = normalizePriceInput(typed);
+      expect(normalizePriceInput(once)).toBe(once);
+    }
+  });
+
+  it("empty and non-digit input clear the box; an over-int4 value is kept as typed (submit rejects it)", () => {
+    expect(normalizePriceInput("")).toBe("");
+    expect(normalizePriceInput("abc")).toBe("");
+    expect(normalizePriceInput("2147483648")).toBe("2147483648");
+    expect(
+      buildDefaultsPatch(club, { ...defaultsValues(club, String), price: "2147483648" }),
+    ).toEqual({
+      patch: null,
+      problem: "price_invalid",
     });
   });
 });
