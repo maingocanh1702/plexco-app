@@ -110,9 +110,12 @@ export function devLoginRouting(
     const decision = evaluateDevLoginGate(env, request.headers);
     if (!decision.open) report(decision.reason);
     const methodOk = ROUTE_METHODS.includes(request.method.toUpperCase());
-    // Owner-accepted residual (owner, 2026-10-15, "S5 A2 waived"): with dev-login on, a request to
-    // the /internal-dev-login prefix that fails only the per-request checks gets this empty 404,
-    // not the framework's HTML 404. That reveals that dev-login is on; it cannot log anyone in.
+    // Owner-accepted residual (owner, 2026-10-15, "S5 A2 waived"): with dev-login on, every refusal
+    // on the /internal-dev-login prefix (matched ignoring case and percent-encoding) is an empty 404,
+    // not the framework's HTML 404: failed per-request checks and non-route methods such as PROPFIND
+    // (here), and the handlers' own refusals (exposure probe, DB guard). With the gate open,
+    // /dev-login also 307s to /internal-dev-login/page first. Both show that dev-login is on; neither
+    // lets anyone log in.
     return methodOk && decision.open ? null : { kind: "not_found" };
   }
 

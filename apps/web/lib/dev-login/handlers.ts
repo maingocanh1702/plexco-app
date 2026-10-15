@@ -17,7 +17,11 @@ import {
   readDevLoginCsrfCookie,
   setDevLoginCsrfCookie,
 } from "./csrf";
-import { devLoginDatabaseVerdict, devLoginOptInCommand } from "./database-guard";
+import {
+  DEV_LOGIN_OPT_IN_RUN_AS,
+  devLoginDatabaseVerdict,
+  devLoginOptInCommand,
+} from "./database-guard";
 import { devLoginNotFound, evaluateDevLoginGate, gateClosedRemedy, readDevLoginEnv } from "./gate";
 import { devServerLoopbackOnly } from "./network-exposure";
 import { buildDevLoginDocument, normalizeDevLoginPageError } from "./page-document";
@@ -68,7 +72,7 @@ async function gateRefusal(request: Request): Promise<Response | null> {
       reason: database.reason,
       remedy:
         database.reason === "database_not_opted_in"
-          ? `as the database owner: ${devLoginOptInCommand(database.database)}`
+          ? `as ${DEV_LOGIN_OPT_IN_RUN_AS}: ${devLoginOptInCommand(database.database)}`
           : "use the app role (NOBYPASSRLS) in DATABASE_URL, never the superuser",
     });
     return devLoginNotFound();

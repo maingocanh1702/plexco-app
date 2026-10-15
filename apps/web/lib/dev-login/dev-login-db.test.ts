@@ -138,7 +138,8 @@ async function freshAppPool(): Promise<void> {
 
 beforeAll(async () => {
   ctx = await setupRlsTestContext(DB_NAME);
-  // The database owner's deliberate opt-in (database-guard.ts), before any app connection exists.
+  // The deliberate database-level opt-in (database-guard.ts; ctx.owner connects as
+  // DATABASE_URL_TEST's superuser), before any app connection exists.
   await optIn(true);
   appUrl = String(ctx.appPool.options.connectionString);
   vi.stubEnv("DATABASE_URL", appUrl);
@@ -482,7 +483,7 @@ describe("the opt-in is the DATABASE's own setting, and both roles must honour R
     expect(await pageStatus()).toBe(200);
   });
 
-  it("an owner's RESET is refused on the very next request, through the same warm pool", async () => {
+  it("a RESET is refused on the very next request, through the same warm pool", async () => {
     expect(await pageStatus()).toBe(200); // the pool is warm now
     await optIn(false);
     try {

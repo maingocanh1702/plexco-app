@@ -125,7 +125,10 @@ export function forwardingHeadersDisqualify(
 /**
  * Process-level conditions first (env-policy.mjs, shared with next.config.mjs and the seed), then
  * the bind evidence, the raw Host and the forwarding headers. Order only decides which reason is
- * reported; every condition must hold for `open: true`.
+ * reported; every condition must hold for `open: true`. One relabel, never a different decision: a
+ * port-less loopback Host (curl -H 'Host: localhost') fails the x-forwarded-port check, because Next
+ * injects the server's real port, not 80. That is a Host problem, not a proxy: if the check passes
+ * with the server's own port in place of the missing one, the reason is "host".
  */
 export function evaluateDevLoginGate(env: DevLoginEnv, headers: GateHeaders): DevLoginGateDecision {
   const environment = devLoginEnvironmentVerdict(env);
@@ -135,7 +138,9 @@ export function evaluateDevLoginGate(env: DevLoginEnv, headers: GateHeaders): De
   const loopback = parseLoopbackHost(host);
   if (host === null || loopback === null) return { open: false, reason: "host" };
   if (forwardingHeadersDisqualify(headers, host, loopback.port)) {
-    return { open: false, reason: "forwarded" };
+    const onlyThePortIsMissing =
+      loopback.port === null && !forwardingHeadersDisqualify(headers, host, env.PORT ?? null);
+    return { open: false, reason: onlyThePortIsMissing ? "host" : "forwarded" };
   }
   return { open: true };
 }
@@ -156,7 +161,7 @@ export function gateClosedRemedy(reason: string): string | undefined {
     case "database_url":
       return "DATABASE_URL must name localhost, 127.0.0.1, [::1] or postgres, with no query string";
     case "host":
-      return "open the page on localhost or 127.0.0.1 (raw Host must be loopback)";
+      return "open http://localhost:<port>/dev-login: the raw Host must be loopback and carry the dev server's port";
     case "forwarded":
       return "do not reach the dev server through a proxy or tunnel";
     default:
@@ -170,7 +175,8 @@ export function gateClosedRemedy(reason: string): string | undefined {
  * leaves them alone and the framework answers its own 404. It answers requests to the
  * IMPLEMENTATION paths, which exist only while every process-level condition holds, whenever the
  * per-request gate is closed (from the middleware) or the handler's own checks fail (probe, DB
- * guard). It is a refusal, NOT the framework's 404 body; that residual is stated in the PR.
+ * guard). It is a refusal, NOT the framework's 404 body: the owner-accepted residual (owner,
+ * 2026-10-15, "S5 A2 waived"), described where the middleware produces it (routing.ts).
  */
 export function devLoginNotFound(): Response {
   return new Response(null, { status: 404, headers: { "cache-control": "no-store" } });

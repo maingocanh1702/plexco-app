@@ -11,7 +11,7 @@
  *  - PRE-FILTERS ONLY: "the database is on this machine". isLocalDatabaseUrl below checks the host
  *    STRING, which an ssh -L / kubectl port-forward / fly proxy to a shared database, or a bare
  *    `postgres` resolved through a DNS search domain, would also pass. The positive check is
- *    database-side (database-guard.ts: the database owner's `plexco.dev_login = 'on'` opt-in, and
+ *    database-side (database-guard.ts: the database-level `plexco.dev_login = 'on'` opt-in, and
  *    an RLS-enforced role), run by the seed and by every dev-login handler.
  *  - DOES NOT DEFEND: a malicious process on the developer's own machine (it can already read the env
  *    and the database). Per-request concerns (bind evidence, Host, forwarding headers) are gate.ts.

@@ -30,8 +30,10 @@ import { devPersonaSubjectInput, type DevPersona } from "./personas";
  *
  * AUDIT, precisely. EVERY call appends one durable auth_audit_events row, written by the definer
  * and indistinguishable in shape from a real Google login: event_type 'login_success',
- * outcome_class 'success', actor_class 'google'. ONLY request_ref says it was a dev persona:
- *   dev_login_<uuid>  a dev-login (one per successful POST);
+ * outcome_class 'success', actor_class 'google' (cell 7, an identity conflict, writes
+ * 'identity_conflict' / 'conflict'). The row is written before issueSession(), so it stays even
+ * when the POST then ends in a stale-cookie reauth. ONLY request_ref says it was a dev persona:
+ *   dev_login_<uuid>  a dev-login (one per POST that reaches the definer);
  *   dev_seed_<uuid>   a `pnpm dev:seed` run (one per persona per run, i.e. 3 rows for "logins"
  *                     that never happened). app has no read-only path to an identity (every
  *                     app-callable identity function writes), so the seed cannot skip the call.

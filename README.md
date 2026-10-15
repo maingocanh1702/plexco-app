@@ -130,12 +130,13 @@ pnpm --filter @plexco/bot start:worker
 **đúng đường của Google sign-in** (account → Person → `issueSession()`, cùng cookie/CSRF/`authorize()`/RLS).
 Chỉ mở khi đủ: `next dev` (NODE_ENV=development) · `PLEXCO_DEV_LOGIN=1` · `TRUSTED_INGRESS_PROVIDER=direct` ·
 dev server chạy **đúng** `-H 127.0.0.1` (bắt buộc; `localhost`, `::`, `::1` hay không `-H` đều bị từ chối) ·
-`DATABASE_URL` trỏ localhost/127.0.0.1/[::1]/`postgres` **và** database đã được owner của nó opt-in
+`DATABASE_URL` trỏ localhost/127.0.0.1/[::1]/`postgres` **và** database đã opt-in ở cấp database
 (`plexco.dev_login = 'on'`) · kết nối bằng role `app` (không superuser/BYPASSRLS) · Host loopback, không header
 forwarding. Thiếu một điều kiện ⇒ 404.
 
 ```bash
-# một lần, bằng role owner của DB (KHÔNG làm trên DB dùng chung/staging):
+# một lần, bằng superuser hoặc role được GRANT SET ON PARAMETER plexco.dev_login (từ PG 15, owner của DB
+# không có grant đó bị "permission denied to set parameter"); KHÔNG làm trên DB dùng chung/staging:
 docker compose -f infra/docker-compose.yml exec -T postgres \
   psql -U plexco -d plexco -c "ALTER DATABASE plexco SET plexco.dev_login = 'on'"
 export ENCRYPTION_KEY="$(openssl rand -base64 32)"   # tạo MỘT lần, dùng chung cho seed và dev server
@@ -158,13 +159,15 @@ Khi `/dev-login` trả 404 dù đã đặt `PLEXCO_DEV_LOGIN`, log của dev ser
 có dòng `auth.dev_login.gate_closed` ghi lý do và cách sửa (`bind` = thiếu `-H 127.0.0.1`, `database_not_opted_in`, ...).
 
 Giới hạn đã biết:
-- **Residual owner đã chấp nhận** (owner, 2026-10-15, "S5 A2 waived"): khi dev-login đang bật, prefix
-  `/internal-dev-login` trả 404 rỗng thay cho trang 404 HTML của framework nếu chỉ các kiểm tra theo từng request
-  thất bại (Host không loopback, header forwarding, không có bằng chứng bind 127.0.0.1). Điều đó cho biết
-  dev-login đang bật, nhưng không ai đăng nhập được qua đó.
-- **Audit:** mỗi lần dev-login ghi dòng `auth_audit_events` của definer `login_success / success / google`, chỉ
-  `request_ref` `dev_login_<uuid>` đánh dấu là dev; mỗi lần chạy seed thêm 3 dòng `dev_seed_<uuid>`. Owner đã từ
-  chối migration `auth_audit_dev_login` (2026-10-15), nên đây là giới hạn đã biết.
+- **Residual owner đã chấp nhận** (owner, 2026-10-15, "S5 A2 waived"): khi dev-login đang bật, mọi lần từ chối
+  trên prefix `/internal-dev-login` (khớp không phân biệt hoa/thường và percent-encoding) là 404 rỗng thay cho
+  trang 404 HTML của framework: kiểm tra theo từng request thất bại, method không phải route (vd. PROPFIND), và
+  các lần handler từ chối (probe lộ mạng, DB guard). Khi gate mở, `/dev-login` còn 307 sang
+  `/internal-dev-login/page` trước. Những điều đó cho biết dev-login đang bật, nhưng không ai đăng nhập được qua đó.
+- **Audit:** mỗi POST dev-login tới được definer ghi một dòng `auth_audit_events` của definer (thường là
+  `login_success / success / google`; cell 7 ghi `identity_conflict / conflict`), kể cả khi sau đó POST kết thúc ở
+  reauth do cookie cũ; chỉ `request_ref` `dev_login_<uuid>` đánh dấu là dev. Mỗi lần chạy seed thêm 3 dòng
+  `dev_seed_<uuid>`. Owner đã từ chối migration `auth_audit_dev_login` (2026-10-15), nên đây là giới hạn đã biết.
 
 ---
 

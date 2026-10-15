@@ -4,8 +4,8 @@ import { expect, test, type Request } from "@playwright/test";
  * OPT-IN, LOCAL ONLY: a real Chromium signs in through dev-login on `next dev`. It cannot run in CI
  * (e2e-web serves the production build, where dev-login does not exist, with no database), so it is
  * skipped unless DEV_LOGIN_E2E_BASE_URL names a running dev server with the gate open:
- *   1. a local database, migrated, opted in by its owner
- *      (ALTER DATABASE <db> SET plexco.dev_login = 'on') and seeded (`pnpm dev:seed`);
+ *   1. a local database, migrated, opted in by a superuser (or a role granted SET ON PARAMETER
+ *      plexco.dev_login): ALTER DATABASE <db> SET plexco.dev_login = 'on'; and seeded (`pnpm dev:seed`);
  *   2. PLEXCO_DEV_LOGIN=1 TRUSTED_INGRESS_PROVIDER=direct DB_EXPECTED_ROLE=app KMS_PROVIDER=local
  *      DATABASE_URL=<app-role URL> ENCRYPTION_KEY=<seed key> next dev -H 127.0.0.1 -p 3311
  *   3. DEV_LOGIN_E2E_BASE_URL=http://localhost:3311 \

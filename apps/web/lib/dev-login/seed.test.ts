@@ -83,7 +83,7 @@ describe("dev:seed refuses, after connecting but BEFORE any write, a database th
     return { handle: { pool: { query }, db: {}, close } as never, query, close };
   }
 
-  it("not opted in by its owner (a port-forward to a shared database looks local by host string)", async () => {
+  it("not opted in (a port-forward to a shared database looks local by host string)", async () => {
     const { handle, query, close } = fakeHandle({
       database: "plexco",
       opt_in: false,

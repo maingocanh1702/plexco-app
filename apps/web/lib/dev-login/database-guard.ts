@@ -9,12 +9,14 @@ import type { DbHandle } from "@plexco/db";
  *     `postgres` resolved through a DNS search domain, would still pass it. So the database itself
  *     must carry the DATABASE-LEVEL setting
  *        ALTER DATABASE <db> SET plexco.dev_login = 'on';
- *     which only the database owner or a superuser can write. It is read from the catalog
- *     (pg_db_role_setting, setrole = 0, setdatabase = this database), never with current_setting():
- *     the session value can be forged by any client (PGOPTIONS='-c plexco.dev_login=on', measured by
- *     review round 2) and a role-level `ALTER ROLE … SET` belongs to the role, not to the database.
- *     Read per request, so the owner's RESET takes effect on the next request (warm pooled
- *     connections do not matter). Configuration, not schema: no migration, no table.
+ *     which only a superuser, or a role granted SET ON PARAMETER plexco.dev_login, can write (since
+ *     PG 15 a database owner without that grant gets "permission denied to set parameter", measured
+ *     on 16.15). It is read from the catalog (pg_db_role_setting, setrole = 0, setdatabase = this
+ *     database), never with current_setting(): the session value can be forged by any client
+ *     (PGOPTIONS='-c plexco.dev_login=on', measured by review round 2) and a role-level
+ *     `ALTER ROLE … SET` belongs to the role, not to the database. Read per request, so a RESET
+ *     takes effect on the next request (warm pooled connections do not matter). Configuration, not
+ *     schema: no migration, no table.
  *  2. An RLS-enforced role. A superuser or BYPASSRLS role would make every dev-persona request
  *     bypass RLS while dev-login promises RLS parity with real sign-in. Checked for BOTH
  *     current_user and session_user (a superuser login plus `-c role=app` changes only
@@ -25,6 +27,9 @@ export type DevLoginDatabaseVerdict =
   | { ok: false; reason: "database_not_opted_in" | "role_bypasses_rls"; database: string };
 
 export const DEV_LOGIN_DB_SETTING = "plexco.dev_login";
+
+/** Who can run the opt-in command (see 1. above); quoted by the seed and handler refusals. */
+export const DEV_LOGIN_OPT_IN_RUN_AS = `a superuser (or a role granted SET ON PARAMETER ${DEV_LOGIN_DB_SETTING})`;
 
 export function devLoginOptInCommand(database: string): string {
   return `ALTER DATABASE ${database} SET ${DEV_LOGIN_DB_SETTING} = 'on'`;

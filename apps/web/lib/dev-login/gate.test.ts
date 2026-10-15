@@ -3,6 +3,7 @@ import {
   devLoginNotFound,
   evaluateDevLoginGate,
   forwardingHeadersDisqualify,
+  gateClosedRemedy,
   loopbackBindEvidence,
   parseLoopbackHost,
   readDevLoginEnv,
@@ -212,6 +213,41 @@ describe("evaluateDevLoginGate — the matrix: each condition false on its own c
     expect(evaluateDevLoginGate(OPEN_ENV, headers)).toEqual({ open: false, reason: "host" });
   });
 
+  it.each([
+    ["localhost", "127.0.0.1"],
+    ["127.0.0.1", "127.0.0.1"],
+    ["[::1]", "::1"],
+  ])(
+    "host: a port-less Host %s stays closed and is labelled host, not forwarded (N2)",
+    (host, socket) => {
+      // curl -H 'Host: localhost' http://127.0.0.1:3311/...: Next injects x-forwarded-port 3311.
+      const portless = directHeaders(host, {
+        "x-forwarded-port": "3311",
+        "x-forwarded-for": socket,
+      });
+      // The decision input is unchanged: the forwarding check itself still refuses it...
+      expect(forwardingHeadersDisqualify(portless, host, null)).toBe(true);
+      // ...so the decision stays closed; only the label says what is actually wrong.
+      expect(evaluateDevLoginGate(OPEN_ENV, portless)).toEqual({ open: false, reason: "host" });
+    },
+  );
+
+  it("forwarded: a port-less Host keeps the forwarded label when something else disqualifies it", () => {
+    const viaProxy = directHeaders("localhost", { "x-forwarded-port": "3311", via: "1.1 proxy" });
+    expect(evaluateDevLoginGate(OPEN_ENV, viaProxy)).toEqual({ open: false, reason: "forwarded" });
+    const clientSetPort = directHeaders("localhost", { "x-forwarded-port": "8080" });
+    expect(evaluateDevLoginGate(OPEN_ENV, clientSetPort)).toEqual({
+      open: false,
+      reason: "forwarded",
+    });
+    // A Host naming another port is a port-forward (ssh -L 8080:localhost:3311), not a missing port.
+    const portForward = directHeaders("localhost:8080", { "x-forwarded-port": "3311" });
+    expect(evaluateDevLoginGate(OPEN_ENV, portForward)).toEqual({
+      open: false,
+      reason: "forwarded",
+    });
+  });
+
   it("forwarded: a tunnel that rewrites Host to localhost still closes (ngrok --host-header=rewrite)", () => {
     const tunnel = new Headers({
       host: "localhost:3000",
@@ -257,6 +293,12 @@ describe("helpers", () => {
     expect(
       loopbackBindEvidence({ ...OPEN_ENV, __NEXT_PRIVATE_ORIGIN: "http://127.0.0.1:3311/" }),
     ).toBe(false);
+  });
+
+  it("the host remedy names the port, since a port-less Host is reported as host", () => {
+    expect(gateClosedRemedy("host")).toMatch(/http:\/\/localhost:<port>\/dev-login/);
+    expect(gateClosedRemedy("host")).toMatch(/carry the dev server's port/);
+    expect(gateClosedRemedy("forwarded")).toMatch(/proxy or tunnel/);
   });
 
   it("the second-layer refusal is a bare 404 that never caches", async () => {
