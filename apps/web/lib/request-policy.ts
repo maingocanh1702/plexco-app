@@ -49,10 +49,17 @@ export function cspNonceEnabled(raw: string | undefined): boolean {
  * adds script-src. `'strict-dynamic'` lets the nonced Next bootstrap load its own chunks without
  * enumerating hosts; the `https:` fallback is ignored by browsers that honour strict-dynamic and
  * keeps old engines from blocking everything.
+ *
+ * `worker-src 'self'` (DD-123 OD-7) is explicit because a worker with no worker-src falls back to
+ * child-src and then script-src, and under 'strict-dynamic' a same-origin URL without a nonce is
+ * not trusted: /sw.js (the PWA service worker, components/pwa/register-sw.tsx) would be refused the
+ * moment the flag is on. next.config.mjs' static CSP has no script-src/default-src/child-src, so
+ * workers are unrestricted there and it needs no worker-src.
  */
 export function buildNonceCsp(nonce: string): string {
   return [
     `script-src 'nonce-${nonce}' 'strict-dynamic' https:`,
+    "worker-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

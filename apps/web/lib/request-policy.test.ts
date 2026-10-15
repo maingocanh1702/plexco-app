@@ -70,6 +70,23 @@ describe("CSP nonce policy (flag-gated)", () => {
     expect(csp).not.toMatch(/unsafe-inline|unsafe-eval|default-src/);
   });
 
+  it("allows the same-origin service worker: exactly one worker-src 'self' (DD-123 OD-7)", () => {
+    const csp = buildNonceCsp("abc123");
+    expect(csp.split("; ").filter((d) => d.startsWith("worker-src"))).toEqual([
+      "worker-src 'self'",
+    ]);
+    expect(csp).toBe(
+      [
+        "script-src 'nonce-abc123' 'strict-dynamic' https:",
+        "worker-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "object-src 'none'",
+      ].join("; "),
+    );
+  });
+
   it("newNonce is base64 of 16 bytes and differs per call", () => {
     const a = newNonce();
     const b = newNonce();

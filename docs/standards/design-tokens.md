@@ -2,9 +2,9 @@
 
 > Foundation-level design tokens cho web app. Khai báo CSS custom properties trong `:root`.
 > **Khi cần color/spacing/font mới → thêm vào đây kèm ghi chú.**
-> v2.0 · 2026-10-13 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
+> v2.1 · 2026-10-15 · **SoT duy nhất cho giá trị token** — `channels/web/design-tokens.md` chỉ còn là pointer (DD-59 ✅).
 > **Design System:** xem `design-system.md` (v1.0, 07/08/2026) cho component catalog, usage tokens, layout patterns, motion, a11y, và responsive grid — document đó reference values từ file này.
-> **Authority boundary (v2.0):** value set **target C — Energetic Orange + Sora/Inter đã ACTIVE** (DD-81 chọn, DD-122 D1 kích hoạt ngày 12/10/2026, thay cho cổng `design.pen`; xem `channels/web/theme-direction-2026-07.md` §5–§6). Code đọc đúng các giá trị này từ `apps/web/app/globals.css` — file duy nhất được chứa literal màu; `apps/web/app/tokens-only.test.ts` fail nếu component CSS/TSX chứa hex/rgba hoặc dùng `var(--x)` chưa định nghĩa. Nhu cầu token: `token-needs-matrix.md`.
+> **Authority boundary (v2.0):** value set **target C — Energetic Orange + Be Vietnam Pro/Inter đã ACTIVE** (DD-81 chọn Sora/Inter, DD-123 OD-7 đổi heading Sora → Be Vietnam Pro ngày 15/10/2026 vì Sora không có subset vietnamese; DD-122 D1 kích hoạt ngày 12/10/2026, thay cho cổng `design.pen`; xem `channels/web/theme-direction-2026-07.md` §5–§6). Code đọc đúng các giá trị này từ `apps/web/app/globals.css` — file duy nhất được chứa literal màu; `apps/web/app/tokens-only.test.ts` fail nếu component CSS/TSX chứa hex/rgba hoặc dùng `var(--x)` chưa định nghĩa. Nhu cầu token: `token-needs-matrix.md`.
 >
 > ⚠️ **2026-10-12 — DD-122 D1 (owner):** gate `design.pen`/exporter/drift-proof **không còn áp dụng**; agent triển khai **được activate** target C (Orange `#FF5A1F` · `--on-primary #22100A` · Sora/Inter) vào `apps/web` và cập nhật giá trị trong file này trong PR FE đầu tiên (M1) theo bước 2 §6 `../channels/web/theme-direction-2026-07.md`. Cho tới PR đó, giá trị bên dưới vẫn là Indigo/Outfit (chưa đổi).
 
@@ -116,13 +116,13 @@
 
 ```css
 :root {
-  --font-heading: var(--font-sora), 'Sora', var(--font-inter), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-heading: var(--font-be-vietnam-pro), 'Be Vietnam Pro', var(--font-inter), system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-sans: var(--font-inter), 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 }
 ```
 
-> Fonts qua `next/font/google` (tự host lúc build, `display: swap`): Sora (subsets `latin`, `latin-ext` — Sora KHÔNG có subset `vietnamese`, latin-ext thiếu U+1EA0–1EF1 nên các nguyên âm xếp dấu của tiếng Việt rơi về Inter qua `--font-heading` (`adjustFontFallback: false` trong `app/layout.tsx` để Inter — không phải Arial do next/font chèn — cấp glyph U+1EA0–1EF1); đề xuất đổi heading font có subset vietnamese = DD của owner) cho heading, Inter (`latin`, `vietnamese`) cho body. `--font-sora` / `--font-inter` do `next/font` gắn trên `<html>`.
+> Fonts qua `next/font/google` (tự host lúc build, `display: swap`): **Be Vietnam Pro** (subsets `latin`, `latin-ext`, `vietnamese`; weights `600` + `700` — font chỉ có weight tĩnh, mọi heading dùng `--font-bold` 700, `--font-semibold` 600 là token còn lại) cho heading, Inter (`latin`, `vietnamese`) cho body. Subset `vietnamese` của Be Vietnam Pro có `unicode-range` phủ U+1EA0–1EF9 (đo ngày 15/10/2026 từ `font-data.json` của Next 15.5.25 và CSS Google Fonts; CSS build ra được kiểm lại trong `.next`), nên các nguyên âm xếp dấu của tiếng Việt hiện bằng chính font heading, không còn mixed-font. Sora (DD-81, subsets `latin`, `latin-ext` — KHÔNG có `vietnamese`, thiếu U+1EA0–1EF1) đã bị thay (DD-123 OD-7). `--font-be-vietnam-pro` / `--font-inter` do `next/font` gắn trên `<html>`.
 
 ### Type Scale
 
@@ -315,7 +315,7 @@
 
 ## 10. Tokens merged từ `channels/web` (v1.1 — 19/07/2026)
 
-> Các token chỉ tồn tại ở `channels/web/design-tokens.md` cũ, đưa về SoT dưới dạng **alias về foundation token** khi có thể (playbook: token per-surface chỉ được alias, không giá trị mới). v2.0: `--font-heading` đã chuyển sang Sora (§2); `--bg-page`/`--bg-input` nay là role token ở §1; `--bg-sidebar` bỏ (sidebar dùng `--bg-card`).
+> Các token chỉ tồn tại ở `channels/web/design-tokens.md` cũ, đưa về SoT dưới dạng **alias về foundation token** khi có thể (playbook: token per-surface chỉ được alias, không giá trị mới). v2.0: `--font-heading` đã chuyển sang Sora, v2.1 sang Be Vietnam Pro (§2); `--bg-page`/`--bg-input` nay là role token ở §1; `--bg-sidebar` bỏ (sidebar dùng `--bg-card`).
 
 ```css
 :root {
@@ -358,6 +358,7 @@
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 15/10/2026 | v2.1 | **Heading font Sora → Be Vietnam Pro (DD-123 OD-7, owner 14/10/2026):** `--font-heading` = `var(--font-be-vietnam-pro), 'Be Vietnam Pro', var(--font-inter), …`; `--font-sora` thay bằng `--font-be-vietnam-pro` (`app/layout.tsx`, `app/tokens-only.test.ts`). Lý do: Sora không có subset `vietnamese`. Be Vietnam Pro có subset `vietnamese` (unicode-range phủ U+1EA0–1EF9, đã kiểm). Weights tải `600` + `700`. Không đổi màu/spacing/type-scale/weight token. |
 | 13/10/2026 | v2.0 | **Activate target C (DD-122 D1 / theme-direction §6 bước 2):** Indigo/Outfit → Energetic Orange `#FF5A1F` + Sora/Inter. `--on-primary` `#22100A`; thêm `--primary-text`, `*-text`/`*-subtle` semantic, `--paid/--pending/--unpaid` alias, `--border-strong`/`--border-hairline`, `--focus-ring`, `--shadow-card`, `--touch-target`, shell layout tokens (`--rail-width`, `--header-height`, `--bottom-nav-height`). Giá trị dùng hex (đo contrast được); code = `apps/web/app/globals.css`. Giữ nguyên cấu trúc §1–§10. |
 | 28/07/2026 | v1.2 | **Authority/status only; zero value change.** DD-59 chốt `.md` value SoT; DD-81 chọn target C + Sora/Inter nhưng current Indigo/Outfit giữ active tới tracked owner-approved `design.pen` + visual/WCAG/drift gate. |
 | 19/07/2026 | v1.1 | **DD-59 reconcile (owner 19/07):** merge `channels/web/design-tokens.md` v0.1 về đây — file đó thành pointer. Thêm §10 (font-heading/bg-page/bg-input/bg-sidebar/text-inverse/text-link, alias-first) + Conflict Resolution Log. Sửa `--sport-tennis` → hsl(48,96%,53%) (SoT cũ trùng `--warning`). Header khai báo SoT duy nhất; link `token-needs-matrix.md`. |
