@@ -5781,16 +5781,18 @@ scope: []
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — chờ owner chọn chính sách retention hoặc sampling (DD-126).
+_readiness: NOT_CODE_READY — owner đã quyết ở DD-131 OD-2 (2026-10-14): MVP không có job retention cho `routing_audit`. Row giữ làm ý tưởng sau MVP; chưa có việc cần làm trong MVP.
 notes: |
   PR #47 (M3a) ghi 1 row `routing_audit` (action `zalo.secret_decrypt`) cho mỗi lần nạp cache secret (60 s) và mỗi lần decrypt token.
   Audit là bằng chứng — retention không được xoá row đang là bằng chứng của một sự kiện bảo mật chưa đóng. Cần quyết định trước khi
   thêm job xoá/sampling.
-  source: PR #47 (M3a) review round 2 backlog note · DD-126
+  Cập nhật 2026-10-15: DD-131 OD-2 chốt "không job retention cho `routing_audit` trong MVP (ghi 1 dòng backlog)" — row này chính là dòng backlog đó. Khi làm sau MVP, ràng buộc ở trên (không xoá row đang là bằng chứng của sự kiện bảo mật chưa đóng) vẫn giữ.
+  source: PR #47 (M3a) review round 2 backlog note · DD-126 · DD-131 OD-2
 
 ## task: session-close-cancel-roster-review-policy
 title: review_policy cho close/cancel session có roster/charge — gỡ chặn luồng "chạy buổi → đóng" (hệ quả DD-117)
-status: idea
+status: merged
+note_merged: delivered by PR #55 (merge `8d4b4b6`, 2026-10-15), hand-reconciled 2026-10-15. The block is lifted by policy, NOT by the `review_policy` model this row's title named: DD-131 OD-1 reversed DD-117 D3 on the close side — `close` refuses open debt with 409 `CLOSE_BLOCKED_OPEN_DEBT` (+ a list of players with an open balance, ids and display names only); `cancel` keeps gate #3 but blocks only charges carrying recorded money (net allocated > 0); a removed unpaid player's void charge no longer blocks cancel. No `review_policy` migration exists on main (the review_policy / impact_policy subsystem stays absent: `packages/db/src/session-service.ts` ~`:974`, `:1460-1474`). Was: idea
 risk: P1
 change_class: schema-migration
 depends_on: []
@@ -5881,7 +5883,8 @@ notes: |
 
 ## task: identity-definer-bypassrls-ownership-0054
 title: Chọn mô hình owner cho definer `link_code_reparent_empty_person` (0054) dưới NOBYPASSRLS
-status: idea
+status: merged
+note_merged: delivered by PR #49 (merge `561086a`, 2026-10-14), hand-reconciled 2026-10-15 (the row sat at `idea`, which `autopilot-backlog-reconcile` never examines; merged_probe stays null). Owner chose option (a), DD-131 OD-3 (= DD-127): dedicated role `identity_definer` (NOLOGIN, BYPASSRLS) owns the 0054 definer through a `SET ROLE` bracket (`infra/postgres-init/03-identity-definer.sql`, wired into `pnpm db:bootstrap`); consume + re-parent run in ONE transaction. R1 on DO is out of scope (DD-132 removed DO from the MVP). Optional hardening is tracked in `identity-link-hardening-consumer-column`. Was: idea
 risk: P1
 change_class: security-posture
 depends_on: []
@@ -5917,7 +5920,7 @@ notes: |
 
 ## task: web-bot-vnd-display-convention
 title: Một convention hiển thị VND cho web và bot (hiện `50.000 ₫` trên web, `110.000đ` trên bot)
-status: idea
+status: in-flight
 risk: P2
 change_class: code
 depends_on: []
@@ -5926,11 +5929,12 @@ scope: []
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — chờ owner chọn convention (DD-128 owner choice b).
+_readiness: owner đã chọn convention ở DD-131 OD-4(b) (2026-10-14): `150.000đ`, dấu chấm phân nghìn, chữ thường U+0111 ngay sau chữ số, không dấu cách, không bao giờ U+20AB, cùng output cho vi và en. Phần web đang ở PR #57 (CHƯA merge) nên `in-flight`; flip `merged` bằng tay khi #57 vào main.
 notes: |
   PR #48 (M2b) owner note: hai format VND cùng tồn tại (web `50.000 ₫`, bot `110.000đ`). Chưa có decision chọn một. Khi chọn, chuẩn hoá
   ở helper dùng chung thay vì sửa hai nơi.
-  source: PR #48 (M2b) owner notes · DD-128
+  Cập nhật 2026-10-15: phần web (một formatter `formatVnd` trong `apps/web/lib/money.ts` + guard `apps/web/lib/money-single-formatter-guard.test.ts`) nằm trong PR #57 (nhánh `feat/mvp-local-polish`, đo `git show origin/feat/mvp-local-polish:apps/web/lib/money.ts`), chưa merge. `apps/bot/src` không có formatter VND nào trên main (không còn gì để căn chỉnh ở phía bot trong repo này). Ghi chú owner: `1.500đ` hiện cả ở UI tiếng Anh nên trình đọc màn hình tiếng Anh có thể đọc như số thập phân; format đã được owner ký.
+  source: PR #48 (M2b) owner notes · DD-128 · DD-131 OD-4(b) · PR #57
 
 ## task: app-worker-test-password-clash-flake
 title: Flake CI `password authentication failed for user app_worker`: hai mật khẩu test khác nhau cho cùng role cluster-global
@@ -6049,7 +6053,7 @@ risk: P3
 change_class: docs-reconcile
 depends_on: []
 invariants: []
-scope: [docs/channels/web/FE/feature_sessions_fe.md, docs/features/BE/feature_zalo_channel_tech.md, docs/features/README.md, docs/standards/BUILD-STATUS.md]
+scope: [docs/channels/web/FE/feature_sessions_fe.md, docs/features/BE/feature_zalo_channel_tech.md, docs/features/README.md, docs/standards/BUILD-STATUS.md, docs/channels/web/theme-direction-2026-07.md, docs/channels/web/README.md, docs/channels/web/design-brief.md, docs/channels/web/designer-kickoff.md, docs/standards/design-system.md, .github/workflows/ci.yml]
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
@@ -6059,7 +6063,10 @@ notes: |
   (2) `docs/features/BE/feature_zalo_channel_tech.md` §3: hàng Error Codes (`WEBHOOK_SIGNATURE_INVALID` 400, ~`:158-164`) và ví dụ signature còn mô tả shape OA cũ; ghi chú DD-126 (~`:154`) đã thay shape.
   (3) `docs/features/README.md:77` pin `BE/feature_identity_tech.md` v1.13, file hiện là v1.19 (FE v1.11 ở cùng hàng chưa đo).
   (4) `docs/standards/BUILD-STATUS.md` chưa cập nhật cho M4 trở đi (T12b có thể sửa mục này; bỏ khỏi lane nếu đã sửa).
-  source: S6 · S3 · S4
+  (5) Font cũ và ký hiệu U+20AB còn trong docs sau PR #57 (OD-4(b) đổi VND sang `đ` U+0111, OD-7 đổi heading font Sora → Be Vietnam Pro; đo `git grep` trên `origin/feat/mvp-local-polish`, đo lại trên main sau khi #57 merge):
+      font Sora — `docs/channels/web/theme-direction-2026-07.md` (8 dòng), `docs/standards/design-system.md` (10 dòng; ~`:38`, `:326`, `:336`, `:339`), `docs/channels/web/README.md` (3), `design-brief.md` (3), `designer-kickoff.md` (3), và comment `.github/workflows/ci.yml:126` ("downloads Sora + Inter");
+      U+20AB — `docs/features/FE/feature_*.md` (nhiều nhất `feature_payment_reconcile.md` 30, `feature_player_view.md` 21, `feature_session_management.md` 12), `docs/channels/web/FE/feature_home_fe.md` (3) và vài wireframe khác. Spec Reviewed: sửa qua đường review docs, không sửa hồi tố lịch sử; `docs/standards/design-tokens.md` đã được #57 cập nhật (v2.1).
+  source: S6 · S3 · S4 · S7 (T10)
 
 ## task: web-command-id-persistence-and-conflict-copy
 title: Web: giữ `commandId` qua reload/Cancel (cửa sổ double-apply của thanh toán một phần và thêm theo tên) và sửa copy `COMMAND_ID_CONFLICT`
@@ -6221,3 +6228,79 @@ notes: |
   brace-expansion GHSA-6j4f-fj2g-mc7p / GHSA-qhr7-859c-m2p7 / GHSA-q2hr-2g5m-vwhr; next GHSA-4jqv-mc3x-m676 / GHSA-mcj8-r9mp-w47p.
   S2 báo scan đỏ từ 2026-09-30 (chưa đo lại ngày bắt đầu). Cách sửa theo tiền lệ AP-51 (`deps-osv-transitive-floors`): nâng floor qua override trong `pnpm-workspace.yaml`, rồi chạy lại scan.
   source: S2 · Security run 38456110453
+
+## task: offline-page-csp-nonce-missing
+title: Trang `/offline` prerender không mang nonce: bật `CSP_SCRIPT_NONCE_ENABLED=true` sẽ chặn mọi script của trang này
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: [web-csp-script-src-nonce]
+invariants: [web-app, auth]
+scope: [apps/web/app/offline/page.tsx, apps/web/middleware.ts, apps/web/lib/request-policy.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — đo bằng trình duyệt thật do S7; cần đo lại sau khi chọn hướng sửa. Phải xong TRƯỚC khi bật cờ ở bất kỳ môi trường nào.
+notes: |
+  Có sẵn từ trước PR #57, và chỉ xảy ra khi cờ bật (mặc định OFF). Với `CSP_SCRIPT_NONCE_ENABLED=true`, `/offline` ship script không có nonce:
+  S7 đo 18 vi phạm `script-src`, trang không hydrate và không đăng ký service worker từ trang đó. Code khớp: `apps/web/app/offline/page.tsx`
+  là trang tĩnh (không `dynamic`, không đọc `headers()`) và còn script inline `CAPTURE_REQUESTED_URL`; middleware chỉ gắn nonce vào request/response,
+  còn HTML prerender được dựng lúc build nên không thể mang nonce của request. Hướng sửa cần đo: chuyển trang sang render động để Next áp nonce,
+  hoặc tách script inline thành file tĩnh cùng origin. Không nới CSP bằng `'unsafe-inline'`.
+  source: S7 (r1)
+
+## task: session-text-fields-control-char-validation
+title: `area` / `venue_name` / `venue_address` của session nhận ký tự điều khiển C0 và bidi (ví dụ U+202E, xuống dòng) rồi hiện cho player
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [schema, web-app]
+scope: [packages/db/src/session-service.ts, apps/web/lib/session-form-model.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — cần quyết định tập ký tự cho phép (ví dụ cấm C0 trừ tab, cấm U+202A-202E và U+2066-2069, xuống dòng) và có cần CHECK ở DB hay chỉ ở service.
+notes: |
+  Có sẵn từ trước, không do PR #57 gây ra. `isOptionalText` (`packages/db/src/session-service.ts:107` trên `origin/feat/mvp-local-polish`) chỉ từ chối NUL
+  (`"\u0000"`); create và update dùng chung nó. `venue_address` thêm trần 200 ký tự và không có gì khác. Migration `0002_tenants_core.sql` khai ba cột là `text`
+  trần, không CHECK. Hệ quả: U+202E hay xuống dòng đi qua service, lưu vào DB và hiện cho player (đổi chiều chữ, giả mạo tên địa điểm).
+  Dùng lại một validator cho cả ba trường thay vì ba regex; kiểm tra kèm test ở route create/update.
+  source: S7 (r1)
+
+## task: session-venue-address-error-field-contract
+title: Lỗi validate `venue_address` bị ép về `400 INVALID_BODY` chung, không nói trường nào sai
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/session-command-route.ts, packages/core/src/api-contract.ts]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — đổi wire contract (thêm field vào error) nên cần quyết định riêng; không bắt đầu trước đó.
+notes: |
+  `INVALID_TEXT_FIELD` (service ném khi `venue_address` quá 200 ký tự hay chứa NUL) nằm trong `VALIDATION_VARIANTS` của
+  `apps/web/lib/session-command-route.ts` (~`:477-485` trên `origin/feat/mvp-local-polish`) và bị gộp thành `400 INVALID_BODY` "Dữ liệu không hợp lệ."
+  mà không kèm trường. Form web (PR #57) chặn trần 200 ở phía client nên người dùng bình thường không gặp; client khác (hoặc kiểm tra bị bỏ qua) chỉ thấy lỗi chung.
+  Mang tên trường qua `error.details` cần đổi `api-contract.ts`, nên là một thay đổi contract có chủ đích, không sửa lặt vặt.
+  source: S7 (F1)
+
+## task: local-smoke-toast-overlap-and-blank-band-measure
+title: Ảnh smoke local cho thấy toast chồng nhau và dải trống ~30 px phía trên header ở workspace session: đo trước khi sửa
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app, design-tokens]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — chưa đo, có thể chỉ là artifact của ảnh chụp; phải tái hiện bằng trình duyệt thật (không phải ảnh) trước khi có scope.
+notes: |
+  Quan sát của runner S7 trên ảnh chụp từ `docs/runbooks/local-mvp-smoke.md` (chưa xác minh, `scope: []` vì chưa biết file nào): toast chồng/đè lên nhau và một dải trống
+  khoảng 30 px phía trên header ở màn workspace session. Cách đo: chạy golden path theo runbook, mở DevTools, đo `getBoundingClientRect()` của header và vùng toast
+  ở 375 px và desktop; nếu không tái hiện được thì đóng row này là `superseded`.
+  source: S7 (runner, chưa xác minh)
