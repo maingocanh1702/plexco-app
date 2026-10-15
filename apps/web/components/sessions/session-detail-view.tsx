@@ -48,6 +48,16 @@ export function SessionDetailView({
   useEffect(() => {
     if (focusHeading > 0) headingRef.current?.focus();
   }, [focusHeading]);
+  // "Open the roster" from a refusal: the native dialog hands focus back to the action-bar button
+  // that opened it; the host asked for the roster, so focus moves to the (now selected) Roster tab
+  // once the dialog has closed (same child-effects-first ordering as the heading above).
+  const [focusRosterTab, setFocusRosterTab] = useState(0);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusRosterTab > 0) {
+      tabsRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
+    }
+  }, [focusRosterTab]);
   const base = `/c/${tenantId}/sessions`;
 
   if (state.status === "loading") {
@@ -178,23 +188,25 @@ export function SessionDetailView({
         }}
       />
 
-      <Tabs
-        label={t("Nội dung buổi chơi", "Session content")}
-        active={tab}
-        onChange={setTab}
-        items={[
-          {
-            id: "roster",
-            label: t("Người chơi", "Roster"),
-            panel: <RosterTab session={session} ctx={ctx} onChanged={refresh} />,
-          },
-          {
-            id: "details",
-            label: t("Chi tiết", "Details"),
-            panel: <DetailsTab session={session} />,
-          },
-        ]}
-      />
+      <div ref={tabsRef}>
+        <Tabs
+          label={t("Nội dung buổi chơi", "Session content")}
+          active={tab}
+          onChange={setTab}
+          items={[
+            {
+              id: "roster",
+              label: t("Người chơi", "Roster"),
+              panel: <RosterTab session={session} ctx={ctx} onChanged={refresh} />,
+            },
+            {
+              id: "details",
+              label: t("Chi tiết", "Details"),
+              panel: <DetailsTab session={session} />,
+            },
+          ]}
+        />
+      </div>
 
       <ConfirmDialog
         open={pending !== null}
@@ -215,11 +227,13 @@ export function SessionDetailView({
             >
               <SessionActionErrorExtra
                 error={actionError}
+                sessionStatus={session.status}
                 // the Roster tab is where payments are recorded and players removed: close the
                 // dialog (state untouched, no refetch) and bring that tab forward
                 onShowRoster={() => {
                   closeDialog();
                   setTab("roster");
+                  setFocusRosterTab((n) => n + 1);
                 }}
               />
             </ApiErrorNotice>

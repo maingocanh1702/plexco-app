@@ -1,7 +1,9 @@
 .extra {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
   justify-items: start;
+  min-width: 0;
 }
 
 .lead {
@@ -9,9 +11,20 @@
   font-size: var(--text-sm);
 }
 
+/*
+ * A club can owe-list dozens of players: the list is capped and scrolls on its own so the dialog's
+ * title, the server message and the actions stay on screen (the confirm sheet has no max-height of
+ * its own). The cap is ~5 rows; overflow-wrap lets an unbroken name wrap instead of widening the
+ * dialog.
+ */
 .list {
   margin: 0;
   padding-left: var(--space-5);
+  max-width: 100%;
+  max-height: calc(var(--space-8) * 3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
   color: var(--error-text);
   font-size: var(--text-sm);
 }

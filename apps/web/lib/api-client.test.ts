@@ -66,19 +66,39 @@ describe("apiFetch", () => {
     expect(error).toMatchObject({ code: "CLOSE_BLOCKED_OPEN_DEBT", statusCode: 409 });
   });
 
-  it("every other error stays details-free: absent, null, a string or an array never become details", async () => {
+  it("a malformed details never becomes details: absent, null, a string, an array or a number", async () => {
     for (const details of [undefined, null, "oops", ["x"], 7]) {
       mockFetch(
         {
           data: null,
-          error: { code: "STALE_VERSION", message: "m", statusCode: 409, details },
+          error: { code: "CLOSE_BLOCKED_OPEN_DEBT", message: "m", statusCode: 409, details },
           meta: { requestId: "r" },
         },
         409,
       );
       const error = (await apiFetch("/api/x").catch((e: unknown) => e)) as ApiClientError;
       expect(error.details, String(details)).toBeUndefined();
-      expect(error).toMatchObject({ code: "STALE_VERSION", message: "m", requestId: "r" });
+      expect(error).toMatchObject({
+        code: "CLOSE_BLOCKED_OPEN_DEBT",
+        message: "m",
+        requestId: "r",
+      });
+    }
+  });
+
+  it("an object details on any other code (STALE_VERSION, CANCEL_REQUIRES_REVIEW) is dropped", async () => {
+    for (const code of ["STALE_VERSION", "CANCEL_REQUIRES_REVIEW", "SESSION_NOT_OPEN"]) {
+      mockFetch(
+        {
+          data: null,
+          error: { code, message: "m", statusCode: 409, details: { openBalancePlayers: [] } },
+          meta: { requestId: "r" },
+        },
+        409,
+      );
+      const error = (await apiFetch("/api/x").catch((e: unknown) => e)) as ApiClientError;
+      expect(error.details, code).toBeUndefined();
+      expect(error).toMatchObject({ code, message: "m", requestId: "r" });
     }
   });
 
