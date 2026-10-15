@@ -72,7 +72,9 @@ function slotsOf(v: SessionFormValues): number | null {
 const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
 
 /**
- * The venue address in the form the server stores and the command compares: trimmed, blank = null.
+ * The venue address in the form this client sends and compares: trimmed, blank = null. The server
+ * does not trim: it stores the value it receives as-is (session-service.ts), so a legacy address with
+ * surrounding spaces is stored raw and only compares equal here after trimming.
  * validateForm's legacy exemption and buildUpdateBody's "changed?" diff BOTH compare in this form,
  * so an address exempted as untouched is also never sent (a legacy over-cap address with
  * surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).

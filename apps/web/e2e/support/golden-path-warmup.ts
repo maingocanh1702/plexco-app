@@ -9,9 +9,12 @@ import { COMPILE_TIMEOUT_MS } from "./golden-path-timeouts";
  * is visible, not a mystery). It uses no fixed sleeps: each request returns when its route is built.
  * Idle routes are evicted after ~60 s, so the spec's own timeouts (golden-path-timeouts.ts) stay generous.
  *
- * The probes carry a nil UUID and an empty body: a not-found / invalid-body answer is expected and
- * is not checked. They change no data. POST /api/onboarding/start is NOT probed: it spends the
- * 3-clubs-per-hour tenant-create bucket even on a bad body, and its first real use is the spec's own step.
+ * The probes carry a nil UUID and an empty body, and the answer is not checked. They change no data.
+ * The POST probes are refused with 403 CSRF_INVALID inside the route handler (no CSRF token is sent):
+ * the route module has been compiled by then, and no session or tenant bucket is spent. Only
+ * GET /api/sports reaches its rate limiter and spends 1 of that account's 60 sports:<account> requests
+ * per minute. POST /api/onboarding/start is NOT probed: it spends the 3-clubs-per-hour tenant-create
+ * bucket, and its first real use is the spec's own step.
  */
 const NIL = "00000000-0000-0000-0000-000000000000";
 

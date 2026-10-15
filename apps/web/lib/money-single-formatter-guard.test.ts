@@ -22,7 +22,18 @@ import { describe, expect, it } from "vitest";
  *  - comment stripping is line-based and string-unaware: a string literal holding `//` mid-line
  *    hides the rest of that line, and `/*` inside a string can hide code up to the next close;
  *  - `x.toLocaleString` reached through a computed key (`x["toLocale" + "String"]`);
- *  - a helper whose name does not start with "format" or "fmt" (the helper rule is name-based).
+ *  - a helper whose name does not start with "format" or "fmt" (the helper rule is name-based);
+ *  - a helper declared with `var`, or as an object / class method shorthand (`{ formatMoney(n) {..} }`):
+ *    the helper rule only reads `function|const|let` declarations;
+ *  - an HTML entity between amount and suffix (`{price}&nbsp;đ`): only whitespace is skipped;
+ *  - a suffix chosen by a ternary or other expression (`${n}${ok ? "đ" : ""}`): only a literal suffix right
+ *    after the amount is seen;
+ *  - a grouping regex written `([\d]{3})+` (a bracketed `\d` class): the triplet forms are `\d{3}`,
+ *    `[0-9]{3}` and `\d\d\d`;
+ *  - `\p{L}`-style boundaries are approximate for "đồng" (see DONG_COMPOUND_SECOND_WORD): a currency "đồng"
+ *    followed by one of those second words is not flagged; an unlisted compound is a false positive;
+ *  - a constant holding the ISO code `"VND"` alone (`const CURRENCY = "VND"`) is deliberately allowed (it is
+ *    a currency CODE for an API field, not a suffix glued after an amount), so `${n} ${CURRENCY}` is a gap.
  */
 const WEB_ROOT = join(__dirname, "..");
 const SKIP = new Set(["node_modules", ".next", "public", "coverage", "playwright-report"]);
@@ -47,8 +58,17 @@ const sources = walk(WEB_ROOT).filter(
 
 /** The d-stroke (U+0111) written as itself or as a JS escape. Tests build it from escapes. */
 const D_STROKE = String.raw`(?:đ|\\u0111|\\u\{0*111\})`;
+/**
+ * The Vietnamese word "dong" (currency) and not a longer word or a compound that merely starts with
+ * it: no letter may follow directly (`đồngxu`), and it may not be followed by a word that makes a
+ * different noun (`đồng đội` teammate, `đồng bộ` sync, `đồng hồ` clock, ...). Any other compound
+ * is a false positive until its second word is added to this list.
+ */
+const DONG_COMPOUND_SECOND_WORD =
+  "đội|bộ|hồ|ý|thời|nghiệp|loạt|hành|minh|tình|cảm|đều|bào|chí|phục|quê|lòng|ca|nhất|thuận|sự|tiền|xu|cỏ|nát|ruộng|bằng|dạng|môn";
+const DONG_WORD = String.raw`đồng(?!\p{L})(?!\s+(?:${DONG_COMPOUND_SECOND_WORD})(?!\p{L}))`;
 /** A currency suffix word: d-stroke, VND, VN + capital D-stroke (also escaped), "dong" in Vietnamese. */
-const CURRENCY_SUFFIX = String.raw`(?:đồng|${D_STROKE}(?!\p{L})|VND(?!\p{L})|VN(?:Đ|\\u0110)(?!\p{L}))`;
+const CURRENCY_SUFFIX = String.raw`(?:${DONG_WORD}|${D_STROKE}(?!\p{L})|VND(?!\p{L})|VN(?:Đ|\\u0110)(?!\p{L}))`;
 
 type Rule = { name: string; find: (src: string) => boolean };
 
@@ -161,10 +181,12 @@ function hasAmountBeforeSuffix(code: string): boolean {
 
 /** `const DONG = "d"` style: a constant that is only a currency suffix, to be glued after an amount. */
 function hasSuffixConstant(code: string): boolean {
-  return new RegExp(
-    String.raw`\b(?:const|let|var)\s+\w+\s*(?::[^=\n]+)?=\s*["'\x60]\s*${CURRENCY_SUFFIX}\s*["'\x60]`,
-    "u",
-  ).test(code);
+  const decl = new RegExp(
+    String.raw`\b(?:const|let|var)\s+\w+\s*(?::[^=\n]+)?=\s*["'\x60](\s*${CURRENCY_SUFFIX}\s*)["'\x60]`,
+    "gu",
+  );
+  // a bare ISO code ("VND", no whitespace) is a currency CODE, not a suffix to glue after an amount
+  return [...code.matchAll(decl)].some((m) => m[1] !== "VND");
 }
 
 const RULES: Rule[] = [
@@ -210,6 +232,10 @@ describe("one shared VND formatter (DD-128 OD-4b)", () => {
 describe("the guard matcher itself", () => {
   const d = "đ"; // d-stroke
   const dBig = "Đ"; // capital D-stroke (VN + D-stroke)
+  const dong = "đồng"; // the word "dong" (currency); also the first syllable of compounds
+  const doi = "đội"; // dong doi = teammate
+  const bo = "bộ"; // dong bo = sync
+  const ho = "hồ"; // dong ho = clock
   const dongSign = "₫";
   const rule = (name: string): Rule => RULES.find((r) => r.name.startsWith(name))!;
 
@@ -248,6 +274,8 @@ describe("the guard matcher itself", () => {
     ["amount directly", "`${n}VND`"],
     ["amount directly", "`${n} VN" + dBig + "`"],
     ["amount directly", "<span>{x} " + d + "ồng</span>"],
+    ["amount directly", "`${n} " + dong + "`"],
+    ["amount directly", "`${n} " + dong + " mỗi người`"],
     ["amount directly", "const s = n + ' VND'"],
     ["amount directly", "const s = '150.000 VND'"],
     ["currency suffix", "const DONG = '" + d + "';\nconst s = `${n}${DONG}`;"],
@@ -298,6 +326,13 @@ describe("the guard matcher itself", () => {
     ["amount directly", "t('Ghi " + d + "ồng ý', 'x') // {n} VND"],
     ["amount directly", "t('Giá mỗi người (VND)', 'Price per person (VND)')"],
     ["currency suffix", "const LABEL = 'Giá (VND)';"],
+    ["currency suffix", "const CURRENCY = 'VND';"],
+    ["currency suffix", 'export const CURRENCY: string = "VND"'],
+    // "dong" followed by a letter, or the first word of another noun, is not the currency
+    ["amount directly", "t(`${n} " + dong + " " + doi + "`, 'x')"],
+    ["amount directly", "t('Bước 2 " + dong + " " + bo + "', 'Step 2 sync')"],
+    ["amount directly", "<span>{n} " + dong + " " + ho + "</span>"],
+    ["amount directly", "<span>{n} " + dong + "xu</span>"],
     ["digit-grouping", "/^\\d+$/.test(s) && /\\d{1,3}/.test(s)"],
     ["digit-grouping", "const phone = /^(\\d{3})(\\d{3})(\\d{4})$/.exec(s)"],
     ["digit-grouping", "const iso = /T\\d{2}:\\d{2}:\\d{2}\\.(\\d{3})Z$/.exec(s)"],

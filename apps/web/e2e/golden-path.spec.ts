@@ -9,6 +9,10 @@ import {
   rosterRow,
   screenshotter,
 } from "./support/golden-path-helpers";
+import {
+  NOT_PROVEN_ANNOTATION,
+  NOT_PROVEN_MESSAGE,
+} from "./support/golden-path-not-proven-reporter";
 import { COMPILE_TIMEOUT_MS } from "./support/golden-path-timeouts";
 import { warmUpDevServer } from "./support/golden-path-warmup";
 
@@ -25,13 +29,12 @@ import { warmUpDevServer } from "./support/golden-path-warmup";
  *
  * A PASS means the whole path ran, club creation included. Club creation is limited to 3 per
  * account per hour; when it is refused the spec FAILS by default. Only the explicit opt-in
- * GOLDEN_PATH_ALLOW_SEEDED_CLUB=1 continues in the seeded Dev Club, and then prints a loud line
- * (the list reporter shows stdout, not annotations) that club creation was NOT proven.
+ * GOLDEN_PATH_ALLOW_SEEDED_CLUB=1 continues in the seeded Dev Club and prints a loud line (the list
+ * reporter shows stdout, not annotations) that club creation was NOT proven: once when it happens, and
+ * again as the very last output, below the "1 passed" summary (support/golden-path-not-proven-reporter.ts).
  */
 const BASE = process.env.GOLDEN_PATH_BASE_URL;
 const ALLOW_SEEDED_CLUB = process.env.GOLDEN_PATH_ALLOW_SEEDED_CLUB === "1";
-const NOT_PROVEN =
-  "!!! GOLDEN PATH: club creation was NOT proven (tenant-create limit hit); the rest of the path ran in the seeded Dev Club !!!";
 test.skip(!BASE, "opt-in: set GOLDEN_PATH_BASE_URL to a dev server with dev-login enabled");
 test.use({ baseURL: BASE });
 
@@ -48,7 +51,6 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
   await paceSessionApi(page); // keep under the per-account API ceiling, also across back-to-back runs
   let sessionUrl = "";
   let devTenantId = "";
-  let clubCreationProven = true;
 
   await test.step("sign in as the host persona (dev-login)", async () => {
     await page.goto("/dev-login");
@@ -109,10 +111,9 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
             "continue in the seeded Dev Club WITHOUT proving club creation.",
         );
       }
-      clubCreationProven = false;
-      console.log(NOT_PROVEN);
+      console.log(NOT_PROVEN_MESSAGE);
       test.info().annotations.push({
-        type: "club-create-throttled",
+        type: NOT_PROVEN_ANNOTATION,
         description: "tenant-create limit (3/hour/account) hit: continued in the seeded Dev Club",
       });
       expect(devTenantId, "the seeded Dev Club is in the owner's session").toBeTruthy();
@@ -239,5 +240,6 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
     await expect(page.getByText("Đã đóng", { exact: true })).toBeVisible();
   });
 
-  if (!clubCreationProven) console.log(NOT_PROVEN); // repeated last, where the reporter output ends
+  // The "NOT proven" line is repeated after the reporter summary by golden-path-not-proven-reporter.ts
+  // (it keys off the annotation above); a console.log here would still print BEFORE "1 passed".
 });

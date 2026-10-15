@@ -19,7 +19,8 @@ import {
  *   GOLDEN_PATH_BASE_URL            required; the dev server's URL, port included (the spec skips without it)
  *   GOLDEN_PATH_SCREENSHOT_DIR      optional; saves one PNG per step
  *   GOLDEN_PATH_ALLOW_SEEDED_CLUB=1 optional; when the 3-clubs-per-hour limit refuses club creation, continue in
- *                                   the seeded Dev Club (a pass then does NOT prove club creation)
+ *                                   the seeded Dev Club (a pass then does NOT prove club creation; the
+ *                                   NOT_PROVEN warning is printed last, below the "1 passed" summary)
  */
 export default defineConfig({
   testDir: ".",
@@ -29,7 +30,9 @@ export default defineConfig({
   timeout: TEST_TIMEOUT_MS,
   // Must outlast one cold compile plus the API pacer's worst-case 60 s rate-limit hold.
   expect: { timeout: COMPILE_TIMEOUT_MS },
-  reporter: "list",
+  // Order matters: the not-proven reporter prints after the list summary, so an opt-in pass in the
+  // seeded Dev Club ends with the NOT_PROVEN warning, not with a plain "1 passed".
+  reporter: [["list"], ["./support/golden-path-not-proven-reporter.ts"]],
   use: {
     trace: "retain-on-failure",
     actionTimeout: ACTION_TIMEOUT_MS,

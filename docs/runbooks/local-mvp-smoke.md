@@ -99,7 +99,7 @@ DATABASE_URL=postgres://app:plexco_dev_app@localhost:5432/plexco_smoke pnpm dev:
 
 Seed tạo CLB "Dev Club" và 3 persona `@dev.invalid`: owner ("Chủ CLB"), co_admin, player. Idempotent **khi dùng đúng khoá cũ**: chạy lại không hại.
 Ngày hôm sau / terminal mới: chạy lại khối trên (nó nạp đúng khoá đã lưu; `dev:seed` chạy lại thành công, không cần seed lại) rồi sang bước 7.
-**Không** tự sinh khoá mới bằng `openssl rand` cho DB đã seed: seed bị từ chối (`slug dev-club belongs to a club the persona does not own`)
+**Không** tự sinh khoá mới bằng `openssl rand` cho DB đã seed: seed bị từ chối (`the slug "dev-club" belongs to a club the dev owner persona does not own`)
 và **mỗi lần thử bị từ chối còn để lại thêm 3 tài khoản persona mồ côi**. Nếu file khoá đã **mất**, cách duy nhất là xoá và tạo lại **chỉ** `plexco_smoke`:
 dừng server, làm mục "Dọn dẹp" (bước 2 `DROP DATABASE plexco_smoke`), rồi làm lại bước 2 → 6 (xoá file khoá cũ nếu còn, khối trên sẽ tạo khoá mới).
 
@@ -181,7 +181,7 @@ GOLDEN_PATH_SCREENSHOT_DIR=/tmp/golden-path-shots GOLDEN_PATH_BASE_URL=http://lo
 | Màn "Bạn thao tác quá nhanh. Đợi một lát rồi thử lại." | Quá ~60 lời gọi API buổi chơi/phút cho một tài khoản (bấm tay quá nhanh, hoặc chạy spec song song/ngoài spec) | Đợi 1 phút rồi bấm **Thử lại** |
 | Spec đứng lâu (bất kỳ lần chạy nào) | `next dev` biên dịch route ở lần gọi đầu và bỏ trang rảnh sau ~60 giây | Bình thường, đặc biệt khi máy tải nặng; timeout rộng (bài 20 phút, assertion 4 phút). Xem log `[warm-up]` |
 | Spec FAIL "Club creation was refused by the tenant-create limit" | Đã tạo 3 CLB trong giờ qua bằng persona này | Đợi hết giờ, hoặc DB smoke mới, hoặc `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1` (không chứng minh tạo CLB) |
-| Đăng nhập xong nhưng mất phiên giữa chừng; hoặc `dev:seed` báo `slug dev-club belongs to a club the persona does not own` | `ENCRYPTION_KEY` của terminal này khác khoá đã dùng để seed (terminal mới, quên nạp) | **Không** sinh khoá mới và **không** seed lại. Chạy lại khối nạp khoá ở bước 6 (đọc `~/.plexco-smoke-encryption-key`) rồi khởi động lại server. Chỉ khi file khoá đã mất: xoá và tạo lại `plexco_smoke` (bước 6) |
+| Đăng nhập xong nhưng mất phiên giữa chừng; hoặc `dev:seed` báo `the slug "dev-club" belongs to a club the dev owner persona does not own` | `ENCRYPTION_KEY` của terminal này khác khoá đã dùng để seed (terminal mới, quên nạp) | **Không** sinh khoá mới và **không** seed lại. Chạy lại khối nạp khoá ở bước 6 (đọc `~/.plexco-smoke-encryption-key`) rồi khởi động lại server. Chỉ khi file khoá đã mất: xoá và tạo lại `plexco_smoke` (bước 6) |
 
 ## Dọn dẹp
 
