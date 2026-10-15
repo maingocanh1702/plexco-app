@@ -106,6 +106,7 @@ describe("createSession", () => {
     const in0 = input({
       area: "Quận 1",
       venueName: "Sân A",
+      venueAddress: "12 Nguyễn Trãi, Quận 5",
       slotsMax: 6,
       joinPolicy: "approval",
       priceAmount: 90000,
@@ -123,8 +124,8 @@ describe("createSession", () => {
     });
 
     const s = await row(
-      `SELECT sport_id, starts_at, ends_at, timezone, area, venue_name, price_amount, slots_max,
-              visibility, join_policy, status, version, tenant_id FROM sessions WHERE id = $1`,
+      `SELECT sport_id, starts_at, ends_at, timezone, area, venue_name, venue_address, price_amount,
+              slots_max, visibility, join_policy, status, version, tenant_id FROM sessions WHERE id = $1`,
       [result.sessionId],
     );
     expect(s).toMatchObject({
@@ -132,6 +133,7 @@ describe("createSession", () => {
       timezone: in0.timezone,
       area: "Quận 1",
       venue_name: "Sân A",
+      venue_address: "12 Nguyễn Trãi, Quận 5",
       price_amount: 90000,
       slots_max: 6,
       visibility: "private",
@@ -162,12 +164,39 @@ describe("createSession", () => {
       tenant_id: ctx.tenantA,
       visibility: "private",
     });
+    // DD-06 / HARD RULE 2: the private venue address (set above) never reaches the outbox.
+    expect(JSON.stringify(ob[0].payload)).not.toMatch(/venue|Nguyễn Trãi/i);
 
     const pc = await row(
       `SELECT count(*)::int c, max(command_type) t FROM processed_commands WHERE tenant_id = $1 AND command_id = $2`,
       [ctx.tenantA, commandId],
     );
     expect(pc).toMatchObject({ c: 1, t: "CreateSession" });
+  });
+
+  it("A3: venueAddress is optional plain text, max 200 characters (DD-128 OD-4a)", async () => {
+    const absent = await create({});
+    const nulled = await create({ venueAddress: null });
+    const edge = await create({ venueAddress: "đ".repeat(200) });
+    const stored = async (id: string) =>
+      (await row(`SELECT venue_address FROM sessions WHERE id = $1`, [id])).venue_address;
+    expect(await stored(absent.sessionId)).toBeNull();
+    expect(await stored(nulled.sessionId)).toBeNull();
+    expect(await stored(edge.sessionId)).toBe("đ".repeat(200));
+    await expectReject(() => createBad({ venueAddress: "đ".repeat(201) }), "INVALID_TEXT_FIELD");
+  });
+
+  it("A3b: a replay with a different/over-long venueAddress still returns the stored envelope (dedup precedes validation, DD-117 D5)", async () => {
+    const commandId = cmdId();
+    const first = await create({ venueAddress: "12 Nguyễn Trãi" }, commandId);
+    const replay = await createSession(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      commandId,
+      input: { ...input(), venueAddress: "x".repeat(500) } as unknown as CreateSessionInputPayload,
+    });
+    expect(replay).toMatchObject({ replayed: true, sessionId: first.sessionId });
+    const s = await row(`SELECT venue_address FROM sessions WHERE id = $1`, [first.sessionId]);
+    expect(s.venue_address).toBe("12 Nguyễn Trãi");
   });
 
   it("A2: a public create carries visibility=public in the outbox payload", async () => {
@@ -203,6 +232,9 @@ describe("createSession", () => {
       [{ venueName: 123 }, "INVALID_TEXT_FIELD"],
       [{ area: "has\u0000nul" }, "INVALID_TEXT_FIELD"],
       [{ venueName: "\u0000" }, "INVALID_TEXT_FIELD"],
+      [{ venueAddress: 123 }, "INVALID_TEXT_FIELD"],
+      [{ venueAddress: "has\u0000nul" }, "INVALID_TEXT_FIELD"],
+      [{ venueAddress: "x".repeat(201) }, "INVALID_TEXT_FIELD"], // DD-128 OD-4a: max 200
       [{ startsAt: t9, endsAt: t9 }, "INVALID_TIME_RANGE"],
       [{ ...pub, area: null }, MDF],
       [{ ...pub, slotsMax: null }, MDF],
@@ -2242,6 +2274,30 @@ describe("updateSession", () => {
     );
     expect(await sessionState(sessionId)).toMatchObject({ version, visibility: "private" });
     expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U8b: venueAddress on update shares create's rule — string|null, max 200 characters (DD-128 OD-4a), zero mutation on reject", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {});
+    for (const bad of ["x".repeat(201), 123, "has\u0000nul"]) {
+      await expectUpdateReject(
+        () =>
+          update(tenantId, {
+            sessionId,
+            expectedVersion: version,
+            venueAddress: bad as unknown as string,
+          }),
+        "INVALID_TEXT_FIELD",
+      );
+    }
+    expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+    const ok = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      venueAddress: "đ".repeat(200),
+    });
+    expect(ok).toMatchObject({ version: version + 1, replayed: false });
   });
 
   it("U9: idempotent no-op when the effective change-set is empty — no version bump, no event, wins a stale version", async () => {

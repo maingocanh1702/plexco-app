@@ -311,21 +311,16 @@ export const present = (body: Record<string, unknown>, key: string): boolean =>
   Object.hasOwn(body, key) && body[key] !== undefined;
 
 /**
- * createSession's vocabulary. It has NO venueAddress, and that omission is the fix for a defect
- * this slice got wrong twice (codex round-01 [P2], then round-02 [P1]).
+ * createSession's vocabulary. Since DD-128 OD-4a it INCLUDES venueAddress (private plain text,
+ * validated by the command: string | null, max 200 characters), so create and update now share
+ * one field list.
  *
- * Round 1 flagged that the shared parser recognised venueAddress while create dropped it —
- * accepting data and silently losing it. The first fix REJECTED the field, which round 2 showed
- * still breaks replay: a create can commit WITHOUT venueAddress, lose its response, and be
- * retried with the field present; DD-117 D5 makes payload differences irrelevant to replay, so
- * that retry must return the stored success rather than a 400. The earlier reasoning ("a create
- * carrying venueAddress can never have committed") only considered the RETRY payload and missed
- * that the ORIGINAL could differ.
- *
- * Both are closed by making create's shape honest: the field is simply not part of this
- * command's vocabulary, so it is ignored exactly like any other unrecognised key rather than
- * being parsed-then-dropped or rejected pre-dedup. Wiring it end to end would mean editing
- * session-service.ts, which belongs to the in-flight close-cancel lane.
+ * History that still binds: this slice once dropped the field (codex round-01 [P2]) and then
+ * rejected it pre-dispatch (round-02 [P1]) — both broke replay. DD-117 D5 makes payload
+ * differences irrelevant to a replay: a create may commit with one payload, lose its response and
+ * be retried with another, and that retry must return the stored success rather than a 400. That
+ * still holds with venueAddress in the vocabulary because the shaper below never validates; the
+ * command dedups on (tenant_id, command_id) BEFORE it validates anything.
  */
 const CREATE_FIELD_KEYS = [
   "timezone",
@@ -334,11 +329,9 @@ const CREATE_FIELD_KEYS = [
   "visibility",
   "area",
   "venueName",
+  "venueAddress",
   "joinPolicy",
 ] as const;
-
-/** updateSession additionally accepts venueAddress. */
-const UPDATE_FIELD_KEYS = [...CREATE_FIELD_KEYS, "venueAddress"] as const;
 
 /**
  * Shapes the provided fields. It NEVER rejects — and that is the whole point.
@@ -409,19 +402,17 @@ function shape(body: Record<string, unknown>, keys: readonly string[]): Record<s
   return out;
 }
 
-/** Fields updateSession accepts. */
+/** Fields updateSession accepts (the same list as createSession since DD-128 OD-4a). */
 export function shapeSessionFields(body: Record<string, unknown>): SessionFieldPayload {
   // Cast, not validation: every value is either a real Date or the caller's own value, and the
   // command re-derives the truth. Typing it as the payload keeps the routes readable without
   // pretending the route verified anything.
-  return shape(body, UPDATE_FIELD_KEYS) as SessionFieldPayload;
+  return shape(body, CREATE_FIELD_KEYS) as SessionFieldPayload;
 }
 
-/** Fields createSession accepts — venueAddress is not one of them, see CREATE_FIELD_KEYS. */
-export function shapeCreateFields(
-  body: Record<string, unknown>,
-): Omit<SessionFieldPayload, "venueAddress"> {
-  return shape(body, CREATE_FIELD_KEYS) as Omit<SessionFieldPayload, "venueAddress">;
+/** Fields createSession accepts, see CREATE_FIELD_KEYS. */
+export function shapeCreateFields(body: Record<string, unknown>): SessionFieldPayload {
+  return shape(body, CREATE_FIELD_KEYS) as SessionFieldPayload;
 }
 
 /**

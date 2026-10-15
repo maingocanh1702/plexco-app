@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
 import { displayNameOf } from "../../lib/roster-rules";
 import type { MarkPaidLineDto } from "../../lib/roster-payments-api";
@@ -17,7 +17,6 @@ export function MarkPaidResult({
   names: Record<string, string>;
 }) {
   const t = useT();
-  const lang = useLang();
   const list = useRef<HTMLUListElement>(null);
   useEffect(() => list.current?.focus(), []);
   return (
@@ -30,7 +29,7 @@ export function MarkPaidResult({
       {lines.map((l) => (
         <li key={l.playerId} className={styles.lineHead}>
           <span>{displayNameOf(names[l.playerId], t)}</span>
-          <span>{formatVnd(l.amount, lang)}</span>
+          <span>{formatVnd(l.amount)}</span>
           <Badge tone={l.status === "paid" ? "success" : "warning"}>
             {l.status === "paid" ? t("Đã thanh toán", "Paid") : t("Trả một phần", "Partly paid")}
           </Badge>

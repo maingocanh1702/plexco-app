@@ -33,8 +33,8 @@ export function RosterLedgerDetails({
     <details className={styles.ledger}>
       <summary>
         {t(
-          `Chi tiết thanh toán (đã thu ${formatVnd(charge.effectiveAllocated, lang)})`,
-          `Payment details (${formatVnd(charge.effectiveAllocated, lang)} collected)`,
+          `Chi tiết thanh toán (đã thu ${formatVnd(charge.effectiveAllocated)})`,
+          `Payment details (${formatVnd(charge.effectiveAllocated)} collected)`,
         )}
       </summary>
       <ul
@@ -45,7 +45,7 @@ export function RosterLedgerDetails({
           <li key={row.id} className={styles.ledgerRow}>
             <span>{formatTimestamp(row.createdAt, timeZone, lang)}</span>
             <strong className={row.amount < 0 ? styles.negative : undefined}>
-              {formatVnd(row.amount, lang)}
+              {formatVnd(row.amount)}
             </strong>
             <span>{row.label}</span>
             {row.note ? <span>{row.note}</span> : null}
@@ -55,8 +55,8 @@ export function RosterLedgerDetails({
                 disabled={!canReverse}
                 aria-describedby={canReverse ? undefined : reverseHint}
                 aria-label={t(
-                  `Hoàn tác khoản ${formatVnd(row.amount, lang)} của ${name}`,
-                  `Reverse ${formatVnd(row.amount, lang)} payment of ${name}`,
+                  `Hoàn tác khoản ${formatVnd(row.amount)} của ${name}`,
+                  `Reverse ${formatVnd(row.amount)} payment of ${name}`,
                 )}
                 onClick={() => onReverse(row.id, row.amount)}
               >

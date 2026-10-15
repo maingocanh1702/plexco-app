@@ -98,7 +98,7 @@ test.describe("list", () => {
     const cardEl = card(page, "s-open");
     await expect(cardEl).toBeVisible();
     await expect(cardEl).toContainText("Cầu lông");
-    await expect(cardEl).toContainText("50.000");
+    await expect(cardEl).toContainText("50.000\u0111"); // DD-128 OD-4b: dots, direct lowercase d-stroke
     await expect(cardEl).toContainText("2/12 chỗ"); // 2 active players of 12
     await expect(cardEl).toContainText("Đang mở");
   });
@@ -293,6 +293,7 @@ test.describe("create", () => {
   }) => {
     const mock = await open(page, "/new");
     await fillValid(page);
+    await page.getByLabel("Địa chỉ").fill("1 Nguyễn Văn Linh");
     await page.getByRole("button", { name: "Tạo bản nháp" }).click();
     await expect(page).toHaveURL(new RegExp(`${BASE}/new-1$`));
     await expect(page.getByRole("heading", { level: 1, name: "Cầu lông" })).toBeVisible();
@@ -307,8 +308,8 @@ test.describe("create", () => {
       slotsMax: null,
       visibility: "private",
       venueName: "Sân A",
+      venueAddress: "1 Nguyễn Văn Linh",
     });
-    expect(call!.body).not.toHaveProperty("venueAddress");
     expect(String(call!.body!.commandId)).toMatch(/^[0-9a-f-]{36}$/);
   });
 
@@ -498,8 +499,8 @@ test.describe("detail", () => {
         // The BE sends ids + names only; these amount-like extras make the "no amount is shown"
         // assertions able to fail if the UI ever started rendering whatever the payload holds.
         openBalancePlayers: [
-          { playerId: "p2", displayName: "Minh Trần", remaining: 150000, amount: "150.000 ₫" },
-          { playerId: "p9", displayName: null, remaining: 90000, amount: "90.000 ₫" },
+          { playerId: "p2", displayName: "Minh Trần", remaining: 150000, amount: "150.000đ" },
+          { playerId: "p9", displayName: null, remaining: 90000, amount: "90.000đ" },
         ],
       },
     };
@@ -528,7 +529,7 @@ test.describe("detail", () => {
       await expect(alert.getByRole("listitem")).toHaveText(["Minh Trần", "(chưa đặt tên)"]);
       await expect(alert).not.toContainText("p2"); // ids are never text
       // no amount is shown or invented, although the payload carries amount-like fields
-      for (const amount of ["₫", "150", "90.000", "remaining"]) {
+      for (const amount of ["150", "90.000", "remaining"]) {
         await expect(alert).not.toContainText(amount);
       }
       await expect(alert.getByRole("button")).toHaveCount(1); // domain code: no reload / retry

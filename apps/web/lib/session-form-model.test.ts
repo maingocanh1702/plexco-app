@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  VENUE_ADDRESS_MAX,
   buildCreateBody,
   buildUpdateBody,
   emptyFormValues,
@@ -80,10 +81,40 @@ describe("validateForm", () => {
   });
 });
 
+describe("validateForm venueAddress cap (DD-128 OD-4a, 200 UTF-16 code units)", () => {
+  const addr = (n: number) => "\u0111".repeat(n); // d-stroke: 1 code unit each
+  it("pins the cap at 200, the same number the input maxLength and hint use", () => {
+    expect(VENUE_ADDRESS_MAX).toBe(200);
+  });
+  it("accepts 200 and rejects 201 on create, pinned to the Address field only", () => {
+    expect(validateForm(base({ venueAddress: addr(200) }), TZ, en)).toEqual({});
+    const e = validateForm(base({ venueAddress: addr(201) }), TZ, en);
+    expect(Object.keys(e)).toEqual(["venueAddress"]);
+    expect(e.venueAddress).toContain("200");
+  });
+  it("counts the trimmed value (what the body sends), so padding never trips the cap", () => {
+    expect(validateForm(base({ venueAddress: `  ${addr(200)}  ` }), TZ, en)).toEqual({});
+  });
+  it("edit: an untouched legacy 250-char address does not block saving other fields", () => {
+    const legacy = base({ venueAddress: addr(250) });
+    expect(validateForm({ ...legacy, venueName: "Sân B" }, TZ, en, legacy)).toEqual({});
+  });
+  it("edit: once the legacy address is changed and still over 200, the Address field is flagged", () => {
+    const legacy = base({ venueAddress: addr(250) });
+    const e = validateForm({ ...legacy, venueAddress: addr(230) }, TZ, en, legacy);
+    expect(Object.keys(e)).toEqual(["venueAddress"]);
+    expect(validateForm({ ...legacy, venueAddress: addr(200) }, TZ, en, legacy)).toEqual({});
+  });
+  it("message is a vi/en pair", () => {
+    const vi = validateForm(base({ venueAddress: addr(201) }), TZ, (v) => v);
+    expect(vi.venueAddress).toBe("Địa chỉ tối đa 200 ký tự.");
+  });
+});
+
 describe("buildCreateBody", () => {
-  it("sends explicit-offset ISO, tenant zone, null slots for unlimited, and no venueAddress", () => {
+  it("sends explicit-offset ISO, tenant zone, null slots for unlimited, and the trimmed venueAddress", () => {
     const body = buildCreateBody(
-      base({ venueName: " Sân A ", venueAddress: "ignored", price: "50.000" }),
+      base({ venueName: " Sân A ", venueAddress: " 1 Nguyễn Văn Linh ", price: "50.000" }),
       TZ,
     );
     expect(body).toEqual({
@@ -96,7 +127,12 @@ describe("buildCreateBody", () => {
       visibility: "private",
       joinPolicy: "open",
       venueName: "Sân A",
+      venueAddress: "1 Nguyễn Văn Linh",
     });
+  });
+
+  it("omits a blank venueAddress", () => {
+    const body = buildCreateBody(base({ venueAddress: "   " }), TZ);
     expect("venueAddress" in body).toBe(false);
   });
 });
@@ -104,14 +140,14 @@ describe("buildCreateBody", () => {
 describe("buildUpdateBody", () => {
   it("an unusable stored zone round-trips in the fallback zone instead of throwing", () => {
     const odd = { ...session, timezone: "Mars/Olympus_Mons" };
-    expect(buildUpdateBody(valuesFromSession(odd, "vi"), odd)).toBeNull();
+    expect(buildUpdateBody(valuesFromSession(odd), odd)).toBeNull();
   });
   it("returns null when nothing changed (round-trip of the loaded session)", () => {
-    expect(buildUpdateBody(valuesFromSession(session, "vi"), session)).toBeNull();
+    expect(buildUpdateBody(valuesFromSession(session), session)).toBeNull();
   });
   it("sends only changed fields; null clears", () => {
     const v = {
-      ...valuesFromSession(session, "vi"),
+      ...valuesFromSession(session),
       price: "60.000",
       area: "",
       venueAddress: "1 Nguyễn Văn Linh",
@@ -122,13 +158,31 @@ describe("buildUpdateBody", () => {
       venueAddress: "1 Nguyễn Văn Linh",
     });
   });
+  it("a legacy over-cap address with surrounding spaces is exempted AND not sent (same comparison)", () => {
+    const stored = `  ${"x".repeat(250)}  `;
+    const legacy = { ...session, venueAddress: stored };
+    const form = { ...valuesFromSession(legacy), venueName: "Sân B" };
+    expect(validateForm(form, TZ, en, valuesFromSession(legacy))).toEqual({});
+    expect(buildUpdateBody(form, legacy)).toEqual({ venueName: "Sân B" });
+    expect(buildUpdateBody(valuesFromSession(legacy), legacy)).toBeNull();
+  });
+  it("an address edited from a legacy over-cap value is still sent and still capped", () => {
+    const legacy = { ...session, venueAddress: "x".repeat(250) };
+    const edited = { ...valuesFromSession(legacy), venueAddress: "y".repeat(230) };
+    expect(Object.keys(validateForm(edited, TZ, en, valuesFromSession(legacy)))).toEqual([
+      "venueAddress",
+    ]);
+    expect(buildUpdateBody(edited, legacy)).toEqual({ venueAddress: "y".repeat(230) });
+    const cleared = { ...valuesFromSession(legacy), venueAddress: "  " };
+    expect(buildUpdateBody(cleared, legacy)).toEqual({ venueAddress: null });
+  });
   it("does not report untouched times as changed when the stored value carries seconds", () => {
     const withSeconds = { ...session, startsAt: "2026-10-20T11:30:42.123Z" };
-    expect(buildUpdateBody(valuesFromSession(withSeconds, "vi"), withSeconds)).toBeNull();
+    expect(buildUpdateBody(valuesFromSession(withSeconds), withSeconds)).toBeNull();
   });
   it("detects a slots change to unlimited and a time change", () => {
     const v = {
-      ...valuesFromSession(session, "vi"),
+      ...valuesFromSession(session),
       slotsUnlimited: true,
       endsAt: "2026-10-20T21:00",
     };

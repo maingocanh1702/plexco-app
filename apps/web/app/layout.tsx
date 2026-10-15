@@ -1,17 +1,20 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Sora } from "next/font/google";
+import { Be_Vietnam_Pro, Inter } from "next/font/google";
 import type { ReactNode } from "react";
 import { THEME_BG_DARK, THEME_BG_LIGHT } from "../lib/theme-colors";
 import { RegisterSw } from "../components/pwa/register-sw";
 import "./globals.css";
 
-// Sora has NO "vietnamese" subset and latin-ext lacks U+1EA0-1EF1 (most stacked Vietnamese
-// vowels), so --font-heading falls back to Inter (which has it) for those glyphs.
+// Headings use Be Vietnam Pro (DD-123 OD-7): it ships a "vietnamese" subset whose unicode-range
+// covers U+1EA0-1EF9, so stacked Vietnamese vowels render in the heading face, not a fallback (the
+// previous heading face had no such subset). It only has static weights, and only 700 is loaded:
+// every --font-heading rule and h1-h4 use --font-bold (pinned by app/heading-font.test.ts), while
+// the 600 semibold token is only ever used on Inter. Add a weight here the day a heading needs it.
 // Self-hosted at build time by next/font; display swap + system fallbacks (see --font-* tokens).
-const sora = Sora({
-  subsets: ["latin", "latin-ext"],
-  adjustFontFallback: false,
-  variable: "--font-sora",
+const beVietnamPro = Be_Vietnam_Pro({
+  subsets: ["latin", "latin-ext", "vietnamese"],
+  weight: ["700"],
+  variable: "--font-be-vietnam-pro",
   display: "swap",
 });
 const inter = Inter({
@@ -45,7 +48,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="vi" className={`${sora.variable} ${inter.variable}`}>
+    <html lang="vi" className={`${beVietnamPro.variable} ${inter.variable}`}>
       <body>
         {children}
         <RegisterSw />

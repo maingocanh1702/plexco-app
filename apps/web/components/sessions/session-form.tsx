@@ -2,9 +2,10 @@
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { ApiClientError } from "../../lib/api-client";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { formatVndInput, parseVndInput } from "../../lib/money";
 import {
+  VENUE_ADDRESS_MAX,
   validateForm,
   type FormErrors,
   type SessionFormValues,
@@ -50,7 +51,6 @@ const SERVER_FIELD_TO_FORM = {
 export function SessionForm(props: SessionFormProps) {
   const { mode, initial, timezone, sports, sportsLoading, submitLabel, cancelHref } = props;
   const t = useT();
-  const lang = useLang();
   const [values, setValues] = useState(initial);
   const [errors, setErrors] = useState<FormErrors>({});
   const [serverError, setServerError] = useState<unknown>(null);
@@ -71,7 +71,7 @@ export function SessionForm(props: SessionFormProps) {
     event.preventDefault();
     if (busy) return;
     setServerError(null);
-    const found = validateForm(values, timezone, t);
+    const found = validateForm(values, timezone, t, initial);
     setErrors(found);
     if (Object.keys(found).length > 0) {
       setFocusSummary((n) => n + 1);
@@ -172,14 +172,14 @@ export function SessionForm(props: SessionFormProps) {
           maxLength={200}
           onChange={(e) => set("venueName", e.target.value)}
         />
-        {mode === "edit" ? (
-          <TextField
-            label={t("Địa chỉ", "Address")}
-            value={values.venueAddress}
-            maxLength={300}
-            onChange={(e) => set("venueAddress", e.target.value)}
-          />
-        ) : null}
+        <TextField
+          label={t("Địa chỉ", "Address")}
+          value={values.venueAddress}
+          error={errors.venueAddress}
+          maxLength={VENUE_ADDRESS_MAX}
+          hint={t(`Tối đa ${VENUE_ADDRESS_MAX} ký tự`, `Up to ${VENUE_ADDRESS_MAX} characters`)}
+          onChange={(e) => set("venueAddress", e.target.value)}
+        />
         <TextField
           label={t("Khu vực", "Area")}
           value={values.area}
@@ -202,11 +202,7 @@ export function SessionForm(props: SessionFormProps) {
             const parsed = parseVndInput(e.target.value);
             set(
               "price",
-              parsed === null
-                ? ""
-                : Number.isNaN(parsed)
-                  ? e.target.value
-                  : formatVndInput(parsed, lang),
+              parsed === null ? "" : Number.isNaN(parsed) ? e.target.value : formatVndInput(parsed),
             );
           }}
         />

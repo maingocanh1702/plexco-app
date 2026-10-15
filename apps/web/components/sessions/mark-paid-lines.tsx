@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { problems, shownTotal, type AmountMap } from "../../lib/mark-paid-model";
 import { formatVnd, parseVndInput } from "../../lib/money";
 import { displayNameOf } from "../../lib/roster-rules";
@@ -27,7 +27,6 @@ export function MarkPaidLines({
   onChange: (playerId: string, text: string) => void;
 }) {
   const t = useT();
-  const lang = useLang();
   const uid = useId();
   const bad = problems(lines, amounts);
   const total = shownTotal(lines, amounts);
@@ -44,10 +43,7 @@ export function MarkPaidLines({
               <div className={styles.lineHead}>
                 <label htmlFor={inputId}>{t(`Số tiền cho ${name}`, `Amount for ${name}`)}</label>
                 <span>
-                  {t(
-                    `Còn ${formatVnd(line.remaining, lang)}`,
-                    `${formatVnd(line.remaining, lang)} left`,
-                  )}
+                  {t(`Còn ${formatVnd(line.remaining)}`, `${formatVnd(line.remaining)} left`)}
                 </span>
               </div>
               <input
@@ -66,8 +62,8 @@ export function MarkPaidLines({
               {problem ? (
                 <p id={errId} className={fieldStyles.error}>
                   {t(
-                    `Nhập số nguyên từ 1 đến ${formatVnd(line.remaining, lang)}.`,
-                    `Enter a whole amount from 1 to ${formatVnd(line.remaining, lang)}.`,
+                    `Nhập số nguyên từ 1 đến ${formatVnd(line.remaining)}.`,
+                    `Enter a whole amount from 1 to ${formatVnd(line.remaining)}.`,
                   )}
                 </p>
               ) : null}
@@ -77,7 +73,7 @@ export function MarkPaidLines({
       </ul>
       <p className={styles.total} aria-live="polite">
         <span>{t("Tổng cộng", "Total")}</span>
-        <span>{total === null ? "—" : formatVnd(total, lang)}</span>
+        <span>{total === null ? "—" : formatVnd(total)}</span>
       </p>
     </>
   );

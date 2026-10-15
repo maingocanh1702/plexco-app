@@ -212,16 +212,16 @@ describe("POST /api/sessions", () => {
     expect(data).toEqual({ session: { id: SESSION_ID, status: "draft", version: 1 } });
   });
 
-  it("does NOT pre-reject venueAddress — it is outside create's vocabulary, so it is ignored", async () => {
-    // codex round-02 [P1]: refusing it pre-dispatch broke replay, because the ORIGINAL request
-    // may have committed WITHOUT the field and the retry may carry it. Payload differences are
-    // irrelevant to dedup (DD-117 D5), so this must reach the command and replay.
-    const response = await POST(req({ ...validBody, venueAddress: "12 Nguyen Trai" }));
+  it("does NOT pre-reject an over-long venueAddress — the command validates it AFTER dedup", async () => {
+    // codex round-02 [P1]: refusing a payload pre-dispatch breaks replay, because the ORIGINAL
+    // request may have committed with a different payload than the retry. Payload differences
+    // are irrelevant to dedup (DD-117 D5), so even a 500-character address must reach the command.
+    const response = await POST(req({ ...validBody, venueAddress: "x".repeat(500) }));
     expect(response.status).toBe(200);
     expect(createSession).toHaveBeenCalledTimes(1);
   });
 
-  it("replays a committed create whose retry ADDS venueAddress (round-02 [P1] scenario)", async () => {
+  it("replays a committed create whose retry CARRIES a different venueAddress (round-02 [P1] scenario)", async () => {
     vi.mocked(createSession).mockResolvedValue({
       sessionId: SESSION_ID,
       status: "draft",
@@ -229,16 +229,30 @@ describe("POST /api/sessions", () => {
       version: 1,
       replayed: true,
     });
-    const response = await POST(req({ ...validBody, venueAddress: "12 Nguyen Trai" }));
+    const response = await POST(req({ ...validBody, venueAddress: "x".repeat(500) }));
     expect(response.status).toBe(200);
     const { data } = await envelope(response);
     expect(data).toEqual({ session: { id: SESSION_ID, status: "draft", version: 1 } });
   });
 
-  it("never forwards venueAddress into the create payload", async () => {
+  it("forwards venueAddress into the create payload (DD-128 OD-4a), and only when present", async () => {
+    await POST(req({ ...validBody, venueAddress: "12 Nguyen Trai" }));
+    const [, withAddr] = vi.mocked(createSession).mock.calls[0]!;
+    expect(withAddr.input.venueAddress).toBe("12 Nguyen Trai");
+    vi.mocked(createSession).mockClear();
     await POST(req(validBody));
-    const [, params] = vi.mocked(createSession).mock.calls[0]!;
-    expect((params.input as unknown as Record<string, unknown>).venueAddress).toBeUndefined();
+    const [, without] = vi.mocked(createSession).mock.calls[0]!;
+    expect(Object.hasOwn(without.input, "venueAddress")).toBe(false);
+  });
+
+  it("maps the command's INVALID_TEXT_FIELD (e.g. a 201-character address) onto INVALID_BODY 400", async () => {
+    vi.mocked(createSession).mockRejectedValue(
+      new SessionCommandError("INVALID_TEXT_FIELD", "venue_address too long"),
+    );
+    const response = await POST(req({ ...validBody, venueAddress: "x".repeat(201) }));
+    expect(response.status).toBe(400);
+    const { error } = await envelope(response);
+    expect(error).toMatchObject({ code: "INVALID_BODY" });
   });
 
   it.each([

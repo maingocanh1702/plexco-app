@@ -330,6 +330,7 @@ export async function installApiMock(
         slotsMax: (body.slotsMax as number | null) ?? null,
         area: (body.area as string | undefined) ?? null,
         venueName: (body.venueName as string | undefined) ?? null,
+        venueAddress: (body.venueAddress as string | undefined) ?? null,
         visibility: String(body.visibility ?? "private"),
         joinPolicy: String(body.joinPolicy ?? "open"),
       });

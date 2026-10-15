@@ -1,4 +1,4 @@
-import type { TFn, ClientLang } from "./i18n-client";
+import type { TFn } from "./i18n-client";
 import { INT4_MAX, formatVndInput, parseVndInput } from "./money";
 import { isoToLocalInput, localInputToIso, resolveTimeZone } from "./session-time";
 import type { SessionDetailDto, SessionFieldsBody } from "./sessions-api";
@@ -22,6 +22,12 @@ export interface SessionFormValues {
   joinPolicy: "open" | "approval";
 }
 
+/**
+ * Max venue address length: the command caps it at 200 UTF-16 code units (DD-128 OD-4a), which is
+ * also the unit of the HTML maxLength attribute, so the input, the hint and this check agree.
+ */
+export const VENUE_ADDRESS_MAX = 200;
+
 export type FormErrors = Partial<Record<keyof SessionFormValues, string>>;
 
 export const emptyFormValues = (): SessionFormValues => ({
@@ -38,7 +44,7 @@ export const emptyFormValues = (): SessionFormValues => ({
   joinPolicy: "open",
 });
 
-export function valuesFromSession(s: SessionDetailDto, lang: ClientLang): SessionFormValues {
+export function valuesFromSession(s: SessionDetailDto): SessionFormValues {
   return {
     sportId: s.sportId,
     startsAt: isoToLocalInput(s.startsAt, resolveTimeZone(s.timezone)),
@@ -46,7 +52,7 @@ export function valuesFromSession(s: SessionDetailDto, lang: ClientLang): Sessio
     venueName: s.venueName ?? "",
     venueAddress: s.venueAddress ?? "",
     area: s.area ?? "",
-    price: formatVndInput(s.priceAmount, lang),
+    price: formatVndInput(s.priceAmount),
     slotsUnlimited: s.slotsMax === null,
     slotsMax: s.slotsMax === null ? "" : String(s.slotsMax),
     visibility: s.visibility === "public" ? "public" : "private",
@@ -63,7 +69,30 @@ function slotsOf(v: SessionFormValues): number | null {
   return n >= 1 && n <= INT4_MAX ? n : Number.NaN;
 }
 
-export function validateForm(v: SessionFormValues, tz: string, t: TFn): FormErrors {
+const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
+
+/**
+ * The venue address in the form this client sends and compares: trimmed, blank = null. The server
+ * does not trim: it stores the value it receives as-is (session-service.ts), so a legacy address with
+ * surrounding spaces is stored raw and only compares equal here after trimming.
+ * validateForm's legacy exemption and buildUpdateBody's "changed?" diff BOTH compare in this form,
+ * so an address exempted as untouched is also never sent (a legacy over-cap address with
+ * surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).
+ */
+const addressKey = (raw: string | null | undefined): string | null => textOrNull(raw ?? "");
+
+/**
+ * `initial` (edit mode) lets the address check skip an address the host did not touch: a legacy
+ * 201-300 character one (the old edit limit was 300, with no server cap) is never sent by
+ * buildUpdateBody while unchanged, so it must not block saving other fields; once edited it is
+ * held to the cap here, pinned to the Address field instead of the generic INVALID_BODY summary.
+ */
+export function validateForm(
+  v: SessionFormValues,
+  tz: string,
+  t: TFn,
+  initial?: SessionFormValues,
+): FormErrors {
   const e: FormErrors = {};
   if (!v.sportId) e.sportId = t("Chọn môn thể thao.", "Choose a sport.");
 
@@ -78,6 +107,17 @@ export function validateForm(v: SessionFormValues, tz: string, t: TFn): FormErro
     e.endsAt = t(
       "Thời gian kết thúc phải sau thời gian bắt đầu.",
       "End time must be after start time.",
+    );
+  }
+
+  const address = v.venueAddress.trim();
+  if (
+    address.length > VENUE_ADDRESS_MAX &&
+    addressKey(v.venueAddress) !== addressKey(initial?.venueAddress)
+  ) {
+    e.venueAddress = t(
+      `Địa chỉ tối đa ${VENUE_ADDRESS_MAX} ký tự.`,
+      `The address is at most ${VENUE_ADDRESS_MAX} characters.`,
     );
   }
 
@@ -107,9 +147,7 @@ export function validateForm(v: SessionFormValues, tz: string, t: TFn): FormErro
   return e;
 }
 
-const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
-
-/** POST body minus commandId. venueAddress is NOT part of the create vocabulary (route drops it). */
+/** POST body minus commandId. Optional text fields are sent only when non-empty (DD-128 OD-4a: venueAddress included). */
 export function buildCreateBody(
   v: SessionFormValues,
   tz: string,
@@ -126,8 +164,10 @@ export function buildCreateBody(
   };
   const area = textOrNull(v.area);
   const venueName = textOrNull(v.venueName);
+  const venueAddress = textOrNull(v.venueAddress);
   if (area !== null) body.area = area;
   if (venueName !== null) body.venueName = venueName;
+  if (venueAddress !== null) body.venueAddress = venueAddress;
   return body;
 }
 
@@ -160,7 +200,7 @@ export function buildUpdateBody(
   if (area !== original.area) body.area = area;
   const venueName = textOrNull(v.venueName);
   if (venueName !== original.venueName) body.venueName = venueName;
-  const venueAddress = textOrNull(v.venueAddress);
-  if (venueAddress !== original.venueAddress) body.venueAddress = venueAddress;
+  const venueAddress = addressKey(v.venueAddress);
+  if (venueAddress !== addressKey(original.venueAddress)) body.venueAddress = venueAddress;
   return Object.keys(body).length === 0 ? null : body;
 }

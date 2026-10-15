@@ -1,5 +1,5 @@
 /*
- * Plexco design tokens - DD-81 target C (Energetic Orange + Sora/Inter), activated by DD-122 D1.
+ * Plexco design tokens - DD-81 target C (Energetic Orange + Be Vietnam Pro/Inter), activated by DD-122 D1.
  * Structure and values mirror docs/standards/design-tokens.md (single source of truth for values).
  * This is the ONLY stylesheet allowed to contain hex/rgba literals (FE-INV-2); components use
  * var(--token) only. Enforced by app/tokens-only.test.ts.
@@ -64,7 +64,8 @@
 
   /* -- Typography (next/font variables are set on <html> by app/layout.tsx) -- */
   --font-heading:
-    var(--font-sora), "Sora", var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif;
+    var(--font-be-vietnam-pro), "Be Vietnam Pro", var(--font-inter), system-ui, -apple-system,
+    "Segoe UI", sans-serif;
   --font-sans: var(--font-inter), "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;

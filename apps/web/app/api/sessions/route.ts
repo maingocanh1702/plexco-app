@@ -21,9 +21,9 @@ export async function POST(request: Request): Promise<Response> {
     // NOTHING about the payload is validated before dispatch: dedup on (tenant_id, command_id)
     // precedes patch validation inside the command (DD-117 D5), so any pre-rejection here would
     // fail a retry of an already-committed create — including the case where the ORIGINAL request
-    // differed from the retry (codex round-02 [P1]). shapeCreateFields simply does not carry
-    // venueAddress, so an unsupported field is ignored like any other unrecognised key rather than
-    // parsed-and-dropped or refused.
+    // differed from the retry (codex round-02 [P1]). shapeCreateFields carries venueAddress
+    // (DD-128 OD-4a) like every other create field; the command validates it (max 200 characters)
+    // only after dedup.
     const fields = shapeCreateFields(context.body);
 
     const result = await createSession(appDb().db, {

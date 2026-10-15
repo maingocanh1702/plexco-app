@@ -39,7 +39,7 @@ export function SessionListCard({
       </span>
       {session.venueName ? <span className={styles.meta}>{session.venueName}</span> : null}
       <span className={styles.meta}>
-        <span className={styles.price}>{formatVnd(session.priceAmount, lang)}</span>
+        <span className={styles.price}>{formatVnd(session.priceAmount)}</span>
         {" · "}
         {slots}
       </span>

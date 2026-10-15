@@ -1200,19 +1200,24 @@ describe("shapeSessionFields", () => {
 });
 
 describe("shapeCreateFields", () => {
-  it("OMITS venueAddress — it is not part of createSession's vocabulary (round-02 [P1])", () => {
+  it("CARRIES venueAddress — it is part of createSession's vocabulary (DD-128 OD-4a)", () => {
     const fields = shapeCreateFields({
       venueAddress: "12 Nguyen Trai",
       venueName: "San A",
     }) as Record<string, unknown>;
-    expect(Object.hasOwn(fields, "venueAddress")).toBe(false);
+    expect(fields.venueAddress).toBe("12 Nguyen Trai");
     expect(fields.venueName).toBe("San A");
   });
 
-  it("never rejects, so a retry carrying an unsupported field can still replay", () => {
-    expect(shapeCreateFields({ venueAddress: "x", priceAmount: "bad" })).not.toBeInstanceOf(
-      Response,
-    );
+  it("preserves a provided venueAddress null and omits an absent one", () => {
+    expect(Object.hasOwn(shapeCreateFields({ venueAddress: null }), "venueAddress")).toBe(true);
+    expect(Object.hasOwn(shapeCreateFields({ venueName: "x" }), "venueAddress")).toBe(false);
+  });
+
+  it("never rejects, so a retry carrying any field value (even an over-long address) can still replay", () => {
+    expect(
+      shapeCreateFields({ venueAddress: "x".repeat(500), priceAmount: "bad" }),
+    ).not.toBeInstanceOf(Response);
   });
 
   it("shares the rest of the vocabulary with update (no drift between the two)", () => {

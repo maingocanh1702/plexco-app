@@ -5,11 +5,12 @@ import { patchClubConfig, type ClubConfigDto } from "../../lib/club-settings-cli
 import {
   buildDefaultsPatch,
   defaultsValues,
+  normalizePriceInput,
   unsureAfter,
   type ClubPatchField,
   type DefaultsFormValues,
 } from "../../lib/club-settings-model";
-import { useLang, useT } from "../../lib/i18n-client";
+import { useT } from "../../lib/i18n-client";
 import { formatVndInput } from "../../lib/money";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
 import type { SportDto } from "../../lib/sessions-api";
@@ -37,13 +38,12 @@ export function ClubDefaultsForm({
   onSaved: () => void;
 }) {
   const t = useT();
-  const lang = useLang();
   const online = useOnlineStatus();
   const command = useCommandId();
   const { refresh: refreshSession } = useSessionContext();
   const formRef = useRef<HTMLFormElement>(null);
   const [values, setValues] = useState<DefaultsFormValues>(() =>
-    defaultsValues(club, (n) => formatVndInput(n, lang)),
+    defaultsValues(club, (n) => formatVndInput(n)),
   );
   const [sportError, setSportError] = useState<string | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
@@ -138,7 +138,7 @@ export function ClubDefaultsForm({
         value={values.price}
         error={priceError}
         onChange={(e) => {
-          setValues({ ...values, price: e.target.value });
+          setValues({ ...values, price: normalizePriceInput(e.target.value) });
           setPriceError(null);
         }}
       />

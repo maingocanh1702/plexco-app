@@ -40,7 +40,7 @@ describe("tokens-only (FE-INV-2)", () => {
 
   it("every var(--token) used in component CSS/TSX is defined in globals.css", () => {
     const defined = new Set([...globals.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
-    defined.add("--font-sora").add("--font-inter"); // injected by next/font on <html>
+    defined.add("--font-be-vietnam-pro").add("--font-inter"); // injected by next/font on <html>
     const missing = new Set<string>();
     for (const file of styled) {
       for (const m of readFileSync(file, "utf8").matchAll(/var\((--[a-z0-9-]+)/g)) {
