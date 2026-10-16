@@ -1,7 +1,7 @@
 # Feature: Home (PWA) — FE Design Spec
 
 > **Route(s):** `/` (authenticated) — PWA landing
-> **Source authority:** `../../../features/FE/feature_home.md` v0.10 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_home.md` v0.10 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4` · STALE PIN: source is now v0.15, FE spec not re-reviewed
 > **Source contract status:** Reviewed composition contract
 > **Projection/API contract:** `GET /api/me/home` target in BE Home v0.4; no runtime
 > **Capability/availability:** Person-self session authz + public Marketplace availability; section failure is fail-closed

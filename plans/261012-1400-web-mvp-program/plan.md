@@ -6,6 +6,8 @@
 > security reviewer for auth/permissions/secrets/money/webhooks/deployment.
 > Design doc: `design.md` (architecture + conventions every slice follows).
 
+> **Status pointer (2026-10-16):** the milestone table below is stale. The current ledger is `docs/sessions/web-mvp-program-status.md` and the current plan (Phase 3: M6, M9, M10, local-only) is `docs/sessions/web-mvp-phase3-plan.md`.
+
 ## Baseline (measured 2026-10-12 at `main@0db92b9`)
 
 49 migrations (tail `0048`) · 15 API routes (0 session READ routes) · 0 FE screens · 8 session
