@@ -15,12 +15,12 @@
 
 Conductor (session local của owner) -> **một orchestrator (opus/max) cho mỗi session P3-S1..P3-S13** -> workers. Mỗi lane = một PR.
 
-- **Conductor** không sửa code. Nó tạo orchestrator theo thứ tự S1..S13; mọi agent do conductor hay orchestrator tạo chạy opus/max (merge clerk và summariser: sonnet/high), không bao giờ truyền model `fable` vào lời gọi Agent; brief của orchestrator = block session trong S3 + block S1 + các block lane (S2) của session đó.
+- **Conductor** không sửa code. Nó tạo orchestrator theo thứ tự S1..S13; orchestrator của session chạy opus/max; mọi worker theo quy tắc model của S1 (writer sonnet/high ở lane nào ghi vậy); merge clerk, verifier và summariser chạy sonnet/high; không bao giờ truyền model `fable` vào lời gọi Agent; brief của orchestrator = block session trong S3 + block S1 + các block lane (S2) của session đó.
 - **Orchestrator** tạo workers: readiness reviewer, writer, code reviewer, security reviewer (khi lane yêu cầu), merge clerk. Workers không tạo agent con. Tối đa 3 writer chạy đồng thời trong một session.
 - **Một lane = một branch + một worktree + tối đa một writer = một PR. Không có stacked PR:** lane phụ thuộc lane khác chạy ở session SAU, sau merge round của session kia, và lấy base là `origin/main` lúc đó. Trong một session song song, tối đa một lane sửa `packages/db/src/session-service.ts` (cũng `roster-service.ts`, `session-form.tsx`); lane có migration không bao giờ chạy song song với nhau (số migration kế tiếp đo tại base của lane, không ghi cứng trong prose).
 - **Step 0 của mỗi session:** với từng lane, readiness reviewer kiểm lại sự thật hiện hành tại base của session. `CODE_READY` => ghi file readiness, chạy `pnpm review:check:changed` TRƯỚC khi commit (checker so với HEAD nên sau commit là vacuous), commit làm commit đầu của branch lane, rồi chạy `pnpm review:check`. `NOT_CODE_READY` => không commit gì; verdict vào báo cáo session như một mục AWAIT (blocker chính xác, owner, cách giải nhị phân) và lane không bắt đầu; các lane khác tiếp tục. Mỗi lane tối đa MỘT migration; lane vượt ngân sách B3 mặc định (khoảng 300 LOC, 3 module) phải có B3 exception tường minh trong step 0, nếu không thì `NOT_CODE_READY`.
 - **Vòng đời một lane:** readiness -> test-first -> verify -> orchestrator push + mở PR -> review độc lập (tối đa 3 vòng) -> security round (lane có P1 auth/money/external input) -> CI GREEN -> dòng `MERGE_READY`.
-- **"Đã ký" = sự kiện duyệt của owner:** PR #58 được owner merge, hoặc owner viết "Phase 3 plan approved" kèm override (được ký một phần, ví dụ "D2 signed except (f)"); L0 ghi chữ ký vào `decisions.md`. **Merge round sau mỗi session:** khi D5 đã ký, một merge clerk (sonnet/high) merge các PR `MERGE_READY` của session theo thứ tự phụ thuộc từ P3-S1 trở đi (merge commit, như phase 2); chưa ký D5 thì owner tự merge và conductor dừng với `RESULT: AWAIT` (merge session N). Owner có thể merge bất cứ lúc nào; PR #50 chỉ owner được động tới. Sau mỗi merge, PR còn lại của session được cập nhật bằng `git merge --no-ff origin/main` (không rebase).
+- **"Đã ký":** không có gì được ký chỉ bằng một lần merge. Owner duyệt bằng cách VIẾT "Phase 3 plan approved" kèm câu trả lời từng quyết định (ví dụ "D1 signed, D2 signed except (f), D3-D5 signed") hoặc override; tin nhắn đó cũng cho phép merge PR #58: nếu owner chưa merge thì merge clerk merge #58 trước, và P3-S1 chỉ bắt đầu trên một `main` đã chứa #58. Merge #58 mà không có tin nhắn đó thì không ký gì và không khởi động gì. L0 ghi chữ ký vào `decisions.md`. **Merge round sau mỗi session:** khi D5 đã ký, một merge clerk (sonnet/high) merge các PR `MERGE_READY` của session theo thứ tự phụ thuộc từ P3-S1 trở đi (merge commit, như phase 2); chưa ký D5 thì owner tự merge và conductor dừng với `RESULT: AWAIT` (merge session N). Owner có thể merge bất cứ lúc nào; PR #50 chỉ owner được động tới. Sau mỗi merge, PR còn lại của session được cập nhật bằng `git merge --no-ff origin/main` (không rebase).
 - **P0 không bao giờ là lane:** bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED`, nối bot token Zalo thật, nhắn người dùng thật chỉ là bước của owner; agent chỉ chuẩn bị runbook. Route announce thuộc lane L4b (chỉ chạy khi owner ký D2 f).
 - **AWAIT** = lane chờ đúng MỘT thứ bên ngoài (chữ ký một quyết định D1-D5, một lần merge, một bước P0) kèm một đề xuất và điều kiện resume nhị phân; chỉ lane phụ thuộc bị dừng, lane khác chạy tiếp.
 - **HALT** (cấp lane) = breaker cứng, không có đường vòng: quá 3 vòng review chưa CLEAN (`MAX_ROUNDS`), cùng một vùng code bị sửa 3 vòng liên tiếp (`REGION_THRASH`), cần file ngoài FILES IN SCOPE (`SCOPE_DRIFT`), cần migration/secret không có trong brief, base lệch (`BASE_MISMATCH`). Orchestrator báo lên conductor dưới dạng `RESULT: BLOCKED`.
@@ -59,8 +59,8 @@ REVIEW (DD-122 D4, owner 2026-10-12; Codex waived): NO codex-review-pin.sh, NO s
 MODELS: writer opus/max for P1 and complex work (auth, identity, money, RLS, SECURITY DEFINER, migrations, webhooks, concurrency),
   sonnet/high for UI wiring, copy, e2e specs, docs, mechanical merges. Reviewer opus/max for money/auth/identity/security/SQL/
   concurrency and for any opus writer; opus/high for other code; sonnet/high for docs-only and mechanical merges. Readiness
-  reviewer = same model and effort as the lane's code reviewer. Orchestrators and every conductor-spawned agent: opus/max only (owner override 2026-10-14 15:32); never pass model fable to any Agent call. Merge clerk and summariser:
-    sonnet/high.
+  reviewer = same model and effort as the lane's code reviewer. Session orchestrators run opus/max (owner override 2026-10-14 15:32); every worker follows this rule (sonnet/high writers where the lane says so); merge clerk, verifier and
+    summariser sonnet/high; never pass model fable to any Agent call.
 STEP 0 (every lane, before any code): a readiness reviewer (same model and effort as the lane's code reviewer) re-verifies live truth at the session base (commit, schema, migrations, grants and RLS, tests, dependent specs).
   CODE_READY => write docs/sessions/web-mvp-phase3-readiness-<slug>.md (code-ready marker, canonical verdict block of docs/standards/review-code-readiness-gate.md, TARGET_FILES only files that exist),
   run `pnpm review:check:changed` BEFORE committing (it diffs against HEAD, so after the commit it is vacuous), commit it as the lane branch's FIRST commit, then run `pnpm review:check`.
@@ -110,11 +110,12 @@ GOAL: Record the owner-signed D1-D5 (DD-133..DD-137) as signed and propagate the
 MILESTONE: all (Phase 3 prerequisite)    RISK: P2 (docs)
 BASE: origin/main at session start (git fetch first; record the full SHA in the report)
 WORKTREE: .autopilot/worktrees/p3-docs-decisions-sync    BRANCH: docs/p3-docs-decisions-sync
-DEPENDS ON: the owner's approval event (PR #58 merged by the owner, or the written words "Phase 3 plan approved" plus any D-overrides; partial signing
-  is allowed, e.g. "D2 signed except (f)")
+DEPENDS ON: the owner's written "Phase 3 plan approved" with per-decision answers or overrides (partial signing is allowed, e.g. "D2 signed except
+  (f)"); a bare merge of PR #58 signs nothing; the session starts on a main that contains #58
 OWNER DECISIONS NEEDED: D1-D5. An unsigned Dn => skip only the edits that depend on it and list them under OPEN.
 FILES IN SCOPE (all exist; re-measure lines):
-- docs/standards/decisions.md (signatures only: flip DD-133..DD-137 as signed, no other row changes; no other lane edits this file);
+- docs/standards/decisions.md (signatures only: flip DD-133..DD-137 as signed, plus one-line amendment pointers at DD-32 (:464, :467 at 3546f6b:
+  public shows slots_open only) and DD-46 (:642: the approved alias is the public club name); nothing else; no other lane edits this file);
   docs/autopilot-backlog.md; docs/sessions/web-mvp-program-status.md; plans/261012-1400-web-mvp-program/plan.md
 - D1 occupancy sync: docs/product/TDD.md (:111, :306, :673, :676); docs/standards/business-rules.md (BL-DSC-1 :50, which D1 amends: host name leaves
   the public whitelist and confirmed_count goes; BL-CBF-3 :63, BL-SES-2 :75); the Product + BE pairs of feature_channel_booking_funnel,
@@ -265,8 +266,8 @@ DEPENDS ON: L3 merged (P3-S2 merge round); D2 (a-e) signed
 OWNER DECISIONS NEEDED: D2 (c) delivery matrix (a, b, e come with L3). Unsigned => AWAIT this lane only.
 FILES IN SCOPE:
 - apps/web/lib/connector-secrets.ts (envelope + decryptConnectorSecret :89), apps/web/lib/auth-secrets.ts (resolveConnectorSecretRoot), apps/web/lib/oauth-transaction.ts (deriveAesKey): MOVE
-  the envelope to NEW packages/db/src/connector-crypto.ts (or another existing package; record why); keep the same HKDF label, AAD and key_version check; the web imports it back; no new
-  secret, local ENCRYPTION_KEY
+  the envelope to NEW packages/db/src/connector-crypto.ts (or another existing package; record why and the final path in the PR, later lanes read it from there); keep the same HKDF label,
+  AAD and key_version check; the web imports it back; no new secret, local ENCRYPTION_KEY
 - apps/web/lib/zalo/client.ts (sendMessage :91, base ZALO_BOT_API_BASE :32): move or share so the worker can call it; packages/db/src/zalo-ingress.ts (appendSecretDecryptAudit :66)
 - apps/bot/src/projectors/zalo-dm.ts (replaces L3's disabled placeholder; index.ts is not edited); NEW recorded-contract Zalo stub for tests at ZALO_BOT_API_BASE
 - NEW packages/db/migrations/<next>_zalo_delivery_targets_definer.sql (likely: app_worker has no grant on zalo_bots, channel_identities or players, so one narrow definer returns the target
@@ -471,7 +472,7 @@ DONE WHEN: one formula, two former copies deleted, backlog row list-sessions-occ
 LANE: L8 p3-m9-join-core
 GOAL: Player self-join on web (open -> active or waitlisted; approval -> join request), approve/reject, self-leave, FIFO waitlist promotion, cross-club guest membership, charge at join per D3 (base price until L11). Postgres is the only source of truth; reuse the host-add capacity/waitlist logic under the session row
   lock.
-MILESTONE: M9    RISK: P1 (money, identity, concurrency, migration likely); B3: at most one migration, an exception is expected in step 0
+MILESTONE: M9    RISK: P1 (money, identity, concurrency, one definite migration); B3: exactly one migration, an exception is expected in step 0
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m9-join-core    BRANCH: feat/p3-m9-join-core
 DEPENDS ON: L7 merged and M6 code-complete (both in the P3-S3 merge round); D3 signed. BASE is origin/main after that merge round, no stacked branch
@@ -480,8 +481,8 @@ FILES IN SCOPE:
 - packages/db/src/roster-service.ts (addMemberToSession :121, removePlayerFromSession :300, upsertCharge); packages/db/src/roster-money-shared.ts (RosterMoneyErrorCode :14-32, emitSessionEvent :148); packages/db/src/session-occupancy.ts (L7); packages/db/src/session-service.ts (capacity-raise promotion hook in
   updateSession; L8 is the only editor in P3-S4)
 - NEW packages/db/src/session-join-service.ts (joinSession, which revalidates canonical live state and is also called by L10b's join-by-slug route; leaveSession, promoteFromWaitlist); NEW packages/db/src/join-request-service.ts (create, cancel, approve, reject); packages/db/src/index.ts
-- NEW packages/db/migrations/<next>_player_self_join.sql (likely): join_requests policy + grants (table exists 0006:37 but has zero code), narrow definers for guest-membership creation and for resolving a public+open session id to its tenant (never returned to the client); packages/db/schema.ts + db.dbml; the new event
-  types are registered for web_realtime in L3's registry (rows, not a second migration)
+- NEW packages/db/migrations/<next>_player_self_join.sql (definite; it also inserts the registry rows for its new event types): join_requests policy + grants (table exists 0006:37 but has zero code), a narrow definer for guest-membership creation (also used by L10b's join); the tenant comes from the ?tenant=<uuid> key
+  of the caller's own club, never from a session id lookup (cross-club joins by visitors go through L10b's public_listing_id route); packages/db/schema.ts + db.dbml
 - NEW apps/web/app/api/sessions/[id]/join/route.ts, .../leave/route.ts; NEW apps/web/app/api/join-requests/[id]/route.ts (DELETE), .../approve/route.ts, .../reject/route.ts; NEW apps/web/app/api/sessions/[id]/join-requests/route.ts (GET, host read of pending requests); apps/web/lib/session-command-route.ts;
   packages/core/src/api-contract.ts (+ test)
 NEGATIVE SCOPE: no holds, QR, pay-now, provider webhook or verified-settlement finalizer; no money moved by join; no gender price (L11); no discovery or projector; no player view pages (L12); no Zalo (L13); DD-41/42/52 eligibility and ban evaluators are not built in the repo and stay out; reversal stays owner-only.
@@ -498,7 +499,7 @@ DECISION TABLE (codes from feature_cross_club_join_tech.md section 3 and roster-
 - self-leave while open and before start, net money 0 -> left, charge void, FIFO promotion in the same transaction; net money > 0 -> refused, zero writes -> UNPINNED (proposal: reuse REMOVE_REQUIRES_REVIEW with player copy "ask the host"); after start -> UNPINNED (default applied)
 - freed seat, host remove or capacity raise -> promote the lowest waitlist_position; promoted player gets exactly one charge; no money moves
 - more than 10 joins per hour per person -> RATE_LIMITED (429) (number from the BE doc)
-- host read of pending requests (GET) -> requires manage_roster in that tenant (else FORBIDDEN 403); returns requester display name within the tenant + created_at only; never money or contact data
+- host read of pending requests (GET) -> requires manage_roster in that tenant (else FORBIDDEN 403); returns the requester's person display name only + created_at; never money or contact data
 - every roster change (join active or waitlisted, leave, promotion, approve, reject) writes ONE outbox event in the same transaction (reuse player.added, player.waitlisted, player.removed where they fit; new types named by the lane, for example player.promoted, join_request.created, join_request.approved,
   join_request.rejected); a rolled-back change writes none; L5 and L10 consume them so slots_open never goes stale
 TESTS: CONCURRENCY: N parallel joins on a slots_max=1 session => exactly one active, the rest waitlisted, as the real app role (an insert-then-count pattern oversells under concurrent Postgres transactions; lock the session row first); double-join replay with one command id; confirm-time re-check against live state;
@@ -609,10 +610,12 @@ FILES IN SCOPE:
 - NEW packages/db/migrations/<next>_public_sessions_projector_writer.sql, in this order of content: (1) definers that upsert and delete public_sessions rows recomputed from canonical rows (EXECUTE app_worker; a writer role is excluded
   because preflight rejects SET ROLE, apps/bot/src/preflight.ts:98-118); (2) session_occupancy(p_session_id uuid) RETURNS integer LANGUAGE sql SECURITY INVOKER SET search_path = public, pg_temp, REVOKE FROM PUBLIC, EXECUTE app + the definer
   owner; (3) DD-41 projection columns of BL-DSC-1 (title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction, age_min, age_max, nullable; sessions has no source for them on main so they stay NULL: UNPINNED,
-  pinned in the step-0 file); (4) the share-link registry per the signed DD-83/DD-75 design (hash-only slug storage, tombstone on revoke, rotatable) plus a slug -> hash -> (tenant, session) lookup definer for L10b; (5) REPLACE
-  public_session_share_v (0033:132-145): exactly the approved whitelist, NO host_display_name (persons are never projected; drop the unused table column if the empty table allows, else keep it NULL and never written), the DD-41 columns, the
-  share slug, club_display_name read LIVE from the tenant's currently approved alias (tenants without one are filtered out right now; a stored copy is never served), keeping security_barrier, the expiry filter and the fence anti-join; GRANT
-  SELECT to readonly only. Never re-grant base SELECT on public_sessions to app or readonly (0033:232-238); app DML stays revoked (0036)
+  pinned in the step-0 file); (4) the share-link registry per the signed DD-83/DD-75 design (hash-only slug storage, raw slug shown once to the host, tombstone on revoke, rotatable; it serves host-shared links only) and, for discovery rows,
+  a plain random public_listing_id column on public_sessions (opaque, unique, 128-bit, rotated whenever the session leaves public) with two lookup definers (slug hash -> (tenant, session) and public_listing_id -> (tenant, session)), EXECUTE
+  on both granted to the discovery/read role only; (5) REPLACE public_session_share_v (0033:132-145): exactly the approved whitelist, NO host_display_name (persons are never projected; drop the unused table column if the empty table allows,
+  else keep it NULL and never written), the DD-41 columns, public_listing_id (the view NEVER exposes session_id, public_projection_version or the share slug; the fence anti-join stays internal), club_display_name read LIVE from the tenant's
+  currently approved alias (tenants without one are filtered out right now; a stored copy is never served), keeping security_barrier, the expiry filter and the fence anti-join; the view is owned by a definer role that can read the approved
+  alias; GRANT SELECT to readonly only. Never re-grant base SELECT on public_sessions to app or readonly (0033:232-238); app DML stays revoked (0036)
 - packages/db/src/session-occupancy.ts (occupiedCountSql now emits session_occupancy(x)); packages/db/src/public-session-fence.ts (+ CAS-clear wrapper for clear_public_session_fence, 0033:208); packages/db/schema.ts + db.dbml
 - apps/bot/src/projectors/public-sessions.ts (replaces L3's placeholder; consumes session.published, updated, visibility_changed, closed, cancelled, L8's roster events, guest_note.* and L10a's alias event); the registry row is enabled
   through L3's registry function
@@ -625,11 +628,12 @@ DECISION TABLE:
 - alias rejected, or edited back to pending -> the view stops returning the club's rows immediately (live filter); the L10a event makes the projector delete or re-project them -> none
 - public -> private, cancel, close -> delete the row, then CAS-clear the fence only if the token is still the observed one -> none
 - occupancy and roster events in any order -> recompute slots_open from canonical rows; same result -> none
-- share link revoked -> tombstoned; rotated -> new slug, old one resolves nothing; slug stored hash-only
+- share link revoked -> tombstoned; rotated -> new slug, old one resolves nothing; slug stored hash-only; public_listing_id rotates whenever the session leaves public and the old one resolves nothing
 - expires_at < now() -> swept -> none
 TESTS: whitelist test on the exact column list of the table, the view and the projector's writes (no gender, price_male, roster, PII, tenant_id, slots_max, confirmed_count, host or person name); the view hides a club the moment its alias is
   rejected, with no projector run; permuted-event-order convergence; idempotent projector, a poison event does not block siblings; readonly cannot SELECT the base table, app cannot write it; fence immediate-deny then CAS-clear; slots_open
-  parity between session_occupancy(id) and getSessionOccupancy over active / waitlisted / left / guest-note fixtures; slug hash-only, revoke and rotate.
+  parity between session_occupancy(id) and getSessionOccupancy over active / waitlisted / left / guest-note fixtures; slug hash-only, revoke and rotate; public_listing_id unique, 128-bit and rotated on leaving public; the view never exposes
+  session_id or public_projection_version.
 ACCEPTANCE COMMANDS: S1 VERIFY set; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter @plexco/bot test; one migration at a time.
 REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any public leak path, view replacement correctness, definer privilege and search_path, base SELECT re-grant, fence race, alias gate bypass.
 DONE WHEN: a public open session of a club with an approved alias is readable through the replaced view within the sync-lag budget, vanishes at once on private, cancel, close or alias rejection, and the whitelist tests are green.
@@ -639,45 +643,44 @@ DONE WHEN: a public open session of a club with an approved alias is readable th
 
 ```text
 LANE: L10b p3-m9-discovery-read
-GOAL: The anonymous public read surface over the replaced guarded view: the discovery list, the DD-73 opaque-slug detail route (DD-83 scheme), the
-  join-by-slug route for a signed-in visitor, and the rate limit. No migration.
+GOAL: The anonymous public read surface over the replaced guarded view, keyed by public_listing_id: the discovery list, the detail route, the join route for a signed-in
+  visitor, plus the DD-83 share-slug route for host-shared links, and the rate limit. No migration.
 MILESTONE: M9 (public read model epic)    RISK: P1 (anonymous public surface, join entry from a public link)
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m9-discovery-read    BRANCH: feat/p3-m9-discovery-read
 DEPENDS ON: L10 and L8 merged (S7, S4); D1 signed (parts a, e); owns packages/db/src/index.ts and api-contract.ts in P3-S8 and runs without L11
-OWNER DECISIONS NEEDED: D1 (e) DD-73 share link = the opaque-slug route. Unsigned => AWAIT this lane only.
+OWNER DECISIONS NEEDED: D1 (e) public_listing_id for discovery and the DD-83 hash-only slug route for host-shared links. Unsigned => AWAIT this lane only.
 FILES IN SCOPE:
-- NEW packages/db/src/public-discovery-read.ts (reads the replaced public_session_share_v as the readonly role; slug -> hash -> session through L10's
-  lookup definer); packages/db/src/index.ts (export; L10b is the only editor); NEW apps/web/app/api/discover/route.ts (list); NEW opaque-slug detail
-  route per DD-83 (path pinned by the lane, for example /session/<slug>, recorded in the step-0 file); NEW join-by-slug route under the same path
-  scheme; NEW apps/web/lib/discovery-cursor.ts (opaque signed cursor)
-- packages/core/src/api-contract.ts (+ test): INVALID_FILTER and DISCOVERY_RATE_LIMITED; apps/web/lib/session-command-route.ts (error map);
-  apps/web/lib/request-policy.ts (DISCOVERY_PATH_ALLOWLIST :28 allows only /healthz and /discover*: add the new paths) + tests;
-  apps/web/middleware.ts; infra/docker-compose.yml discovery profile and .env.example only if wiring needs it (readonly URL: local wiring pinned in
-  the step-0 file)
-NEGATIVE SCOPE: no migration (else HALT); no writer or projector change; no UI (L12); no confirmed_count, slots_max, tenant id, session uuid, venue,
-  roster, money beyond price_amount, gender, host or person name in any response, URL or redirect; no /s/<session id> share path; no cache.
+- NEW packages/db/src/public-discovery-read.ts (reads the replaced public_session_share_v as the readonly role; public_listing_id and slug-hash resolve to (tenant,
+  session) server-side through L10's lookup definers, which only the discovery/read role may execute); packages/db/src/index.ts (export; L10b is the only editor); NEW
+  apps/web/app/api/discover/route.ts (list); NEW detail and join routes keyed by public_listing_id (paths pinned by the lane and recorded in the step-0 file); NEW DD-83
+  share route for host-shared slugs (for example /session/<slug>; hash-only, resolved server-side); NEW apps/web/lib/discovery-cursor.ts (opaque signed cursor)
+- packages/core/src/api-contract.ts (+ test): INVALID_FILTER and DISCOVERY_RATE_LIMITED; apps/web/lib/session-command-route.ts (error map); apps/web/lib/request-policy.ts
+  (DISCOVERY_PATH_ALLOWLIST :28 allows only /healthz and /discover*: add the new paths) + tests; apps/web/middleware.ts; infra/docker-compose.yml discovery profile and
+  .env.example only if wiring needs it (readonly URL: local wiring pinned in the step-0 file)
+NEGATIVE SCOPE: no migration (else HALT); no writer or projector change; no UI (L12); no confirmed_count, slots_max, tenant id, session uuid, venue, roster, money beyond
+  price_amount, gender, host or person name in any response, URL or redirect; no /s/<session id> share path; no cache.
 MODELS: writer opus/max; reviewer opus/max; security opus/max; readiness opus/max.
 DECISION TABLE:
-- anonymous list -> whitelist DTO only (share slug, sport_key, starts_at, ends_at, area, price_amount, slots_open, club_display_name, join_policy,
-  DD-41 columns when non-NULL); ORDER BY starts_at ASC, id ASC (MKT-OQ-3 default)
-- unknown filter value or malformed cursor -> INVALID_FILTER (400); over the rate limit -> DISCOVERY_RATE_LIMITED (429); numbers UNPINNED (proposal 60
-  requests per minute per IP, page size 20, max 50; pinned in the step-0 file)
-- detail by slug -> the same whitelist; unknown, tombstoned, rotated, fenced, expired or wrong-shape slug -> NOT_FOUND (404), one body; a raw session
-  uuid used as a slug -> NOT_FOUND, never resolved
-- join-by-slug without a session -> AUTH_REQUIRED (401); with one -> a definer resolves slug -> (tenant, session) server-side (public, open, unfenced,
-  alias approved) and L8's joinSession revalidates canonical live state; the CTA grants nothing (DD-73); outcomes are L8's codes; the session uuid
-  never reaches the client
-- club alias rejected or edited meanwhile -> the slug resolves nothing at once (live view filter)
-TESTS: DTO golden JSON and a whitelist assertion on every response; routes run as the readonly role (list, detail) and cannot read the base table;
-  slug enumeration is uniform 404; join-by-slug on a full, private-again or fenced session fails closed; rate limit; cursor tamper; request-policy
-  allowlist test for the discovery process; no PII or money in logs.
-ACCEPTANCE COMMANDS: S1 VERIFY set; pnpm --filter @plexco/web test; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter
-  @plexco/web exec playwright test.
-REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any field beyond the whitelist, enumeration, rate-limit bypass,
-  join without canonical revalidation, discovery-process allowlist hole.
-DONE WHEN: anonymous list and slug detail return only whitelisted data and a signed-in visitor can join by slug through L8's service, with the
-  isolation tests green; the local wiring and UNPINNED pins are in the step-0 file.
+- anonymous list -> whitelist DTO only (public_listing_id, sport_key, starts_at, ends_at, area, price_amount, slots_open, club_display_name, join_policy, DD-41 columns
+  when non-NULL); ORDER BY starts_at ASC, public_listing_id ASC (MKT-OQ-3 default; the cursor is signed and carries only those two values)
+- unknown filter value or malformed cursor -> INVALID_FILTER (400); over the rate limit -> DISCOVERY_RATE_LIMITED (429); numbers UNPINNED (proposal 60 requests per minute
+  per IP, page size 20, max 50; pinned in the step-0 file)
+- detail by public_listing_id or by a shared slug -> the same whitelist; unknown, rotated, tombstoned, fenced, expired or wrong-shape id or slug -> NOT_FOUND (404), one
+  body; a raw session uuid in place of either -> NOT_FOUND, never resolved
+- join without a session -> AUTH_REQUIRED (401); with one -> a definer resolves public_listing_id (or the slug hash) -> (tenant, session) server-side (public, open,
+  unfenced, alias approved) and L8's joinSession revalidates canonical live state; the CTA grants nothing (DD-73); outcomes are L8's codes; the session uuid never reaches
+  the client
+- club alias rejected or edited meanwhile -> the listing and its share link resolve nothing at once (live view filter)
+TESTS: DTO golden JSON and a whitelist assertion on every response; routes run as the readonly role (list, detail) and cannot read the base table; listing-id and slug
+  enumeration is a uniform 404; the join route on a full, private-again or fenced session fails closed; rate limit; cursor tamper; request-policy allowlist test for the
+  discovery process; no PII or money in logs.
+ACCEPTANCE COMMANDS: S1 VERIFY set; pnpm --filter @plexco/web test; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter @plexco/web exec
+  playwright test.
+REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any field beyond the whitelist, enumeration, rate-limit bypass, join without canonical
+  revalidation, discovery-process allowlist hole.
+DONE WHEN: anonymous list and detail return only whitelisted data and a signed-in visitor can join by public_listing_id through L8's service, with the isolation tests
+  green; the local wiring and UNPINNED pins are in the step-0 file.
 ```
 
 ### L11 - p3-m9-gender-pricing (M9, P1)
@@ -696,7 +699,7 @@ FILES IN SCOPE:
   the session's tenant and the target has, or is being given, a membership there; waitlist promotion: the target is the FIFO head of that session's waitlist, inside the same transaction that freed the seat with sessions FOR UPDATE held, not keyed to the caller);
   packages/db/schema.ts + db.dbml
 - NEW packages/db/src/charge-derivation.ts (deriveChargeAmount returns an amount or a typed failure, never enqueues); NEW packages/db/src/gender-crypto.ts reusing the AES-256-GCM envelope of connector-crypto.ts with a distinct HKDF label and person-bound AAD; no new secret, local
-  ENCRYPTION_KEY
+  ENCRYPTION_KEY; import the shared connector crypto module that L4 created (path recorded in L4's PR)
 - packages/db/src/roster-service.ts (host-add charge :246-262), packages/db/src/session-join-service.ts (L8), the waitlist promotion path (L8), packages/db/src/session-service.ts (create/update accept the two prices; price guard PRICE_CHANGE_REQUIRES_POLICY),
   packages/db/src/me-settings.ts
 - apps/web/components/me/settings-profile-form.tsx + settings-view.tsx (gender + consent), apps/web/components/sessions/session-form.tsx + apps/web/lib/session-form-model.ts (price mode), the existing profile route apps/web/app/api/me/profile/route.ts (extend it: UNPINNED default
@@ -738,8 +741,8 @@ DEPENDS ON: L8, L9 merged; L10b merged for the discovery pages
 OWNER DECISIONS NEEDED: D3 (join and money); D1 for the discovery pages only (D1 declined => those pages leave this lane, the rest ships). Unsigned =>
   AWAIT the affected part only.
 FILES IN SCOPE:
-- NEW apps/web/app/discover/page.tsx and the DD-83 slug detail page at the path L10b pinned (never /discover/[publicId], never a session uuid; the
-  join button posts to L10b's join-by-slug route); NEW apps/web/app/me/page.tsx, apps/web/app/me/clubs/page.tsx, apps/web/app/me/sessions/page.tsx,
+- NEW apps/web/app/discover/page.tsx and the detail page keyed by public_listing_id at the path L10b pinned (never /discover/[publicId] with a session
+  uuid; the join button posts to L10b's join route); NEW apps/web/app/me/page.tsx, apps/web/app/me/clubs/page.tsx, apps/web/app/me/sessions/page.tsx,
   apps/web/app/me/charges/page.tsx, apps/web/app/me/requests/page.tsx; NEW host inbox under apps/web/app/c/[tenantId]/sessions/[id]/ (a requests tab);
   apps/web/app/me/layout.tsx (exists)
 - NEW apps/web/components/discover/*, apps/web/components/player/*, apps/web/components/sessions/join-panel.tsx and request-inbox.tsx (each with
@@ -815,24 +818,25 @@ DONE WHEN: /join, /leave, /pay work for linked accounts against the recorded-pay
 
 ```text
 LANE: L14 p3-m10-chat-core
-GOAL: The chat command core on the existing chat_* tables, through chat_definer functions: send, edit own, soft-delete own, mark read, moderation hide/restore, plus the default club channel
-  auto-provisioned with chat_members rows in the same transaction as membership activation. DM stays disabled.
+GOAL: The chat command core on the existing chat_* tables, through chat_definer functions: send, edit own, soft-delete own, mark read, moderation hide/restore, plus the default club channel auto-provisioned
+  with chat_members rows in the same transaction as membership activation. DM stays disabled.
 MILESTONE: M10    RISK: P1 (authorization, new definer functions, migration); B3: one migration, an exception is expected in step 0
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m10-chat-core    BRANCH: feat/p3-m10-chat-core
 DEPENDS ON: L8 merged; D4 signed
 OWNER DECISIONS NEEDED: D4 (club channels only; no DM, media, reactions, search, group, pin, poll, slash commands, digests). Unsigned => AWAIT this lane only.
 FILES IN SCOPE:
-- NEW packages/db/migrations/<next>_chat_message_commands.sql: functions owned by chat_definer (role bootstrap infra/postgres-init/02-chat-definer.sql, run pnpm db:bootstrap first): send,
-  edit own, delete own, mark read, moderate hide/restore, provision default channel + chat_members; capability checks via tenant_capability_authorize (0049) with keys from 0047
-  (chat.channel.post_restricted, chat.message.moderate); append-only revision store and moderation audit (names UNPINNED, no UPDATE/DELETE grants); idempotent backfill of the default channel
-  and members for existing clubs (creation_origin system_bootstrap); app keeps SELECT only (0031:353-354)
+- NEW packages/db/migrations/<next>_chat_message_commands.sql: functions owned by chat_definer (role bootstrap infra/postgres-init/02-chat-definer.sql, run pnpm db:bootstrap first): send, edit own, delete own,
+  mark read, moderate hide/restore, provision default channel + chat_members; capability checks via tenant_capability_authorize (0049) with keys from 0047 (chat.channel.post_restricted, chat.message.moderate);
+  append-only revision store and moderation audit (names UNPINNED, no UPDATE/DELETE grants); idempotent backfill of the default channel and members for existing clubs (creation_origin system_bootstrap); app
+  keeps SELECT only (0031:353-354)
 - NEW packages/db/src/chat-service.ts (+ test); packages/db/src/index.ts; packages/db/schema.ts (+ db.dbml); packages/db/src/authorization.ts and capability.ts (use, do not change)
-- membership activation paths: packages/db/src/roster-service.ts, packages/db/src/session-join-service.ts (L8), the onboarding club-create path, the 0051 host-add definer: pin trigger vs
-  explicit call (proposal: an AFTER trigger on memberships calling a chat_definer function, so no activation path can forget; UNPINNED default applied)
+- membership activation paths: packages/db/src/roster-service.ts, packages/db/src/session-join-service.ts (L8), the club-create path (apps/web/app/api/onboarding/start/route.ts -> provisionTenant at
+  packages/db/src/auth.ts:197 -> the tenant_provision SQL function, which INSERTs the owner membership, 0037:148), the 0051 host-add definer: pin trigger vs explicit call (proposal: an AFTER trigger on
+  memberships calling a chat_definer function, so no activation path can forget; UNPINNED default applied)
 - packages/core/src/api-contract.ts (CHAT_* codes + test)
-NEGATIVE SCOPE: no HTTP route or UI (L15, L16); no DM (all four dm_safety flags stay false, assert_dm_allowed denies safety_disabled); no media, reactions, search, mentions, mutes, group,
-  pin, poll, nickname, slash commands, digest, push or email; no chat content in logs, NOTIFY payloads or any public surface; no Zalo or Messenger bridge; the Assistant stays off.
+NEGATIVE SCOPE: no HTTP route or UI (L15, L16); no DM (all four dm_safety flags stay false, assert_dm_allowed denies safety_disabled); no media, reactions, search, mentions, mutes, group, pin, poll, nickname,
+  slash commands, digest, push or email; no chat content in logs, NOTIFY payloads or any public surface; no Zalo or Messenger bridge; the Assistant stays off.
 MODELS: writer opus/max; reviewer opus/max; security opus/max; readiness opus/max.
 DECISION TABLE (codes verbatim from feature_inapp_chat_tech.md section 3):
 - sender is not an active member of the tenant or has no chat_members row -> CHAT_FORBIDDEN (403)
@@ -842,17 +846,16 @@ DECISION TABLE (codes verbatim from feature_inapp_chat_tech.md section 3):
 - reply target missing, cross-channel or tombstoned -> CHAT_REPLY_INVALID (409), no partial insert
 - edit by a non-author, on an assistant/system message, at 15 minutes or later, or with five edits used -> CHAT_EDIT_WINDOW_CLOSED (409); stale expectedEditCount -> CHAT_EDIT_CONFLICT (409)
 - author soft-delete -> tombstone via author_deleted_at, idempotent, no restore, no hard delete
-- hide or restore without chat.message.moderate, or on a DM, assistant or system message -> CHAT_MODERATION_FORBIDDEN (403), generic; reason outside spam|harassment|unsafe|off_topic|other ->
-  CHAT_REASON_INVALID (422)
+- hide or restore without chat.message.moderate, or on a DM, assistant or system message -> CHAT_MODERATION_FORBIDDEN (403), generic; reason outside spam|harassment|unsafe|off_topic|other -> CHAT_REASON_INVALID
+  (422)
 - any operation on a kind dm channel -> CHAT_SAFETY_BLOCKED (403), generic
 - more than 20 sends per 10 s or 300 per minute per person and channel -> CHAT_RATE_LIMITED (429)
 - mark read -> the cursor (last_read_created_at, last_read_message_id) only moves forward; non-members cannot write it
-TESTS: one case per row against the real DB as the app role; a non-member cannot read or write (RLS + chat_current_is_member); a message hidden by a moderator is a tombstone to everyone
-  else; membership activation provisions exactly one default channel and one chat_members row per member, retry-safe, rolled back with the activation; concurrent sends keep per-channel order
-  by (created_at, id); no chat text in any log line or NOTIFY payload (grep test); the chat_definer role must exist (CI runs db:bootstrap).
+TESTS: one case per row against the real DB as the app role; a non-member cannot read or write (RLS + chat_current_is_member); a message hidden by a moderator is a tombstone to everyone else; membership
+  activation provisions exactly one default channel and one chat_members row per member, retry-safe, rolled back with the activation; concurrent sends keep per-channel order by (created_at, id); no chat text in
+  any log line or NOTIFY payload (grep test); the chat_definer role must exist (CI runs db:bootstrap).
 ACCEPTANCE COMMANDS: S1 VERIFY set; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; one migration at a time.
-REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = definer privilege and search_path, capability bypass, cross-tenant read, DM reachable through any
-  function, audit tamper.
+REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = definer privilege and search_path, capability bypass, cross-tenant read, DM reachable through any function, audit tamper.
 DONE WHEN: all rows tested, provisioning proven transactional, DM provably unreachable.
 ```
 
@@ -984,8 +987,10 @@ Mỗi block là một session tự đủ: conductor chép nguyên block vào fil
 
 ```text
 SESSION P3-S1 (orchestrator: opus/max; never pass model fable to any Agent call)
-DEPENDS ON: Phase 3 plan merged or approved. L0 also needs D1-D5 signed (an unsigned Dn only skips its own edits). L1 and L2 need nothing else.
-READ FIRST: the S1 operating rules block; lane blocks L0, L1, L2; docs/00-start-here/HANDOFF.md (newest LIVE TRUTH block); docs/standards/decisions.md (DD-122, DD-131, DD-132, DD-133..DD-137); docs/sessions/web-mvp-program-status.md.
+DEPENDS ON: the owner's written "Phase 3 plan approved" with per-decision answers (it also authorizes the merge clerk to merge PR #58 first); the session starts only on a main that contains #58, and a bare merge of #58 signs nothing. L0
+  needs the D1-D5 answers (an unsigned Dn only skips its own edits). L1 and L2 need nothing else.
+READ FIRST: the S1 operating rules block; lane blocks L0, L1, L2; docs/standards/review-code-readiness-gate.md and docs/templates/review-doc-plan-session-template.md (step 0 output format); docs/00-start-here/HANDOFF.md (newest LIVE TRUTH
+  block); docs/standards/decisions.md (DD-122, DD-131, DD-132, DD-133..DD-137); docs/sessions/web-mvp-program-status.md.
 STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first
   commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
 TASKS: 1) step 0 for L0, L1, L2. 2) Writers run in parallel in .autopilot/worktrees/p3-docs-decisions-sync, p3-ci-flake-hardening, p3-session-text-control-chars. 3) Each lane: verify, orchestrator pushes and opens the PR, independent review
@@ -1101,19 +1106,17 @@ REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the privilege test output; MERGE_RE
 ```text
 SESSION P3-S7 (orchestrator: opus/max; never pass model fable to any Agent call)
 DEPENDS ON: P3-S6 merged (L10a; migrations are strictly sequential); L3, L6, L7, L8 merged; D1 signed (parts a, b, c, e).
-READ FIRST: S1 operating rules; lane block L10; docs/features/FE/feature_marketplace_discovery.md + BE/feature_marketplace_discovery_tech.md; packages/db/migrations/0006, 0024, 0033, 0036;
-  docs/standards/decisions.md (DD-12, DD-114 D3, DD-41, DD-75, DD-83, DD-133); docs/research/occupancy-authority-2026-10-16.md; apps/bot/src/projectors/public-sessions.ts (L3 placeholder).
-STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is
-  committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are
-  recorded here. Other lanes continue.
-TASKS: 1) step 0 for L10 (B3 exception expected: one migration with five parts including the view replacement). 2) L10 writer (opus/max) in .autopilot/worktrees/p3-m9-public-projector. 3) Verify, push + PR,
-  independent review plus security round (max 3 rounds), CI GREEN, MERGE_READY. 4) Pin the UNPINNED values (DD-41 columns left NULL, slug and registry shape) in the step-0 file and the PR body.
+READ FIRST: S1 operating rules; lane block L10; docs/features/FE/feature_marketplace_discovery.md + BE/feature_marketplace_discovery_tech.md; packages/db/migrations/0006, 0024, 0033, 0036; docs/standards/decisions.md (DD-12, DD-114 D3,
+  DD-41, DD-75, DD-83, DD-133); docs/research/occupancy-authority-2026-10-16.md; apps/bot/src/projectors/public-sessions.ts (L3 placeholder).
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first
+  commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L10 (B3 exception expected: one migration with five parts including the view replacement). 2) L10 writer (opus/max) in .autopilot/worktrees/p3-m9-public-projector. 3) Verify, push + PR, independent review plus security
+  round (max 3 rounds), CI GREEN, MERGE_READY. 4) Pin the UNPINNED values (DD-41 columns left NULL, public_listing_id and slug registry shape) in the step-0 file and the PR body.
 PARALLEL: none (single migration lane).
 MERGE ROUND: the merge clerk (sonnet/high) merges L10 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
-STOP: AWAIT on unsigned D1; HALT on any re-grant of base SELECT, a public field beyond the approved whitelist, host_display_name or any person name in the view, confirmed_count anywhere, or a club served
-  without an approved alias; BLOCKED on 3 failed rounds.
-REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; whitelist test output; the alias-rejection-hides-at-once test; slots_open parity evidence; MERGE_READY #<n> head=<full 40-char sha> by=S7; last line RESULT: DONE |
-  CONTINUE | AWAIT | BLOCKED.
+STOP: AWAIT on unsigned D1; HALT on any re-grant of base SELECT, a public field beyond the approved whitelist, host_display_name or any person name in the view, confirmed_count anywhere, or a club served without an approved alias; BLOCKED
+  on 3 failed rounds.
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; whitelist test output; the alias-rejection-hides-at-once test; slots_open parity evidence; MERGE_READY #<n> head=<full 40-char sha> by=S7; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
 
 ### P3-S8 - M9 discovery read (L10b)
@@ -1132,8 +1135,8 @@ TASKS: 1) step 0 for L10b. 2) L10b writer (opus/max) in .autopilot/worktrees/p3-
 PARALLEL: none (it edits index.ts, api-contract.ts and session-command-route.ts; it has no migration).
 MERGE ROUND: the merge clerk (sonnet/high) merges L10b once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
 STOP: AWAIT on unsigned D1; HALT on a migration need, any non-whitelisted field, a session uuid reaching the client, or a join that skips canonical revalidation; BLOCKED on 3 failed rounds.
-REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; whitelist assertions and the join-by-slug fail-closed tests; MERGE_READY #<n> head=<full 40-char sha> by=S8; last line RESULT: DONE | CONTINUE |
-  AWAIT | BLOCKED.
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; whitelist assertions and the join fail-closed tests; MERGE_READY #<n> head=<full 40-char sha> by=S8; last line RESULT: DONE | CONTINUE | AWAIT |
+  BLOCKED.
 ```
 
 ### P3-S9 - M9 gender pricing (L11)
@@ -1142,7 +1145,7 @@ REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; whitelist assertions and the join-b
 SESSION P3-S9 (orchestrator: opus/max; never pass model fable to any Agent call)
 DEPENDS ON: P3-S8 merged (or skipped under "D1 declined"); L8 merged. DD-39 is signed, no owner wait.
 READ FIRST: S1 operating rules; lane block L11; docs/standards/decisions.md (DD-39 at :542-556); docs/features/BE/feature_user_settings_tech.md (charge derivation
-  section); docs/features/FE/feature_user_settings.md; the shared connector crypto from L4 (packages/db/src/connector-crypto.ts).
+  section); docs/features/FE/feature_user_settings.md; the shared connector crypto module L4 created (path recorded in L4's PR).
 STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm
   review:check:changed BEFORE it is committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes
   into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
