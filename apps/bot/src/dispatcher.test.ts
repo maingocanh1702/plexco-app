@@ -7,10 +7,12 @@ import { migrate } from "@plexco/db";
 import { describe, expect, it, vi } from "vitest";
 import { withTestContext } from "./test-harness.js";
 import {
+  ROLE_PW,
   bootstrapJobDefiner,
   setAppWorkerPasswordRaceSafe,
   testUrl,
   withJobDefinerLock,
+  type TestRolePasswordLease,
 } from "./test-db.js";
 import {
   REQUIRED_PROJECTORS,
@@ -22,13 +24,9 @@ import {
 } from "./dispatcher.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const APP_WORKER_PASSWORD = "plexco_test_worker_jrd";
-// codex round-04 [P2] — see preflight.test.ts's identical comment for the
-// full rationale: this file deliberately does NOT try to restore
-// app_worker's cluster-global password after its own suite finishes. An
-// earlier attempt at exactly that caused a live cross-file race (this
-// file's pool opening a new connection while a sibling file's afterAll
-// changed the password out from under it).
+// app_worker's password is CLUSTER-global. Its one test value is ROLE_PW.app_worker, leased for the
+// fixture's lifetime (setAppWorkerPasswordRaceSafe) and restored by the last participant on the
+// cluster, so no suite changes it under another one and nobody restores it by hand.
 
 // --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
 // (shared with preflight.test.ts and schedule.test.ts); this file still owns its
@@ -56,14 +54,16 @@ async function setupDispatcherContext(dbName: string): Promise<DispatcherTestCon
   const directUrl = testUrl(base, {
     db: dbName,
     user: "app_worker",
-    password: APP_WORKER_PASSWORD,
+    password: ROLE_PW.app_worker,
   });
   let created = false;
   let verify: pg.Client | undefined;
   let workerPool: pg.Pool | undefined;
+  let passwords: TestRolePasswordLease | undefined;
   const teardown = async () => {
     const closed = await Promise.allSettled([workerPool?.end(), verify?.end()]);
-    const errors = closed
+    const released = await Promise.allSettled([passwords?.release()]); // after app_worker closed
+    const errors = [...closed, ...released]
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason);
     if (errors.length) throw new AggregateError(errors, "Failed to close fixture connections");
@@ -88,7 +88,7 @@ async function setupDispatcherContext(dbName: string): Promise<DispatcherTestCon
       await bootstrapJobDefiner(admin);
       await migrate(migrationUrl);
     });
-    await setAppWorkerPasswordRaceSafe(admin, APP_WORKER_PASSWORD);
+    passwords = await setAppWorkerPasswordRaceSafe(base);
     verify = new pg.Client({ connectionString: migrationUrl });
     await verify.connect();
     workerPool = new pg.Pool({ connectionString: directUrl });
@@ -137,7 +137,7 @@ it(
         this: pg.Client,
         ...args
       ) {
-        if (args[0] === "SELECT pg_advisory_lock($1)") return Promise.reject(failure);
+        if (String(args[0]).includes("advisory_lock")) return Promise.reject(failure);
         return Reflect.apply(originalQuery, this, args);
       });
       return {

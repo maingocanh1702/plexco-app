@@ -2,6 +2,13 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import {
+  leaseTestRolePasswords,
+  withDefinerReadLock,
+  type TestRolePasswordLease,
+} from "../../../packages/db/src/test-harness.js";
+
+export { ROLE_PW, type TestRolePasswordLease } from "../../../packages/db/src/test-harness.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,11 +21,9 @@ const JOB_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   "postgres-init",
   "01-job-definer.sql",
 );
-// SAME key as packages/db/src/test-harness.ts's JOB_DEFINER_LOCK_KEY ("jobd") — this
-// lock only protects job_definer (cluster-global) if every caller that bootstraps or
-// migrates against it shares the identical advisory-lock key. A different key here
-// would silently not coordinate with packages/db's own JCL-2/3 tests, which
-// deliberately put job_definer into a broken state mid-run under this same lock.
+// SAME key as packages/db/src/test-harness.ts's JOB_DEFINER_LOCK_KEY ("jobd"). The lock is the
+// harness's own (withJobDefinerLock below delegates to it), so the bot coordinates with
+// packages/db's breaker windows, which deliberately break job_definer mid-run, on one key.
 export const JOB_DEFINER_LOCK_KEY = 0x6a6f6264;
 
 export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
@@ -31,34 +36,14 @@ export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
   }
 }
 
+/** The bot only reads the definers its migrate() reaches: the reader side of their locks. */
 export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  const lockClient = new pg.Client({ connectionString: base });
-  try {
-    await lockClient.connect();
-    await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
-    return await fn();
-  } finally {
-    // Closing the session releases its advisory lock, including on failed setup.
-    await lockClient.end();
-  }
+  return withDefinerReadLock(base, fn);
 }
 
-export async function setAppWorkerPasswordRaceSafe(
-  client: pg.Client,
-  password: string,
-): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await client.query(`ALTER ROLE app_worker WITH LOGIN PASSWORD '${password}'`);
-      return;
-    } catch (error) {
-      if (String(error).includes("tuple concurrently updated") && attempt < 10) {
-        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-        continue;
-      }
-      throw error;
-    }
-  }
+/** ROLE_PW.app_worker (and app, readonly) until the lease is released; release it after the pools. */
+export async function setAppWorkerPasswordRaceSafe(base: string): Promise<TestRolePasswordLease> {
+  return leaseTestRolePasswords(base);
 }
 
 export function testUrl(
