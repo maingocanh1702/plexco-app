@@ -30,11 +30,15 @@ describe("ZALO_BOT_API_BASE pin (Z-5, A26)", () => {
     "http://stub.test",
     "http://10.0.0.7:8080",
     "http://169.254.169.254",
+    "http://bot-api.zaloplatforms.com",
     "ftp://stub.test",
-    "https://user:pw@stub.test",
-    "https://stub.test/prefix",
-    "https://stub.test/?q=1",
-    "https://stub.test/#frag",
+    "https://stub.test",
+    "https://bot-api.zaloplatforms.com.evil.test",
+    "https://bot-api.zaloplatforms.com:8443",
+    "https://user:pw@bot-api.zaloplatforms.com",
+    "https://bot-api.zaloplatforms.com/prefix",
+    "https://bot-api.zaloplatforms.com/?q=1",
+    "https://bot-api.zaloplatforms.com/#frag",
     "not a url",
   ])("refuses %s before any fetch; the projector dead-letters config_missing", async (base) => {
     process.env.ZALO_BOT_API_BASE = base;
@@ -47,7 +51,7 @@ describe("ZALO_BOT_API_BASE pin (Z-5, A26)", () => {
 
   it.each([
     [undefined, "https://bot-api.zaloplatforms.com"],
-    ["https://stub.test/", "https://stub.test"],
+    ["HTTPS://BOT-API.ZALOPLATFORMS.COM:443/", "https://bot-api.zaloplatforms.com"],
     ["http://127.0.0.1:8080", "http://127.0.0.1:8080"],
     ["http://localhost:9", "http://localhost:9"],
     ["http://[::1]:9", "http://[::1]:9"],

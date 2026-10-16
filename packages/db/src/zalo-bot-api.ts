@@ -4,8 +4,8 @@
  * The decrypted bot token only exists in a process that calls Zalo (DD-122 O4). Endpoint shape
  * `https://bot-api.zaloplatforms.com/bot<TOKEN>/<method>` is taken from
  * docs/research/player-side-saas-reconciliation.md section 4 (verified there against bot.zapps.me/docs);
- * override with env ZALO_BOT_API_BASE, which must be an origin only: https, or http for a loopback host
- * (tests), never userinfo, a path, a query or a fragment (SSRF pin; `invalid_base` before any fetch).
+ * override with env ZALO_BOT_API_BASE (Z-5 SSRF pin): only that exact https origin or an http
+ * loopback origin (tests); any other host, userinfo, path, query or fragment is `invalid_base`.
  *
  * Response envelope `{ ok, result, description, error_code }` (DD-126, read the way the payment bot's
  * src/zalo/zalo.ts callApi reads it): success only on `ok: true`; `ok: false` is `rejected` (with the
@@ -41,7 +41,7 @@ export class ZaloApiError extends Error {
   }
 }
 
-/** The pinned API origin (Z-5): throws ZaloApiError("invalid_base") for anything but an origin-only URL. */
+/** Pinned API origin (Z-5): DEFAULT_BASE or an http loopback origin; else throws "invalid_base". */
 export function zaloBotApiBase(raw: string | undefined = process.env.ZALO_BOT_API_BASE): string {
   let url: URL;
   try {
@@ -49,9 +49,9 @@ export function zaloBotApiBase(raw: string | undefined = process.env.ZALO_BOT_AP
   } catch {
     throw new ZaloApiError("invalid_base");
   }
-  const schemeOk =
-    url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
-  if (!schemeOk || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+  const originOk =
+    url.origin === DEFAULT_BASE || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
+  if (!originOk || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
     throw new ZaloApiError("invalid_base");
   }
   return url.origin;

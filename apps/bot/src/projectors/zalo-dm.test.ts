@@ -94,8 +94,9 @@ describe("zalo_dm projector before any DB call (Z-4, Z-10, Z-12)", () => {
     noDb.query.mockClear();
     const saved = { ...process.env };
     type EnvCase = [Record<string, string | undefined>, string];
-    const bases = ["http://example.com", "ftp://127.0.0.1", "https://u:p@zalo.test"];
-    const more = ["https://zalo.test/x", "https://zalo.test/?q=1"];
+    const host = "bot-api.zaloplatforms.com";
+    const bases = ["http://example.com", "ftp://127.0.0.1", "https://zalo.test", `http://${host}`];
+    const more = [`https://u:p@${host}`, `https://${host}/x`, `https://${host}/?q=1`];
     const cases: EnvCase[] = [
       [{ ENCRYPTION_KEY: undefined }, "bot_unavailable"],
       [{ ENCRYPTION_KEY: Buffer.alloc(8, "k").toString("base64") }, "bot_unavailable"],
