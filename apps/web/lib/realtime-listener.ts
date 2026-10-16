@@ -9,12 +9,10 @@ import { appDb } from "./session-cookies";
 
 /**
  * One LISTEN client per web process with in-memory fan-out (lane L5, readiness R-7, R-9, R-12,
- * R-14), plus the per-subscriber SSE stream (R-5, R-10, R-11).
- *
- * The web_realtime projector NOTIFYs the bare event id. Ids are queued (bounded) and handled one
- * at a time; each is re-authorized per subscriber by planEventDelivery before a frame is written.
- * A missed NOTIFY cannot be replayed, so a lost connection or an overflow closes every stream and
- * the clients reconnect and refetch through the authorized GET. Limits are per web process.
+ * R-14), plus the per-subscriber SSE stream (R-5, R-10, R-11). The projector NOTIFYs a bare event
+ * id; ids are queued (bounded), handled one at a time and re-authorized per subscriber by
+ * planEventDelivery before any frame. A missed NOTIFY cannot be replayed, so a lost connection or
+ * an overflow closes every stream (clients reconnect and refetch). Limits are per web process.
  */
 export const REALTIME_CHANNEL = "web_realtime";
 export const MAX_STREAMS_PER_ACCOUNT = 5;
@@ -37,7 +35,6 @@ export interface RealtimeSubscriber extends RealtimeAudience {
   close(): void;
 }
 
-/** The slice of a checked-out pg client the listener uses. */
 export interface ListenClient {
   query(sql: string): Promise<unknown>;
   onNotification(fn: (channel: string, payload: string | undefined) => void): void;
@@ -227,10 +224,9 @@ export function realtimeListener(): RealtimeListener {
 const encoder = new TextEncoder();
 
 /**
- * One subscriber's SSE body: registered with the listener, a heartbeat that re-checks access
- * every 25 s (R-10), a 15-minute lifetime (R-11), and a 16-chunk queue whose overflow closes the
- * stream (slow consumer, R-12). Abort, cancel, revocation and errors all run one idempotent
- * cleanup. Returns null when the account is at its stream cap (R-7).
+ * One subscriber's SSE body: a heartbeat that re-checks access every 25 s (R-10), a 15-minute
+ * lifetime (R-11) and a 16-chunk queue whose overflow closes the stream (slow consumer, R-12).
+ * Abort, cancel, revocation and errors run one idempotent cleanup. Null at the stream cap (R-7).
  */
 export function openRealtimeStream(
   listener: RealtimeListener,

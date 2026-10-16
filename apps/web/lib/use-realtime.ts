@@ -4,14 +4,11 @@ import { useEffect, useRef } from "react";
 
 /**
  * Client side of web live sync (lane L5, readiness R-14, R-15): one native EventSource per tenant
- * per tab, shared by every live view through a reference count.
- *
- * The stream only says "something changed" ({type, sessionId, version}); views refetch through
- * their authorized GET. The browser's own retry is never used: every error closes the source and
- * this module reconnects with full-jitter exponential backoff. A refetch ("resync") happens once at
- * the first failure after an open (which surfaces AUTH_REQUIRED/FORBIDDEN through the GET and so
- * turns live off) and once on each re-open after a failure. Nothing here runs on a timer except
- * that reconnect: there is no polling fallback.
+ * per tab, shared by every live view through a reference count. The stream only says "something
+ * changed"; views refetch through their authorized GET. The browser's own retry is never used: an
+ * error closes the source and this module reconnects with full-jitter backoff. A resync refetch
+ * happens at the first failure after an open (surfacing AUTH_REQUIRED/FORBIDDEN, which turns live
+ * off) and on each re-open after a failure. Only that reconnect runs on a timer: no polling.
  */
 export interface RealtimeMessage {
   type: string;

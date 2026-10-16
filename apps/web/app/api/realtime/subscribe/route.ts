@@ -6,23 +6,18 @@ import { resolveSessionReadContext } from "../../../../lib/session-read-route";
 
 /**
  * GET /api/realtime/subscribe?tenant=<uuid> (lane L5, readiness R-6, R-7): the host workspace's
- * live-sync stream (text/event-stream, same origin, cookie-authenticated).
- *
- * Admission is the host READ gate unchanged (session cookie -> tenant param -> actor ceiling ->
- * session.manage -> tenant language -> per-tenant bucket), so its 401/400/403/429 bodies are the
- * ones GET /api/sessions returns, with no existence oracle. Every pushed frame is re-authorized
- * per event, and the heartbeat re-checks the session and capability (realtime-listener.ts). The
- * stream carries ids only ({type, sessionId, version}); the client refetches through the
- * authorized GET. Never a public or anonymous surface.
+ * same-origin, cookie-authenticated live-sync stream. Admission is the host READ gate unchanged,
+ * so its 401/400/403/429 bodies are GET /api/sessions' own (no existence oracle). Every frame is
+ * re-authorized per event and the heartbeat re-checks access (realtime-listener.ts). Ids only
+ * ({type, sessionId, version}); clients refetch through the authorized GET. Never public or
+ * anonymous.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const ADMISSION = { bucket: "realtime-subscribe", limit: 30 };
 
 export async function GET(request: Request): Promise<Response> {
-  const context = await resolveSessionReadContext(request, {
-    bucket: "realtime-subscribe",
-    limit: 30,
-  });
+  const context = await resolveSessionReadContext(request, ADMISSION);
   if (context instanceof Response) return context;
   // The principal plus the token hash the heartbeat re-resolves; null is the gate's own 401.
   const principal = await resolveRealtimePrincipal();
