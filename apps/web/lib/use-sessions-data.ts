@@ -75,9 +75,11 @@ export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
   const [state, setState] = useState<Loadable<T>>({ status: "loading" });
   const [nonce, setNonce] = useState(0);
   const silent = useRef(false);
-  // For liveRefresh: the latest `load`, and a generation that discards a refetch from older deps.
+  // For liveRefresh: the latest `load`, a generation that discards a refetch from older deps, and
+  // the current (re)load, which a live round waits for (F2).
   const latestLoad = useRef(load);
   const generation = useRef(0);
+  const settled = useRef<Promise<unknown>>(Promise.resolve());
   useEffect(() => {
     latestLoad.current = load;
   });
@@ -86,7 +88,7 @@ export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
     generation.current += 1;
     if (!silent.current) setState({ status: "loading" });
     silent.current = false;
-    load(controller.signal).then(
+    settled.current = load(controller.signal).then(
       (data) => {
         if (!controller.signal.aborted) setState({ status: "ready", data });
       },
@@ -104,6 +106,7 @@ export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
   }, []);
   /** Silent refetch for a live change: keeps the data on screen unless access is gone. */
   const liveRefresh = useCallback(async () => {
+    await settled.current; // F2: an older in-flight snapshot never lands after a live refetch
     const gen = generation.current;
     try {
       const data = await latestLoad.current(new AbortController().signal);
@@ -152,8 +155,10 @@ export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOpt
   // generation must not write its (old-tab) rows over the new tab's state.
   const generation = useRef(0);
   const moreController = useRef<AbortController | null>(null);
-  // `streams` for liveRefresh, written next to every setStreams (no render lag).
+  // `streams` for liveRefresh, written next to every setStreams (no render lag), and the current
+  // tab load, which a live round waits for (F2: a change during the first load is not dropped).
   const streamsRef = useRef<Stream[] | null>(null);
+  const settled = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -165,7 +170,7 @@ export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOpt
     setStreams(null);
     streamsRef.current = null;
     setMoreError(null);
-    Promise.all(
+    settled.current = Promise.all(
       tabStatuses(tab).map(async (status): Promise<Stream> => {
         const page = await listSessions(tenantId, { status, limit: PAGE }, controller.signal);
         return {
@@ -255,6 +260,7 @@ export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOpt
   // state. The generation is bumped at the start and again on apply, so a loadMore built on the
   // stale cursors is discarded; only AUTH_REQUIRED/FORBIDDEN replace the list.
   const liveRefresh = useCallback(async () => {
+    await settled.current;
     const current = streamsRef.current;
     if (!current) return;
     generation.current += 1;

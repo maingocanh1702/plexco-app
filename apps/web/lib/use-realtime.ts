@@ -7,8 +7,9 @@ import { useEffect, useRef } from "react";
  * per tab, shared by every live view through a reference count. The stream only says "something
  * changed"; views refetch through their authorized GET. The browser's own retry is never used: an
  * error closes the source and this module reconnects with full-jitter backoff. A resync refetch
- * happens at the first failure after an open (surfacing AUTH_REQUIRED/FORBIDDEN, which turns live
- * off) and on each re-open after a failure. Only that reconnect runs on a timer: no polling.
+ * happens on every open (F2: the first one too, so a change committed between a view's GET and
+ * LISTEN going live is not missed) and at the first failure after an open (surfacing
+ * AUTH_REQUIRED/FORBIDDEN, which turns live off). Only that reconnect runs on a timer: no polling.
  */
 export interface RealtimeMessage {
   type: string;
@@ -66,7 +67,6 @@ interface Channel {
   attempt: number;
   open: boolean;
   openedAt: number;
-  failed: boolean;
   lastSeen: Map<string, number>;
 }
 
@@ -82,11 +82,9 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
     channel.source = source;
     source.onopen = () => {
       if (channel.source !== source) return;
-      const reopened = channel.failed;
-      channel.failed = false;
       channel.open = true;
       channel.openedAt = deps.now();
-      if (reopened) emit(channel, { kind: "resync" });
+      emit(channel, { kind: "resync" });
     };
     source.onmessage = (event) => {
       if (channel.source !== source) return;
@@ -101,7 +99,6 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
       if (channel.source !== source) return;
       source.close();
       channel.source = null;
-      channel.failed = true;
       // F6: a close after a short open (a NOTIFY flood overflowing the listener) keeps backing off.
       if (channel.open && deps.now() - channel.openedAt >= STABLE_OPEN_MS) channel.attempt = 0;
       const delay = backoffDelayMs(channel.attempt, deps.random);
@@ -125,7 +122,6 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
           attempt: 0,
           open: false,
           openedAt: 0,
-          failed: false,
           lastSeen: new Map(),
         };
         channels.set(tenantId, channel);

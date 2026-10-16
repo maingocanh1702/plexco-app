@@ -84,24 +84,24 @@ describe("createRealtimeHub", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("A11: an error closes the source, reconnects within [0, cap] and a re-open resyncs once", async () => {
+  it("A11/F2: an error closes the source, reconnects within [0, cap]; every open resyncs once", async () => {
     const r = recorder();
     hub().subscribe(TENANT, r.fn);
     latest().open();
-    expect(r.signals).toEqual([]);
+    expect(r.signals).toEqual([{ kind: "resync" }]); // F2: the first open too (GET-to-LISTEN gap)
     const first = latest();
     first.fail();
     expect(first.closed).toBe(true);
-    expect(r.resyncs()).toBe(1);
+    expect(r.resyncs()).toBe(2);
     expect(delays[0]).toBeGreaterThanOrEqual(0);
     expect(delays[0]).toBeLessThan(1_000);
     await vi.advanceTimersByTimeAsync(delays[0]!);
     expect(FakeSource.all).toHaveLength(2);
     latest().open();
-    expect(r.resyncs()).toBe(2);
+    expect(r.resyncs()).toBe(3);
     first.fail();
     first.open();
-    expect(r.resyncs()).toBe(2);
+    expect(r.resyncs()).toBe(3);
   });
 
   it("A11: a repeated or older (sessionId, version) is ignored: no duplicate apply", () => {
@@ -116,28 +116,29 @@ describe("createRealtimeHub", () => {
     for (const v of [3, 3, 2, 4]) latest().push(msg(v));
     latest().push(msg(1, "55555555-5555-4555-8555-555555555555"));
     expect(r.signals).toEqual([
+      { kind: "resync" },
       { kind: "event", message: msg(3) },
       { kind: "event", message: msg(4) },
       { kind: "event", message: msg(1, "55555555-5555-4555-8555-555555555555") },
     ]);
   });
 
-  it("A23: an idle healthy stream never refetches; an outage of N failures refetches once", async () => {
+  it("A23: an idle healthy stream refetches only on its open; an outage refetches once", async () => {
     const r = recorder();
     hub().subscribe(TENANT, r.fn);
     latest().open();
     await vi.advanceTimersByTimeAsync(10 * 60_000);
-    expect(r.signals).toEqual([]);
+    expect(r.signals).toEqual([{ kind: "resync" }]);
     expect(FakeSource.all).toHaveLength(1);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       latest().fail();
       await vi.advanceTimersByTimeAsync(30_000);
     }
-    expect(r.resyncs()).toBe(1);
+    expect(r.resyncs()).toBe(2);
     expect(Math.max(...delays)).toBeLessThanOrEqual(30_000);
     expect(delays.slice(-3).every((d) => d === backoffDelayMs(20, () => 0.999))).toBe(true);
     latest().open();
-    expect(r.resyncs()).toBe(2);
+    expect(r.resyncs()).toBe(3);
     await vi.advanceTimersByTimeAsync(30_000); // F6: only a stream open for 30 s resets the backoff
     latest().fail();
     expect(delays.at(-1)).toBeLessThan(1_000);
@@ -174,7 +175,7 @@ describe("createRealtimeHub", () => {
     ]) {
       latest().push(bad);
     }
-    expect(r.signals).toEqual([]);
+    expect(r.signals).toEqual([{ kind: "resync" }]); // the open's own resync only
     expect(parseRealtimeMessage(42)).toBeNull();
   });
 });
