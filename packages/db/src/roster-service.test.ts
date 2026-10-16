@@ -209,13 +209,31 @@ describe("addMemberToSession", () => {
     }
   });
 
-  it("concurrent adds into the last slot: exactly one ACTIVE, the other waitlisted (session lock)", async () => {
+  it("CC1: N = 4 concurrent adds into the last slot (app role, pool max 4): exactly one ACTIVE, three waitlisted 1..3, one charge (session lock)", async () => {
     const { tenantId, actor, sessionId } = await world({ slotsMax: 1 });
-    const results = await Promise.all([
-      add(tenantId, actor, sessionId, { displayName: "R1" }),
-      add(tenantId, actor, sessionId, { displayName: "R2" }),
+    const results = await Promise.all(
+      ["R1", "R2", "R3", "R4"].map((displayName) =>
+        add(tenantId, actor, sessionId, { displayName }),
+      ),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([
+      "active",
+      "waitlisted",
+      "waitlisted",
+      "waitlisted",
     ]);
-    expect(results.map((r) => r.status).sort()).toEqual(["active", "waitlisted"]);
+    const waitlisted = results.filter((r) => r.status === "waitlisted");
+    expect(waitlisted.map((r) => r.waitlistPosition).sort()).toEqual([1, 2, 3]);
+    expect(results.filter((r) => r.chargeId !== null)).toHaveLength(1);
+    expect(await fx.rows(`SELECT 1 FROM charges WHERE session_id = $1`, [sessionId])).toHaveLength(
+      1,
+    );
+    expect((await fx.events(sessionId)).map((e) => e.type).sort()).toEqual([
+      "player.added",
+      "player.waitlisted",
+      "player.waitlisted",
+      "player.waitlisted",
+    ]);
     expect(
       (
         await fx.row(

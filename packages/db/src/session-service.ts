@@ -16,6 +16,7 @@ import type { Db, Tx } from "./client.js";
 import { chargeRemaining } from "./payment-manual.js";
 import { raisePublicSessionFence } from "./public-session-fence.js";
 import { effectiveByCharge } from "./roster-money-shared.js";
+import { getSessionOccupancy, sessionActiveRosterCount } from "./session-occupancy.js";
 import { hasHiddenChar } from "./text-safety.js";
 import { withTenant } from "./tenant.js";
 
@@ -1462,14 +1463,15 @@ export async function updateSession(
 
     // Capacity guard (edge #16, DD-112): only when slots_max is being CHANGED to a
     // FINITE value. Preserve the active-only refusal first; then use the same occupancy
-    // helper as guest-note creation so existing guests also keep their slots. Both reads
-    // run under the tenant GUC and the session lock shared with guest-note mutations.
+    // helper (getSessionOccupancy, session-occupancy.ts) as guest-note creation so existing
+    // guests also keep their slots. Both reads run under the tenant GUC and the session lock
+    // shared with guest-note mutations.
     if (changes.slotsMax !== undefined && changes.slotsMax !== null) {
       const activeCount = await sessionActiveRosterCount(tx, sessionId);
       if (changes.slotsMax < activeCount) {
         failUpdate("CAPACITY_BELOW_ROSTER", "slots_max cannot be below the active roster");
       }
-      if (changes.slotsMax < (await sessionOccupancy(tx, sessionId))) {
+      if (changes.slotsMax < (await getSessionOccupancy(tx, sessionId))) {
         failUpdate("CAPACITY_BELOW_OCCUPANCY", "slots_max cannot be below occupied slots");
       }
     }
@@ -2070,19 +2072,6 @@ function isStoredCancelResult(value: unknown): value is StoredCancelResult {
   );
 }
 
-/** CANONICAL active-roster count for a session — the SINGLE source for the active-roster aggregate,
- *  read by BOTH updateSession's CAPACITY_BELOW_ROSTER guard and cancelSession (so the two can never
- *  drift on separate formulas). Gate #3 (owner, 2026-08-26) makes a non-zero active roster a
- *  fail-closed REFUSAL on the open cancel path (see cancelSession), so on cancel's clean path this is
- *  0. NOT the draft-anomaly probe — that needs ANY player, active or not (see sessionHasAnyPlayer). */
-async function sessionActiveRosterCount(tx: Tx, sessionId: string): Promise<number> {
-  const rows = await tx
-    .select({ n: sql<number>`count(*)` })
-    .from(players)
-    .where(and(eq(players.sessionId, sessionId), eq(players.status, "active")));
-  return Number(rows[0]!.n);
-}
-
 /** ANY player row on a session regardless of status ('active'|'left'|'waitlisted'). The draft-discard
  *  anomaly invariant (edge #28) is "a draft has NO players at all" — a charge-free 'left'/'waitlisted'
  *  row is still an anomaly, so the guard must NOT use the active-only count. */
@@ -2659,29 +2648,6 @@ async function guestNoteCountFor(tx: Tx, sessionId: string, personId: string): P
   return Number(rows[0]!.n);
 }
 
-/**
- * Live occupancy of a session, the shared denominator behind SESSION_FULL (§4 step 5/7, edge #39).
- *
- * The spec's formula is `active + pending players + guest notes + live holds`. Two of its four
- * terms are STRUCTURALLY zero at this base and are therefore not queried:
- *  - `pending` is not a live players.status value. 0014_players_waitlist.sql pins players_status_chk
- *    to exactly ('active','left','waitlisted') and no later migration touches it, so a pending row
- *    cannot exist to be counted (one stale doc comment at feature_session_management_tech.md:174
- *    says otherwise; the constraint is the authority).
- *  - `live holds` has no table anywhere in schema.ts or the migrations — payment holds are not
- *    built.
- * Both terms return here with the migrations that make them representable. Counting a column that
- * does not exist is not possible; pretending to count one would be worse.
- */
-export async function sessionOccupancy(tx: Tx, sessionId: string): Promise<number> {
-  const active = await sessionActiveRosterCount(tx, sessionId);
-  const notes = await tx
-    .select({ n: sql<number>`count(*)` })
-    .from(sessionGuestNotes)
-    .where(eq(sessionGuestNotes.sessionId, sessionId));
-  return active + Number(notes[0]!.n);
-}
-
 /** Next per-aggregate outbox sequence, computed in-statement like every other session command. */
 export const nextOutboxSequence = (sessionId: string) =>
   sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${sessionId}), 0) + 1`;
@@ -2811,7 +2777,10 @@ export async function createGuestNote(
 
     // Step 5 — capacity. A NULL slots_max is "unbounded" everywhere else in this service, so a
     // session without a cap can never be SESSION_FULL.
-    if (session.slotsMax !== null && (await sessionOccupancy(tx, sessionId)) >= session.slotsMax) {
+    if (
+      session.slotsMax !== null &&
+      (await getSessionOccupancy(tx, sessionId)) >= session.slotsMax
+    ) {
       failGuestNote("SESSION_FULL", "the session has no free slot for another guest (edge #39)");
     }
 
@@ -3012,7 +2981,7 @@ export async function deleteGuestNote(
     // Step 4 — the freed slot, recomputed AFTER the delete so it reflects the release. Published
     // on the event rather than dropped, which is what makes the recompute observable; the
     // promotion this number is meant to feed does not exist yet (see the doc comment above).
-    const occupancyAfter = await sessionOccupancy(tx, sessionId);
+    const occupancyAfter = await getSessionOccupancy(tx, sessionId);
 
     await tx.insert(outboxEvents).values({
       tenantId,
