@@ -117,6 +117,11 @@
 | DD-96 | **Home money chips** → **Part A ✅** canonical `SelfPaymentSummary` cross-club thuộc `player_view` (Home cấm tự cộng; `feature_home_tech.md:166` đã yêu cầu mở rộng Player View owner), **unknown-dominates**: một CLB `unknown` ⇒ cả summary `unknown`, cấm sum các CLB known; `clubCount` = số CLB có outstanding > 0; không `payAction` ở tầng aggregate. **Part B 🟡** chip "Chưa thu" cross-club — owner chốt direction, đảo HOME-OQ-1(c), nhưng **không thuộc player_view** (DD-48 + DTO allowlist "other charges ❌ NEVER"); cần host-self owner riêng và còn 4 blocker B1–B4 (design-probe · `authorizeTenantAction` 0 caller · chưa Reviewed per-club owner · fan-out semantics) | Part A ✅ `DECISION_FINAL` contract shape (owner 2026-08-07), chưa authorize code · Part B ✅ direction / 🟡 `NOT_PLAN_READY` mechanism | Part A: S9 (cùng Home) sau P4.6 · Part B: sau per-club host receivable owner | DD-48 · DD-79 (HOME-OQ-1) · DD-91 · `../features/BE/feature_player_view_tech.md` · `../features/BE/feature_home_tech.md:166` · `../channels/web/FE/feature_dashboard_fe.md:59-66` |
 | DD-97 | **Collection statement + export sao kê per-session/kỳ (PDF/XLSX)** → composition-only trên `charges`+`payment_allocations` (không bảng/formula tiền mới; DTO cần owner Reviewed — cùng họ blocker B3 của DD-96); export async behavior-contract-only trên DD-89 foundation (không authorize enablement); download authenticated tenant-scoped, không public link (HR2); entitlement ✅ tách lớp: per-session statement view = **free** · kỳ/tháng + export file = **`host_pro`** | ✅ Direction + entitlement chốt (owner-delegated 2026-08-07) · mechanism chờ DTO owner Reviewed | P5+ TBD | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · DD-89 · DD-40 |
 | DD-98 | **Negative scope cho mechanic Sporta không port** → không theo đuổi: custom split per player (đụng derivation DD-39/41/45/49) · timeout-hold release cho linked member (DD-32 Option D giữ pay-later) · OS push kèm tiền/QR (mirror NTF — đã cấm sẵn) · auto-archive "nợ cũ" theo tuổi · geo/radius/distance/map picker (NP-5 — mâu thuẫn DD-06 area-only public) | ✅ Chốt (owner-delegated 2026-08-07) | — | `../research/sporta-payment-fe-port-analysis-2026-08-07.md` · `../research/sporta-fe-docs-gap-2026-08-07.md` · DD-06/32/39/49 |
+| DD-137 | **Cổng thoát đợt A + phong bì Phase 3 (D5).** Đợt A đóng bằng CI main xanh tại `3546f6b` + golden path local; Phase 3 chỉ local (không staging/DO), mỗi milestone đóng bằng golden path mở rộng; P0 chỉ owner; merge clerk merge PR `MERGE_READY` sau mỗi session; PR #50 chỉ owner. | 🟡 Đề xuất (chờ owner ký, 2026-10-16) | MVP Phase 3 | `../sessions/web-mvp-phase3-plan.md` · DD-132 |
+| DD-136 | **Phạm vi chat MVP (D4).** Chỉ kênh CLB (một kênh mặc định, tự cấp): gửi, lịch sử keyset, đã đọc, live, reply, sửa/xoá mềm tin của mình, host hide/restore. Ngoài: DM, media, reaction, search, group/pin/poll/embed, slash command, digest/push offline. | 🟡 Đề xuất (chờ owner ký, 2026-10-16) | MVP Phase 3 (M10) | `../sessions/web-mvp-phase3-plan.md` · DD-86 · DD-91..95 |
+| DD-135 | **M9 join + tiền không ngân hàng (D3).** Join bằng tài khoản; open ⇒ active + charge ngay hoặc waitlisted; approval ⇒ `join_requests` pending; tự rời chỉ khi tiền ghi nhận ròng = 0; FIFO tự nâng; Zalo `/join` `/leave` `/pay` chỉ tài khoản đã link, `/pay` không dữ liệu ngân hàng. | 🟡 Đề xuất (chờ owner ký, 2026-10-16) | MVP Phase 3 (M9) | `../sessions/web-mvp-phase3-plan.md` · DD-05 · DD-39 · DD-132 |
+| DD-134 | **M6 chính sách giao outbox + route announce (D2).** (a) 8 lần giao, lần 8 lỗi ⇒ DLQ, 7 khoảng chờ 15 s × 2^(n−1) (≈32 phút); (b) replay DLQ chỉ owner; (c) ma trận giao `web_realtime`/`zalo_dm`; (d) amend OD-2: chấp nhận ingress đồng bộ của #47; (e) cờ lịch OFF mặc định; (f) amend hoãn announce 2026-08-26: route ở L4b, guard theo heartbeat worker (`schedule_enabled` + `projector_is_enabled('zalo_dm')`), mã `ANNOUNCE_DELIVERY_DISABLED` (409, UNPINNED). | 🟡 Đề xuất (chờ owner ký, 2026-10-16) | MVP Phase 3 (M6) | `../sessions/web-mvp-phase3-plan.md` · Tier C #6 · DD-131 OD-2 |
+| DD-133 | **Public read model epic (DD-114 D3) (D1): ủy quyền trong Phase 3 và cách làm.** (a) occupancy authority: một helper, `slots_open` là số public duy nhất; (b) hàm SQL `session_occupancy(uuid)`; (c) cột DD-41 + (e) `public_listing_id` opaque cho discovery (slug DD-83/DD-75 chỉ cho link host chia sẻ) trong MỘT migration L10 thay `public_session_share_v` (không `host_display_name`, lọc sống theo alias đã duyệt); (d) alias CLB được moderate (L10a). Amend BL-DSC-1 (tên host, `confirmed_count` rời whitelist), DD-32 Browse/helper và ánh xạ host name của DD-46. Từ chối ⇒ public read model rời Phase 3. | 🟡 Đề xuất (chờ owner ký, 2026-10-16) | MVP Phase 3 (M9) | `../research/occupancy-authority-2026-10-16.md` · DD-114 D3 · DD-32 · DD-83 · DD-128 |
 | DD-132 | **Sửa scope DD-122 D2 (OD-0): MVP không có tích hợp ngân hàng (SePay/ApiPay), billing/`host_pro`, nhắc tự động, deploy DigitalOcean/DD-129, cấp phát secret/Google OAuth, M7 · M8 · M11 · M12 · M13.** Tiền chỉ thủ công `cash` \| `attested_transfer`, cho trả một phần, reversal chỉ owner (`money.correct`); mọi CLB dùng mọi tính năng; M9 chỉ phụ thuộc M6; PR #50 (M5) chỉ-owner / đóng băng. | ✅ Quyết định owner 2026-10-14 (hiệu lực khi PR merge) | MVP (chương trình) | DD-122 D2 · DD-131 OD-0 · DD-129 · PR #50 |
 | DD-131 | **Owner ký OD-0…OD-9 (14/10).** OD-0 scope (→ DD-132) · OD-1 **[REVERSAL] đảo DD-117 D3 vế close**: close được khi không còn charge chưa trả, từ chối bằng mã mới `CLOSE_BLOCKED_OPEN_DEBT` kèm danh sách player còn nợ; cancel giữ cổng #3 nhưng "có charge" → "có tiền đã ghi nhận (net allocated > 0)" · OD-2 ký shape Zalo ingress (DD-126) · OD-3 owner definer BYPASSRLS qua `SET ROLE` (DD-127 chọn a) · OD-4 `venueAddress` end-to-end + một formatter VND (DD-128) · OD-5 ký 5 mã lỗi DD-125 · OD-6 ký đề xuất M4 (#52) + M2c-fe (#53) · OD-7 **[DEFAULT]** heading font rời Sora (đề xuất Be Vietnam Pro, phải xác minh subset) + `worker-src 'self'` (DD-123) · OD-8 ký DD-124 nguyên trạng · OD-9 **[DEFAULT]** waive trần 3 vòng đúng một vòng cho #44 và #47 (DD-130). Đóng DD-123…DD-128, DD-130; DD-129 đóng băng. | ✅ Quyết định owner 2026-10-14 (hiệu lực khi PR merge) | MVP (chương trình) | PR #42–#53 · DD-117 D3 · DD-122 · DD-123…DD-130 · DD-132 |
 | DD-130 | **Fix sau vòng review 3 không được review lại (DD-122 D4: tối đa 3 vòng/PR).** Theo đúng các PR body: PR #44 — fix round-3 (`fb386e0`, open redirect, `safeReturnTo`) **không** được review độc lập lại; PR #43 — commit `7535e26` sau vòng 3 (9 file, +60/−10) do primary đọc diff, không có vòng review; PR #42 — `15cde0f` doc-only sau vòng 3 (primary chạy `review:check`); PR #47 — body **không ghi kết quả vòng 3** (chỉ có dòng "appended below" không có nội dung), trạng thái review chưa xác định từ snapshot. **Owner chọn một:** (a) đọc commit fix rồi merge; hoặc (b) cho đúng một vòng review nhắm riêng commit fix (waive cap cho vòng đó). | ✅ ký qua DD-131 OD-9 (14/10) | MVP (chương trình) | PR #42 · #43 · #44 · #47 · DD-122 D4 |
@@ -1736,6 +1741,117 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 - **D3 — nhận schema v3, forward-only.** `design_contract` chỉ tồn tại trong `level3-operational-v3`; validator + scope-gate sửa phối hợp, chấp nhận cả v2 lẫn v3 trong cửa sổ chuyển tiếp. **Không retrofit manifest v2 đang active** — runtime manifest hash-lock sau `register`, thêm trường = ép `MANIFEST_DRIFT`. Lane `chat-dm-safety-authority-core--v2` sống hết vòng đời ở v2. Không thêm `manifest_schema_version` vào authored contract (`scope-gate:548` HALT `CONTRACT_INVALID`).
 - **D4 — giết ledger + `proactive_routine`.** Owner uỷ quyền theo tiêu chí lợi ích dài hạn; quyết định bằng đo, không bằng sở thích: **zero consumer** (16/16 manifest khai `supervised`, không nơi nào khai `proactive_routine`), **zero writer** (consumer duy nhất `autopilot-onboard.sh:236` chỉ kiểm file tồn tại), **mục đích gốc đã bị bác** (ledger phục vụ `auto_merge_after_2x_codex_clean`, thứ Level 3 đã bỏ), và **cứu nó xung đột ràng buộc git của Plexco** (durable append buộc `ap-finish.sh` mutate default worktree — đúng lớp tranh chấp root-lock sinh ra để dập). Phạm vi xoá: `.autopilot/maturity-ledger.md` · `.gitignore:55-57` · `autopilot-review-readiness.mjs:316` · `level3-workflow.md:47,72,172,385` · `autopilot-ONBOARDING.md` (3 chỗ) · `autopilot-onboard.sh:236` · block `level3-workflow` trong `CLAUDE.md`.
 - **Hệ quả.** Mọi slice 3.1 là **kit-maintenance**: theo P3, `gate_profile: light` không bao giờ áp dụng cho diff chạm reviewer wrapper / scope-readiness validator / manifest schema / review-readiness gate — kể cả file `.md`/`.sh`; và không slice nào được tự certify bằng gate mà chính nó đang sửa. Blocker nặng nhất là **B1**: lane `chat-dm-safety-authority-core--v2` @ `31bd4d9` đang đỗ chờ đúng `codex-review-pin.sh` mà ba slice đầu sẽ sửa ⇒ đóng M1 trước khi mở slice 3.1 đầu tiên.
+
+---
+
+## DD-137 — Cổng thoát đợt A và phong bì Phase 3 (D5) · 🟡 Đề xuất (chờ owner ký, 2026-10-16)
+
+> Từ `docs/sessions/web-mvp-phase3-plan.md` (quyết định D5). Chưa ký ⇒ chưa có hiệu lực. Không sửa spec Reviewed.
+
+- **Bối cảnh.** DD-132 gỡ cổng "E2E staging" của đợt A và để owner chọn cổng thay thế (ghi chú chương trình ở cuối DD-132). Ledger giữ
+  đề xuất chưa quyết (`docs/sessions/web-mvp-program-status.md:67-68`); main `3546f6b` đã gộp #57 (golden path local + runbook).
+- **Đề xuất.** (1) Đợt A đóng bằng CI main xanh tại `3546f6b` (`verify` + `e2e-web`) cộng golden path local và runbook của #57. Đo bằng `gh run list --branch main`: workflow CI run 38794722311
+  = success (`verify` success, `e2e-web` success); workflow Security run 38794722631: Semgrep CE success, "OSV full dependency scan" failure (đỏ trên main, bỏ qua từ 2026-09-30, owner chọn thời điểm sửa).
+  (2) Phase 3 chỉ chạy local: không staging, không DigitalOcean; mỗi milestone (M6, M9, M10) đóng bằng một lần chạy golden path local
+  mở rộng. (3) Bước P0 (bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED`, nối bot token Zalo thật, nhắn người dùng thật) chỉ owner làm; agent chỉ
+  chuẩn bị runbook. (4) Sau mỗi session một merge clerk merge các PR `MERGE_READY` (merge commit, đúng thứ tự phụ thuộc, retarget PR con
+  trước khi xoá branch); owner merge được bất cứ lúc nào; PR #50 chỉ owner.
+- **Lý do.** Cổng đo lại được bằng lệnh, không cần hạ tầng ngoài; giữ đúng cách phase 2 đã chạy; không đụng bước không đảo ngược được.
+- **Hệ quả.** Chặn: khởi động P3-S2 (M6) và mọi merge round (chưa ký ⇒ owner tự merge, conductor dừng `RESULT: AWAIT`). DD-132 không đổi.
+- **Điều kiện resume (nhị phân).** Ký ⇔ owner VIẾT "Phase 3 plan approved" kèm trả lời D5 hoặc override (merge #58 một mình không ký gì; tin nhắn đó cho phép merge clerk merge #58 trước, P3-S1 chỉ bắt đầu trên `main` chứa #58); L0 rồi ghi
+  DD-137 ✅ (không có vòng chờ vào merge của L0). Chưa thoả ⇒ merge clerk không chạy; owner tự merge.
+- **Nguồn** (số dòng đo tại `3546f6b`, trước khi PR này chèn dòng)**.** `docs/standards/decisions.md:1775` (ghi chú cổng) · `:1863-1864` · `docs/sessions/web-mvp-program-status.md:60-68` ·
+  `docs/runbooks/local-mvp-smoke.md:123` · `docs/sessions/2026-10-14-web-mvp-program-handoff-2.md:136-138`.
+
+---
+
+## DD-136 — Phạm vi chat MVP (M10): chỉ kênh CLB (D4) · 🟡 Đề xuất (chờ owner ký, 2026-10-16)
+
+> Từ `docs/sessions/web-mvp-phase3-plan.md` (quyết định D4). Chưa ký ⇒ chưa có hiệu lực. Không sửa spec Reviewed.
+
+- **Bối cảnh.** DD-86, DD-91..95 đã ✅ nhưng "không authorize code"; spec chat còn nhiều bề mặt (group, pin, poll, embed, media). DD-132 không
+  nêu tên M10 và cấm nhắc tự động. Bảng chat đã có (`packages/db/schema.ts:920` `chat_channels`, `:971` `chat_messages`, `:1043` `chat_members`).
+- **Đề xuất.** Chỉ kênh CLB: một kênh mặc định mỗi CLB, tự cấp, thành viên vào kênh trong cùng transaction với kích hoạt membership
+  (DD-86). Có: gửi, lịch sử keyset, con trỏ đã đọc, cập nhật live, reply, sửa tin của mình, xoá mềm tin của mình, host hide/restore. KHÔNG: DM
+  (cờ safety giữ `false`, DD-55), media/đính kèm, reaction, search, group/pin/poll/embed/nickname, slash command, digest/push/email offline
+  (chỉ trạng thái chưa đọc trong app).
+- **Lý do.** Đủ cho "chat trong app" của BRD mà không kéo vendor lưu trữ/quét file; DD-132 cấm nhắc nợ tự động, còn việc cắt digest/push offline là lựa chọn sản phẩm của D4; mỗi mục bị loại có
+  thể thêm sau mà không đổi dữ liệu đã ghi.
+- **Hệ quả.** Chặn L14, L15, L16 (chạy P3-S11, P3-S12, P3-S13). Không sửa DD-86/DD-91..95; chỉ thu hẹp phần được xây ở MVP.
+- **Điều kiện resume (nhị phân).** Ký ⇔ owner VIẾT "Phase 3 plan approved" kèm trả lời D4 hoặc override (merge #58 một mình không ký gì; tin nhắn đó cho phép merge clerk merge #58 trước, P3-S1 chỉ bắt đầu trên `main` chứa #58); L0 rồi ghi DD-136 ✅.
+  Chưa thoả ⇒ L14-L16 chỉ AWAIT, lane khác chạy tiếp.
+- **Nguồn** (số dòng đo tại `3546f6b`, trước khi PR này chèn dòng)**.** `docs/standards/decisions.md:1235` (DD-86 provisioning) · `:1329` (DD-92) · `:1352` (DD-94) · `:1364` (DD-95) · `:734-740` (DD-55) ·
+  `packages/db/schema.ts:856-870` (cờ safety mặc định `false`) · `docs/features/BE/feature_inapp_chat_tech.md`.
+
+---
+
+## DD-135 — M9: join và tiền không qua ngân hàng (D3) · 🟡 Đề xuất (chờ owner ký, 2026-10-16)
+
+> Từ `docs/sessions/web-mvp-phase3-plan.md` (quyết định D3). Chưa ký ⇒ chưa có hiệu lực. Không sửa spec Reviewed.
+
+- **Bối cảnh.** DD-05 (join open/approval theo từng session) và DD-39 (giá theo giới tính) đã ✅; DD-132 bỏ ngân hàng, hold, webhook nhà cung cấp.
+  Host-add hiện tạo charge ngay (`packages/db/src/roster-service.ts:121`); session miễn phí cho charge 0đ trạng thái `paid`
+  (`packages/db/src/payment-manual.ts:46-52`); reversal chỉ owner (DD-132, `money.correct`).
+- **Đề xuất.** Join bằng tài khoản đã đăng nhập. Open: còn chỗ ⇒ active + tạo charge ngay (giá theo DD-39; session miễn phí ⇒ charge 0đ `paid`),
+  hết chỗ ⇒ waitlisted, chưa charge tới khi được nâng. Approval (DD-05): tạo `join_requests` pending, host duyệt/từ chối. Tự rời khi session
+  còn open và trước giờ bắt đầu: chỉ khi tiền ghi nhận ròng = 0 (charge void); ngược lại từ chối bằng mã bảo player nhờ host (host reverse
+  trước). FIFO tự nâng khi trống chỗ. Zalo `/join` `/leave` `/pay` chỉ cho tài khoản đã link; `/pay` chỉ hiện khoản của chính mình, không dữ
+  liệu ngân hàng. Ngoài MVP: hold, QR, pay-now, webhook nhà cung cấp, finalizer settlement.
+- **Lý do.** Dùng lại logic host-add (khoá hàng session, đếm chỗ), không tạo đường tiền mới; không tự hoàn tiền (HARD RULE 2 và 4).
+- **Hệ quả.** Chặn L8, L9 (own-money), L13, và hiển thị tiền ở L12. Mã lỗi của "refuse leave" chưa ghim: lane ghim default trong readiness file step 0 và PR body ("default applied, pending owner sign-off"); L17 gom mọi default đã áp vào MỘT mục `decisions.md`.
+- **Điều kiện resume (nhị phân).** Ký ⇔ owner VIẾT "Phase 3 plan approved" kèm trả lời D3 hoặc override (merge #58 một mình không ký gì; tin nhắn đó cho phép merge clerk merge #58 trước, P3-S1 chỉ bắt đầu trên `main` chứa #58); L0 rồi ghi DD-135 ✅.
+  Chưa thoả ⇒ L8, L9, L12, L13 chỉ AWAIT.
+- **Nguồn** (số dòng đo tại `3546f6b`, trước khi PR này chèn dòng)**.** `docs/standards/decisions.md:217-225` (DD-05) · `:542-556` (DD-39) · `:1768` · `packages/db/src/roster-service.ts:121,360,364` ·
+  `docs/features/BE/feature_cross_club_join_tech.md:211` · `docs/standards/business-rules.md:75`.
+
+---
+
+## DD-134 — M6: chính sách giao outbox và route announce (D2) · 🟡 Đề xuất (chờ owner ký, 2026-10-16)
+
+> Từ `docs/sessions/web-mvp-phase3-plan.md` (quyết định D2). Chưa ký ⇒ chưa có hiệu lực. Không sửa spec Reviewed.
+
+- **Bối cảnh.** Tier C #6 (giới hạn lần thử outbox) không có default (`decisions.md:1934-1936`); consumer duy nhất là stub (`apps/bot/src/dispatcher.ts:32-33,77`);
+  cron pg-boss tối thiểu 1 phút (`apps/bot/src/queues.ts:42-47`); cờ lịch mặc định OFF (`apps/bot/src/worker.ts:80-96`). Route announce bị hoãn tới khi lịch bật
+  (`decisions.md:753-758`). DD-131 OD-2 mô tả ack-rồi-xử-lý-async (`decisions.md:1807-1812`).
+- **Đề xuất.** (a) 8 lần giao: lần giao thứ n lỗi (n < 8) ⇒ thử lại sau 15 s × 2^(n−1); lần thứ 8 lỗi ⇒ DLQ; 7 khoảng chờ cộng 1905 s (khoảng 32 phút), không có trần.
+  (b) DLQ: xem + replay chỉ owner (script CLI, một dòng audit, đặt lại bộ đếm), không UI trong MVP. (c) Ma trận giao: `web_realtime` nhận mọi event session; `zalo_dm`
+  chỉ `session.updated` (giờ/địa điểm/giá) và `session.cancelled` tới roster active có Zalo đã link, cùng `session.announcement_requested` thành MỘT DM cho host yêu cầu
+  (kèm đoạn tin để forward + link web); không gì khác tới Zalo; không nhắc tự động (DD-132). (d) **Amend OD-2** (ack-rồi-xử-lý-async): chấp nhận Zalo ingress xử lý đồng bộ
+  rồi ack của #47 (dedupe `message_id`). (e) Cờ lịch giữ OFF mặc định; bật cho dùng thật là bước P0 của owner (agent chỉ bật trong tiến trình test/scratch local); M6 cũng tự huỷ draft cũ (system cancel, chặn bởi cờ lịch).
+  (f) **Amend hoãn (b) ngày 2026-08-26** (`decisions.md:753-758`, announce ship khi lịch đã bật): route announce ship ở L4b cho MVP local, kênh phải là zalo, kèm guard theo
+  sự thật DB (không bao giờ theo env của tiến trình): từ chối trừ khi heartbeat worker còn mới báo `schedule_enabled` VÀ `projector_is_enabled('zalo_dm')`, bằng mã đề xuất
+  `ANNOUNCE_DELIVERY_DISABLED` (409, UNPINNED); không bao giờ trả `{announced:true}` khi không có gì giao được. Không ký (f) ⇒ L4b chờ owner báo đã bật lịch.
+- **Lý do.** Bound hữu hạn + DLQ tránh vòng retry vô hạn; ma trận hẹp tránh spam Zalo và không cần group binding; guard giữ nguyên ý hoãn.
+- **Hệ quả.** (a)-(e) chặn L3, L4 (và L5 theo (c)); (f) chỉ chặn L4b.
+- **Điều kiện resume (nhị phân).** Mỗi vế ký ⇔ owner VIẾT "Phase 3 plan approved" kèm trả lời từng vế hoặc override (merge #58 một mình không ký gì; tin nhắn đó cho phép merge clerk merge #58 trước); L0 rồi ghi DD-134 ✅. Ký từng phần
+  được (ví dụ "D2 signed except (f)").
+- **Nguồn** (số dòng đo tại `3546f6b`, trước khi PR này chèn dòng)**.** `decisions.md:753-758,1807-1812,1860-1862,1934-1936` · `docs/sessions/2026-10-14-web-mvp-program-handoff-2.md:136-138` ·
+  `apps/bot/src/dispatcher.ts:32-33,77` · `apps/bot/src/queues.ts:42-47` · `apps/bot/src/worker.ts:80-96`.
+
+---
+
+## DD-133 — Public read model epic (DD-114 D3): ủy quyền trong Phase 3, và cách làm (D1) · 🟡 Đề xuất (chờ owner ký, 2026-10-16)
+
+> Từ `docs/sessions/web-mvp-phase3-plan.md` (quyết định D1); phân tích occupancy: `docs/research/occupancy-authority-2026-10-16.md`. Chưa ký ⇒ chưa có hiệu lực.
+
+- **Bối cảnh.** DD-114 D3 (owner đã ký) đặt projector `public_sessions` vào epic "public read model" với BỐN tiền đề (DD-73 route opaque slug, DD-41 cột
+  whitelist, một occupancy helper, alias moderated cho `club_display_name`) và "slice nào chạm giá trị projection phải AWAIT tới khi epic được authorize".
+  Occupancy có bốn công thức trong tài liệu và công thức thứ năm trong code (`packages/db/src/session-service.ts:2664`); chưa có bảng hold (DD-132).
+- **Đề xuất (MỘT gói; ký đủ a-e).** (a) Occupancy authority: một helper `getSessionOccupancy` trả một số; `confirmed_count` = active players, tenant-private;
+  `slots_open` = NULL khi `slots_max` NULL, ngược lại max(0, slots_max − occupied); DTO public chỉ `slots_open`. (b) Hàm SQL `session_occupancy(p_session_id uuid)`
+  (SECURITY INVOKER, REVOKE PUBLIC). (c) Cột DD-41. (e) Định danh discovery: hàng public mang `public_listing_id` ngẫu nhiên, opaque, 128-bit, xoay mỗi khi session rời public; slug hash-only DD-83/DD-75 chỉ phục vụ link host chia sẻ;
+  view không lộ `session_id` hay `public_projection_version`, tra cứu phía server; không sửa gì đã ký. (b)(c)(e) nằm trong MỘT migration của L10, cũng THAY `public_session_share_v` (`0033:132-145`):
+  view trả đúng whitelist đã duyệt, KHÔNG có `host_display_name` (cột bảng có thể còn nhưng không ghi), thêm cột DD-41 và `public_listing_id`, và lọc sống theo tenant có alias đang được duyệt ngay lúc đọc
+  (`club_display_name` đọc sống từ alias đã duyệt, nên thu hồi là fail-closed). Test whitelist `rls-invariants.test.ts:171` sửa theo danh sách đúng này. (d) Lane L10a:
+  alias công khai của CLB (text ngắn, HIDDEN_CHAR-safe), status pending|approved|rejected; chủ CLB đặt (`content.manage`), sửa alias đã duyệt ⇒ về pending; chỉ owner nền
+  tảng duyệt/từ chối qua script owner-only có audit row (không UI); L10a phát outbox event để L10 chiếu lại hoặc xoá; CLB chưa có alias đã duyệt không bao giờ được project.
+- **Amend.** BL-DSC-1 (`business-rules.md:50`): tên host và `confirmed_count` rời whitelist public (danh sách sync của L0 gồm BL-DSC-1); DD-32 `decisions.md:464`, `:467`; DD-46
+  `:642` (ánh xạ `host_display_name` ← `memberships.display_name`): tên host/person không bao giờ được project (số dòng tại `3546f6b`). **Nếu owner từ chối** ("D1 declined"): L10a, L10, L10b và phần discovery của L12 rời Phase 3; M9 chỉ ship join, cross-club, me-reads, giá giới tính, lệnh Zalo.
+- **Lý do.** Điều kiện DD-114 D3 để mở epic; một công thức không lộ số hold; hàm là SQL vì `app_worker` không có grant bảng gốc (`0033:232-238`); view đọc sống ⇒ thu hồi tức thì.
+- **Hệ quả.** L7 (occupancy giai đoạn 1) KHÔNG chờ. Chặn L10a, L10, L10b, phần discovery của L12, phần occupancy/BL-DSC-1 của L0. Lane migration chạy tuần tự, mỗi lane một migration.
+- **Điều kiện resume (nhị phân).** Ký ⇔ owner VIẾT "Phase 3 plan approved" kèm trả lời D1 hoặc override (merge #58 một mình không ký gì; tin nhắn đó cho phép merge clerk merge #58 trước); L0 rồi ghi DD-133 ✅. Ký từng phần được; "D1 declined" ⇒ các lane trên rời Phase 3.
+- **Nguồn** (số dòng đo tại `3546f6b`, trước khi PR này chèn dòng)**.** `decisions.md:2467-2479` (DD-114 D3) · `:464,:467,:642` · `:1173` (DD-83) · `:1048` (DD-75) · `business-rules.md:50` ·
+  `0033_public_projection_fences.sql:132-145` · `packages/db/src/rls-invariants.test.ts:171` · `docs/research/occupancy-authority-2026-10-16.md`.
 
 ---
 
@@ -3544,6 +3660,7 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 16/10/2026 | v2.57 | **Thêm DD-133…DD-137 → 🟡 Đề xuất (chờ owner ký) cho kế hoạch Web MVP Phase 3 (M6, M9, M10), không DD nào ✅.** D1 DD-133 public read model epic DD-114 D3 (occupancy authority; hàm SQL `session_occupancy(uuid)`; một migration L10 thay `public_session_share_v` với cột DD-41 và registry slug DD-83/DD-75; alias được moderate L10a; amend BL-DSC-1 và DD-32:464/:467); D2 DD-134 chính sách giao outbox M6 (a)-(f; (d) amend OD-2, (f) amend hoãn announce 2026-08-26); D3 DD-135 M9 join + tiền không ngân hàng; D4 DD-136 phạm vi chat MVP; D5 DD-137 cổng thoát đợt A + phong bì Phase 3. Văn bản DD cũ, các dòng changelog cũ và mọi spec Reviewed giữ nguyên; đồng bộ spec là việc của lane L0 sau khi owner ký. Không authorize merge/deploy/flag production. |
 | 15/10/2026 | v2.56 | **Ghi chú trạng thái triển khai, không đổi quyết định nào.** (1) DD-131: thêm danh sách trạng thái triển khai — OD-1 → PR #55 (`8d4b4b6`), OD-3 → PR #49 (`561086a`), OD-2 → PR #47 (`2339c8a`) kèm điểm owner còn mở (xử lý đồng bộ rồi ack; đề xuất chấp nhận cho MVP), và đề xuất cổng thoát đợt A (Playwright `e2e-web` local xanh trên tip stack) thay cổng "E2E staging" mà DD-132 đã gỡ — cả hai là đề xuất, owner chưa quyết. (2) DD-117: thêm ghi chú ở thân D3 và ô trạng thái bảng tổng hợp rằng vế close đã được thay bởi DD-131 OD-1 (PR #55). Văn bản DD cũ và các dòng changelog cũ giữ nguyên. Không authorize merge/deploy/flag production. |
 | 14/10/2026 | v2.55 | **Thêm DD-131 → ✅ Quyết định owner 2026-10-14 (ký OD-0…OD-9; hiệu lực khi PR merge) và DD-132 → ✅ scope amendment của DD-122 D2 (OD-0).** DD-131: OD-1 là **[REVERSAL] một phần của DD-117 D3** (chỉ vế close; cổng #3 của cancel giữ); OD-2…OD-6, OD-8 ký các điểm owner-chọn của DD-125/126/127/128/124 và đề xuất PR #52/#53; OD-7 và OD-9 là **[DEFAULT]** (heading font + `worker-src 'self'`; waive trần 3 vòng đúng một vòng cho #44/#47). **DD-123…DD-128 và DD-130 chuyển 🟡 → ✅ qua DD-131** (DD-123 có điều kiện xác minh font); **DD-129 không ký — đóng băng** theo OD-0 + DD-132 (M5 / PR #50 chỉ-owner). DD-132: MVP bỏ tích hợp ngân hàng, billing/`host_pro`, nhắc tự động, deploy DO, secret/Google OAuth, M7·M8·M11·M12·M13; tiền chỉ thủ công; M9 chỉ phụ thuộc M6. Nguồn: chỉ dẫn lập kế hoạch của owner 14/10 (chưa ký cho tới khi PR merge). Thân DD-123…DD-130 không đổi, chỉ ô trạng thái; ô trạng thái DD-117 thêm con trỏ DD-131 OD-1. Không authorize merge/deploy/flag production. |
 | 13/10/2026 | v2.54 | **DD-123…DD-130 proposals 🟡 từ các lane Web MVP (PR #44–#50), chờ owner ký; không DD nào ✅.** Mỗi DD ghi default lane đã áp + điểm owner phải chọn; DD-125 có pointer ⚠️ dưới DD-117 (hệ quả roster/charge trên close/cancel — câu hỏi mở quan trọng nhất của wave). DD-130 ghi các fix sau vòng review 3 không được review lại (PR #42, #43, #44; #47 không có kết quả vòng 3 trong snapshot). Không đổi DD-122, không đổi trạng thái DD cũ. Ledger `sessions/web-mvp-program-status.md` cập nhật 13/10. Không authorize merge/deploy/flag production. |
