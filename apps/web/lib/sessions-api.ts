@@ -31,10 +31,12 @@ export interface SessionScalarsDto {
 }
 
 /** List row = scalars + roster counts (no roster, no money). `occupiedCount` = active players +
- *  guest notes, computed server-side: the ONE capacity numerator (BL-DSC-1; never re-sum on the client). */
+ *  guest notes, computed server-side: the ONE capacity numerator (BL-DSC-1; never re-sum on the client).
+ *  `slotsOpen` = server-computed free slots, null when unlimited (never derived on the client). */
 export interface SessionListItemDto extends SessionScalarsDto {
   activeCount: number;
   occupiedCount: number;
+  slotsOpen: number | null;
 }
 
 export interface SessionListDto {
@@ -84,7 +86,13 @@ export interface GuestNoteDto {
 export interface SessionDetailDto extends SessionScalarsDto {
   players: RosterPlayerDto[];
   guestNotes: GuestNoteDto[];
-  counts: { active: number; waitlisted: number; guestNotes: number; occupied: number };
+  counts: {
+    active: number;
+    waitlisted: number;
+    guestNotes: number;
+    occupied: number;
+    slotsOpen: number | null;
+  };
 }
 
 export interface SportDto {

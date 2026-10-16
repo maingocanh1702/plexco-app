@@ -8,7 +8,7 @@ import styles from "./session-detail-view.module.css";
 export function RosterCounts({ session }: { session: SessionDetailDto }) {
   const t = useT();
   const { counts } = session;
-  const free = session.slotsMax === null ? null : Math.max(0, session.slotsMax - counts.occupied);
+  const free = counts.slotsOpen;
   return (
     <dl className={styles.counts}>
       <div>

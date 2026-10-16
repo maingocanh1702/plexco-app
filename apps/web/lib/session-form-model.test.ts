@@ -45,7 +45,7 @@ const session: SessionDetailDto = {
   updatedAt: "2026-10-01T00:00:00.000Z",
   players: [],
   guestNotes: [],
-  counts: { active: 0, waitlisted: 0, guestNotes: 0, occupied: 0 },
+  counts: { active: 0, waitlisted: 0, guestNotes: 0, occupied: 0, slotsOpen: 12 },
 };
 
 describe("validateForm", () => {
