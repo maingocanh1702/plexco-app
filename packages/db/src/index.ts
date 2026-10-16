@@ -76,6 +76,7 @@ export {
   type SessionScalars,
 } from "./session-read.js";
 export { listActiveSports, type ActiveSport } from "./sports-read.js";
+export { readSessionRealtimeEvent, type SessionRealtimeEvent } from "./realtime-event-read.js";
 // Web MVP lane M2c: host roster writer + manual mark-paid (DD-40) + reversal.
 export {
   addMemberToSession,
