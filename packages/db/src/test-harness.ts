@@ -704,8 +704,6 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   });
   await admin.end();
 
-  // 3. the roles exist now (ensured by the runner + 0000): lease their test passwords until teardown
-  const passwords = await leaseTestRolePasswords(base);
   const owner = new pg.Client({ connectionString: migrationUrl });
   guardClientErrors(owner, () => tearingDown);
   await owner.connect();
@@ -719,6 +717,8 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   );
   const sport = await owner.query(`SELECT id FROM sports WHERE key = 'badminton'`);
 
+  // 3. last: lease the roles' test passwords, so a failed connect or seed never holds them
+  const passwords = await leaseTestRolePasswords(base);
   const appUrl = testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app });
   const readonlyUrl = testUrl(base, { db: dbName, user: "readonly", password: ROLE_PW.readonly });
   const workerUrl = testUrl(base, { db: dbName, user: "app_worker", password: ROLE_PW.app_worker });
@@ -745,12 +745,14 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
     remigrate: () => migrate(migrationUrl),
     teardown: async () => {
       tearingDown = true;
-      await appDb.close();
-      await readonlyPool.end();
-      await workerPool.end();
-      await superuserDb.close();
-      await owner.end();
-      await passwords.release(); // once no pool logs in with a test password any more
+      const closed = await Promise.allSettled([
+        appDb.close(),
+        readonlyPool.end(),
+        workerPool.end(),
+        superuserDb.close(),
+        owner.end(),
+      ]);
+      await passwords.release(); // after every close settled: a failed close can't keep the lease
       // No FORCE: every connection this context opened is closed, DROP DATABASE waits up to 5 s for
       // sockets still closing, and a connection a caller leaked fails here instead of being killed.
       const dropper = new pg.Client({ connectionString: base });
@@ -760,6 +762,7 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
       } finally {
         await dropper.end();
       }
+      for (const result of closed) if (result.status === "rejected") throw result.reason;
     },
   };
 }

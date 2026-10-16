@@ -54,7 +54,6 @@ async function setupWorkerContext(dbName: string): Promise<WorkerContext> {
   let created = false;
   let passwords: TestRolePasswordLease | undefined;
   const teardown = async () => {
-    await passwords?.release(); // spawned workers and runPreflightChecks have finished by now
     if (!created) return;
     const cleanup = new pg.Client({ connectionString: base });
     try {
@@ -63,6 +62,7 @@ async function setupWorkerContext(dbName: string): Promise<WorkerContext> {
       created = false;
     } finally {
       await cleanup.end();
+      await passwords?.release(); // after the drop, which a failed release then can't skip
     }
   };
 
