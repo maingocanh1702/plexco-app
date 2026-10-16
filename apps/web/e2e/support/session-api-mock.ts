@@ -388,6 +388,20 @@ export async function installApiMock(
         }),
       );
     }
+    // Like the real BE (after its version check): a result that would be public without a
+    // non-blank area or a finite slots_max is refused with no write and no version bump.
+    const eff = method === "PUT" && body ? { ...target, ...body } : null;
+    if (eff?.visibility === "public" && (!String(eff.area ?? "").trim() || eff.slotsMax == null)) {
+      return json(
+        route,
+        400,
+        errorEnvelope({
+          code: "MISSING_DISCOVERY_FIELDS",
+          message: "Thiếu thông tin bắt buộc để công khai kèo.",
+          statusCode: 400,
+        }),
+      );
+    }
     const action = detailMatch[2];
     if (action === "publish") target.status = "open";
     else if (action === "close") target.status = "closed";
