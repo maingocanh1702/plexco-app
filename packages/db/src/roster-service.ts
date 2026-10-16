@@ -177,39 +177,16 @@ export async function addMemberToSession(
       return fail("ALREADY_JOINED", "member is already on this session roster");
     }
 
-    const full =
-      session.slotsMax !== null && (await getSessionOccupancy(tx, sessionId)) >= session.slotsMax;
-    let waitlistPosition: number | null = null;
-    if (full) {
-      const [tail] = await tx
-        .select({ max: sql<number>`coalesce(max(${players.waitlistPosition}), 0)` })
-        .from(players)
-        .where(and(eq(players.sessionId, sessionId), eq(players.status, "waitlisted")));
-      waitlistPosition = Number(tail!.max) + 1;
-    }
-    const status = full ? "waitlisted" : "active";
-
-    let playerId: string;
-    if (existing === undefined) {
-      const [row] = await tx
-        .insert(players)
-        .values({ tenantId, sessionId, membershipId, status, waitlistPosition })
-        .returning({ id: players.id });
-      playerId = row!.id;
-    } else {
-      // Re-join of a `left` row: same row, fresh joined_at (queue order), no duplicate charge.
-      playerId = existing.id;
-      await tx
-        .update(players)
-        .set({ status, waitlistPosition, joinedAt: sql`clock_timestamp()` })
-        .where(eq(players.id, playerId));
-    }
-
-    let chargeId: string | null = null;
-    if (!full)
-      chargeId = await upsertCharge(tx, tenantId, sessionId, playerId, membershipId, session.price);
-
-    await emitSessionEvent(tx, tenantId, sessionId, full ? "player.waitlisted" : "player.added", {
+    const { playerId, status, waitlistPosition, chargeId } = await seatPlayer(
+      tx,
+      tenantId,
+      sessionId,
+      session,
+      membershipId,
+      existing?.id,
+    );
+    const eventType = status === "waitlisted" ? "player.waitlisted" : "player.added";
+    await emitSessionEvent(tx, tenantId, sessionId, eventType, {
       session_id: sessionId,
       player_id: playerId,
       membership_id: membershipId,
@@ -232,8 +209,66 @@ export async function addMemberToSession(
   });
 }
 
-/** Exactly ONE charge per (session, player): create it, or revive the `void` one of a re-join. */
-async function upsertCharge(
+export interface SeatResult {
+  playerId: string;
+  status: "active" | "waitlisted";
+  waitlistPosition: number | null;
+  chargeId: string | null;
+}
+
+/**
+ * Seats one member on an OPEN session whose row the caller already holds FOR UPDATE (every players
+ * writer serializes on that lock): ACTIVE with exactly one charge while getSessionOccupancy is below
+ * slots_max, else WAITLISTED at the FIFO tail (max position + 1) with none. `existingPlayerId` is the
+ * member's `left` row, locked FOR UPDATE by the caller, and is reused (fresh joined_at, never a
+ * second charge). The caller emits its own event. Shared by host-add and the player self-join paths
+ * (session-join-service.ts); internal to packages/db, NOT exported from index.ts.
+ */
+export async function seatPlayer(
+  tx: Tx,
+  tenantId: string,
+  sessionId: string,
+  session: { slotsMax: number | null; price: number },
+  membershipId: string,
+  existingPlayerId: string | undefined,
+): Promise<SeatResult> {
+  const full =
+    session.slotsMax !== null && (await getSessionOccupancy(tx, sessionId)) >= session.slotsMax;
+  let waitlistPosition: number | null = null;
+  if (full) {
+    const [tail] = await tx
+      .select({ max: sql<number>`coalesce(max(${players.waitlistPosition}), 0)` })
+      .from(players)
+      .where(and(eq(players.sessionId, sessionId), eq(players.status, "waitlisted")));
+    waitlistPosition = Number(tail!.max) + 1;
+  }
+  const status = full ? "waitlisted" : "active";
+
+  let playerId: string;
+  if (existingPlayerId === undefined) {
+    const [row] = await tx
+      .insert(players)
+      .values({ tenantId, sessionId, membershipId, status, waitlistPosition })
+      .returning({ id: players.id });
+    playerId = row!.id;
+  } else {
+    // Re-join of a `left` row: same row, fresh joined_at (queue order), no duplicate charge.
+    playerId = existingPlayerId;
+    await tx
+      .update(players)
+      .set({ status, waitlistPosition, joinedAt: sql`clock_timestamp()` })
+      .where(eq(players.id, playerId));
+  }
+
+  let chargeId: string | null = null;
+  if (!full)
+    chargeId = await upsertCharge(tx, tenantId, sessionId, playerId, membershipId, session.price);
+  return { playerId, status, waitlistPosition, chargeId };
+}
+
+/** Exactly ONE charge per (session, player): create it, or revive the `void` one of a re-join.
+ *  Internal to packages/db (host-add, self-join, waitlist promotion), NOT exported from index.ts. */
+export async function upsertCharge(
   tx: Tx,
   tenantId: string,
   sessionId: string,
