@@ -1,6 +1,20 @@
+import { execFile } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import pg from "pg";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { acquireChatDefinerLock } from "./test-harness.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  acquireChatDefinerLock,
+  createRolePasswordLeaser,
+  setupRlsTestContext,
+  withAdvisoryLocks,
+  withDefinerReadLock,
+  withJobDefinerLock,
+  type TestRolePasswordLease,
+} from "./test-harness.js";
 
 /**
  * Covers the harness itself rather than using it (CDL-1..CDL-6).
@@ -100,14 +114,14 @@ const REAL_LOCK_TIMEOUT_MS = 120_000;
  * and delegate everything else, so the observer connection keeps working while the lock query
  * fails. The spy is process-local, so it cannot reach another test file's worker.
  */
-function rejectLockQueryWith(error: Error) {
+function rejectLockQueryWith(error: Error, statement = /pg_advisory_lock\(/) {
   const original = pg.Client.prototype.query;
   return vi.spyOn(pg.Client.prototype, "query").mockImplementation(function (
     this: pg.Client,
     ...args: unknown[]
   ) {
     const text = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string })?.text;
-    if (typeof text === "string" && text.includes("pg_advisory_lock(")) {
+    if (typeof text === "string" && statement.test(text)) {
       return Promise.reject(error);
     }
     return (original as (...a: unknown[]) => unknown).apply(this, args) as Promise<unknown>;
@@ -287,6 +301,214 @@ describe("acquireChatDefinerLock", () => {
       expect(ended.size).toBe(1);
       await expect.poll(() => countBackends(appName), { timeout: 5_000 }).toBe(0);
       expect(await advisoryLocksHeldBy(appName)).toBe(0);
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
+});
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+// test-harness.ts's module-private keys, re-stated for the same reason as CHAT_DEFINER_LOCK_KEY.
+const JOB_DEFINER_LOCK_KEY = 0x6a6f6264;
+const CHAT_DEFINER_STATE_LOCK_KEY = 0x63687374;
+/** Advisory keys of this process alone: the proofs below never touch a real definer lock. */
+const scratchKey = (n: number) => 0x7a000000 + (process.pid % 0x10000) * 16 + n;
+
+describe("createRolePasswordLeaser, on scratch roles and keys (RPW)", () => {
+  const role = (suffix: string) => `zz_rpw_${process.pid}_${suffix}`;
+  const [roleA, roleB, roleC] = [role("a"), role("b"), role("c")];
+  const passwords = { [roleA]: "rpw_test_a", [roleB]: "rpw_test_b", [roleC]: "rpw_test_c" };
+  let config: Parameters<typeof createRolePasswordLeaser>[0];
+  let lease: (base: string) => Promise<TestRolePasswordLease>;
+  const roleState = async () =>
+    (
+      await observer.query(
+        "SELECT rolname, rolpassword, rolcanlogin FROM pg_authid WHERE rolname = ANY($1) ORDER BY 1",
+        [[roleA, roleB, roleC]],
+      )
+    ).rows;
+
+  beforeEach(async () => {
+    const storeDir = mkdtempSync(path.join(os.tmpdir(), "plexco-rpw-"));
+    config = { passwords, mutexKey: scratchKey(1), participantKey: scratchKey(2), storeDir };
+    lease = createRolePasswordLeaser(config);
+    for (const name of [roleA, roleB, roleC]) await observer.query(`DROP ROLE IF EXISTS ${name}`);
+    // Pre-run state: A logs in with a password of its own, B is NOLOGIN with one, C is absent.
+    await observer.query(`CREATE ROLE ${roleA} LOGIN PASSWORD 'rpw_orig_a'`);
+    await observer.query(`CREATE ROLE ${roleB} NOLOGIN PASSWORD 'rpw_orig_b'`);
+  });
+
+  afterEach(async () => {
+    for (const name of [roleA, roleB, roleC]) await observer.query(`DROP ROLE IF EXISTS ${name}`);
+    rmSync(config.storeDir, { recursive: true, force: true });
+  });
+
+  it("RPW-1: concurrent participants write one at a time — no two ALTER ROLE ... PASSWORD overlap", async () => {
+    const spans: [number, number][] = [];
+    const original = pg.Client.prototype.query;
+    vi.spyOn(pg.Client.prototype, "query").mockImplementation(function (
+      this: pg.Client,
+      ...args: unknown[]
+    ) {
+      const result = (original as (...a: unknown[]) => Promise<unknown>).apply(this, args);
+      if (!/^ALTER ROLE .* PASSWORD/.test(String(args[0]))) return result;
+      const start = performance.now();
+      return result.finally(() => spans.push([start, performance.now()]));
+    });
+    const leases = await Promise.all([1, 2, 3, 4].map(() => lease(BASE!)));
+    vi.restoreAllMocks();
+    for (const held of leases) await held.release();
+    expect(spans).toHaveLength(8); // 4 participants x the 2 roles that exist
+    spans.sort((x, y) => x[0] - y[0]);
+    for (let i = 1; i < spans.length; i++)
+      expect(spans[i]![0]).toBeGreaterThanOrEqual(spans[i - 1]![1]);
+  });
+
+  it("RPW-2: only the last participant restores, exactly; a role absent at the snapshot ends with no password and stays", async () => {
+    const before = await roleState();
+    const first = await lease(BASE!);
+    await observer.query(`CREATE ROLE ${roleC} LOGIN PASSWORD 'rpw_orig_c'`);
+    const second = await lease(BASE!);
+    await first.release();
+    const midRun = await roleState(); // a participant is still alive: nothing restored under it
+    expect(midRun.filter((r) => before.some((b) => b.rolpassword === r.rolpassword))).toEqual([]);
+    await second.release();
+    const after = await roleState();
+    expect(after.slice(0, 2)).toEqual(before);
+    expect(after[2]).toMatchObject({ rolname: roleC, rolpassword: null, rolcanlogin: true });
+    expect(readdirSync(config.storeDir)).toEqual([]);
+  });
+
+  it(
+    "RPW-3: a participant killed mid-run leaves its snapshot; the next complete run restores the original, not the test value",
+    async () => {
+      const before = await roleState();
+      const script = path.join(config.storeDir, "..", `plexco-rpw-killed-${process.pid}.mts`);
+      const harness = pathToFileURL(path.join(HERE, "test-harness.ts")).href;
+      writeFileSync(
+        script,
+        `const { createRolePasswordLeaser } = await import(${JSON.stringify(harness)});
+         await createRolePasswordLeaser(JSON.parse(process.env.RPW_CONFIG))(process.env.DATABASE_URL_TEST);
+         process.kill(process.pid, "SIGKILL");`,
+      );
+      const tsx = path.join(HERE, "..", "node_modules", ".bin", "tsx");
+      const env = { ...process.env, RPW_CONFIG: JSON.stringify(config) };
+      const killed = await promisify(execFile)(tsx, [script], { env }).then(
+        () => null,
+        (error: { code?: number; signal?: string }) => error.signal ?? error.code, // tsx relays 137
+      );
+      rmSync(script, { force: true });
+      expect(["SIGKILL", 137]).toContain(killed);
+      expect((await roleState())[0]!.rolpassword).not.toBe(before[0]!.rolpassword); // test value left
+      expect(readdirSync(config.storeDir)).toHaveLength(1);
+      const held =
+        "SELECT count(*)::int AS n FROM pg_locks WHERE objid = $1 AND locktype = 'advisory'";
+      await expect // the killed session's backend is gone once its participant hold is
+        .poll(async () => (await observer.query(held, [config.participantKey])).rows[0].n)
+        .toBe(0);
+      await (await lease(BASE!)).release();
+      expect(await roleState()).toEqual(before);
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
+
+  it("RPW-4: a failed lock, snapshot or restore rejects with the ORIGINAL error and closes its client; a failed restore keeps the snapshot", async () => {
+    for (const statement of [/^SELECT pg_advisory_lock\(/, /FROM pg_authid/]) {
+      const sentinel = new Error(`injected at ${statement}`);
+      const { ended } = spyOnEndedClients();
+      rejectLockQueryWith(sentinel, statement);
+      await expect(lease(BASE!)).rejects.toBe(sentinel);
+      vi.restoreAllMocks();
+      expect(ended.size).toBe(1);
+    }
+    const before = await roleState();
+    const held = await lease(BASE!);
+    const sentinel = new Error("injected restore failure");
+    rejectLockQueryWith(sentinel, /^ALTER ROLE/);
+    await expect(held.release()).rejects.toBe(sentinel);
+    vi.restoreAllMocks();
+    expect(readdirSync(config.storeDir)).toHaveLength(1);
+    await (await lease(BASE!)).release();
+    expect(await roleState()).toEqual(before);
+  });
+});
+
+describe("withAdvisoryLocks, on scratch keys (LCK)", () => {
+  const [k1, k2] = [scratchKey(3), scratchKey(4)];
+  /** Holds keys on a tagged session: `inside` resolves once fn runs, `leave()` lets it finish. */
+  function hold(keys: number[], mode: "shared" | "exclusive") {
+    const { url, appName } = taggedUrl();
+    let enter!: () => void;
+    let exit!: () => void;
+    const inside = new Promise<void>((r) => (enter = r));
+    const body = () => (enter(), new Promise<void>((r) => (exit = r)));
+    const done = withAdvisoryLocks(url, keys, mode, body);
+    return { appName, inside, leave: () => (exit(), done) };
+  }
+  const locksOf = async (appName: string) =>
+    (
+      await observer.query<{ key: string; mode: string; granted: boolean }>(
+        `SELECT l.objid::text AS key, l.mode, l.granted FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+          WHERE l.locktype = 'advisory' AND a.application_name = $1 ORDER BY 1`,
+        [appName],
+      )
+    ).rows;
+  const waiting = async (appName: string, key: number) =>
+    (await locksOf(appName)).some((l) => l.key === String(key) && !l.granted);
+  const waitsOn = (appName: string, key: number) =>
+    expect.poll(() => waiting(appName, key), { timeout: 10_000 }).toBe(true);
+
+  it("LCK-1: readers share a key; a breaker excludes readers and readers exclude a breaker", async () => {
+    const reader = hold([k1], "shared");
+    await reader.inside;
+    const second = hold([k1], "shared");
+    await second.inside; // in while the first reader still is
+    const breaker = hold([k1], "exclusive");
+    await waitsOn(breaker.appName, k1);
+    const late = hold([k1], "shared");
+    await waitsOn(late.appName, k1); // queued behind the waiting breaker
+    await Promise.all([reader.leave(), second.leave()]);
+    await breaker.inside;
+    expect((await locksOf(late.appName)).some((l) => l.granted)).toBe(false);
+    await breaker.leave();
+    await late.inside;
+    await late.leave();
+  });
+
+  it("LCK-2: a reader waiting on one busy key holds none of the others", async () => {
+    const breaker = hold([k2], "exclusive");
+    await breaker.inside;
+    const reader = hold([k1, k2], "shared");
+    await waitsOn(reader.appName, k2);
+    expect((await locksOf(reader.appName)).filter((l) => l.granted)).toEqual([]);
+    await breaker.leave();
+    await reader.inside;
+    expect((await locksOf(reader.appName)).map((l) => l.granted)).toEqual([true, true]);
+    await reader.leave();
+  });
+
+  it(
+    "LCK-3: the reader wrappers hold the shared side of jobd, and withDefinerReadLock of chst too",
+    async () => {
+      const { url, appName } = taggedUrl();
+      const held = async () => (await locksOf(appName)).map((l) => `${l.key} ${l.mode}`).sort();
+      const [jobd, chst] = [
+        `${JOB_DEFINER_LOCK_KEY} ShareLock`,
+        `${CHAT_DEFINER_STATE_LOCK_KEY} ShareLock`,
+      ];
+      expect(await withJobDefinerLock(url, held)).toEqual([jobd]);
+      expect(await withDefinerReadLock(url, held)).toEqual([jobd, chst].sort());
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
+});
+
+describe("setupRlsTestContext (HRN)", () => {
+  it(
+    "HRN-1: teardown drops the database the context created",
+    async () => {
+      await (await setupRlsTestContext("plexco_harness_teardown_check")).teardown();
+      const sql = "SELECT 1 FROM pg_database WHERE datname = 'plexco_harness_teardown_check'";
+      expect((await observer.query(sql)).rows).toEqual([]);
     },
     REAL_LOCK_TIMEOUT_MS,
   );
