@@ -2278,9 +2278,12 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         [ctx.tenantA],
       ],
     ];
-    for (const [sql, params] of denied) {
-      await expect(ctx.workerPool.query(sql, params), sql).rejects.toThrow(/permission denied/i);
-    }
+    // Under the reader lock, as JRD-11: a breaker window grants job_definer to app_worker.
+    await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
+      for (const [sql, params] of denied) {
+        await expect(ctx.workerPool.query(sql, params), sql).rejects.toThrow(/permission denied/i);
+      }
+    });
 
     // only EXECUTE succeeds
     const ev = await seedOutboxEvent(ctx.tenantA);

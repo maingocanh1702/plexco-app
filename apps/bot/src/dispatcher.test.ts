@@ -24,9 +24,8 @@ import {
 } from "./dispatcher.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-// app_worker's password is CLUSTER-global. Its one test value is ROLE_PW.app_worker, leased for the
-// fixture's lifetime (setAppWorkerPasswordRaceSafe) and restored by the last participant on the
-// cluster, so no suite changes it under another one and nobody restores it by hand.
+// app_worker's password is CLUSTER-global: ROLE_PW.app_worker, leased for the fixture's lifetime
+// (setAppWorkerPasswordRaceSafe) and restored by the last participant on the cluster.
 
 // --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
 // (shared with preflight.test.ts and schedule.test.ts); this file still owns its
@@ -1032,10 +1031,11 @@ describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
         );
         expect(stale.rows[0]!.alive).toBe(false);
 
-        // No table grant: the definer is the only door.
-        await expect(
-          ctx.workerPool.query("SELECT * FROM job_worker_heartbeats"),
-        ).rejects.toMatchObject({ code: "42501" });
+        // No table grant: the definer is the only door (read under the reader lock, as JRD-11).
+        const heartbeats = () => ctx.workerPool.query("SELECT * FROM job_worker_heartbeats");
+        await withJobDefinerLock(process.env.DATABASE_URL_TEST!, () =>
+          expect(heartbeats()).rejects.toMatchObject({ code: "42501" }),
+        );
         await expect(
           ctx.workerPool.query("SELECT job_worker_heartbeat($1, 'h', 1)", ["x".repeat(129)]),
         ).rejects.toMatchObject({ code: "22023" });
