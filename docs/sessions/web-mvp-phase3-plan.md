@@ -13,7 +13,7 @@
 - 5 quyết định chờ owner (D1-D5 = DD-133..DD-137, 🟡); D1 là epic public read model (DD-114 D3). Chưa ký thì chỉ lane phụ thuộc bị AWAIT; ký từng phần được.
 - Bước P0 (bật lịch outbox, nối bot token Zalo thật, nhắn người dùng thật) chỉ owner làm; không lane nào làm.
 - **Đề xuất: duyệt kế hoạch như đã viết và ký D1–D5 theo đề xuất.**
-- **Điều kiện resume (nhị phân):** owner merge PR #58 (`docs/mvp-phase3-plan`) HOẶC viết "Phase 3 plan approved" (kèm override D1–D5 nếu có); đó là sự kiện duyệt. P3-S1 bắt đầu và lane L0 ghi D1–D5 là đã ký (không chờ merge của L0).
+- **Điều kiện resume (nhị phân):** chỉ tin nhắn VIẾT "Phase 3 plan approved" của owner, kèm trả lời từng quyết định (ví dụ "D1 signed, D2 signed except (f), D3-D5 signed") hoặc override, mới ký và mới khởi động. Tin nhắn đó cho phép merge clerk merge PR #58 trước nếu owner chưa merge; P3-S1 chỉ bắt đầu trên `main` đã chứa #58. Merge #58 mà không có tin nhắn đó không ký gì, không khởi động gì.
 
 ## 2. Phạm vi và baseline (đo tại `3546f6b`)
 
@@ -31,7 +31,7 @@
 
 | Lane | Milestone | Mục tiêu | Risk | Writer / reviewer (+ security) | Migration | Phụ thuộc | Session |
 |---|---|---|---|---|---|---|---|
-| L0 `p3-docs-decisions-sync` | tất cả | ghi D1-D5 đã ký, sửa drift spec, làm mới ledger | P2 | sonnet-high / sonnet-high | không | sự kiện duyệt của owner | S1 |
+| L0 `p3-docs-decisions-sync` | tất cả | ghi D1-D5 đã ký, sửa drift spec, làm mới ledger | P2 | sonnet-high / sonnet-high | không | tin nhắn duyệt của owner | S1 |
 | L1 `p3-ci-flake-hardening` | infra | bỏ flake suite (password clash, 57P01, pwa) | P2 | opus-max / opus-max | không | không | S1 |
 | L2 `p3-session-text-control-chars` | tiền đề M9 | chặn ký tự điều khiển/bidi ở text session | P2 | sonnet-high / opus-max | không | không | S1 |
 | L3 `p3-m6-outbox-delivery-core` | M6 | projector registry, bounded retry + DLQ, NOTIFY wake-up | P1 | opus-max / opus-max + security | có | L1; D2 | S2 |
@@ -44,7 +44,7 @@
 | L4b `p3-m6-announce-route` | M6 | route announce (kênh zalo); guard = sự thật DB (heartbeat worker + `projector_is_enabled('zalo_dm')`) | P1 | opus-max / opus-max + security | không | L4 (chạy sau L8: chung file); D2 (f) | S5 |
 | L10a `p3-m9-public-alias-moderation` | M9 | alias CLB công khai + duyệt owner-only; outbox event khi alias đổi | P1 | opus-max / opus-max + security | có | L9 (migration tuần tự); D1 (d) | S6 |
 | L10 `p3-m9-public-projector` | M9 | consumer + MỘT migration (BE): writer `public_sessions`, cột DD-41, registry slug, `session_occupancy(uuid)`, thay view `public_session_share_v` | P1 | opus-max / opus-max + security | có | L3, L6, L7, L8, L10a; D1 (a-c, e) | S7 |
-| L10b `p3-m9-discovery-read` | M9 | discovery list + chi tiết opaque slug + join-by-slug + rate limit | P1 | opus-max / opus-max + security | không | L10, L8; D1 (a, e) | S8 |
+| L10b `p3-m9-discovery-read` | M9 | discovery list/detail/join theo `public_listing_id` + route slug DD-83 + rate limit | P1 | opus-max / opus-max + security | không | L10, L8; D1 (a, e) | S8 |
 | L11 `p3-m9-gender-pricing` | M9 | giá theo giới tính (DD-39), gồm derivation lúc nâng waitlist | P1 | opus-max / opus-max + security | có | L8 | S9 |
 | L12 `p3-m9-player-web` | M9 | trang player, inbox host (discovery cần L10b) | P2 | sonnet-high / opus-max | không | L8, L9, L10b; D3 (D1 cho discovery) | S10 |
 | L13 `p3-m9-zalo-player-commands` | M9 | Zalo `/join` `/leave` `/pay` | P1 | opus-max / opus-max + security | không | L8, L4; D3 | S10 |
@@ -53,7 +53,7 @@
 | L16 `p3-m10-chat-web` | M10 | UI chat | P2 | sonnet-high / opus-high | không | L15; D4 | S13 |
 | L17 `p3-closeout` | tất cả | ledger, handoff-3, backlog flips, golden path; gom mọi default đã áp vào MỘT mục `decisions.md` | P2 | sonnet-high / sonnet-high | không | mọi lane khác | S13 |
 
-Mỗi lane tối đa một migration; lane có migration chạy tuần tự (số kế tiếp đo tại base của lane, không ghi cứng). Tại một session song song chỉ một lane được sửa `session-service.ts` (cũng `roster-service.ts`, `session-form.tsx`). Orchestrator chạy opus/max (owner override 2026-10-14 15:32); merge clerk và summariser sonnet-high; không bao giờ dùng `fable`. Mỗi lane ghim default đã áp trong readiness file step 0 và PR body; L17 gom vào MỘT mục `decisions.md`, lane khác không sửa `decisions.md` (L0 chỉ ghi chữ ký). Trong P3-S4 chỉ L8 sửa `session-service.ts`.
+Mỗi lane tối đa một migration; lane có migration chạy tuần tự (số kế tiếp đo tại base của lane, không ghi cứng). Tại một session song song chỉ một lane được sửa `session-service.ts` (cũng `roster-service.ts`, `session-form.tsx`). Orchestrator chạy opus/max (owner override 2026-10-14 15:32); worker theo quy tắc model của S1 (writer sonnet-high ở lane nào ghi vậy); merge clerk, verifier và summariser sonnet-high; không bao giờ truyền model `fable`. Mỗi lane ghim default đã áp trong readiness file step 0 và PR body; L17 gom vào MỘT mục `decisions.md`, lane khác không sửa `decisions.md` (L0 chỉ ghi chữ ký). Trong P3-S4 chỉ L8 sửa `session-service.ts`.
 
 ## 4. Đồ thị phụ thuộc
 
@@ -95,15 +95,15 @@ L15 <- L14, L5 [D4]       L16 <- L15 [D4]           L17 <- every other lane (L16
 
 ## 5. Checklist quyết định của owner (D1-D5)
 
-"Ký" = sự kiện duyệt của owner: owner merge PR #58, hoặc viết "Phase 3 plan approved" kèm override; L0 rồi ghi DD tương ứng ✅ (không vòng chờ vào merge của L0). Ký từng phần được (ví dụ "D2 signed except (f)"); D1 có thể "declined". Văn bản đầy đủ: `decisions.md` DD-133..DD-137. Mặc định lane tự áp khi thiếu số liệu (mã lỗi chưa ghim, rate limit) ghi trong readiness file step 0 và PR body là "default applied, pending owner sign-off"; L17 gom vào MỘT mục `decisions.md`; không tự coi là quyết định.
+"Ký" = owner VIẾT "Phase 3 plan approved" kèm trả lời từng quyết định hoặc override (merge #58 một mình không ký gì); L0 rồi ghi DD tương ứng ✅ (không vòng chờ vào merge của L0). Ký từng phần được (ví dụ "D2 signed except (f)"); D1 có thể "declined". Văn bản đầy đủ: `decisions.md` DD-133..DD-137. Mặc định lane tự áp khi thiếu số liệu (mã lỗi chưa ghim, rate limit) ghi trong readiness file step 0 và PR body là "default applied, pending owner sign-off"; L17 gom vào MỘT mục `decisions.md`; không tự coi là quyết định.
 
 | # | Câu hỏi | Đề xuất | Lý do ngắn | Amend / authorize | Lane bị chặn | Resume (nhị phân) | DD |
 |---|---|---|---|---|---|---|---|
-| D1 | Public read model epic (DD-114 D3): authorize trong Phase 3, và cách làm | Có, gói a-e: (a) occupancy authority, `slots_open` là số public duy nhất; (b) hàm SQL `session_occupancy(uuid)`; (c) cột DD-41 + (e) registry share-link opaque slug (DD-83/DD-75, không sửa DD-83) trong MỘT migration L10 thay `public_session_share_v` (không `host_display_name`, lọc sống theo alias đang được duyệt, thu hồi fail-closed); (d) alias CLB được moderate (L10a, duyệt owner-only qua script có audit) | DD-114 D3 đòi 4 tiền đề trước khi chạm giá trị projection; một công thức, không lộ số hold hay tên host | amend BL-DSC-1 (tên host và `confirmed_count` rời whitelist; danh sách sync của L0 gồm BL-DSC-1) DD-32 (`decisions.md:464`, `:467`) và ánh xạ `host_display_name` ← `memberships.display_name` của DD-46 (`:642`; tên host/person không bao giờ project), số dòng tại `3546f6b`; authorize epic DD-114 D3 | L10a, L10, L10b, discovery của L12, occupancy/BL-DSC-1 của L0; L7 KHÔNG chờ | ký ⇔ sự kiện duyệt ghi nhận a-e; "D1 declined" ⇒ public read model rời Phase 3 (M9 chỉ join, cross-club, me-reads, giá, Zalo) | DD-133 |
-| D2 | M6: bound retry, DLQ, ma trận giao, ingress đồng bộ, cờ lịch, route announce | (a) 8 lần giao, lần 8 lỗi ⇒ DLQ, 7 khoảng chờ 15 s × 2^(n−1) = 1905 s (≈32 phút), không trần; (b) replay chỉ owner; (c) ma trận hẹp; (d) nhận ingress đồng bộ của #47; (e) cờ OFF; (f) announce ở L4b, guard theo heartbeat worker còn mới báo `schedule_enabled` VÀ `projector_is_enabled('zalo_dm')`, không theo env tiến trình | bound hữu hạn, không spam Zalo, không `announced:true` giả | (d) amend OD-2 ack-rồi-xử-lý-async; (f) amend hoãn (b) ngày 2026-08-26 (`decisions.md:753-758` tại `3546f6b`); mã từ chối đề xuất `ANNOUNCE_DELIVERY_DISABLED` (409, UNPINNED) | L3, L4, L5 (a-e); L4b (f) | mỗi vế ký ⇔ sự kiện duyệt; không ký (f) ⇒ L4b chờ owner báo đã bật lịch | DD-134 |
-| D3 | M9: join và tiền khi không có ngân hàng | Join bằng tài khoản; charge ngay hoặc waitlist; rời chỉ khi tiền ròng = 0; Zalo `/pay` chỉ khoản của mình | dùng lại logic host-add, không đường tiền mới | không sửa DD nào; áp DD-05, DD-39, DD-132 | L8, L9, L13; hiển thị tiền ở L12 | ký ⇔ sự kiện duyệt | DD-135 |
-| D4 | M10: cắt phạm vi chat | Chỉ kênh CLB; không DM, media, reaction, search, digest | đủ cho chat trong app, không vendor lưu trữ, không thông báo tự động | không sửa DD nào; thu hẹp phần xây của DD-86, DD-91..95 | L14, L15, L16 | ký ⇔ sự kiện duyệt | DD-136 |
-| D5 | Cổng thoát đợt A và phong bì Phase 3 | CI main xanh tại `3546f6b` (CI run 38794722311: `verify` + `e2e-web` success) + golden path local; chỉ local; P0 chỉ owner; merge clerk sau mỗi session; #50 chỉ owner | đo lại được bằng lệnh; giống cách phase 2 chạy | điền cổng đợt A mà DD-132 để mở; không đổi chữ DD-132 | mọi merge round của clerk (chưa ký ⇒ owner tự merge) | ký ⇔ sự kiện duyệt | DD-137 |
+| D1 | Public read model epic (DD-114 D3): authorize trong Phase 3, và cách làm | Có, gói a-e: (a) occupancy authority, `slots_open` là số public duy nhất; (b) hàm SQL `session_occupancy(uuid)`; (c) cột DD-41 + (e) định danh discovery: `public_listing_id` ngẫu nhiên, opaque, 128-bit, xoay mỗi khi session rời public; slug hash-only DD-83/DD-75 chỉ cho link host chia sẻ; view không lộ `session_id` hay `public_projection_version`, tra cứu phía server; không sửa gì đã ký, trong MỘT migration L10 thay `public_session_share_v` (không `host_display_name`, lọc sống theo alias đang được duyệt, thu hồi fail-closed); (d) alias CLB được moderate (L10a, duyệt owner-only qua script có audit) | DD-114 D3 đòi 4 tiền đề trước khi chạm giá trị projection; một công thức, không lộ số hold hay tên host | amend BL-DSC-1 (tên host và `confirmed_count` rời whitelist; danh sách sync của L0 gồm BL-DSC-1), DD-32 (`decisions.md:464`, `:467`) và ánh xạ `host_display_name` ← `memberships.display_name` của DD-46 (`:642`; tên host/person không bao giờ project), số dòng tại `3546f6b`; authorize epic DD-114 D3 | L10a, L10, L10b, discovery của L12, occupancy/BL-DSC-1 của L0; L7 KHÔNG chờ | ký ⇔ tin nhắn viết "Phase 3 plan approved" của owner ghi nhận a-e; "D1 declined" ⇒ public read model rời Phase 3 (M9 chỉ join, cross-club, me-reads, giá, Zalo) | DD-133 |
+| D2 | M6: bound retry, DLQ, ma trận giao, ingress đồng bộ, cờ lịch, route announce | (a) 8 lần giao, lần 8 lỗi ⇒ DLQ, 7 khoảng chờ 15 s × 2^(n−1) = 1905 s (≈32 phút), không trần; (b) replay chỉ owner; (c) ma trận hẹp; (d) nhận ingress đồng bộ của #47; (e) cờ OFF; M6 cũng tự huỷ draft cũ (system cancel, chặn bởi cờ lịch); (f) announce ở L4b, guard theo heartbeat worker còn mới báo `schedule_enabled` VÀ `projector_is_enabled('zalo_dm')`, không theo env tiến trình | bound hữu hạn, không spam Zalo, không `announced:true` giả | (d) amend OD-2 ack-rồi-xử-lý-async; (f) amend hoãn (b) ngày 2026-08-26 (`decisions.md:753-758` tại `3546f6b`); mã từ chối đề xuất `ANNOUNCE_DELIVERY_DISABLED` (409, UNPINNED) | L3, L4, L5 (a-e); L4b (f) | mỗi vế ký ⇔ tin nhắn viết "Phase 3 plan approved" của owner; không ký (f) ⇒ L4b chờ owner báo đã bật lịch | DD-134 |
+| D3 | M9: join và tiền khi không có ngân hàng | Join bằng tài khoản; charge ngay hoặc waitlist; rời chỉ khi tiền ròng = 0; Zalo `/pay` chỉ khoản của mình | dùng lại logic host-add, không đường tiền mới | không sửa DD nào; áp DD-05, DD-39, DD-132 | L8, L9, L13; hiển thị tiền ở L12 | ký ⇔ tin nhắn viết "Phase 3 plan approved" của owner | DD-135 |
+| D4 | M10: cắt phạm vi chat | Chỉ kênh CLB; không DM, media, reaction, search, digest | đủ cho chat trong app, không vendor lưu trữ, không thông báo tự động | không sửa DD nào; thu hẹp phần xây của DD-86, DD-91..95 | L14, L15, L16 | ký ⇔ tin nhắn viết "Phase 3 plan approved" của owner | DD-136 |
+| D5 | Cổng thoát đợt A và phong bì Phase 3 | CI main xanh tại `3546f6b` (CI run 38794722311: `verify` + `e2e-web` success) + golden path local; chỉ local; P0 chỉ owner; merge clerk sau mỗi session; #50 chỉ owner | đo lại được bằng lệnh; giống cách phase 2 chạy | điền cổng đợt A mà DD-132 để mở; không đổi chữ DD-132 | mọi merge round của clerk (chưa ký ⇒ owner tự merge) | ký ⇔ tin nhắn viết "Phase 3 plan approved" của owner | DD-137 |
 
 ## 6. Sizing (worker-round)
 
@@ -116,7 +116,7 @@ Một worker-round = một lần chạy worker: readiness, viết, review, secur
 
 | Session | Lane | Phụ thuộc | Worker-round | Cổng sau merge round |
 |---|---|---|---|---|
-| P3-S1 | L0, L1, L2 | sự kiện duyệt của owner | 15 | CI main xanh; L1 có N lần chạy song song không flake (trong một cửa sổ khoá DB/e2e độc quyền) |
+| P3-S1 | L0, L1, L2 | tin nhắn duyệt của owner; `main` chứa #58 | 15 | CI main xanh; L1 có N lần chạy song song không flake (trong một cửa sổ khoá DB/e2e độc quyền) |
 | P3-S2 | L3, L6 | S1; D2 (a, b, e); D5 | 13 | cờ lịch vẫn false; runbook enable/rollback có mặt |
 | P3-S3 | L4, L5, L7 | S2; D2 (c) | 22 | golden path local M6; danh sách P0 của owner |
 | P3-S4 | L8 | S3; D3 | 10 | test concurrency không oversell; mỗi thay đổi roster có một outbox event |
@@ -134,7 +134,7 @@ Step 0 mỗi session: reviewer readiness (cùng model/effort với reviewer code
 
 ## 8. Bước P0 chỉ owner làm
 
-1. Duyệt plan và ký D1-D5 (merge PR #58 hoặc viết "Phase 3 plan approved"). Merge PR của lane có thể làm bất cứ lúc nào; PR #50 chỉ owner.
+1. Duyệt plan: viết "Phase 3 plan approved" kèm trả lời D1-D5 (merge #58 một mình không ký gì). Merge PR của lane có thể làm bất cứ lúc nào; PR #50 chỉ owner.
 2. Bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED` (sau khi L3, L4, L5 đã merge; runbook enable/rollback do L3 viết). Nếu không ký D2 (f), báo owner đã bật lịch để L4b chạy. Agent chỉ bật vòng dispatch trong tiến trình test hoặc môi trường scratch local (đo p95, golden path); mặc định commit và `.env.example` giữ `false`.
 3. Nối bot token Zalo thật (bằng chứng giao hàng live của L4). 4. Nhắn người dùng thật. Không agent nào làm các bước này.
 
@@ -204,27 +204,27 @@ FIRST_IMPLEMENTATION_STEP: BLOCKED until B1 resolves; then P3-S1 step 0 (per-lan
 REMAINING_BLOCKERS:
   - blocker: B1 owner approval of this plan
     owner: Ngoc-Anh
-    resolution: owner merges PR #58 (docs/mvp-phase3-plan) into main OR writes "Phase 3 plan approved" (with any D1-D5 overrides)
-    next_review_trigger: merge commit of PR #58 on origin/main, or the owner message "Phase 3 plan approved"
+    resolution: owner writes "Phase 3 plan approved" with per-decision answers or overrides (this message also authorizes the merge clerk to merge PR #58; a merge alone signs nothing)
+    next_review_trigger: the owner's written message "Phase 3 plan approved" and a main that contains PR #58
   - blocker: B2 D1 public read model epic, DD-114 D3 (DD-133) unsigned
     owner: Ngoc-Anh
-    resolution: owner approval event records DD-133 parts (a)-(e) as signed (L0 then writes DD-133 ✅), or the owner writes "D1 declined" (L10a, L10, L10b leave Phase 3)
+    resolution: the owner's written "Phase 3 plan approved" records DD-133 parts (a)-(e) as signed (L0 then writes DD-133 ✅), or the owner writes "D1 declined" (L10a, L10, L10b leave Phase 3)
     next_review_trigger: decisions.md on origin/main shows DD-133 ✅ or the owner message "D1 declined"
   - blocker: B3 D2 M6 delivery policy (DD-134) unsigned
     owner: Ngoc-Anh
-    resolution: owner approval event records DD-134 as signed (partial signing allowed, e.g. "D2 signed except (f)"); L0 then writes DD-134 ✅
+    resolution: the owner's written "Phase 3 plan approved" records DD-134 as signed (partial signing allowed, e.g. "D2 signed except (f)"); L0 then writes DD-134 ✅
     next_review_trigger: decisions.md on origin/main shows DD-134 ✅
   - blocker: B4 D3 M9 join and money without a bank (DD-135) unsigned
     owner: Ngoc-Anh
-    resolution: owner approval event records DD-135 as signed (or an override); L0 then writes DD-135 ✅
+    resolution: the owner's written "Phase 3 plan approved" records DD-135 as signed (or an override); L0 then writes DD-135 ✅
     next_review_trigger: decisions.md on origin/main shows DD-135 ✅
   - blocker: B5 D4 M10 chat MVP cut (DD-136) unsigned
     owner: Ngoc-Anh
-    resolution: owner approval event records DD-136 as signed (or an override); L0 then writes DD-136 ✅
+    resolution: the owner's written "Phase 3 plan approved" records DD-136 as signed (or an override); L0 then writes DD-136 ✅
     next_review_trigger: decisions.md on origin/main shows DD-136 ✅
   - blocker: B6 D5 wave-A exit gate and Phase 3 envelope (DD-137) unsigned
     owner: Ngoc-Anh
-    resolution: owner approval event records DD-137 as signed (or an override); L0 then writes DD-137 ✅
+    resolution: the owner's written "Phase 3 plan approved" records DD-137 as signed (or an override); L0 then writes DD-137 ✅
     next_review_trigger: decisions.md on origin/main shows DD-137 ✅
-NEXT_REVIEW_TRIGGER: merge commit of PR #58 on origin/main (or the owner message "Phase 3 plan approved"); then P3-S1 step 0 writes the per-lane CODE_READY or NOT_CODE_READY verdicts
+NEXT_REVIEW_TRIGGER: the owner's written message "Phase 3 plan approved" and a main that contains PR #58; then P3-S1 step 0 writes the per-lane CODE_READY or NOT_CODE_READY verdicts
 ```
