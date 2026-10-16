@@ -9,7 +9,7 @@
 ## 1. Tóm tắt
 
 - Phase 3 làm ba milestone còn lại sau DD-132: **M6** sync live + public/private, **M9** phía player + discovery + giá theo giới tính, **M10** chat trong app. Local-only; M7/M8/M11/M12/M13 đã gỡ; M9 chỉ phụ thuộc M6.
-- 21 lane (L0-L17 + L4b, L10a, L10b), 12 session (P3-S1..S12), tổng **143 worker-round**, không hứa lịch. Mỗi lane = một branch + một worktree + một writer = một PR (tối đa một migration); không stacked PR.
+- 21 lane (L0-L17 + L4b, L10a, L10b), 13 session (P3-S1..S13), tổng **143 worker-round**, không hứa lịch. Mỗi lane = một branch + một worktree + một writer = một PR (tối đa một migration); không stacked PR.
 - 5 quyết định chờ owner (D1-D5 = DD-133..DD-137, 🟡); D1 là epic public read model (DD-114 D3). Chưa ký thì chỉ lane phụ thuộc bị AWAIT; ký từng phần được.
 - Bước P0 (bật lịch outbox, nối bot token Zalo thật, nhắn người dùng thật) chỉ owner làm; không lane nào làm.
 - **Đề xuất: duyệt kế hoạch như đã viết và ký D1–D5 theo đề xuất.**
@@ -39,29 +39,27 @@
 | L4 `p3-m6-zalo-outbound` | M6 | projector `zalo_dm` đúng ma trận D2 | P1 | opus-max / opus-max + security | có thể | L3; D2 (a-e) | S3 |
 | L5 `p3-m6-web-live-sync` | M6 | projector `web_realtime` + SSE host | P1 | opus-max / opus-max + security | không | L3; D2 (c) | S3 |
 | L7 `p3-m9-occupancy-helper` | M9 | một helper `getSessionOccupancy` (giai đoạn 1) | P1 | opus-max / opus-max | không | không | S3 |
-| L8 `p3-m9-join-core` | M9 | self-join, duyệt, rời, waitlist FIFO, cross-club | P1 | opus-max / opus-max + security | có thể | L7, M6 xong; D3 | S4 |
+| L8 `p3-m9-join-core` | M9 | self-join, duyệt, rời, waitlist FIFO, cross-club; route host xem yêu cầu join; outbox event cho mỗi thay đổi roster | P1 | opus-max / opus-max + security | có thể | L7, M6 xong; D3 | S4 |
 | L9 `p3-m9-me-reads` | M9 | đọc xuyên CLB theo người (definer) | P1 | opus-max / opus-max + security | có | L8; D3 | S5 |
-| L4b `p3-m6-announce-route` | M6 | route announce (kênh zalo) + guard runtime | P1 | opus-max / opus-max + security | không | L4 (chạy sau L8: chung file); D2 (f) | S5 |
-| L10a `p3-m9-public-alias-moderation` | M9 | alias CLB công khai + duyệt owner-only | P1 | opus-max / opus-max + security | có | L9 (migration tuần tự); D1 (d) | S6 |
-| L10 `p3-m9-public-projector` | M9 | writer `public_sessions` + cột DD-41 + `session_occupancy(uuid)` + slug (BE) | P1 | opus-max / opus-max + security | có | L3, L6, L7, L10a; D1 (a-c) | S7 |
-| L10b `p3-m9-discovery-read` | M9 | route discovery list + chi tiết opaque slug + rate limit | P1 | opus-max / opus-max + security | không | L10; D1 (a, e) | S8 |
-| L11 `p3-m9-gender-pricing` | M9 | giá theo giới tính (DD-39) | P1 | opus-max / opus-max + security | có | L8 | S8 |
-| L12 `p3-m9-player-web` | M9 | trang player, inbox host (discovery cần L10b) | P2 | sonnet-high / opus-max | không | L8, L9, L10b; D3 (D1 cho discovery) | S9 |
-| L13 `p3-m9-zalo-player-commands` | M9 | Zalo `/join` `/leave` `/pay` | P1 | opus-max / opus-max + security | không | L8, L4; D3 | S9 |
-| L14 `p3-m10-chat-core` | M10 | chat command core qua `chat_definer` | P1 | opus-max / opus-max + security | có | L8; D4 | S10 |
-| L15 `p3-m10-chat-api-live` | M10 | route chat + live (SSE của L5) | P1 | opus-max / opus-max + security | không | L14, L5; D4 | S11 |
-| L16 `p3-m10-chat-web` | M10 | UI chat | P2 | sonnet-high / opus-high | không | L15; D4 | S12 |
-| L17 `p3-closeout` | tất cả | ledger, handoff-3, backlog flips, golden path | P2 | sonnet-high / sonnet-high | không | mọi lane khác | S12 |
+| L4b `p3-m6-announce-route` | M6 | route announce (kênh zalo); guard = sự thật DB (heartbeat worker + `projector_is_enabled('zalo_dm')`) | P1 | opus-max / opus-max + security | không | L4 (chạy sau L8: chung file); D2 (f) | S5 |
+| L10a `p3-m9-public-alias-moderation` | M9 | alias CLB công khai + duyệt owner-only; outbox event khi alias đổi | P1 | opus-max / opus-max + security | có | L9 (migration tuần tự); D1 (d) | S6 |
+| L10 `p3-m9-public-projector` | M9 | consumer + MỘT migration (BE): writer `public_sessions`, cột DD-41, registry slug, `session_occupancy(uuid)`, thay view `public_session_share_v` | P1 | opus-max / opus-max + security | có | L3, L6, L7, L8, L10a; D1 (a-c, e) | S7 |
+| L10b `p3-m9-discovery-read` | M9 | discovery list + chi tiết opaque slug + join-by-slug + rate limit | P1 | opus-max / opus-max + security | không | L10, L8; D1 (a, e) | S8 |
+| L11 `p3-m9-gender-pricing` | M9 | giá theo giới tính (DD-39), gồm derivation lúc nâng waitlist | P1 | opus-max / opus-max + security | có | L8 | S9 |
+| L12 `p3-m9-player-web` | M9 | trang player, inbox host (discovery cần L10b) | P2 | sonnet-high / opus-max | không | L8, L9, L10b; D3 (D1 cho discovery) | S10 |
+| L13 `p3-m9-zalo-player-commands` | M9 | Zalo `/join` `/leave` `/pay` | P1 | opus-max / opus-max + security | không | L8, L4; D3 | S10 |
+| L14 `p3-m10-chat-core` | M10 | chat command core qua `chat_definer` | P1 | opus-max / opus-max + security | có | L8; D4 | S11 |
+| L15 `p3-m10-chat-api-live` | M10 | route chat + live (SSE của L5) | P1 | opus-max / opus-max + security | không | L14, L5; D4 | S12 |
+| L16 `p3-m10-chat-web` | M10 | UI chat | P2 | sonnet-high / opus-high | không | L15; D4 | S13 |
+| L17 `p3-closeout` | tất cả | ledger, handoff-3, backlog flips, golden path; gom mọi default đã áp vào MỘT mục `decisions.md` | P2 | sonnet-high / sonnet-high | không | mọi lane khác | S13 |
 
-Mỗi lane tối đa một migration; lane có migration chạy tuần tự (số kế tiếp đo tại base của lane, không ghi cứng). Tại một session song song chỉ một lane được sửa `session-service.ts` (cũng `roster-service.ts`, `session-form.tsx`). Orchestrator chạy opus/max (owner override 2026-10-14 15:32).
+Mỗi lane tối đa một migration; lane có migration chạy tuần tự (số kế tiếp đo tại base của lane, không ghi cứng). Tại một session song song chỉ một lane được sửa `session-service.ts` (cũng `roster-service.ts`, `session-form.tsx`). Orchestrator chạy opus/max (owner override 2026-10-14 15:32); merge clerk và summariser sonnet-high; không bao giờ dùng `fable`. Mỗi lane ghim default đã áp trong readiness file step 0 và PR body; L17 gom vào MỘT mục `decisions.md`, lane khác không sửa `decisions.md` (L0 chỉ ghi chữ ký). Trong P3-S4 chỉ L8 sửa `session-service.ts`.
 
 ## 4. Đồ thị phụ thuộc
 
 ```mermaid
 flowchart LR
-  D1([D1 a-c]) --> L10
-  D1d([D1 d]) --> L10a
-  D1e([D1 e]) --> L10b
+  D1([D1]) --> L10a & L10 & L10b
   D2([D2 a-e]) --> L3 & L4 & L5
   D2f([D2 f]) --> L4b
   D3([D3]) --> L8
@@ -73,7 +71,7 @@ flowchart LR
   L7 --> L8 & L10
   L4 & L5 & L6 --> L8
   L4 --> L4b & L13
-  L8 --> L9 & L11 & L13 & L14 & L4b
+  L8 --> L9 & L10 & L10b & L11 & L13 & L14 & L4b
   L9 --> L10a & L12
   L10a --> L10
   L10 --> L10b
@@ -90,19 +88,19 @@ L0  <- [owner approval]   L1  <- (none)             L2  <- (none)             L7
 L3  <- L1 [D2]            L4  <- L3 [D2 a-e]        L5  <- L3 [D2 c]          L6  <- L2
 L8  <- L7, L4, L5, L6 [D3]  (M6 code-complete = L3..L6)    L9 <- L8 [D3]    L11 <- L8
 L4b <- L4 [D2 f]  (chạy sau L8: chung api-contract.ts, session-command-route.ts)
-L10a <- L9 [D1 d]         L10 <- L3, L6, L7, L10a [D1 a-c]    L10b <- L10 [D1 a, e]
+L10a <- L9 [D1 d]   L10 <- L3, L6, L7, L8, L10a [D1 a-c, e]   L10b <- L10, L8 [D1 a, e]
 L12 <- L8, L9, L10b [D3, D1 cho discovery]   L13 <- L8, L4 [D3]    L14 <- L8 [D4]
 L15 <- L14, L5 [D4]       L16 <- L15 [D4]           L17 <- every other lane (L16 last)
 ```
 
 ## 5. Checklist quyết định của owner (D1-D5)
 
-"Ký" = sự kiện duyệt của owner: owner merge PR #58, hoặc viết "Phase 3 plan approved" kèm override; L0 rồi ghi DD tương ứng ✅ (không vòng chờ vào merge của L0). Ký từng phần được (ví dụ "D2 signed except (f)"); D1 có thể "declined". Văn bản đầy đủ: `decisions.md` DD-133..DD-137. Mặc định lane tự áp khi thiếu số liệu (mã lỗi chưa ghim, rate limit) ghi "default applied, pending owner sign-off", không tự coi là quyết định.
+"Ký" = sự kiện duyệt của owner: owner merge PR #58, hoặc viết "Phase 3 plan approved" kèm override; L0 rồi ghi DD tương ứng ✅ (không vòng chờ vào merge của L0). Ký từng phần được (ví dụ "D2 signed except (f)"); D1 có thể "declined". Văn bản đầy đủ: `decisions.md` DD-133..DD-137. Mặc định lane tự áp khi thiếu số liệu (mã lỗi chưa ghim, rate limit) ghi trong readiness file step 0 và PR body là "default applied, pending owner sign-off"; L17 gom vào MỘT mục `decisions.md`; không tự coi là quyết định.
 
 | # | Câu hỏi | Đề xuất | Lý do ngắn | Amend / authorize | Lane bị chặn | Resume (nhị phân) | DD |
 |---|---|---|---|---|---|---|---|
-| D1 | Public read model epic (DD-114 D3): authorize trong Phase 3, và cách làm | Có, gói a-e: (a) occupancy authority, `slots_open` là số public duy nhất; (b) hàm SQL `session_occupancy(uuid)` trong migration L10; (c) cột DD-41 cùng migration; (d) alias CLB được moderate (L10a, duyệt owner-only qua script có audit); (e) route chi tiết opaque slug (L10b) | DD-114 D3 đòi 4 tiền đề trước khi chạm giá trị projection; một công thức, không lộ số hold | amend DD-32 Browse (`decisions.md:464` tại `3546f6b`) và BL-DSC-1; authorize epic DD-114 D3 | L10a, L10, L10b, discovery của L12, occupancy của L0; L7 KHÔNG chờ | ký ⇔ sự kiện duyệt ghi nhận a-e; "D1 declined" ⇒ public read model rời Phase 3 (M9 chỉ join, cross-club, me-reads, giá, Zalo) | DD-133 |
-| D2 | M6: bound retry, DLQ, ma trận giao, ingress đồng bộ, cờ lịch, route announce | (a) 8 lần giao, lần 8 lỗi ⇒ DLQ, 7 khoảng chờ 15 s × 2^(n−1) = 1905 s (≈32 phút), không trần; (b) replay chỉ owner; (c) ma trận hẹp; (d) nhận ingress đồng bộ của #47; (e) cờ OFF; (f) announce ở L4b kèm guard | bound hữu hạn, không spam Zalo, không `announced:true` giả | (d) amend OD-2 ack-rồi-xử-lý-async; (f) amend hoãn (b) ngày 2026-08-26 (`decisions.md:753-758` tại `3546f6b`); mã từ chối đề xuất `ANNOUNCE_DELIVERY_DISABLED` (409, UNPINNED) | L3, L4, L5 (a-e); L4b (f) | mỗi vế ký ⇔ sự kiện duyệt; không ký (f) ⇒ L4b chờ owner báo đã bật lịch | DD-134 |
+| D1 | Public read model epic (DD-114 D3): authorize trong Phase 3, và cách làm | Có, gói a-e: (a) occupancy authority, `slots_open` là số public duy nhất; (b) hàm SQL `session_occupancy(uuid)`; (c) cột DD-41 + (e) registry share-link opaque slug (DD-83/DD-75, không sửa DD-83) trong MỘT migration L10 thay `public_session_share_v` (không `host_display_name`, lọc sống theo alias đang được duyệt, thu hồi fail-closed); (d) alias CLB được moderate (L10a, duyệt owner-only qua script có audit) | DD-114 D3 đòi 4 tiền đề trước khi chạm giá trị projection; một công thức, không lộ số hold hay tên host | amend BL-DSC-1 (tên host và `confirmed_count` rời whitelist; danh sách sync của L0 gồm BL-DSC-1) và DD-32 (`decisions.md:464`, `:467` tại `3546f6b`); authorize epic DD-114 D3 | L10a, L10, L10b, discovery của L12, occupancy/BL-DSC-1 của L0; L7 KHÔNG chờ | ký ⇔ sự kiện duyệt ghi nhận a-e; "D1 declined" ⇒ public read model rời Phase 3 (M9 chỉ join, cross-club, me-reads, giá, Zalo) | DD-133 |
+| D2 | M6: bound retry, DLQ, ma trận giao, ingress đồng bộ, cờ lịch, route announce | (a) 8 lần giao, lần 8 lỗi ⇒ DLQ, 7 khoảng chờ 15 s × 2^(n−1) = 1905 s (≈32 phút), không trần; (b) replay chỉ owner; (c) ma trận hẹp; (d) nhận ingress đồng bộ của #47; (e) cờ OFF; (f) announce ở L4b, guard theo heartbeat worker còn mới báo `schedule_enabled` VÀ `projector_is_enabled('zalo_dm')`, không theo env tiến trình | bound hữu hạn, không spam Zalo, không `announced:true` giả | (d) amend OD-2 ack-rồi-xử-lý-async; (f) amend hoãn (b) ngày 2026-08-26 (`decisions.md:753-758` tại `3546f6b`); mã từ chối đề xuất `ANNOUNCE_DELIVERY_DISABLED` (409, UNPINNED) | L3, L4, L5 (a-e); L4b (f) | mỗi vế ký ⇔ sự kiện duyệt; không ký (f) ⇒ L4b chờ owner báo đã bật lịch | DD-134 |
 | D3 | M9: join và tiền khi không có ngân hàng | Join bằng tài khoản; charge ngay hoặc waitlist; rời chỉ khi tiền ròng = 0; Zalo `/pay` chỉ khoản của mình | dùng lại logic host-add, không đường tiền mới | không sửa DD nào; áp DD-05, DD-39, DD-132 | L8, L9, L13; hiển thị tiền ở L12 | ký ⇔ sự kiện duyệt | DD-135 |
 | D4 | M10: cắt phạm vi chat | Chỉ kênh CLB; không DM, media, reaction, search, digest | đủ cho chat trong app, không vendor lưu trữ, không thông báo tự động | không sửa DD nào; thu hẹp phần xây của DD-86, DD-91..95 | L14, L15, L16 | ký ⇔ sự kiện duyệt | DD-136 |
 | D5 | Cổng thoát đợt A và phong bì Phase 3 | CI main xanh tại `3546f6b` (CI run 38794722311: `verify` + `e2e-web` success) + golden path local; chỉ local; P0 chỉ owner; merge clerk sau mỗi session; #50 chỉ owner | đo lại được bằng lệnh; giống cách phase 2 chạy | điền cổng đợt A mà DD-132 để mở; không đổi chữ DD-132 | mọi merge round của clerk (chưa ký ⇒ owner tự merge) | ký ⇔ sự kiện duyệt | DD-137 |
@@ -111,25 +109,26 @@ L15 <- L14, L5 [D4]       L16 <- L15 [D4]           L17 <- every other lane (L16
 
 Một worker-round = một lần chạy worker: readiness, viết, review, security, fix, kiểm cascade, fix sau trần vòng.
 - **Theo lane:** L0 5 · L1 6 · L2 4 · L3 9 · L4 8 · L4b 4 · L5 8 · L6 4 · L7 6 · L8 10 · L9 8 · L10a 8 · L10 9 · L10b 7 · L11 9 · L12 6 · L13 8 · L14 9 · L15 7 · L16 5 · L17 3 = **143**.
-- **Theo session:** S1 15 · S2 13 · S3 22 · S4 10 · S5 12 · S6 8 · S7 9 · S8 16 · S9 14 · S10 9 · S11 7 · S12 8 = 143.
-- **Giả định:** L2 và L6 nhỏ vì luật ký tự ẩn (`me-settings.ts:32`) và select visibility + `MISSING_DISCOVERY_FIELDS` + fence đã có (W1 đo). Không tính: 1-2 lượt orchestrator mỗi session (CONTINUE khi tới khoảng 20 kết quả worker), 12 merge round (merge clerk), rerun flake, chờ giới hạn usage, thời gian owner ký. D1 bị từ chối thì L10a, L10, L10b rời kế hoạch (-24 worker-round). **Không hứa lịch.**
+- **Theo session:** S1 15 · S2 13 · S3 22 · S4 10 · S5 12 · S6 8 · S7 9 · S8 7 · S9 9 · S10 14 · S11 9 · S12 7 · S13 8 = 143.
+- **Giả định:** L2 và L6 nhỏ vì luật ký tự ẩn (`me-settings.ts:32`) và select visibility + `MISSING_DISCOVERY_FIELDS` + fence đã có (W1 đo). Không tính: 1-2 lượt orchestrator mỗi session (CONTINUE khi tới khoảng 20 kết quả worker), 13 merge round (merge clerk), rerun flake, chờ giới hạn usage, thời gian owner ký. D1 bị từ chối thì L10a, L10, L10b rời kế hoạch (-24 worker-round). **Không hứa lịch.**
 
-## 7. Bảng session (một orchestrator opus/max mỗi session, merge round sau mỗi session)
+## 7. Bảng session (một orchestrator opus/max mỗi session, 13 merge round: một sau mỗi session)
 
 | Session | Lane | Phụ thuộc | Worker-round | Cổng sau merge round |
 |---|---|---|---|---|
 | P3-S1 | L0, L1, L2 | sự kiện duyệt của owner | 15 | CI main xanh; L1 có N lần chạy song song không flake (trong một cửa sổ khoá DB/e2e độc quyền) |
 | P3-S2 | L3, L6 | S1; D2 (a, b, e); D5 | 13 | cờ lịch vẫn false; runbook enable/rollback có mặt |
 | P3-S3 | L4, L5, L7 | S2; D2 (c) | 22 | golden path local M6; danh sách P0 của owner |
-| P3-S4 | L8 | S3; D3 | 10 | test concurrency không oversell |
+| P3-S4 | L8 | S3; D3 | 10 | test concurrency không oversell; mỗi thay đổi roster có một outbox event |
 | P3-S5 | L9, L4b | S4; D3; L4b cần D2 (f) | 12 | migration chỉ ở L9 |
-| P3-S6 | L10a | S5; D1 (d) | 8 | alias: không role app/app_worker/readonly duyệt được |
-| P3-S7 | L10 | S6; D1 (a-c) | 9 | whitelist `public_sessions` xanh; `session_occupancy` có test |
-| P3-S8 | L10b, L11 | S7; D1 (a, e) cho L10b | 16 | L11 là lane migration duy nhất; gender không lộ public |
-| P3-S9 | L12, L13 | S8; D3 | 14 | golden path local M9 |
-| P3-S10 | L14 | S9; D4; `pnpm db:bootstrap` | 9 | migration chat tuần tự |
-| P3-S11 | L15 | S10; L5; D4 | 7 | authorize từng route và từng event |
-| P3-S12 | L16, L17 | S11; D4 | 8 | golden path local M10 + closeout (merge round cuối, L17 merge cuối) |
+| P3-S6 | L10a | S5; D1 (d) | 8 | alias: không role app/app_worker/readonly duyệt được; sửa alias ⇒ pending |
+| P3-S7 | L10 | S6; L8; D1 (a-c, e) | 9 | whitelist `public_sessions` xanh; view thay mới; `session_occupancy` có test |
+| P3-S8 | L10b | S7; L8; D1 (a, e) | 7 | L10b sở hữu `index.ts` và `api-contract.ts`; view mới chỉ whitelist, không tên host |
+| P3-S9 | L11 | S8 (hoặc bỏ qua nếu D1 declined); L8 | 9 | decrypt-fail không tạo charge; whitelist không lộ gender |
+| P3-S10 | L12, L13 | S9; D3 (D1 cho discovery) | 14 | golden path local M9 |
+| P3-S11 | L14 | S10; D4; `pnpm db:bootstrap` | 9 | migration chat tuần tự |
+| P3-S12 | L15 | S11; L5; D4 | 7 | authorize từng route và từng event |
+| P3-S13 | L16, L17 | S12; D4 | 8 | golden path local M10 + closeout (merge round cuối, L17 merge cuối) |
 
 Step 0 mỗi session: reviewer readiness (cùng model/effort với reviewer code của lane) re-verify live truth tại base. `CODE_READY` ⇒ ghi `docs/sessions/web-mvp-phase3-readiness-<slug>.md` (`<!-- review-readiness: code-ready -->`, TARGET_FILES chỉ file tồn tại), chạy `pnpm review:check:changed` TRƯỚC khi commit (nó diff với HEAD) và `pnpm review:check` sau, làm commit đầu của branch lane. `NOT_CODE_READY` ⇒ không commit gì; khối verdict vào báo cáo session như mục AWAIT (blocker, owner, resolution nhị phân), lane không bắt đầu. Review: Claude độc lập tối đa 3 vòng (DD-122 D4, không Codex).
 
@@ -142,7 +141,7 @@ Step 0 mỗi session: reviewer readiness (cùng model/effort với reviewer code
 ## 9. Rủi ro
 
 1. **Môi trường dùng chung:** một Postgres + một cổng e2e ⇒ một khoá, không chạy song song hai suite DB/migration/e2e; flake ở mục 2 làm chậm mọi lane. Giảm: L1 chạy trước, rerun một lần, lần đỏ thứ hai là thật.
-2. **Đường găng dài:** tối đa 8 lane migration tuần tự (L3, L4, L8, L9, L10a, L10, L11, L14), không stacked PR ⇒ 12 session nối tiếp. Giảm: lane không migration chạy song song trong session.
+2. **Đường găng dài:** tối đa 8 lane migration tuần tự (L3, L4, L8, L9, L10a, L10, L11, L14), không stacked PR ⇒ 13 session nối tiếp. Giảm: lane không migration chạy song song trong session.
 3. **Sync p95 ≤ 3 s:** cron pg-boss tối thiểu 1 phút (`queues.ts:42-47`). Giảm: NOTIFY wake-up ở L3; báo số đo thật kèm tải, không hứa số.
 4. **Không có bằng chứng giao Zalo live** khi chưa có token thật (P0). L4 chỉ chứng minh với stub ghi hợp đồng; cấm tuyên bố đã giao live.
 5. **Epic public read model chưa ký (D1)** chặn discovery công khai (L10a, L10, L10b); L7 vẫn chạy, và nếu D1 bị từ chối thì M9 vẫn ship join, cross-club, me-reads, giá, Zalo.
@@ -180,8 +179,10 @@ TARGET_FILES:
   - docs/autopilot-templates/web-mvp-phase3-2026-10-16-RUN.md
   - docs/research/occupancy-authority-2026-10-16.md
   - docs/standards/decisions.md
+  - docs/autopilot-backlog.md
+  - docs/autopilot-templates/web-mvp-2026-10-12-RUN.md
 SLICE: web-mvp-phase3-plan
-IN_SCOPE: kế hoạch docs-only cho M6, M9, M10 local-only: 21 lane, 12 session, 5 quyết định owner (D1-D5), sizing 143 worker-round, bước P0 của owner
+IN_SCOPE: kế hoạch docs-only cho M6, M9, M10 local-only: 21 lane, 13 session, 5 quyết định owner (D1-D5), sizing 143 worker-round, bước P0 của owner
 OUT_OF_SCOPE: code, test, migration, sửa spec Reviewed, PR #50 (M5), ngân hàng, billing, nhắc tự động, deploy DO, M7/M8/M11-M13, mọi bước P0
 G1_DECISION: FAIL
 G2_SPEC: PARTIAL
