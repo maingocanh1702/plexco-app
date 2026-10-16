@@ -27,7 +27,7 @@ Session Projector → public_sessions (dedicated projection table)
 | Session detail route | Anonymous / Player | UNPINNED (pinned by L10b, keyed by `public_listing_id`) — single session detail (public fields only) |
 | Session projector (outbox consumer) | System | Publish/unpublish/update → `public_sessions` |
 | Cache invalidation (purge on unpublish) | System | Privacy-critical: immediate purge on visibility change |
-| `getSessionOccupancy()` | Internal (projector) | occupied = active players + guest notes + live holds (+ pending invites after the migration that adds them); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)` (DD-133 (a)) |
+| `getSessionOccupancy()` | Internal (projector) | occupied = active players + guest notes + live holds (= 0 until a hold table exists, DD-132/DD-135) (+ pending invites after the migration that adds them); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)` (DD-133 (a)) |
 
 ---
 
@@ -185,8 +185,8 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 Session event → Check: public? open? future? required fields present? (visibility='public' ⇒ includes slots_max IS NOT NULL)
   → YES: resolve public aliases
       club tenant     → approved public alias (L10a; tenants has no display_name column)
-      personal tenant → nonblank moderated owner membership.display_name (DD-46 target)
-      personal alias blank/invalid → NO projection (never internal tenant/person fallback)
+      personal tenant → approved public alias only (L10a; DD-133: no host or person name is ever projected)
+      alias missing/unapproved/blank → NO projection (never internal tenant/person fallback)
     → getSessionOccupancy(session) once
     → Upsert public_sessions (slots_open = slots_max IS NULL ? NULL : max(0, slots_max - occupied),
       occupied from getSessionOccupancy(); no confirmed_count; reload canonical safe fields;
@@ -290,7 +290,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-10-16 | v2.8 | **Sync DD-133 (D1, owner ký 2026-10-16) + route + schema drift; docs-only.** (1) Public chỉ `slots_open`: bỏ `confirmed_count` khỏi DDL, migration (b), DTO, projector, cache row và test #28; `host_display_name` đánh dấu legacy, không bao giờ ghi; `getSessionOccupancy()` = active + guest notes + live holds. (2) DTO key `publicId` → `publicListingId`; club alias = alias đã duyệt (L10a) thay cho `tenants.display_name` (cột không tồn tại). (3) Route: list = `GET /api/discover`; bỏ `/api/public/sessions`; detail route UNPINNED (L10b ghim, khoá `public_listing_id`). Các dòng lịch sử giữ nguyên. |
+| 2026-10-16 | v2.8 | **Sync DD-133 (D1, owner ký 2026-10-16) + route + schema drift; docs-only.** (1) Public chỉ `slots_open`: bỏ `confirmed_count` khỏi DDL, migration (b), DTO, projector, cache row và test #28; `host_display_name` đánh dấu legacy, không bao giờ ghi; `getSessionOccupancy()` = active + guest notes + live holds. (2) DTO key `publicId` → `publicListingId`; club alias = alias đã duyệt (L10a) thay cho `tenants.display_name` (cột không tồn tại). (3) Route: list = `GET /api/discover`; bỏ `/api/public/sessions`; detail route UNPINNED (L10b ghim, khoá `public_listing_id`). Personal-tenant alias chỉ đọc alias đã duyệt (không còn `owner membership.display_name`; DD-133). Vòng review 1: live holds ghi rõ = 0 tới khi có bảng hold. Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.7 | **A-grade upgrade:** thêm Entry points table (5 entries); bump version. Không đổi contract/projection model. |
 | 2026-07-28 | v2.6 | Mirror DD-32: add target `confirmed_count`, change existing `slots_open` projector semantics to active + live holds through one `getSessionOccupancy()` read, keep hold count private, invalidate on player/hold events and keep final mutation independent of cached counts. Live migration/projector remain unbuilt. |
 | 2026-07-27 | v2.5 | Reconcile live `0024_public_visibility_capacity_check`: validated `sessions_public_capacity_chk` now rejects public + unlimited capacity at DB level while preserving nullable capacity for non-public rows. Reclassify projector skip/purge as defensive compatibility behavior for pre-`0024`/fixture/bypass input; add direct DB invariant coverage. Projector/API/cache runtime remains unbuilt. |

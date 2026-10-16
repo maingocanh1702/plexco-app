@@ -89,7 +89,7 @@ Bot trả một card ngắn:
 [Đăng ký] [Xem kèo khác]
 ```
 
-Public/browse chỉ có `slots_open` (DD-133). occupied = `getSessionOccupancy()` = active players + guest notes + live holds (+ pending invites sau migration thêm chúng); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)`; `confirmed_count` = active players, tenant-private, không bao giờ public. Khi có hold, UI có thể thêm “một số chỗ đang được giữ trong lúc thanh toán”, không hiển thị danh tính.
+Public/browse chỉ có `slots_open` (DD-133). occupied = `getSessionOccupancy()` = active players + guest notes + live holds (= 0 tới khi có bảng hold, DD-132/DD-135) (+ pending invites sau migration thêm chúng); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)`; `confirmed_count` = active players, tenant-private, không bao giờ public. Khi có hold, UI có thể thêm “một số chỗ đang được giữ trong lúc thanh toán”, không hiển thị danh tính.
 
 ### 3.2 Final confirm — linked
 
@@ -234,7 +234,7 @@ Messenger có thể dùng provider-native account-link CTA khi capability đư�
 
 | Nhóm | Case | Hành vi |
 |---|---|---|
-| Concurrency | Hai user tranh final slot | Session lock + live holds: đúng một active/hold; người còn lại waitlisted |
+| Concurrency | Hai user tranh final slot | Session lock + `getSessionOccupancy()`: đúng một active/hold; người còn lại waitlisted |
 | Concurrency | Link callback và payment callback cùng lúc | Một finalizer thắng; callback còn lại idempotently gắn/allocate vào outcome hiện hành, không tạo booking thứ hai |
 | Data integrity | Session/price/capacity đổi trong lúc link | Recheck; hiển thị delta và require reconfirm |
 | Financial | Underpay/overpay/wrong currency | Underpay/wrong currency không finalise; overpay chỉ allocate amount due rồi giữ phần dư unmatched/manual review |
@@ -302,7 +302,7 @@ Không còn product question trong scope. DD-14/DD-15, Meta App Review và payme
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-10-16 | v1.4 | **Sync DD-133 (D1, owner ký 2026-10-16); docs-only.** Browse card bỏ "số người đã xác nhận" và hàng `Going count` (không có cột whitelist public); chỉ còn `slots_open` từ `getSessionOccupancy()` (active + guest notes + live holds); `confirmed_count` tenant-private. AC browse khớp. Không đổi decision table. Các dòng lịch sử giữ nguyên. |
+| 2026-10-16 | v1.4 | **Sync DD-133 (D1, owner ký 2026-10-16); docs-only.** Browse card bỏ "số người đã xác nhận" và hàng `Going count` (không có cột whitelist public); chỉ còn `slots_open` từ `getSessionOccupancy()` (active + guest notes + live holds); `confirmed_count` tenant-private. AC browse khớp. Không đổi decision table. Vòng review 1: live holds ghi rõ = 0 tới khi có bảng hold. Các dòng lịch sử giữ nguyên. |
 | 2026-08-12 | v1.3 | **SessionCard upgrade (Playo reference #2):** Bot card thêm urgency text ("⚠️ Chỉ còn N chỗ!" khi ≤3 slots, text-only), skill range format ("Người mới – Trung bình"). 2 fields mới. Bot platform limited (không pill/badge). |
 | 2026-08-12 | v1.2 | **Unified SessionCard data alignment (Playo-inspired):** Bot session browse card sync với unified `SessionCard` fields: time range (`HH:mm – HH:mm, DD/MM`), `N/M Going` count (thay `Confirmed count`), price format VND + "/Người", thêm skill level tag (legacy text). Không đổi CTA/flow — bot platform limited. |
 | 2026-08-10 | v1.1 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/decision table. |
