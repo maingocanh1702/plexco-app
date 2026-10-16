@@ -86,6 +86,15 @@ export {
   type RemovePlayerParams,
   type RemovePlayerResult,
 } from "./roster-service.js";
+// Web MVP Phase 3 lane L8 (M9): player self-join, self-leave and FIFO waitlist promotion.
+export {
+  joinSession,
+  leaveSession,
+  type JoinSessionParams,
+  type JoinSessionResult,
+  type LeaveSessionParams,
+  type LeaveSessionResult,
+} from "./session-join-service.js";
 export {
   chargeStatusFor,
   markPaid,
