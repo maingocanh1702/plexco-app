@@ -74,7 +74,12 @@ function setup(over: Partial<ListenerDeps> = {}) {
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-const audience: RealtimeAudience = { tenantId: TENANT, accountId: "a1", personId: "p1", tokenHash: "h" };
+const audience: RealtimeAudience = {
+  tenantId: TENANT,
+  accountId: "a1",
+  personId: "p1",
+  tokenHash: "h",
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -114,7 +119,13 @@ describe("createRealtimeListener", () => {
     const s = subscriber();
     listener.add(s);
     await listener.ready();
-    for (const bad of ["not-a-uuid", ID.toUpperCase(), ` ${ID}`, `${ID},${ID}`, undefined]) {
+    for (const bad of [
+      "not-a-uuid",
+      "ABCDEF01-2345-4678-89AB-CDEF01234567",
+      ` ${ID}`,
+      `${ID},${ID}`,
+      undefined,
+    ]) {
       clients[0]!.notify(REALTIME_CHANNEL, bad);
     }
     clients[0]!.notify("outbox_wake", ID);
@@ -144,7 +155,9 @@ describe("createRealtimeListener", () => {
     vi.mocked(deps.plan)
       .mockImplementationOnce(async (_id, groups) => {
         // The plan was computed for both; s2 leaves before it resolves.
-        const planned = [...groups.values()].flatMap((set) => [...set].map((s) => [s, FRAME] as const));
+        const planned = [...groups.values()].flatMap((set) =>
+          [...set].map((s) => [s, FRAME] as const),
+        );
         await gate;
         return planned;
       })
@@ -165,7 +178,11 @@ describe("createRealtimeListener", () => {
   it("A26: more than 1,000 pending ids close every stream and clear the queue, no crash", async () => {
     const { listener, clients, subscriber, deps } = setup();
     vi.mocked(deps.plan).mockImplementation(() => new Promise(() => undefined));
-    const subs = [subscriber(), subscriber("a2"), subscriber("a3", "22222222-2222-4222-8222-222222222222")];
+    const subs = [
+      subscriber(),
+      subscriber("a2"),
+      subscriber("a3", "22222222-2222-4222-8222-222222222222"),
+    ];
     for (const s of subs) listener.add(s);
     await listener.ready();
     for (let i = 0; i <= MAX_PENDING_EVENTS + 1; i += 1) clients[0]!.notify(REALTIME_CHANNEL, ID);
@@ -247,7 +264,12 @@ describe("openRealtimeStream", () => {
       await vi.advanceTimersByTimeAsync(0);
       if (i % 2 === 0) abort.abort();
       else await stream!.cancel();
-      expect(listener.stats()).toEqual({ subscribers: 0, accounts: 0, listening: false, pending: 0 });
+      expect(listener.stats()).toEqual({
+        subscribers: 0,
+        accounts: 0,
+        listening: false,
+        pending: 0,
+      });
     }
     expect(vi.getTimerCount()).toBe(0);
     expect(clients.every((c) => c.released === 1)).toBe(true);

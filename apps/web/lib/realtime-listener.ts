@@ -240,9 +240,8 @@ export function openRealtimeStream(
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closed = false;
   let beating = false;
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let lifetime: ReturnType<typeof setTimeout> | undefined;
 
+  // Only reachable after `heartbeat` and `lifetime` exist: nothing calls it before add() returns.
   const finish = () => {
     if (closed) return;
     closed = true;
@@ -277,7 +276,7 @@ export function openRealtimeStream(
   );
   if (!listener.add(subscriber)) return null;
 
-  heartbeat = setInterval(() => {
+  const heartbeat = setInterval(() => {
     if (beating) return;
     beating = true;
     options
@@ -289,7 +288,7 @@ export function openRealtimeStream(
         else finish();
       });
   }, HEARTBEAT_MS);
-  lifetime = setTimeout(finish, STREAM_LIFETIME_MS);
+  const lifetime = setTimeout(finish, STREAM_LIFETIME_MS);
   if (options.signal?.aborted) finish();
   else options.signal?.addEventListener("abort", finish, { once: true });
   listener.ready().then(() => write(HEARTBEAT_FRAME), finish);

@@ -1,4 +1,4 @@
-import { authorize, readSessionRealtimeEvent, resolveWebSession, withTenant } from "@plexco/db";
+import { authorize, readSessionRealtimeEvent, resolveWebSession } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   encodeFrame,
@@ -50,9 +50,11 @@ const groups = (...subs: RealtimeAudience[]) => {
 };
 /** The read only finds the row under the owning tenant's RLS context (fake tx carries tenantId). */
 const ownedBy = (owner: string, row: Record<string, unknown>) =>
-  vi.mocked(readSessionRealtimeEvent).mockImplementation(async (tx) =>
-    (tx as unknown as { tenantId: string }).tenantId === owner ? (row as never) : null,
-  );
+  vi
+    .mocked(readSessionRealtimeEvent)
+    .mockImplementation(async (tx) =>
+      (tx as unknown as { tenantId: string }).tenantId === owner ? (row as never) : null,
+    );
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -82,10 +84,8 @@ describe("planEventDelivery (R-4, R-8)", () => {
       tenantId: TENANT_A,
       changed_fields: ["visibility"],
     });
-    const [[, frame]] = (await planEventDelivery(EVENT, groups(audience(TENANT_A)))) as [
-      unknown,
-      Record<string, unknown>,
-    ][];
+    const planned = await planEventDelivery(EVENT, groups(audience(TENANT_A)));
+    const frame = planned[0]?.[1] as unknown as Record<string, unknown> | undefined;
     expect(Object.keys(frame!).sort()).toEqual(["sessionId", "type", "version"]);
     const wire = encodeFrame(frame as never);
     expect(wire).toBe(`data: {"type":"session.updated","sessionId":"${SESSION}","version":4}\n\n`);
@@ -133,7 +133,13 @@ describe("planEventDelivery (R-4, R-8)", () => {
 });
 
 describe("recheckSubscriber (R-10, R-18)", () => {
-  const live = { sessionId: "s", accountId: "a1", personId: "p1", csrfSecret: "c", expiresAt: new Date() };
+  const live = {
+    sessionId: "s",
+    accountId: "a1",
+    personId: "p1",
+    csrfSecret: "c",
+    expiresAt: new Date(),
+  };
 
   it("passes only for the same live session, same account and a current capability", async () => {
     vi.mocked(resolveWebSession).mockResolvedValue(live);
