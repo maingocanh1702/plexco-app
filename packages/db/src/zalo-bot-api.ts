@@ -87,7 +87,9 @@ async function call(
   try {
     read = await readBoundedBody(res, MAX_RESPONSE_BYTES);
   } catch {
-    throw new ZaloApiError("timeout"); // abort mid-body (the request timeout signal covers the body)
+    // Reset, stall or abort mid-body AFTER a 2xx (the timeout signal covers the body): Zalo may already
+    // have accepted a send, so it is bad_response, never resent (Z-6); getMe/setWebhook stay retryable.
+    throw new ZaloApiError(method === "sendMessage" ? "bad_response" : "timeout");
   }
   if (!read.ok) throw new ZaloApiError("bad_response");
   let json: unknown;

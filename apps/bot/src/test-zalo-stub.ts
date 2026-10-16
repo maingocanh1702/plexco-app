@@ -13,6 +13,7 @@ export type StubReply =
   | "malformed"
   | "oversize"
   | "reset"
+  | "cut"
   | "no_ok"
   | { status: number }
   | { okFalse: number | null };
@@ -49,6 +50,7 @@ export async function startZaloStub(): Promise<ZaloStub> {
       if (reply === "malformed") return void res.writeHead(200).end("{not json");
       if (reply === "oversize") return json({ ok: true, result: "x".repeat(70 * 1024) });
       if (reply === "reset") return void req.socket.destroy();
+      if (reply === "cut") return void res.writeHead(200).write("{", () => req.socket.destroy());
       if (reply === "no_ok") return json({ result: {} });
       if ("status" in reply) return void res.writeHead(reply.status).end();
       const code = reply.okFalse === null ? {} : { error_code: reply.okFalse };

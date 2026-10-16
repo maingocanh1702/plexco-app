@@ -421,6 +421,7 @@ describe("zalo_dm projector against the 0057 definers and the stub (as app_worke
       ["chat-no-ok", "no_ok", "zalo_bad_response"],
       ["chat-bad-json", "malformed", "zalo_bad_response"],
       ["chat-oversize", "oversize", "zalo_bad_response"],
+      ["chat-cut-after-200", "cut", "zalo_bad_response"],
     ];
     const chatOf = new Map<unknown, string>();
     for (const [chat, reply] of script) {
