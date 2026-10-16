@@ -7,22 +7,24 @@
 > Chưa có verdict hoặc lane bị `NOT_CODE_READY` thì lane đó chỉ được AWAIT, không được viết code.
 >
 > **Owner decisions D1..D5 -> số DD** (số tiếp theo còn trống đo tại `3546f6b`: DD-132 là lớn nhất; nếu `decisions.md` đánh số khác thì `decisions.md` thắng):
-> D1 Occupancy authority -> DD-133 · D2 M6 delivery policy -> DD-134 · D3 M9 join + tiền không ngân hàng -> DD-135 · D4 M10 chat MVP cut -> DD-136 · D5 Wave-A exit gate + Phase 3 envelope -> DD-137.
+> D1 Public read model epic (gồm occupancy authority) -> DD-133 · D2 M6 delivery policy -> DD-134 · D3 M9 join + tiền không ngân hàng -> DD-135 · D4 M10 chat MVP cut -> DD-136 · D5 Wave-A exit gate + Phase 3 envelope -> DD-137.
 > Quy tắc nền: DD-132 / OD-0 (không bank, không billing, không nhắc tự động, không deploy DO, không M7/M8/M11/M12/M13; tiền chỉ `cash | attested_transfer`; M9 chỉ phụ thuộc M6).
+> **Lưu ý cite:** số dòng `path:line` đo tại `origin/main` `3546f6b`; `decisions.md` dịch dòng sau PR này (khoảng +5 sau bảng index, khoảng +107 sau khối DD-133..DD-137), nên cite theo DD id trước.
 
 ## S0. Phase 3 chạy như thế nào
 
-Conductor (session local của owner) -> **một orchestrator cho mỗi session P3-S1..P3-S11** -> workers. Mỗi lane = một PR.
+Conductor (session local của owner) -> **một orchestrator (opus/max) cho mỗi session P3-S1..P3-S12** -> workers. Mỗi lane = một PR.
 
-- **Conductor** không sửa code. Nó tạo orchestrator theo thứ tự S1..S11; brief của orchestrator = block session trong S3 + block S1 + các block lane (S2) của session đó.
+- **Conductor** không sửa code. Nó tạo orchestrator theo thứ tự S1..S12; mọi agent do conductor hay orchestrator tạo chạy opus/max (merge clerk: sonnet/high), không bao giờ truyền model `fable` vào lời gọi Agent; brief của orchestrator = block session trong S3 + block S1 + các block lane (S2) của session đó.
 - **Orchestrator** tạo workers: readiness reviewer, writer, code reviewer, security reviewer (khi lane yêu cầu), merge clerk. Workers không tạo agent con. Tối đa 3 writer chạy đồng thời trong một session.
 - **Một lane = một branch + một worktree + tối đa một writer = một PR. Không có stacked PR:** lane phụ thuộc lane khác chạy ở session SAU, sau merge round của session kia, và lấy base là `origin/main` lúc đó. Trong một session song song, tối đa một lane sửa `packages/db/src/session-service.ts` (cũng `roster-service.ts`, `session-form.tsx`); lane có migration không bao giờ chạy song song với nhau (số migration kế tiếp đo tại base của lane, không ghi cứng trong prose).
-- **Step 0 của mỗi session:** với từng lane, readiness reviewer kiểm lại sự thật hiện hành tại base của session và ghi verdict của lane. `CODE_READY` mới được viết code; `NOT_CODE_READY` thì lane AWAIT với blocker chính xác, các lane khác tiếp tục.
+- **Step 0 của mỗi session:** với từng lane, readiness reviewer kiểm lại sự thật hiện hành tại base của session. `CODE_READY` => ghi file readiness, chạy `pnpm review:check:changed` TRƯỚC khi commit (checker so với HEAD nên sau commit là vacuous), commit làm commit đầu của branch lane, rồi chạy `pnpm review:check`. `NOT_CODE_READY` => không commit gì; verdict vào báo cáo session như một mục AWAIT (blocker chính xác, owner, cách giải nhị phân) và lane không bắt đầu; các lane khác tiếp tục. Mỗi lane tối đa MỘT migration; lane vượt ngân sách B3 mặc định (khoảng 300 LOC, 3 module) phải có B3 exception tường minh trong step 0, nếu không thì `NOT_CODE_READY`.
 - **Vòng đời một lane:** readiness -> test-first -> verify -> orchestrator push + mở PR -> review độc lập (tối đa 3 vòng) -> security round (lane có P1 auth/money/external input) -> CI GREEN -> dòng `MERGE_READY`.
-- **Merge round sau mỗi session:** khi owner đã ký D5, một merge clerk merge các PR `MERGE_READY` của session theo thứ tự phụ thuộc (merge commit, như phase 2); chưa ký D5 thì owner tự merge và conductor dừng với `RESULT: AWAIT` (merge session N). Owner có thể merge bất cứ lúc nào; PR #50 chỉ owner được động tới. Sau mỗi merge, PR còn lại của session được cập nhật bằng `git merge --no-ff origin/main` (không rebase).
+- **"Đã ký" = sự kiện duyệt của owner:** PR #58 được owner merge, hoặc owner viết "Phase 3 plan approved" kèm override (được ký một phần, ví dụ "D2 signed except (f)"); L0 ghi chữ ký vào `decisions.md`. **Merge round sau mỗi session:** khi D5 đã ký, một merge clerk (sonnet/high) merge các PR `MERGE_READY` của session theo thứ tự phụ thuộc từ P3-S1 trở đi (merge commit, như phase 2); chưa ký D5 thì owner tự merge và conductor dừng với `RESULT: AWAIT` (merge session N). Owner có thể merge bất cứ lúc nào; PR #50 chỉ owner được động tới. Sau mỗi merge, PR còn lại của session được cập nhật bằng `git merge --no-ff origin/main` (không rebase).
 - **P0 không bao giờ là lane:** bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED`, nối bot token Zalo thật, nhắn người dùng thật chỉ là bước của owner; agent chỉ chuẩn bị runbook. Route announce thuộc lane L4b (chỉ chạy khi owner ký D2 f).
 - **AWAIT** = lane chờ đúng MỘT thứ bên ngoài (chữ ký một quyết định D1-D5, một lần merge, một bước P0) kèm một đề xuất và điều kiện resume nhị phân; chỉ lane phụ thuộc bị dừng, lane khác chạy tiếp.
 - **HALT** (cấp lane) = breaker cứng, không có đường vòng: quá 3 vòng review chưa CLEAN (`MAX_ROUNDS`), cùng một vùng code bị sửa 3 vòng liên tiếp (`REGION_THRASH`), cần file ngoài FILES IN SCOPE (`SCOPE_DRIFT`), cần migration/secret không có trong brief, base lệch (`BASE_MISMATCH`). Orchestrator báo lên conductor dưới dạng `RESULT: BLOCKED`.
+- **Public read model epic (D1):** L10a, L10, L10b và phần discovery của L12 cùng phụ thuộc D1; owner từ chối D1 ("D1 declined") thì cả bốn rời Phase 3 và M9 chỉ ship join, cross-club, me-reads, gender pricing và Zalo commands.
 - **Local-only:** không staging, không DigitalOcean, không cờ production, không provider thật. Mỗi milestone đóng bằng một lần chạy golden path local mở rộng (runbook `docs/runbooks/local-mvp-smoke.md`).
 - **Ngoài phạm vi toàn bộ plan:** PR #50 (M5 đóng băng, chỉ-owner) và mọi file của nó; mọi thứ DD-132 đã gỡ.
 
@@ -46,8 +48,7 @@ HARD RULES (a violation is a real leak):
 4. A money-bearing claim or identity merge needs a strong factor: verified email on web, single-use link_code on the bot (DD-50).
    Name, alias or display name is never enough.
 5. Every user-facing string is t(vi, en). No key-based i18n.
-PROGRAM FACTS (owner rulings, do not re-decide): one shared VND formatter for the web (OD-4b, apps/web/lib/money.ts); no bank integration (no SePay,
-  no ApiPay), no billing or host_pro paywall (all clubs
+PROGRAM FACTS (owner rulings, do not re-decide): one shared VND formatter for the web (OD-4b, apps/web/lib/money.ts); no bank integration (no SePay, no ApiPay), no billing or host_pro paywall (all clubs
   get all features), no automatic reminders, no DigitalOcean, no secret or Google OAuth provisioning. Payments are manual only:
   cash | attested_transfer, partial payments allowed, reversal owner-only (money.correct) until a grant UI exists. Local-only.
 REVIEW (DD-122 D4, owner 2026-10-12; Codex waived): NO codex-review-pin.sh, NO scope-gate register/ready, NO ap-finish. Review =
@@ -58,10 +59,17 @@ REVIEW (DD-122 D4, owner 2026-10-12; Codex waived): NO codex-review-pin.sh, NO s
 MODELS: writer opus/max for P1 and complex work (auth, identity, money, RLS, SECURITY DEFINER, migrations, webhooks, concurrency),
   sonnet/high for UI wiring, copy, e2e specs, docs, mechanical merges. Reviewer opus/max for money/auth/identity/security/SQL/
   concurrency and for any opus writer; opus/high for other code; sonnet/high for docs-only and mechanical merges. Readiness
-  reviewer = same model and effort as the lane's code reviewer. Orchestrators: Fable xhigh, or opus/max while the Fable limit holds.
+  reviewer = same model and effort as the lane's code reviewer. Orchestrators and every conductor-spawned agent: opus/max only (owner override 2026-10-14 15:32); never pass model fable to any Agent call. Merge clerk: sonnet/high.
+STEP 0 (every lane, before any code): a readiness reviewer (same model and effort as the lane's code reviewer) re-verifies live truth at the session base (commit, schema, migrations, grants and RLS, tests, dependent specs).
+  CODE_READY => write docs/sessions/web-mvp-phase3-readiness-<slug>.md (code-ready marker, canonical verdict block of docs/standards/review-code-readiness-gate.md, TARGET_FILES only files that exist),
+  run `pnpm review:check:changed` BEFORE committing (it diffs against HEAD, so after the commit it is vacuous), commit it as the lane branch's FIRST commit, then run `pnpm review:check`.
+  NOT_CODE_READY => commit nothing; the verdict block goes into the session report as that lane's AWAIT item (exact blocker, owner, binary resolution); the lane does not start; other lanes continue.
+BUDGET (gate B3, about 300 LOC, 3 modules, 1 migration): at most ONE migration per lane. A lane over the default LOC or module budget needs an explicit B3 exception in step 0 (modules named, why a split breaks coherence, compatibility
+  proof), else NOT_CODE_READY.
+ENABLEMENT: agents may enable the dispatch cycle (OUTBOX_DISPATCH_SCHEDULE_ENABLED=true or a direct dispatch call) only inside a local test process or a local scratch env for tests, the p95 measurement and the golden path.
+  Committed defaults and .env.example stay false. Enabling it for real use with a real Zalo token is the owner's P0 step.
 ENVIRONMENT: one shared local Postgres (compose) and one e2e port => one lock: never two DB suites, migrations or e2e runs at once.
-  Never `docker compose down -v`. Compose started from another checkout re-binds the Postgres mount there: re-bind by running compose once with the
-    root checkout as the working directory (a command, never a file edit; data persists).
+  Never `docker compose down -v`. Compose started from another checkout re-binds the Postgres mount there: re-bind by running compose once with the root checkout as the working directory (a command, never a file edit; data persists).
   `pnpm db:bootstrap` as superuser (DATABASE_URL_MIGRATION) BEFORE migration 0054 on any older DB (old-text 0054/0055 => sha256 guard
   fails => reset the DB). No host psql: use the container psql. plexco_smoke: ENCRYPTION_KEY is fixed in ~/.plexco-smoke-encryption-key;
   a lost key means drop and recreate ONLY plexco_smoke; never touch plexco or plexco_test. Roles app / app_worker / readonly are
@@ -99,7 +107,8 @@ GOAL: Record the owner-signed D1-D5 (DD-133..DD-137) as signed and propagate the
 MILESTONE: all (Phase 3 prerequisite)    RISK: P2 (docs)
 BASE: origin/main at session start (git fetch first; record the full SHA in the report)
 WORKTREE: .autopilot/worktrees/p3-docs-decisions-sync    BRANCH: docs/p3-docs-decisions-sync
-DEPENDS ON: owner signs D1-D5 (merge of the Phase 3 plan PR, or the words "Phase 3 plan approved" plus any D-overrides)
+DEPENDS ON: the owner's approval event (PR #58 merged by the owner, or the written words "Phase 3 plan approved" plus any D-overrides; partial signing
+  is allowed, e.g. "D2 signed except (f)")
 OWNER DECISIONS NEEDED: D1-D5. An unsigned Dn => skip only the edits that depend on it and list them under OPEN.
 FILES IN SCOPE (all exist; re-measure lines):
 - docs/standards/decisions.md (flip DD-133..DD-137 to signed; no other row changes); docs/autopilot-backlog.md;
@@ -155,8 +164,9 @@ TESTS (what must become deterministic): one shared app_worker password (or seria
   cluster; the cluster-global app/app_worker/readonly passwords are restored at teardown; no unhandled 57P01 in tenant-capability-authority.test.ts;
   JCL-4, JCL-12, BR-5 and roster-service timeouts fixed at the cause; pwa.spec.ts:39 root cause recorded in the PR body.
 ACCEPTANCE COMMANDS: state N and cite results. N=5 parallel runs of the db + bot + web suites on the one cluster with 0 flakes (rerun counts as a
-  flake); pwa.spec.ts 8 consecutive local runs, baseline was 3/8 red, target 0/8; then the S1 VERIFY set; count leaked per-pid DBs before and after
-  one full run (target: no growth).
+  flake); pwa.spec.ts 8 consecutive local runs, baseline was 3/8 red, target 0/8; all inside ONE exclusive DB/e2e lock window (no other lane's DB
+  suite or e2e meanwhile; in P3-S1 L2's DB tests wait for it); then the S1 VERIFY set; count leaked per-pid DBs before and after one full run (target:
+  no growth).
 REVIEW PLAN: opus/max reviewer, max 3 rounds; questions = does any change weaken an assertion, hide a race, or alter production behaviour; is cleanup
   limited to the exact pattern.
 DONE WHEN: N repeated parallel runs show the flakes gone, the leak stopped, numbers cited; the app_worker password section of
@@ -200,44 +210,42 @@ DONE WHEN: both write paths reject the set with zero writes, tests cover it, one
 
 ```text
 LANE: L3 p3-m6-outbox-delivery-core
-GOAL: Replace productionStubDeliver as the required consumer with a durable projector registry; bounded retry + DLQ with owner-only replay; a NOTIFY wake-up so sync-lag p95 <= 3 s is reachable; the shared
-  scheduler + stale-draft auto-expiry; flag stays OFF.
-MILESTONE: M6    RISK: P1 (shared choke point, migration, SECURITY DEFINER)
+GOAL: Replace productionStubDeliver as the required consumer with a durable projector registry; bounded retry + DLQ with owner-only replay; a NOTIFY wake-up so sync-lag p95 <= 3 s is reachable; the shared scheduler + stale-draft auto-expiry; flag stays OFF.
+MILESTONE: M6    RISK: P1 (shared choke point, migration, SECURITY DEFINER); B3: one migration, an exception is expected in step 0
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m6-outbox-delivery-core    BRANCH: feat/p3-m6-outbox-delivery-core
 DEPENDS ON: L1 merged; D2 signed
-OWNER DECISIONS NEEDED: D2 (a) bound 8 + backoff min(15 s x 2^(n-1), 30 min) then DLQ, (b) DLQ inspect + replay owner-only, (e) schedule flag OFF by default. Unsigned => AWAIT this lane only.
+OWNER DECISIONS NEEDED: D2 (a) bound 8, backoff 15 s x 2^(n-1) (7 waits = 1905 s, about 32 min) then DLQ, (b) DLQ inspect + replay owner-only, (e) schedule flag OFF by default. Unsigned => AWAIT this lane only.
 FILES IN SCOPE:
-- apps/bot/src/dispatcher.ts (REQUIRED_PROJECTORS :33, STUB_PROJECTOR :32, productionStubDeliver :77, runDispatchCycle, the 2-phase ack/deliver); apps/bot/src/worker.ts (:80-96 enablement, :138-142);
-  apps/bot/src/queues.ts (OUTBOX_DISPATCH_CRON :47, 1-min floor :38-46); apps/bot/src/preflight.ts if it enumerates functions; their tests (dispatcher.test.ts, dispatcher-outcome.test.ts, schedule.test.ts)
-- NEW apps/bot/src/projector-registry.ts; NEW apps/bot/src/projectors/index.ts (projector name -> deliver function map) + three disabled placeholder modules apps/bot/src/projectors/web-realtime.ts, zalo-dm.ts,
-  public-sessions.ts (they return a DLQ projector_not_implemented and are never invoked while their registry row is disabled; L5, L4 and L10 each replace only their own file); NEW apps/bot/src/outbox-wake.ts
-  (LISTEN loop, debounced cycle; the 1-min cron stays as the safety net); NEW apps/bot/src/draft-expiry-job.ts + the system cancel of a stale draft as a new module (NEW packages/db/src/draft-expiry.ts) or a
-  narrow definer in the migration (feature_session_management_tech.md section 4 "Draft discard + auto-expiry", edges #28-#30)
-- NEW packages/db/migrations/<next>_outbox_projector_registry_dlq_replay.sql: durable registry (event type -> required projectors; ack_outbox_event receives the array computed at ack time; a projector added
-  later never retro-applies to acked events; seeded with web_realtime, zalo_dm and public_sessions DISABLED, enabling a row is a registry function call in the runbook, not a migration), NOTIFY trigger on
-  outbox_events insert, narrow definers for DLQ inspect/replay and draft claim (EXECUTE app_worker or the owner path only; app_worker has no base grants, 0009:17); packages/db/schema.ts + db.dbml; a migration
-  test
+- apps/bot/src/dispatcher.ts (REQUIRED_PROJECTORS :33, STUB_PROJECTOR :32, productionStubDeliver :77, runDispatchCycle, the 2-phase ack/deliver); apps/bot/src/worker.ts (:80-96 enablement, :138-142); apps/bot/src/queues.ts (OUTBOX_DISPATCH_CRON :47, 1-min floor :38-46);
+  apps/bot/src/preflight.ts if it enumerates functions; their tests (dispatcher.test.ts, dispatcher-outcome.test.ts, schedule.test.ts)
+- NEW apps/bot/src/projector-registry.ts; NEW apps/bot/src/projectors/index.ts (projector name -> deliver function map) + three disabled placeholder modules apps/bot/src/projectors/web-realtime.ts, zalo-dm.ts, public-sessions.ts (they return a DLQ projector_not_implemented and
+  are never invoked while their registry row is disabled; L5, L4 and L10 each replace only their own file); NEW apps/bot/src/outbox-wake.ts (LISTEN loop, debounced cycle; the 1-min cron stays as the safety net); NEW apps/bot/src/draft-expiry-job.ts + the system cancel of a stale
+  draft as a new module (NEW packages/db/src/draft-expiry.ts) or a narrow definer in the migration (feature_session_management_tech.md section 4 "Draft discard + auto-expiry", edges #28-#30)
+- NEW packages/db/migrations/<next>_outbox_projector_registry_dlq_replay.sql: durable registry (event type -> required projectors; ack_outbox_event receives the array computed at ack time; a projector added later never retro-applies to acked events; seeded with web_realtime,
+  zalo_dm and public_sessions DISABLED, enabling a row is a registry function call in the runbook, not a migration), NOTIFY trigger on outbox_events insert, a read function projector_is_enabled(name) EXECUTE app (for guards such as L4b's), narrow definers for DLQ inspect/replay
+  and the stale-draft cancel (EXECUTE app_worker or the owner path only; app_worker has no base grants, 0009:17); packages/db/schema.ts + db.dbml; a migration test
 - NEW scripts/outbox-dlq-replay.mjs (owner CLI, no HTTP, no UI); NEW docs/runbooks/outbox-dispatch-enable-rollback.md (owner enable and rollback steps, sync-lag measurement procedure)
-NEGATIVE SCOPE: no provider call (L4); no web_realtime or public_sessions consumer (L5, L10); never enable OUTBOX_DISPATCH_SCHEDULE_ENABLED (default false stays in .env.example:95 and docker-compose.yml:130);
-  no re-grant of base SELECT on any table; never edit migrations 0022/0023; no public_sessions write; do NOT edit packages/db/src/session-service.ts (stale-draft auto-expiry goes through the new module or
-  definer; if that is impossible the sub-item HALTs SCOPE_DRIFT and moves to a later lane).
+NEGATIVE SCOPE: no provider call (L4); no web_realtime or public_sessions consumer (L5, L10); never enable OUTBOX_DISPATCH_SCHEDULE_ENABLED (default false stays in .env.example:95 and docker-compose.yml:130); no re-grant of base SELECT on any table; never edit migrations
+  0022/0023; no public_sessions write; do NOT edit packages/db/src/session-service.ts (stale-draft auto-expiry goes through the new module or definer; if that is impossible the sub-item HALTs SCOPE_DRIFT and moves to a later lane).
 MODELS: writer opus/max; reviewer opus/max; security opus/max (replay authorization, definer functions, role grants); readiness opus/max.
 DECISION TABLE (D2; error_code grammar ^[a-z][a-z0-9_]{0,63}$ from dispatcher.ts):
 - delivered -> mark delivered, ack kept -> none
-- transient failure, attempts < 8 -> retry at now + min(15 s x 2^(n-1), 30 min) -> the projector's error_code
+- attempt n = the nth delivery try (attempts increments on completion: dispatcher.ts:53-55, 0022:444-464); failure n < 8 -> retry after 15 s x 2^(n-1) -> the projector's error_code
 - failure the projector classifies terminal -> DLQ at once -> the projector's error_code
-- failure at attempts = 8 -> DLQ -> UNPINNED: lane pins the code (proposal attempts_exhausted) and records it as default applied, pending owner sign-off
+- failure 8 -> DLQ (7 waits total 1905 s, about 32 min, no cap) -> UNPINNED: lane pins the code (proposal attempts_exhausted) and records it as default applied, pending owner sign-off
 - event type with no registered projector -> ack with an empty required set, never DLQ -> none
 - replay of a DLQ row by the owner path -> status pending, attempts 0, one job_audit_events row, no other row touched -> none
 - replay of a non-DLQ row -> refuse, zero writes -> UNPINNED (lane pins, default applied)
+- stale draft (status draft, starts_at <= now(): the claim filter of BE edge #30) -> status cancelled, actor system through a narrow definer, session.cancelled event + fence, one audit row; runs only when the schedule flag is on (OFF => nothing runs); a second run is a no-op ->
+  none
+- draft carrying a player or a charge -> no mutation, session.expiry_anomaly_detected path; draft racing PublishSession -> both lock the session row FOR UPDATE, the loser sees the new state -> none
 - replay or inspect by app, app_worker without the definer, or readonly -> privilege error, zero writes -> database privilege error (no HTTP code)
-TESTS: registry lookup per event type; backoff schedule numbers 15 s, 30 s, 60 s ... capped 30 min and the 8th failure DLQs; replay resets attempts and writes one audit row; non-owner replay writes nothing (run
-  as the real role); NOTIFY wake runs one debounced cycle and an idempotent double wake does not double-deliver; sync-lag measured under a stated load (state events/s and N) with p95 and p99 recorded;
-  draft-expiry races publish on one row and the second runner is a no-op; worker.ts still refuses to schedule while the deliverer is the stub or the flag is not "true".
+TESTS: registry lookup per event type; backoff waits 15, 30, 60, 120, 240, 480, 960 s (sum 1905 s) and the 8th failure DLQs; replay resets attempts and writes one audit row; non-owner replay writes nothing (run as the real role); NOTIFY wake runs one debounced cycle and an
+  idempotent double wake does not double-deliver; sync-lag measured under a stated load (state events/s and N) with p95 and p99 recorded; draft-expiry: races publish on one row, the second runner is a no-op, anomaly drafts are untouched, flag OFF runs nothing (enable only inside
+  the local test process, S1 ENABLEMENT); worker.ts still refuses to schedule while the deliverer is the stub or the flag is not "true".
 ACCEPTANCE COMMANDS: S1 VERIFY set; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/bot test; pnpm --filter @plexco/db test (one DB lock).
-REVIEW PLAN: opus/max reviewer then opus/max security round, max 3 rounds total; questions = ordering independence (no per-aggregate order guarantee, 0023), replay privilege, any path that lets app_worker read
-  a base table, rolling-deploy safety of the registry.
+REVIEW PLAN: opus/max reviewer then opus/max security round, max 3 rounds total; questions = ordering independence (no per-aggregate order guarantee, 0023), replay privilege, any path that lets app_worker read a base table, rolling-deploy safety of the registry.
 DONE WHEN: no stub is the required set; DLQ replay works end to end locally; p95 recorded; flag still OFF; the runbook gives exact enable and rollback steps.
 ```
 
@@ -246,7 +254,7 @@ DONE WHEN: no stub is the required set; DLQ replay works end to end locally; p95
 ```text
 LANE: L4 p3-m6-zalo-outbound
 GOAL: A zalo_dm projector in the worker delivering exactly the D2 matrix through the Zalo Bot API, with retry/terminal classification and a per-recipient delivery disposition. No live proof.
-MILESTONE: M6    RISK: P1 (secret decrypt, external input, new definer, migration likely)
+MILESTONE: M6    RISK: P1 (secret decrypt, external input, new definer, migration likely); B3: at most one migration, an exception is expected in step 0
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m6-zalo-outbound    BRANCH: feat/p3-m6-zalo-outbound
 DEPENDS ON: L3 merged (P3-S2 merge round); D2 (a-e) signed
@@ -267,6 +275,7 @@ DECISION TABLE (D2 c):
 - session.updated whose changed_fields include starts_at, ends_at, timezone, venue_name, venue_address or price_amount -> one DM per ACTIVE roster player with an active Zalo identity on this
   club's bot; waitlisted, left, unlinked get none; other changed_fields only -> no DM, delivered as a no-op -> none
 - session.cancelled -> same recipients -> none
+- empty recipient set (nobody active with a linked identity) -> no DM, delivered as a recorded no-op, never a retry or DLQ -> none
 - session.announcement_requested -> ONE DM to the requesting host with a ready-to-forward join text + web link; handled once L4b supplies requested_by_person_id; an event without it ->
   terminal, no send -> UNPINNED (lane pins, proposal no_requester)
 - every other event type -> no zalo_dm requirement -> none
@@ -291,8 +300,9 @@ GOAL: Give the announcement event a requester and ship the host announce route w
 MILESTONE: M6    RISK: P1 (new HTTP command on a messaging path, error contract)
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m6-announce-route    BRANCH: feat/p3-m6-announce-route
-DEPENDS ON: L4 and L8 merged (P3-S3 and P3-S4 merge rounds); D2 (f) signed. D2 (f) unsigned => the lane is PARKED (not started) until the owner
-  reports the schedule enabled
+DEPENDS ON: L4 merged (P3-S3); it runs after L8 (P3-S4) only because both edit packages/core/src/api-contract.ts and
+  apps/web/lib/session-command-route.ts (shared-file serialization, no functional dependency); D2 (f) signed. D2 (f) unsigned => the lane is PARKED
+  (not started) until the owner reports the schedule enabled
 OWNER DECISIONS NEEDED: D2 (f), which amends the deferral at decisions.md:753-758 for the local-only MVP. Unsigned => park this lane only; L4's
   announcement DM stays consumer-only.
 FILES IN SCOPE:
@@ -306,18 +316,18 @@ NEGATIVE SCOPE: no announce UI; no group send; no change to dispatch, registry o
   of roster-service.ts, session-form.tsx or any L9 file (me-player-reads, its migration, packages/db/src/index.ts).
 MODELS: writer opus/max; reviewer opus/max; security opus/max; readiness opus/max.
 DECISION TABLE (codes from feature_session_management_tech.md section 3):
-- schedule flag not "true" in the web process -> refuse, zero writes, no outbox row -> dedicated code UNPINNED (proposal ANNOUNCE_DELIVERY_DISABLED,
-  status 409); never announced:true
-- flag "true", caller with session.manage, session open, ends_at in the future, valid channel -> exactly one session.announcement_requested
-  {session_id, channel, requested_by_person_id} -> 200
-- channel outside the closed enum zalo|messenger -> INVALID_CHANNEL (400); messenger has no projector in the MVP, so it produces no DM -> UNPINNED
-  (default applied)
+- schedule flag not "true" in the web process, OR no enabled zalo_dm projector (projector_is_enabled from L3) -> refuse, zero writes, no outbox row ->
+  dedicated code UNPINNED (proposal ANNOUNCE_DELIVERY_DISABLED, status 409); never announced:true
+- flag "true", zalo_dm enabled, caller with session.manage, session open, ends_at in the future, channel zalo -> exactly one
+  session.announcement_requested {session_id, channel, requested_by_person_id} -> 200
+- channel other than zalo (messenger is out of the MVP, so it is INVALID_CHANNEL too) -> INVALID_CHANNEL (400), zero writes -> UNPINNED (default
+  applied: narrows the BE zalo|messenger enum for the MVP)
 - open session with ends_at <= now() -> SESSION_ALREADY_ENDED (409); draft, closed or cancelled -> SESSION_NOT_OPEN (409)
 - caller without session.manage -> FORBIDDEN (403), same body for every reason; suspended tenant -> TENANT_SUSPENDED (403, existing DD-110 rule)
 - same commandId again -> stored result, no second event (processed_commands dedup)
 TESTS: refusal while the flag is OFF (route test and a DB test proving zero outbox rows); payload carries the requester id only, no PII and no
   destination id; one event per command id; every row above; the e2e/route mocks never claim delivery; the web process flag helper matches worker.ts
-  for "true", "TRUE", "1", unset.
+  for "true", "TRUE", "1", unset; refusal when zalo_dm is disabled; channel messenger refused.
 ACCEPTANCE COMMANDS: S1 VERIFY set; pnpm --filter @plexco/web test; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test.
 REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any path returning announced:true without a delivery path,
   requester spoofing, channel enum bypass, payload PII.
@@ -359,8 +369,8 @@ DECISION TABLE:
 - any field beyond ids and type in a pushed message -> whitelist test fails: never roster, money, PII
 TESTS: cross-tenant leak test (tenant A event never reaches a tenant B subscriber); revoke-mid-stream test (no further events after membership removal); heartbeat at most
   every 30 s; NOTIFY payload is the event id only; reconnect resumes with a refetch, no duplicate-apply bug; slow-consumer and client-abort cleanup (no listener leak);
-  two-browser Playwright test where a host edit appears on the second view; local p95 host-edit -> second-view recorded with the method and load stated; axe + 375px not
-  regressed.
+  two-browser Playwright test where a host edit appears on the second view; local p95 host-edit -> second-view recorded with the method and load stated (the dispatch
+  cycle is enabled only in the local test process or a scratch env, S1 ENABLEMENT); axe + 375px not regressed.
 ACCEPTANCE COMMANDS: S1 VERIFY set; pnpm --filter @plexco/web exec playwright test; local measurement script output pasted in the PR body.
 REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = event-to-subscriber authorization race, tenant isolation of the shared listener,
   resource exhaustion, CSP/headers on the stream, id-only claim.
@@ -456,7 +466,7 @@ DONE WHEN: one formula, two former copies deleted, backlog row list-sessions-occ
 LANE: L8 p3-m9-join-core
 GOAL: Player self-join on web (open -> active or waitlisted; approval -> join request), approve/reject, self-leave, FIFO waitlist promotion, cross-club guest membership, charge at join per D3 (base price until
   L11). Postgres is the only source of truth; reuse the host-add capacity/waitlist logic under the session row lock.
-MILESTONE: M9    RISK: P1 (money, identity, concurrency, migration likely)
+MILESTONE: M9    RISK: P1 (money, identity, concurrency, migration likely); B3: at most one migration, an exception is expected in step 0
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m9-join-core    BRANCH: feat/p3-m9-join-core
 DEPENDS ON: L7 merged and M6 code-complete (both in the P3-S3 merge round); D3 signed. BASE is origin/main after that merge round, no stacked branch
@@ -537,90 +547,177 @@ REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; question
 DONE WHEN: four GET routes return person-scoped data with the isolation tests green.
 ```
 
-### L10 - p3-m9-public-projector-discovery (M9, P1)
+### L10a - p3-m9-public-alias-moderation (M9, P1)
 
 ```text
-LANE: L10 p3-m9-public-projector-discovery
-GOAL: The public_sessions writer (a narrow SECURITY DEFINER function for app_worker), the projector consumer, the stage-2 session_occupancy(uuid) SQL function, and anonymous discovery read routes over the guarded view. Whitelist only;
-  slots_open only; never confirmed_count.
-MILESTONE: M9    RISK: P1 (public exposure of tenant data, migration, SECURITY DEFINER)
+LANE: L10a p3-m9-public-alias-moderation
+GOAL: The minimal moderated alias substrate that DD-114 D3 precondition 4 requires: a club public alias with status pending|approved|rejected, set by
+  the club, approved only by the platform owner. club_display_name will be the approved alias; no approved alias => never projected (DD-46
+  fail-closed).
+MILESTONE: M9 (public read model epic)    RISK: P1 (tenant-controlled text that becomes public; migration; owner-only moderation); B3: one migration
 BASE: origin/main at session start (git fetch first; record the full SHA)
-WORKTREE: .autopilot/worktrees/p3-m9-public-projector-discovery    BRANCH: feat/p3-m9-public-projector-discovery
-DEPENDS ON: L3, L6, L7 merged; D1 signed (includes the stage-2 function authorization)
-OWNER DECISIONS NEEDED: D1 (a) occupancy authority, (b) session_occupancy(uuid) inside this migration. Unsigned => AWAIT this lane only.
+WORKTREE: .autopilot/worktrees/p3-m9-public-alias-moderation    BRANCH: feat/p3-m9-public-alias-moderation
+DEPENDS ON: P3-S5 merged (migrations are sequential); D1 signed (part d). D1 declined => this lane leaves Phase 3
+OWNER DECISIONS NEEDED: D1 (public read model epic). Unsigned => AWAIT this lane only.
 FILES IN SCOPE:
-- NEW packages/db/migrations/<next>_public_sessions_projector_writer.sql: definers upsert/delete of public_sessions recomputed from canonical rows (EXECUTE app_worker; the writer role is excluded because preflight rejects SET ROLE,
-  apps/bot/src/preflight.ts:98-118); session_occupancy(p_session_id uuid) RETURNS integer LANGUAGE sql SECURITY INVOKER SET search_path = public, pg_temp, REVOKE FROM PUBLIC, EXECUTE app + the definer owner; optional CHECK (slots_open >=
-  0). Never re-grant base SELECT on public_sessions to app or readonly (0033:232-238); app DML stays revoked (0036)
-- packages/db/src/session-occupancy.ts (occupiedCountSql now emits session_occupancy(x): one body for TS and SQL); packages/db/src/public-session-fence.ts (+ CAS-clear wrapper for clear_public_session_fence, 0033:208); packages/db/schema.ts
-  + db.dbml
-- apps/bot/src/projectors/public-sessions.ts (replaces L3's disabled placeholder; consumes session.published, updated, visibility_changed, closed, cancelled and the occupancy events player.* and guest_note.*; index.ts is not edited);
-  registry row enabled through L3's registry function
-- NEW packages/db/src/public-discovery-read.ts (reads public_session_share_v as the readonly role); NEW apps/web/app/api/discover/route.ts and apps/web/app/api/discover/sessions/[publicId]/route.ts (path per
-  feature_marketplace_discovery_tech.md section 3, :109-110; the :26-29 names are drift); NEW apps/web/lib/discovery-cursor.ts (opaque signed cursor); apps/web/lib/request-policy.ts + middleware.ts (discovery process allowlist)
-- packages/db/src/rls-invariants.test.ts (:171 whitelist test stays green, add the new invariants); infra/docker-compose.yml discovery profile and .env.example only if wiring needs it
-NEGATIVE SCOPE: no confirmed_count column or field; no gender, money beyond price_amount, roster, venue address, tenant id, channel id or hold count in any public object; no DD-41 columns, no search overlay, no DD-46 alias substrate
-  (host_display_name stays NULL: UNPINNED default applied; club_display_name = tenants.name); no cache layer (UNPINNED default: none in the MVP); no player pages (L12); no bank or hold branch.
+- NEW packages/db/migrations/<next>_tenant_public_alias.sql: tenants.public_alias (plain text, bounded) + public_alias_status; a definer to set the
+  alias that authorizes content.manage through tenant_capability_authorize (0049) and sets status pending; a moderation definer NOT granted to app,
+  app_worker or readonly (owner path only) that approves or rejects; an append-only audit row per decision (table or existing audit function: lane
+  pins); packages/db/schema.ts + db.dbml
+- NEW packages/db/src/public-alias.ts (+ test), reusing HIDDEN_CHAR / the visible-code-point rule of packages/db/src/me-settings.ts (or L2's
+  text-safety module); packages/db/src/index.ts
+- NEW scripts/public-alias-moderate.mjs (owner CLI: list pending, approve, reject; writes the audit row; no UI in the MVP)
+- club-side control through the existing content.manage-gated club config path: apps/web/lib/club-config-route.ts,
+  apps/web/app/api/onboarding/club/route.ts, apps/web/lib/club-settings-model.ts, club-settings-client.ts,
+  apps/web/components/settings/club-profile-form.tsx (+ tests)
+NEGATIVE SCOPE: no projector, no public read route (L10, L10b); no moderation UI; tenants.name is never used as the public name; host and person
+  display names are never projected or returned; no auto-approve; no change to public_sessions.
 MODELS: writer opus/max; reviewer opus/max; security opus/max; readiness opus/max.
 DECISION TABLE:
-- published, public, status open, starts in the future, area non-blank, slots_max finite -> upsert the whitelist row, slots_open = slotsOpen(slots_max, session_occupancy(id)) recomputed at delivery time -> none
-- draft (even if public), private, closed, cancelled, past, blank area, slots_max NULL -> no row, delete if present, siblings continue; NULL slots_max is also an audit event -> none
+- caller with content.manage in this tenant sets a valid alias -> stored, status pending, any earlier approval cleared -> none
+- caller without content.manage -> FORBIDDEN (403), same body for every reason
+- alias empty, over the cap, or with control, bidi, zero-width or invisible-only characters -> INVALID_BODY (400), zero writes -> UNPINNED (default
+  applied: cap 60 characters)
+- platform owner approves or rejects through the owner CLI -> status approved or rejected + one audit row (actor, tenant, decision, time) -> none
+- approve or reject attempted by app, app_worker, readonly or a club role -> privilege error, zero writes
+- alias edited after approval -> back to pending; an unreviewed text is never public
+- tenant with no approved alias (none, pending, rejected) -> the lane's read function returns NULL so L10 never projects its sessions
+TESTS: each row as the real roles (app cannot call the moderation definer; owner path can); HIDDEN_CHAR set parity with me-settings; approval cleared
+  on edit; audit row written once per decision and cannot be updated or deleted; club settings UI shows pending/approved/rejected states with t(vi,
+  en) copy; no host or person name in any return value.
+ACCEPTANCE COMMANDS: S1 VERIFY set; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter @plexco/web test; one migration
+  at a time.
+REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any path where unreviewed text becomes public, privilege of the
+  moderation definer, XSS or spoofing through the alias, audit tamper.
+DONE WHEN: the alias lifecycle works through the club control and the owner CLI with the privilege tests green.
+```
+
+### L10 - p3-m9-public-projector (M9, P1)
+
+```text
+LANE: L10 p3-m9-public-projector
+GOAL: The public_sessions projector consumer and its ONE migration (backend only): the writer definer, the DD-41 projection columns, the stage-2 session_occupancy(uuid) function and an
+  opaque slug column. Whitelist only; slots_open only; never confirmed_count.
+MILESTONE: M9 (public read model epic)    RISK: P1 (public exposure of tenant data, SECURITY DEFINER); B3: exactly one migration, an exception is expected in step 0
+BASE: origin/main at session start (git fetch first; record the full SHA)
+WORKTREE: .autopilot/worktrees/p3-m9-public-projector    BRANCH: feat/p3-m9-public-projector
+DEPENDS ON: L3, L6, L7, L10a merged (S2, S3, S6 merge rounds); D1 signed (parts a, b, c)
+OWNER DECISIONS NEEDED: D1 (a) occupancy authority, (b) session_occupancy(uuid), (c) DD-41 columns in this migration. Unsigned => AWAIT this lane only.
+FILES IN SCOPE:
+- NEW packages/db/migrations/<next>_public_sessions_projector_writer.sql: definers that upsert and delete public_sessions rows recomputed from canonical rows (EXECUTE app_worker; the writer
+  role is excluded because preflight rejects SET ROLE, apps/bot/src/preflight.ts:98-118); session_occupancy(p_session_id uuid) RETURNS integer LANGUAGE sql SECURITY INVOKER SET search_path =
+  public, pg_temp, REVOKE FROM PUBLIC, EXECUTE app + the definer owner; DD-41 projection columns of BL-DSC-1 (title, session_type, level_min_rank, level_max_rank, level_strict,
+  gender_restriction, age_min, age_max as nullable; sessions has no source for them on main, so they stay NULL: UNPINNED default applied) and no skill_level in the view; an opaque unique
+  slug column (DD-83 style, unguessable); optional CHECK (slots_open >= 0). Never re-grant base SELECT on public_sessions to app or readonly (0033:232-238); app DML stays revoked (0036)
+- packages/db/src/session-occupancy.ts (occupiedCountSql now emits session_occupancy(x): one body for TS and SQL); packages/db/src/public-session-fence.ts (+ CAS-clear wrapper for
+  clear_public_session_fence, 0033:208); packages/db/schema.ts + db.dbml
+- apps/bot/src/projectors/public-sessions.ts (replaces L3's disabled placeholder; consumes session.published, updated, visibility_changed, closed, cancelled and the occupancy events player.*
+  and guest_note.*); the registry row is enabled through L3's registry function
+- packages/db/src/rls-invariants.test.ts (the whitelist test at :171 is amended to the exact approved BL-DSC-1 list in this PR and still excludes everything else)
+NEGATIVE SCOPE: no HTTP route and no UI (L10b, L12); no confirmed_count; no gender (person), money beyond price_amount, roster, venue address, tenant id, channel id, hold count, host or
+  person name in any public object; club_display_name = the approved alias from L10a only; no cache.
+MODELS: writer opus/max; reviewer opus/max; security opus/max; readiness opus/max.
+DECISION TABLE:
+- published, public, status open, starts in the future, area non-blank, slots_max finite, tenant has an approved alias -> upsert the whitelist row, slots_open = slotsOpen(slots_max,
+  session_occupancy(id)) recomputed at delivery time -> none
+- draft (even if public), private, closed, cancelled, past, blank area, slots_max NULL, or no approved alias -> no row, delete if present, siblings continue; NULL slots_max is also an audit
+  event -> none
 - public -> private, cancel, close -> delete the row, then CAS-clear the fence only if the token is still the one observed (a newer fence stays) -> none
-- occupancy events (player.*, guest_note.*, session.updated) -> recompute slots_open from canonical rows; events may arrive in any order and the result is identical -> none
+- occupancy events (player.*, guest_note.*, session.updated) -> recompute slots_open from canonical rows; any event order gives the same row -> none
 - expires_at < now() -> swept -> none
-- anonymous read -> whitelist DTO only: session_id, sport_key, starts_at, ends_at, area, price_amount, slots_open, club_display_name, host_display_name, join_policy; ORDER BY starts_at ASC, id ASC (MKT-OQ-3 default)
-- unknown filter value or malformed cursor -> INVALID_FILTER (400); over the rate limit -> DISCOVERY_RATE_LIMITED (429); numbers UNPINNED: lane pins default applied (proposal 60 requests per minute per IP, page size 20, max 50)
-- unknown, fenced or expired public id on detail -> NOT_FOUND (404), one body for all three
-TESTS: public-whitelist test (exact column list of the view and the DTO; no gender, price_male, roster, PII, tenant_id, slots_max, confirmed_count); permuted-event-order convergence; projector idempotent and a poison event does not block
-  siblings; the readonly role cannot SELECT the base table and app cannot write it; fence immediate-deny then CAS-clear; slots_open parity between session_occupancy(id) and getSessionOccupancy over active / waitlisted / left / guest-note
-  fixtures; cursor tamper rejected; rate limit; DTO golden JSON.
-ACCEPTANCE COMMANDS: S1 VERIFY set; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter @plexco/bot test; pnpm --filter @plexco/web test; one migration at a time.
-REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any public leak path, definer privilege and search_path, re-grant of base SELECT, fence race, anonymous abuse.
-DONE WHEN: a public open session appears in the anonymous API within the sync-lag budget and disappears immediately on private/cancel/close; whitelist tests green; chosen local wiring of the readonly read path recorded as default applied.
+- any projected field outside the approved whitelist -> the invariant test fails -> none
+TESTS: public-whitelist test (exact column list of the table, the view and what the projector writes; no gender, price_male, roster, PII, tenant_id, slots_max, confirmed_count, host or
+  person name); permuted-event-order convergence; idempotent projector and a poison event does not block siblings; no approved alias => no row; the readonly role cannot SELECT the base table
+  and app cannot write it; fence immediate-deny then CAS-clear; slots_open parity between session_occupancy(id) and getSessionOccupancy over active / waitlisted / left / guest-note fixtures;
+  slug unique and unguessable.
+ACCEPTANCE COMMANDS: S1 VERIFY set; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter @plexco/bot test; one migration at a time.
+REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any public leak path, definer privilege and search_path, base SELECT re-grant, fence race, alias gate
+  bypass.
+DONE WHEN: a public open session with an approved alias appears in public_sessions within the sync-lag budget and disappears immediately on private, cancel or close; whitelist tests green.
+```
+
+### L10b - p3-m9-discovery-read (M9, P1)
+
+```text
+LANE: L10b p3-m9-discovery-read
+GOAL: The anonymous public read surface over the guarded view: the discovery list route, the DD-73 opaque-slug detail route (DD-83 scheme) and the
+  rate limit. No migration.
+MILESTONE: M9 (public read model epic)    RISK: P1 (anonymous public surface)
+BASE: origin/main at session start (git fetch first; record the full SHA)
+WORKTREE: .autopilot/worktrees/p3-m9-discovery-read    BRANCH: feat/p3-m9-discovery-read
+DEPENDS ON: L10 merged (S7); D1 signed (parts a, e)
+OWNER DECISIONS NEEDED: D1 (e) DD-73 share link = the opaque-slug detail route. Unsigned => AWAIT this lane only.
+FILES IN SCOPE:
+- NEW packages/db/src/public-discovery-read.ts (reads public_session_share_v and the slug as the readonly role); NEW
+  apps/web/app/api/discover/route.ts (list); NEW opaque-slug detail route per DD-83 (path pinned by the lane, for example /session/<slug>, UNPINNED:
+  record it); NEW apps/web/lib/discovery-cursor.ts (opaque signed cursor)
+- apps/web/lib/request-policy.ts (DISCOVERY_PATH_ALLOWLIST :28 only allows /healthz and /discover*: add the new paths) + request-policy tests;
+  apps/web/middleware.ts; infra/docker-compose.yml discovery profile and .env.example only if wiring needs it (readonly URL: lane pins the local
+  wiring, default applied)
+NEGATIVE SCOPE: no migration (else HALT); no writer, no projector change; no UI (L12); no confirmed_count, slots_max, tenant id, venue, roster, money
+  beyond price_amount, gender, host or person name in any response; no /s/<session id> share path; no cache.
+MODELS: writer opus/max; reviewer opus/max; security opus/max; readiness opus/max.
+DECISION TABLE:
+- anonymous list request -> whitelist DTO only (session slug, sport_key, starts_at, ends_at, area, price_amount, slots_open, club_display_name,
+  join_policy, plus the DD-41 columns when non-NULL); ORDER BY starts_at ASC, id ASC (MKT-OQ-3 default)
+- unknown filter value or malformed cursor -> INVALID_FILTER (400); over the rate limit -> DISCOVERY_RATE_LIMITED (429); numbers UNPINNED: default
+  applied (proposal 60 requests per minute per IP, page size 20, max 50)
+- detail by opaque slug -> the same whitelist; unknown, fenced, expired or wrong-shape slug -> NOT_FOUND (404), one body for all
+- a guessable id (a raw session uuid) used as a slug -> NOT_FOUND, never resolved
+- fenced or private-again session -> absent immediately (view anti-join), no cache to purge
+TESTS: DTO golden JSON and a whitelist assertion on every response; the route runs as the readonly role and cannot read the base table; slug
+  enumeration returns 404 uniformly with equal timing class; rate limit; cursor tamper rejected; request-policy allowlist test for the discovery
+  process; no PII or money in logs.
+ACCEPTANCE COMMANDS: S1 VERIFY set; pnpm --filter @plexco/web test; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter
+  @plexco/web exec playwright test.
+REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any field beyond the whitelist, enumeration, rate-limit bypass,
+  discovery-process allowlist hole.
+DONE WHEN: anonymous list and slug detail return only whitelisted data with the isolation tests green; the chosen local wiring and the UNPINNED pins
+  are recorded as default applied.
 ```
 
 ### L11 - p3-m9-gender-pricing (M9, P1)
 
 ```text
 LANE: L11 p3-m9-gender-pricing
-GOAL: DD-39 gender pricing (signed, decisions.md:542-556): persons.gender_enc with consent, sessions.price_male/price_female, a self-declared settings control, host price
-  mode, and charge derivation at host-add, self-join and waitlist promotion.
-MILESTONE: M9    RISK: P1 (money, PII encryption, migration)
+GOAL: DD-39 gender pricing (signed, decisions.md:542-556): persons.gender_enc with consent, sessions.price_male/price_female, a self-declared settings control, host price mode, and charge derivation at host-add, self-join and waitlist
+  promotion.
+MILESTONE: M9    RISK: P1 (money, PII encryption, migration); B3: one migration, an exception is expected in step 0
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m9-gender-pricing    BRANCH: feat/p3-m9-gender-pricing
 DEPENDS ON: L8 merged (DD-39 is signed; no owner wait)
 OWNER DECISIONS NEEDED: none (DD-39 + the 2026-07-16 addendum are signed)
 FILES IN SCOPE:
-- NEW packages/db/migrations/<next>_gender_pricing.sql: persons.gender_enc bytea (+ key version and consent columns, names UNPINNED), sessions.price_male / price_female
-  integer CHECK >= 0 (both NULL = single price; at least one set = gender mode, a missing side falls back to price_amount); definers keyed by the account id (0055
-  pattern) to write the caller's own gender and to read it for charge derivation only; packages/db/schema.ts + db.dbml
-- NEW packages/db/src/charge-derivation.ts (deriveChargeAmount returns an amount or a typed failure, never enqueues); NEW packages/db/src/gender-crypto.ts reusing the
-  AES-256-GCM envelope of connector-crypto.ts with a distinct HKDF label and person-bound AAD; no new secret, local ENCRYPTION_KEY
-- packages/db/src/roster-service.ts (host-add charge :246-262), packages/db/src/session-join-service.ts (L8), the waitlist promotion path (L8),
-  packages/db/src/session-service.ts (create/update accept the two prices; price guard PRICE_CHANGE_REQUIRES_POLICY), packages/db/src/me-settings.ts
-- apps/web/components/me/settings-profile-form.tsx + settings-view.tsx (gender + consent), apps/web/components/sessions/session-form.tsx +
-  apps/web/lib/session-form-model.ts (price mode), the existing profile route apps/web/app/api/me/profile/route.ts (extend it: UNPINNED default applied; the BE doc names
-  PUT /api/me/settings), packages/core/src/api-contract.ts
-NEGATIVE SCOPE: no host-set gender (self-declared only); no raw gender returned to any host or any public surface, only the resulting price; no dob, no username; no
-  projector change except the whitelist test proving gender and per-gender prices never appear; no second price table.
+- NEW packages/db/migrations/<next>_gender_pricing.sql: persons.gender_enc bytea (+ key version and consent columns, names UNPINNED), sessions.price_male / price_female integer CHECK >= 0 (both NULL = single price; at least one set = gender
+  mode, a missing side falls back to price_amount); a definer keyed by the account id (0055 pattern) to write and self-read the caller's own gender, and a derivation definer that returns ciphertext only after authorizing the context
+  (self-join: caller person = target person; host-add or promotion: caller holds manage_roster in the session's tenant and the target has, or is being given, a membership there); packages/db/schema.ts + db.dbml
+- NEW packages/db/src/charge-derivation.ts (deriveChargeAmount returns an amount or a typed failure, never enqueues); NEW packages/db/src/gender-crypto.ts reusing the AES-256-GCM envelope of connector-crypto.ts with a distinct HKDF label
+  and person-bound AAD; no new secret, local ENCRYPTION_KEY
+- packages/db/src/roster-service.ts (host-add charge :246-262), packages/db/src/session-join-service.ts (L8), the waitlist promotion path (L8), packages/db/src/session-service.ts (create/update accept the two prices; price guard
+  PRICE_CHANGE_REQUIRES_POLICY), packages/db/src/me-settings.ts
+- apps/web/components/me/settings-profile-form.tsx + settings-view.tsx (gender + consent), apps/web/components/sessions/session-form.tsx + apps/web/lib/session-form-model.ts (price mode), the existing profile route
+  apps/web/app/api/me/profile/route.ts (extend it: UNPINNED default applied; the BE doc names PUT /api/me/settings), packages/core/src/api-contract.ts
+NEGATIVE SCOPE: no host-set gender (self-declared only); no raw gender returned to any host or any public surface, only the resulting price; no dob, no username; no projector change except the whitelist test proving gender and per-gender
+  prices never appear; no second price table.
 MODELS: writer opus/max; reviewer opus/max; security opus/max; readiness opus/max.
 DECISION TABLE (codes verbatim from feature_user_settings_tech.md):
 - session without price_male / price_female -> price_amount
 - gender_enc NULL (never set) -> price_amount + a visible "set your gender" prompt; a valid state, not an error
-- gender_enc present and decrypt/KMS fails -> FAIL-CLOSED, typed CHARGE_DERIVATION_UNAVAILABLE, NO fallback price; direct join/approve rolls back (no player, charge or
-  venue; a new guest membership rolls back too); host-add creates no charge and shows the host an error; waitlist promotion leaves the candidate unchanged + audit event
+- gender_enc present and decrypt/KMS fails -> FAIL-CLOSED, typed CHARGE_DERIVATION_UNAVAILABLE, NO fallback price; direct join/approve rolls back (no player, charge or venue; a new guest membership rolls back too); host-add creates no
+  charge and shows the host an error; waitlist promotion leaves the candidate unchanged + audit event
 - male with price_male set -> price_male; female with price_female set -> price_female; the missing side, other, undisclosed -> price_amount
 - consent OFF -> the charge path reads NULL -> price_amount
 - gender value outside male|female|other|undisclosed -> INVALID_GENDER (400)
-- anyone but the owner person or a host of a related club asking for gender -> GENDER_FORBIDDEN (403); hosts get the derived price only
+- gender plaintext is returned only to its owner (self-read in settings); charge derivation decrypts inside the process and returns ONLY the amount; gender is never logged, never in a DTO, never public -> none
+- any raw-gender read by anyone but its owner (including a host or the derivation context asking for plaintext) -> GENDER_FORBIDDEN (403)
+- derivation requested outside an authorized context (caller is neither the target person nor a manage_roster holder of that tenant) -> refused, zero writes, no ciphertext returned -> GENDER_FORBIDDEN (403)
 - host changes the price mode while any charge exists -> PRICE_CHANGE_REQUIRES_POLICY (existing guard), zero writes
 - derived amount outside int4 or negative -> refused, zero writes -> UNPINNED (default applied)
-TESTS: DECRYPT-FAILURE NO-CHARGE test (corrupt ciphertext and wrong key version: no charge row, no active player, host-visible error, for host-add, join and promotion);
-  NULL gender fallback + prompt; consent OFF path; one case per row above; public-whitelist test proving gender and price_male / price_female never reach public_sessions,
-  the view, any DTO or any log; ciphertext is person-bound (a blob copied to another person fails); settings UI is t(vi, en), labels read from the DD-39 value set.
+TESTS: DECRYPT-FAILURE NO-CHARGE test (corrupt ciphertext and wrong key version: no charge row, no active player, host-visible error, for host-add, join and promotion); NULL gender fallback + prompt; consent OFF path; one case per row
+  above; public-whitelist test proving gender and price_male / price_female never reach public_sessions, the view, any DTO or any log; ciphertext is person-bound (a blob copied to another person fails); settings UI is t(vi, en), labels read
+  from the DD-39 value set.
 ACCEPTANCE COMMANDS: S1 VERIFY set; NODE_ENV=test DATABASE_URL_TEST=... pnpm --filter @plexco/db test; pnpm --filter @plexco/web test; one migration at a time.
-REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any fallback on decrypt failure, plaintext gender in logs or errors, host able to read
-  raw gender, key reuse across purposes.
+REVIEW PLAN: opus/max reviewer + opus/max security round, max 3 rounds; questions = any fallback on decrypt failure, plaintext gender in logs or errors, host able to read raw gender, key reuse across purposes.
 DONE WHEN: every row has a passing test, decrypt failure provably charges nobody, public surfaces proven free of gender.
 ```
 
@@ -628,13 +725,15 @@ DONE WHEN: every row has a passing test, decrypt failure provably charges nobody
 
 ```text
 LANE: L12 p3-m9-player-web
-GOAL: The player-facing web pages: discovery list and detail (anonymous allowed), member session detail with join / leave / waitlist state, my clubs /
-  sessions / charges / requests, and the host approval inbox. Extends the local golden path with a player journey.
+GOAL: The player-facing web pages: discovery list and detail (anonymous allowed; these pages exist only if D1 is signed), member session detail with
+  join / leave / waitlist state, my clubs / sessions / charges / requests, and the host approval inbox. Extends the local golden path with a player
+  journey.
 MILESTONE: M9    RISK: P2 (UI over finished commands; money display only)
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m9-player-web    BRANCH: feat/p3-m9-player-web
-DEPENDS ON: L8, L9, L10 merged
-OWNER DECISIONS NEEDED: D3 (join and money), D1 (slots_open shown, no denominator). Unsigned => AWAIT this lane only.
+DEPENDS ON: L8, L9 merged; L10b merged for the discovery pages
+OWNER DECISIONS NEEDED: D3 (join and money); D1 for the discovery pages only (D1 declined => those pages leave this lane, the rest ships). Unsigned =>
+  AWAIT the affected part only.
 FILES IN SCOPE:
 - NEW apps/web/app/discover/page.tsx and apps/web/app/discover/[publicId]/page.tsx; NEW apps/web/app/me/page.tsx, apps/web/app/me/clubs/page.tsx,
   apps/web/app/me/sessions/page.tsx, apps/web/app/me/charges/page.tsx, apps/web/app/me/requests/page.tsx; NEW host inbox under
@@ -648,8 +747,9 @@ FILES IN SCOPE:
 NEGATIVE SCOPE: no API or DB change (an API gap goes under OPEN, not into this lane); no pay-now, QR or bank detail anywhere; no other player's debt;
   no venue before the player is active; no chat UI (L16); docs/channels/web/FE/*_fe.md are reference input only, any field without an owner DTO is
   omitted (UNPINNED - omit active UI).
-MODELS: writer sonnet/high; reviewer opus/high; security none; readiness opus/high.
-DECISION TABLE: none new (UI renders outcomes of L8 to L10; each screen's Error mapping table uses only codes from the merged routes and ends with an
+MODELS: writer sonnet/high; reviewer opus/max (shows own charges, triggers charge-creating joins, hosts the approval inbox); security none; readiness
+  opus/max.
+DECISION TABLE: none new (UI renders outcomes of L8 to L10b; each screen's Error mapping table uses only codes from the merged routes and ends with an
   unknown/timeout fail-closed row).
 TESTS: every screen has loading, ready, empty, error and offline states at 375px and desktop, light and dark; axe clean; amounts only through
   formatVnd; waitlisted/pending users see area and position but no venue; anonymous discovery page works with no session; join button disabled and
@@ -657,7 +757,7 @@ TESTS: every screen has loading, ready, empty, error and offline states at 375px
   en) pairs.
 ACCEPTANCE COMMANDS: S1 VERIFY set; pnpm --filter @plexco/web exec playwright test; local golden-path run (apps/web/e2e/golden-path.config.ts) output
   cited or marked NOT RUN with the reason.
-REVIEW PLAN: opus/high reviewer, max 3 rounds; questions = any DTO field shown that is not whitelisted, debt of another person, hardcoded value,
+REVIEW PLAN: opus/max reviewer, max 3 rounds; questions = any DTO field shown that is not whitelisted, debt of another person, hardcoded value,
   client-trusted ids.
 DONE WHEN: the player journey passes locally end to end and the extended golden path run is recorded.
 ```
@@ -713,7 +813,7 @@ DONE WHEN: /join, /leave, /pay work for linked accounts against the recorded-pay
 LANE: L14 p3-m10-chat-core
 GOAL: The chat command core on the existing chat_* tables, through chat_definer functions: send, edit own, soft-delete own, mark read, moderation hide/restore, plus the default club channel
   auto-provisioned with chat_members rows in the same transaction as membership activation. DM stays disabled.
-MILESTONE: M10    RISK: P1 (authorization, new definer functions, migration)
+MILESTONE: M10    RISK: P1 (authorization, new definer functions, migration); B3: one migration, an exception is expected in step 0
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m10-chat-core    BRANCH: feat/p3-m10-chat-core
 DEPENDS ON: L8 merged; D4 signed
@@ -805,7 +905,7 @@ GOAL: The chat UI for the D4 cut: channel list, keyset history, composer, reply,
 MILESTONE: M10    RISK: P2 (UI over finished routes)
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-m10-chat-web    BRANCH: feat/p3-m10-chat-web
-DEPENDS ON: L15 merged (P3-S10 merge round); D4 signed. BASE is origin/main after that merge round, no stacked branch
+DEPENDS ON: L15 merged (P3-S11 merge round); D4 signed. BASE is origin/main after that merge round, no stacked branch
 OWNER DECISIONS NEEDED: D4. Unsigned => AWAIT this lane only.
 FILES IN SCOPE:
 - NEW apps/web/app/c/[tenantId]/chat/page.tsx and apps/web/app/c/[tenantId]/chat/[channelId]/page.tsx (Server Components gate auth with
@@ -841,8 +941,9 @@ GOAL: Close Phase 3: ledger, handoff-3, backlog flips, runbook, owner P0 list an
 MILESTONE: all    RISK: P2 (docs)
 BASE: origin/main at session start (git fetch first; record the full SHA)
 WORKTREE: .autopilot/worktrees/p3-closeout    BRANCH: docs/p3-closeout
-DEPENDS ON: every other lane merged, L16 last: L17 runs beside L16 in P3-S11, is merged last, and after L16 merges it catches up with git merge
-  --no-ff origin/main, completes the L16-dependent rows and the golden-path evidence, then re-runs its checks
+DEPENDS ON: every other lane merged, L16 last: L17 is the one exception to "a dependency runs in a later session": this docs-only closeout runs beside
+  L16 in P3-S12, is merged last, and after L16 merges it catches up with git merge --no-ff origin/main, completes the L16-dependent rows and the
+  golden-path evidence, then re-runs its checks
 OWNER DECISIONS NEEDED: none (list any default still "applied, pending owner sign-off")
 FILES IN SCOPE:
 - docs/sessions/web-mvp-program-status.md (milestone rows M6, M9, M10 with PR numbers and measured SHA); NEW
@@ -869,46 +970,43 @@ DONE WHEN: handoff-3 lists state, open proposals (defaults applied, pending sign
   unsigned) and the golden-path evidence.
 ```
 
-## S3. Sessions P3-S1..P3-S11
+## S3. Sessions P3-S1..P3-S12
 
 Mỗi block là một session tự đủ: conductor chép nguyên block vào file session local, đính kèm block S1 và các block lane (S2) của session đó. Không có stacked PR: lane phụ thuộc chạy ở session sau, base là `origin/main` sau merge round. Trong session song song tối đa một lane sửa `session-service.ts` (cũng `roster-service.ts`, `session-form.tsx`); lane có migration không chạy song song với nhau.
 
 ### P3-S1 - docs sync + CI hardening + text safety (L0, L1, L2)
 
 ```text
-SESSION P3-S1 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
+SESSION P3-S1 (orchestrator: opus/max; never pass model fable to any Agent call)
 DEPENDS ON: Phase 3 plan merged or approved. L0 also needs D1-D5 signed (an unsigned Dn only skips its own edits). L1 and L2 need nothing else.
-READ FIRST: the S1 operating rules block; lane blocks L0, L1, L2; docs/00-start-here/HANDOFF.md (newest LIVE TRUTH block); docs/standards/decisions.md (DD-122, DD-131, DD-132, DD-133..DD-137);
-  docs/sessions/web-mvp-program-status.md.
-STEP 0: per lane, a readiness reviewer (same model and effort as that lane's code reviewer) re-verifies live truth at the session base (commit, schema, migrations, grants and RLS, tests, dependent specs) and
-  writes docs/sessions/web-mvp-phase3-readiness-<slug>.md: the code-ready review-readiness marker, the canonical verdict block of docs/standards/review-code-readiness-gate.md, TARGET_FILES only files that
-  exist. It is the lane branch's FIRST commit and must pass pnpm review:check:changed. NOT_CODE_READY => that lane AWAITs with the exact blocker; other lanes continue.
-TASKS: 1) step 0 for L0, L1, L2. 2) Writers run in parallel in .autopilot/worktrees/p3-docs-decisions-sync, p3-ci-flake-hardening, p3-session-text-control-chars. 3) Each lane: verify, orchestrator pushes and
-  opens the PR, independent review (max 3 rounds, the L2 reviewer also covers input security), CI GREEN, MERGE_READY.
-PARALLEL: all three. File-disjoint: L0 edits docs/ and plans/ only; L1 edits test files, test harnesses and apps/web/e2e/pwa.spec.ts; L2 edits session-service.ts (the ONLY session-service.ts editor here), a new
-  text-safety module, me-settings.ts exports and the web session form model. No lane has a migration. DB and e2e verification runs serialise on the one lock (one Postgres, one port).
-MERGE ROUND: the merge clerk merges the MERGE_READY PRs in order L0, L1, L2 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. Remaining PRs catch up with git merge --no-ff origin/main.
+READ FIRST: the S1 operating rules block; lane blocks L0, L1, L2; docs/00-start-here/HANDOFF.md (newest LIVE TRUTH block); docs/standards/decisions.md (DD-122, DD-131, DD-132, DD-133..DD-137); docs/sessions/web-mvp-program-status.md.
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first
+  commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L0, L1, L2. 2) Writers run in parallel in .autopilot/worktrees/p3-docs-decisions-sync, p3-ci-flake-hardening, p3-session-text-control-chars. 3) Each lane: verify, orchestrator pushes and opens the PR, independent review
+  (max 3 rounds, the L2 reviewer also covers input security), CI GREEN, MERGE_READY.
+PARALLEL: all three. File-disjoint: L0 edits docs/ and plans/ only; L1 edits test files, test harnesses and apps/web/e2e/pwa.spec.ts; L2 edits session-service.ts (the ONLY session-service.ts editor here), a new text-safety module,
+  me-settings.ts exports and the web session form model. No lane has a migration. DB and e2e verification runs serialise on the one lock (one Postgres, one port): L1's repeated-run proof takes ONE exclusive DB/e2e window and L2's DB tests
+  wait for it.
+MERGE ROUND: the merge clerk (sonnet/high) merges the MERGE_READY PRs in order L0, L1, L2 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. Remaining PRs catch up with git merge --no-ff origin/main.
 STOP: AWAIT per lane on NOT_CODE_READY or an unsigned Dn; BLOCKED on 3 failed review rounds, scope drift, or a flake that survives the L1 root-cause work; never loosen a timeout to pass.
-REPORT: per lane: STATUS, HEAD (full sha), CHANGED, CHECKS with measured output, OPEN; the L1 N-run flake evidence; MERGE_READY #<n> head=<full 40-char sha> by=S1 per PR; last line RESULT: DONE | CONTINUE |
-  AWAIT | BLOCKED.
+REPORT: per lane: STATUS, HEAD (full sha), CHANGED, CHECKS with measured output, OPEN; the L1 N-run flake evidence; MERGE_READY #<n> head=<full 40-char sha> by=S1 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
 
 ### P3-S2 - M6 delivery core + visibility toggle (L3, L6)
 
 ```text
-SESSION P3-S2 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
+SESSION P3-S2 (orchestrator: opus/max; never pass model fable to any Agent call)
 DEPENDS ON: P3-S1 merged (L1 flake hardening, L2 text safety); D2 (a, b, e) signed for L3; D5 signed (starts M6). L6 needs only L2.
-READ FIRST: S1 operating rules; lane blocks L3, L6; docs/features/BE/feature_sync_engine_tech.md; docs/features/BE/feature_session_management_tech.md (section 4 draft discard + auto-expiry, edges #28-#30);
-  apps/bot/src/dispatcher.ts, worker.ts, queues.ts; packages/db/migrations/0022, 0023, 0033.
-STEP 0: per lane, a readiness reviewer (same model and effort as that lane's code reviewer) re-verifies live truth at the session base and writes docs/sessions/web-mvp-phase3-readiness-<slug>.md (code-ready
-  marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST commit; it must pass pnpm review:check:changed. NOT_CODE_READY => that lane AWAITs with the exact blocker.
-TASKS: 1) step 0 for L3 and L6. 2) L3 (the migration lane, opus/max + security) and L6 (no migration) run in parallel. 3) Each lane: verify, push + PR, independent review (max 3 rounds), security round for L3,
-  CI GREEN, MERGE_READY. 4) The L3 report carries the measured sync-lag numbers with the stated load.
-PARALLEL: L3 and L6. File-disjoint: L3 edits apps/bot, packages/db migrations and schema, scripts and a runbook and must NOT edit session-service.ts (stale-draft auto-expiry goes through a new module or
-  definer; if impossible that sub-item HALTs SCOPE_DRIFT and moves to a later lane); L6 edits apps/web session components, web lib and e2e and is the ONLY session-service.ts editor here (tests only unless a fix
-  is proven necessary). L3 is the only migration lane.
-MERGE ROUND: the merge clerk merges in order L3, L6 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. OUTBOX_DISPATCH_SCHEDULE_ENABLED stays false; L3's runbook holds the owner's enable
-  and rollback steps (P0).
+READ FIRST: S1 operating rules; lane blocks L3, L6; docs/features/BE/feature_sync_engine_tech.md; docs/features/BE/feature_session_management_tech.md (section 4 draft discard + auto-expiry, edges #28-#30); apps/bot/src/dispatcher.ts,
+  worker.ts, queues.ts; packages/db/migrations/0022, 0023, 0033.
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first
+  commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L3 and L6. 2) L3 (the migration lane, opus/max + security) and L6 (no migration) run in parallel. 3) Each lane: verify, push + PR, independent review (max 3 rounds), security round for L3, CI GREEN, MERGE_READY. 4) The
+  L3 report carries the measured sync-lag numbers with the stated load.
+PARALLEL: L3 and L6. File-disjoint: L3 edits apps/bot, packages/db migrations and schema, scripts and a runbook and must NOT edit session-service.ts (stale-draft auto-expiry goes through a new module or definer; if impossible that sub-item
+  HALTs SCOPE_DRIFT and moves to a later lane); L6 edits apps/web session components, web lib and e2e and is the ONLY session-service.ts editor here (tests only unless a fix is proven necessary). L3 is the only migration lane.
+MERGE ROUND: the merge clerk (sonnet/high) merges in order L3, L6 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. OUTBOX_DISPATCH_SCHEDULE_ENABLED stays false; L3's runbook holds the owner's enable and rollback steps
+  (P0).
 STOP: AWAIT L3 if D2 is unsigned (L6 continues); HALT L6 if the toggle needs a migration; BLOCKED on 3 failed rounds, a REGION_THRASH, or any path that lets app_worker read a base table.
 REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the L3 sync-lag table; MERGE_READY #<n> head=<full 40-char sha> by=S2 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
@@ -916,18 +1014,18 @@ REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the L3 sync-lag table; MER
 ### P3-S3 - M6 Zalo outbound + web live sync + occupancy helper (L4, L5, L7)
 
 ```text
-SESSION P3-S3 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
+SESSION P3-S3 (orchestrator: opus/max; never pass model fable to any Agent call)
 DEPENDS ON: P3-S2 merged (L3 registry, wake-up, DLQ, projector placeholders); D2 (c) signed for L4 and L5. L7 depends on nothing (stage 1, same semantics). M6 is code-complete after this merge round, except L4b.
 READ FIRST: S1 operating rules; lane blocks L4, L5, L7; apps/web/lib/connector-secrets.ts, apps/web/lib/zalo/client.ts, apps/web/lib/zalo/process-event.ts; packages/db/src/zalo-ingress.ts; docs/features/BE/feature_sync_engine_tech.md;
   docs/runbooks/outbox-dispatch-enable-rollback.md (from L3); docs/research/occupancy-authority-2026-10-16.md if present.
-STEP 0: per lane, a readiness reviewer (same model and effort as that lane's code reviewer) re-verifies live truth at the session base and writes docs/sessions/web-mvp-phase3-readiness-<slug>.md (code-ready marker, canonical verdict block,
-  TARGET_FILES only existing files) as the lane branch's FIRST commit; it must pass pnpm review:check:changed. NOT_CODE_READY => that lane AWAITs with the exact blocker.
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first
+  commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
 TASKS: 1) step 0 for L4, L5, L7. 2) Three writers (all opus/max) run in parallel; L4 and L5 also get a security round. 3) Each lane: verify, push + PR, independent review (max 3 rounds), CI GREEN, MERGE_READY. 4) Prepare the owner P0 list:
   enable the schedule, connect a real Zalo bot token, message real users; none is done by an agent.
 PARALLEL: L4, L5, L7. File-disjoint: L4 edits the Zalo projector file, the shared connector crypto, packages/db/src/index.ts (the ONLY editor), zalo-ingress.ts, one definer migration (the ONLY migration here) and web connector files; L5
   edits its own projector file, the web realtime route, lib and hooks, request-policy, middleware and new e2e files only; L7 is the ONLY session-service.ts and roster-service.ts editor, plus session-read.ts, the occupancy module,
   sessions-api.ts, the roster-counts and session-card components and e2e/support/session-api-mock.ts (which L5 must not touch). Projector files are separate modules created by L3, so index.ts of the projector map is not edited.
-MERGE ROUND: the merge clerk merges in order L7, L4, L5 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. Then the conductor runs the M6 local golden-path check (verifier sonnet/high, evidence only).
+MERGE ROUND: the merge clerk (sonnet/high) merges in order L7, L4, L5 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. Then the conductor runs the M6 local golden-path check (verifier sonnet/high, evidence only).
 STOP: AWAIT L4 or L5 if D2 is unsigned (L7 continues); BLOCKED on any claim of live delivery, a secret that must be provisioned, or 3 failed rounds.
 REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the L5 p95 numbers with load; the L7 equivalence evidence; the P0 list; MERGE_READY #<n> head=<full 40-char sha> by=S3 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
@@ -935,17 +1033,17 @@ REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the L5 p95 numbers with lo
 ### P3-S4 - M9 join core (L8)
 
 ```text
-SESSION P3-S4 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
+SESSION P3-S4 (orchestrator: opus/max; never pass model fable to any Agent call)
 DEPENDS ON: P3-S3 merged (L7 occupancy helper, M6 code-complete); D3 signed.
 READ FIRST: S1 operating rules; lane block L8; docs/features/FE/feature_cross_club_join.md + BE/feature_cross_club_join_tech.md; packages/db/src/roster-service.ts and
   roster-money-shared.ts; packages/db/src/session-occupancy.ts; docs/standards/decisions.md (DD-05, DD-125, DD-135).
-STEP 0: a readiness reviewer (same model and effort as L8's code reviewer) re-verifies live truth at the session base and writes
-  docs/sessions/web-mvp-phase3-readiness-p3-m9-join-core.md (code-ready marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST
-  commit; it must pass pnpm review:check:changed. NOT_CODE_READY => AWAIT with the exact blocker.
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm
+  review:check:changed BEFORE it is committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes
+  into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
 TASKS: 1) step 0 for L8. 2) L8 writer (opus/max) in .autopilot/worktrees/p3-m9-join-core, based on origin/main after the P3-S3 merge round. 3) Verify (the concurrency
   test runs as the real app role), push + PR, independent review plus security round (max 3 rounds), CI GREEN, MERGE_READY. 4) Record the UNPINNED pins.
 PARALLEL: none (single lane; it is the migration lane and the roster-service.ts editor).
-MERGE ROUND: the merge clerk merges L8 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+MERGE ROUND: the merge clerk (sonnet/high) merges L8 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
 STOP: AWAIT on unsigned D3; HALT on an oversell in the concurrency test, a second occupancy formula, or a client-supplied person or tenant id being trusted; BLOCKED on 3
   failed rounds.
 REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the concurrency evidence and the UNPINNED pins; MERGE_READY #<n> head=<full 40-char sha> by=S4; last line RESULT: DONE |
@@ -955,158 +1053,184 @@ REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the concurrency evidence and the UN
 ### P3-S5 - M9 person-scoped reads + announce route (L9, L4b)
 
 ```text
-SESSION P3-S5 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
-DEPENDS ON: P3-S4 merged (L8); P3-S3 merged (L4). L9 needs D3 signed. L4b runs only if D2 (f) is signed, otherwise it is PARKED until the owner reports the schedule enabled and L9 runs alone.
-READ FIRST: S1 operating rules; lane blocks L9, L4b; docs/features/FE/feature_player_view.md + BE/feature_player_view_tech.md; packages/db/migrations/0055_me_settings_definers.sql;
-  packages/db/src/me-settings.ts; docs/features/BE/feature_session_management_tech.md (announce, section 3 error codes); docs/standards/decisions.md lines 753-758 (announce deferral) and DD-134.
-STEP 0: per lane, a readiness reviewer (same model and effort as that lane's code reviewer) re-verifies live truth at the session base and writes docs/sessions/web-mvp-phase3-readiness-<slug>.md (code-ready
-  marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST commit; it must pass pnpm review:check:changed. NOT_CODE_READY => that lane AWAITs with the exact blocker.
-TASKS: 1) step 0 for L9 and L4b. 2) L9 (migration lane, opus/max + security) and L4b (no migration, opus/max + security) run in parallel. 3) Each lane: verify, push + PR, independent review plus security round
-  (max 3 rounds), CI GREEN, MERGE_READY. 4) L9 evidence: cross-person and cross-tenant isolation tests as the real app role; L4b evidence: refusal while the flag is OFF and zero outbox rows.
-PARALLEL: L9 and L4b. File-disjoint: L9 edits its new definer migration (the ONLY migration), me-player-reads.ts, packages/db/src/index.ts and schema.ts and the new apps/web/app/api/me routes, with no
-  api-contract.ts change; L4b is the ONLY session-service.ts editor and edits the announce route, session-command-route.ts, packages/core api-contract.ts and a packages/core flag helper.
-MERGE ROUND: the merge clerk merges in order L9, L4b once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
-STOP: AWAIT L9 on unsigned D3; park L4b on unsigned D2 (f); HALT if a function needs a person or tenant parameter from the client, any response can carry another person's data, or the announce route can answer
-  announced:true while the flag is OFF; BLOCKED on 3 failed rounds.
-REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the isolation and refusal test lists with output; MERGE_READY #<n> head=<full 40-char sha> by=S5 per PR; last line RESULT: DONE | CONTINUE | AWAIT |
-  BLOCKED.
+SESSION P3-S5 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S4 merged (L8); P3-S3 merged (L4). L4b waits for L8 only because both edit api-contract.ts and session-command-route.ts (shared-file serialization). L9 needs D3 signed. L4b runs only if D2 (f) is signed, otherwise it is
+  PARKED until the owner reports the schedule enabled and L9 runs alone.
+READ FIRST: S1 operating rules; lane blocks L9, L4b; docs/features/FE/feature_player_view.md + BE/feature_player_view_tech.md; packages/db/migrations/0055_me_settings_definers.sql; packages/db/src/me-settings.ts;
+  docs/features/BE/feature_session_management_tech.md (announce, section 3 error codes); docs/standards/decisions.md lines 753-758 (announce deferral) and DD-134.
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first
+  commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L9 and L4b. 2) L9 (migration lane, opus/max + security) and L4b (no migration, opus/max + security) run in parallel. 3) Each lane: verify, push + PR, independent review plus security round (max 3 rounds), CI GREEN,
+  MERGE_READY. 4) L9 evidence: cross-person and cross-tenant isolation tests as the real app role; L4b evidence: refusal while the flag is OFF and zero outbox rows.
+PARALLEL: L9 and L4b. File-disjoint: L9 edits its new definer migration (the ONLY migration), me-player-reads.ts, packages/db/src/index.ts and schema.ts and the new apps/web/app/api/me routes, with no api-contract.ts change; L4b is the ONLY
+  session-service.ts editor and edits the announce route, session-command-route.ts, packages/core api-contract.ts and a packages/core flag helper.
+MERGE ROUND: the merge clerk (sonnet/high) merges in order L9, L4b once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+STOP: AWAIT L9 on unsigned D3; park L4b on unsigned D2 (f); HALT if a function needs a person or tenant parameter from the client, any response can carry another person's data, or the announce route can answer announced:true while the flag
+  is OFF; BLOCKED on 3 failed rounds.
+REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the isolation and refusal test lists with output; MERGE_READY #<n> head=<full 40-char sha> by=S5 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
 
-### P3-S6 - M9 public projector + discovery (L10)
+### P3-S6 - M9 public alias moderation (L10a)
 
 ```text
-SESSION P3-S6 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
-DEPENDS ON: P3-S5 merged (migrations are strictly sequential); L3, L6, L7 merged; D1 signed including the stage-2 session_occupancy(uuid) authorization.
-READ FIRST: S1 operating rules; lane block L10; docs/features/FE/feature_marketplace_discovery.md + BE/feature_marketplace_discovery_tech.md; packages/db/migrations/0006, 0024, 0033, 0036;
-  docs/standards/decisions.md (DD-12, DD-114 D3, DD-133); docs/research/occupancy-authority-2026-10-16.md if present; apps/web/middleware.ts and lib/request-policy.ts.
-STEP 0: a readiness reviewer (same model and effort as L10's code reviewer) re-verifies live truth at the session base and writes
-  docs/sessions/web-mvp-phase3-readiness-p3-m9-public-projector-discovery.md (code-ready marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST commit;
-  it must pass pnpm review:check:changed. NOT_CODE_READY => AWAIT with the exact blocker.
-TASKS: 1) step 0 for L10. 2) L10 writer (opus/max) in .autopilot/worktrees/p3-m9-public-projector-discovery. 3) Verify, push + PR, independent review plus security round (max 3 rounds), CI
-  GREEN, MERGE_READY. 4) Record the chosen local wiring of the readonly read path and the UNPINNED pins (rate limit, page size, no cache, host_display_name NULL).
+SESSION P3-S6 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S5 merged (migrations are strictly sequential); D1 signed (part d). D1 declined => this session is skipped.
+READ FIRST: S1 operating rules; lane block L10a; docs/standards/decisions.md (DD-114 D3 preconditions, DD-46, DD-133); packages/db/src/me-settings.ts;
+  packages/db/migrations/0047, 0049; apps/web/lib/club-config-route.ts; docs/research/occupancy-authority-2026-10-16.md.
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is
+  checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY =>
+  nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L10a. 2) L10a writer (opus/max) in .autopilot/worktrees/p3-m9-public-alias-moderation. 3) Verify, push + PR, independent review
+  plus security round (max 3 rounds), CI GREEN, MERGE_READY. 4) Record the UNPINNED pins (alias cap, audit mechanism).
 PARALLEL: none (single migration lane).
-MERGE ROUND: the merge clerk merges L10 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
-STOP: AWAIT on unsigned D1; HALT on any re-grant of base SELECT, any public field beyond the whitelist, or a confirmed_count appearing anywhere; BLOCKED on 3 failed rounds.
-REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; whitelist test output; slots_open parity evidence; MERGE_READY #<n> head=<full 40-char sha> by=S6; last line RESULT: DONE | CONTINUE | AWAIT |
+MERGE ROUND: the merge clerk (sonnet/high) merges L10a once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+STOP: AWAIT on unsigned D1; HALT if unreviewed text can reach any public object, the moderation definer is callable by app, app_worker or readonly, or
+  a host or person name is returned; BLOCKED on 3 failed rounds.
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the privilege test output; MERGE_READY #<n> head=<full 40-char sha> by=S6; last line RESULT: DONE |
+  CONTINUE | AWAIT | BLOCKED.
+```
+
+### P3-S7 - M9 public projector (L10)
+
+```text
+SESSION P3-S7 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S6 merged (L10a; migrations are strictly sequential); L3, L6, L7 merged; D1 signed (parts a, b, c).
+READ FIRST: S1 operating rules; lane block L10; docs/features/FE/feature_marketplace_discovery.md + BE/feature_marketplace_discovery_tech.md; packages/db/migrations/0006, 0024, 0033, 0036;
+  docs/standards/decisions.md (DD-12, DD-114 D3, DD-41, DD-83, DD-133); docs/research/occupancy-authority-2026-10-16.md; apps/bot/src/projectors/public-sessions.ts (L3 placeholder).
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed
+  BEFORE it is committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's
+  AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L10 (B3 exception expected: one migration with four parts). 2) L10 writer (opus/max) in .autopilot/worktrees/p3-m9-public-projector. 3) Verify, push + PR, independent
+  review plus security round (max 3 rounds), CI GREEN, MERGE_READY. 4) Record the UNPINNED pins (DD-41 columns left NULL, slug shape).
+PARALLEL: none (single migration lane).
+MERGE ROUND: the merge clerk (sonnet/high) merges L10 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+STOP: AWAIT on unsigned D1; HALT on any re-grant of base SELECT, any public field beyond the approved whitelist, confirmed_count anywhere, or a projected row without an approved alias;
+  BLOCKED on 3 failed rounds.
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; whitelist test output; slots_open parity evidence; MERGE_READY #<n> head=<full 40-char sha> by=S7; last line RESULT: DONE | CONTINUE | AWAIT |
   BLOCKED.
 ```
 
-### P3-S7 - M9 gender pricing (L11)
+### P3-S8 - M9 discovery read + gender pricing (L10b, L11)
 
 ```text
-SESSION P3-S7 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
-DEPENDS ON: P3-S6 merged (migrations are strictly sequential); L8 merged. DD-39 is signed, no owner wait.
-READ FIRST: S1 operating rules; lane block L11; docs/standards/decisions.md (DD-39 at :542-556); docs/features/BE/feature_user_settings_tech.md (charge derivation
-  section); docs/features/FE/feature_user_settings.md; the shared connector crypto from L4 (packages/db/src/connector-crypto.ts).
-STEP 0: a readiness reviewer (same model and effort as L11's code reviewer) re-verifies live truth at the session base and writes
-  docs/sessions/web-mvp-phase3-readiness-p3-m9-gender-pricing.md (code-ready marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST
-  commit; it must pass pnpm review:check:changed. NOT_CODE_READY => AWAIT with the exact blocker.
-TASKS: 1) step 0 for L11. 2) L11 writer (opus/max) in .autopilot/worktrees/p3-m9-gender-pricing. 3) Verify, push + PR, independent review plus security round (max 3
-  rounds), CI GREEN, MERGE_READY. 4) Evidence: the decrypt-failure no-charge test for host-add, join and promotion, and the public-whitelist test.
-PARALLEL: none (single migration lane; it edits session-service.ts, roster-service.ts and session-form.tsx).
-MERGE ROUND: the merge clerk merges L11 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
-STOP: HALT on any fallback price after a decrypt failure, plaintext gender in a log or error, or a host path that reads raw gender; BLOCKED on 3 failed rounds.
-REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the decision-table test map; MERGE_READY #<n> head=<full 40-char sha> by=S7; last line RESULT: DONE | CONTINUE | AWAIT |
-  BLOCKED.
+SESSION P3-S8 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S7 merged (L10); L8 merged (L11). L10b needs D1 signed (parts a, e) and is skipped if D1 is declined; L11 needs no owner wait (DD-39 is signed).
+READ FIRST: S1 operating rules; lane blocks L10b, L11; docs/standards/decisions.md (DD-39 at :542-556, DD-73, DD-83, DD-133); docs/features/BE/feature_user_settings_tech.md (charge derivation);
+  docs/features/BE/feature_marketplace_discovery_tech.md; apps/web/lib/request-policy.ts; packages/db/src/connector-crypto.ts (L4).
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is
+  committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are
+  recorded here. Other lanes continue.
+TASKS: 1) step 0 for L10b and L11. 2) L11 (migration lane, opus/max + security) and L10b (no migration, opus/max + security) in parallel. 3) Each lane: verify, push + PR, independent review plus security round
+  (max 3 rounds), CI GREEN, MERGE_READY. 4) L11 evidence: the decrypt-failure no-charge test and the public-whitelist test; L10b evidence: whitelist assertion on every response.
+PARALLEL: L10b and L11. File-disjoint: L11 is the ONLY migration lane and the ONLY session-service.ts, roster-service.ts and session-form.tsx editor (plus me-settings, charge-derivation, gender-crypto and the
+  settings UI); L10b edits only its new discovery read module and routes, request-policy.ts and middleware.ts, with no migration and no packages/db/src/index.ts change.
+MERGE ROUND: the merge clerk (sonnet/high) merges L11 then L10b once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+STOP: AWAIT L10b on unsigned D1 (L11 continues); HALT on any fallback price after a decrypt failure, plaintext gender in a log, error or DTO, a host path that reads raw gender, a migration in L10b, or any
+  non-whitelisted field in a public response; BLOCKED on 3 failed rounds.
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the L11 decision-table test map; MERGE_READY #<n> head=<full 40-char sha> by=S8 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
 
-### P3-S8 - M9 player web + Zalo player commands (L12, L13)
+### P3-S9 - M9 player web + Zalo player commands (L12, L13)
 
 ```text
-SESSION P3-S8 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
-DEPENDS ON: P3-S7 merged; L8, L9, L10 merged (L12); L8, L4 merged (L13); D3 signed (D1 for the slots_open display). Neither lane has a migration.
+SESSION P3-S9 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S8 merged; L8, L9 merged and L10b merged for the discovery pages (L12); L8, L4 merged (L13); D3 signed. D1 declined => L12 drops its discovery pages and ships the rest. Neither lane has a
+  migration.
 READ FIRST: S1 operating rules; lane blocks L12, L13; docs/channels/web/FE/feature_player_view_fe.md and feature_marketplace_fe.md (reference input only); docs/standards/design-tokens.md; apps/web/lib/zalo/*;
   docs/runbooks/local-mvp-smoke.md.
-STEP 0: per lane, a readiness reviewer (same model and effort as that lane's code reviewer) re-verifies live truth at the session base and writes docs/sessions/web-mvp-phase3-readiness-<slug>.md (code-ready
-  marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST commit; it must pass pnpm review:check:changed. NOT_CODE_READY => that lane AWAITs with the exact blocker.
-TASKS: 1) step 0 for L12 and L13. 2) L12 writer sonnet/high (reviewer opus/high) and L13 writer opus/max (reviewer + security opus/max) in parallel. 3) Each lane: verify, push + PR, review (max 3 rounds), CI
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is
+  committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are
+  recorded here. Other lanes continue.
+TASKS: 1) step 0 for L12 and L13. 2) L12 writer sonnet/high (reviewer opus/max) and L13 writer opus/max (reviewer + security opus/max) in parallel. 3) Each lane: verify, push + PR, review (max 3 rounds), CI
   GREEN, MERGE_READY. 4) After the merge round the conductor runs the extended local golden path for M9 (verifier sonnet/high; evidence only).
 PARALLEL: L12 and L13. File-disjoint: L12 edits apps/web/app/discover, apps/web/app/me, apps/web/components, the discover/player libs, session-error-ui.ts, e2e and the runbook; L13 edits apps/web/lib/zalo,
   packages/db zalo-ingress.ts and the webhook route test. Neither edits session-service.ts, roster-service.ts or session-form.tsx. An API gap found by L12 goes under OPEN, never into its scope.
-MERGE ROUND: the merge clerk merges in order L13, L12 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+MERGE ROUND: the merge clerk (sonnet/high) merges L13 then L12 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
 STOP: AWAIT a lane on an unsigned decision; HALT on bank data or another player's debt appearing in any UI or reply; BLOCKED on 3 failed rounds.
-REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the golden-path result or NOT RUN with the reason; MERGE_READY #<n> head=<full 40-char sha> by=S8 per PR; last line RESULT: DONE | CONTINUE | AWAIT |
-  BLOCKED.
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the golden-path result or NOT RUN with the reason; MERGE_READY #<n> head=<full 40-char sha> by=S9 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
 
-### P3-S9 - M10 chat core (L14)
+### P3-S10 - M10 chat core (L14)
 
 ```text
-SESSION P3-S9 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
-DEPENDS ON: P3-S8 merged; L8 merged; D4 signed. Needs pnpm db:bootstrap run first (chat_definer role).
+SESSION P3-S10 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S9 merged; L8 merged; D4 signed. Needs pnpm db:bootstrap run first (chat_definer role).
 READ FIRST: S1 operating rules; lane block L14; docs/features/FE/feature_inapp_chat.md + BE/feature_inapp_chat_tech.md (sections 3-4); packages/db/migrations/0030, 0031,
   0032, 0047, 0049; infra/postgres-init/02-chat-definer.sql; docs/standards/decisions.md (DD-86, DD-136).
-STEP 0: a readiness reviewer (same model and effort as L14's code reviewer) re-verifies live truth at the session base and writes
-  docs/sessions/web-mvp-phase3-readiness-p3-m10-chat-core.md (code-ready marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST
-  commit; it must pass pnpm review:check:changed. NOT_CODE_READY => AWAIT with the exact blocker.
-TASKS: 1) step 0 for L14. 2) L14 writer (opus/max) in .autopilot/worktrees/p3-m10-chat-core. 3) Verify, push + PR, independent review plus security round (max 3 rounds),
-  CI GREEN, MERGE_READY. 4) Record the UNPINNED pins (message cap, audit and revision table names, provisioning trigger vs call).
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm
+  review:check:changed BEFORE it is committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes
+  into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L14 (B3 exception expected: one migration, several functions). 2) L14 writer (opus/max) in .autopilot/worktrees/p3-m10-chat-core. 3) Verify, push +
+  PR, independent review plus security round (max 3 rounds), CI GREEN, MERGE_READY. 4) Record the UNPINNED pins (message cap, audit and revision table names, provisioning
+  trigger vs call).
 PARALLEL: none (single migration lane; it may touch roster-service.ts and the join service for membership activation).
-MERGE ROUND: the merge clerk merges L14 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+MERGE ROUND: the merge clerk (sonnet/high) merges L14 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
 STOP: AWAIT on unsigned D4; HALT if any function makes a DM channel reachable, bypasses a capability check, or logs message text; BLOCKED on 3 failed rounds.
-REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the decision-table test map; MERGE_READY #<n> head=<full 40-char sha> by=S9; last line RESULT: DONE | CONTINUE | AWAIT |
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the decision-table test map; MERGE_READY #<n> head=<full 40-char sha> by=S10; last line RESULT: DONE | CONTINUE | AWAIT |
   BLOCKED.
 ```
 
-### P3-S10 - M10 chat API + live (L15)
+### P3-S11 - M10 chat API + live (L15)
 
 ```text
-SESSION P3-S10 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
-DEPENDS ON: P3-S9 merged (L14); L5 merged (transport); D4 signed. No migration lane here.
+SESSION P3-S11 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S10 merged (L14); L5 merged (transport); D4 signed. No migration lane here.
 READ FIRST: S1 operating rules; lane block L15; docs/features/BE/feature_inapp_chat_tech.md (route contract, error codes, rate limits);
   apps/web/lib/realtime-listener.ts and realtime-auth.ts (L5); packages/db/src/chat-service.ts (L14).
-STEP 0: a readiness reviewer (same model and effort as L15's code reviewer) re-verifies live truth at the session base and writes
-  docs/sessions/web-mvp-phase3-readiness-p3-m10-chat-api-live.md (code-ready marker, canonical verdict block, TARGET_FILES only existing files) as the
-  lane branch's FIRST commit; it must pass pnpm review:check:changed. NOT_CODE_READY => AWAIT with the exact blocker.
-TASKS: 1) step 0 for L15. 2) L15 writer (opus/max) in .autopilot/worktrees/p3-m10-chat-api-live, based on origin/main after the P3-S9 merge round. 3)
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is
+  checked with pnpm review:check:changed BEFORE it is committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY =>
+  nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are recorded here. Other lanes continue.
+TASKS: 1) step 0 for L15. 2) L15 writer (opus/max) in .autopilot/worktrees/p3-m10-chat-api-live, based on origin/main after the P3-S10 merge round. 3)
   Verify, push + PR, independent review plus security round (max 3 rounds), CI GREEN, MERGE_READY. 4) Evidence: cross-tenant leak test on subscribe
   and revoke-mid-stream test.
-PARALLEL: none (L16 needs L15's routes, so it runs in P3-S11).
-MERGE ROUND: the merge clerk merges L15 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
+PARALLEL: none (L16 needs L15's routes, so it runs in P3-S12).
+MERGE ROUND: the merge clerk (sonnet/high) merges L15 once D5 is signed, otherwise the owner merges; PR #50 stays owner-only.
 STOP: AWAIT on unsigned D4; HALT on chat text in a log, NOTIFY payload or any new migration need in L15; BLOCKED on 3 failed rounds.
-REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the leak and revoke test output; MERGE_READY #<n> head=<full 40-char sha> by=S10; last line RESULT: DONE
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the leak and revoke test output; MERGE_READY #<n> head=<full 40-char sha> by=S11; last line RESULT: DONE
   | CONTINUE | AWAIT | BLOCKED.
 ```
 
-### P3-S11 - M10 chat UI + closeout (L16, L17)
+### P3-S12 - M10 chat UI + closeout (L16, L17)
 
 ```text
-SESSION P3-S11 (orchestrator: Fable xhigh, or opus/max while the Fable limit holds)
-DEPENDS ON: P3-S10 merged (L15); D4 signed. L17 needs every other lane merged and L16 merged before it completes.
+SESSION P3-S12 (orchestrator: opus/max; never pass model fable to any Agent call)
+DEPENDS ON: P3-S11 merged (L15); D4 signed. L17 is the one exception to "a dependency runs in a later session": it needs every other lane merged and L16 merged before it completes.
 READ FIRST: S1 operating rules; lane blocks L16, L17; docs/standards/design-tokens.md; apps/web/lib/realtime-listener.ts (L5); docs/sessions/web-mvp-program-status.md; docs/runbooks/local-mvp-smoke.md.
-STEP 0: per lane, a readiness reviewer (same model and effort as that lane's code reviewer) re-verifies live truth at the session base and writes docs/sessions/web-mvp-phase3-readiness-<slug>.md (code-ready
-  marker, canonical verdict block, TARGET_FILES only existing files) as the lane branch's FIRST commit; it must pass pnpm review:check:changed. NOT_CODE_READY => that lane AWAITs with the exact blocker.
-TASKS: 1) step 0 for L16 and L17. 2) L16 writer sonnet/high (reviewer opus/high) and L17 writer sonnet/high (reviewer sonnet/high) in parallel, both based on origin/main after the P3-S10 merge round. 3) Each
+STEP 0: per S1 STEP 0, for each lane of this session (readiness reviewer = same model and effort as that lane's code reviewer; the CODE_READY file is checked with pnpm review:check:changed BEFORE it is
+  committed as the lane branch's first commit and with pnpm review:check after; NOT_CODE_READY => nothing is committed, the verdict goes into the session report as that lane's AWAIT item). B3 exceptions are
+  recorded here. Other lanes continue.
+TASKS: 1) step 0 for L16 and L17. 2) L16 writer sonnet/high (reviewer opus/high) and L17 writer sonnet/high (reviewer sonnet/high) in parallel, both based on origin/main after the P3-S11 merge round. 3) Each
   lane: verify, push + PR, review (max 3 rounds), CI GREEN, MERGE_READY. 4) After L16 merges, L17 catches up with git merge --no-ff origin/main, completes the L16-dependent rows and the golden-path evidence,
   re-runs its checks, then it is merged.
 PARALLEL: L16 and L17. File-disjoint: L16 edits apps/web chat pages, components, libs and e2e (including golden-path.spec.ts) and not the runbook; L17 edits only docs/ and plans/ (including the runbook).
   Neither edits session-service.ts, roster-service.ts or session-form.tsx; no migration.
-MERGE ROUND (FINAL): the merge clerk merges L16 first and L17 last once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. Then the conductor runs the extended golden path for M10 (verifier
-  sonnet/high).
+MERGE ROUND (FINAL): the merge clerk (sonnet/high) merges L16 first and L17 last once D5 is signed, otherwise the owner merges; PR #50 stays owner-only. Then the conductor runs the extended golden path for M10
+  (verifier sonnet/high).
 STOP: AWAIT a lane on an unsigned D4; HALT on chat text in any log, analytics or service-worker cache, or a gap that needs an API change (report it under OPEN); BLOCKED on 3 failed rounds.
-REPORT: per lane STATUS, HEAD, CHANGED, CHECKS, OPEN; the closeout evidence; MERGE_READY #<n> head=<full 40-char sha> by=S11 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
+REPORT: STATUS, HEAD, CHANGED, CHECKS, OPEN; the closeout evidence; MERGE_READY #<n> head=<full 40-char sha> by=S12 per PR; last line RESULT: DONE | CONTINUE | AWAIT | BLOCKED.
 ```
 
 ## S4. Ghi chú cho conductor
 
 | Session | Lane | Milestone | Cổng sau merge round |
 |---|---|---|---|
-| P3-S1 | L0, L1, L2 | docs, infra, M9 prerequisite | CI GREEN trên main; L1 có N lần chạy song song không flake |
+| P3-S1 | L0, L1, L2 | docs, infra, M9 prerequisite | CI GREEN trên main; L1 có N lần chạy song song không flake (trong một cửa sổ khoá DB/e2e độc quyền) |
 | P3-S2 | L3, L6 | M6 | cờ schedule vẫn false; runbook enable/rollback có mặt |
 | P3-S3 | L4, L5, L7 | M6 gần xong | golden path local M6 (evidence); danh sách P0 của owner |
 | P3-S4 | L8 | M9 | test concurrency không oversell |
 | P3-S5 | L9, L4b | M9, M6 (announce) | L4b chỉ chạy khi D2 (f) đã ký; migration chỉ có ở L9 |
-| P3-S6, S7 | L10, L11 | M9 | migration tuần tự, mỗi PR một migration |
-| P3-S8 | L12, L13 | M9 xong | golden path local M9 (evidence) |
-| P3-S9, S10 | L14, L15 | M10 | migration chỉ ở L14; không stacked PR |
-| P3-S11 | L16, L17 | M10 xong | golden path local M10 + closeout (FINAL merge round, L17 merge cuối) |
+| P3-S6, S7 | L10a, L10 | M9 (public read model) | chỉ chạy khi D1 đã ký; mỗi PR một migration, tuần tự |
+| P3-S8 | L10b, L11 | M9 | L11 là lane migration duy nhất; L10b không migration |
+| P3-S9 | L12, L13 | M9 xong | golden path local M9 (evidence) |
+| P3-S10, S11 | L14, L15 | M10 | migration chỉ ở L14; không stacked PR |
+| P3-S12 | L16, L17 | M10 xong | golden path local M10 + closeout (FINAL merge round, L17 merge cuối) |
 
-- **Vòng lặp:** chạy tuần tự S1..S11; session N+1 chỉ bắt đầu sau khi merge round của session N đã xong (hoặc owner nói rõ bỏ qua một lane). Lane phụ thuộc lane khác không bao giờ chạy cùng session với lane đó. Mỗi session tối đa **6 lần chạy orchestrator**; lần thứ 7 coi như `BLOCKED` và báo owner.
+- **Vòng lặp:** chạy tuần tự S1..S12; session N+1 chỉ bắt đầu sau khi merge round của session N đã xong (hoặc owner nói rõ bỏ qua một lane). Lane phụ thuộc lane khác không bao giờ chạy cùng session với lane đó. Mỗi session tối đa **6 lần chạy orchestrator**; lần thứ 7 coi như `BLOCKED` và báo owner.
 - **CONTINUE:** orchestrator chạm khoảng 20 kết quả worker thì ghi `CHECKPOINT` (trạng thái từng lane, số PR, head đầy đủ, finding còn mở, việc kế tiếp) và trả `RESULT: CONTINUE`; conductor tiếp tục cùng orchestrator bằng SendMessage, hoặc mở lần chạy mới với đúng CHECKPOINT đó.
 - **AWAIT:** chuyển cho owner đúng một câu hỏi + một đề xuất + điều kiện resume nhị phân; trong lúc chờ chạy tiếp các lane không phụ thuộc. Một Dn chưa ký chỉ chặn lane của nó (D2 f chỉ chặn L4b).
 - **BLOCKED:** không retry mù. Theo thứ tự: thêm context -> chia nhỏ task -> nâng Sonnet lên Opus -> báo owner. Cùng một lane thất bại 3 lần thì dừng và báo.
 - **Hết usage limit** (429 hoặc thông báo giới hạn từ bất kỳ agent nào): dừng tạo agent mới, để worker đang chạy kết thúc hoặc dừng sạch, ghi CHECKPOINT, trả `RESULT: CONTINUE` lý do `usage_limit`. Conductor đề xuất cho owner chọn (đợi hoặc chạy ngay bằng opus/max); không im lặng đổi model; resume bằng SendMessage tới orchestrator cũ.
-- **Merge round:** khi owner ký D5, merge clerk merge các PR `MERGE_READY` của session (merge commit, đúng thứ tự phụ thuộc); chưa ký thì owner merge. Orchestrator không merge, không đóng PR, không xoá branch. PR #50 chỉ owner.
-- **P0:** không bao giờ là lane. Danh sách việc owner (bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED`, nối bot token Zalo thật, nhắn người dùng thật) nằm trong handoff-3 của L17; route announce là L4b (park nếu D2 f chưa ký).
+- **Merge round:** khi owner ký D5, merge clerk (sonnet/high) merge các PR `MERGE_READY` của session (merge commit, đúng thứ tự phụ thuộc); chưa ký thì owner merge. Orchestrator không merge, không đóng PR, không xoá branch. PR #50 chỉ owner.
+- **P0:** không bao giờ là lane. Danh sách việc owner (bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED`, nối bot token Zalo thật, nhắn người dùng thật) nằm trong handoff-3 của L17; route announce là L4b (park nếu D2 f chưa ký); D1 từ chối thì L10a, L10, L10b và phần discovery của L12 bị bỏ.
 - **Kết thúc:** sau merge round cuối, conductor chạy một summariser (sonnet/high): đọc ledger, handoff-3, danh sách PR, rồi viết MỘT báo cáo tiếng Việt cho owner (đã ship gì, số đo, default đang chờ ký, việc P0, rủi ro còn lại, câu hỏi mở). Summariser không sửa file trong repo.
 
