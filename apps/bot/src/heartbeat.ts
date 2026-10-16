@@ -4,10 +4,12 @@ import type pg from "pg";
 
 /**
  * Worker business liveness (audit 2026-09-06 X-5, last part). Two signals, one loop:
- *   1. DB: `job_worker_heartbeat(worker_id, hostname, pid)` — the ONE definer app_worker may
- *      call for this (0041); an operator reads `job_worker_liveness()` to see which workers
- *      still tick. "The process is up" and "the loop still reaches the database" are different
- *      facts; this is the second one.
+ *   1. DB: `job_worker_heartbeat(worker_id, hostname, pid, schedule_enabled)` — the ONE definer
+ *      app_worker may call for this (0041, flag added by 0056); an operator reads
+ *      `job_worker_liveness()` to see which workers still tick. "The process is up" and "the loop
+ *      still reaches the database" are different facts; this is the second one. The flag is the
+ *      gate that decided boss.work in this process, so `outbox_dispatch_schedule_live()` (the
+ *      L4b guard, DD-134 f) can tell a live dispatching worker from a live idle one.
  *   2. Local file: after every SUCCESSFUL DB heartbeat the loop rewrites HEARTBEAT_FILE, so the
  *      container HEALTHCHECK (infra/Dockerfile, worker branch) can judge liveness from the file's
  *      age without holding database credentials. A stalled loop, a lost connection or a hung
@@ -62,6 +64,8 @@ export interface HeartbeatDeps {
    * up to HEARTBEAT_STALE_MS into a shutdown that has already started.
    */
   cancelled?: () => boolean;
+  /** D-12: whether this process registered the dispatch consumer; omitted = NULL (= off). */
+  scheduleEnabled?: boolean;
 }
 
 /** One tick: DB first, file second. Returns true iff the DB heartbeat succeeded. */
@@ -76,7 +80,12 @@ export async function heartbeatOnce(deps: HeartbeatDeps): Promise<boolean> {
       // borrows this pooled client next (a session-level SET would).
       await client.query("BEGIN");
       await client.query(`SET LOCAL statement_timeout = ${HEARTBEAT_STATEMENT_TIMEOUT_MS}`);
-      await client.query("SELECT job_worker_heartbeat($1, $2, $3)", [id, hostname(), pid]);
+      await client.query("SELECT job_worker_heartbeat($1, $2, $3, $4)", [
+        id,
+        hostname(),
+        pid,
+        deps.scheduleEnabled ?? null,
+      ]);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
