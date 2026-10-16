@@ -72,6 +72,27 @@ function slotsOf(v: SessionFormValues): number | null {
 const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
 
 /**
+ * Client mirror of hasHiddenChar (packages/db/src/text-safety.ts, the rule behind display names and
+ * the session text fields). Client code cannot import @plexco/db (FE-INV-3), so the class is copied
+ * from me-settings-client.ts; session-form-model.test.ts pins it against validateDisplayName over
+ * every code point. Control, format (bidi, zero-width), line and paragraph separators, invisible fillers.
+ */
+export function hasHiddenChar(value: string): boolean {
+  return /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0\u2800]/u.test(value);
+}
+
+/**
+ * True when the value this form would SEND (trimmed, blank = null) holds a hidden character. In
+ * edit mode a value equal to the loaded one is skipped: it is never re-sent (buildUpdateBody), so a
+ * legacy value must not block saving other fields; once edited it is held to the rule.
+ */
+function hasNewHiddenChar(raw: string, initialRaw: string | undefined): boolean {
+  const sent = textOrNull(raw);
+  if (sent === null || !hasHiddenChar(sent)) return false;
+  return initialRaw === undefined || sent !== textOrNull(initialRaw);
+}
+
+/**
  * The venue address in the form this client sends and compares: trimmed, blank = null. The server
  * does not trim: it stores the value it receives as-is (session-service.ts), so a legacy address with
  * surrounding spaces is stored raw and only compares equal here after trimming.
@@ -110,6 +131,19 @@ export function validateForm(
     );
   }
 
+  if (hasNewHiddenChar(v.venueName, initial?.venueName)) {
+    e.venueName = t(
+      "Tên sân không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+      "The venue name cannot contain control or hidden characters.",
+    );
+  }
+  if (hasNewHiddenChar(v.area, initial?.area)) {
+    e.area = t(
+      "Khu vực không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+      "The area cannot contain control or hidden characters.",
+    );
+  }
+
   const address = v.venueAddress.trim();
   if (
     address.length > VENUE_ADDRESS_MAX &&
@@ -118,6 +152,11 @@ export function validateForm(
     e.venueAddress = t(
       `Địa chỉ tối đa ${VENUE_ADDRESS_MAX} ký tự.`,
       `The address is at most ${VENUE_ADDRESS_MAX} characters.`,
+    );
+  } else if (hasNewHiddenChar(v.venueAddress, initial?.venueAddress)) {
+    e.venueAddress = t(
+      "Địa chỉ không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+      "The address cannot contain control or hidden characters.",
     );
   }
 

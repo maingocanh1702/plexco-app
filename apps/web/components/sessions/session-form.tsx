@@ -169,6 +169,7 @@ export function SessionForm(props: SessionFormProps) {
         <TextField
           label={t("Tên sân / địa điểm", "Venue name")}
           value={values.venueName}
+          error={errors.venueName}
           maxLength={200}
           onChange={(e) => set("venueName", e.target.value)}
         />

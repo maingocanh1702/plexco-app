@@ -1,9 +1,11 @@
+import { validateDisplayName } from "@plexco/db";
 import { describe, expect, it } from "vitest";
 import {
   VENUE_ADDRESS_MAX,
   buildCreateBody,
   buildUpdateBody,
   emptyFormValues,
+  hasHiddenChar,
   validateForm,
   valuesFromSession,
   type SessionFormValues,
@@ -190,5 +192,108 @@ describe("buildUpdateBody", () => {
       slotsMax: null,
       endsAt: "2026-10-20T21:00:00+07:00",
     });
+  });
+});
+
+// Hidden-character rule (web mirror of packages/db/src/text-safety.ts). Characters are built with
+// fromCodePoint so no control or bidi character sits in this source.
+describe("validateForm hidden characters in venueName, venueAddress and area", () => {
+  const ch = (cp: number) => String.fromCodePoint(cp);
+  const C8 = [0x0000, 0x202e, 0x200b, 0x2028, 0x2029, 0x000a, 0x0009, 0x001b];
+  const FIELDS = ["area", "venueName", "venueAddress"] as const;
+  const vi = (v: string) => v;
+  const EN_COPY = {
+    area: "The area cannot contain control or hidden characters.",
+    venueName: "The venue name cannot contain control or hidden characters.",
+    venueAddress: "The address cannot contain control or hidden characters.",
+  };
+  const VI_COPY = {
+    area: "Khu vực không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+    venueName: "Tên sân không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+    venueAddress: "Địa chỉ không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+  };
+
+  it("W1: each of the 8 characters in an inner position flags exactly that field (en copy)", () => {
+    for (const field of FIELDS) {
+      for (const cp of C8) {
+        const e = validateForm(base({ [field]: "Sân" + ch(cp) + "A" }), TZ, en);
+        expect(Object.keys(e)).toEqual([field]);
+        expect(e[field]).toBe(EN_COPY[field]);
+      }
+    }
+  });
+
+  it("W2: the vi copy is distinct per field", () => {
+    for (const field of FIELDS) {
+      const e = validateForm(base({ [field]: "Sân" + ch(0x202e) + "A" }), TZ, vi);
+      expect(e[field]).toBe(VI_COPY[field]);
+    }
+    expect(new Set(Object.values(VI_COPY)).size).toBe(3);
+  });
+
+  it("W3: Vietnamese NFC, NFD, an emoji with VS16 and the empty value are accepted", () => {
+    const texts = [
+      "Sân Quận Tân Bình",
+      "Sân Quận Tân Bình".normalize("NFD"),
+      "Sân " + ch(0x2764) + ch(0xfe0f),
+      "",
+    ];
+    for (const field of FIELDS) {
+      for (const text of texts) expect(validateForm(base({ [field]: text }), TZ, en)).toEqual({});
+    }
+  });
+
+  it("W4: an edge newline or tab is trimmed and never sent, so it is no error", () => {
+    expect(validateForm(base({ venueName: "Sân A" + ch(0x000a) }), TZ, en)).toEqual({});
+    expect(validateForm(base({ area: ch(0x0009) + "Quận 1" }), TZ, en)).toEqual({});
+    const body = buildCreateBody(base({ venueName: "Sân A" + ch(0x000a) }), TZ);
+    expect(body.venueName).toBe("Sân A");
+  });
+
+  it("W5: edit mode skips an untouched legacy value but flags an edited one", () => {
+    const legacy = "Sân" + ch(0x202e) + "A";
+    const orig: SessionDetailDto = { ...session, venueName: legacy, area: "Q7" };
+    const initial = valuesFromSession(orig);
+    expect(validateForm({ ...initial, area: "Q8" }, TZ, en, initial)).toEqual({});
+    expect(buildUpdateBody({ ...initial, area: "Q8" }, orig)).toEqual({ area: "Q8" });
+    const edited = { ...initial, venueName: "Sân" + ch(0x200b) + "B" };
+    expect(Object.keys(validateForm(edited, TZ, en, initial))).toEqual(["venueName"]);
+  });
+
+  it("W6: an over-cap address with a hidden character shows only the cap message", () => {
+    const address = "đ".repeat(VENUE_ADDRESS_MAX) + ch(0x200b);
+    expect(address.length).toBe(VENUE_ADDRESS_MAX + 1);
+    const e = validateForm(base({ venueAddress: address }), TZ, en);
+    expect(e.venueAddress).toBe(`The address is at most ${VENUE_ADDRESS_MAX} characters.`);
+  });
+
+  it("a public session with a hidden-character area shows the hidden message, not the area-needed one", () => {
+    const e = validateForm(
+      base({
+        visibility: "public",
+        slotsMax: "8",
+        slotsUnlimited: false,
+        area: "Quận" + ch(0x202e) + "1",
+      }),
+      TZ,
+      en,
+    );
+    expect(e.area).toBe(EN_COPY.area);
+  });
+
+  it("W7: the client mirror equals validateDisplayName's hidden-character rule over every scalar", () => {
+    const mismatches: number[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const c = ch(cp);
+      let serverHidden = false;
+      try {
+        validateDisplayName("a" + c + "b");
+      } catch {
+        serverHidden = true;
+      }
+      if (hasHiddenChar(c) !== serverHidden) mismatches.push(cp);
+    }
+    expect(mismatches).toEqual([]);
   });
 });
