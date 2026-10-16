@@ -623,8 +623,9 @@ describe("A12-A15 heartbeat, projector switches, envelope and wake trigger", () 
   });
 
   it("A14b: a live claim reads nothing unless its projector is registered, enabled and routed for the event", async () => {
-    const claimed = async (projector: string) => {
-      const { eventId } = await delivery(projector);
+    const claimed = async (projector: string, event?: string) => {
+      const eventId = event ?? (await seedEvent("jrd.test.event", "jrd_test_aggregate"));
+      await worker("SELECT job_prepare_projector_delivery($1, $2)", [eventId, projector]);
       const claim = await worker("SELECT claim_token FROM claim_projector_delivery_batch($1, 1)", [
         projector,
       ]);
@@ -632,18 +633,26 @@ describe("A12-A15 heartbeat, projector switches, envelope and wake trigger", () 
       return async () =>
         (await worker("SELECT * FROM outbox_claimed_event($1, $2, $3)", args)).rows.length;
     };
-    await addProjector("a14b_unrouted", [["jrd_test_aggregate", "jrd.other.event"]]);
+    await addProjector("a14b_unrouted", [
+      ["jrd_test_aggregate", "jrd.other.event"], // the event's aggregate, another type
+      ["jrd_other_aggregate", "jrd.test.event"], // the event's type, another aggregate
+    ]);
     await setEnabled("a14b_unrouted", true);
     await addProjector("a14b_proj", [["jrd_test_aggregate", "jrd.test.event"]]);
     const madeUp = await claimed("a14b_made_up"); // never registered: app_worker minted the claim
-    const unrouted = await claimed("a14b_unrouted"); // enabled, routed for another event type only
+    const unrouted = await claimed("a14b_unrouted"); // enabled; no route matches aggregate and type
     const proj = await claimed("a14b_proj"); // registered and routed, still disabled
     const reads = [await madeUp(), await unrouted(), await proj()];
     await setEnabled("a14b_proj", true);
     reads.push(await proj()); // the same live claim, now enabled
     await setEnabled("a14b_proj", false);
     reads.push(await proj()); // a disable stops the next read of a claim already held
-    expect(reads).toEqual([0, 0, 0, 1, 0]);
+    await setEnabled("web_realtime", true); // seeded (session, NULL): the only wildcard route
+    const wildOwn = await claimed("web_realtime", await seedEvent()); // a session.updated event
+    const wildOther = await claimed("web_realtime"); // a jrd event: not the wildcard's aggregate
+    reads.push(await wildOwn(), await wildOther());
+    await setEnabled("web_realtime", false);
+    expect(reads).toEqual([0, 0, 0, 1, 0, 1, 0]);
   });
 
   it("A15: every committed insert statement notifies outbox_wake once with an empty payload; a rollback notifies nothing", async () => {
