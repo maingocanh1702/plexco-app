@@ -73,7 +73,7 @@ Booking funnel chạy chủ yếu trên bot (Messenger/Zalo), nhưng một số 
 │     │  🏸 Cầu lông tối thứ Tư                     │        │
 │     │  🕒 19:00–21:00, 30/07/2026                  │        │
 │     │  📍 Quận 3 · Khu vực (không lộ địa chỉ)     │        │
-│     │  👥 12 đã xác nhận · 2 chỗ còn              │        │
+│     │  👥 2 chỗ còn trống                          │        │
 │     │  💳 120,000đ                                 │        │
 │     │                                              │        │
 │     │  ─────────────────────────────────────────── │        │
@@ -102,7 +102,7 @@ Booking funnel chạy chủ yếu trên bot (Messenger/Zalo), nhưng một số 
 │ 🏸 Cầu lông tối thứ Tư  │
 │ 🕒 19:00–21:00, 30/07   │
 │ 📍 Quận 3               │
-│ 👥 12 xác nhận · 2 chỗ  │
+│ 👥 2 chỗ còn trống       │
 │ 💳 120,000đ              │
 │                           │
 │ ─────────────────────── │
@@ -360,4 +360,4 @@ _FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 
 
 _Re-pin 2026-09-15 (cấu trúc, không bump version): as-built @ `e235ea4` theo `ROADMAP.md` v3.17 §📍 — 8 command session · 7 route nghiệp vụ · **0 màn FE**; FE PENDING (DD-116) không đổi, DD-119 vẫn 🟡 chưa ratify. Nội dung thiết kế không đổi._
 
-_Sync 2026-10-16 (không bump version): bỏ hàng `Confirmed count` và đổi `Slots available` sang `slots_open` từ `getSessionOccupancy()` theo DD-133 (owner ký 2026-10-16). Source pin vẫn STALE, FE spec chưa được review lại._
+_Sync 2026-10-16 (không bump version): bỏ hàng `Confirmed count` và đổi `Slots available` sang `slots_open` từ `getSessionOccupancy()` theo DD-133 (owner ký 2026-10-16). Hai wireframe (card chi tiết và card inline) cũng bỏ "N đã xác nhận" (round-1 review). Source pin vẫn STALE, FE spec chưa được review lại._

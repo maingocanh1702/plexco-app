@@ -528,11 +528,8 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 │ │ │ 17:00 – 19:00 │ │ 150.000₫/Ng│ │ │  time pill + price pill
 │ │ └──────────────┘ └─────────────┘ │ │
 │ │                                  │ │
-│ │ [👤] · 4/6 Going                 │ │  host avatar + going count
-│ │                                  │ │
 │ │ 🏸 Kèo chiều thứ 5               │ │  sport icon + title
 │ │ 🏢 CLB Cầu Lông Q7              │ │  club display name
-│ │ 👤 Host: Minh Hoàng              │ │  host display name
 │ │ 📍 Quận 7                       │ │  area (DD-06, KHÔNG exact venue)
 │ │                                  │ │
 │ │ [Xem kèo →]                     │ │  CTA → session detail/landing
@@ -747,7 +744,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 - [ ] **Session card embed:** send message với `embed_type='session'` + `embed_ref_id` → server resolve + validate visibility + snapshot BL-DSC-1 whitelist fields → message chứa rich card.
 - [ ] **Session picker:** attach (+) → "Kèo" → hiện sessions actor có quyền xem (own sessions + public marketplace). Private/draft sessions **KHÔNG** hiện.
 - [ ] **Embed snapshot server-side only:** client KHÔNG cung cấp `embed_snapshot`; server resolve tại insert time. Forged snapshot bị reject.
-- [ ] **Embed whitelist:** snapshot chỉ chứa `sport_key`, `title`, `starts_at`, `ends_at`, `area`, `price_amount`, `slots_open`, `club_display_name`, `join_policy`, `session_type`, `public_listing_id` (BL-DSC-1 whitelist, DD-133; không `confirmed_count`, không `host_display_name`). KHÔNG venue/roster/PII/charge/debt.
+- [ ] **Embed whitelist:** snapshot chỉ chứa `sport_key`, `title`, `starts_at`, `ends_at`, `area`, `price_amount`, `slots_open`, `club_display_name`, `join_policy`, `session_type` (BL-DSC-1 whitelist, DD-133; không `confirmed_count`, không `host_display_name`; snapshot không giữ khoá `public_listing_id` vì khoá đổi khi session rời public — tap luôn fetch live). KHÔNG venue/roster/PII/charge/debt.
 - [ ] **Tap CTA:** public session → `/session/<slug>` (DD-73 landing). Same-tenant → session detail. Session unavailable → generic "Kèo không còn khả dụng" toast.
 - [ ] **Stale card:** snapshot data tại send time. Card KHÔNG tự update; tap CTA luôn fetch live status. Message/card KHÔNG bị xoá/ẩn khi session cancel.
 - [ ] **Body + embed:** message có thể có body text + embed, hoặc chỉ embed (body rỗng). Cả hai idempotent theo `client_msg_id`.
@@ -776,7 +773,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-10-16 | v0.21 | **Sync DD-133/DD-136 + schema 0031; docs-only.** (1) Embed whitelist (bảng snapshot và AC) khớp BL-DSC-1 đã sửa: bỏ `confirmed_count`/`N/M Going`, host avatar và host display name; thêm `public_listing_id`. (2) Cột read-state cũ không tồn tại trong schema → `last_read_created_at` + `last_read_message_id` (0031). (3) `kind=group` chú thích: chưa có schema (0031 CHECK `club`,`dm`) và ngoài MVP build theo DD-136; không use case/wireframe nào bị xoá. Các dòng lịch sử giữ nguyên. |
+| 2026-10-16 | v0.21 | **Sync DD-133/DD-136 + schema 0031; docs-only.** (1) Embed whitelist (bảng snapshot và AC) khớp BL-DSC-1 đã sửa: bỏ `confirmed_count`/`N/M Going`, host avatar và host display name. (2) Cột read-state cũ không tồn tại trong schema → `last_read_created_at` + `last_read_message_id` (0031). (3) `kind=group` chú thích: chưa có schema (0031 CHECK `club`,`dm`) và ngoài MVP build theo DD-136; không use case/wireframe nào bị xoá. (4) Wireframe embed bỏ `N/M Going`, host avatar và host name; embed snapshot không giữ `public_listing_id`. Các dòng lịch sử giữ nguyên. |
 | 2026-08-12 | v0.20 | **SessionCard embed upgrade (Playo reference #2):** Embed snapshot thêm: `cover_image_url` (optional hero), urgency badge ("Chỉ N chỗ!" snapshot tại send time), skill level range ("Người mới – Trung bình" green chip). Snapshot fields từ 9 → 12. Không đổi embed security contract. |
 | 2026-08-12 | v0.19 | **Unified SessionCard embed (Playo-inspired):** Session Card Embed redesign → unified `SessionCard` variant `embed` với: time pill (`HH:mm – HH:mm`), price pill (VND/Ng), host avatar (32px, moderated), `N/M Going` count. Thêm embed snapshot field table (9 fields). Giữ: sport icon, title, club/host display name, area (DD-06), CTA "Xem kèo", BL-DSC-1 whitelist. Không đổi embed security contract. |
 | 2026-08-12 | v0.18 | **Share Session in Chat:** Cho phép gửi session card kèm thông tin hiển thị vào club chat / DM / group. Structured embed trên `chat_messages`: `embed_type='session'` + `embed_ref_id` + server-rendered `embed_snapshot` (BL-DSC-1 whitelist, DD-73 contract). Session picker lọc theo actor visibility (own sessions + public). Tap CTA → session detail/landing (live re-check). Snapshot tại send time, card giữ nguyên trong history khi session cancel. Thêm CHT-UC-32/33, edge case #43–48, 2 screens (Session Card Embed, Session Picker), 2 analytics events, 8 AC bullets. |
