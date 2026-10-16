@@ -532,7 +532,7 @@ export async function acquireChatDefinerLock(
  */
 const JOB_DEFINER_LOCK_KEY = 0x6a6f6264; // "jobd"
 
-/** The reader side; JCL-2/3 windows hold the breaker side. Never nest: see withAdvisoryLocks. */
+/** The reader side. Never call it inside a reader's fn: see withAdvisoryLocks. */
 export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
   return withAdvisoryLocks(base, [JOB_DEFINER_LOCK_KEY], "shared", fn);
 }
@@ -550,8 +550,8 @@ export async function withDefinerReadLock<T>(base: string, fn: () => Promise<T>)
 /**
  * Holds `keys` on one session while fn runs. Exclusive: in order. Shared: all-or-nothing, waiting on
  * a busy key while holding nothing. A connect() or lock failure ends the session, error unchanged
- * (audit 2026-09-06, test-harness-job-definer-lock-client-leak). Never nest one hold in another's
- * fn: a breaker queued between them waits on the outer, the inner on it: a hang Postgres can't see.
+ * (audit 2026-09-06, test-harness-job-definer-lock-client-leak). Never take a reader lock inside a
+ * reader's fn: a breaker queued between the two waits on the outer, the inner on it: an unseen hang.
  */
 export async function withAdvisoryLocks<T>(
   base: string,
