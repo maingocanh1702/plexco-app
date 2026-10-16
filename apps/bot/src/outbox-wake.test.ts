@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import pg from "pg";
 import { migrate } from "@plexco/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -342,7 +343,8 @@ describe("outbox wake against a real database (A26, A28)", () => {
           max: Math.round(ms.at(-1)!),
           cycles: probe.cycles.length,
         };
-        console.log(`SYNC_LAG ${JSON.stringify(report)}`);
+        const out = process.env.OUTBOX_SYNC_LAG_OUT; // vitest does not echo a passing test's console
+        if (out) appendFileSync(out, `SYNC_LAG ${JSON.stringify(report)}\n`);
         expect(report.n).toBe(batches * perBatch);
       } finally {
         await inserter.end();

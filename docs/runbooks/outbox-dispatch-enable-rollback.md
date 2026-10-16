@@ -82,12 +82,13 @@ node scripts/outbox-dlq-replay.mjs replay --event <event-uuid> --projector web_r
 
 ## 5. Đo sync lag (chỉ local, trong test process; NFR-1c p95 <= 3 s, p99 <= 10 s)
 
-Không bao giờ bật flag để đo. Test tự chạy wake loop + runner thật trên DB test riêng của nó, rồi in một dòng `SYNC_LAG {...}`
-(N, p50, p95, p99, max, số cycle) cho tải ổn định 10 event/s x 60 s và tải burst 50 event/transaction mỗi 5 s:
+Không bao giờ bật flag để đo. Test tự chạy wake loop + runner thật trên DB test riêng của nó, rồi ghi một dòng `SYNC_LAG {...}`
+(N, p50, p95, p99, max, số cycle) vào file `OUTBOX_SYNC_LAG_OUT`, cho tải ổn định 10 event/s x 60 s và tải burst 50 event/transaction mỗi 5 s:
 
 ```bash
 bash -c 'export NODE_ENV=test DATABASE_URL_TEST=postgres://plexco:plexco_dev@localhost:5432/plexco_test
-OUTBOX_SYNC_LAG_MEASURE=1 pnpm --filter @plexco/bot exec vitest run src/outbox-wake.test.ts -t "sync lag"' | grep SYNC_LAG
+OUTBOX_SYNC_LAG_MEASURE=1 OUTBOX_SYNC_LAG_OUT="$PWD/sync-lag.jsonl" pnpm --filter @plexco/bot exec vitest run src/outbox-wake.test.ts -t "sync lag"'
+cat sync-lag.jsonl && rm sync-lag.jsonl
 ```
 
 Sau mỗi lần chạy test: đặt lại password ba role runtime theo `docs/runbooks/local-mvp-smoke.md` mục 5.
