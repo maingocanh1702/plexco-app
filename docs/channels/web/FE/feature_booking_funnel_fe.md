@@ -331,8 +331,7 @@ Booking funnel chạy chủ yếu trên bot (Messenger/Zalo), nhưng một số 
 | Time | "HH:mm–HH:mm, DD/MM" | locale formatter | |
 | Venue area (coarse) | "Quận N" | `data — no copy` | KHÔNG address cụ thể trước confirm |
 | Venue full (post-confirm) | Full address | `data — no copy` | Chỉ khi active |
-| Confirmed count | "N đã xác nhận" | `t("%d đã xác nhận", "%d confirmed")` | Active players only |
-| Slots available | "N chỗ còn" | `t("%d chỗ còn", "%d spots left")` | Trừ active + live holds |
+| Slots available | "N chỗ còn" | `t("%d chỗ còn", "%d spots left")` | `slots_open` từ `getSessionOccupancy()` (DD-133); không có `confirmed_count` public |
 | Price | "120,000đ" | `t("đ", "₫")` tabular-nums | VND format |
 | Pay code | "PXC-XXXX" | `data — no copy` | Monospace, copy-on-tap |
 | Countdown | "MM:SS" | `data — no copy` | Server-authoritative |

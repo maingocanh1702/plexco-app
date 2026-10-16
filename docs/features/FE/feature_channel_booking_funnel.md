@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3 / P4.7 + Messenger P2.5
 > **Track:** Growth / Channel Acquisition
-> **Version:** 1.3 · 2026-08-12
+> **Version:** 1.4 · 2026-10-16
 > **Status:** Reviewed contract — DD-32 Option D (`browse freely → link hoặc pay-now ở final confirm`)
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** Identity/account link · common Session/Join/Waitlist core · payment settlement capability · Zalo/Messenger adapters · web-auth handoff
@@ -14,7 +14,7 @@
 
 Plexco cho phép người dùng tìm hiểu và đăng ký session ngay trong Messenger/Zalo mà không buộc cài app trước:
 
-1. **Browse không ma sát:** xem thời gian, khu vực, phí, số người đã xác nhận và số chỗ đang khả dụng.
+1. **Browse không ma sát:** xem thời gian, khu vực, phí và số chỗ còn trống (`slots_open`).
 2. **Final confirm có hai đường:**
    - link Plexco account một lần cho đúng channel identity rồi đặt chỗ, chưa cần trả ngay;
    - không link thì thanh toán ngay để xác nhận chỗ.
@@ -83,13 +83,13 @@ Bot trả một card ngắn:
 🏸 Cầu lông tối thứ Tư
 🕒 19:00–21:00, 30/07
 📍 Quận 3 · địa điểm cụ thể sau khi xác nhận
-👥 12 người đã xác nhận · 2 chỗ đang khả dụng
+👥 2 chỗ còn trống
 💳 120.000đ
 
 [Đăng ký] [Xem kèo khác]
 ```
 
-`confirmed_count` là active players; `slots_available` trừ cả active players và live payment holds. Khi có hold, hai số có thể không cộng thành capacity; UI có thể thêm “một số chỗ đang được giữ trong lúc thanh toán”, không hiển thị danh tính.
+Public/browse chỉ có `slots_open` (DD-133). occupied = `getSessionOccupancy()` = active players + guest notes + live holds (+ pending invites sau migration thêm chúng); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)`; `confirmed_count` = active players, tenant-private, không bao giờ public. Khi có hold, UI có thể thêm “một số chỗ đang được giữ trong lúc thanh toán”, không hiển thị danh tính.
 
 ### 3.2 Final confirm — linked
 
@@ -159,9 +159,8 @@ Messenger có thể dùng provider-native account-link CTA khi capability đư�
 | Sport + session name | `public_sessions.sport_key` + `sessions.name` | |
 | Time range | `sessions.starts_at/ends_at` | Format `HH:mm – HH:mm, DD/MM` |
 | Area | `sessions.area` | Coarse, KHÔNG address |
-| Going count | Shared occupancy helper | `N/M Going` (active_count / slots_max) |
 | Urgency text | `slots_open` | "⚠️ Chỉ còn N chỗ!" khi `≤ 3`. Text-only (bot không có badge). Ẩn khi `> 3` |
-| Slots available | `slots_max - active - live_holds` | Advisory |
+| Slots available | `slots_open` từ `getSessionOccupancy()` | Advisory |
 | Fee | `sessions.price_amount` | VND + "/Người" |
 | Skill level | `sessions.skill_level` | Range format: "Người mới – Trung bình" (khi có min+max) |
 | CTA buttons | `[Đăng ký]` `[Xem kèo khác]` | Platform quick-reply |
@@ -277,7 +276,7 @@ Không log raw platform UID, email, tên, token/link code, nội dung message, b
 
 ## 7. Acceptance criteria
 
-- [ ] Messenger và Zalo cho browse time, area, fee display, confirmed count và slots available mà không cần link.
+- [ ] Messenger và Zalo cho browse time, area, fee display và slots available (`slots_open`) mà không cần link.
 - [ ] Exact venue chỉ trả sau active; roster/debt không xuất hiện trong browse response.
 - [ ] Free session confirm được khi unlinked; full/approval flow không thu tiền sai thời điểm.
 - [ ] Linked paid booking active + exactly-one canonical charge và không cần pay ngay.
@@ -303,6 +302,7 @@ Không còn product question trong scope. DD-14/DD-15, Meta App Review và payme
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v1.4 | **Sync DD-133 (D1, owner ký 2026-10-16); docs-only.** Browse card bỏ "số người đã xác nhận" và hàng `Going count` (không có cột whitelist public); chỉ còn `slots_open` từ `getSessionOccupancy()` (active + guest notes + live holds); `confirmed_count` tenant-private. AC browse khớp. Không đổi decision table. Các dòng lịch sử giữ nguyên. |
 | 2026-08-12 | v1.3 | **SessionCard upgrade (Playo reference #2):** Bot card thêm urgency text ("⚠️ Chỉ còn N chỗ!" khi ≤3 slots, text-only), skill range format ("Người mới – Trung bình"). 2 fields mới. Bot platform limited (không pill/badge). |
 | 2026-08-12 | v1.2 | **Unified SessionCard data alignment (Playo-inspired):** Bot session browse card sync với unified `SessionCard` fields: time range (`HH:mm – HH:mm, DD/MM`), `N/M Going` count (thay `Confirmed count`), price format VND + "/Người", thêm skill level tag (legacy text). Không đổi CTA/flow — bot platform limited. |
 | 2026-08-10 | v1.1 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/decision table. |

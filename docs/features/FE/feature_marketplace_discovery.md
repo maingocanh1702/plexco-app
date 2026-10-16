@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3 (Marketplace) · P4.5 (Global Search)  
 > **Track:** 🔍 Discovery, Marketplace & Search  
-> **Version:** 2.7 · 2026-08-12
+> **Version:** 2.8 · 2026-10-16
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status). *Tail migration hiện hành là `0029` (đo 06/08 tại `2cd52ce`), nhưng `0025`–`0029` không chạm marketplace: rename CHECK, definer read-only và DD-29 billing registry.*
 > **Prerequisites:** P2 session management · P4 sync/public projector  
@@ -32,7 +32,7 @@
 - Public serializer **chỉ** emit whitelist fields — không bao giờ expose internal routing/tenant ID.
 - Private/**draft** (chưa publish)/incomplete/closed/cancelled/past sessions **KHÔNG BAO GIỜ** xuất hiện.
 - Exact venue chỉ reveal khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
-- `confirmed_count` là canonical active players; `slots_open = max(0, slots_max - active players - live payment holds)`. Hai field public là advisory projection từ một shared occupancy helper; hold count không public và final confirm luôn recheck transactionally.
+- Public chỉ có `slots_open` (DD-133): occupied = `getSessionOccupancy()` = active players + guest notes + live holds (+ pending invites sau migration thêm chúng); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)`. `confirmed_count` = active players, tenant-private, không bao giờ public. `slots_open` là advisory projection; hold count không public và final confirm luôn recheck transactionally.
 - Messenger central mặc định global discovery; tenant Page mặc định local + “Khám phá tất cả”. Mỗi trang tối đa 8 business choices; Join CTA là opaque action, không raw routing ID.
 
 ---
@@ -70,7 +70,7 @@
 | 4 | Security | Roster/membership/bank/charge/payment/PII leak | ❌ NEVER — strict whitelist |
 | 5 | Data Integrity | Aggregate counts stale khi browse | Advisory only — final join/hold rechecks shared occupancy under session lock |
 | 6 | Security | Pagination enumeration attack | Stable cursors + rate-limit per IP/session/account |
-| 7 | Data Integrity | Club/host display name inappropriate | Moderation/privacy policy gate — reject offensive names |
+| 7 | Data Integrity | Club display name inappropriate | Moderation/privacy policy gate — reject offensive names |
 | 8 | Data Integrity | Projector lag > SLO | Expiry guard prevents stale past offers |
 | 9 | Security | Ranking dùng financial/identity data | ❌ NEVER — ranking explainable, chỉ dùng public attributes |
 | 10 | Data Integrity | Closed/cancelled session vẫn trong search index | Projector must delete — reproject verifies clean |
@@ -135,10 +135,8 @@
 │ │ │ 19:00 – 21:00  │ │ 120.000₫/Ng │   │   │  time pill + price pill + favorite
 │ │ └───────────────┘ └──────────────┘   │   │
 │ │                                    │   │
-│ │ [👤] · 6/8 Going                   │   │  host avatar + going count
-│ │                                    │   │
 │ │ 🏸 Cầu lông chiều T5              │   │  sport icon + session title
-│ │ CLB Rồng Xanh · Host: Anh T       │   │  club + host display name
+│ │ CLB Rồng Xanh                     │   │  club display name (approved alias)
 │ │                                    │   │
 │ │ 📍 Q.Bình Thạnh  ~2.9 km           │   │  area + distance (conditional)
 │ │                                    │   │
@@ -150,7 +148,6 @@
 │ │ ┌───────────────┐ ┌─────────────┐  ♡ │   │
 │ │ │ 16:00 – 18:00  │ │ 85.000₫/Ng │    │   │
 │ │ └───────────────┘ └─────────────┘    │   │
-│ │ [👤] · 8/10 Going                  │   │
 │ │ ⚽ Bóng đá T7 · FC Weekend           │   │
 │ │ 📍 Thủ Đức  ~3.8 km                │   │
 │ │ 🏅 Trung bình – Khá   ┌────────┐  │   │  skill level + slots status
@@ -172,14 +169,11 @@
 | Session cover | `public_sessions.cover_image_url` | Optional hero image phía trên card; fallback: sport gradient bg. Moderated public field |
 | Time pill | `public_sessions.starts_at` + `ends_at` | Green pill: format `HH:mm – HH:mm` |
 | Time-of-day label | Derived from `starts_at` | Thay time pill khi host chọn time category hoặc chỉ có `starts_at`: "Sáng" / "Chiều" / "Tối" / "Đêm" |
-| Price pill | `public_sessions.price` | White/grey pill: VND scalar + "/Ng"; "Miễn phí" if 0 |
+| Price pill | `public_sessions.price_amount` | White/grey pill: VND scalar + "/Ng"; "Miễn phí" if 0 |
 | Favorite ♡ | Client-local only (phase-1) | Tap → toast "Tính năng sắp ra mắt" — backend `saved_sessions` defer |
-| Host avatar | `public_sessions.host_avatar_url` | Circular 32px; fallback initials |
-| Going count | `confirmed_count` + `slots_max` | Format `N/M Going` |
-| Urgency badge | `slots_open` | 🔴 "Chỉ N chỗ!" khi `slots_open ≤ 3` và `> 0`. Ẩn khi `> 3` hoặc = 0. Red bg, white text, right-aligned cạnh Going |
+| Urgency badge | `slots_open` | 🔴 "Chỉ N chỗ!" khi `slots_open ≤ 3` và `> 0`. Ẩn khi `> 3` hoặc = 0. Red bg, white text, right-aligned trên card |
 | Sport icon + title | `public_sessions.sport_key` + title | Taxonomy icon + session name |
 | Club name | `public_sessions.club_display_name` | Moderated; personal blank → ẩn |
-| Host name | `public_sessions.host_display_name` | Moderated; never raw identity |
 | Area | `public_sessions.area` | Coarse (quận/khu vực), KHÔNG address |
 | Distance | Geolocation API | Conditional: chỉ hiện khi user đã cấp quyền location; fallback ẩn |
 | Skill level tag | `public_sessions.skill_level` | Hiện dạng range khi có min+max: "Người mới – Trung bình". Single value khi chỉ có 1 level. Green chip pill + sport icon bên trái |
@@ -202,7 +196,7 @@
 
 | Condition | Badge | Style |
 |-----------|-------|-------|
-| `slots_open ≤ 3` và `> 0` | "Chỉ {N} chỗ!" | Red background, white text, bold, right-aligned cạnh Going count |
+| `slots_open ≤ 3` và `> 0` | "Chỉ {N} chỗ!" | Red background, white text, bold, right-aligned trên card |
 | `slots_open > 3` | Ẩn urgency badge | Hiện `N chỗ` bình thường |
 | `slots_open = 0` | "Đầy" | Red pill, CTA disabled / thay "Vào danh sách chờ" |
 
@@ -237,10 +231,9 @@
 | Empty | Icon 🔍 + "Không tìm thấy buổi chơi nào" + [Reset bộ lọc] CTA |ame | `public_sessions.sport_key` → `sports` taxonomy | Không expose internal ID |
 | Area | `public_sessions.area` | Coarse (quận/khu vực), KHÔNG address |
 | Date/time | `public_sessions.starts_at` | Format `DD/MM · HH:mm` |
-| Price | `public_sessions.price` | VND, scalar — không lộ gender pricing |
-| Confirmed / Slots | `confirmed_count` + `slots_open` | Advisory — final check at join |
+| Price | `public_sessions.price_amount` | VND, scalar — không lộ gender pricing |
+| Slots | `slots_open` | Advisory — final check at join |
 | Club name | `public_sessions.club_display_name` | Moderated; personal blank → no project |
-| Host name | `public_sessions.host_display_name` | Moderated; never raw identity |
 | Join CTA | Opaque action → `cross_club_join` | Không raw routing ID |
 
 **Component: Filter bar:**
@@ -273,7 +266,7 @@
 ├──────────────────────────────────────┤
 │                                      │
 │ 🏸 Cầu lông chiều T5                │
-│ CLB Rồng Xanh · Host: Anh T         │
+│ CLB Rồng Xanh                       │
 │                                      │
 │ 📅 Thứ 5, 10/08/2026                │
 │ 🕒 19:00 — 21:00                    │
@@ -281,7 +274,7 @@
 │    khi xác nhận tham gia)            │
 │                                      │
 │ 💰 120,000₫ / người                 │
-│ 👥 6 / 8 người · 2 chỗ còn trống   │
+│ 👥 2 chỗ còn trống                 │
 │ 🏅 Trình độ: Trung bình — Khá      │
 │                                      │
 │ ─── Chính sách tham gia ───         │
@@ -457,7 +450,7 @@
 | Session cards | `public_sessions` (materialized) | Whitelist only, no FK to tenant |
 | Sport chips | `sports` taxonomy | Ordered |
 | Area filter | `public_sessions.area` DISTINCT | Coarse taxonomy |
-| Counts | `confirmed_count`, `slots_open` | Advisory, shared occupancy helper |
+| Counts | `slots_open` | Advisory, `getSessionOccupancy()` |
 | Join action | Opaque session ref → `cross_club_join` | No raw routing ID |
 
 ### State coverage matrix
@@ -498,11 +491,10 @@
 | `area` | sessions.area | Coarse — quận/khu vực, KHÔNG address |
 | `skill_level` | sessions | **Live legacy only** during DD-41 expand/backfill; must disappear from projection at cutover |
 | `level_min_rank` / `level_max_rank` / `level_strict` | sessions policy (DD-41 target) | Ordered DD-08 ranks + advisory/hard flag; replaces `skill_level`, never exposes a player's level |
-| `price` | sessions.price_amount | Amount in VND |
-| `confirmed_count` | active `players` count | Advisory aggregate; no roster identity |
-| `slots_open` | shared occupancy helper | `max(0, slots_max - active - live holds)`; advisory |
-| `club_display_name` | Club tenant: moderated `tenants.display_name`; personal tenant (DD-46 target): owner membership `display_name` | Personal tenant must never expose internal tenant name; blank alias => no projection |
-| `host_display_name` | memberships.display_name | Moderated; never raw person/account identity fallback |
+| `price_amount` | sessions.price_amount | Amount in VND |
+| `slots_open` | `getSessionOccupancy()` (DD-133 (a)) | `slots_max IS NULL ? NULL : max(0, slots_max - occupied)`; advisory |
+| `club_display_name` | Approved public alias (L10a; DD-46 as amended by DD-133), read live | Never an internal tenant name or a person/host name; blank alias => no projection |
+| `public_listing_id` | opaque listing key (DD-133 (e)) | Discovery / deep-link key; never the internal session id |
 | `join_policy` | sessions | open / approval |
 
 > **Excluded:** tenant_id, venue address, roster, phone, email, bank, charges, channel IDs.
@@ -541,10 +533,10 @@
 - [ ] Public invariant test pass under replay
 - [ ] Browse latency target documented và met
 - [ ] Messenger central/tenant Page local-vs-global context đúng; opaque action TTL/snapshot/replay tests pass
-- [ ] Public DTO emits `confirmed_count` + `slots_open` from one shared occupancy projection; hold count/identities remain private, adapters never re-derive and final mutation ignores stale counts.
+- [ ] Public DTO emits `slots_open` only (no `confirmed_count`) from one shared occupancy projection (`getSessionOccupancy()`); hold count/identities remain private, adapters never re-derive and final mutation ignores stale counts.
 - [ ] Personal-tenant session uses only nonblank moderated owner-membership alias for `club_display_name`; blank alias stays absent and internal tenant/person name never leaks
 - [ ] **Horizontal Date Selector:** render 14 ngày (today → 2 tuần), today highlighted, session dot indicator hiện đúng, tap filter sessions, scroll ngang snap-to-item
-- [ ] **Session card (unified `browse` variant):** time pill (green) + price pill + favorite icon + host avatar (32px, fallback initials) + `N/M Going` + sport icon + title + club name + host name + area + distance (conditional) + skill level tag + slots status badge + CTA "Tham gia"
+- [ ] **Session card (unified `browse` variant):** time pill (green) + price pill + favorite icon + sport icon + title + club name + area + distance (conditional) + skill level tag + slots status badge + CTA "Tham gia"
 - [ ] **Favorite icon:** Tap → toast "Tính năng sắp ra mắt" (phase-1 placeholder); không persist
 - [ ] **Distance:** Chỉ hiện khi user đã cấp quyền geolocation; fallback: ẩn distance, chỉ area text
 - [ ] **Skill level tag:** Hiện legacy `skill_level` text; DD-41 ranked range là separate migration
@@ -581,6 +573,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v2.8 | **Sync DD-133 (D1, owner ký 2026-10-16); docs-only.** Public card/detail/DTO chỉ còn `slots_open` từ `getSessionOccupancy()`: bỏ `N/M Going`, `confirmed_count`, host avatar và host name (không có cột whitelist public); `club_display_name` = alias đã duyệt (L10a); thêm `public_listing_id`. Sửa drift: `public_sessions.price` → `price_amount` (§Card, §Detail, bảng DTO). Wireframe và AC khớp. `N/M Going` ở bề mặt tenant-private (feature_session_management) giữ nguyên. Các dòng lịch sử giữ nguyên. |
 | 2026-08-12 | v2.7 | **SessionCard upgrade (Playo reference #2):** (1) **Urgency badge:** "Chỉ N chỗ!" (đỏ) khi `slots_open ≤ 3` — tăng conversion. (2) **Booking status badge:** `ĐÃ ĐĂNG KÝ`/`CHỜ`/`CHỜ DUYỆT` (right-aligned) khi authenticated player đã join — nhận ra kèo đã đăng ký trong marketplace. (3) **Skill level range:** hiện range "Người mới – Trung bình" với green chip pill + sport icon, thay single text. (4) **Time-of-day label:** "Sáng"/"Chiều"/"Tối"/"Đêm" thay time pill khi phù hợp. (5) **Session cover image:** optional hero image trên card, fallback sport gradient. Thêm 4 component tables mới (time-of-day mapping, urgency badge, booking status, cover image). 5 fields mới trong session card table. BL-DSC-1: `cover_image_url` là public moderated field. |
 | 2026-08-12 | v2.6 | **Unified SessionCard + Horizontal Date Selector (Playo-inspired):** (1) **Date selector:** thay date picker dropdown bằng horizontal scrollable date selector (14 ngày, today highlighted, session dot indicator, snap-to-item) phía trên sport chips. (2) **Session card redesign:** unified `SessionCard` variant `browse` với: time pill (green) + price pill + favorite icon (♡ placeholder phase-1) + host avatar (32px) + `N/M Going` count + sport icon + title + club/host display name + area + conditional distance (~X km, geolocation-gated) + skill level tag (legacy text, DD-41 sau) + slots status badge (`N chỗ`/`Đầy`). (3) **Filter bar:** remove date dropdown (chuyển lên date selector); giữ khu vực/giá/trình độ/slot. (4) **Loading skeleton:** thêm date selector shimmer. (5) 5 AC bullets mới. BL-DSC-1 whitelist giữ nguyên — `host_avatar_url` là public moderated field như `host_display_name`. Không đổi privacy contract. |
 | 2026-08-10 | v2.5 | **Global Search (P4.5):** Mở rộng doc từ session-only marketplace thành unified search. Thêm: Global Search scope (§1 — multi-entity: Users, Clubs, Tournaments, Sessions), entry points table (6 entries), 6 use cases mới (MKT-UC-11→16), 8 edge cases mới (#14→21 — sanitize, privacy, stale index, enumerate protection), 3 screens mới (Global Search overlay + suggestion dropdown + empty state — tất cả có ASCII layouts), search result component spec (4 entity types), 5 state coverage rows mới, 4 domain model entities (search_index, persons view, tenants view, public_tournaments), 5 analytics events (global_search_*), 17 acceptance criteria mới. Privacy-safe: chỉ public/moderated data, no PII leak. Additive-only — marketplace contract không đổi. |

@@ -1,7 +1,7 @@
 # Feature: Marketplace Discovery & Public Projection — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.7 · 2026-08-10
+> **Version:** 2.8 · 2026-10-16
 > **Status:** Reviewed  
 > **Implementation:** DB invariant `0024` đã land; `public_sessions` baseline có sẵn, nhưng projector/API/cache invalidation chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_marketplace_discovery.md`  
@@ -23,11 +23,11 @@ Session Projector → public_sessions (dedicated projection table)
 
 | Entry | Caller | Mô tả |
 |-------|--------|-------|
-| `GET /api/public/sessions` | Anonymous / Player | Discovery API — whitelist DTO, short TTL cache |
-| `GET /api/public/sessions/:id` | Anonymous / Player | Single session detail (public fields only) |
+| `GET /api/discover` | Anonymous / Player | Discovery API — whitelist DTO, short TTL cache |
+| Session detail route | Anonymous / Player | UNPINNED (pinned by L10b, keyed by `public_listing_id`) — single session detail (public fields only) |
 | Session projector (outbox consumer) | System | Publish/unpublish/update → `public_sessions` |
 | Cache invalidation (purge on unpublish) | System | Privacy-critical: immediate purge on visibility change |
-| `getSessionOccupancy()` | Internal (projector) | Active + live holds count for `slots_open` |
+| `getSessionOccupancy()` | Internal (projector) | occupied = active players + guest notes + live holds (+ pending invites after the migration that adds them); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)` (DD-133 (a)) |
 
 ---
 
@@ -48,10 +48,9 @@ CREATE TABLE public_sessions (
   area text NOT NULL,
   skill_level text,
   price_amount integer NOT NULL,
-  confirmed_count integer NOT NULL DEFAULT 0 CHECK (confirmed_count >= 0),
   slots_open integer NOT NULL,
   club_display_name text NOT NULL,
-  host_display_name text,
+  host_display_name text,  -- legacy, never written (DD-133 (c): no host or person name is public)
   join_policy text NOT NULL,
   projected_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL
@@ -68,7 +67,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 
 > Grep live `packages/db/migrations/` (`0000`–`0024` đã merge trên main, 25 migrations; tail `0024_public_visibility_capacity_check.sql`): `public_sessions` + 4 index trên **đã tồn tại từ `0006_discovery.sql`**, khớp DDL này (kể cả plain btree thay partial-index `now()`) — baseline để đọc, **reuse, không recreate**. `0024` đã add + validate `sessions_public_capacity_chk CHECK (NOT (visibility='public' AND slots_max IS NULL))`; đây là DB invariant đã implement, không phải projector/API runtime.
 
-- **Migration (genuinely new → migration mới monotonic sau tail đã merge):** (a) DD-41 expand→contract như đã pin ở đầu §2; (b) DD-32 additive `confirmed_count` column plus projector semantic change for existing `slots_open`. Live `public_sessions` does not yet contain `confirmed_count`; backfill/reproject must run before readers require it.
+- **Migration (genuinely new → migration mới monotonic sau tail đã merge):** (a) DD-41 expand→contract như đã pin ở đầu §2; (b) withdrawn by DD-133 (owner 2026-10-16): the planned DD-32 additive `confirmed_count` column is NOT added (public carries `slots_open` only; `confirmed_count` stays tenant-private); only the projector semantic change for existing `slots_open` remains, via `getSessionOccupancy()`. Live `public_sessions` has no `confirmed_count` and none will be created.
 - **Rollback:**
 
 | Bước | Hành động | An toàn? |
@@ -96,7 +95,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 | 13 | Privacy | Personal-tenant owner alias blank | Do not upsert projection; never fall back to internal tenant/person/account name |
 | 14 | Data Integrity | Public session chưa publish (`draft`) | Projector KHÔNG upsert — chỉ `status='open'` (đã publish) mới chiếu; `visibility='public'` một mình không đủ. Timing authority: `feature_session_management_tech.md` §4 bước 7 (`PublishSession` `draft`→`open`) |
 | 15 | Data Integrity | Public session với `slots_max IS NULL` | Trên DB đã migrate đầy đủ, `sessions_public_capacity_chk` từ `0024` reject trực tiếp mọi INSERT/UPDATE vi phạm; `slots_max` vẫn nullable hợp lệ cho private/non-public. Projector vẫn giữ guard phòng thủ cho pre-`0024` data/fixture/constraint-bypass: KHÔNG upsert, xoá projection + purge cache cũ, emit audit và continue sibling rows. Đây là compatibility defense, không phải lý do claim projector đã build |
-| 16 | Data Integrity | Active/hold counts change after projection | Projector recomputes all three aggregates from shared `getSessionOccupancy()`; finalizer ignores cached values and rechecks under session lock |
+| 16 | Data Integrity | Active/hold counts change after projection | Projector recomputes `slots_open` from shared `getSessionOccupancy()`; finalizer ignores cached values and rechecks under session lock |
 
 ---
 
@@ -107,7 +106,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 | Method | Path | Auth | Mô tả |
 |--------|------|------|-------|
 | GET | /api/discover | Public | Browse/filter sessions |
-| GET | /api/discover/sessions/:publicId | Public | Session detail |
+| GET | UNPINNED (pinned by L10b, keyed by `public_listing_id`) | Public | Session detail |
 
 ### Query Parameters
 
@@ -140,7 +139,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 {
   "data": {
     "items": [
-      { "publicId": "…", "sportKey": "badminton", "startsAt": "…", "area": "q7", "priceAmount": 50000, "confirmedCount": 12, "slotsOpen": 2, "clubDisplayName": "…", "joinPolicy": "open" }
+      { "publicListingId": "…", "sportKey": "badminton", "startsAt": "…", "area": "q7", "priceAmount": 50000, "slotsOpen": 2, "clubDisplayName": "…", "joinPolicy": "open" }
     ],
     "nextCursor": "…"
   },
@@ -166,7 +165,7 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 | Endpoint | Idempotent? | Key |
 |----------|-------------|-----|
 | GET `/api/discover` | ✅ | Read-only — không mutation |
-| GET `/api/discover/sessions/:publicId` | ✅ | Read-only |
+| GET session detail (route UNPINNED, L10b) | ✅ | Read-only |
 | Projector upsert/delete (system) | ✅ | Replay idempotent theo `public_sessions.id` (= session id, PK — §2; test #16) |
 
 ---
@@ -185,12 +184,12 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 ```text
 Session event → Check: public? open? future? required fields present? (visibility='public' ⇒ includes slots_max IS NOT NULL)
   → YES: resolve public aliases
-      club tenant     → moderated tenants.display_name
+      club tenant     → approved public alias (L10a; tenants has no display_name column)
       personal tenant → nonblank moderated owner membership.display_name (DD-46 target)
       personal alias blank/invalid → NO projection (never internal tenant/person fallback)
     → getSessionOccupancy(session) once
-    → Upsert public_sessions (confirmed_count=active,
-      slots_open=max(0, slots_max-active-live holds); reload canonical safe fields;
+    → Upsert public_sessions (slots_open = slots_max IS NULL ? NULL : max(0, slots_max - occupied),
+      occupied from getSessionOccupancy(); no confirmed_count; reload canonical safe fields;
       session_id remains no-FK internal reference)
   → NO: Delete from public_sessions
 Periodic sweep: DELETE WHERE expires_at < now()
@@ -206,7 +205,6 @@ Periodic sweep: DELETE WHERE expires_at < now()
 |------|--------|-----|-------------|
 | Public session DTO (browse/detail) | ✅ | Ngắn (short TTL — §1; số cụ thể chốt ở build slice) | Purge on privacy-critical unpublish (§1, edge #8, test #19); same purge on defensive projector skip of a pre-`0024`/fixture/constraint-bypass public + `slots_max IS NULL` row (edge #15, test #26); cache key/value = public DTO only (edge #7, test #18) |
 | `slots_open` | Advisory only (trong DTO cache) | Như DTO | Join re-checks transactionally (edge #10) — không phải nguồn quyết định capacity/tiền |
-| `confirmed_count` | Advisory only (trong DTO cache) | Như DTO | Purge/reproject on player lifecycle event; adapter không tự count |
 | Hold count | ❌ private | — | Used only inside occupancy helper to compute `slots_open`; never serialized/cached publicly |
 | Tenant-private data (venue/roster/financial/identity) | ❌ | — | Không bao giờ vào projection/cache/CDN (edge #1/#2/#7; ranking không dùng financial/identity — §4) |
 
@@ -256,8 +254,8 @@ Periodic sweep: DELETE WHERE expires_at < now()
 | 25 | Draft public session excluded | `visibility='public'`, `status='draft'` (not yet published) | Not projected; only appears after `PublishSession` flips `status='open'` (edge #14) |
 | 26 | Defensive public capacity guard, skip-and-continue | Compatibility/unit fixture bypasses DB CHECK to model pre-`0024` row A: `visibility='public'`, `status='open'`, `slots_max IS NULL`, already projected + cached; sibling B valid in same batch | A not projected; old row/cache purged; audit emitted. B still projects. Test documents bypass explicitly; normal current-DB setup cannot insert A |
 | 27 | Live DB public-capacity invariant | Direct INSERT/UPDATE public row with `slots_max=NULL`; controls private row with `slots_max=NULL` | `sessions_public_capacity_chk` rejects public writes and accepts nullable non-public control; structural invariant suite `PVC-1..PVC-8` remains green |
-| 28 | DD-32 aggregate parity | Active players + live/expired holds | One occupancy read yields public confirmed count + slots; live hold reduces slots, expired hold does not, hold count stays private |
-| 29 | Aggregate replay/cache invalidation | Player/hold event replay + stale cached DTO | Idempotent reproject, cached DTO purged/replaced with matching public aggregate pair |
+| 28 | DD-32 aggregate parity | Active players + live/expired holds | One occupancy read yields `slots_open`; live hold reduces slots, expired hold does not, hold count stays private; `confirmed_count` never public |
+| 29 | Aggregate replay/cache invalidation | Player/hold event replay + stale cached DTO | Idempotent reproject, cached DTO purged/replaced with matching public `slots_open` |
 
 ### Integration Tests
 
@@ -286,12 +284,13 @@ Periodic sweep: DELETE WHERE expires_at < now()
 - Projection lag / stale removals
 - Rate-limit hits / cache hit ratio
 - Privacy invariant failures (page immediately)
-- Aggregate projection parity/lag for public confirmed-count + slots pair
+- Aggregate projection parity/lag for public `slots_open`
 
 ### Changelog
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v2.8 | **Sync DD-133 (D1, owner ký 2026-10-16) + route + schema drift; docs-only.** (1) Public chỉ `slots_open`: bỏ `confirmed_count` khỏi DDL, migration (b), DTO, projector, cache row và test #28; `host_display_name` đánh dấu legacy, không bao giờ ghi; `getSessionOccupancy()` = active + guest notes + live holds. (2) DTO key `publicId` → `publicListingId`; club alias = alias đã duyệt (L10a) thay cho `tenants.display_name` (cột không tồn tại). (3) Route: list = `GET /api/discover`; bỏ `/api/public/sessions`; detail route UNPINNED (L10b ghim, khoá `public_listing_id`). Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.7 | **A-grade upgrade:** thêm Entry points table (5 entries); bump version. Không đổi contract/projection model. |
 | 2026-07-28 | v2.6 | Mirror DD-32: add target `confirmed_count`, change existing `slots_open` projector semantics to active + live holds through one `getSessionOccupancy()` read, keep hold count private, invalidate on player/hold events and keep final mutation independent of cached counts. Live migration/projector remain unbuilt. |
 | 2026-07-27 | v2.5 | Reconcile live `0024_public_visibility_capacity_check`: validated `sessions_public_capacity_chk` now rejects public + unlimited capacity at DB level while preserving nullable capacity for non-public rows. Reclassify projector skip/purge as defensive compatibility behavior for pre-`0024`/fixture/bypass input; add direct DB invariant coverage. Projector/API/cache runtime remains unbuilt. |

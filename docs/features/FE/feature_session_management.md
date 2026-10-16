@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.27 · 2026-09-12
+> **Version:** 2.28 · 2026-10-16
 > **Status:** Reviewed  
 > **Implementation:** DB substrate (`0014` waitlist, `0019` same-tenant integrity, `0024` public-capacity CHECK) + **SessionService đủ 6 command** (`packages/db/src/session-service.ts`: create · publish · announce · update · close · cancel) + **5 route** (`POST /api/sessions` · `/[id]` · `/[id]/publish` · `/[id]/close` · `/[id]/cancel`; `announce` gate DD-56 clause 1) đã merge (đo 2026-09-06 tại `30a3e90`, re-verified 2026-09-11 tại `6bfa905`); **chưa có**: route đọc (`GET /api/sessions`, `/[id]`), projector thật (stub `dlq`), auto-promote, auto-expiry, writer cho `players` (roster — invite/guest-note/approve/reject family) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
@@ -46,7 +46,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 
 - Chat và web gọi **cùng domain service** — không duplicate logic.
 - Session luôn gắn `tenant_id` — RLS choke-point.
-- Admission capacity không bao giờ bị vượt: một helper đếm `active players + unexpired channel payment holds`; concurrent join/hold/capacity change đều lock session. Waitlisted và account-link-only intent không chiếm chỗ.
+- Admission capacity không bao giờ bị vượt: một helper `getSessionOccupancy()` (DD-133 (a): active players + guest notes + live holds, + pending invites sau migration thêm chúng); concurrent join/hold/capacity change đều lock session. Waitlisted và account-link-only intent không chiếm chỗ.
 - Giá thay đổi sau khi đã charge → bắt buộc preview + explicit policy.
 - Venue chi tiết (tên, SĐT, bản đồ) chỉ hiện khi canonical player outcome là `active`; pending và approved-but-waitlisted chỉ thấy area/position.
 - Messenger `/newsession` dùng một durable wizard owner ở pre-dispatch boundary; mỗi bước/final confirm re-check `session.manage`, tenant context và snapshot. Central/tenant Page chỉ là adapter/context surface, không chứa business rule riêng.
@@ -110,7 +110,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 31 | Security | Player add friend chưa follow mình vào session | Chỉ tạo guest note (text), KHÔNG add thành player. Follow-guard (DD-47): `person_follows.status='accepted'` bắt buộc cho invite thành player |
 | 32 | Security | `allow_player_invite = false` trên session | Reject mọi invite/note — `INVITE_NOT_ALLOWED`; chỉ host/admin add thủ công |
 | 33 | Security | Player chưa active (`waitlisted`/`left`/`pending`) cố invite friend | Reject `PLAYER_NOT_ACTIVE` — chỉ active players mời được bạn |
-| 34 | Concurrency | Invite friend khi session đã đầy (slots_max reached) | Reject `SESSION_FULL` — occupancy = active players + pending players + guest notes + live holds; check dưới session lock |
+| 34 | Concurrency | Invite friend khi session đã đầy (slots_max reached) | Reject `SESSION_FULL` — occupancy = `getSessionOccupancy()` (DD-133 (a)); check dưới session lock |
 | 35 | Data Integrity | Player tạo guest note thứ 4 (vượt max 3/player/session) | Reject `GUEST_NOTE_LIMIT_REACHED` |
 | 36 | Security | Invite friend đã là player trong session (active/waitlisted/pending) | Reject `ALREADY_JOINED` — idempotent no-op nếu cùng `commandId` |
 | 37 | Security | Invite friend bị block (DD-55) | Reject `MEMBER_BLOCKED` — block boundary overrides follow |
@@ -879,7 +879,7 @@ stateDiagram-v2
 - [ ] Invite friend đã có trong session (active/waitlisted/pending) → reject `ALREADY_JOINED`
 - [ ] `allow_player_invite=false` → reject mọi invite/note `INVITE_NOT_ALLOWED`; "Mời bạn" button hidden
 - [ ] Player chưa active (`waitlisted`/`left`/`pending`) cố invite → reject `PLAYER_NOT_ACTIVE`
-- [ ] **Guest note:** Player active tạo note cho người ngoài hệ thống → chiếm slot (occupancy = active + pending + guest notes + live holds); max 3/player/session; không tạo charge
+- [ ] **Guest note:** Player active tạo note cho người ngoài hệ thống → chiếm slot (occupancy = `getSessionOccupancy()`, DD-133 (a)); max 3/player/session; không tạo charge
 - [ ] Guest note thứ 4 → reject `GUEST_NOTE_LIMIT_REACHED`
 - [ ] Invite/note khi session đầy → reject `SESSION_FULL`; capacity check dưới session lock
 - [ ] Player xoá guest note mình tạo → giải phóng slot + occupancy recompute; KHÔNG promote waitlist thật (sửa 2026-09-12 — waitlist engine chưa build)
@@ -912,6 +912,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v2.28 | **Sync DD-133 (D1, owner ký 2026-10-16); docs-only.** Ba chỗ liệt kê công thức occupancy (admission capacity, UC #34, AC guest note) → con trỏ tới `getSessionOccupancy()`. Dòng `Going count` / `N/M Going` ở bề mặt tenant-private (session detail của host) GIỮ nguyên: `confirmed_count` là tenant-private, chỉ không được public. Các dòng lịch sử giữ nguyên. |
 | 2026-09-12 | v2.27 | **ap3-intake rescore reconciliation (Q2, `ap3/features/session-management/INTAKE.md` 2026-09-12 round):** SES-UC-17, edge #38 và AC checklist đều claim xoá guest note "trigger waitlist auto-promote" — shipped `deleteGuestNote` (`packages/db/src/session-service.ts:2818-2825`) deliberately no-ops this (no waitlist/join/leave code exists yet, D2 vẫn fully blocked). Cả 3 chỗ sửa lại: occupancy recompute + publish event có xảy ra, promotion thật thì chưa. Docs-only, mirror BE v2.29 cùng round. |
 | 2026-09-11 | v2.26 | **ap3-intake gap closure (9 owner answers, `ap3/features/session-management/INTAKE.md`):** (1) Implementation line cập nhật khớp BE:6 — SessionService 6 command + 5 route đã merge, đo `6bfa905`; (2) §1 thêm đoạn "Marketplace discovery / FLOW 13" — SES-UC-8 scope tới toggle+fence, projection thật deferred tới epic "public read model" (4 tiền đề DD-73/DD-41/occupancy-helper/DD-46, DD-114 D3); (3) §2 thêm 8 edge case mới #39–46: close transition (#39–41, từ live code `closeSession`), auto-close OWNER-CHECK chưa build (#42–44, từ DD-45/45a + auto-expiry pattern), mirror BE #44/#45 cho approve/reject pending (#45–46); (4) §3 thêm bảng 4-state cho Bot Session detail (trước đây chỉ có ở aggregate matrix); Bot Publish/Discard draft thêm dòng Loading/Empty tường minh; dọn 6 dòng mồ côi thành 2 section riêng (Join/Leave action, Publish/Discard control Web), xoá 3 dòng trùng lặp; (5) §7 SES-OQ-2 chốt DD-121 (this-and-future only); SES-OQ-10 mới (timezone validation, `INVALID_TIMEZONE`). |
 | 2026-08-13 | v2.25 | **Gỡ WIP DeleteSession (rút toàn bộ nội dung v2.20) theo DD-104:** `decisions.md` v2.27 chốt D0–D4 (D1a: mọi FK giữ `NO ACTION` và chặn delete — KHÔNG có cascade, cơ chế v2.20 khai không tồn tại (9 FK trỏ `sessions` đều `NO ACTION`); D2a: action class `delete_draft_session`; D3c: bắt `23503` rồi tra `pg_constraint`; D4a: concurrency ordering chung delete+publish). Gỡ khỏi body: SES-UC-15, edges #27–#30, bot/web delete surfaces + confirm dialog, state-machine transitions, permission row, `session_deleted` analytics, 6 AC bullets, 2 state-coverage rows. ID edges #27–#30 giữ trống, KHÔNG renumber #31+. Spec DeleteSession sẽ được author trong slice DD-104 sau khi `tenant-capability-authority-core` có packet. |

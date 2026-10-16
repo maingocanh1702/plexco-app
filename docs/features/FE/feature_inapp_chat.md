@@ -4,11 +4,13 @@
 
 > **Canonical phase:** P4 (đề xuất — dựng sớm hạ tầng `chat_*`)
 > **Track:** 💬 In-app Chat
-> **Version:** 0.20 · 2026-08-12
+> **Version:** 0.21 · 2026-10-16
 > **Status:** ✅ Reviewed — final Product contract, pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web/app surface + sync engine · **DD-07** (SSE + `LISTEN/NOTIFY`) · P3.5 identity (Person/Membership)
 > **Tài liệu liên quan:** `../../product/BRD.md` MODULE 10 / BR-15 / AC-10 / FR-10 · `../../standards/decisions.md` **DD-38/DD-55/DD-56/DD-86/DD-88/DD-91..95** · DD-07 · DD-19/DD-20 (trợ lý tái dùng `chat_*` ở P7) · `feature_club_assistant.md` · `feature_notifications_reminders.md` · `feature_identity.md` · `packages/db/schema.ts` (**AUTHORITATIVE** khi triển khai)
+
+> ⚠️ **MVP build scope narrowed by DD-136 (owner 2026-10-16): club channel only.** DM, media, reaction, search, group/pin/poll/embed, slash command và digest/push offline nằm ngoài MVP build. Schema `0031`: `chat_channels.kind` CHECK = `('club','dm')` — `group` chưa có schema. Mọi use case và wireframe `group` bên dưới giữ nguyên như product contract bị hoãn (deferred); không use case nào bị xoá.
 
 > ✅ **DD-86 final boundary (2026-07-28):** Option B đã `DECISION_FINAL`: N `kind='club'` channel/tenant, exact-one active default, atomic auto-provision; lifecycle/restricted post dùng exact `chat.channel.manage`/`chat.channel.post_restricted`. Assistant mặc định true cho `all_members`, false cho `admins_only`; chỉ `chat.channel.manage` được đổi flag trên cả hai policy, và channel flag luôn **AND** tenant config/exact `assistant_ai_kb` entitlement/cap/provider/privacy gates. Migration vẫn **HOLD** tới strict slice readiness; Reviewed docs không phải runtime proof hay build authorization.
 
@@ -75,7 +77,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 - **Author lifecycle + search:** original human author được sửa body theo DB time `<15m`, tối đa 5 lần, với restricted prior-body revisions; author/channel/reply/attachments/mentions bất biến. Author soft-delete bất cứ lúc nào, irreversible với author và shared tombstone. Search beta-required chạy trên canonical current-visible row bằng PostgreSQL `simple` FTS, re-check current-readable channels và loại tombstone/revisions/slash/private bot data.
 - Mention Club Assistant dùng exact structured target `club_assistant`, chỉ từ active member trong club channel. Mention không tự cấp quyền gọi model: projector vẫn bắt channel flag + mọi DD-20/DD-21 tenant/entitlement/provider/privacy gate và chỉ trả KB-grounded answer/citation hoặc `no_answer`; ledger status phải đi `/pay`, không qua LLM.
 - **Slash v1:** ASCII case-insensitive canonicalization, zero alias/argument. `/help|/pay|/me|/myclubs|/discover|/name` chạy ở club, private Club Bot và human-DM overlay; `/sessions|/waitlist` chỉ ở club/bot. Unknown, extra argument hoặc unsupported surface trả private typed error/help **trước insert** và không bao giờ thành message.
-- **Read boundary + digest:** realtime history/reconnect/unread/badge và `chat_members.last_read_at` thuộc Chat. DD-94 digest chỉ là generic coalesced delivery signal: DM/direct mention/reply default ON; club preference `all|mentions|off`, default `mentions`; zero durable item per source message/body/title/amount và live reauthorization ngay trước provider write.
+- **Read boundary + digest:** realtime history/reconnect/unread/badge và `chat_members.last_read_created_at` + `last_read_message_id` (0031) thuộc Chat. DD-94 digest chỉ là generic coalesced delivery signal: DM/direct mention/reply default ON; club preference `all|mentions|off`, default `mentions`; zero durable item per source message/body/title/amount và live reauthorization ngay trước provider write.
 - **Club moderation:** chỉ human-authored message trong club channel. `chat.message.moderate` soft-hide/restore bằng tombstone; `chat.member.mute` áp timed `1h|24h|7d` theo channel. Required reason `spam|harassment|unsafe|off_topic|other`, với bounded note cho `other`. Mỗi action cần actor-scoped receipt/fingerprint và immutable actor/reason/before-after/timestamp audit. Mute chặn write, không chặn read. Không đọc/moderate human DM, hard delete, sửa content, permanent ban, moderate assistant/system hoặc tạo system message.
 
 ---
@@ -212,7 +214,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 | Icon | Club sport icon (club) / Avatar (DM) | Kind-specific |
 | Name | `chat_channels.name` (club) / person display_name (DM) | |
 | Last message preview | `chat_messages` latest | Truncated, sender prefix |
-| Unread badge | `chat_members.last_read_at` vs latest | 🔴 count |
+| Unread badge | `chat_members.last_read_created_at` + `last_read_message_id` (0031) vs latest | 🔴 count |
 | Timestamp | Relative (vừa xong / 2m / 5h / hôm qua) | |
 
 **4 States:**
@@ -546,12 +548,9 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 | Session cover | ✅ | `cover_image_url` (optional, moderated). Fallback: sport gradient |
 | Time pill | ✅ | `starts_at` + `ends_at` → `HH:mm – HH:mm` |
 | Price pill | ✅ | `price_amount` → VND + "/Ng" |
-| Host avatar | ✅ | `host_avatar_url` (moderated public field) |
-| Going count | ✅ | `confirmed_count` + `slots_max` → `N/M Going` |
 | Urgency badge | ✅ | "Chỉ N chỗ!" khi `slots_open ≤ 3`. Snapshot tại send time |
 | Sport icon + title | ✅ | `sport_key` + session title |
 | Club display name | ✅ | Moderated |
-| Host display name | ✅ | Moderated |
 | Area | ✅ | Coarse — DD-06 KHÔNG exact venue |
 | Skill level | ✅ | Range format: "Người mới – Trung bình". Green chip |
 | CTA | ✅ | "Xem kèo →" → session detail/landing |
@@ -596,9 +595,9 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 | Component | Data source | Ghi chú |
 |-----------|-------------|---------|
-| Channel list | `chat_channels` + `chat_members` | club/dm/group split, sorted recency |
+| Channel list | `chat_channels` + `chat_members` | club/dm split (group: deferred, chưa có schema — DD-136), sorted recency |
 | Messages | `chat_messages` + search vector + embed columns | Paginated, realtime SSE |
-| Unread count | `chat_members.last_read_at` | Per-channel per-person |
+| Unread count | `chat_members.last_read_created_at` + `last_read_message_id` (0031) | Per-channel per-person |
 | Reactions | `chat_message_reactions` | Closed set, 1/person/message |
 | Command results | Canonical services (`getSelfPaymentStatus`) | Requester-only ephemeral |
 | Safety | `chat_blocks` (DD-55) | Block/report/mute |
@@ -639,7 +638,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 | Entity (target) | Plane | Vai trò | Key constraints |
 |--------|-------|---------|-----------------|
-| `chat_channels` | `club`: Tenant-private · `dm`: **Person-self (global)** · `group`: **Membership-gated** (global hoặc tenant) | Kênh chat | `kind ∈ {club, dm, group}`; N active club channel/tenant với club-only metadata + creator identity và đúng một active default; **dm** → `tenant_id` và toàn bộ club-only metadata/creator fields **NULL**, `dm_key='least:greatest'` 2 person UNIQUE; **group** → `tenant_id` NULL (global) hoặc NOT NULL (tenant-scoped), `title` NOT NULL, `dm_key` NULL, `max_members` default 50, `group_avatar_url` optional, `created_by_person_id` NOT NULL |
+| `chat_channels` | `club`: Tenant-private · `dm`: **Person-self (global)** · `group`: **Membership-gated** (global hoặc tenant) | Kênh chat | `kind ∈ {club, dm, group}` (schema `0031` hiện chỉ CHECK `('club','dm')`; `group` chưa có schema và nằm ngoài MVP build theo DD-136 — giữ như contract bị hoãn); N active club channel/tenant với club-only metadata + creator identity và đúng một active default; **dm** → `tenant_id` và toàn bộ club-only metadata/creator fields **NULL**, `dm_key='least:greatest'` 2 person UNIQUE; **group** → `tenant_id` NULL (global) hoặc NOT NULL (tenant-scoped), `title` NOT NULL, `dm_key` NULL, `max_members` default 50, `group_avatar_url` optional, `created_by_person_id` NOT NULL |
 | `chat_members` | theo channel (`club` tenant-private / `dm` person-self / `group` membership-gated) | Thành viên kênh | **club**: `tenant_id`+`membership_id` NOT NULL, `UNIQUE(tenant, channel, membership)`; **dm**: `tenant_id`/`membership_id` NULL, đúng 2 person theo `dm_key`; **group**: `role ∈ {admin, member}`, `tenant_id` match channel, 3–50 members |
 | `chat_messages` | theo channel (`club` tenant-private / `dm` person-self) | Canonical current message | Author shape + `client_msg_id`; same-channel reply; bounded own edit; author/moderation tombstone; generated current-content search vector; no hard-delete. **Structured embed:** optional `embed_type ∈ {session}` + `embed_ref_id` + server-rendered `embed_snapshot` (JSONB, BL-DSC-1 whitelist). Body có thể rỗng khi có embed. Client KHÔNG cung cấp snapshot |
 | `chat_message_mentions` | theo message/channel | Structured mention | Target kind/ref + safe render snapshot; target/server authorization before insert |
@@ -656,7 +655,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 - **RLS:** `club` channel → thêm `chat_*` vào RLS list (ENABLE + FORCE theo `app.tenant_id`). `dm` (`tenant_id` NULL) **không** qua tenant-RLS mà gate **person-self** (chỉ 2 person trong `dm_key`) — khớp `../BE/feature_inapp_chat_tech.md`. Migration RLS list tương lai.
 - **Realtime:** SSE + `LISTEN/NOTIFY` theo tenant/person (DD-07) — cùng cơ chế sync engine.
-- **Read state:** `chat_members.last_read_at` vẫn là Chat authority cho history/reconnect/unread/badge. DD-94 Notification chỉ giữ opaque coalesced `highest_unread_cursor` signal; không durable notification item per source message hoặc content snapshot.
+- **Read state:** `chat_members.last_read_created_at` + `last_read_message_id` (0031) vẫn là Chat authority cho history/reconnect/unread/badge. DD-94 Notification chỉ giữ opaque coalesced `highest_unread_cursor` signal; không durable notification item per source message hoặc content snapshot.
 - **Không** entity nào thuộc public plane.
 
 ---
@@ -731,7 +730,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 - [ ] Safe member-target core ở slice 9 chỉ trả current-channel active human member với short-lived requester+channel-bound opaque ref + safe label; wrong actor/channel/expired ref generic-deny và mọi structured mention, mute, start-DM re-authorize khi consume. Không global/fuzzy search, raw UUID, persistent directory, contact, gender hoặc debt data.
 - [ ] A1–A13 chỉ sở hữu HTTP auth/session/action authz, validation, privacy/cache headers, DTO và route tests; F1–F10 chỉ mở sau F0 và dùng API thật. Không adapter/component nào re-derive canonical mechanism state.
 - [ ] Reviewed contract không là runtime proof: trước immutable authority re-pin và strict per-slice `CODE_READY`, không migration/route/worker/FE nào được coi là authorized hoặc implemented.
-- [ ] **Group chat** tạo được cả global (`tenant_id=NULL`) và tenant-scoped (`tenant_id NOT NULL`); kind='group' nằm trong `chat_channels` chính.
+- [ ] **Group chat** (deferred, ngoài MVP build theo DD-136; chưa có schema `group` ở 0031) tạo được cả global (`tenant_id=NULL`) và tenant-scoped (`tenant_id NOT NULL`); kind='group' nằm trong `chat_channels` chính.
 - [ ] **Follow-guard:** add member vào group chỉ thành công khi target đã follow actor (DD-47 `person_follows.status='accepted'`); user chưa follow không hiện trong picker; block boundary (DD-55) cũng chặn add.
 - [ ] **Max 50 members/group** — add khi đầy reject `GROUP_MAX_MEMBERS`; concurrent add serialize dưới channel lock.
 - [ ] **Group admin:** creator tự động là admin đầu; admin đặt/bỏ admin khác, kick member, rename, đổi avatar; last admin không được leave (`LAST_ADMIN_CANNOT_LEAVE`).
@@ -748,7 +747,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 - [ ] **Session card embed:** send message với `embed_type='session'` + `embed_ref_id` → server resolve + validate visibility + snapshot BL-DSC-1 whitelist fields → message chứa rich card.
 - [ ] **Session picker:** attach (+) → "Kèo" → hiện sessions actor có quyền xem (own sessions + public marketplace). Private/draft sessions **KHÔNG** hiện.
 - [ ] **Embed snapshot server-side only:** client KHÔNG cung cấp `embed_snapshot`; server resolve tại insert time. Forged snapshot bị reject.
-- [ ] **Embed whitelist:** snapshot chỉ chứa `sport_key`, `title`, `starts_at`, `ends_at`, `area`, `price_amount`, `confirmed_count`, `slots_open`, `club_display_name`, `host_display_name`, `join_policy`, `session_type`. KHÔNG venue/roster/PII/charge/debt.
+- [ ] **Embed whitelist:** snapshot chỉ chứa `sport_key`, `title`, `starts_at`, `ends_at`, `area`, `price_amount`, `slots_open`, `club_display_name`, `join_policy`, `session_type`, `public_listing_id` (BL-DSC-1 whitelist, DD-133; không `confirmed_count`, không `host_display_name`). KHÔNG venue/roster/PII/charge/debt.
 - [ ] **Tap CTA:** public session → `/session/<slug>` (DD-73 landing). Same-tenant → session detail. Session unavailable → generic "Kèo không còn khả dụng" toast.
 - [ ] **Stale card:** snapshot data tại send time. Card KHÔNG tự update; tap CTA luôn fetch live status. Message/card KHÔNG bị xoá/ẩn khi session cancel.
 - [ ] **Body + embed:** message có thể có body text + embed, hoặc chỉ embed (body rỗng). Cả hai idempotent theo `client_msg_id`.
@@ -777,6 +776,7 @@ Mechanism slices 1–15 không ngầm sở hữu HTTP/UI. A1–A13 lần lượt
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v0.21 | **Sync DD-133/DD-136 + schema 0031; docs-only.** (1) Embed whitelist (bảng snapshot và AC) khớp BL-DSC-1 đã sửa: bỏ `confirmed_count`/`N/M Going`, host avatar và host display name; thêm `public_listing_id`. (2) `chat_members.last_read_at` (không tồn tại) → `last_read_created_at` + `last_read_message_id` (0031). (3) `kind=group` chú thích: chưa có schema (0031 CHECK `club`,`dm`) và ngoài MVP build theo DD-136; không use case/wireframe nào bị xoá. Các dòng lịch sử giữ nguyên. |
 | 2026-08-12 | v0.20 | **SessionCard embed upgrade (Playo reference #2):** Embed snapshot thêm: `cover_image_url` (optional hero), urgency badge ("Chỉ N chỗ!" snapshot tại send time), skill level range ("Người mới – Trung bình" green chip). Snapshot fields từ 9 → 12. Không đổi embed security contract. |
 | 2026-08-12 | v0.19 | **Unified SessionCard embed (Playo-inspired):** Session Card Embed redesign → unified `SessionCard` variant `embed` với: time pill (`HH:mm – HH:mm`), price pill (VND/Ng), host avatar (32px, moderated), `N/M Going` count. Thêm embed snapshot field table (9 fields). Giữ: sport icon, title, club/host display name, area (DD-06), CTA "Xem kèo", BL-DSC-1 whitelist. Không đổi embed security contract. |
 | 2026-08-12 | v0.18 | **Share Session in Chat:** Cho phép gửi session card kèm thông tin hiển thị vào club chat / DM / group. Structured embed trên `chat_messages`: `embed_type='session'` + `embed_ref_id` + server-rendered `embed_snapshot` (BL-DSC-1 whitelist, DD-73 contract). Session picker lọc theo actor visibility (own sessions + public). Tap CTA → session detail/landing (live re-check). Snapshot tại send time, card giữ nguyên trong history khi session cancel. Thêm CHT-UC-32/33, edge case #43–48, 2 screens (Session Card Embed, Session Picker), 2 analytics events, 8 AC bullets. |
