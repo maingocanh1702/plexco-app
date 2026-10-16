@@ -73,7 +73,7 @@ const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.tri
 
 /**
  * Client mirror of hasHiddenChar (packages/db/src/text-safety.ts, the rule behind display names and
- * the session text fields). Client code cannot import @plexco/db (FE-INV-3), so the class is copied
+ * the session text fields). Client code cannot import the db package (FE-INV-3), so the class is copied
  * from me-settings-client.ts; session-form-model.test.ts pins it against validateDisplayName over
  * every code point. Control, format (bidi, zero-width), line and paragraph separators, invisible fillers.
  */
