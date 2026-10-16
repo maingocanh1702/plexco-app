@@ -95,6 +95,19 @@ export {
   type LeaveSessionParams,
   type LeaveSessionResult,
 } from "./session-join-service.js";
+// L8 (M9): join requests on approval sessions (openJoinRequest stays internal to joinSession).
+export {
+  approveJoinRequest,
+  cancelJoinRequest,
+  listPendingJoinRequests,
+  rejectJoinRequest,
+  type ApproveJoinRequestResult,
+  type CancelJoinRequestParams,
+  type DecideJoinRequestParams,
+  type JoinRequestClosedResult,
+  type ListPendingJoinRequestsParams,
+  type PendingJoinRequest,
+} from "./join-request-service.js";
 export {
   chargeStatusFor,
   markPaid,

@@ -2,6 +2,7 @@ import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { charges, memberships, players, sessions } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
 import type { Db, Tx } from "./client.js";
+import { openJoinRequest } from "./join-request-service.js";
 import {
   effectiveByCharge,
   emitSessionEvent,
@@ -41,7 +42,8 @@ export interface JoinSessionParams {
    *  only for a public session (P-1, P-3). Every other caller must already be a live member. */
   allowGuestMembership?: boolean;
 }
-/** Exactly these five keys (P-18: no amount, no venue). `requested` is part B (join_requests). */
+/** Exactly these five keys (P-18: no amount, no venue). `requested` = a pending join_requests row
+ *  on a join_policy 'approval' session (requestId set; playerId and waitlistPosition null). */
 export interface JoinSessionResult {
   outcome: "active" | "waitlisted" | "requested";
   playerId: string | null;
@@ -116,8 +118,9 @@ async function playerGate(tx: Tx, params: LeaveSessionParams, badSession: Roster
 }
 
 /** sessions FOR UPDATE: every players writer of a session serializes on this row (4.2). Re-taking
- *  it in a transaction that already holds it is a no-op. P-2: "past" = starts_at <= now(). */
-async function lockSession(tx: Tx, sessionId: string) {
+ *  it in a transaction that already holds it is a no-op. P-2: "past" = starts_at <= now().
+ *  Exported for join-request-service.ts only (not from index.ts). */
+export async function lockSession(tx: Tx, sessionId: string) {
   const [row] = await tx
     .select({
       status: sessions.status,
@@ -134,8 +137,9 @@ async function lockSession(tx: Tx, sessionId: string) {
 }
 
 /** The person's live (active|guest) membership of the tenant, FOR SHARE: RLS plus an explicit
- *  tenant filter. At most one exists (UNIQUE (tenant_id, person_id) WHERE status is live). */
-async function liveMembership(tx: Tx, tenantId: string, personId: string) {
+ *  tenant filter. At most one exists (UNIQUE (tenant_id, person_id) WHERE status is live).
+ *  Exported for join-request-service.ts only (not from index.ts). */
+export async function liveMembership(tx: Tx, tenantId: string, personId: string) {
   const [row] = await tx
     .select({ id: memberships.id, status: memberships.status })
     .from(memberships)
@@ -181,8 +185,13 @@ export async function rejoinUnprovable(
 }
 
 /** 0058 definer (tenant pinned to the GUC, person must be active): the live membership or a new
- *  `guest` one, race-safe on the live UNIQUE. Same tx: a failed join rolls it back (BE edge 16). */
-async function mintGuestMembership(tx: Tx, tenantId: string, personId: string): Promise<string> {
+ *  `guest` one, race-safe on the live UNIQUE. Same tx: a failed join rolls it back (BE edge 16).
+ *  Exported for join-request-service.ts only (approve); never called for a join request. */
+export async function mintGuestMembership(
+  tx: Tx,
+  tenantId: string,
+  personId: string,
+): Promise<string> {
   const created = await tx.execute(
     sql`SELECT create_guest_membership(${tenantId}::uuid, ${personId}::uuid) AS id`,
   );
@@ -246,10 +255,24 @@ export async function joinSession(db: Db, params: JoinSessionParams): Promise<Jo
     if (existing !== undefined && (await rejoinUnprovable(tx, sessionId, existing.id))) {
       return fail("REJOIN_REQUIRES_REVIEW", "prior payments need review first");
     }
-    // join_policy 'approval' opens a join request (readiness 4.3, part B). Until openJoinRequest
-    // lands it fails closed with zero writes: no membership, player, charge or held seat.
+    // join_policy 'approval' opens a join request only (readiness 4.3, DT-7): no membership,
+    // player, charge or held seat. It stays BEFORE mintGuestMembership, so a visitor's request
+    // never creates a membership (BE :151); the 0058 definer runs at approve instead.
     if (session.joinPolicy !== "open") {
-      return fail("SESSION_NOT_JOINABLE", "approval sessions are not open for self-join yet");
+      const opened = await openJoinRequest(tx, tenantId, sessionId, personId, commandKey);
+      const requested: JoinOutcome = {
+        outcome: "requested",
+        playerId: null,
+        waitlistPosition: null,
+        requestId: opened.requestId,
+      };
+      // A live pending request is the current outcome: zero writes and no recordCommand (like a
+      // seated player).
+      if (opened.created) {
+        const record: StoredJoin = { sessionId, actorPersonId: personId, ...requested };
+        await recordCommand(tx, tenantId, commandKey, JOIN_TYPE, record);
+      }
+      return joinResult(requested, false);
     }
 
     const membershipId = membership?.id ?? (await mintGuestMembership(tx, tenantId, personId));

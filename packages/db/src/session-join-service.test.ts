@@ -679,3 +679,54 @@ describe("leaveSession and FIFO promotion", () => {
     expect((await state(tenantId)).allocations).toBe(0);
   });
 });
+
+describe("joinSession on a join_policy 'approval' session", () => {
+  it("DT-7/P-1: the request opens only after every join check: a seated player gets the current outcome with zero writes; a visitor's request mints no membership; on a private session a guest member is SESSION_NOT_JOINABLE with no request and an active member gets `requested`", async () => {
+    const { tenantId, sessionId } = await world({ slotsMax: 3, visibility: "public" });
+    const a = await seedMember(tenantId);
+    const seated = await join(tenantId, a.personId, sessionId);
+    expect(seated).toMatchObject({ outcome: "active", requestId: null, replayed: false });
+    await ctx.owner.query(`UPDATE sessions SET join_policy = 'approval' WHERE id = $1`, [
+      sessionId,
+    ]);
+    const requests = async () =>
+      Number((await appRow(tenantId, sql`SELECT count(*)::int AS n FROM join_requests`)).n);
+
+    const s0 = await state(tenantId);
+    expect(await join(tenantId, a.personId, sessionId)).toEqual(seated);
+    expect(await state(tenantId)).toEqual(s0);
+    expect(await requests()).toBe(0);
+
+    const visitor = await fx.seedPerson("Visitor");
+    const v = await join(tenantId, visitor, sessionId, { allowGuestMembership: true });
+    expect(v).toEqual({
+      outcome: "requested",
+      playerId: null,
+      waitlistPosition: null,
+      requestId: expect.any(String),
+      replayed: false,
+    });
+    const s1 = await state(tenantId);
+    for (const k of ["memberships", "players", "charges", "allocations"] as const) {
+      expect(Number(s1[k]), k).toBe(Number(s0[k]));
+    }
+    expect(Number(s1.events)).toBe(Number(s0.events) + 1);
+    expect(Number(s1.commands)).toBe(Number(s0.commands) + 1);
+    expect(await requests()).toBe(1);
+    expect(
+      await withTenant(ctx.appDb.db, tenantId, (tx) => getSessionOccupancy(tx, sessionId)),
+    ).toBe(1);
+
+    await ctx.owner.query(`UPDATE sessions SET visibility = 'private' WHERE id = $1`, [sessionId]);
+    const g = await seedMember(tenantId, "guest");
+    const s2 = await state(tenantId);
+    expect(await codeOf(join(tenantId, g.personId, sessionId))).toBe("SESSION_NOT_JOINABLE");
+    expect(await state(tenantId)).toEqual(s2);
+    expect(await requests()).toBe(1);
+    const b = await seedMember(tenantId);
+    const rb = await join(tenantId, b.personId, sessionId);
+    expect(rb).toMatchObject({ outcome: "requested", playerId: null, waitlistPosition: null });
+    expect(rb.requestId).not.toBe(v.requestId);
+    expect(await requests()).toBe(2);
+  });
+});
