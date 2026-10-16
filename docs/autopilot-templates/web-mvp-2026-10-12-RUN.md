@@ -58,11 +58,11 @@ rating công khai · fill-slot · web push · Telegram · thanh toán in-app/ví
 | M3 | Zalo bot chạy song song · link CLB ⇄ bot · link account ⇄ Zalo | M1 | credentials Zalo OA (DD-14/15) · egress |
 | M4 | Settings tối thiểu | M1, M3 | — |
 | M5 | Sẵn sàng launch: staging, log, PITR, E2E, runbook tenant #1 | M1–M4 | owner deploy production (P0) · export data bot cũ |
-| M6 | Sync 2 chiều live + public/private | M3 | owner bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED` |
+| M6 | Sync 2 chiều live + public/private | M3 | owner bật `OUTBOX_DISPATCH_SCHEDULE_ENABLED` · **Superseded:** Phase 3 lanes: see web-mvp-phase3-2026-10-16-RUN.md; DD-132 removed M7, M9 depends on M6 only. |
 | M7 | Tiền `host_pro`: billing, đối soát CK, nhắc tự động | M2, M6 | ApiPay signed body · egress · tài khoản provider |
 | M8 | Privacy + settings đầy đủ | M4 | trả lời luật sư A3 |
-| M9 | Phía player · join · cross-club · discovery · giá theo giới tính | M6, M7 | quyết định Occupancy authority (chưa có default) |
-| M10 | In-app Chat | M2 (`authorize()`), M9 | — |
+| M9 | Phía player · join · cross-club · discovery · giá theo giới tính | M6, M7 | quyết định Occupancy authority (chưa có default) · **Superseded:** Phase 3 lanes: see web-mvp-phase3-2026-10-16-RUN.md; DD-132 removed M7, M9 depends on M6 only. |
+| M10 | In-app Chat | M2 (`authorize()`), M9 | — · **Superseded:** Phase 3 lanes: see web-mvp-phase3-2026-10-16-RUN.md; DD-132 removed M7, M9 depends on M6 only. |
 | M11 | Messenger | M3, M9 | Meta App Review |
 | M12 | Email/password | M1 | owner chọn email vendor (C7) |
 | M13 | Hardening MVP | M9–M12 | owner thuê pen-test |
@@ -424,6 +424,8 @@ OUT OF SCOPE: the production deploy itself; launch communication.
 
 ### M6 — Sync 2 chiều live + public/private
 
+> **Superseded:** Phase 3 lanes: see web-mvp-phase3-2026-10-16-RUN.md; DD-132 removed M7, M9 depends on M6 only.
+
 ```text
 Read the SHARED CONTRACT in "$HOME/Projects/Plexco app/docs/autopilot-templates/web-mvp-2026-10-12-RUN.md" first.
 
@@ -509,6 +511,8 @@ OUT OF SCOPE: anything the A3 answer has not settled.
 
 ### M9 — Phía player + discovery
 
+> **Superseded:** Phase 3 lanes: see web-mvp-phase3-2026-10-16-RUN.md; DD-132 removed M7, M9 depends on M6 only.
+
 ```text
 Read the SHARED CONTRACT in "$HOME/Projects/Plexco app/docs/autopilot-templates/web-mvp-2026-10-12-RUN.md" first.
 
@@ -535,6 +539,8 @@ OUT OF SCOPE: skill matchmaking, fill-slot, ratings, feed.
 ```
 
 ### M10 — In-app Chat
+
+> **Superseded:** Phase 3 lanes: see web-mvp-phase3-2026-10-16-RUN.md; DD-132 removed M7, M9 depends on M6 only.
 
 ```text
 Read the SHARED CONTRACT in "$HOME/Projects/Plexco app/docs/autopilot-templates/web-mvp-2026-10-12-RUN.md" first.
