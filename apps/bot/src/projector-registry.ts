@@ -56,7 +56,7 @@ export async function projectorIsEnabled(db: Queryable, name: string): Promise<b
   return result.rows[0]?.enabled === true;
 }
 
-/** The claimed event, or null once the claim is gone (wrong token, expired lease, completed). */
+/** The event; null if the lease is lost or the projector is not registered, enabled and routed. */
 export async function claimedEvent(
   db: Queryable,
   eventId: string,

@@ -235,11 +235,11 @@ export async function runDispatchCycle(
       if (!row) break;
       deliveriesThisCycle += 1;
 
-      // D-6: the event is readable only while this claim is live. Zero rows means the lease is
-      // already gone; no deliver(), and stop this projector for the cycle (the stale-stop rule).
+      // D-6: zero rows = the lease was lost, or the projector is no longer registered, enabled and
+      // routed for the event (0056 3d). No deliver(); stop it for the cycle (the stale-stop rule).
       const event = await claimedEvent(pool, row.event_id, row.projector, row.claim_token);
       if (!event) {
-        summary.leaseLostSkips += 1;
+        summary.leaseLostSkips += 1; // lease lost or projector no longer registered/enabled/routed
         break;
       }
       const job: ClaimedDeliveryJob = {
