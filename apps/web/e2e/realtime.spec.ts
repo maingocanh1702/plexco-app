@@ -29,11 +29,16 @@ test("A14: a host edit in one context reaches a second context's list without a 
     await installRealtimeStreamMock(pageA);
     const mockB = await installApiMock(pageB, fixtures());
     const streamB = await installRealtimeStreamMock(pageB);
+    let listGets = 0; // B's answered list GETs (the detail GET is /api/sessions/<id>)
+    pageB.on("requestfinished", (r) => {
+      if (r.method() === "GET" && new URL(r.url()).pathname === "/api/sessions") listGets += 1;
+    });
 
     await pageB.goto(BASE);
     await expect(card(pageB, "s-open")).toContainText("Sân Cũ");
     await expect.poll(() => streamB.urls.length).toBe(1);
     expect(new URL(streamB.urls[0]!).search).toBe(`?tenant=${TENANT_ID}`);
+    await expect.poll(() => listGets).toBe(2); // the first GET and the open's own resync (F2)
     await pageB.evaluate(() => {
       (window as Marked).__sameDocument = true;
     });
@@ -45,15 +50,18 @@ test("A14: a host edit in one context reaches a second context's list without a 
     const edited = mockA.state.find((s) => s.id === "s-open")!;
     expect(edited.venueName).toBe("Sân Mới");
 
-    // The change lands in B's server state; B must not see it until a frame arrives (no polling).
+    // The change lands in B's server state only. B's stream stays open and B does not poll, so only
+    // the pushed frame can make B refetch: a client that drops every frame fails here (F3).
     Object.assign(
       mockB.state.find((s) => s.id === "s-open")!,
       structuredClone(edited),
     );
-    await pageB.waitForTimeout(1_500);
     await expect(card(pageB, "s-open")).toContainText("Sân Cũ");
+    expect(listGets).toBe(2);
     await streamB.push({ type: "session.updated", sessionId: "s-open", version: edited.version });
     await expect(card(pageB, "s-open")).toContainText("Sân Mới");
+    await expect.poll(() => listGets).toBe(3);
+    expect(streamB.urls).toHaveLength(1); // never reconnected, so no reopen resync either
     expect(await pageB.evaluate(() => (window as Marked).__sameDocument)).toBe(true);
   } finally {
     await Promise.all(contexts.map((context) => context.close()));
