@@ -60,11 +60,10 @@ test.describe("PWA assets", () => {
     await page.goto("/?auth_error=AUTH_STALE");
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Bạn đang offline");
     // Back online: the user returns to the page they asked for, not the static fallback.
-    // Sequenced on the browser, not the app. The heading is server-rendered, so first wait for the
-    // page's own "online" listener (components/pwa/offline-view.tsx adds it after hydration). Then
-    // hold the page's script at its next statement while setOffline(false) runs: Playwright lifts
-    // the emulation page first and service worker second, so the page's retry could otherwise reach
-    // a worker that is still offline and be served the fallback again (measured, 1 of 8 runs).
+    // Sequenced on the browser, not the app: wait for the page's own "online" listener (the heading
+    // is server-rendered, the listener comes with hydration), then hold the page's script while
+    // setOffline(false) runs. Playwright lifts the page before the service worker, so the page's
+    // retry could reach a still-offline worker and get the fallback again (measured, 1 of 8 runs).
     const cdp = await context.newCDPSession(page);
     await expect
       .poll(async () => {

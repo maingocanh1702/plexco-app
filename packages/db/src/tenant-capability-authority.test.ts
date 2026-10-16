@@ -456,8 +456,7 @@ describe("authorize(): under a NOSUPERUSER NOBYPASSRLS migration owner (0037 D-2
         await nsCtx.bootstrapChatDefinerForOwner();
         await nsCtx.runMigration();
       });
-      // The harness's pool: the leased app password, an error guard for teardown's FORCE drop
-      // (57P01), ended by nsCtx.teardown().
+      // The harness pool: leased app password, guarded for teardown's FORCE drop (57P01), ended there.
       const appPool = await nsCtx.connectAsApp();
 
       // Fixtures the production way: a person (owner connection; persons has no runtime grant)

@@ -2,11 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
-import {
-  leaseTestRolePasswords,
-  withDefinerReadLock,
-  type TestRolePasswordLease,
-} from "../../../packages/db/src/test-harness.js";
+import * as harness from "../../../packages/db/src/test-harness.js";
 
 export { ROLE_PW, type TestRolePasswordLease } from "../../../packages/db/src/test-harness.js";
 
@@ -38,12 +34,12 @@ export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
 
 /** The bot only reads the definers its migrate() reaches: the reader side of their locks. */
 export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  return withDefinerReadLock(base, fn);
+  return harness.withDefinerReadLock(base, fn);
 }
 
 /** ROLE_PW.app_worker (and app, readonly) until the lease is released; release it after the pools. */
-export async function setAppWorkerPasswordRaceSafe(base: string): Promise<TestRolePasswordLease> {
-  return leaseTestRolePasswords(base);
+export async function setAppWorkerPasswordRaceSafe(base: string) {
+  return harness.leaseTestRolePasswords(base);
 }
 
 export function testUrl(

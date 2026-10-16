@@ -319,13 +319,10 @@ describe("createRolePasswordLeaser, on scratch roles and keys (RPW)", () => {
   const passwords = { [roleA]: "rpw_test_a", [roleB]: "rpw_test_b", [roleC]: "rpw_test_c" };
   let config: Parameters<typeof createRolePasswordLeaser>[0];
   let lease: (base: string) => Promise<TestRolePasswordLease>;
+  const stateSql =
+    "SELECT rolname, rolpassword, rolcanlogin FROM pg_authid WHERE rolname = ANY($1)";
   const roleState = async () =>
-    (
-      await observer.query(
-        "SELECT rolname, rolpassword, rolcanlogin FROM pg_authid WHERE rolname = ANY($1) ORDER BY 1",
-        [[roleA, roleB, roleC]],
-      )
-    ).rows;
+    (await observer.query(`${stateSql} ORDER BY 1`, [[roleA, roleB, roleC]])).rows;
 
   beforeEach(async () => {
     const storeDir = mkdtempSync(path.join(os.tmpdir(), "plexco-rpw-"));
@@ -444,14 +441,10 @@ describe("withAdvisoryLocks, on scratch keys (LCK)", () => {
     const done = withAdvisoryLocks(url, keys, mode, body);
     return { appName, inside, leave: () => (exit(), done) };
   }
-  const locksOf = async (appName: string) =>
-    (
-      await observer.query<{ key: string; mode: string; granted: boolean }>(
-        `SELECT l.objid::text AS key, l.mode, l.granted FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-          WHERE l.locktype = 'advisory' AND a.application_name = $1 ORDER BY 1`,
-        [appName],
-      )
-    ).rows;
+  const locksSql = `SELECT l.objid::text AS key, l.mode, l.granted FROM pg_locks l JOIN pg_stat_activity a
+    ON a.pid = l.pid WHERE l.locktype = 'advisory' AND a.application_name = $1 ORDER BY 1`;
+  type Held = { key: string; mode: string; granted: boolean };
+  const locksOf = async (appName: string) => (await observer.query<Held>(locksSql, [appName])).rows;
   const waiting = async (appName: string, key: number) =>
     (await locksOf(appName)).some((l) => l.key === String(key) && !l.granted);
   const waitsOn = (appName: string, key: number) =>
@@ -491,10 +484,9 @@ describe("withAdvisoryLocks, on scratch keys (LCK)", () => {
     async () => {
       const { url, appName } = taggedUrl();
       const held = async () => (await locksOf(appName)).map((l) => `${l.key} ${l.mode}`).sort();
-      const [jobd, chst] = [
-        `${JOB_DEFINER_LOCK_KEY} ShareLock`,
-        `${CHAT_DEFINER_STATE_LOCK_KEY} ShareLock`,
-      ];
+      const [jobd, chst] = [JOB_DEFINER_LOCK_KEY, CHAT_DEFINER_STATE_LOCK_KEY].map(
+        (k) => `${k} ShareLock`,
+      );
       expect(await withJobDefinerLock(url, held)).toEqual([jobd]);
       expect(await withDefinerReadLock(url, held)).toEqual([jobd, chst].sort());
     },

@@ -103,12 +103,11 @@ type RoleRow = { rolname: string; rolpassword: string | null; rolcanlogin: boole
 type RoleSnapshot = Record<string, RoleRow | null>;
 
 /**
- * Leases the roles' test passwords. A participant holds participantKey SHARED while it may connect
- * with one, and writes them only under mutexKey: no two ALTER ROLEs race, no password changes under
- * a live participant. The first of an overlapping set snapshots each role's pg_authid password and
- * LOGIN flag to a 0600 file outside the repo (never logged), the last restores and checks them. A
- * killed run leaves the file, kept by the next set (a test value never overwrites it). A role absent
- * at the snapshot ends with no password. A failure ends the session (its locks too), error unchanged.
+ * Leases the roles' test passwords: held SHARED (participantKey) while in use, written only under
+ * mutexKey, so no two ALTER ROLEs race and none changes under a live participant. The first of a set
+ * snapshots pg_authid password + LOGIN to a 0600 file outside the repo, never logged; the last
+ * restores and checks it. A killed run's file is kept by the next set, so a test value never
+ * overwrites it. A role absent at the snapshot ends with no password. A failure ends the session.
  */
 export function createRolePasswordLeaser(config: {
   passwords: Readonly<Record<string, string>>;
@@ -121,19 +120,17 @@ export function createRolePasswordLeaser(config: {
     const client = new pg.Client({ connectionString: base });
     let tearingDown = false;
     guardClientErrors(client, () => tearingDown);
-    const query = <R extends pg.QueryResultRow>(text: string, values?: unknown[]) =>
-      client.query<R>(text, values);
     const rolesNow = async () => {
       const sql = "SELECT rolname, rolpassword, rolcanlogin FROM pg_authid WHERE rolname = ANY($1)";
-      return new Map((await query<RoleRow>(sql, [roles])).rows.map((r) => [r.rolname, r]));
+      return new Map((await client.query<RoleRow>(sql, [roles])).rows.map((r) => [r.rolname, r]));
     };
     const lastOne = async () => {
       const sql = "SELECT pg_try_advisory_lock($1) AS ok";
-      return (await query<{ ok: boolean }>(sql, [config.participantKey])).rows[0]!.ok;
+      return (await client.query<{ ok: boolean }>(sql, [config.participantKey])).rows[0]!.ok;
     };
     const storeFile = async () => {
       const sql = "SELECT system_identifier::text AS id FROM pg_control_system()";
-      const cluster = (await query<{ id: string }>(sql)).rows[0]!.id;
+      const cluster = (await client.query<{ id: string }>(sql)).rows[0]!.id;
       return path.join(config.storeDir, `${cluster}-${config.participantKey.toString(16)}.json`);
     };
     const inSession = async (work: () => Promise<void>) => {
@@ -147,7 +144,7 @@ export function createRolePasswordLeaser(config: {
     };
     await inSession(async () => {
       await client.connect();
-      await query("SELECT pg_advisory_lock($1)", [config.mutexKey]);
+      await client.query("SELECT pg_advisory_lock($1)", [config.mutexKey]);
       if (await lastOne()) {
         const file = await storeFile();
         if (!existsSync(file)) {
@@ -157,14 +154,16 @@ export function createRolePasswordLeaser(config: {
           writeFileSync(`${file}.tmp`, JSON.stringify(snapshot), { mode: 0o600 });
           renameSync(`${file}.tmp`, file);
         }
-        await query("SELECT pg_advisory_unlock($1)", [config.participantKey]);
+        await client.query("SELECT pg_advisory_unlock($1)", [config.participantKey]);
       }
-      await query("SELECT pg_advisory_lock_shared($1)", [config.participantKey]);
+      await client.query("SELECT pg_advisory_lock_shared($1)", [config.participantKey]);
       for (const role of (await rolesNow()).keys()) {
         const password = client.escapeLiteral(config.passwords[role]!);
-        await query(`ALTER ROLE ${client.escapeIdentifier(role)} WITH LOGIN PASSWORD ${password}`);
+        await client.query(
+          `ALTER ROLE ${client.escapeIdentifier(role)} WITH LOGIN PASSWORD ${password}`,
+        );
       }
-      await query("SELECT pg_advisory_unlock($1)", [config.mutexKey]);
+      await client.query("SELECT pg_advisory_unlock($1)", [config.mutexKey]);
     });
     let released = false;
     return {
@@ -172,8 +171,8 @@ export function createRolePasswordLeaser(config: {
         if (released) return;
         released = true;
         await inSession(async () => {
-          await query("SELECT pg_advisory_lock($1)", [config.mutexKey]);
-          await query("SELECT pg_advisory_unlock_shared($1)", [config.participantKey]);
+          await client.query("SELECT pg_advisory_lock($1)", [config.mutexKey]);
+          await client.query("SELECT pg_advisory_unlock_shared($1)", [config.participantKey]);
           if (await lastOne()) {
             const file = await storeFile();
             const snapshot = JSON.parse(readFileSync(file, "utf8")) as RoleSnapshot;
@@ -181,7 +180,7 @@ export function createRolePasswordLeaser(config: {
               const was = snapshot[role];
               const login = was ? (was.rolcanlogin ? "LOGIN " : "NOLOGIN ") : "";
               const password = was?.rolpassword ? client.escapeLiteral(was.rolpassword) : "NULL";
-              await query(
+              await client.query(
                 `ALTER ROLE ${client.escapeIdentifier(role)} WITH ${login}PASSWORD ${password}`,
               );
             }
@@ -195,7 +194,7 @@ export function createRolePasswordLeaser(config: {
             }
             rmSync(file);
           }
-          await query("SELECT pg_advisory_unlock_all()");
+          await client.query("SELECT pg_advisory_unlock_all()");
         });
         tearingDown = true;
         await client.end();
@@ -526,11 +525,10 @@ export async function acquireChatDefinerLock(
  * same class of hazard BR-1 documents for app/app_worker/readonly, except those tests dodge it by
  * never touching the shared roles at all (migrate.test.ts:24-25). job_definer's negative-path
  * proofs have no such option (they must actually break it), so this advisory lock makes "must be
- * correct" (every bootstrap+migrate call: withJobDefinerLock, the shared side, so these never wait
- * on each other) and "deliberately broken for one assertion" (the JCL-2/3 negative tests:
- * withJobDefinerBreakerLock, the exclusive side) mutually exclusive: whichever side holds the lock,
- * the other blocks until it's released (a waiting breaker goes before newer readers), so the two
- * windows can never overlap. A leftover ABSENT role self-heals (the next
+ * correct" (every bootstrap+migrate call: withJobDefinerLock, shared) and "deliberately broken for
+ * one assertion" (the JCL-2/3 negative tests: withJobDefinerBreakerLock, exclusive) mutually
+ * exclusive: whichever side holds the lock, the other blocks until it's released, so the two windows
+ * can never overlap. A leftover ABSENT role self-heals (the next
  * lock-holder's bootstrap recreates it) — a leftover WRONG-ATTRIBUTE role does NOT (bootstrap
  * fails closed on drift instead of silently fixing it), so every caller that intentionally
  * corrupts the attributes MUST drop the role again before releasing the lock.
@@ -552,10 +550,9 @@ export async function withDefinerReadLock<T>(base: string, fn: () => Promise<T>)
 }
 
 /**
- * Holds `keys` on one dedicated session while fn runs (the keys keep the hazard classes apart).
- * Exclusive: in order. Shared: all-or-nothing, so a reader waits on a busy key holding nothing, then
- * retries the set. A connect() or lock failure ends the session, error unchanged (audit 2026-09-06,
- * test-harness-job-definer-lock-client-leak). Exported for test-harness.test.ts.
+ * Holds `keys` on one session while fn runs. Exclusive: in order. Shared: all-or-nothing, waiting on
+ * a busy key while holding nothing. A connect() or lock failure ends the session, error unchanged
+ * (audit 2026-09-06, test-harness-job-definer-lock-client-leak). Exported for test-harness.test.ts.
  */
 export async function withAdvisoryLocks<T>(
   base: string,

@@ -1766,8 +1766,7 @@ describe("DD29-8 0028's lock ordering avoids a deadlock with concurrent tenant_p
       });
 
       // Connect as `app` — the runtime role tenant_provision() is GRANTed to (already granted by
-      // 0012, part of the 0000-0027 replay above). `app` is CLUSTER-GLOBAL: its one test password is
-      // leased (test-harness.ts leaseTestRolePasswords) and given back once appClient is closed.
+      // 0012, part of the 0000-0027 replay above), on its leased test password (CLUSTER-GLOBAL role).
       passwords = await leaseTestRolePasswords(BASE!);
       appClient = await connect(url(dbName, "app", ROLE_PW.app));
 

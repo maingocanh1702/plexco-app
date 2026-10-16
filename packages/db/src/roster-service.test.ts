@@ -237,8 +237,7 @@ describe("addMemberToSession", () => {
       if (ok)
         expect((await add(tenantId, actor, sessionId, { displayName: "X" })).status).toBe("active");
       else {
-        // Counted BEFORE the command starts: a command started first could reject (unhandled) while
-        // this read is still pending, and could write before it.
+        // Counted BEFORE the command starts, which could otherwise reject unhandled meanwhile.
         const before = await fx.counts(tenantId);
         expect(await codeOf(add(tenantId, actor, sessionId, { displayName: "X" }))).toBe(
           "SESSION_NOT_OPEN",

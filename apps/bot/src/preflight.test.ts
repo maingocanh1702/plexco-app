@@ -23,9 +23,8 @@ const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_ENTRYPOINT = path.join(HERE, "worker.ts");
 const TSX_BIN = path.join(HERE, "..", "node_modules", ".bin", "tsx");
-// app_worker's password is CLUSTER-global. Its one test value is ROLE_PW.app_worker, leased for the
-// fixture's lifetime (setAppWorkerPasswordRaceSafe) and restored by the last participant on the
-// cluster, so no suite changes it under another one and nobody restores it by hand.
+// app_worker's password is CLUSTER-global: ROLE_PW.app_worker, leased for the fixture's lifetime
+// (setAppWorkerPasswordRaceSafe) and restored by the last participant on the cluster.
 
 // --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
 // (shared with dispatcher.test.ts and schedule.test.ts); this file still owns its
