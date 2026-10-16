@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { type DbHandle } from "@plexco/db";
 import { cookieSecure } from "./session-cookies";
@@ -131,28 +131,17 @@ export function decryptPkceVerifier(enc: Buffer, keys: { encKey: Buffer } & Pkce
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
 }
 
-/** Opaque KMS key/version reference stored alongside a ciphertext. */
-export function authKeyVersion(): string {
-  return process.env.KMS_KEY_ID?.trim() || "local";
-}
+/**
+ * authKeyVersion() (the opaque KMS key/version reference stored alongside a ciphertext: KMS_KEY_ID or
+ * "local") and deriveAesKey(secret, info) (HKDF-SHA256 to EXACTLY 32 bytes, domain-separated by `info`;
+ * codex round-02 [P1]) moved unchanged to `@plexco/db/connector-crypto` so the worker derives the same
+ * keys; re-exported here so every importer keeps its path.
+ */
+export { authKeyVersion, deriveAesKey } from "@plexco/db/connector-crypto";
 
 /** HKDF `info` labels — domain-separate the derived AES keys by purpose. */
 export const PKCE_ENC_KEY_INFO = "plexco:oauth-pkce-enc:v1";
 export const EMAIL_ENC_KEY_INFO = "plexco:account-email-enc:v1";
-
-/**
- * Derive an EXACTLY-32-byte AES-256-GCM key from the shared auth secret via
- * HKDF-SHA256, domain-separated by `info`. resolveAuthSecretKey() only enforces
- * a 32-byte MINIMUM, so a deployed ENCRYPTION_KEY / KMS plaintext LONGER than 32
- * bytes would otherwise make encryptPkceVerifier / deriveEmailArtifacts (both
- * require length === 32) throw and take the whole adapter down (codex round-02
- * [P1]). HKDF also stretches/separates the key so the same secret yields
- * distinct, purpose-bound encryption keys. Deterministic — the future order-4
- * email lifecycle reproduces the email key with the same secret + EMAIL_ENC_KEY_INFO.
- */
-export function deriveAesKey(secret: Buffer, info: string): Buffer {
-  return Buffer.from(hkdfSync("sha256", secret, Buffer.alloc(0), info, 32));
-}
 
 /* ---------------------------------------------------------------------------
  * Provider-scoped Lax binding cookie — NOT the session cookie and NOT the
