@@ -49,6 +49,31 @@ const cmdId = () => `cmd-${seq++}`;
 const t9 = new Date("2026-09-01T09:00:00Z");
 const t11 = new Date("2026-09-01T11:00:00Z");
 
+// Hidden-character vectors, built with fromCodePoint so no control or bidi character sits in this
+// source (a literal escape inside a tool call or a regex would put the rejected character here).
+const ch = (cp: number): string => String.fromCodePoint(cp);
+const HIDDEN_VECTORS: ReadonlyArray<readonly [string, number]> = [
+  ["NUL", 0x0000],
+  ["RLO bidi override", 0x202e],
+  ["ZWSP zero-width", 0x200b],
+  ["LINE SEPARATOR", 0x2028],
+  ["PARAGRAPH SEPARATOR", 0x2029],
+  ["LF", 0x000a],
+  ["TAB", 0x0009],
+  ["ESC (Cc control)", 0x001b],
+];
+type TextField = "area" | "venueName" | "venueAddress";
+const TEXT_FIELDS: readonly TextField[] = ["area", "venueName", "venueAddress"];
+const TEXT_CASES = TEXT_FIELDS.flatMap((field) =>
+  HIDDEN_VECTORS.map(([label, cp]) => ({ field, label, cp })),
+);
+// Accepted text: Vietnamese NFC, the same string decomposed (NFD), an emoji + VS16.
+const OK_TEXTS = [
+  "Sân Quận Tân Bình",
+  "Sân Quận Tân Bình".normalize("NFD"),
+  "Sân A " + ch(0x2764) + ch(0xfe0f),
+];
+
 const input = (over: Partial<CreateSessionInputPayload> = {}): CreateSessionInputPayload => ({
   sportId: ctx.badmintonSportId,
   startsAt: t9,
@@ -197,6 +222,56 @@ describe("createSession", () => {
     expect(replay).toMatchObject({ replayed: true, sessionId: first.sessionId });
     const s = await row(`SELECT venue_address FROM sessions WHERE id = $1`, [first.sessionId]);
     expect(s.venue_address).toBe("12 Nguyễn Trãi");
+  });
+
+  it.each(TEXT_CASES)(
+    "TXT1: create rejects $label in $field as INVALID_TEXT_FIELD, zero writes",
+    async ({ field, cp }) => {
+      await expectReject(() => createBad({ [field]: "Sân" + ch(cp) + "A" }), "INVALID_TEXT_FIELD");
+    },
+  );
+
+  it("TXT2: the server does not trim, so an edge newline or tab is rejected; the 200 cap and the hidden rule both apply", async () => {
+    await expectReject(() => createBad({ venueName: "Sân A\n" }), "INVALID_TEXT_FIELD");
+    await expectReject(() => createBad({ area: "\tQuận 1" }), "INVALID_TEXT_FIELD");
+    await expectReject(
+      () => createBad({ venueAddress: "đ".repeat(199) + ch(0x200b) }),
+      "INVALID_TEXT_FIELD",
+    );
+    // Over the cap by length, with no hidden character: still rejected (the cap holds).
+    await expectReject(() => createBad({ venueAddress: "đ".repeat(201) }), "INVALID_TEXT_FIELD");
+    // Exactly at the cap with no hidden character: accepted.
+    const edge = await create({ venueAddress: "đ".repeat(200) });
+    expect(edge.replayed).toBe(false);
+  });
+
+  it("TXT3: a public create with a hidden character in area reports INVALID_TEXT_FIELD, not MISSING_DISCOVERY_FIELDS", async () => {
+    await expectReject(
+      () => createBad({ visibility: "public", slotsMax: 8, area: "Quận" + ch(0x202e) + "1" }),
+      "INVALID_TEXT_FIELD",
+    );
+  });
+
+  it("TXT5: create stores Vietnamese NFC/NFD and an emoji with VS16 byte for byte; empty and null are accepted clears", async () => {
+    for (const text of OK_TEXTS) {
+      const r = await create({ area: text, venueName: text, venueAddress: text });
+      const s = await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
+        r.sessionId,
+      ]);
+      expect(s).toEqual({ area: text, venue_name: text, venue_address: text });
+    }
+    const empty = await create({ area: "", venueName: "", venueAddress: "" });
+    const nulled = await create({ area: null, venueName: null, venueAddress: null });
+    expect(
+      await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
+        empty.sessionId,
+      ]),
+    ).toEqual({ area: "", venue_name: "", venue_address: "" });
+    expect(
+      await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
+        nulled.sessionId,
+      ]),
+    ).toEqual({ area: null, venue_name: null, venue_address: null });
   });
 
   it("A2: a public create carries visibility=public in the outbox payload", async () => {
@@ -2298,6 +2373,100 @@ describe("updateSession", () => {
       venueAddress: "đ".repeat(200),
     });
     expect(ok).toMatchObject({ version: version + 1, replayed: false });
+  });
+
+  it("TXT4: update rejects every hidden character in area, venue_name, venue_address as INVALID_TEXT_FIELD with zero writes", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { area: "Quận 1" });
+    const commandIds: string[] = [];
+    for (const { field, cp } of TEXT_CASES) {
+      const commandId = cmdId();
+      commandIds.push(commandId);
+      await expectUpdateReject(
+        () =>
+          update(
+            tenantId,
+            { sessionId, expectedVersion: version, [field]: "Sân" + ch(cp) + "A" },
+            commandId,
+          ),
+        "INVALID_TEXT_FIELD",
+      );
+    }
+    expect(
+      await row(`SELECT version, area, venue_name, venue_address FROM sessions WHERE id = $1`, [
+        sessionId,
+      ]),
+    ).toEqual({ version, area: "Quận 1", venue_name: null, venue_address: null });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+    expect(
+      (
+        await row(
+          `SELECT count(*)::int AS n FROM processed_commands WHERE command_id = ANY($1::text[])`,
+          [commandIds],
+        )
+      ).n,
+    ).toBe(0);
+    // Control: the same expected version with a clean value succeeds.
+    const ok = await update(tenantId, { sessionId, expectedVersion: version, venueName: "Sân A" });
+    expect(ok).toMatchObject({ version: version + 1, replayed: false });
+  });
+
+  it("TXT4b: update has the same edge-whitespace and no-op rules as create (no trimming; a rejected value never reaches the no-op branch)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { area: "Quận 1" });
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, venueName: "Sân A\n" }),
+      "INVALID_TEXT_FIELD",
+    );
+    await expectUpdateReject(
+      () => update(tenantId, { sessionId, expectedVersion: version, area: "Quận 1" + ch(0x200b) }),
+      "INVALID_TEXT_FIELD",
+    );
+    expect(await sessionState(sessionId)).toMatchObject({ version, area: "Quận 1" });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("TXT5b: update stores Vietnamese NFC/NFD and an emoji with VS16 byte for byte; null and empty clear the field", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const seeded = await seedSession(tenantId, { area: "Quận 1" });
+    const sessionId = seeded.sessionId;
+    let version = seeded.version;
+    for (const text of OK_TEXTS) {
+      const r = await update(tenantId, {
+        sessionId,
+        expectedVersion: version,
+        area: text,
+        venueName: text,
+        venueAddress: text,
+      });
+      version = r.version;
+      expect(
+        await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
+          sessionId,
+        ]),
+      ).toEqual({ area: text, venue_name: text, venue_address: text });
+    }
+    const cleared = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      area: null,
+      venueName: null,
+      venueAddress: null,
+    });
+    expect(
+      await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [sessionId]),
+    ).toEqual({ area: null, venue_name: null, venue_address: null });
+    const emptied = await update(tenantId, {
+      sessionId,
+      expectedVersion: cleared.version,
+      area: "",
+      venueName: "",
+      venueAddress: "",
+    });
+    expect(emptied).toMatchObject({ replayed: false });
+    expect(
+      await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [sessionId]),
+    ).toEqual({ area: "", venue_name: "", venue_address: "" });
   });
 
   it("U9: idempotent no-op when the effective change-set is empty — no version bump, no event, wins a stale version", async () => {
