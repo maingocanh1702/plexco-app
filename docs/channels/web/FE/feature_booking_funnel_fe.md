@@ -102,8 +102,8 @@ Booking funnel chạy chủ yếu trên bot (Messenger/Zalo), nhưng một số 
 │ 🏸 Cầu lông tối thứ Tư  │
 │ 🕒 19:00–21:00, 30/07   │
 │ 📍 Quận 3               │
-│ 👥 2 chỗ còn trống       │
-│ 💳 120,000đ              │
+│ 👥 2 chỗ còn trống      │
+│ 💳 120,000đ             │
 │                           │
 │ ─────────────────────── │
 │ CLB Cầu lông BT          │
