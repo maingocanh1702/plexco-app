@@ -141,6 +141,8 @@ export function startOutboxWake(options: OutboxWakeOptions): { stop(): Promise<v
     const c = new pg.Client({
       connectionString: options.connectionString,
       application_name: WAKE_APPLICATION_NAME,
+      keepAlive: true, // a half-open idle socket must error (and reconnect), not leave the loop deaf
+      keepAliveInitialDelayMillis: 10_000,
     });
     client = c;
     let lost = false;
