@@ -8,10 +8,12 @@ import { migrate } from "@plexco/db";
 import { describe, expect, it, vi } from "vitest";
 import { withTestContext } from "./test-harness.js";
 import {
+  ROLE_PW,
   bootstrapJobDefiner,
   setAppWorkerPasswordRaceSafe,
   testUrl,
   withJobDefinerLock,
+  type TestRolePasswordLease,
 } from "./test-db.js";
 import { runPreflightChecks } from "./preflight.js";
 import { provisionQueue } from "./provision-queue.js";
@@ -21,21 +23,8 @@ const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_ENTRYPOINT = path.join(HERE, "worker.ts");
 const TSX_BIN = path.join(HERE, "..", "node_modules", ".bin", "tsx");
-const APP_WORKER_PASSWORD = "plexco_test_worker_jrd";
-// codex round-04 [P2]: app_worker's password is CLUSTER-global, exactly like
-// its role attributes and job_definer membership above. This file does NOT
-// attempt to restore it after its own suite finishes: an earlier attempt at
-// exactly that (an afterAll hook) introduced a WORSE race than the problem
-// it solved — vitest runs test files concurrently, so this file's afterAll
-// firing while dispatcher.test.ts's pool was still opening new connections
-// mid-suite caused a live "password authentication failed" failure there,
-// observed directly. Restoring safely would need coordination with every
-// OTHER file/package that also authenticates as app_worker (packages/db's
-// own suites included, out of this slice's scope) — not something a single
-// file's teardown can do correctly. .env.example/infra/docker-compose.yml
-// document re-running the bootstrap ALTER ROLE after any `pnpm -w test`
-// instead, matching how packages/db's own tests already leave app_worker on
-// a test password with no restore, unrelated to this slice.
+// app_worker's password is CLUSTER-global: ROLE_PW.app_worker, leased for the fixture's lifetime
+// (setAppWorkerPasswordRaceSafe) and restored by the last participant on the cluster.
 
 // --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
 // (shared with dispatcher.test.ts and schedule.test.ts); this file still owns its
@@ -60,9 +49,10 @@ async function setupWorkerContext(dbName: string): Promise<WorkerContext> {
   const directUrl = testUrl(base, {
     db: dbName,
     user: "app_worker",
-    password: APP_WORKER_PASSWORD,
+    password: ROLE_PW.app_worker,
   });
   let created = false;
+  let passwords: TestRolePasswordLease | undefined;
   const teardown = async () => {
     if (!created) return;
     const cleanup = new pg.Client({ connectionString: base });
@@ -72,6 +62,7 @@ async function setupWorkerContext(dbName: string): Promise<WorkerContext> {
       created = false;
     } finally {
       await cleanup.end();
+      await passwords?.release(); // after the drop, which a failed release then can't skip
     }
   };
 
@@ -85,7 +76,7 @@ async function setupWorkerContext(dbName: string): Promise<WorkerContext> {
       await bootstrapJobDefiner(admin);
       await migrate(migrationUrl);
     });
-    await setAppWorkerPasswordRaceSafe(admin, APP_WORKER_PASSWORD);
+    passwords = await setAppWorkerPasswordRaceSafe(base);
   } catch (error) {
     errors.push(error);
   } finally {
@@ -127,7 +118,7 @@ it(
         this: pg.Client,
         ...args
       ) {
-        if (args[0] === "SELECT pg_advisory_lock($1)") return Promise.reject(failure);
+        if (String(args[0]).includes("advisory_lock")) return Promise.reject(failure);
         return Reflect.apply(originalQuery, this, args);
       });
       return {

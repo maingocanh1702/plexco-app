@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { authorize } from "./tenant-capability-authority.js";
 import { withTenant } from "./tenant.js";
-import pg from "pg";
 import {
   setupNonSuperuserOwnerContext,
   setupRlsTestContext,
@@ -451,19 +450,14 @@ describe("authorize(): grant row lock (#28, lock half)", () => {
 describe("authorize(): under a NOSUPERUSER NOBYPASSRLS migration owner (0037 D-2 incident class)", () => {
   it("an owner is allowed and a stranger is denied when the definer's owner is subject to FORCE RLS", async () => {
     const nsCtx = await setupNonSuperuserOwnerContext("plexco_authorize_nonsuper");
-    let appPool: pg.Pool | undefined;
     try {
       await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         await nsCtx.runMigration();
       });
-      await nsCtx.superuser.query(`ALTER ROLE app WITH LOGIN PASSWORD 'plexco_test_app'`);
-      const url = new URL(process.env.DATABASE_URL_TEST!);
-      url.pathname = `/${nsCtx.dbName}`;
-      url.username = "app";
-      url.password = "plexco_test_app";
-      appPool = new pg.Pool({ connectionString: url.toString(), max: 2 });
+      // The harness pool: leased app password, guarded for teardown's FORCE drop (57P01), ended there.
+      const appPool = await nsCtx.connectAsApp();
 
       // Fixtures the production way: a person (owner connection; persons has no runtime grant)
       // and tenant_provision() as `app`, which creates the owner tenant_admins row under FORCE RLS.
@@ -484,7 +478,7 @@ describe("authorize(): under a NOSUPERUSER NOBYPASSRLS migration owner (0037 D-2
       ).rows[0]!.id;
 
       const decide = async (person: string) => {
-        const c = await appPool!.connect();
+        const c = await appPool.connect();
         try {
           await c.query("BEGIN");
           await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenant]);
@@ -505,7 +499,6 @@ describe("authorize(): under a NOSUPERUSER NOBYPASSRLS migration owner (0037 D-2
         reason: "not_a_member",
       });
     } finally {
-      await appPool?.end();
       await nsCtx.teardown();
     }
   }, 120_000);

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🤝 Cross-club Join  
-> **Version:** 2.12 · 2026-08-10
+> **Version:** 2.13 · 2026-10-16
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
@@ -136,9 +136,9 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 |-----------|-------------|---------|
 | Session info | `public_sessions` (whitelist) | Pre-join: no venue |
 | Join action | `players` INSERT + occupancy check | Transactional |
-| Post-join venue | `sessions.venue` | Only if active |
+| Post-join venue | `sessions.venue_name` / `venue_address` | Only if active |
 | Waitlist position | `players` WHERE waitlisted, ordered | |
-| Approval status | `players.status = 'pending'` | Host approves |
+| Approval status | `join_requests.status = 'pending'` | Host approves (pending approval sống ở `join_requests`, không ở `players`) |
 
 ### State coverage matrix
 
@@ -156,7 +156,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 |--------|---------|-----------------|
 | `join_requests` | Pending approval tracking | `UNIQUE(person_id, session_id)` active, `status` enum, `expires_at` |
 | `players` | Player in session/waitlist | `UNIQUE(tenant_id, session_id, membership_id)`, `status ∈ active\|left\|waitlisted`; waitlisted có position dương; direct/approved origin thuộc command/audit event, không phải cột `source` |
-| `memberships` | Guest membership created on join | `UNIQUE(person_id, tenant_id)`, `role=guest` |
+| `memberships` | Guest membership created on join | `status='guest'`; partial unique index trên `(tenant_id, person_id)` where `status IN ('active','guest')`; không có cột `role` |
 | `charges` | Payment obligation tạo khi player lần đầu active | UNIQUE `(tenant_id,session_id,player_id)`; first-entry waitlisted không tạo charge. Row/ledger giữ lại sau `left`, nên DD-49 rejoin-waitlisted có thể mang aggregate lịch sử đã chứng minh nhưng không tạo charge thứ hai |
 
 ### Join Request State Machine
@@ -223,6 +223,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v2.13 | **Sửa drift theo `packages/db/schema.ts` (docs-only, không đổi contract/domain model):** `memberships` không có `role` (guest = `status='guest'`) và unique là partial index `(tenant_id, person_id)` where status IN active,guest; trạng thái chờ duyệt là `join_requests.status='pending'` (enum của `players.status` là active/left/waitlisted); `sessions.venue` → `venue_name`/`venue_address`. Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.12 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v2.11 | Mirror DD-32 Option D: preserve CCJ as canonical join while requiring channel finalizer proof before active mutation; full/pending remain no-pay and generic web/direct join is unchanged. No runtime. |
 | 2026-07-19 | v2.10a | Metadata sweep (index v2.35): thêm trường **Implementation** đồng bộ BUILD-STATUS (Not started). Không đổi contract. |

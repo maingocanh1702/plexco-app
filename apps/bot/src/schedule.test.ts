@@ -8,10 +8,12 @@ import { migrate } from "@plexco/db";
 import { describe, expect, it, vi } from "vitest";
 import { withTestContext } from "./test-harness.js";
 import {
+  ROLE_PW,
   bootstrapJobDefiner,
   setAppWorkerPasswordRaceSafe,
   testUrl,
   withJobDefinerLock,
+  type TestRolePasswordLease,
 } from "./test-db.js";
 import {
   isOutboxDispatchScheduleEnabled,
@@ -32,12 +34,8 @@ const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_ENTRYPOINT = path.join(HERE, "worker.ts");
 const TSX_BIN = path.join(HERE, "..", "node_modules", ".bin", "tsx");
-const APP_WORKER_PASSWORD = "plexco_test_worker_jrd";
-// Deliberately the SAME constant preflight.test.ts/dispatcher.test.ts use — app_worker's
-// password is a CLUSTER-global role attribute, and vitest runs test files concurrently
-// (see preflight.test.ts's header comment for the full rationale). Using a different value
-// here would race with those files' own setup, whichever runs last would silently break the
-// others' already-open connections.
+// app_worker's password is CLUSTER-global: ROLE_PW.app_worker, leased for the fixture's lifetime
+// (setAppWorkerPasswordRaceSafe) and restored by the last participant on the cluster.
 
 // --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
 // (shared with dispatcher.test.ts and preflight.test.ts); this file still owns its
@@ -64,13 +62,15 @@ async function setupScheduleContext(dbName: string): Promise<ScheduleTestContext
   const directUrl = testUrl(base, {
     db: dbName,
     user: "app_worker",
-    password: APP_WORKER_PASSWORD,
+    password: ROLE_PW.app_worker,
   });
   let created = false;
   let verify: pg.Client | undefined;
+  let passwords: TestRolePasswordLease | undefined;
   const teardown = async () => {
     const closed = await Promise.allSettled([verify?.end()]);
-    const errors = closed
+    const released = await Promise.allSettled([passwords?.release()]); // after app_worker closed
+    const errors = [...closed, ...released]
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason);
     if (errors.length) throw new AggregateError(errors, "Failed to close fixture connections");
@@ -95,7 +95,7 @@ async function setupScheduleContext(dbName: string): Promise<ScheduleTestContext
       await bootstrapJobDefiner(admin);
       await migrate(migrationUrl);
     });
-    await setAppWorkerPasswordRaceSafe(admin, APP_WORKER_PASSWORD);
+    passwords = await setAppWorkerPasswordRaceSafe(base);
     verify = new pg.Client({ connectionString: migrationUrl });
     await verify.connect();
   } catch (error) {
@@ -143,7 +143,7 @@ it(
         this: pg.Client,
         ...args
       ) {
-        if (args[0] === "SELECT pg_advisory_lock($1)") return Promise.reject(failure);
+        if (String(args[0]).includes("advisory_lock")) return Promise.reject(failure);
         return Reflect.apply(originalQuery, this, args);
       });
       return {
