@@ -260,6 +260,26 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
     expect(Object.keys(validateForm(edited, TZ, en, initial))).toEqual(["venueName"]);
   });
 
+  it("W5b: a legacy value with edge spaces plus a hidden character is exempted AND not sent (same comparison)", () => {
+    const legacyName = " Sân" + ch(0x202e) + "A ";
+    const legacyArea = "Quận" + ch(0x200b) + "1" + ch(0x00a0);
+    const orig: SessionDetailDto = { ...session, venueName: legacyName, area: legacyArea };
+    const initial = valuesFromSession(orig);
+    const form = { ...initial, venueAddress: "1 Nguyễn Văn Linh" };
+    expect(validateForm(form, TZ, en, initial)).toEqual({});
+    expect(buildUpdateBody(form, orig)).toEqual({ venueAddress: "1 Nguyễn Văn Linh" });
+    expect(buildUpdateBody(initial, orig)).toBeNull();
+    // Edited to another hidden value: flagged on the field, and it would be sent.
+    const edited = { ...initial, venueName: " Sân" + ch(0x200b) + "B " };
+    expect(Object.keys(validateForm(edited, TZ, en, initial))).toEqual(["venueName"]);
+  });
+
+  it("lists the errors in form order: venue name, address, area", () => {
+    const bad = "Sân" + ch(0x202e) + "A";
+    const e = validateForm(base({ area: bad, venueName: bad, venueAddress: bad }), TZ, en);
+    expect(Object.keys(e)).toEqual(["venueName", "venueAddress", "area"]);
+  });
+
   it("W6: an over-cap address with a hidden character shows only the cap message", () => {
     const address = "đ".repeat(VENUE_ADDRESS_MAX) + ch(0x200b);
     expect(address.length).toBe(VENUE_ADDRESS_MAX + 1);

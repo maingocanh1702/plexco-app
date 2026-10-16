@@ -83,24 +83,25 @@ export function hasHiddenChar(value: string): boolean {
 
 /**
  * True when the value this form would SEND (trimmed, blank = null) holds a hidden character. In
- * edit mode a value equal to the loaded one is skipped: it is never re-sent (buildUpdateBody), so a
- * legacy value must not block saving other fields; once edited it is held to the rule.
+ * edit mode a value whose textKey equals the loaded one is skipped: buildUpdateBody compares in the
+ * same form and does not send it, so a legacy value must not block saving other fields; once edited
+ * it is held to the rule.
  */
 function hasNewHiddenChar(raw: string, initialRaw: string | undefined): boolean {
   const sent = textOrNull(raw);
   if (sent === null || !hasHiddenChar(sent)) return false;
-  return initialRaw === undefined || sent !== textOrNull(initialRaw);
+  return initialRaw === undefined || sent !== textKey(initialRaw);
 }
 
 /**
- * The venue address in the form this client sends and compares: trimmed, blank = null. The server
- * does not trim: it stores the value it receives as-is (session-service.ts), so a legacy address with
- * surrounding spaces is stored raw and only compares equal here after trimming.
- * validateForm's legacy exemption and buildUpdateBody's "changed?" diff BOTH compare in this form,
- * so an address exempted as untouched is also never sent (a legacy over-cap address with
- * surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).
+ * A text field (area, venue name, address) in the form this client sends and compares: trimmed,
+ * blank = null. The server does not trim: it stores the value it receives as-is (session-service.ts),
+ * so a legacy value with surrounding spaces is stored raw and only compares equal here after trimming.
+ * validateForm's legacy exemptions (address cap, hidden characters) and buildUpdateBody's "changed?"
+ * diff ALL compare in this form, so a field exempted as untouched is also never sent (a legacy value
+ * with surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).
  */
-const addressKey = (raw: string | null | undefined): string | null => textOrNull(raw ?? "");
+const textKey = (raw: string | null | undefined): string | null => textOrNull(raw ?? "");
 
 /**
  * `initial` (edit mode) lets the address check skip an address the host did not touch: a legacy
@@ -137,17 +138,11 @@ export function validateForm(
       "The venue name cannot contain control or hidden characters.",
     );
   }
-  if (hasNewHiddenChar(v.area, initial?.area)) {
-    e.area = t(
-      "Khu vực không được chứa ký tự điều khiển hoặc ký tự ẩn.",
-      "The area cannot contain control or hidden characters.",
-    );
-  }
 
   const address = v.venueAddress.trim();
   if (
     address.length > VENUE_ADDRESS_MAX &&
-    addressKey(v.venueAddress) !== addressKey(initial?.venueAddress)
+    textKey(v.venueAddress) !== textKey(initial?.venueAddress)
   ) {
     e.venueAddress = t(
       `Địa chỉ tối đa ${VENUE_ADDRESS_MAX} ký tự.`,
@@ -157,6 +152,14 @@ export function validateForm(
     e.venueAddress = t(
       "Địa chỉ không được chứa ký tự điều khiển hoặc ký tự ẩn.",
       "The address cannot contain control or hidden characters.",
+    );
+  }
+
+  // Area after the address: the summary lists errors in form order (venue name, address, area).
+  if (hasNewHiddenChar(v.area, initial?.area)) {
+    e.area = t(
+      "Khu vực không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+      "The area cannot contain control or hidden characters.",
     );
   }
 
@@ -235,11 +238,11 @@ export function buildUpdateBody(
   if (slots !== original.slotsMax) body.slotsMax = slots;
   if (v.visibility !== original.visibility) body.visibility = v.visibility;
   if (v.joinPolicy !== original.joinPolicy) body.joinPolicy = v.joinPolicy;
-  const area = textOrNull(v.area);
-  if (area !== original.area) body.area = area;
-  const venueName = textOrNull(v.venueName);
-  if (venueName !== original.venueName) body.venueName = venueName;
-  const venueAddress = addressKey(v.venueAddress);
-  if (venueAddress !== addressKey(original.venueAddress)) body.venueAddress = venueAddress;
+  const area = textKey(v.area);
+  if (area !== textKey(original.area)) body.area = area;
+  const venueName = textKey(v.venueName);
+  if (venueName !== textKey(original.venueName)) body.venueName = venueName;
+  const venueAddress = textKey(v.venueAddress);
+  if (venueAddress !== textKey(original.venueAddress)) body.venueAddress = venueAddress;
   return Object.keys(body).length === 0 ? null : body;
 }
