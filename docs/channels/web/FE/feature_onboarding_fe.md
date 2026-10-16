@@ -1,7 +1,7 @@
 # Feature: Onboarding Wizard — FE Design Spec
 
 > **Route(s):** `/onboarding`
-> **Source authority:** `../../../features/FE/feature_web_auth_onboarding.md` v2.11 + `../../../features/FE/feature_connector_onboarding.md` v1.0 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_web_auth_onboarding.md` v2.13 + `../../../features/FE/feature_connector_onboarding.md` v1.1 · baseline `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a`
 > **Source authority (BE connector catalog + contract):** `../../../features/BE/feature_connector_onboarding_tech.md` §3 — *Error Codes* (`APIPAY_BANK_SELECTION_INVALID` · `APIPAY_KEY_INVALID` · `APIPAY_BANK_NOT_ACTIVE` · `APIPAY_ENTERPRISE_BANK_UNSUPPORTED` · `APIPAY_ENTERPRISE_PROVISION_FAILED` · `APIPAY_ENTERPRISE_UNAVAILABLE` · `PROVIDER_WEBHOOK_REGISTER_FAILED` · `SEPAY_OAUTH_DENIED` · `OAUTH_STATE_INVALID` · `BANK_ALREADY_BOUND` · `IDEMPOTENCY_KEY_REUSED` · `RATE_LIMITED`) và `POST /api/onboarding/apipay/provision` — nơi định nghĩa `bankSelectionRef` là reference **opaque, TTL ngắn, server-cấp**, không phải số TK thô/credential.
 > **Source authority (BE auth catalog):** `../../../features/BE/feature_web_auth_onboarding_tech.md` §3 — `AUTH_INVALID` · `CSRF_INVALID` lấy nguyên văn từ bảng Error Codes ở đó.
 > **Source contract status:** Auth onboarding Reviewed; connector auto-register Draft/externally gated
@@ -610,3 +610,5 @@ _FE Design Spec v0.3 · 2026-08-07 · Changelog: Thêm 4 section Draft (Analytic
 _FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `e235ea4`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._
 
 _Re-pin 2026-09-15 (cấu trúc, không bump version): as-built @ `e235ea4` theo `ROADMAP.md` v3.17 §📍 — 8 command session · 7 route nghiệp vụ · **0 màn FE**; FE PENDING (DD-116) không đổi, DD-119 vẫn 🟡 chưa ratify. Nội dung thiết kế không đổi._
+
+_Re-pin 2026-10-16 (cấu trúc, không bump version): source pin `feature_web_auth_onboarding.md` v2.11 → v2.13 và `feature_connector_onboarding.md` v1.0 → v1.1 @ `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a`; changelog giữa các bản chỉ có hàng A-grade (Entry points / Use Cases table), không đổi field/state/route/error code. Nội dung thiết kế không đổi._

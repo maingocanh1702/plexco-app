@@ -1,7 +1,7 @@
 # Feature: Payments & Ledger — FE Design Spec
 
 > **Route(s):** `/dashboard/payments`
-> **Source authority:** `../../../features/FE/feature_payment_reconcile.md` v1.10 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_payment_reconcile.md` v1.10 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4` · STALE PIN: source is now v1.13, FE spec not re-reviewed
 > **Source authority (BE tokens):** `../../../features/BE/feature_payment_reconcile_tech.md` — `ALLOCATION_EXCEEDS_FUNDS` · `CHARGE_ALREADY_SETTLED` · `REVERSAL_EXCEEDS_EFFECTIVE` · `ATTESTED_TRANSFER_UNSUPPORTED`; HTTP status cho phần lớn catalog **chưa pin** (`:472` — "HTTP mapping cho code chưa pin sẽ chốt ở build slice"), nên §3 để `—` ở cột Status thay vì đoán.
 > **Source contract status:** Reviewed; primary plan PLAN_READY nhưng runtime slices chưa CODE_READY
 > **Projection/API contract:** `UNPINNED` — unified ledger/month summaries phải omit khỏi active UI tới khi có discriminated DTO owner

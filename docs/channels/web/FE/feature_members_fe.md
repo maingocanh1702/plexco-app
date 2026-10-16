@@ -1,7 +1,7 @@
 # Feature: Members & Merge — FE Design Spec
 
 > **Route(s):** `/dashboard/members`
-> **Source authority:** `../../../features/FE/feature_identity.md` v1.11 + `../../../features/FE/feature_payment_reconcile.md` v1.10 + DD-25 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_identity.md` v1.11 + `../../../features/FE/feature_payment_reconcile.md` v1.10 + DD-25 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4` · STALE PIN: payment_reconcile is now v1.13 (identity v1.12 is Entry-points only), FE spec not re-reviewed
 > **Source authority (BE tokens):** `../../../features/BE/feature_identity_tech.md` — `hasFinancialHistory` (merge gate predicate) và `MERGE_REQUIRES_REVIEW` / `LINK_CODE_INVALID` / `LINK_CODE_RATE_LIMITED`; `../../../features/FE/feature_tenant_routing_authz.md` — capability `money.mark_paid`, `member.manage_routine`. Các token này **không** nằm trong `feature_identity.md` v1.11; FE lấy nguyên văn, không tự đặt.
 > **Source contract status:** Reviewed identity/payment safety contracts
 > **Projection/API contract:** Member directory/merge DTO `UNPINNED`; money action delegates to canonical mark-paid contract

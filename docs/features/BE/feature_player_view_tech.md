@@ -1,7 +1,7 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.10 · 2026-08-10
+> **Version:** 2.11 · 2026-10-16
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_player_view.md`  
@@ -98,24 +98,28 @@ Uses existing tables: `persons`, `memberships`, `players`, `charges`, `payment_a
 
 ```sql
 -- getPlayerDashboard (person-self, multi-tenant aggregate)
-SELECT s.id, s.sport_key, s.starts_at, s.area, s.price,
+SELECT s.id, sp.key AS sport_key, s.starts_at, s.area, s.price_amount,
        p.status AS player_status,
-       t.display_name AS club_name
+       t.name AS club_name
 FROM players p
+JOIN memberships m ON m.id = p.membership_id
 JOIN sessions s ON s.id = p.session_id
+JOIN sports sp ON sp.id = s.sport_id
 JOIN tenants t ON t.id = s.tenant_id
-WHERE p.person_id = $1
+WHERE m.person_id = $1
   AND s.starts_at > now()
 ORDER BY s.starts_at
 LIMIT 20;
 
 -- getPaymentHistory (person-self)
-SELECT c.id, c.amount, c.currency, c.status, c.created_at,
-       s.sport_key, s.starts_at
+SELECT c.id, c.amount_due, c.amount_allocated, c.status, c.created_at,
+       sp.key AS sport_key, s.starts_at
 FROM charges c
 JOIN players p ON p.id = c.player_id
+JOIN memberships m ON m.id = p.membership_id
 JOIN sessions s ON s.id = p.session_id
-WHERE p.person_id = $1
+JOIN sports sp ON sp.id = s.sport_id
+WHERE m.person_id = $1
 ORDER BY c.created_at DESC
 LIMIT 20;
 ```
@@ -402,6 +406,7 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v2.11 | **Sửa drift query pattern theo `packages/db/schema.ts` (docs-only, không đổi contract person-self):** `players` không có `person_id` — person đi qua `players.membership_id` → `memberships.person_id`; `sessions.price` → `price_amount`; sport qua `sessions.sport_id` → `sports.key`; `tenants.display_name` → `tenants.name`; `charges` có `amount_due`/`amount_allocated`/`status` (không có `amount`, không có `currency`, tiền VND). Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.10 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/person-self model. |
 | 2026-08-07 | v2.9 | **DD-96 Part A:** thêm canonical cross-club `SelfPaymentSummary` + `getSelfPaymentSummary` vào §4 — đóng gap `feature_home_tech.md:166` (`SelfPaymentStatus` là per-club, Home bị cấm tự cộng). Pin **unknown-dominates** (một CLB `unknown` ⇒ cả summary `unknown`, cấm partial sum vì nó hiện số thấp hơn nợ thật), `clubCount` = số CLB có outstanding > 0, không `payAction` ở tầng aggregate. Thêm unit #29–34. Additive read-only: không bảng/migration/route mới, surface chốt ở build slice. Host receivable ("Chưa thu") **không** vào file này — DD-48 + DTO allowlist §4 `other charges ❌ NEVER`; xem DD-96 Part B. Không authorize runtime. |
 | 2026-07-28 | v2.8 | Reconcile immutable authority `90d292d` and primary plan v1.8 `PLAN_READY`; retain per-mechanism `CODE_READY`, beta OFF and no-runtime boundaries. |

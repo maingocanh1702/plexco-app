@@ -1,7 +1,7 @@
 # Feature: Notifications — FE Design Spec
 
 > **Route(s):** Accessed via 🔔 header icon → dropdown/panel
-> **Source authority:** `../../../features/FE/feature_notifications_reminders.md` v3.11 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_notifications_reminders.md` v3.11 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4` · STALE PIN: source is now v3.13, FE spec not re-reviewed
 > **Source contract status:** Reviewed core notification contract; session/activity types deferred
 > **Projection/API contract:** F11/A18 Inbox/detail HTTP DTO `UNPINNED — active UI omitted`
 > **Capability/availability:** Current read visibility per item + closed type producer availability

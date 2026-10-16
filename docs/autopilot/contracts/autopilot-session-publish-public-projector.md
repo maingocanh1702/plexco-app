@@ -1,6 +1,8 @@
-<!-- review-readiness: enforce -->
+<!-- review-readiness: historical -->
 
 # session-publish-public-projector — task contract
+
+> **SUPERSEDED (2026-10-16).** Superseded by DD-133 (signed by the owner 2026-10-16) and lane L10 of docs/autopilot-templates/web-mvp-phase3-2026-10-16-RUN.md: the public projector, the occupancy authority and the public whitelist (slots_open only; no confirmed_count, no host name) are now defined there. Kept as history; do not use as authority.
 
 > **Slice (as framed):** `session-publish-public-projector` (slug = mechanism: the `PublishSession`
 > command boundary `draft`→`open`, **plus** the first REAL `public_sessions` projector — the first

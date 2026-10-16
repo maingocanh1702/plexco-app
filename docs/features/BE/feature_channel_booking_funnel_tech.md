@@ -1,7 +1,7 @@
 # Channel-first Booking Funnel — Backend Technical Spec
 
 > **Canonical phase:** P4.3 / P4.7 + Messenger P2.5
-> **Version:** 1.2 · 2026-08-25
+> **Version:** 1.3 · 2026-10-16
 > **Status:** Reviewed contract · Implementation pending
 > **Implementation:** Not started — live schema has no channel booking intent/payment hold/finalizer
 > **Product spec:** `../FE/feature_channel_booking_funnel.md`
@@ -51,7 +51,7 @@ Adapters must not calculate fee, capacity, linked state, payment result or waitl
 | Account link | current `ChannelIdentity → Person ← Account` binding plus verified `account_identities` |
 | Money | `bank_transactions → charges → payment_allocations` |
 | Final interaction/seat hold | new `channel_booking_intents`; never presented as a player or charge |
-| Admission capacity | one shared `getSessionOccupancy()` helper: active players + unexpired payment holds |
+| Admission capacity | one shared `getSessionOccupancy()` helper: occupied = active players + guest notes + live holds (= 0 until a hold table exists, DD-132/DD-135) (+ pending invites after the migration that adds them); `slots_open` is the only public number (DD-133 (a)) |
 | Public/channel counts | one projector/helper output; adapters never derive `slots_max - slots_open` |
 
 `channel_booking_intents` is an orchestration and reservation record, not a second booking ledger. Only a completed finalizer may create/return canonical player/charge/allocation refs.
@@ -163,15 +163,15 @@ Required constraints:
 
 ### 2.4 Capacity helper
 
-Exactly one helper is authoritative:
+Exactly one helper is authoritative: `getSessionOccupancy()` (DD-133 (a)). occupied = active players + guest notes + live holds (+ pending invites after the migration that adds them); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)`; `confirmed_count` = active players, tenant-private, never public. Live holds are 0 until a hold table exists (DD-132); `held_count` below is the future term for that component.
 
 ```text
-confirmed_count = count(players where status='active')
+confirmed_count = count(players where status='active')          -- tenant-private
 held_count      = count(channel_booking_intents
                         where status='awaiting_payment'
                           and hold_expires_at > clock_timestamp())
-occupied_count  = confirmed_count + held_count
-slots_available = max(0, sessions.slots_max - occupied_count)
+occupied_count  = confirmed_count + guest_notes + held_count    -- getSessionOccupancy()
+slots_open      = slots_max IS NULL ? NULL : max(0, slots_max - occupied_count)
 ```
 
 Join, approval fulfillment, promotion, hold creation and projector all call this helper under the session lock for mutation. Read projections are advisory and may lag; finalisation always rechecks live.
@@ -228,16 +228,17 @@ Waitlisted players are not occupied. An account-link-only intent does not occupy
 ```sql
 -- getSessionForBooking (public projection)
 SELECT ps.session_id, ps.sport_key, ps.starts_at, ps.ends_at,
-       ps.area, ps.price, ps.slots_open, ps.join_policy,
+       ps.area, ps.price_amount, ps.slots_open, ps.join_policy,
        ps.club_display_name
 FROM public_sessions ps
 WHERE ps.session_id = $1;
 
 -- checkPlayerEligibility (tenant-scoped)
-SELECT p.id, p.status, p.person_id
+SELECT p.id, p.status, m.person_id
 FROM players p
+JOIN memberships m ON m.id = p.membership_id
 WHERE p.session_id = $1
-  AND p.person_id = $2;
+  AND m.person_id = $2;
 ```
 
 ## 3. API contract
@@ -266,8 +267,7 @@ All mutations require a canonical request fingerprint. Reusing the same command 
   "endsAt": "2026-07-30T14:00:00Z",
   "area": "Quận 3",
   "fee": { "kind": "exact", "amount": 120000, "currency": "VND" },
-  "confirmedCount": 12,
-  "slotsAvailable": 2,
+  "slotsOpen": 2,
   "joinPolicy": "open",
   "viewerState": "eligible"
 }
@@ -302,6 +302,8 @@ Provider adapters render this shared union. App-facing HTTP routes use the DD-60
 
 ### 3.5 Error codes
 
+> **UNPINNED error catalog — omit active UI.** This repo has two unreconciled error-code sets: this intent-level catalog (newer, DD-32 Option D) and the older `### Error Codes` table below (HTTP-style codes). Neither is implemented (zero hits in `packages/` and `apps/` at base c762c90). FE must not map active UI to either until the booking implementation lane pins exactly one set; no mapping between the two is invented here.
+
 `BOOKING_STALE`, `BOOKING_PRICE_CHANGED`, `BOOKING_FULL_WAITLISTED`, `BOOKING_LINK_REQUIRED`, `BOOKING_PAYMENT_UNAVAILABLE`, `BOOKING_PAYMENT_PENDING`, `BOOKING_HOLD_EXPIRED`, `BOOKING_REQUIRES_REVIEW`, `BOOKING_NOT_ELIGIBLE`.
 
 External copy is generic where identity/payment enumeration is possible; logs contain opaque refs and reason codes only.
@@ -324,6 +326,8 @@ External copy is generic where identity/payment enumeration is possible; logs co
 > Mọi endpoint qua channel adapter (bot); không có user-facing REST.
 
 ### Error Codes
+
+> Older table (pre-Option D); superseded in intent by the `BOOKING_*` catalog in §3.5, not implemented, and part of the same UNPINNED error catalog (omit active UI until one set is pinned).
 
 | Code | Error Code | Message | Trigger |
 |------|-----------|---------|---------|
@@ -481,7 +485,7 @@ Unique constraints on player/session, charge/player/session, allocation keys and
 5. Approval revoked/restriction added while hold lives: no activation; payment manual review.
 6. DD-49 left/refunded/not-refunded dispositions remain canonical.
 7. Wrong Page/OA/account/browser replay returns generic reject with zero mutation.
-8. Projection reports `confirmedCount` from active players and `slotsAvailable` from active+holds; final mutation ignores stale projection.
+8. Projection reports `slotsOpen` only (from `getSessionOccupancy()`; `confirmedCount` is tenant-private and never in the DTO); final mutation ignores stale projection.
 9. RLS/role tests prove adapters cannot select/write intent, identity or money base tables.
 10. Provider outage hides pay-now while free and linked pay-later paths remain available.
 
@@ -552,6 +556,7 @@ Metrics: funnel conversion, hold creation/expiry, settlement latency, over/under
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-16 | v1.3 | **Sync DD-133 (D1, owner ký 2026-10-16) + schema drift; docs-only.** (1) §1 bảng capacity, §2.4 và edge 8: một `getSessionOccupancy()` = active + guest notes + live holds; public chỉ `slots_open`, `confirmed_count` tenant-private, DTO §3.2 bỏ `confirmedCount`, `slotsAvailable` → `slotsOpen`. (2) Query pattern: cột giá của `public_sessions` là `price_amount`; `players` không có cột person nên query đi qua `JOIN memberships m ON m.id = p.membership_id ... m.person_id` (`packages/db/schema.ts`). (3) Hai bộ error code (§3.5 và bảng Error Codes) ghi nhãn UNPINNED error catalog — omit active UI; không bịa mapping. Vòng review 1: live holds ghi rõ = 0 tới khi có bảng hold. Các dòng lịch sử giữ nguyên. |
 | 2026-08-25 | v1.2 | **Vá wording theo DD-50 amendment (owner 2026-08-25; bản vá được amendment xếp hàng cho phiên docs):** §4.1 predicate bước 3 — "verified Account" phase-1 = **≥1 `account_emails.verified_at IS NOT NULL`** (verified email theo DD-50), thay literal cũ "≥1 currently verified account identity" (wording drift trước DD-37; legacy `account_identities` không tính). Correction của quyết định đã chốt (mirror `decisions.md` DD-50 amendment), không phải quyết định mới. Không đổi các vế còn lại của predicate/pipeline. |
 | 2026-08-10 | v1.1 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/pipeline model. |
 | 2026-07-28 | v1.0 | Tạo BE companion cho DD-32 Option D: shared decision core, qualified Account link, durable intent/15-minute hold, occupancy helper, atomic finalizer, approval/waitlist/late-payment behavior, API/security/test/rollout contract. No runtime. |
