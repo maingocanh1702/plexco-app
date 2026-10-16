@@ -36,7 +36,11 @@ import {
   type UpdateSessionResult,
 } from "./session-service.js";
 import { tenantRepo, withTenant } from "./tenant.js";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import {
+  expectErrorChainToMatch,
+  setupRlsTestContext,
+  type RlsTestContext,
+} from "./test-harness.js";
 
 // Real-PG tests for CreateSession. Runs as the `app` role via the RLS harness, so
 // grants, tenant_isolation and the outbox producer boundary CHECK are exercised
@@ -2973,6 +2977,154 @@ describe("updateSession", () => {
     });
     expect(r).toMatchObject({ version: priv.version + 1 });
     expect(await fenceReason(priv.sessionId)).toBeNull();
+  });
+
+  // L6 visibility toggle (VT1-VT6): the host toggle PUTs only { visibility } with the version it
+  // read. These pin what U-VIS, U-FENCE, U8 and U9 leave open; a refusal must leave no trace.
+  // cmdId() never repeats in this file (and its DB is private), so command_id alone finds the row.
+  const ledger = (commandId: string) =>
+    rows(`SELECT result_ref FROM processed_commands WHERE command_id = $1`, [commandId]);
+  async function expectZeroWrites(sessionId: string, commandId: string, unchanged: object) {
+    expect(await sessionState(sessionId)).toMatchObject(unchanged);
+    expect(await updatedEvents(sessionId)).toEqual([]);
+    expect(await ledger(commandId)).toEqual([]);
+    expect(await fenceReason(sessionId)).toBeNull();
+  }
+
+  it("VT1: public->private emits exactly session.updated + session.visibility_changed, stores the four-key envelope and fences", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { visibility: "public" });
+    const commandId = cmdId();
+    const patch = { sessionId, expectedVersion: version, visibility: "private" as const };
+    const result = await update(tenantId, patch, commandId);
+    expect(result).toMatchObject({ visibility: "private", version: version + 1, replayed: false });
+    // toEqual fails on any extra key, so both payloads and the stored envelope are exact.
+    expect((await updatedEvents(sessionId)).map((e) => [e.type, e.sequence, e.payload])).toEqual([
+      ["session.updated", 1, { session_id: sessionId, changed_fields: ["visibility"] }],
+      ["session.visibility_changed", 2, { session_id: sessionId, new_visibility: "private" }],
+    ]);
+    expect(await ledger(commandId)).toEqual([
+      { result_ref: { sessionId, status: "open", version: version + 1, visibility: "private" } },
+    ]);
+    expect(await fenceReason(sessionId)).toBe("visibility_private");
+  });
+
+  it.each([
+    { row: "a", seed: { area: null }, patch: { visibility: "public" } },
+    { row: "b", seed: { area: "" }, patch: { visibility: "public" } },
+    { row: "c", seed: { area: "   " }, patch: { visibility: "public" } },
+    { row: "d", seed: { slotsMax: null }, patch: { visibility: "public" } },
+    { row: "e", seed: {}, patch: { visibility: "public", area: "" } },
+    { row: "f", seed: {}, patch: { visibility: "public", slotsMax: null } },
+    { row: "g", seed: { visibility: "public" }, patch: { area: null } },
+    { row: "h", seed: { visibility: "public" }, patch: { area: "  " } },
+  ] as const)(
+    "VT2 ($row): a result that would be public without an area or a finite slots_max is MISSING_DISCOVERY_FIELDS, zero writes",
+    async ({ seed, patch }) => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId, seed);
+      const commandId = cmdId();
+      // The CURRENT version on every row: a stale one would answer STALE_VERSION first (VT5 c).
+      await expectUpdateReject(
+        () => update(tenantId, { sessionId, expectedVersion: version, ...patch }, commandId),
+        "MISSING_DISCOVERY_FIELDS",
+      );
+      const visibility = seed.visibility ?? "private"; // seedSession's default
+      await expectZeroWrites(sessionId, commandId, { version, visibility });
+    },
+  );
+
+  it("VT2c: supplying the missing area in the same PUT lets the flip to public through (control)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { area: null });
+    const patch = { sessionId, expectedVersion: version, visibility: "public" as const };
+    const result = await update(tenantId, { ...patch, area: "Quận 1" });
+    expect(result).toMatchObject({ visibility: "public", version: version + 1 });
+    const types = (await updatedEvents(sessionId)).map((e) => e.type);
+    expect(types).toEqual(["session.updated", "session.visibility_changed"]);
+  });
+
+  it("VT3: a failing fence raise rolls the whole public->private update back (never private without its fence)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { visibility: "public" });
+    await projectToPublic(sessionId, tenantId);
+    const patch = { sessionId, expectedVersion: version, visibility: "private" as const };
+    const commandId = cmdId();
+    // Committed REVOKE (an uncommitted one is invisible to the app pool), restored in finally; the
+    // DB is private to this file and its tests run sequentially (identity-link-web.test.ts:680).
+    const fn = "raise_public_session_fence(uuid, text)";
+    let failure: unknown;
+    try {
+      await ctx.owner.query(`REVOKE EXECUTE ON FUNCTION ${fn} FROM app`);
+      failure = await update(tenantId, patch, commandId).catch((e: unknown) => e);
+    } finally {
+      await ctx.owner.query(`GRANT EXECUTE ON FUNCTION ${fn} TO app`);
+    }
+    expect(failure).not.toBeInstanceOf(SessionUpdateError);
+    await expectErrorChainToMatch(Promise.reject(failure), /permission denied/i);
+    await expectZeroWrites(sessionId, commandId, { version, visibility: "public" });
+    expect(await viewHasSession(sessionId)).toBe(true);
+    // Restore proven: the same patch under a fresh commandId now commits together with its fence.
+    await expect(update(tenantId, patch)).resolves.toMatchObject({ visibility: "private" });
+    expect(await fenceReason(sessionId)).toBe("visibility_private");
+  });
+
+  it.each(["private", "public"] as const)(
+    "VT4 (%s): re-sending the current visibility is a no-op that wins a stale version: no event, no fence, one ledger row",
+    async (visibility) => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId, { visibility });
+      if (visibility === "public") await projectToPublic(sessionId, tenantId);
+      const commandId = cmdId();
+      const patch = { sessionId, expectedVersion: version + 5, visibility };
+      const result = await update(tenantId, patch, commandId);
+      expect(result).toMatchObject({ version, visibility, replayed: false });
+      expect(await sessionState(sessionId)).toMatchObject({ version, visibility });
+      expect(await updatedEvents(sessionId)).toEqual([]);
+      expect(await fenceReason(sessionId)).toBeNull();
+      expect(await ledger(commandId)).toMatchObject([{ result_ref: { version, visibility } }]);
+      if (visibility === "public") expect(await viewHasSession(sessionId)).toBe(true);
+    },
+  );
+
+  it.each([
+    { row: "a", seed: { visibility: "public" }, to: "private", bump: 1, projected: true },
+    { row: "b", seed: { visibility: "private" }, to: "public", bump: 1 },
+    { row: "c", seed: { visibility: "private", area: null }, to: "public", bump: 1 },
+    { row: "d", seed: { visibility: "public" }, to: "private", bump: null },
+  ] as const)(
+    "VT5 ($row): a stale or version-less toggle is STALE_VERSION, checked before discovery, zero writes",
+    async ({ seed, to, bump, projected }) => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId, seed);
+      if (projected) await projectToPublic(sessionId, tenantId);
+      const commandId = cmdId();
+      const expected = bump === null ? {} : { expectedVersion: version + bump };
+      await expectUpdateReject(
+        () => update(tenantId, { sessionId, visibility: to, ...expected }, commandId),
+        "STALE_VERSION",
+      );
+      await expectZeroWrites(sessionId, commandId, { version, visibility: seed.visibility });
+      if (projected) expect(await viewHasSession(sessionId)).toBe(true);
+    },
+  );
+
+  it("VT6: re-publishing a fenced session succeeds but keeps the fence (app cannot unfence; the view stays dark)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { visibility: "public" });
+    await projectToPublic(sessionId, tenantId);
+    await update(tenantId, { sessionId, expectedVersion: version, visibility: "private" });
+    const toPublic = { sessionId, expectedVersion: version + 1, visibility: "public" as const };
+    const again = await update(tenantId, toPublic);
+    expect(again).toMatchObject({ visibility: "public", version: version + 2 });
+    expect(await fenceReason(sessionId)).toBe("visibility_private");
+    expect(await viewHasSession(sessionId)).toBe(false);
+    expect(await baseStillProjected(sessionId)).toBe(true);
+    const last = (await updatedEvents(sessionId)).at(-1);
+    expect([last.type, last.payload.new_visibility]).toEqual([
+      "session.visibility_changed",
+      "public",
+    ]);
   });
 });
 

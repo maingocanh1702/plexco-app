@@ -20,6 +20,7 @@ import { DetailsTab } from "./details-tab";
 import { RosterTab } from "./roster-tab";
 import { SessionActionBar } from "./session-action-bar";
 import { SessionStatusBadge } from "./session-status-badge";
+import { VisibilityToggle } from "./visibility-toggle";
 import styles from "./session-detail-view.module.css";
 
 /** /sessions/[id]: header, status-driven action bar (confirm dialogs), Roster | Details tabs. */
@@ -194,6 +195,16 @@ export function SessionDetailView({
           commandId.current = null;
           setPending(action);
         }}
+      />
+      <VisibilityToggle
+        session={session}
+        ctx={ctx}
+        editHref={`${base}/${session.id}/edit`}
+        onDone={(message) => {
+          setDone(message);
+          refresh();
+        }}
+        onReload={refresh}
       />
 
       <div ref={tabsRef}>

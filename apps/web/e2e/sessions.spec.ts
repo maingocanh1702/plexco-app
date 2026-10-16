@@ -901,6 +901,213 @@ test.describe("edit", () => {
   });
 });
 
+test.describe("visibility toggle", () => {
+  const pub = makeSession({ id: "s-public", visibility: "public", version: 5 });
+  const noArea = makeSession({ id: "s-no-area", area: null });
+  const noSlots = makeSession({ id: "s-no-slots", slotsMax: null });
+  const noBoth = makeSession({ id: "s-no-both", area: null, slotsMax: null });
+  const all = () => [...fixtures(), pub, noArea, noSlots, noBoth]; // never grow fixtures() itself
+  const MISSING = "Thiếu thông tin bắt buộc để công khai kèo.";
+  const MISSING_ERR = { code: "MISSING_DISCOVERY_FIELDS", message: MISSING, statusCode: 400 };
+  // Not "Đang ngoại tuyến": roster.spec.ts:566 finds the roster hint by that text in strict mode.
+  const OFFLINE_HINT = "Bạn đang offline — chưa thể đổi chế độ hiển thị.";
+  const LEAD = "Chưa thể công khai buổi này: ";
+  const TO_PUBLIC = "Chuyển sang Công khai";
+  const stateLine = (page: Page) => page.getByText(/^(Hiển thị|Visibility): /);
+  const refusal = (page: Page) => page.locator("main").getByRole("alert");
+  const toggle = (page: Page, name = TO_PUBLIC) => page.getByRole("button", { name, exact: true });
+  const confirmIn = (page: Page, name = TO_PUBLIC) =>
+    page.getByRole("dialog").getByRole("button", { name, exact: true }).click();
+  const describedBy = async (page: Page) =>
+    page.locator(`[id="${await toggle(page).getAttribute("aria-describedby")}"]`);
+  const puts = (mock: ApiMock, id: string) =>
+    mock.calls.filter((c) => c.method === "PUT" && c.path === `/api/sessions/${id}`);
+  const stored = (mock: ApiMock, id: string) => mock.state.find((s) => s.id === id)!;
+  const WCAG_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
+
+  test("E1+E2: no optimistic state; toast, refetch and focus after the PUT", async ({ page }) => {
+    const mock = await open(page, "/s-open", all());
+    await expect(stateLine(page)).toHaveText("Hiển thị: Riêng tư");
+    const release = mock.holdNext("update");
+    await toggle(page).click();
+    const dialog = page.getByRole("dialog", { name: "Công khai buổi này?" });
+    await expect(dialog).toContainText("Buổi sẽ chuyển sang Công khai.");
+    await confirmIn(page);
+    await expect(dialog.getByRole("button", { name: "Đang xử lý…" })).toBeDisabled();
+    await expect(stateLine(page)).toHaveText("Hiển thị: Riêng tư"); // nothing before the server
+    await expect(page.getByText("Đã chuyển sang Công khai.")).toHaveCount(0);
+    release();
+    await expect(page.getByText("Đã chuyển sang Công khai.")).toBeVisible();
+    await expect(stateLine(page)).toHaveText("Hiển thị: Công khai");
+    await expect(toggle(page, "Chuyển về Riêng tư")).toBeFocused();
+    const [put] = puts(mock, "s-open");
+    expect(Object.keys(put!.body!).sort()).toEqual(["commandId", "expectedVersion", "visibility"]);
+    expect(put!.body).toMatchObject({ visibility: "public", expectedVersion: 3 });
+  });
+
+  test("E1+E3: a public session confirms the flip to private", async ({ page }) => {
+    const mock = await open(page, "/s-public", all());
+    await expect(stateLine(page)).toHaveText("Hiển thị: Công khai");
+    await toggle(page, "Chuyển về Riêng tư").click();
+    await expect(page.getByRole("dialog", { name: "Chuyển buổi này về Riêng tư?" })).toBeVisible();
+    await confirmIn(page, "Chuyển về Riêng tư");
+    await expect(page.getByText("Đã chuyển về Riêng tư.")).toBeVisible();
+    await expect(stateLine(page)).toHaveText("Hiển thị: Riêng tư");
+    const [put] = puts(mock, "s-public");
+    expect(put!.body).toMatchObject({ visibility: "private", expectedVersion: 5 });
+  });
+
+  test("E4: no area: refused locally, nothing sent, the link focuses it", async ({ page }) => {
+    const mock = await open(page, "/s-no-area", all());
+    await toggle(page).click();
+    await expect(refusal(page)).toHaveText(LEAD + "Kèo công khai cần có khu vực.");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(puts(mock, "s-no-area")).toHaveLength(0);
+    const link = page.getByRole("link", { name: "Bổ sung thông tin" });
+    await expect(link).toHaveAttribute("href", `${BASE}/s-no-area/edit#area`);
+    await link.click();
+    await expect(page.getByLabel("Khu vực")).toBeFocused();
+  });
+
+  test("E5: no slots links #slots (checkbox focus); both gaps link #area", async ({ page }) => {
+    await open(page, "/s-no-slots", all());
+    await toggle(page).click();
+    await expect(refusal(page)).toHaveText(LEAD + "Kèo công khai cần số chỗ giới hạn.");
+    const link = page.getByRole("link", { name: "Bổ sung thông tin" });
+    await expect(link).toHaveAttribute("href", `${BASE}/s-no-slots/edit#slots`);
+    await link.click();
+    await expect(page.getByLabel("Không giới hạn số chỗ")).toBeFocused();
+    await open(page, "/s-no-both", all());
+    await toggle(page).click();
+    await expect(refusal(page)).toContainText("cần có khu vực. Kèo công khai cần số chỗ giới hạn.");
+    await expect(link).toHaveAttribute("href", `${BASE}/s-no-both/edit#area`);
+  });
+
+  test("E6: a server refusal changes nothing; the next try is a new command", async ({ page }) => {
+    const mock = await open(page, "/s-open", all());
+    mock.failNext("update", MISSING_ERR);
+    await toggle(page).click();
+    await confirmIn(page);
+    const alert = page.getByRole("dialog").getByRole("alert");
+    await expect(alert).toContainText(MISSING);
+    await expect(alert.getByRole("link")).toHaveAttribute("href", `${BASE}/s-open/edit`);
+    await expect(stateLine(page)).toHaveText("Hiển thị: Riêng tư");
+    stored(mock, "s-open").area = "  "; // now the mock's own MISSING_DISCOVERY_FIELDS rule answers
+    await confirmIn(page);
+    await expect.poll(() => puts(mock, "s-open").length).toBe(2);
+    await expect(alert).toContainText(MISSING);
+    const [first, second] = puts(mock, "s-open").map((c) => c.body!.commandId);
+    expect(second).not.toBe(first);
+    expect(stored(mock, "s-open")).toMatchObject({ visibility: "private", version: 3 });
+  });
+
+  test("E7: STALE_VERSION reloads, closes the dialog, shows the new version", async ({ page }) => {
+    const mock = await open(page, "/s-open", all());
+    await expect(page.getByText("Phiên bản 3")).toBeVisible();
+    stored(mock, "s-open").version = 9;
+    await toggle(page).click();
+    await confirmIn(page);
+    const alert = page.getByRole("dialog").getByRole("alert");
+    await expect(alert).toContainText("Kèo vừa được cập nhật");
+    await alert.getByRole("button", { name: "Tải lại dữ liệu" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByText("Phiên bản 9")).toBeVisible();
+  });
+
+  test("E8: a network failure retries with the SAME commandId", async ({ page }) => {
+    const mock = await open(page, "/s-open", all());
+    mock.failNext("update", "network");
+    await toggle(page).click();
+    await confirmIn(page);
+    const alert = page.getByRole("dialog").getByRole("alert");
+    await expect(alert).toContainText("Không có kết nối mạng");
+    await alert.getByRole("button", { name: "Thử lại" }).click();
+    await expect(page.getByText("Đã chuyển sang Công khai.")).toBeVisible();
+    const ids = puts(mock, "s-open").map((c) => c.body!.commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  test("E9: offline: disabled with its own hint; online: enabled", async ({ page, context }) => {
+    await open(page, "/s-open", all());
+    await context.setOffline(true);
+    await expect(toggle(page)).toBeDisabled();
+    await expect(await describedBy(page)).toHaveText(OFFLINE_HINT);
+    await context.setOffline(false);
+    await expect(toggle(page)).toBeEnabled();
+  });
+
+  test("E10: past start: disabled with its hint; terminal: no toggle", async ({ page }) => {
+    await open(page, "/s-past-open", all());
+    await expect(toggle(page)).toBeDisabled();
+    await expect(await describedBy(page)).toHaveText(
+      "Buổi đã bắt đầu nên không đổi được chế độ hiển thị nữa.",
+    );
+    for (const id of ["s-closed", "s-cancelled"]) {
+      await open(page, `/${id}`, all());
+      await expect(page.getByText("Buổi này chỉ để xem.")).toBeVisible();
+      await expect(stateLine(page)).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /Công khai|Riêng tư/ })).toHaveCount(0);
+    }
+  });
+
+  test("E11: an English club gets the English copy", async ({ page }) => {
+    await open(page, "/s-open", all(), "en");
+    await expect(stateLine(page)).toHaveText("Visibility: Private");
+    await toggle(page, "Make public").click();
+    await confirmIn(page, "Make public");
+    await expect(page.getByText("The session is now public.")).toBeVisible();
+    await open(page, "/s-no-area", all(), "en");
+    await toggle(page, "Make public").click();
+    await expect(refusal(page)).toContainText("A public session needs an area.");
+  });
+
+  for (const scheme of ["light", "dark"] as const) {
+    test(`E12: axe + layout, five states, 375x812 ${scheme}`, async ({ page, context }) => {
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page.emulateMedia({ colorScheme: scheme });
+      const check = async (state: string, inDialog = false) => {
+        if (inDialog) await expectDialogFits(page);
+        const width = await page.evaluate(() => [
+          document.documentElement.scrollWidth,
+          document.documentElement.clientWidth,
+        ]);
+        expect(width[0], `${state}: no horizontal page scroll`).toBeLessThanOrEqual(width[1]!);
+        const { violations } = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
+        const blocking = violations.filter(
+          (v) => v.impact === "serious" || v.impact === "critical",
+        );
+        expect(blocking.map((v) => [state, v.id, v.nodes.map((n) => n.target)])).toEqual([]);
+      };
+      const mock = await open(page, "/s-open", all());
+      const release = mock.holdNext("update");
+      await toggle(page).click();
+      await confirmIn(page);
+      await expect(page.getByRole("dialog").getByText("Đang xử lý…")).toBeVisible();
+      await check("busy", true);
+      release();
+      await expect(page.getByText("Đã chuyển sang Công khai.")).toBeVisible();
+      (await open(page, "/s-open", all())).failNext("update", MISSING_ERR);
+      await toggle(page).click();
+      await confirmIn(page);
+      await expect(page.getByRole("dialog").getByRole("alert")).toContainText(MISSING);
+      await check("server error", true);
+      await open(page, "/s-no-area", all());
+      await toggle(page).click();
+      await expect(refusal(page)).toBeVisible();
+      await check("refusal");
+      await open(page, "/s-past-open", all());
+      await expect(toggle(page)).toBeDisabled();
+      await check("past start");
+      await open(page, "/s-open", all());
+      await context.setOffline(true);
+      await expect(toggle(page)).toBeDisabled();
+      await check("offline");
+      await context.setOffline(false);
+    });
+  }
+});
+
 test.describe("language", () => {
   test("an English club renders the screens in English", async ({ page }) => {
     await open(page, "", fixtures(), "en");
