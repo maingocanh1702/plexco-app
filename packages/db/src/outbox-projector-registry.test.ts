@@ -111,23 +111,35 @@ const required = async (eventId: string) =>
   (await worker("SELECT outbox_required_projectors($1) AS p", [eventId])).rows[0].p as string[];
 
 describe("A1-A3 migration, seeds and route invariants", () => {
-  it("A1: 57 migrations apply with tail 0056 and re-run idempotently", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(57);
-    expect(ctx.migrateResult.applied.at(-1)).toBe("0056_outbox_projector_registry_dlq_replay.sql");
+  it("A1: 58 migrations apply with tail 0057 and re-run idempotently", async () => {
+    expect(ctx.migrateResult.applied.length).toBe(58);
+    expect(ctx.migrateResult.applied).toContain("0056_outbox_projector_registry_dlq_replay.sql");
+    expect(ctx.migrateResult.applied.at(-1)).toBe("0057_zalo_delivery_targets_definer.sql");
     const again = await ctx.remigrate();
     expect(again.applied).toEqual([]);
-    expect(again.skipped.length).toBe(57);
+    expect(again.skipped.length).toBe(58);
   });
 
-  it("A2: three projectors, all disabled, and exactly one route (web_realtime, session, NULL)", async () => {
+  it("A2: three projectors, all disabled; the web_realtime wildcard route plus the three 0057 zalo_dm routes", async () => {
     expect(await rows("SELECT name, enabled FROM outbox_projectors ORDER BY name")).toEqual([
       { name: "public_sessions", enabled: false },
       { name: "web_realtime", enabled: false },
       { name: "zalo_dm", enabled: false },
     ]);
     expect(
-      await rows("SELECT projector, aggregate_type, event_type FROM outbox_projector_routes"),
-    ).toEqual([{ projector: "web_realtime", aggregate_type: "session", event_type: null }]);
+      await rows(
+        "SELECT projector, aggregate_type, event_type FROM outbox_projector_routes ORDER BY projector, event_type",
+      ),
+    ).toEqual([
+      { projector: "web_realtime", aggregate_type: "session", event_type: null },
+      {
+        projector: "zalo_dm",
+        aggregate_type: "session",
+        event_type: "session.announcement_requested",
+      },
+      { projector: "zalo_dm", aggregate_type: "session", event_type: "session.cancelled" },
+      { projector: "zalo_dm", aggregate_type: "session", event_type: "session.updated" },
+    ]);
   });
 
   it("A3: every route and name invariant is enforced by its named constraint", async () => {
@@ -167,17 +179,23 @@ describe("A1-A3 migration, seeds and route invariants", () => {
       ownerPath((c) => c.query("INSERT INTO outbox_projectors (name) VALUES ('Bad-Name')")),
     );
     expect([name.code, name.constraint]).toEqual(["23514", "outbox_projectors_name_chk"]);
-    // The four signed DM types are admitted (and rolled back: only L4/L8 migrations insert them).
-    for (const type of [
-      "session.updated",
-      "session.cancelled",
-      "session.announcement_requested",
-      "player.promoted",
-    ]) {
-      await ownerPath(insert("zalo_dm", "session", type), false);
+    // The four signed DM types are admitted. 0057 (L4) inserted the three session types, so a second
+    // insert passes the CHECK and hits outbox_projector_routes_uq; player.promoted is admitted and
+    // rolled back (only the promotion lane's migration inserts it).
+    for (const type of ["session.updated", "session.cancelled", "session.announcement_requested"]) {
+      const dup = await sqlError(ownerPath(insert("zalo_dm", "session", type), false));
+      expect([type, dup.code, dup.constraint]).toEqual([
+        type,
+        "23505",
+        "outbox_projector_routes_uq",
+      ]);
     }
-    expect(await rows("SELECT projector FROM outbox_projector_routes")).toEqual([
+    await ownerPath(insert("zalo_dm", "session", "player.promoted"), false);
+    expect(await rows("SELECT projector FROM outbox_projector_routes ORDER BY projector")).toEqual([
       { projector: "web_realtime" },
+      { projector: "zalo_dm" },
+      { projector: "zalo_dm" },
+      { projector: "zalo_dm" },
     ]);
   });
 });
@@ -369,15 +387,25 @@ describe("A6-A8 authorization and catalog posture", () => {
           .filter((r) => r.rel === rel && r.priv === priv)
           .map((r) => (r.col as string | null) ?? "<table>")
           .sort();
+      // 0057 (L4) adds sessions (ends_at, timezone) and the players columns of the zalo_dm targets definer.
       expect(cols("sessions", "SELECT")).toEqual([
+        "ends_at",
         "id",
         "starts_at",
         "status",
         "tenant_id",
+        "timezone",
         "version",
       ]);
       expect(cols("sessions", "UPDATE")).toEqual(["status", "updated_at", "version"]);
-      expect(cols("players", "SELECT")).toEqual(["session_id"]);
+      expect(cols("players", "SELECT")).toEqual([
+        "id",
+        "joined_at",
+        "membership_id",
+        "session_id",
+        "status",
+        "tenant_id",
+      ]);
       expect(cols("charges", "SELECT")).toEqual(["session_id"]);
       expect(cols("outbox_events", "INSERT")).toEqual([
         "aggregate_id",

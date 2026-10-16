@@ -50,7 +50,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 57; // 0000..0056 (0056 outbox projector registry + DLQ replay) (0055 me settings definers) (0054 link_code reparent empty person) (0053 zalo ingress) (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core · 0048 capability grant trigger search_path · 0049 tenant capability authorize · 0050 attested_transfer allocation source · 0051 host-add person definer · 0052 tenant profile definers)
+const MIGRATION_COUNT = 58; // 0000..0057 (0057 zalo delivery targets definer) (0056 outbox projector registry + DLQ replay) (0055 me settings definers) (0054 link_code reparent empty person) (0053 zalo ingress) (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core · 0048 capability grant trigger search_path · 0049 tenant capability authorize · 0050 attested_transfer allocation source · 0051 host-add person definer · 0052 tenant profile definers)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -766,9 +766,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      expect(res.applied[res.applied.length - 1]).toBe(
-        "0056_outbox_projector_registry_dlq_replay.sql",
-      );
+      expect(res.applied[res.applied.length - 1]).toBe("0057_zalo_delivery_targets_definer.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);

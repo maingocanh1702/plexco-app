@@ -57,13 +57,15 @@ describe("scripts/outbox-dlq-replay.mjs (D-10)", () => {
 });
 
 describe("projector modules (D-5, D-8, A24)", () => {
-  it("maps exactly the three registry names to placeholders that dead-letter projector_not_implemented with no I/O", async () => {
+  it("maps exactly the three registry names; the remaining placeholder dead-letters projector_not_implemented with no I/O", async () => {
     const clientQuery = vi.spyOn(pg.Client.prototype, "query");
     const poolQuery = vi.spyOn(pg.Pool.prototype, "query");
     try {
       expect([...PROJECTORS.keys()]).toEqual(["public_sessions", "web_realtime", "zalo_dm"]);
       const job = { eventId: "e", projector: "p", attempts: 0 } as unknown as ClaimedDeliveryJob;
-      for (const deliver of PROJECTORS.values()) {
+      // web_realtime (P3-S3 L5) and zalo_dm (P3-S3 L4) are real projectors, each tested in its own file.
+      for (const [name, deliver] of PROJECTORS) {
+        if (name !== "public_sessions") continue;
         await expect(deliver(job)).resolves.toEqual({
           result: "dlq",
           errorCode: "projector_not_implemented",

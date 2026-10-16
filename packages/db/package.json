@@ -11,7 +11,10 @@
     "./schema": {
       "types": "./schema.ts",
       "default": "./schema.ts"
-    }
+    },
+    "./connector-crypto": "./src/connector-crypto.ts",
+    "./zalo-bot-api": "./src/zalo-bot-api.ts",
+    "./read-bounded-body": "./src/read-bounded-body.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -19,6 +22,7 @@
     "migrate": "tsx src/migrate.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.700.0",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.13.1"
   },

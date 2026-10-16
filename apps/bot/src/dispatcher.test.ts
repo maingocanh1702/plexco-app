@@ -195,7 +195,7 @@ describe("dispatcher.ts and the 0056 worker modules — shipped source (static)"
   ];
   it("JRD-5: the shipped modules issue ZERO SQL outside the granted definers, and touch no table", async () => {
     const allowed =
-      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|claim_projector_delivery_batch|outbox_claimed_event|job_expire_stale_drafts)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event|complete_projector_delivery|outbox_required_projectors|projector_is_enabled)\(|^LISTEN outbox_wake$/;
+      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|claim_projector_delivery_batch|outbox_claimed_event|job_expire_stale_drafts|zalo_dm_delivery_targets|zalo_dm_record_recipient)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event|complete_projector_delivery|outbox_required_projectors|projector_is_enabled)\(|^SELECT pg_notify\('web_realtime', \$1\)$|^LISTEN outbox_wake$/;
     const tables = [
       "outbox_events",
       "projector_deliveries",

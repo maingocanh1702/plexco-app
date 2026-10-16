@@ -1559,6 +1559,28 @@ export const outboxProjectorRoutes = pgTable("outbox_projector_routes", {
     sql`${t.projector} <> 'zalo_dm' OR (${t.aggregateType} = 'session' AND ${t.eventType} IS NOT NULL AND ${t.eventType} IN ('session.updated', 'session.cancelled', 'session.announcement_requested', 'player.promoted'))`),
 }));
 
+// 0057: per-recipient zalo_dm dispositions (Phase 3 L4). GLOBAL (tenant derived through the event),
+// owned by job_definer, zero grants: reached only through zalo_dm_delivery_targets() and
+// zalo_dm_record_recipient(). A row means "sent" or "terminal for this recipient"; never resent.
+export const zaloDmRecipientDeliveries = pgTable("zalo_dm_recipient_deliveries", {
+  eventId: uuid("event_id").notNull(),
+  channelIdentityId: uuid("channel_identity_id").notNull(),
+  outcome: text("outcome").notNull(),
+  errorCode: text("error_code"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ name: "zalo_dm_recipient_deliveries_pkey", columns: [t.eventId, t.channelIdentityId] }),
+  eventFk: foreignKey({ name: "zalo_dm_recipient_deliveries_event_fk", columns: [t.eventId],
+    foreignColumns: [outboxEvents.id] }).onDelete("cascade"),
+  identityFk: foreignKey({ name: "zalo_dm_recipient_deliveries_identity_fk", columns: [t.channelIdentityId],
+    foreignColumns: [channelIdentities.id] }).onDelete("cascade"),
+  outcomeChk: check("zalo_dm_recipient_deliveries_outcome_chk", sql`${t.outcome} IN ('sent', 'terminal')`),
+  errorCodeChk: check("zalo_dm_recipient_deliveries_error_code_chk",
+    sql`${t.errorCode} ~ '^[a-z][a-z0-9_]{0,63}$'`),
+  outcomeCodeChk: check("zalo_dm_recipient_deliveries_outcome_code_chk",
+    sql`(${t.outcome} = 'sent') = (${t.errorCode} IS NULL)`),
+}));
+
 export const surfaceRefs = pgTable("surface_refs", {
   id: uuid("id").primaryKey().defaultRandom(),
   aggregateId: uuid("aggregate_id").notNull(),

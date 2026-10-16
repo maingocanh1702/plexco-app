@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "@plexco/core": "workspace:*",
+    "@plexco/db": "workspace:*",
     "pg": "^8.13.1",
     "pg-boss": "^10.1.5",
     "tsx": "^4.19.2"
   },
   "devDependencies": {
-    "@plexco/db": "workspace:*",
     "@types/node": "^22.10.7",
     "@types/pg": "^8.11.10",
     "typescript": "^5.7.3",
