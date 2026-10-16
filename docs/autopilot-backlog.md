@@ -5924,7 +5924,9 @@ notes: |
 
 ## task: web-bot-vnd-display-convention
 title: Một convention hiển thị VND cho web và bot (hiện `50.000 ₫` trên web, `110.000đ` trên bot)
-status: in-flight
+status: merged
+merged: 2026-10-15 · PR #57, merge 844a0a92d3e9cfbcc67d0197ea53f725998ba6ec · `formatVnd` tại `apps/web/lib/money.ts:27`; merged_probe giữ `null` (scope: [] và token có dấu gạch nối không qua `is_symbol_probe`)
+note_merged: đóng TAY 2026-10-16 tại `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a` (L0 p3-docs-decisions-sync). Phần web đã vào main qua PR #57 (2026-10-15T19:24:43Z); phần bot không có formatter VND nào để căn chỉnh.
 risk: P2
 change_class: code
 depends_on: []
@@ -5933,11 +5935,12 @@ scope: []
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: owner đã chọn convention ở DD-131 OD-4(b) (2026-10-14): `150.000đ`, dấu chấm phân nghìn, chữ thường U+0111 ngay sau chữ số, không dấu cách, không bao giờ U+20AB, cùng output cho vi và en. Phần web đang ở PR #57 (CHƯA merge) nên `in-flight`; flip `merged` bằng tay khi #57 vào main.
+_readiness: owner đã chọn convention ở DD-131 OD-4(b) (2026-10-14): `150.000đ`, dấu chấm phân nghìn, chữ thường U+0111 ngay sau chữ số, không dấu cách, không bao giờ U+20AB, cùng output cho vi và en. Phần web đã merge ở PR #57 (`844a0a92d3e9cfbcc67d0197ea53f725998ba6ec`, 2026-10-15) nên flip `merged` bằng tay (2026-10-16).
 notes: |
   PR #48 (M2b) owner note: hai format VND cùng tồn tại (web `50.000 ₫`, bot `110.000đ`). Chưa có decision chọn một. Khi chọn, chuẩn hoá
   ở helper dùng chung thay vì sửa hai nơi.
   Cập nhật 2026-10-15: phần web (một formatter `formatVnd` trong `apps/web/lib/money.ts` + guard `apps/web/lib/money-single-formatter-guard.test.ts`) nằm trong PR #57 (nhánh `feat/mvp-local-polish`, đo `git show origin/feat/mvp-local-polish:apps/web/lib/money.ts`), chưa merge. `apps/bot/src` không có formatter VND nào trên main (không còn gì để căn chỉnh ở phía bot trong repo này). Ghi chú owner: `1.500đ` hiện cả ở UI tiếng Anh nên trình đọc màn hình tiếng Anh có thể đọc như số thập phân; format đã được owner ký.
+  Cập nhật 2026-10-16: PR #57 đã merge (`844a0a92d3e9cfbcc67d0197ea53f725998ba6ec`); `formatVnd` có trên main tại `apps/web/lib/money.ts:27`. Các dòng "chưa merge" ở trên là lịch sử 2026-10-15.
   source: PR #48 (M2b) owner notes · DD-128 · DD-131 OD-4(b) · PR #57
 
 ## task: app-worker-test-password-clash-flake
@@ -6043,7 +6046,7 @@ scope: [docs/channels/web/FE/feature_sessions_fe.md, docs/features/BE/feature_za
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main 7fe5525; sửa từng file qua đường review docs của repo.
+_readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main 7fe5525, đo lại 2026-10-16 tại c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a (xem dòng "Cập nhật 2026-10-16"; #57 và #51 đã merge); sửa từng file qua đường review docs của repo.
 notes: |
   (1) `docs/channels/web/FE/feature_sessions_fe.md:3` (và Flows 1-3, ~`:36-50`) vẫn ghi `/dashboard/sessions`; bản build là `/c/[tenantId]/sessions`.
   (2) `docs/features/BE/feature_zalo_channel_tech.md` §3: hàng Error Codes (`WEBHOOK_SIGNATURE_INVALID` 400, ~`:158-164`) và ví dụ signature còn mô tả shape OA cũ; ghi chú DD-126 (~`:154`) đã thay shape.
@@ -6052,6 +6055,7 @@ notes: |
   (5) Font cũ và ký hiệu U+20AB còn trong docs sau PR #57 (OD-4(b) đổi VND sang `đ` U+0111, OD-7 đổi heading font Sora → Be Vietnam Pro; đo `git grep` trên `origin/feat/mvp-local-polish`, đo lại trên main sau khi #57 merge):
       font Sora — `docs/channels/web/theme-direction-2026-07.md` (8 dòng), `docs/standards/design-system.md` (10 dòng; ~`:38`, `:326`, `:336`, `:339`), `docs/channels/web/README.md` (3), `design-brief.md` (3), `designer-kickoff.md` (3), và comment `.github/workflows/ci.yml:126` ("downloads Sora + Inter");
       U+20AB — `docs/features/FE/feature_*.md` (nhiều nhất `feature_payment_reconcile.md` 30, `feature_player_view.md` 21, `feature_session_management.md` 12), `docs/channels/web/FE/feature_home_fe.md` (3) và vài wireframe khác. Spec Reviewed: sửa qua đường review docs, không sửa hồi tố lịch sử; `docs/standards/design-tokens.md` do PR #57 cập nhật (chỉ trích theo số PR; head của #57 còn có thể đổi).
+  Cập nhật 2026-10-16 (đo lại tại `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a`; #57 merge `844a0a92d3e9cfbcc67d0197ea53f725998ba6ec`, #51 merge `3546f6b49bc32e82dbe12e5da636c62206c63b2e`): (3) `docs/features/README.md:77` pin identity FE v1.11 và BE v1.13, file hiện FE v1.12 và BE v1.19 (FE đã đo lần này). (5) font Sora: theme-direction 8, design-system 10, web README 3, design-brief 3, designer-kickoff 3, `.github/workflows/ci.yml` 1 (không đổi); ngoài scope hiện tại: `docs/channels/web/designer-docs-guide.md` 2 và `docs/channels/web/design-tokens.md` 2. U+20AB còn ở 21 file ngoài `docs/archive` (payment_reconcile 30, player_view 21, session_management 12, billing_lifecycle 6, marketplace_discovery 5, home 5, user_settings 4, inapp_chat 4, club_assistant 4, `channels/web/FE/feature_home_fe.md` 3, ...). (6) MỚI: `docs/features/BE/feature_zalo_channel_tech.md:154` vẫn ghi "pending in PR #51" trong khi #51 đã merge. Các mục (1), (2), (4) chưa đo lại ở lần này.
   source: đo trên origin/main 7fe5525 và origin/feat/mvp-local-polish (PR #57) · PR #47 (ghi chú DD-126) · PR #52 · PR #53
 
 ## task: web-command-id-persistence-and-conflict-copy

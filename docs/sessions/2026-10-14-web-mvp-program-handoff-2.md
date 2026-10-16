@@ -22,6 +22,8 @@
 >
 > Owner-facing status (Vietnamese) lives in `docs/sessions/web-mvp-program-status.md`. This file is the agent-facing copy.
 
+> **Pointer (2026-10-16, L0 p3-docs-decisions-sync):** #57 (merge `844a0a92d3e9cfbcc67d0197ea53f725998ba6ec`), #51 (merge `3546f6b49bc32e82dbe12e5da636c62206c63b2e`) and #58 (merge `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a`) are merged, so section 2 (PR state) and section 7 step 1 (final merge round) below are historical. The current ledger is `docs/sessions/web-mvp-program-status.md`; the current plan is `docs/sessions/web-mvp-phase3-plan.md`. The body of this file is unchanged.
+
 ## 1. Rules still in force
 
 - Review rule of DD-122 D4: no Codex, no `scope-gate register/ready`, no `ap-finish`; ordinary branches, one PR per coherent change;
