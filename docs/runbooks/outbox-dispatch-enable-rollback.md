@@ -11,11 +11,11 @@
   `infra/docker-compose.yml`; chỉ đặt `true` trong env của **process worker** khi bật.
 - Đồng hồ worker và DB phải đồng bộ NTP: lệch >= 15 s biến một lần retry sớm thành dlq `malformed_outcome` (replay được).
 - Bật projector chỉ bằng `outbox_projector_set_enabled` (dưới đây), **không** bằng migration, **không** sửa tay bảng.
-- Chỉ bật một projector khi module thật của nó đã merge: `web_realtime` sau L5; `zalo_dm` sau L4 + bot token thật (P0);
-  `public_sessions` sau L10. Placeholder trả dlq `projector_not_implemented` cho mọi delivery.
+- Chỉ bật một projector khi module thật của nó đã merge **và đã deploy trên mọi worker đang chạy** (worker còn placeholder
+  trả dlq `projector_not_implemented`): `web_realtime` sau L5; `zalo_dm` sau L4 + bot token thật (P0); `public_sessions` sau L10.
 
 ```bash
-# Owner SQL shell (local compose). Mọi lệnh owner chạy giữa SET ROLE job_definer ... RESET ROLE.
+# Owner SQL shell (local compose). Mọi lệnh gọi function của job_definer chạy giữa SET ROLE job_definer ... RESET ROLE.
 OWNER_SQL='docker exec -i plexco-postgres-1 psql -U plexco -d plexco -v ON_ERROR_STOP=1'
 ```
 
@@ -38,7 +38,7 @@ $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT name, enabled FROM outbox_projec
 2. Xác nhận heartbeat báo đúng cổng (trong 30 s):
 
 ```bash
-$OWNER_SQL -c "SELECT outbox_dispatch_schedule_live()"   # phải là t
+$OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_dispatch_schedule_live()" -c "RESET ROLE"   # phải là t
 ```
 
 3. Chờ backlog chưa ack về 0. Khi mọi projector tắt, event được ack với tập rỗng `'{}'`, nên không event cũ nào bị gửi:
@@ -57,20 +57,24 @@ $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('we
 
 ## 3. Rollback
 
-- **Tắt một projector:** như bước 2.4 với `false`. Delivery của nó nằm chờ (`pending`/`failed`); khi bật lại có thể
-  đã cũ, module thật phải tải lại trạng thái canonical.
+- **Tắt một projector:** như bước 2.4 với `false`. Có hiệu lực ở lần đọc envelope kế tiếp: tối đa delivery đang gửi dở
+  hoàn tất; dòng vừa claim nằm `claimed` tới khi lease 5 phút hết. Chỉ delivery đã prepare **trước** lúc tắt nằm chờ
+  (`pending`/`failed`; khi bật lại có thể đã cũ). Event ack **trong lúc tắt** được ack không có projector này và **không bao
+  giờ** tới nó, kể cả sau khi bật lại (không backfill; không có dòng dlq nên không replay được). Bật lại xong, owner phải cho
+  projection đã lỡ khoảng đó dựng lại từ trạng thái canonical (đường rebuild/reconcile của chính module); `zalo_dm`: tin của khoảng đó không gửi.
 - **Tắt hẳn dispatch:** đặt flag `false` (hoặc bỏ) + restart worker: unschedule, không consumer, không LISTEN, không
   draft expiry. Heartbeat báo `false` trong 30 s; `SELECT outbox_dispatch_schedule_live()` về `f` trong 90 s.
 - **Gỡ code:** chỉ sau khi flag đã tắt; schema thì revert bằng một migration mới (không sửa `0056`).
 
 ## 4. DLQ: kiểm tra và replay (CLI owner, không HTTP, không UI)
 
-Retry: lần thất bại thứ n < 8 chờ 15 s x 2^(n-1) (tổng 1905 s, khoảng 32 phút); lần thứ 8 vào dlq `attempts_exhausted`;
-lỗi projector báo terminal vào dlq ngay. Ngưỡng cảnh báo: **> 100** dòng dlq.
+Retry: lần thất bại thứ n < 8 chờ **ít nhất** 15 s x 2^(n-1) (tổng 1905 s, khoảng 32 phút); retry đến hạn chỉ chạy ở lần wake
+kế tiếp (event mới bất kỳ) hoặc tick cron 1 phút, nên mỗi lần chờ có thể trễ tới khoảng 60 s (cả chuỗi tới khoảng 39 phút).
+Lần thứ 8 vào dlq `attempts_exhausted`; lỗi projector báo terminal vào dlq ngay. Ngưỡng cảnh báo: **> 100** dòng dlq.
 
 ```bash
 $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT count(*) FROM outbox_dlq_list(NULL, 500)" -c "RESET ROLE"
-export DATABASE_URL_MIGRATION='postgres://plexco:<password>@localhost:5432/plexco'   # không commit, không dán vào log
+read -rs PW && export DATABASE_URL_MIGRATION="postgres://plexco:${PW}@localhost:5432/plexco" && unset PW   # gõ password + Enter (không hiện, không vào history) hoặc nạp từ file env chmod 600; không bao giờ gõ thẳng trong lệnh
 node scripts/outbox-dlq-replay.mjs list --projector web_realtime --limit 50
 node scripts/outbox-dlq-replay.mjs replay --event <event-uuid> --projector web_realtime
 ```
