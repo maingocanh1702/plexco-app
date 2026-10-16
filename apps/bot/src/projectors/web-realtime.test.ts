@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type pg from "pg";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   setupRlsTestContext,
@@ -83,6 +83,27 @@ describe("deliverWebRealtime outcomes (A25)", () => {
     expect(outcome).toEqual({ result: "dlq", errorCode: "unsupported_aggregate" });
     expect(ERROR_CODE_RE.test("unsupported_aggregate")).toBe(true);
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it("never connects with pg's implicit defaults; the reset seam ends a lazily created pool", async () => {
+    const query = vi.spyOn(pg.Pool.prototype, "query").mockResolvedValue({ rows: [] } as never);
+    const end = vi.spyOn(pg.Pool.prototype, "end").mockResolvedValue(undefined as never);
+    try {
+      await setWebRealtimeDbForTests(null);
+      vi.stubEnv("DATABASE_URL_DIRECT", "");
+      const unset = await deliverWebRealtime(job());
+      expect(unset).toEqual({ result: "retry", errorCode: "notify_failed" });
+      expect(query).not.toHaveBeenCalled();
+
+      vi.stubEnv("DATABASE_URL_DIRECT", "postgres://app_worker@127.0.0.1:1/none");
+      await expect(deliverWebRealtime(job())).resolves.toEqual({ result: "delivered" });
+      await setWebRealtimeDbForTests(null);
+      expect(end).toHaveBeenCalledTimes(1);
+    } finally {
+      query.mockRestore();
+      end.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 });
 

@@ -203,7 +203,11 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     }
   });
 
-  it("routes a session event to web_realtime only once enabled; an event acked with '{}' never gains a delivery (A4, A5); the placeholder dead-letters", async () => {
+  it("routes a session event to web_realtime only once enabled; an event acked with '{}' never gains a delivery (A4, A5)", async () => {
+    // The real projector NOTIFYs through this test's app_worker pool (the worker's role), never a
+    // lazily created pool on an unset DATABASE_URL_DIRECT that the suite would leave open.
+    const webRealtime = await import("./projectors/web-realtime.js");
+    await webRealtime.setWebRealtimeDbForTests(workerPool);
     try {
       const before = await insertEvent("session", "session.updated");
       await cycle(PROJECTORS);
@@ -213,15 +217,11 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       const after = await insertEvent("session", "session.updated");
       await cycle(PROJECTORS);
       expect(await deliveries(after)).toEqual([
-        {
-          projector: "web_realtime",
-          status: "dlq",
-          attempts: 1,
-          error_code: "projector_not_implemented",
-        },
+        { projector: "web_realtime", status: "delivered", attempts: 1, error_code: null },
       ]);
       expect(await deliveries(before)).toEqual([]);
     } finally {
+      await webRealtime.setWebRealtimeDbForTests(null);
       await asOwner("SELECT outbox_projector_set_enabled('web_realtime', false)", []);
     }
   });

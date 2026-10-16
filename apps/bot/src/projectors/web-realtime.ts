@@ -15,16 +15,22 @@ export const NOTIFY_TIMEOUT_MS = 5_000;
 let injected: Queryable | null = null;
 let pool: pg.Pool | null = null;
 
-/** Test seam (R-3): route the NOTIFY through `db`; null restores the lazy worker pool. */
-export function setWebRealtimeDbForTests(db: Queryable | null): void {
+/** Test seam (R-3): route the NOTIFY through `db` (null: the lazy pool); ends any lazily created pool. */
+export async function setWebRealtimeDbForTests(db: Queryable | null): Promise<void> {
   injected = db;
+  const created = pool;
+  pool = null;
+  await created?.end();
 }
 
 function notifyDb(): Queryable {
   if (injected) return injected;
   if (!pool) {
+    const connectionString = process.env.DATABASE_URL_DIRECT;
+    // Fail closed: without a URL pg would connect as the OS user with its implicit defaults.
+    if (!connectionString) throw new Error("DATABASE_URL_DIRECT is not set");
     pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL_DIRECT,
+      connectionString,
       max: 1,
       connectionTimeoutMillis: NOTIFY_TIMEOUT_MS,
       query_timeout: NOTIFY_TIMEOUT_MS,
