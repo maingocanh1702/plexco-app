@@ -155,6 +155,14 @@ describe("recheckSubscriber (R-10, R-18)", () => {
     vi.mocked(resolveWebSession).mockRejectedValue(new Error("db down"));
     expect(await recheckSubscriber(audience(TENANT_A))).toBe(false);
   });
+
+  it("closes the stream when only the person changes (an identity merge re-parented the account)", async () => {
+    vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "admin" });
+    vi.mocked(resolveWebSession).mockResolvedValue(live);
+    expect(await recheckSubscriber(audience(TENANT_A))).toBe(true);
+    vi.mocked(resolveWebSession).mockResolvedValue({ ...live, personId: "other" });
+    expect(await recheckSubscriber(audience(TENANT_A))).toBe(false);
+  });
 });
 
 describe("resolveRealtimePrincipal", () => {
