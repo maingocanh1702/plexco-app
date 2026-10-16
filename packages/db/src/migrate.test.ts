@@ -4807,7 +4807,7 @@ describe("0045 guest-note tenant context", () => {
           }));
         const dataBefore = await retainedRows();
         // Restrict cluster catalog reads to this migration's principals. Unrelated
-        // test files may create their own fixture owner roles (job_definer members) concurrently.
+        // test files may grant job_definer to their own fixture owner roles concurrently.
         const principals = [
           ctx.ownerRole,
           "app",
@@ -4844,7 +4844,8 @@ describe("0045 guest-note tenant context", () => {
             await owner.query(
               `SELECT roleid, member, grantor, admin_option, inherit_option, set_option FROM pg_auth_members
             WHERE roleid IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1))
-              AND member IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1)) ORDER BY roleid, member, grantor`,
+                AND NOT (roleid = 'job_definer'::regrole AND member NOT IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1)))
+               OR member IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1)) ORDER BY roleid, member, grantor`,
               [principals],
             )
           ).rows,
