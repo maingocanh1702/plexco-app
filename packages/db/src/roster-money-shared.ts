@@ -21,6 +21,12 @@ export type RosterMoneyErrorCode =
   | "ALREADY_JOINED"
   | "REJOIN_REQUIRES_REVIEW"
   | "REMOVE_REQUIRES_REVIEW"
+  // Player self-join (M9, readiness p3-m9-join-core 4.6):
+  | "SESSION_NOT_JOINABLE" // not open, started, or private for a caller who is not an active member
+  | "LEAVE_REQUIRES_HOST" // self-leave refused: net money != 0, after start, or the session is not open
+  | "JOIN_REQUEST_NOT_FOUND" // unknown, foreign or not-own join request id (one answer)
+  | "REQUEST_DECIDED" // the join request is no longer pending
+  | "REQUEST_EXPIRED" // the pending join request passed its expiry
   | "CHARGE_NOT_PAYABLE"
   | "CHARGE_ALREADY_SETTLED"
   | "ALLOCATION_EXCEEDS_FUNDS"

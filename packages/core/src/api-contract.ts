@@ -78,6 +78,10 @@
  * CHANNEL_NOT_LINKED (409) arrived with POST /api/me/channels/:id/detach (M4): one answer for "not yours",
  * "unknown", "already detached" and "inactive" (no existence oracle). Pinned in
  * feature_user_settings_tech.md section 4, signed by the owner as OD-6 (2026-10-14).
+ *
+ * JOIN_REQUEST_NOT_FOUND (404), LEAVE_REQUIRES_HOST (409), REQUEST_DECIDED (409), REQUEST_EXPIRED (409)
+ * and SESSION_NOT_JOINABLE (400) arrived with player self-join (M9: POST /api/sessions/:id/join and
+ * /leave, the join-request cancel/approve/reject routes); D3 (DD-135), readiness p3-m9-join-core 4.6.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -104,6 +108,8 @@ export const API_ERROR_CODES = [
   "INVALID_TIME_RANGE",
   "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
+  "JOIN_REQUEST_NOT_FOUND",
+  "LEAVE_REQUIRES_HOST",
   "LINK_CODE_INVALID",
   "LINK_CODE_RATE_LIMITED",
   "LINK_UNAVAILABLE",
@@ -119,10 +125,13 @@ export const API_ERROR_CODES = [
   "RATE_LIMITED",
   "REJOIN_REQUIRES_REVIEW",
   "REMOVE_REQUIRES_REVIEW",
+  "REQUEST_DECIDED",
+  "REQUEST_EXPIRED",
   "REVERSAL_EXCEEDS_EFFECTIVE",
   "REVERSAL_NOT_SUPPORTED",
   "SESSION_FULL",
   "SESSION_NOT_FOUND",
+  "SESSION_NOT_JOINABLE",
   "SESSION_NOT_OPEN",
   "SLUG_TAKEN",
   "SPORT_INACTIVE",
@@ -140,6 +149,24 @@ export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 export interface OpenBalancePlayerDto {
   playerId: string;
   displayName: string | null;
+}
+
+/** One pending join request as the host reads it (GET /api/sessions/:id/join-requests, manage_roster).
+ *  Request id + the requester's display name + created_at ONLY: never money or contact data. */
+export interface PendingJoinRequestDto {
+  requestId: string;
+  displayName: string | null;
+  createdAt: string;
+}
+
+/** Result of a self-join (POST /api/sessions/:id/join). Every outcome carries all four keys:
+ *  'active' -> playerId; 'waitlisted' -> playerId + waitlistPosition; 'requested' (approval policy)
+ *  -> requestId only; the others are null. No amount and no venue (P-18). */
+export interface JoinSessionResultDto {
+  outcome: "active" | "waitlisted" | "requested";
+  playerId: string | null;
+  waitlistPosition: number | null;
+  requestId: string | null;
 }
 
 /**

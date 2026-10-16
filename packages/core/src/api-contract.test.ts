@@ -5,6 +5,8 @@ import {
   isApiErrorCode,
   type ApiEnvelope,
   type ApiError,
+  type JoinSessionResultDto,
+  type PendingJoinRequestDto,
 } from "./api-contract.js";
 
 describe("API_ERROR_CODES registry", () => {
@@ -196,5 +198,70 @@ describe("account <-> Zalo link codes (M3b)", () => {
 describe("linked channels (M4)", () => {
   it("registers the literal POST /api/me/channels/:id/detach emits", () => {
     expect(isApiErrorCode("CHANNEL_NOT_LINKED")).toBe(true);
+  });
+});
+
+describe("player self-join (M9)", () => {
+  it("registers the five literals the join, leave and join-request routes emit", () => {
+    for (const code of [
+      "JOIN_REQUEST_NOT_FOUND",
+      "LEAVE_REQUIRES_HOST",
+      "REQUEST_DECIDED",
+      "REQUEST_EXPIRED",
+      "SESSION_NOT_JOINABLE",
+    ]) {
+      expect(isApiErrorCode(code)).toBe(true);
+    }
+  });
+
+  it("types a pending join request as request id + display name + created_at only (no money, no contact)", () => {
+    const pending = [
+      {
+        requestId: "4c3a2e9e-0000-4000-8000-000000000011",
+        displayName: "Lan",
+        createdAt: "2026-10-17T05:00:00.000Z",
+      },
+      {
+        requestId: "4c3a2e9e-0000-4000-8000-000000000012",
+        displayName: null,
+        createdAt: "2026-10-17T05:01:00.000Z",
+      },
+    ] satisfies PendingJoinRequestDto[];
+    // Compile-time half: any other key (an amount, a phone, a person id) fails `tsc` through
+    // `satisfies`; the runtime half pins the exact key set of every entry.
+    for (const entry of pending) {
+      expect(Object.keys(entry).sort()).toEqual(["createdAt", "displayName", "requestId"]);
+    }
+  });
+
+  it("types the join result with no amount and no venue (P-18), the same four keys for every outcome", () => {
+    const results = [
+      {
+        outcome: "active",
+        playerId: "4c3a2e9e-0000-4000-8000-000000000021",
+        waitlistPosition: null,
+        requestId: null,
+      },
+      {
+        outcome: "waitlisted",
+        playerId: "4c3a2e9e-0000-4000-8000-000000000022",
+        waitlistPosition: 3,
+        requestId: null,
+      },
+      {
+        outcome: "requested",
+        playerId: null,
+        waitlistPosition: null,
+        requestId: "4c3a2e9e-0000-4000-8000-000000000023",
+      },
+    ] satisfies JoinSessionResultDto[];
+    for (const result of results) {
+      expect(Object.keys(result).sort()).toEqual([
+        "outcome",
+        "playerId",
+        "requestId",
+        "waitlistPosition",
+      ]);
+    }
   });
 });
