@@ -80,7 +80,7 @@ export async function expectErrorChainToMatch(promise: Promise<unknown>, pattern
  * container / local compose postgres). The harness:
  *   1. drops + recreates a dedicated database (never touches the url's own db),
  *   2. runs the real migration runner against it (current baseline 0000..0014),
- *   3. leases the cluster-global runtime roles' test passwords so tests can connect
+ *   3. after step 4, leases the cluster-global runtime roles' test passwords so tests can connect
  *      AS app/readonly — proving RLS/grants from the runtime roles' seats,
  *      never from superuser (FORCE RLS is meaningless to a superuser),
  *   4. seeds two tenants via the owner connection (tenant provisioning is an
@@ -445,8 +445,9 @@ export async function revokeAllChatDefinerMembers(client: pg.Client): Promise<st
  */
 const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
 // "chad": the one-member SLOT of chat_definer and identity_definer, held by a hand-off until its
-// teardown. "chst": their STATE, shared by each migrate() reaching 0030/0054 (withDefinerReadLock),
-// exclusive in each breaker window (withChatDefinerLock, 0054 step 1 too). Readers never take chad.
+// teardown. "chst": their STATE (0030/0054), shared in withDefinerReadLock and exclusive in each
+// breaker window (withChatDefinerLock, 0054 step 1 too). The reader locks never take chad; a
+// non-superuser hand-off takes it in its jobd reader hold and migrates under the slot, not chst.
 const CHAT_DEFINER_STATE_LOCK_KEY = 0x63687374; // "chst"
 
 /** A chat_definer or identity_definer breaker window: the slot, then the state, both exclusive. */
@@ -537,6 +538,7 @@ export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>):
   return withAdvisoryLocks(base, [JOB_DEFINER_LOCK_KEY], "shared", fn);
 }
 
+/** The exclusive side, for every window that breaks job_definer (JCL-2/3, bootstrap refusals). */
 export async function withJobDefinerBreakerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
   return withAdvisoryLocks(base, [JOB_DEFINER_LOCK_KEY], "exclusive", fn);
 }
@@ -715,7 +717,7 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   );
   const sport = await owner.query(`SELECT id FROM sports WHERE key = 'badminton'`);
 
-  // 3. last: lease the roles' test passwords, so a failed connect or seed never holds them
+  // last (step 3): lease the roles' test passwords, so a failed connect or seed never holds them
   const passwords = await leaseTestRolePasswords(base);
   const appUrl = testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app });
   const readonlyUrl = testUrl(base, { db: dbName, user: "readonly", password: ROLE_PW.readonly });
