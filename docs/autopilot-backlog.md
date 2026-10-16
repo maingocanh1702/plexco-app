@@ -5926,7 +5926,7 @@ notes: |
 title: Một convention hiển thị VND cho web và bot (hiện `50.000 ₫` trên web, `110.000đ` trên bot)
 status: merged
 merged: 2026-10-15 · PR #57, merge 844a0a92d3e9cfbcc67d0197ea53f725998ba6ec · `formatVnd` tại `apps/web/lib/money.ts:27`; merged_probe giữ `null` (scope: [] và token có dấu gạch nối không qua `is_symbol_probe`)
-note_merged: đóng TAY 2026-10-16 tại `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a` (L0 p3-docs-decisions-sync). Phần web đã vào main qua PR #57 (2026-10-15T19:24:43Z); phần bot không có formatter VND nào để căn chỉnh.
+note_merged: đóng TAY 2026-10-16 tại `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a` (L0 p3-docs-decisions-sync). Phần web đã vào main qua PR #57 (2026-10-15T19:24:43Z); phần bot đã dùng `fmtMoney` (`packages/core/src/format.ts:12`) cho cùng định dạng `150.000đ`, không cần sửa.
 risk: P2
 change_class: code
 depends_on: []
