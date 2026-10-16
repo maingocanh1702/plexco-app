@@ -31,7 +31,7 @@ export interface ZaloDmValues {
   link: string;
 }
 
-/** starts_at in the session's own time zone, short date and time; never throws. */
+/** starts_at in the session's own time zone, short date and time; never throws ("" if invalid). */
 function formatStart(startsAt: Date, timeZone: string): string {
   const locale = getLang() === "en" ? "en-GB" : "vi-VN";
   const style = { dateStyle: "short", timeStyle: "short" } as const;
@@ -43,7 +43,7 @@ function formatStart(startsAt: Date, timeZone: string): string {
         startsAt,
       );
     } catch {
-      return startsAt.toISOString?.() ?? String(startsAt);
+      return Number.isNaN(startsAt.getTime()) ? "" : startsAt.toISOString();
     }
   }
 }

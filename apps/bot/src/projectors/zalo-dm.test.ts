@@ -21,6 +21,7 @@ import {
   type TestRolePasswordLease,
 } from "../test-db.js";
 import { startZaloStub, type StubReply, type ZaloStub } from "../test-zalo-stub.js";
+import { renderZaloDm } from "./zalo-dm-templates.js";
 import { __endZaloDmPoolForTest, createZaloDmDeliver, deliverZaloDm } from "./zalo-dm.js";
 
 // Fixture secrets only: the web tests' "k" x 32 key and a token that only the stub ever sees.
@@ -88,6 +89,11 @@ describe("zalo_dm projector before any DB call (Z-4, Z-10, Z-12)", () => {
     await expect(promoted).resolves.toEqual(dlq("unexpected_event_type"));
     expect(noDb.query).not.toHaveBeenCalled();
     expect(stub.calls).toHaveLength(0);
+  });
+
+  it("Z-13: an Invalid Date start time renders without throwing", () => {
+    const v = { startsAt: new Date(Number.NaN), timeZone: "UTC", fields: [], link: "/l" };
+    expect(() => renderZaloDm("cancelled", v)).not.toThrow();
   });
 
   it("A26/Z-4: bad key material, APP_BASE_URL or ZALO_BOT_API_BASE fail closed before any DB call", async () => {
