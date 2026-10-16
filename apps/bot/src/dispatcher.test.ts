@@ -702,6 +702,33 @@ describe("runDispatchCycle", () => {
   );
 
   it(
+    "a projector disabled mid-cycle reads no further envelope, so the cycle stops it after the delivery in hand",
+    withTestContext(
+      () => setupDispatcherContext("plexco_jrd_dispatcher_disable_mid_cycle"),
+      async (ctx) => {
+        const tenantId = await seedTenant(ctx.verify);
+        for (let i = 0; i < 3; i += 1) await seedOutboxEvent(ctx.verify, tenantId);
+        let calls = 0;
+        const deliver: DeliverFn = async () => {
+          calls += 1; // the owner disables the projector while this delivery is in hand
+          await ctx.verify.query("UPDATE outbox_projectors SET enabled = false WHERE name = $1", [
+            TEST_PROJECTOR,
+          ]);
+          return { result: "delivered" };
+        };
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
+        expect(calls).toBe(1);
+        expect(summary).toMatchObject({ processedDeliveries: 1, leaseLostSkips: 1 });
+        const left = await ctx.verify.query<{ status: string }>(
+          "SELECT status FROM projector_deliveries WHERE projector = $1 ORDER BY status",
+          [TEST_PROJECTOR],
+        );
+        expect(left.rows.map((r) => r.status)).toEqual(["claimed", "delivered", "pending"]);
+      },
+    ),
+  );
+
+  it(
     "JRD-10: expired lease is reclaimed on the next claim, and job_audit_events shows more than one row for that job_id",
     withTestContext(
       () => setupDispatcherContext("plexco_jrd_dispatcher_10"),
