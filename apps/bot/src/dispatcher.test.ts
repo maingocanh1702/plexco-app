@@ -15,8 +15,7 @@ import {
   type TestRolePasswordLease,
 } from "./test-db.js";
 import {
-  REQUIRED_PROJECTORS,
-  STUB_PROJECTOR,
+  ATTEMPTS_EXHAUSTED,
   completionArgs,
   normalizeErrorCode,
   runDispatchCycle,
@@ -24,6 +23,10 @@ import {
 } from "./dispatcher.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+// The 0056 registry decides which projectors an event needs: every fixture registers this one,
+// enabled, for the jrd test event type, and each cycle passes it in its own projector map.
+const TEST_PROJECTOR = "jrd_test_projector";
+const only = (deliver: DeliverFn) => new Map([[TEST_PROJECTOR, deliver]]);
 // app_worker's password is CLUSTER-global: ROLE_PW.app_worker, leased for the fixture's lifetime
 // (setAppWorkerPasswordRaceSafe) and restored by the last participant on the cluster.
 
@@ -90,6 +93,13 @@ async function setupDispatcherContext(dbName: string): Promise<DispatcherTestCon
     passwords = await setAppWorkerPasswordRaceSafe(base);
     verify = new pg.Client({ connectionString: migrationUrl });
     await verify.connect();
+    await verify.query("INSERT INTO outbox_projectors (name, enabled) VALUES ($1, true)", [
+      TEST_PROJECTOR,
+    ]);
+    await verify.query(
+      "INSERT INTO outbox_projector_routes (projector, aggregate_type, event_type) VALUES ($1, 'jrd_test_aggregate', 'jrd.test.event')",
+      [TEST_PROJECTOR],
+    );
     workerPool = new pg.Pool({ connectionString: directUrl });
   } catch (error) {
     errors.push(error);
@@ -170,34 +180,59 @@ it(
   ),
 );
 
-describe("dispatcher.ts — shipped source (static)", () => {
-  it("JRD-5: the shipped handler issues ZERO SQL outside the five granted functions, and touches no other table", async () => {
-    const source = await readFile(path.join(HERE, "dispatcher.ts"), "utf8");
-    const queryCalls = [...source.matchAll(/\.query(?:<[^>]*>)?\(\s*"([^"]+)"/g)].map((m) => m[1]!);
-    expect(queryCalls.length).toBeGreaterThan(0); // sanity: the extraction pattern actually matched something
-
-    const allowedFunctionCall =
-      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|claim_projector_delivery_batch)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event(?:\s+AS\s+\w+)?|complete_projector_delivery)\(/;
-    for (const sql of queryCalls) {
-      expect(sql).toMatch(allowedFunctionCall);
-      // Independent, structural cross-check WITHIN each query string specifically
-      // (comments are allowed to name these tables for documentation — e.g. the
-      // production stub explains why it's safe against "outbox_events" having no
-      // producer yet; only actual SQL text must never reference them directly).
-      for (const table of ["outbox_events", "projector_deliveries", "job_audit_events"]) {
-        expect(sql).not.toContain(table);
+describe("dispatcher.ts and the 0056 worker modules — shipped source (static)", () => {
+  // A25 (JRD-5 extended): every SQL string these modules send is one call of an allowed definer
+  // (or the LISTEN of the wake loop), named in a double-quoted literal, and names no table.
+  const SQL_FILES = [
+    "dispatcher.ts",
+    "projector-registry.ts",
+    "outbox-wake.ts",
+    "draft-expiry-job.ts",
+    "projectors/index.ts",
+    "projectors/web-realtime.ts",
+    "projectors/zalo-dm.ts",
+    "projectors/public-sessions.ts",
+  ];
+  it("JRD-5: the shipped modules issue ZERO SQL outside the granted definers, and touch no table", async () => {
+    const allowed =
+      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|claim_projector_delivery_batch|outbox_claimed_event|job_expire_stale_drafts)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event|complete_projector_delivery|outbox_required_projectors|projector_is_enabled)\(|^LISTEN outbox_wake$/;
+    const tables = [
+      "outbox_events",
+      "projector_deliveries",
+      "job_audit_events",
+      "outbox_projectors",
+      "outbox_projector_routes",
+      "job_worker_heartbeats",
+      "sessions",
+      "players",
+      "charges",
+    ];
+    let total = 0;
+    for (const file of SQL_FILES) {
+      const source = await readFile(path.join(HERE, file), "utf8");
+      const queryCalls = [...source.matchAll(/\.query(?:<[^>]*>)?\(\s*"([^"]+)"/g)].map(
+        (m) => m[1]!,
+      );
+      // every .query( call carries its SQL as a literal the extraction above can see
+      expect(source.match(/\.query(?:<[^>]*>)?\(/g)?.length ?? 0, file).toBe(queryCalls.length);
+      total += queryCalls.length;
+      for (const sql of queryCalls) {
+        expect(sql, file).toMatch(allowed);
+        for (const table of tables) expect(sql, file).not.toMatch(new RegExp(`\\b${table}\\b`));
       }
     }
+    expect(total).toBeGreaterThan(0); // sanity: the extraction pattern actually matched something
   });
 
   it("JRD-12: no INSERT into outbox_events exists in any shipped file", async () => {
     const shippedFiles = [
-      "dispatcher.ts",
+      ...SQL_FILES,
       "preflight.ts",
       "worker.ts",
       "queues.ts",
       "queue.ts",
       "provision-queue.ts",
+      "heartbeat.ts",
     ];
     for (const file of shippedFiles) {
       const source = await readFile(path.join(HERE, file), "utf8");
@@ -217,16 +252,16 @@ describe("runDispatchCycle", () => {
 
         await ctx.workerPool.query("SELECT job_prepare_projector_delivery($1, $2)", [
           eventId,
-          STUB_PROJECTOR,
+          TEST_PROJECTOR,
         ]);
         await ctx.workerPool.query("SELECT job_prepare_projector_delivery($1, $2)", [
           eventId,
-          STUB_PROJECTOR,
+          TEST_PROJECTOR,
         ]);
 
         const rows = await ctx.verify.query(
           "SELECT status, attempts FROM projector_deliveries WHERE event_id = $1 AND projector = $2",
-          [eventId, STUB_PROJECTOR],
+          [eventId, TEST_PROJECTOR],
         );
         expect(rows.rows).toHaveLength(1);
         expect(rows.rows[0].status).toBe("pending");
@@ -244,10 +279,7 @@ describe("runDispatchCycle", () => {
         const eventId = await seedOutboxEvent(ctx.verify, tenantId);
 
         const deliver: DeliverFn = async () => ({ result: "delivered", providerRef: "jrd-7-ref" });
-        const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver,
-          requiredProjectors: [STUB_PROJECTOR],
-        });
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
 
         expect(summary.claimedEvents).toBe(1);
         expect(summary.ackedEvents).toBe(1);
@@ -255,7 +287,7 @@ describe("runDispatchCycle", () => {
 
         const row = await ctx.verify.query(
           "SELECT status, attempts, claim_token, lease_expires_at, provider_ref FROM projector_deliveries WHERE event_id=$1 AND projector=$2",
-          [eventId, STUB_PROJECTOR],
+          [eventId, TEST_PROJECTOR],
         );
         expect(row.rows[0].status).toBe("delivered");
         expect(row.rows[0].attempts).toBe(1);
@@ -275,25 +307,25 @@ describe("runDispatchCycle", () => {
         const eventId = await seedOutboxEvent(ctx.verify, tenantId);
         await ctx.workerPool.query("SELECT job_prepare_projector_delivery($1, $2)", [
           eventId,
-          STUB_PROJECTOR,
+          TEST_PROJECTOR,
         ]);
 
         const claim1 = await ctx.workerPool.query<{ claim_token: string }>(
           "SELECT claim_token FROM claim_projector_delivery_batch($1, $2)",
-          [STUB_PROJECTOR, 10],
+          [TEST_PROJECTOR, 10],
         );
         const token1 = claim1.rows[0]!.claim_token;
 
         const nextAttemptAt = new Date(Date.now() + 60_000);
         const completed = await ctx.workerPool.query<{ complete_projector_delivery: boolean }>(
           "SELECT complete_projector_delivery($1,$2,$3,'retry',$4,NULL,'jrd_8_retry')",
-          [eventId, STUB_PROJECTOR, token1, nextAttemptAt],
+          [eventId, TEST_PROJECTOR, token1, nextAttemptAt],
         );
         expect(completed.rows[0]!.complete_projector_delivery).toBe(true);
 
         let row = await ctx.verify.query(
           "SELECT status, attempts, claim_token, error_code FROM projector_deliveries WHERE event_id=$1 AND projector=$2",
-          [eventId, STUB_PROJECTOR],
+          [eventId, TEST_PROJECTOR],
         );
         expect(row.rows[0].status).toBe("failed");
         expect(row.rows[0].attempts).toBe(1);
@@ -303,18 +335,18 @@ describe("runDispatchCycle", () => {
         // not yet due — must NOT be re-claimable.
         const notDueClaim = await ctx.workerPool.query(
           "SELECT * FROM claim_projector_delivery_batch($1, $2)",
-          [STUB_PROJECTOR, 10],
+          [TEST_PROJECTOR, 10],
         );
         expect(notDueClaim.rows).toHaveLength(0);
 
         // simulate the retry becoming due.
         await ctx.verify.query(
           "UPDATE projector_deliveries SET next_attempt_at = now() - interval '1 second' WHERE event_id=$1 AND projector=$2",
-          [eventId, STUB_PROJECTOR],
+          [eventId, TEST_PROJECTOR],
         );
         const claim2 = await ctx.workerPool.query<{ claim_token: string }>(
           "SELECT claim_token FROM claim_projector_delivery_batch($1, $2)",
-          [STUB_PROJECTOR, 10],
+          [TEST_PROJECTOR, 10],
         );
         expect(claim2.rows).toHaveLength(1);
         const token2 = claim2.rows[0]!.claim_token;
@@ -323,13 +355,13 @@ describe("runDispatchCycle", () => {
         // the STALE (pre-reclaim) token must not be able to complete anymore.
         const staleComplete = await ctx.workerPool.query<{ complete_projector_delivery: boolean }>(
           "SELECT complete_projector_delivery($1,$2,$3,'delivered',NULL,NULL,NULL)",
-          [eventId, STUB_PROJECTOR, token1],
+          [eventId, TEST_PROJECTOR, token1],
         );
         expect(staleComplete.rows[0]!.complete_projector_delivery).toBe(false);
 
         row = await ctx.verify.query(
           "SELECT status, claim_token FROM projector_deliveries WHERE event_id=$1 AND projector=$2",
-          [eventId, STUB_PROJECTOR],
+          [eventId, TEST_PROJECTOR],
         );
         expect(row.rows[0].status).toBe("claimed");
         expect(row.rows[0].claim_token).toBe(token2);
@@ -346,35 +378,35 @@ describe("runDispatchCycle", () => {
         const eventId = await seedOutboxEvent(ctx.verify, tenantId);
         await ctx.workerPool.query("SELECT job_prepare_projector_delivery($1, $2)", [
           eventId,
-          STUB_PROJECTOR,
+          TEST_PROJECTOR,
         ]);
         const claim1 = await ctx.workerPool.query<{ claim_token: string }>(
           "SELECT claim_token FROM claim_projector_delivery_batch($1,$2)",
-          [STUB_PROJECTOR, 10],
+          [TEST_PROJECTOR, 10],
         );
         const token = claim1.rows[0]!.claim_token;
 
         const completed = await ctx.workerPool.query<{ complete_projector_delivery: boolean }>(
           "SELECT complete_projector_delivery($1,$2,$3,'dlq',NULL,NULL,'jrd_9_dlq')",
-          [eventId, STUB_PROJECTOR, token],
+          [eventId, TEST_PROJECTOR, token],
         );
         expect(completed.rows[0]!.complete_projector_delivery).toBe(true);
 
         const row = await ctx.verify.query(
           "SELECT status FROM projector_deliveries WHERE event_id=$1 AND projector=$2",
-          [eventId, STUB_PROJECTOR],
+          [eventId, TEST_PROJECTOR],
         );
         expect(row.rows[0].status).toBe("dlq");
 
         const reclaim = await ctx.workerPool.query(
           "SELECT * FROM claim_projector_delivery_batch($1,$2)",
-          [STUB_PROJECTOR, 10],
+          [TEST_PROJECTOR, 10],
         );
         expect(reclaim.rows).toHaveLength(0);
 
         const recomplete = await ctx.workerPool.query<{ complete_projector_delivery: boolean }>(
           "SELECT complete_projector_delivery($1,$2,$3,'delivered',NULL,NULL,NULL)",
-          [eventId, STUB_PROJECTOR, token],
+          [eventId, TEST_PROJECTOR, token],
         );
         expect(recomplete.rows[0]!.complete_projector_delivery).toBe(false);
       },
@@ -405,10 +437,7 @@ describe("runDispatchCycle", () => {
           return { result: "delivered" };
         };
 
-        const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver,
-          requiredProjectors: [STUB_PROJECTOR],
-        });
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
 
         expect(summary.staleCompletionSkips).toBe(1);
         expect(summary.processedDeliveries).toBe(0);
@@ -437,10 +466,7 @@ describe("runDispatchCycle", () => {
         const eventId = await seedOutboxEvent(ctx.verify, tenantId);
 
         const deliver: DeliverFn = async () => ({ result: "dlq", errorCode: 42 }) as never;
-        const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver,
-          requiredProjectors: [STUB_PROJECTOR],
-        });
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
 
         expect(summary.processedDeliveries).toBe(1); // the cycle finished instead of throwing
         const rows = await ctx.verify.query<{ status: string; error_code: string | null }>(
@@ -469,10 +495,7 @@ describe("runDispatchCycle", () => {
           return { result: "delivered" };
         };
 
-        const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver,
-          requiredProjectors: [STUB_PROJECTOR],
-        });
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
         expect(callCount).toBe(2);
         expect(summary.processedDeliveries).toBe(2);
 
@@ -498,28 +521,59 @@ describe("runDispatchCycle", () => {
   );
 
   it(
-    "audit B-1: a projector returning retry with a PAST next_attempt_at fails closed to dlq/malformed_next_attempt instead of raising inside the cycle",
+    "A23: the dispatcher schedules each retry at 15 s x 2^attempts (a projector's nextAttemptAt is ignored) and dead-letters the 8th failure as attempts_exhausted",
     withTestContext(
-      () => setupDispatcherContext("plexco_jrd_dispatcher_bad_grammar_retry"),
+      () => setupDispatcherContext("plexco_jrd_dispatcher_retry_schedule"),
       async (ctx) => {
         const tenantId = await seedTenant(ctx.verify);
-        const eventA = await seedOutboxEvent(ctx.verify, tenantId);
-
-        const deliver: DeliverFn = async () => ({
-          result: "retry",
-          nextAttemptAt: new Date(0),
-          errorCode: "provider_timeout",
+        const eventId = await seedOutboxEvent(ctx.verify, tenantId);
+        const seen: number[] = [];
+        const deliver: DeliverFn = async (job) => {
+          seen.push(job.attempts);
+          return {
+            result: "retry",
+            errorCode: "Provider_Timeout",
+            nextAttemptAt: new Date(0),
+          } as never;
+        };
+        const row = async () =>
+          (
+            await ctx.verify.query<{
+              status: string;
+              attempts: number;
+              error_code: string;
+              wait: number;
+            }>(
+              `SELECT status, attempts, error_code,
+                      round(extract(epoch FROM next_attempt_at - clock_timestamp()))::int AS wait
+                 FROM projector_deliveries WHERE event_id = $1`,
+              [eventId],
+            )
+          ).rows[0]!;
+        for (const [attempts, wait] of [15, 30, 60, 120, 240, 480, 960].entries()) {
+          await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
+          const r = await row();
+          expect(r).toMatchObject({
+            status: "failed",
+            attempts: attempts + 1,
+            error_code: "provider_timeout",
+          });
+          expect(Math.abs(r.wait - wait)).toBeLessThanOrEqual(2);
+          await ctx.verify.query(
+            "UPDATE projector_deliveries SET next_attempt_at = now() - interval '1 second' WHERE event_id = $1",
+            [eventId],
+          );
+        }
+        expect(
+          (await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) }))
+            .processedDeliveries,
+        ).toBe(1);
+        expect(await row()).toMatchObject({
+          status: "dlq",
+          attempts: 8,
+          error_code: ATTEMPTS_EXHAUSTED,
         });
-        const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver,
-          requiredProjectors: [STUB_PROJECTOR],
-        });
-        expect(summary.processedDeliveries).toBe(1);
-        const row = await ctx.verify.query<{ status: string; error_code: string | null }>(
-          "SELECT status, error_code FROM projector_deliveries WHERE event_id = $1",
-          [eventA],
-        );
-        expect(row.rows[0]).toEqual({ status: "dlq", error_code: "malformed_next_attempt" });
+        expect(seen).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
       },
     ),
   );
@@ -542,10 +596,7 @@ describe("runDispatchCycle", () => {
           return { result: "delivered" };
         };
 
-        const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver,
-          requiredProjectors: [STUB_PROJECTOR],
-        });
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
 
         // Both rows were attempted — the throw on the first did not abort the
         // loop before claiming/attempting the second.
@@ -594,13 +645,13 @@ describe("runDispatchCycle", () => {
         const deliver: DeliverFn = async () => {
           const stillPending = await ctx.verify.query<{ count: string }>(
             "SELECT count(*) FROM projector_deliveries WHERE projector = $1 AND status = 'pending'",
-            [STUB_PROJECTOR],
+            [TEST_PROJECTOR],
           );
           pendingCountsAtEachDelivery.push(Number(stillPending.rows[0]!.count));
           return { result: "delivered" };
         };
 
-        await runDispatchCycle(ctx.workerPool, { deliver, requiredProjectors: [STUB_PROJECTOR] });
+        await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
 
         expect(pendingCountsAtEachDelivery.slice().sort((a, b) => b - a)).toEqual([2, 1, 0]);
       },
@@ -632,10 +683,7 @@ describe("runDispatchCycle", () => {
           return { result: "delivered" };
         };
 
-        const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver,
-          requiredProjectors: [STUB_PROJECTOR],
-        });
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
 
         // Only the first row was ever attempted — the stale completion it
         // produced stopped phase 2 for this projector before claiming the
@@ -646,9 +694,36 @@ describe("runDispatchCycle", () => {
 
         const stillPending = await ctx.verify.query<{ count: string }>(
           "SELECT count(*) FROM projector_deliveries WHERE projector = $1 AND status = 'pending'",
-          [STUB_PROJECTOR],
+          [TEST_PROJECTOR],
         );
         expect(Number(stillPending.rows[0]!.count)).toBe(1);
+      },
+    ),
+  );
+
+  it(
+    "a projector disabled mid-cycle reads no further envelope, so the cycle stops it after the delivery in hand",
+    withTestContext(
+      () => setupDispatcherContext("plexco_jrd_dispatcher_disable_mid_cycle"),
+      async (ctx) => {
+        const tenantId = await seedTenant(ctx.verify);
+        for (let i = 0; i < 3; i += 1) await seedOutboxEvent(ctx.verify, tenantId);
+        let calls = 0;
+        const deliver: DeliverFn = async () => {
+          calls += 1; // the owner disables the projector while this delivery is in hand
+          await ctx.verify.query("UPDATE outbox_projectors SET enabled = false WHERE name = $1", [
+            TEST_PROJECTOR,
+          ]);
+          return { result: "delivered" };
+        };
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
+        expect(calls).toBe(1);
+        expect(summary).toMatchObject({ processedDeliveries: 1, leaseLostSkips: 1 });
+        const left = await ctx.verify.query<{ status: string }>(
+          "SELECT status FROM projector_deliveries WHERE projector = $1 ORDER BY status",
+          [TEST_PROJECTOR],
+        );
+        expect(left.rows.map((r) => r.status)).toEqual(["claimed", "delivered", "pending"]);
       },
     ),
   );
@@ -730,8 +805,7 @@ describe("runDispatchCycle", () => {
         const eventId = await seedOutboxEvent(ctx.verify, tenantId);
 
         const summary = await runDispatchCycle(ctx.workerPool, {
-          deliver: async () => ({ result: "delivered" }),
-          requiredProjectors: [STUB_PROJECTOR],
+          projectors: only(async () => ({ result: "delivered" })),
         });
         expect(summary.ackedEvents).toBe(1);
 
@@ -780,11 +854,11 @@ describe("runDispatchCycle", () => {
         // the FIRST (now-superseded) handler prepares+attempts ack with its stale token.
         await ctx.workerPool.query("SELECT job_prepare_projector_delivery($1, $2)", [
           eventId,
-          STUB_PROJECTOR,
+          TEST_PROJECTOR,
         ]);
         const ackResult = await ctx.workerPool.query<{ ack_outbox_event: boolean }>(
           "SELECT ack_outbox_event($1, $2, $3) AS ack_outbox_event",
-          [eventId, [STUB_PROJECTOR], staleToken],
+          [eventId, [TEST_PROJECTOR], staleToken],
         );
         expect(ackResult.rows[0]!.ack_outbox_event).toBe(false);
 
@@ -811,11 +885,11 @@ describe("runDispatchCycle", () => {
       async (ctx) => {
         const tenantId = await seedTenant(ctx.verify);
         const eventId = await seedOutboxEvent(ctx.verify, tenantId);
-        const requiredProjectors = [STUB_PROJECTOR, "second_test_projector"];
+        const requiredProjectors = [TEST_PROJECTOR, "second_test_projector"];
 
         await ctx.workerPool.query("SELECT job_prepare_projector_delivery($1, $2)", [
           eventId,
-          STUB_PROJECTOR,
+          TEST_PROJECTOR,
         ]);
         // deliberately do NOT prepare "second_test_projector".
 
@@ -841,33 +915,28 @@ describe("runDispatchCycle", () => {
       () => setupDispatcherContext("plexco_jrd_dispatcher_17b"),
       async (ctx) => {
         const tenantId = await seedTenant(ctx.verify);
-        await seedOutboxEvent(ctx.verify, tenantId);
-
-        // ack_outbox_event's own raise path (JRD-17a) is structurally unreachable
-        // through runDispatchCycle's normal call pattern, BY DESIGN (item e):
-        // phase 1 always prepares every entry of requiredProjectors immediately
-        // before acking, in the same call, so the anti-join can never observe an
-        // unprepared required projector when going through this function. This
-        // exercises the SAME "phase 1 must not swallow an error" property via
-        // the other SQL call in that loop (job_prepare_projector_delivery's own
-        // format validation), since dispatcher.ts wraps neither call in a
-        // try/catch — any throw from either propagates identically.
-        await expect(
-          runDispatchCycle(ctx.workerPool, {
-            deliver: async () => ({ result: "delivered" }),
-            requiredProjectors: ["Not A Valid Projector Name!"],
-          }),
-        ).rejects.toThrow();
+        const eventId = await seedOutboxEvent(ctx.verify, tenantId);
+        // Phase 1 reads the event's required set right after the claim. Withdrawing app_worker's
+        // EXECUTE on that definer in THIS throwaway database (a per-database ACL) makes it raise;
+        // the error must leave the cycle unchanged and the event must stay unacked. A denial is a
+        // negative-privilege assertion, so it holds the jobd reader lock (C10).
+        await ctx.verify.query(
+          "REVOKE EXECUTE ON FUNCTION outbox_required_projectors(uuid) FROM app_worker",
+        );
+        await withJobDefinerLock(process.env.DATABASE_URL_TEST!, () =>
+          expect(
+            runDispatchCycle(ctx.workerPool, {
+              projectors: only(async () => ({ result: "delivered" })),
+            }),
+          ).rejects.toMatchObject({ code: "42501" }),
+        );
+        const acked = await ctx.verify.query("SELECT acked_at FROM outbox_events WHERE id = $1", [
+          eventId,
+        ]);
+        expect(acked.rows[0].acked_at).toBeNull();
       },
     ),
   );
-});
-
-describe("REQUIRED_PROJECTORS", () => {
-  it("is a single source read by both fan-out and the (future) ack argument — not duplicated", () => {
-    expect(REQUIRED_PROJECTORS).toContain(STUB_PROJECTOR);
-    expect(REQUIRED_PROJECTORS.length).toBe(1);
-  });
 });
 
 describe("audit B-1: outcome grammar normalisation is enforced once, in completionArgs", () => {
@@ -881,19 +950,6 @@ describe("audit B-1: outcome grammar normalisation is enforced once, in completi
     for (const sample of ["ECONNRESET", "x y", "ok_code", "Ω", "9"]) {
       expect(normalizeErrorCode(sample)).toMatch(/^[a-z][a-z0-9_]{0,63}$/);
     }
-  });
-
-  it("a retry whose nextAttemptAt is not strictly in the future becomes dlq/malformed_next_attempt; a future one is kept", () => {
-    const now = () => new Date(1_000_000);
-    expect(
-      completionArgs({ result: "retry", nextAttemptAt: new Date(1_000_000), errorCode: "x" }, now),
-    ).toMatchObject({ result: "dlq", errorCode: "malformed_next_attempt", nextAttemptAt: null });
-    expect(
-      completionArgs({ result: "retry", nextAttemptAt: new Date(Number.NaN), errorCode: "x" }, now),
-    ).toMatchObject({ result: "dlq", errorCode: "malformed_next_attempt" });
-    expect(
-      completionArgs({ result: "retry", nextAttemptAt: new Date(1_000_001), errorCode: "X" }, now),
-    ).toMatchObject({ result: "retry", errorCode: "x", rawErrorCode: "X" });
   });
 
   it("a NON-STRING raw error code is described, never coerced with .slice() — the log line must not abort the cycle", async () => {
@@ -922,9 +978,9 @@ describe("audit B-1: outcome grammar normalisation is enforced once, in completi
     for (const [raw, described] of shapes) {
       for (const outcome of [
         { result: "dlq", errorCode: raw } as never,
-        { result: "retry", nextAttemptAt: new Date(Date.now() + 60_000), errorCode: raw } as never,
+        { result: "retry", errorCode: raw } as never,
       ]) {
-        const args = completionArgs(outcome);
+        const args = completionArgs(outcome, 0);
         expect(() => boundRawErrorCode(args.rawErrorCode as never)).not.toThrow();
         expect(boundRawErrorCode(args.rawErrorCode as never)).toBe(described);
         expect(args.errorCode).toBe("malformed_error_code"); // and the STORED code stays in-grammar
@@ -936,7 +992,7 @@ describe("audit B-1: outcome grammar normalisation is enforced once, in completi
   });
 
   it("delivered passes providerRef through untouched and carries no error code", () => {
-    expect(completionArgs({ result: "delivered", providerRef: "ref-1" })).toEqual({
+    expect(completionArgs({ result: "delivered", providerRef: "ref-1" }, 0)).toEqual({
       result: "delivered",
       nextAttemptAt: null,
       providerRef: "ref-1",
@@ -1020,6 +1076,27 @@ describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
         expect(restarted.rows[0]!.started_at.getTime()).toBeGreaterThan(
           before.rows[0]!.started_at.getTime(),
         );
+
+        // D-12 (A12): the tick records the gate it was given; omitted = NULL, which never counts.
+        const scheduleLive = async () =>
+          (await ctx.workerPool.query("SELECT outbox_dispatch_schedule_live() AS v")).rows[0].v;
+        expect(await scheduleLive()).toBe(false);
+        await heartbeatOnce({
+          pool: ctx.workerPool,
+          id: "hb-test-2",
+          pid: 7,
+          file,
+          scheduleEnabled: true,
+        });
+        const flags = await ctx.verify.query(
+          "SELECT worker_id, schedule_enabled FROM job_worker_heartbeats ORDER BY worker_id",
+        );
+        expect(flags.rows).toEqual([
+          { worker_id: "hb-test-1", schedule_enabled: null },
+          { worker_id: "hb-test-2", schedule_enabled: true },
+        ]);
+        expect(await scheduleLive()).toBe(true);
+        await ctx.verify.query("DELETE FROM job_worker_heartbeats WHERE worker_id = 'hb-test-2'");
 
         // Staleness: an old tick reads as not alive.
         await ctx.verify.query(

@@ -19,8 +19,10 @@ import {
   isOutboxDispatchScheduleEnabled,
   registerOutboxDispatchSchedule,
   resolveOutboxDispatchEnablement,
+  resolveWorkerDispatchEnablement,
 } from "./worker.js";
-import { productionStubDeliver } from "./dispatcher.js";
+import { productionStubDeliver, runDispatchCycle, type DeliverFn } from "./dispatcher.js";
+import { PROJECTORS } from "./projectors/index.js";
 import { provisionQueue } from "./provision-queue.js";
 import { QUEUE_SCHEMA } from "./queue.js";
 import {
@@ -28,7 +30,6 @@ import {
   OUTBOX_DISPATCH_QUEUE,
   PGBOSS_INTERNAL_SEND_IT_QUEUE,
 } from "./queues.js";
-import { REQUIRED_PROJECTORS, runDispatchCycle } from "./dispatcher.js";
 
 const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -129,6 +130,25 @@ async function seedOutboxEvent(client: pg.Client, tenantId: string): Promise<str
     [tenantId],
   );
   return result.rows[0]!.id;
+}
+
+/** An empty draft whose start has passed: what job_expire_stale_drafts would cancel (0056). */
+async function seedStaleDraft(client: pg.Client): Promise<string> {
+  const tenantId = await seedTenant(client);
+  const result = await client.query<{ id: string }>(
+    `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status)
+     SELECT $1, id, now() - interval '2 hours', now() - interval '1 hour', 'Asia/Ho_Chi_Minh', 'draft'
+     FROM sports WHERE key = 'badminton' RETURNING id`,
+    [tenantId],
+  );
+  return result.rows[0]!.id;
+}
+
+async function heartbeatScheduleFlags(client: pg.Client): Promise<(boolean | null)[]> {
+  const result = await client.query<{ schedule_enabled: boolean | null }>(
+    "SELECT schedule_enabled FROM job_worker_heartbeats",
+  );
+  return result.rows.map((row) => row.schedule_enabled);
 }
 
 it(
@@ -328,6 +348,12 @@ describe("registerOutboxDispatchSchedule", () => {
         await provisionQueue(ctx.migrationUrl);
         const tenantId = await seedTenant(ctx.verify);
         const eventId = await seedOutboxEvent(ctx.verify, tenantId);
+        await ctx.verify.query(
+          "INSERT INTO outbox_projectors (name, enabled) VALUES ('jso_projector', true)",
+        );
+        await ctx.verify.query(
+          "INSERT INTO outbox_projector_routes (projector, aggregate_type, event_type) VALUES ('jso_projector', 'jso_test_aggregate', 'jso.test.event')",
+        );
 
         const boss = new PgBoss({
           connectionString: ctx.directUrl,
@@ -350,9 +376,9 @@ describe("registerOutboxDispatchSchedule", () => {
           });
 
           await boss.work(OUTBOX_DISPATCH_QUEUE, { pollingIntervalSeconds: 1 }, async () => {
+            const delivered: DeliverFn = async () => ({ result: "delivered" });
             const summary = await runDispatchCycle(workerPool, {
-              deliver: async () => ({ result: "delivered" }),
-              requiredProjectors: REQUIRED_PROJECTORS,
+              projectors: new Map([["jso_projector", delivered]]),
             });
             resolveHandled(summary);
           });
@@ -478,6 +504,7 @@ describe("main() — boss.work() registration (spawned process)", () => {
       () => setupScheduleContext("plexco_jso_worker_gate_off"),
       async (ctx) => {
         await provisionQueue(ctx.migrationUrl);
+        const draftId = await seedStaleDraft(ctx.verify);
 
         // codex round-03 [P2]: explicitly override, don't just omit — an empty
         // extraEnv still INHERITS OUTBOX_DISPATCH_SCHEDULE_ENABLED from
@@ -493,24 +520,27 @@ describe("main() — boss.work() registration (spawned process)", () => {
         expect(stdout).toContain(
           "[worker] outbox dispatch worker not registered (schedule disabled)",
         );
+        // A27/A28: OFF means no LISTEN and no draft expiry, and the heartbeat reports the gate.
+        expect(stdout).not.toContain("outbox wake listening");
+        expect(await heartbeatScheduleFlags(ctx.verify)).toEqual([false]);
+        const draft = await ctx.verify.query<{ status: string }>(
+          "SELECT status FROM sessions WHERE id = $1",
+          [draftId],
+        );
+        expect(draft.rows[0]!.status).toBe("draft");
       },
     ),
   );
 
   /**
-   * This assertion inverted with the X-3 fix. The flag alone used to be enough to register the
-   * schedule and a boss.work() consumer; the audit showed the comment justifying that ("no
-   * producer inserts outbox_events") had rotted — session-service.ts emits eight event types —
-   * while the only configured deliverer is still productionStubDeliver, which acks then DLQs
-   * every row terminally. So worker.ts now refuses the pair even with the flag on, and says why.
-   *
-   * When a real projector replaces the stub (backlog projector-real-replace-stub), `deliver` stops
-   * being productionStubDeliver, resolveOutboxDispatchEnablement returns enabled, and THIS test
-   * flips back to asserting registration — that lane owns the flip. The unit-level matrix for the
-   * decision itself lives in the resolveOutboxDispatchEnablement describe below.
+   * D-14 flip (readiness p3-m6-outbox-delivery-core). Under audit X-3 this test asserted a REFUSAL,
+   * because the only deliverer was productionStubDeliver. The required set now comes from the 0056
+   * registry (seeded all disabled) and PROJECTORS holds real modules, so the flag plus a passing
+   * registry probe registers the schedule, the consumer and the LISTEN loop; the heartbeat row
+   * reports exactly that gate.
    */
   it(
-    "REFUSES to register the schedule even with the flag enabled, while the deliverer is still the stub (audit X-3)",
+    "registers the schedule, the consumer and the outbox wake LISTEN when the flag is true and the registry probe passes (D-14)",
     withTestContext(
       () => setupScheduleContext("plexco_jso_worker_gate_on"),
       async (ctx) => {
@@ -521,37 +551,66 @@ describe("main() — boss.work() registration (spawned process)", () => {
         });
 
         expect(stdout).toContain("[worker] pg-boss started");
-        expect(stdout).toContain("[worker] running until SIGTERM/SIGINT");
-        expect(stdout).toContain("[worker] outbox dispatch schedule OFF — ");
-        expect(stdout).toContain("productionStubDeliver");
-        expect(stdout).not.toContain("outbox dispatch schedule registered");
-        // and, because "off" must mean this process never touches dispatch at all, no consumer either
         expect(stdout).toContain(
-          "[worker] outbox dispatch worker not registered (schedule disabled)",
+          `[worker] outbox dispatch schedule registered: "${OUTBOX_DISPATCH_CRON}"`,
         );
+        expect(stdout).toContain("[worker] outbox wake listening");
+        expect(stdout).not.toContain("schedule OFF");
+        expect(stdout).not.toContain("worker not registered");
+        expect(await heartbeatScheduleFlags(ctx.verify)).toEqual([true]);
       },
     ),
   );
 });
 
 describe("resolveOutboxDispatchEnablement (audit 2026-09-06 X-3)", () => {
-  it("is off when the flag is off, whatever the deliverer", () => {
-    expect(
-      resolveOutboxDispatchEnablement(undefined, async () => ({ result: "delivered" })),
-    ).toMatchObject({
+  it("is off when the flag is off, whatever the projector map", () => {
+    expect(resolveOutboxDispatchEnablement(undefined, PROJECTORS)).toMatchObject({
       enabled: false,
     });
   });
-  it("REFUSES to enable with the flag on while the deliverer is productionStubDeliver — producers exist and the stub DLQs terminally", () => {
-    const r = resolveOutboxDispatchEnablement("true", productionStubDeliver);
-    expect(r.enabled).toBe(false);
-    expect(r.reason).toMatch(/productionStubDeliver/);
+  it("REFUSES to enable with the flag on while a projector is productionStubDeliver or none is configured", () => {
+    for (const map of [new Map([["x", productionStubDeliver]]), new Map<string, DeliverFn>()]) {
+      const r = resolveOutboxDispatchEnablement("true", map);
+      expect(r.enabled).toBe(false);
+      expect(r.reason).toMatch(/productionStubDeliver/);
+    }
   });
-  it("enables with the flag on and a real deliverer", () => {
-    expect(resolveOutboxDispatchEnablement("true", async () => ({ result: "delivered" }))).toEqual({
+  it("enables with the flag on and the registry projector map", () => {
+    expect(resolveOutboxDispatchEnablement("true", PROJECTORS)).toEqual({
       enabled: true,
       reason: null,
     });
+  });
+});
+
+describe("resolveWorkerDispatchEnablement (D-14)", () => {
+  it('never probes the registry while the flag is not exactly "true" or the map is the stub', async () => {
+    const probe = vi.fn(async () => {});
+    for (const flag of [undefined, "", "false", "TRUE", "1"]) {
+      expect((await resolveWorkerDispatchEnablement(flag, PROJECTORS, probe)).enabled).toBe(false);
+    }
+    const stub = new Map([["x", productionStubDeliver]]);
+    expect((await resolveWorkerDispatchEnablement("true", stub, probe)).enabled).toBe(false);
+    expect(probe).not.toHaveBeenCalled();
+  });
+  it("stays OFF with a reason naming the probe when the registry probe fails", async () => {
+    const missing = Object.assign(new Error("function projector_is_enabled does not exist"), {
+      code: "42883",
+    });
+    const r = await resolveWorkerDispatchEnablement("true", PROJECTORS, async () => {
+      throw missing;
+    });
+    expect(r.enabled).toBe(false);
+    expect(r.reason).toMatch(/registry probe failed \(42883 function projector_is_enabled/);
+  });
+  it("is ON only when the flag, the projector map and the probe all pass", async () => {
+    const probe = vi.fn(async () => {});
+    expect(await resolveWorkerDispatchEnablement("true", PROJECTORS, probe)).toEqual({
+      enabled: true,
+      reason: null,
+    });
+    expect(probe).toHaveBeenCalledTimes(1);
   });
 });
 
