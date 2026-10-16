@@ -16,6 +16,7 @@ import type { Db, Tx } from "./client.js";
 import { chargeRemaining } from "./payment-manual.js";
 import { raisePublicSessionFence } from "./public-session-fence.js";
 import { effectiveByCharge } from "./roster-money-shared.js";
+import { hasHiddenChar } from "./text-safety.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -104,8 +105,13 @@ const isValidDate = (value: unknown): value is Date =>
   value.getUTCFullYear() <= 9999; // representable by PostgreSQL timestamptz
 const isInt4 = (value: unknown, min: number): boolean =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= INT4_MAX;
+/**
+ * Optional text: undefined, null or a string with no hidden character (text-safety.ts, the same rule as
+ * display names: control, format, bidi, zero-width, line and paragraph separators). Applied to the RAW
+ * value (no trim, no normalisation). NUL is a control character, so PG text's NUL rejection is covered.
+ */
 const isOptionalText = (value: unknown): boolean =>
-  value === undefined || value === null || (typeof value === "string" && !value.includes("\u0000")); // PG text rejects NUL
+  value === undefined || value === null || (typeof value === "string" && !hasHiddenChar(value));
 /** DD-128 OD-4a: venue_address is optional plain text capped at 200 characters (create AND update). */
 const VENUE_ADDRESS_MAX = 200;
 const isOptionalVenueAddress = (value: unknown): boolean =>
@@ -201,12 +207,15 @@ function validateInput(input: CreateSessionInputPayload): void {
     fail("INVALID_SLOTS", "slots_max must be an integer in [1, 2147483647] or null");
   }
   if (!isOptionalText(input.area) || !isOptionalText(input.venueName)) {
-    fail("INVALID_TEXT_FIELD", "area and venue_name must be a string or null");
+    fail(
+      "INVALID_TEXT_FIELD",
+      "area and venue_name must be a string with no control or hidden characters, or null",
+    );
   }
   if (!isOptionalVenueAddress(input.venueAddress)) {
     fail(
       "INVALID_TEXT_FIELD",
-      `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters or null`,
+      `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters with no control or hidden characters, or null`,
     );
   }
 }
@@ -1246,12 +1255,15 @@ export async function updateSession(
       failUpdate("INVALID_SLOTS", "slots_max must be an integer in [1, 2147483647] or null");
     }
     if (!isOptionalText(input.area) || !isOptionalText(input.venueName)) {
-      failUpdate("INVALID_TEXT_FIELD", "area and venue_name must be a string or null");
+      failUpdate(
+        "INVALID_TEXT_FIELD",
+        "area and venue_name must be a string with no control or hidden characters, or null",
+      );
     }
     if (!isOptionalVenueAddress(input.venueAddress)) {
       failUpdate(
         "INVALID_TEXT_FIELD",
-        `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters or null`,
+        `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters with no control or hidden characters, or null`,
       );
     }
 
