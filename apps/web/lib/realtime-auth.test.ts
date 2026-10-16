@@ -1,0 +1,174 @@
+import { authorize, readSessionRealtimeEvent, resolveWebSession, withTenant } from "@plexco/db";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  encodeFrame,
+  planEventDelivery,
+  recheckSubscriber,
+  resolveRealtimePrincipal,
+  type RealtimeAudience,
+} from "./realtime-auth";
+import { hashToken } from "./session-cookies";
+
+// Per-event re-authorization (lane L5, R-4, R-5, R-8, R-10). The real authorize()/withTenant
+// call shapes run; only @plexco/db's DB-touching functions and the cookie jar are stubbed.
+vi.mock("@plexco/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@plexco/db")>();
+  return {
+    ...actual,
+    authorize: vi.fn(),
+    readSessionRealtimeEvent: vi.fn(),
+    resolveWebSession: vi.fn(),
+    withTenant: vi.fn(async (_db: unknown, tenantId: string, fn: (tx: unknown) => unknown) =>
+      fn({ tenantId }),
+    ),
+  };
+});
+const jar = vi.hoisted(() => ({ token: undefined as string | undefined }));
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ get: () => (jar.token ? { value: jar.token } : undefined) }),
+}));
+vi.mock("./session-cookies", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./session-cookies")>();
+  return { ...actual, appDb: vi.fn(() => ({ pool: {}, db: {} })) };
+});
+
+const TENANT_A = "11111111-1111-4111-8111-111111111111";
+const TENANT_B = "22222222-2222-4222-8222-222222222222";
+const EVENT = "33333333-3333-4333-8333-333333333333";
+const SESSION = "44444444-4444-4444-8444-444444444444";
+
+const audience = (tenantId: string, personId = "p1", accountId = "a1"): RealtimeAudience => ({
+  tenantId,
+  personId,
+  accountId,
+  tokenHash: "h".repeat(64),
+});
+const groups = (...subs: RealtimeAudience[]) => {
+  const map = new Map<string, Set<RealtimeAudience>>();
+  for (const s of subs) map.set(s.tenantId, (map.get(s.tenantId) ?? new Set()).add(s));
+  return map;
+};
+/** The read only finds the row under the owning tenant's RLS context (fake tx carries tenantId). */
+const ownedBy = (owner: string, row: Record<string, unknown>) =>
+  vi.mocked(readSessionRealtimeEvent).mockImplementation(async (tx) =>
+    (tx as unknown as { tenantId: string }).tenantId === owner ? (row as never) : null,
+  );
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  jar.token = undefined;
+  vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "co_admin" });
+});
+
+describe("planEventDelivery (R-4, R-8)", () => {
+  it("A3: an authorized subscriber of the owning tenant gets exactly one {type, sessionId, version}", async () => {
+    ownedBy(TENANT_A, { type: "session.updated", sessionId: SESSION, version: 4 });
+    const sub = audience(TENANT_A);
+    const plan = await planEventDelivery(EVENT, groups(sub));
+    expect(plan).toEqual([[sub, { type: "session.updated", sessionId: SESSION, version: 4 }]]);
+    expect(authorize).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: TENANT_A,
+      action: "session.manage",
+      actorPersonId: "p1",
+    });
+  });
+
+  it("A6: extra fields on the read row never reach the frame or the wire", async () => {
+    ownedBy(TENANT_A, {
+      type: "session.updated",
+      sessionId: SESSION,
+      version: 4,
+      payload: { price_amount: 120000, roster: ["Lan"] },
+      tenantId: TENANT_A,
+      changed_fields: ["visibility"],
+    });
+    const [[, frame]] = (await planEventDelivery(EVENT, groups(audience(TENANT_A)))) as [
+      unknown,
+      Record<string, unknown>,
+    ][];
+    expect(Object.keys(frame!).sort()).toEqual(["sessionId", "type", "version"]);
+    const wire = encodeFrame(frame as never);
+    expect(wire).toBe(`data: {"type":"session.updated","sessionId":"${SESSION}","version":4}\n\n`);
+    expect(wire).not.toMatch(/^(event|id|retry):/m);
+    expect(Object.keys(JSON.parse(wire.slice(6))).sort()).toEqual(["sessionId", "type", "version"]);
+  });
+
+  it("A4/A8: a subscriber that lost session.manage after subscribing is dropped, nothing planned", async () => {
+    ownedBy(TENANT_A, { type: "session.updated", sessionId: SESSION, version: 5 });
+    vi.mocked(authorize).mockResolvedValue({ allowed: false } as never);
+    expect(await planEventDelivery(EVENT, groups(audience(TENANT_A)))).toEqual([]);
+  });
+
+  it("A7 core: tenant A's event never reaches a tenant B subscriber; reads stop at the owner", async () => {
+    ownedBy(TENANT_A, { type: "session.updated", sessionId: SESSION, version: 6 });
+    const a = audience(TENANT_A, "pa", "aa");
+    const b = audience(TENANT_B, "pb", "ab");
+    const plan = await planEventDelivery(EVENT, groups(b, a));
+    expect(plan.map(([s]) => s)).toEqual([a]);
+    expect(authorize).toHaveBeenCalledTimes(1);
+    vi.mocked(readSessionRealtimeEvent).mockClear();
+    await planEventDelivery(EVENT, groups(a, b));
+    expect(readSessionRealtimeEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("memoizes the capability check per (tenant, person) for one event; an error fails closed", async () => {
+    ownedBy(TENANT_A, { type: "session.updated", sessionId: SESSION, version: 7 });
+    const tab1 = audience(TENANT_A, "p1", "a1");
+    const tab2 = { ...audience(TENANT_A, "p1", "a1") };
+    const other = audience(TENANT_A, "p2", "a2");
+    vi.mocked(authorize).mockImplementation(async (_tx, input) => {
+      if (input.actorPersonId === "p2") throw new Error("db down");
+      return { allowed: true, role: "admin" } as never;
+    });
+    const plan = await planEventDelivery(EVENT, groups(tab1, tab2, other));
+    expect(plan.map(([s]) => s)).toEqual([tab1, tab2]);
+    expect(authorize).toHaveBeenCalledTimes(2);
+  });
+
+  it("A21 core: an unknown id plans nothing", async () => {
+    vi.mocked(readSessionRealtimeEvent).mockResolvedValue(null);
+    expect(await planEventDelivery(EVENT, groups(audience(TENANT_A)))).toEqual([]);
+    expect(authorize).not.toHaveBeenCalled();
+  });
+});
+
+describe("recheckSubscriber (R-10, R-18)", () => {
+  const live = { sessionId: "s", accountId: "a1", personId: "p1", csrfSecret: "c", expiresAt: new Date() };
+
+  it("passes only for the same live session, same account and a current capability", async () => {
+    vi.mocked(resolveWebSession).mockResolvedValue(live);
+    expect(await recheckSubscriber(audience(TENANT_A))).toBe(true);
+    expect(resolveWebSession).toHaveBeenCalledWith({}, "h".repeat(64));
+    vi.mocked(resolveWebSession).mockResolvedValue(null);
+    expect(await recheckSubscriber(audience(TENANT_A))).toBe(false);
+    vi.mocked(resolveWebSession).mockResolvedValue({ ...live, accountId: "other" });
+    expect(await recheckSubscriber(audience(TENANT_A))).toBe(false);
+    vi.mocked(resolveWebSession).mockResolvedValue(live);
+    vi.mocked(authorize).mockResolvedValue({ allowed: false } as never);
+    expect(await recheckSubscriber(audience(TENANT_A))).toBe(false);
+    vi.mocked(resolveWebSession).mockRejectedValue(new Error("db down"));
+    expect(await recheckSubscriber(audience(TENANT_A))).toBe(false);
+  });
+});
+
+describe("resolveRealtimePrincipal", () => {
+  it("captures the token hash the heartbeat re-resolves; no cookie or a dead session gives null", async () => {
+    expect(await resolveRealtimePrincipal()).toBeNull();
+    expect(resolveWebSession).not.toHaveBeenCalled();
+    jar.token = "raw-token";
+    vi.mocked(resolveWebSession).mockResolvedValue(null);
+    expect(await resolveRealtimePrincipal()).toBeNull();
+    vi.mocked(resolveWebSession).mockResolvedValue({
+      sessionId: "s",
+      accountId: "a1",
+      personId: "p1",
+      csrfSecret: "c",
+      expiresAt: new Date(),
+    });
+    expect(await resolveRealtimePrincipal()).toEqual({
+      accountId: "a1",
+      personId: "p1",
+      tokenHash: hashToken("raw-token"),
+    });
+  });
+});
