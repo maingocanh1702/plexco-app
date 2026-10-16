@@ -54,7 +54,9 @@ describe("deliverWebRealtime outcomes (A25)", () => {
   });
 
   it("maps a NOTIFY error to retry notify_failed and a hung NOTIFY to retry notify_timeout", async () => {
-    setWebRealtimeDbForTests({ query: vi.fn(async () => Promise.reject(new Error("down"))) } as never);
+    setWebRealtimeDbForTests({
+      query: vi.fn(async () => Promise.reject(new Error("down"))),
+    } as never);
     const failed = await deliverWebRealtime(job());
     expect(failed).toEqual({ result: "retry", errorCode: "notify_failed" });
 

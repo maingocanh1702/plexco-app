@@ -64,7 +64,12 @@ async function seedAdmin(tenantId: string) {
      VALUES ($1, 'web', $2, 'admin', true)`,
     [tenantId, actor.personId],
   );
-  return { tenantId, accountId: actor.accountId, personId: actor.personId, tokenHash: hashToken(randomUUID()) };
+  return {
+    tenantId,
+    accountId: actor.accountId,
+    personId: actor.personId,
+    tokenHash: hashToken(randomUUID()),
+  };
 }
 
 async function seedSession(tenantId: string) {
@@ -79,7 +84,11 @@ async function seedSession(tenantId: string) {
 }
 
 /** A real host edit, then the projector's NOTIFY for the event it wrote. */
-async function editAndNotify(tenantId: string, session: { id: string; version: number }, venue: string) {
+async function editAndNotify(
+  tenantId: string,
+  session: { id: string; version: number },
+  venue: string,
+) {
   await updateSession(ctx.appDb.db, {
     tenantId,
     commandId: randomUUID(),
@@ -95,7 +104,9 @@ async function editAndNotify(tenantId: string, session: { id: string; version: n
 
 const next = async (reader: ReadableStreamDefaultReader<Uint8Array>, ms = 2_000) => {
   const timeout = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), ms));
-  const read = reader.read().then(({ done, value }) => (done ? "done" : new TextDecoder().decode(value)));
+  const read = reader
+    .read()
+    .then(({ done, value }) => (done ? "done" : new TextDecoder().decode(value)));
   return Promise.race([read, timeout]);
 };
 

@@ -52,7 +52,11 @@ function hub(random = () => 0.999) {
 }
 function recorder() {
   const signals: RealtimeSignal[] = [];
-  return { signals, fn: (s: RealtimeSignal) => signals.push(s), resyncs: () => signals.filter((s) => s.kind === "resync").length };
+  return {
+    signals,
+    fn: (s: RealtimeSignal) => signals.push(s),
+    resyncs: () => signals.filter((s) => s.kind === "resync").length,
+  };
 }
 
 beforeEach(() => {
@@ -103,7 +107,11 @@ describe("createRealtimeHub", () => {
     const r = recorder();
     hub().subscribe(TENANT, r.fn);
     latest().open();
-    const msg = (version: number, sessionId = SESSION) => ({ type: "session.updated", sessionId, version });
+    const msg = (version: number, sessionId = SESSION) => ({
+      type: "session.updated",
+      sessionId,
+      version,
+    });
     for (const v of [3, 3, 2, 4]) latest().push(msg(v));
     latest().push(msg(1, "55555555-5555-4555-8555-555555555555"));
     expect(r.signals).toEqual([
