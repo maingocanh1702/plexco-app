@@ -27,12 +27,15 @@ export interface EventSourceLike {
 
 export interface RealtimeHubDeps {
   create(url: string): EventSourceLike;
+  now(): number;
   setTimeout(fn: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
   random(): number;
 }
 
 const BACKOFF = { baseMs: 1_000, factor: 2, capMs: 30_000 } as const;
+/** F6: only a stream open this long resets the backoff (its first `: hb` opens it at once). */
+const STABLE_OPEN_MS = 30_000;
 
 /** R-14 full jitter: uniform in [0, min(cap, base * factor^attempt)). Mirrors the server listener. */
 export function backoffDelayMs(attempt: number, random: () => number): number {
@@ -62,6 +65,7 @@ interface Channel {
   timer: unknown;
   attempt: number;
   open: boolean;
+  openedAt: number;
   failed: boolean;
   lastSeen: Map<string, number>;
 }
@@ -79,9 +83,9 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
     source.onopen = () => {
       if (channel.source !== source) return;
       const reopened = channel.failed;
-      channel.attempt = 0;
       channel.failed = false;
       channel.open = true;
+      channel.openedAt = deps.now();
       if (reopened) emit(channel, { kind: "resync" });
     };
     source.onmessage = (event) => {
@@ -98,6 +102,8 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
       source.close();
       channel.source = null;
       channel.failed = true;
+      // F6: a close after a short open (a NOTIFY flood overflowing the listener) keeps backing off.
+      if (channel.open && deps.now() - channel.openedAt >= STABLE_OPEN_MS) channel.attempt = 0;
       const delay = backoffDelayMs(channel.attempt, deps.random);
       channel.attempt += 1;
       channel.timer = deps.setTimeout(() => connect(tenantId, channel), delay);
@@ -118,6 +124,7 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
           timer: null,
           attempt: 0,
           open: false,
+          openedAt: 0,
           failed: false,
           lastSeen: new Map(),
         };
@@ -159,6 +166,7 @@ function hub(): ReturnType<typeof createRealtimeHub> | null {
     },
     setTimeout: (fn, ms) => window.setTimeout(fn, ms),
     clearTimeout: (handle) => window.clearTimeout(handle as number),
+    now: () => Date.now(),
     random: Math.random,
   });
   return browserHub;

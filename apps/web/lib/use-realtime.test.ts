@@ -42,6 +42,7 @@ let delays: number[] = [];
 function hub(random = () => 0.999) {
   return createRealtimeHub({
     create: (url) => new FakeSource(url),
+    now: () => Date.now(),
     setTimeout: (fn, ms) => {
       delays.push(ms);
       return setTimeout(fn, ms);
@@ -137,8 +138,25 @@ describe("createRealtimeHub", () => {
     expect(delays.slice(-3).every((d) => d === backoffDelayMs(20, () => 0.999))).toBe(true);
     latest().open();
     expect(r.resyncs()).toBe(2);
+    await vi.advanceTimersByTimeAsync(30_000); // F6: only a stream open for 30 s resets the backoff
     latest().fail();
     expect(delays.at(-1)).toBeLessThan(1_000);
+  });
+
+  it("F6: a forced close/reopen cycle backs off exponentially; 30 s open resets it", async () => {
+    hub().subscribe(TENANT, () => undefined);
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      latest().open(); // the first ": hb" opens the stream at once, so an open alone proves nothing
+      await vi.advanceTimersByTimeAsync(1_000);
+      latest().fail(); // e.g. a NOTIFY flood overflowing the server listener closes every stream
+      await vi.advanceTimersByTimeAsync(delays.at(-1)!);
+    }
+    const ceiling = (attempt: number) => backoffDelayMs(attempt, () => 0.999);
+    expect(delays).toEqual([0, 1, 2, 3, 4, 5].map(ceiling));
+    latest().open();
+    await vi.advanceTimersByTimeAsync(30_000);
+    latest().fail();
+    expect(delays.at(-1)).toBe(ceiling(0));
   });
 
   it("drops messages outside the R-5 shape", () => {
