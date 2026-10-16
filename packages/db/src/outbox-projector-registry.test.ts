@@ -111,16 +111,19 @@ const required = async (eventId: string) =>
   (await worker("SELECT outbox_required_projectors($1) AS p", [eventId])).rows[0].p as string[];
 
 describe("A1-A3 migration, seeds and route invariants", () => {
-  it("A1: 58 migrations apply with tail 0057 and re-run idempotently", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(58);
+  it("A1: 59 migrations apply with tail 0058 and re-run idempotently", async () => {
+    expect(ctx.migrateResult.applied.length).toBe(59);
     expect(ctx.migrateResult.applied).toContain("0056_outbox_projector_registry_dlq_replay.sql");
-    expect(ctx.migrateResult.applied.at(-1)).toBe("0057_zalo_delivery_targets_definer.sql");
+    expect(ctx.migrateResult.applied.at(-1)).toBe("0058_player_self_join.sql");
     const again = await ctx.remigrate();
     expect(again.applied).toEqual([]);
-    expect(again.skipped.length).toBe(58);
+    expect(again.skipped.length).toBe(59);
   });
 
-  it("A2: three projectors, all disabled; the web_realtime wildcard route plus the three 0057 zalo_dm routes", async () => {
+  // DM-8 (L8): exactly four zalo_dm routes, the three 0057 session types plus 0058's player.promoted
+  // (DD-134 (c): the one promotion DM). No other L8 event type (player.added, player.waitlisted,
+  // player.removed, join_request.*) gets a zalo_dm route, and every projector stays disabled.
+  it("A2: three projectors, all disabled; the web_realtime wildcard route plus the four zalo_dm routes (0057's three + 0058's player.promoted)", async () => {
     expect(await rows("SELECT name, enabled FROM outbox_projectors ORDER BY name")).toEqual([
       { name: "public_sessions", enabled: false },
       { name: "web_realtime", enabled: false },
@@ -132,6 +135,7 @@ describe("A1-A3 migration, seeds and route invariants", () => {
       ),
     ).toEqual([
       { projector: "web_realtime", aggregate_type: "session", event_type: null },
+      { projector: "zalo_dm", aggregate_type: "session", event_type: "player.promoted" },
       {
         projector: "zalo_dm",
         aggregate_type: "session",
@@ -179,10 +183,15 @@ describe("A1-A3 migration, seeds and route invariants", () => {
       ownerPath((c) => c.query("INSERT INTO outbox_projectors (name) VALUES ('Bad-Name')")),
     );
     expect([name.code, name.constraint]).toEqual(["23514", "outbox_projectors_name_chk"]);
-    // The four signed DM types are admitted. 0057 (L4) inserted the three session types, so a second
-    // insert passes the CHECK and hits outbox_projector_routes_uq; player.promoted is admitted and
-    // rolled back (only the promotion lane's migration inserts it).
-    for (const type of ["session.updated", "session.cancelled", "session.announcement_requested"]) {
+    // The four signed DM types are admitted and all four are routed: 0057 (L4) inserted the three
+    // session types and 0058 (L8, the promotion lane) inserted player.promoted, so a second insert of
+    // any of them passes the CHECK and hits outbox_projector_routes_uq.
+    for (const type of [
+      "session.updated",
+      "session.cancelled",
+      "session.announcement_requested",
+      "player.promoted",
+    ]) {
       const dup = await sqlError(ownerPath(insert("zalo_dm", "session", type), false));
       expect([type, dup.code, dup.constraint]).toEqual([
         type,
@@ -190,9 +199,9 @@ describe("A1-A3 migration, seeds and route invariants", () => {
         "outbox_projector_routes_uq",
       ]);
     }
-    await ownerPath(insert("zalo_dm", "session", "player.promoted"), false);
     expect(await rows("SELECT projector FROM outbox_projector_routes ORDER BY projector")).toEqual([
       { projector: "web_realtime" },
+      { projector: "zalo_dm" },
       { projector: "zalo_dm" },
       { projector: "zalo_dm" },
       { projector: "zalo_dm" },
