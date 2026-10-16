@@ -39,30 +39,6 @@ export function liveStreamEnabled(options: LiveOptions | undefined, state: { sta
   return options?.live === true && state.status !== "error";
 }
 
-/** R-16: at most one run in flight plus at most one queued rerun, with no fixed delay. */
-function useSingleFlight(task: () => Promise<void>): () => void {
-  const latest = useRef(task);
-  const flight = useRef({ running: false, queued: false });
-  useEffect(() => {
-    latest.current = task;
-  });
-  return useCallback(() => {
-    const f = flight.current;
-    if (f.running) {
-      f.queued = true;
-      return;
-    }
-    f.running = true;
-    void (async () => {
-      do {
-        f.queued = false;
-        await latest.current().catch(() => undefined);
-      } while (f.queued);
-      f.running = false;
-    })();
-  }, []);
-}
-
 export type Loadable<T> =
   { status: "loading" } | { status: "ready"; data: T } | { status: "error"; error: ApiClientError };
 
@@ -75,8 +51,7 @@ export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
   const [state, setState] = useState<Loadable<T>>({ status: "loading" });
   const [nonce, setNonce] = useState(0);
   const silent = useRef(false);
-  // For liveRefresh: the latest `load`, a generation that discards a refetch from older deps, and
-  // the current (re)load, which a live round waits for (F2).
+  // For liveRefresh: the latest `load`, and a generation that discards a refetch from older deps.
   const latestLoad = useRef(load);
   const generation = useRef(0);
   const settled = useRef<Promise<unknown>>(Promise.resolve());
@@ -104,17 +79,19 @@ export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
     silent.current = true;
     setNonce((n) => n + 1);
   }, []);
-  /** Silent refetch for a live change: keeps the data on screen unless access is gone. */
+  /** Silent live refetch: keeps the data unless access is gone; true = RATE_LIMITED (F1 b). */
   const liveRefresh = useCallback(async () => {
     await settled.current; // F2: an older in-flight snapshot never lands after a live refetch
     const gen = generation.current;
     try {
       const data = await latestLoad.current(new AbortController().signal);
       if (gen === generation.current) setState({ status: "ready", data });
+      return false;
     } catch (raw) {
       const error = noteError(raw);
       if (gen === generation.current && LIVE_STOP.has(error.code))
         setState({ status: "error", error });
+      return error.code === "RATE_LIMITED";
     }
   }, []);
   return { state, reload, refresh, liveRefresh };
@@ -125,10 +102,12 @@ export function useSessionDetail(tenantId: string, sessionId: string, options?: 
     (signal) => getSession(tenantId, sessionId, signal),
     [tenantId, sessionId],
   );
-  const refreshLive = useSingleFlight(loadable.liveRefresh);
-  useRealtime(tenantId, liveStreamEnabled(options, loadable.state), (signal) => {
-    if (signal.kind === "resync" || signal.message.sessionId === sessionId) refreshLive();
-  });
+  useRealtime(
+    tenantId,
+    liveStreamEnabled(options, loadable.state),
+    loadable.liveRefresh,
+    (signal) => signal.kind === "resync" || signal.message.sessionId === sessionId,
+  );
   return loadable;
 }
 
@@ -155,8 +134,7 @@ export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOpt
   // generation must not write its (old-tab) rows over the new tab's state.
   const generation = useRef(0);
   const moreController = useRef<AbortController | null>(null);
-  // `streams` for liveRefresh, written next to every setStreams (no render lag), and the current
-  // tab load, which a live round waits for (F2: a change during the first load is not dropped).
+  // `streams` for liveRefresh, written next to every setStreams (no render lag).
   const streamsRef = useRef<Stream[] | null>(null);
   const settled = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -258,11 +236,11 @@ export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOpt
 
   // Live refresh (R-16): refetch every loaded stream silently, up to 50 rows each, with no loading
   // state. The generation is bumped at the start and again on apply, so a loadMore built on the
-  // stale cursors is discarded; only AUTH_REQUIRED/FORBIDDEN replace the list.
+  // stale cursors is discarded; only AUTH_REQUIRED/FORBIDDEN replace the list (true = 429, F1 b).
   const liveRefresh = useCallback(async () => {
-    await settled.current;
+    await settled.current; // F2: a signal during the tab's (first) load waits for it, not dropped
     const current = streamsRef.current;
-    if (!current) return;
+    if (!current) return false;
     generation.current += 1;
     const gen = generation.current;
     moreController.current?.abort();
@@ -276,7 +254,7 @@ export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOpt
           return { status: s.status, items: page.sessions, cursor, hasMore };
         }),
       );
-      if (gen !== generation.current) return;
+      if (gen !== generation.current) return false;
       generation.current += 1;
       const visible = visibleSessions(next, tab, now.current);
       saveSnapshot(tenantId, tab, visible);
@@ -285,13 +263,15 @@ export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOpt
       setLoadingMore(false);
       const hasMore = hasMorePages(next, tab, now.current);
       setState({ status: "ready", sessions: visible, hasMore, offlineSavedAt: null });
+      return false;
     } catch (raw) {
       const error = noteError(raw);
       if (gen === generation.current && LIVE_STOP.has(error.code))
         setState({ status: "error", error });
+      return error.code === "RATE_LIMITED";
     }
   }, [tenantId, tab]);
-  useRealtime(tenantId, liveStreamEnabled(options, state), useSingleFlight(liveRefresh));
+  useRealtime(tenantId, liveStreamEnabled(options, state), liveRefresh);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   return { state, loadMore, loadingMore, moreError, reload };

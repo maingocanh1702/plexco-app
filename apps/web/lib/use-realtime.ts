@@ -6,10 +6,9 @@ import { useEffect, useRef } from "react";
  * Client side of web live sync (lane L5, readiness R-14, R-15): one native EventSource per tenant
  * per tab, shared by every live view through a reference count. The stream only says "something
  * changed"; views refetch through their authorized GET. The browser's own retry is never used: an
- * error closes the source and this module reconnects with full-jitter backoff. A resync refetch
- * happens on every open (F2: the first one too, so a change committed between a view's GET and
- * LISTEN going live is not missed) and at the first failure after an open (surfacing
- * AUTH_REQUIRED/FORBIDDEN, which turns live off). Only that reconnect runs on a timer: no polling.
+ * error closes the source and this module reconnects with full-jitter backoff. A resync is emitted
+ * on every open (F2: the first too) and at the first failure after an open (AUTH_REQUIRED or
+ * FORBIDDEN then turns live off). Timers only space reconnects and live rounds (F1): no polling.
  */
 export interface RealtimeMessage {
   type: string;
@@ -33,10 +32,15 @@ export interface RealtimeHubDeps {
   clearTimeout(handle: unknown): void;
   random(): number;
 }
+type Timers = Pick<RealtimeHubDeps, "now" | "setTimeout" | "clearTimeout">;
 
 const BACKOFF = { baseMs: 1_000, factor: 2, capMs: 30_000 } as const;
 /** F6: only a stream open this long resets the backoff (its first `: hb` opens it at once). */
 const STABLE_OPEN_MS = 30_000;
+/** F1 (amends R-16's "no fixed delay"): the least start-to-start gap of one view's live rounds. */
+export const LIVE_ROUND_GAP_MS = 2_000;
+/** F1 b: ApiClientError exposes no retry hint (api-client.ts:9-34), so a 429 pauses 30 s. */
+export const LIVE_PAUSE_MS = 30_000;
 
 /** R-14 full jitter: uniform in [0, min(cap, base * factor^attempt)). Mirrors the server listener. */
 export function backoffDelayMs(attempt: number, random: () => number): number {
@@ -142,11 +146,70 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
   };
 }
 
+/**
+ * One view's live rounds (F1, amends R-16): single-flight; a signal after a quiet period starts
+ * one at once, then at most one per LIVE_ROUND_GAP_MS (a burst coalesces into one trailing round).
+ * A round resolving true (RATE_LIMITED) pauses them LIVE_PAUSE_MS, then one catch-up runs. While
+ * the tab is hidden signals wait; becoming visible runs one round if any is pending.
+ */
+export function createLiveRounds(
+  round: () => Promise<boolean>,
+  deps: Timers & { hidden(): boolean },
+) {
+  let running = false;
+  let wanted = false;
+  let stopped = false;
+  let lastStart = -Infinity;
+  let resumeAt = -Infinity;
+  let timer: unknown = null;
+  const pump = (): void => {
+    if (stopped || running || timer !== null || !wanted || deps.hidden()) return;
+    const wait = Math.max(lastStart + LIVE_ROUND_GAP_MS, resumeAt) - deps.now();
+    if (wait > 0) {
+      timer = deps.setTimeout(() => {
+        timer = null;
+        pump();
+      }, wait);
+      return;
+    }
+    wanted = false;
+    running = true;
+    lastStart = deps.now();
+    void round()
+      .catch(() => false)
+      .then((limited) => {
+        running = false;
+        if (limited) resumeAt = deps.now() + LIVE_PAUSE_MS;
+        wanted ||= limited; // a rate-limited round leaves exactly one catch-up pending
+        pump();
+      });
+  };
+  return {
+    signal(): void {
+      wanted = true;
+      pump();
+    },
+    visibilityChanged: pump,
+    stop(): void {
+      stopped = true;
+      if (timer !== null) deps.clearTimeout(timer);
+    },
+  };
+}
+
+const browserDeps: Timers & { hidden(): boolean } = {
+  now: () => Date.now(),
+  setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+  clearTimeout: (handle) => window.clearTimeout(handle as number),
+  hidden: () => document.visibilityState === "hidden",
+};
+
 let browserHub: ReturnType<typeof createRealtimeHub> | null = null;
 
 function hub(): ReturnType<typeof createRealtimeHub> | null {
   if (typeof window === "undefined" || typeof window.EventSource === "undefined") return null;
   browserHub ??= createRealtimeHub({
+    ...browserDeps,
     create: (url) => {
       const source = new window.EventSource(url);
       const like: EventSourceLike = {
@@ -160,26 +223,36 @@ function hub(): ReturnType<typeof createRealtimeHub> | null {
       source.onerror = () => like.onerror?.();
       return like;
     },
-    setTimeout: (fn, ms) => window.setTimeout(fn, ms),
-    clearTimeout: (handle) => window.clearTimeout(handle as number),
-    now: () => Date.now(),
     random: Math.random,
   });
   return browserHub;
 }
 
-/** Calls `onSignal` for live changes of `tenantId` while `enabled`; opens nothing otherwise. */
+/**
+ * While `enabled`, runs the view's live `round` (true = RATE_LIMITED) for each change of
+ * `tenantId` that `accept` takes, through createLiveRounds (F1). Opens nothing otherwise.
+ */
 export function useRealtime(
   tenantId: string,
   enabled: boolean,
-  onSignal: (signal: RealtimeSignal) => void,
+  round: () => Promise<boolean>,
+  accept: (signal: RealtimeSignal) => boolean = () => true,
 ): void {
-  const latest = useRef(onSignal);
+  const latest = useRef({ round, accept });
   useEffect(() => {
-    latest.current = onSignal;
+    latest.current = { round, accept };
   });
   useEffect(() => {
     if (!enabled) return undefined;
-    return hub()?.subscribe(tenantId, (signal) => latest.current(signal));
+    const rounds = createLiveRounds(() => latest.current.round(), browserDeps);
+    document.addEventListener("visibilitychange", rounds.visibilityChanged);
+    const off = hub()?.subscribe(tenantId, (signal) => {
+      if (latest.current.accept(signal)) rounds.signal();
+    });
+    return () => {
+      off?.();
+      document.removeEventListener("visibilitychange", rounds.visibilityChanged);
+      rounds.stop();
+    };
   }, [tenantId, enabled]);
 }

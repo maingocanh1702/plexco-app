@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   backoffDelayMs,
+  createLiveRounds,
   createRealtimeHub,
+  LIVE_PAUSE_MS,
+  LIVE_ROUND_GAP_MS,
   parseRealtimeMessage,
   type EventSourceLike,
   type RealtimeSignal,
@@ -177,6 +180,115 @@ describe("createRealtimeHub", () => {
     }
     expect(r.signals).toEqual([{ kind: "resync" }]); // the open's own resync only
     expect(parseRealtimeMessage(42)).toBeNull();
+  });
+});
+
+describe("F1: createLiveRounds (one view's live refresh rounds)", () => {
+  // A fake view: `limited` answers successive rounds (true = RATE_LIMITED), `ms` is each round's GET.
+  function view(limited: boolean[] = [], ms = 0) {
+    const starts: number[] = [];
+    const tab = { hidden: false };
+    const rounds = createLiveRounds(
+      async () => {
+        starts.push(Date.now());
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        return limited.shift() ?? false;
+      },
+      {
+        now: () => Date.now(),
+        setTimeout: (fn, wait) => setTimeout(fn, wait),
+        clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        hidden: () => tab.hidden,
+      },
+    );
+    return { rounds, starts, tab };
+  }
+  const gaps = (starts: number[]) => starts.slice(1).map((t, i) => t - starts[i]!);
+
+  it("a: the first signal runs at once; a burst coalesces into one trailing round", async () => {
+    const { rounds, starts } = view();
+    const t0 = Date.now();
+    rounds.signal();
+    for (let i = 0; i < 10; i += 1) {
+      await vi.advanceTimersByTimeAsync(150);
+      rounds.signal();
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(starts.map((t) => t - t0)).toEqual([0, LIVE_ROUND_GAP_MS]);
+    rounds.signal(); // after a quiet period: at once again
+    expect(starts).toHaveLength(3);
+  });
+
+  it("a: sustained events give at most 30 rounds a minute; a slow round is never overlapped", async () => {
+    const fast = view();
+    const slow = view([], 2_500);
+    const t0 = Date.now();
+    for (let elapsed = 0; elapsed < 60_000; elapsed += 100) {
+      fast.rounds.signal();
+      slow.rounds.signal();
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(fast.starts.filter((t) => t - t0 < 60_000)).toHaveLength(30);
+    expect(Math.min(...gaps(fast.starts))).toBe(LIVE_ROUND_GAP_MS);
+    expect(Math.min(...gaps(slow.starts))).toBeGreaterThanOrEqual(2_500);
+  });
+
+  it("b: a RATE_LIMITED round pauses the view's rounds for 30 s, then one catch-up runs", async () => {
+    const busy = view([true]);
+    const quiet = view([true]);
+    const t0 = Date.now();
+    busy.rounds.signal();
+    quiet.rounds.signal();
+    for (let i = 0; i < 25; i += 1) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      busy.rounds.signal(); // events keep arriving during the pause
+    }
+    await vi.advanceTimersByTimeAsync(LIVE_PAUSE_MS - 25_001);
+    expect(busy.starts).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(busy.starts.map((t) => t - t0)).toEqual([0, LIVE_PAUSE_MS]);
+    expect(quiet.starts.map((t) => t - t0)).toEqual([0, LIVE_PAUSE_MS]); // no event needed
+  });
+
+  it("c: no round while hidden; becoming visible resyncs once, only if something was skipped", async () => {
+    const { rounds, starts, tab } = view();
+    tab.hidden = true;
+    rounds.visibilityChanged();
+    rounds.signal();
+    rounds.signal();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(starts).toEqual([]);
+    tab.hidden = false;
+    rounds.visibilityChanged();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(starts).toHaveLength(1);
+    tab.hidden = true; // hidden and visible again with nothing skipped: no round
+    rounds.visibilityChanged();
+    tab.hidden = false;
+    rounds.visibilityChanged();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(starts).toHaveLength(1);
+    rounds.signal(); // runs at once; the next one waits for the 2 s gap, which ends while hidden
+    rounds.signal();
+    tab.hidden = true;
+    rounds.visibilityChanged();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(starts).toHaveLength(2);
+    tab.hidden = false;
+    rounds.visibilityChanged();
+    expect(starts).toHaveLength(3);
+  });
+
+  it("stop() (the view unmounted) drops the pending trailing round and its timer", async () => {
+    const { rounds, starts } = view();
+    rounds.signal();
+    await vi.advanceTimersByTimeAsync(0);
+    rounds.signal();
+    expect(vi.getTimerCount()).toBe(1);
+    rounds.stop();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(starts).toHaveLength(1);
   });
 });
 
