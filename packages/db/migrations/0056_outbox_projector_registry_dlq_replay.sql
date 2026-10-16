@@ -180,8 +180,10 @@ END;
 $$;
 REVOKE ALL ON FUNCTION outbox_projector_set_enabled(text, boolean) FROM PUBLIC;
 
--- 3d. The token-gated event envelope (D-6, C7): app_worker cannot read
--- outbox_events, so a projector sees its event only while it holds the claim.
+-- 3d. The token-gated event envelope (D-6, C7): app_worker cannot read outbox_events. A row
+-- needs the live claim (token + lease) AND a registered, enabled projector routed for the event
+-- (the 3b rule; 0022 prepare checks neither), so a self-minted claim under any other name reads
+-- nothing, and a disable stops the next read of a claim already held.
 CREATE FUNCTION outbox_claimed_event(p_event_id uuid, p_projector text, p_claim_token uuid)
 RETURNS TABLE (event_type text, aggregate_type text, aggregate_id uuid, sequence integer,
                tenant_id uuid, payload jsonb, created_at timestamptz)
@@ -192,11 +194,15 @@ AS $$
   SELECT o.type, o.aggregate_type, o.aggregate_id, o.sequence, o.tenant_id, o.payload, o.created_at
     FROM projector_deliveries pd
     JOIN outbox_events o ON o.id = pd.event_id
+    JOIN outbox_projectors p ON p.name = pd.projector AND p.enabled
    WHERE pd.event_id = p_event_id
      AND pd.projector = p_projector
      AND pd.status = 'claimed'
      AND pd.claim_token = p_claim_token
-     AND pd.lease_expires_at >= clock_timestamp();
+     AND pd.lease_expires_at >= clock_timestamp()
+     AND EXISTS (SELECT 1 FROM outbox_projector_routes r
+                  WHERE r.projector = pd.projector AND r.aggregate_type = o.aggregate_type
+                    AND (r.event_type IS NULL OR r.event_type = o.type));
 $$;
 REVOKE ALL ON FUNCTION outbox_claimed_event(uuid, text, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION outbox_claimed_event(uuid, text, uuid) TO app_worker;
