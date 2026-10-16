@@ -167,6 +167,11 @@
       "path": "scripts/check-dev-login-exclusion.test.mjs",
       "overwrite_path": "none",
       "note": "No canonical copy. Tests the guard on planted occurrences, a clean tree, the git listing and this repository."
+    },
+    {
+      "path": "scripts/outbox-dlq-replay.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy. Repo-owned owner CLI (L3): DLQ inspect and replay through job_definer definers."
     }
   ],
   "pack_pairs_verbatim": [

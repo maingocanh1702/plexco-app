@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import type pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ATTEMPTS_EXHAUSTED,
   boundRawErrorCode,
   completionArgs,
   runDispatchCycle,
@@ -57,10 +58,8 @@ const malformedCases: [string, () => unknown][] = [
   ["revoked outcome", revoked],
   ["result getter", () => accessor("result")],
   ["provider getter", () => accessor("providerRef", "delivered")],
-  ["date getter", () => accessor("nextAttemptAt", "retry")],
   ["error getter", () => accessor("errorCode")],
   ["invalid retry/error getter", () => accessor("errorCode", "retry")],
-  ["Date proxy", () => ({ result: "retry", nextAttemptAt: new Proxy(new Date(), {}) })],
 ];
 
 beforeEach(() => vi.spyOn(console, "warn").mockImplementation(() => {}));
@@ -68,12 +67,12 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("completionArgs runtime boundary", () => {
   it.each(malformedCases)("fails closed for %s", (_name, make) => {
-    expect(completionArgs(make())).toEqual(malformed);
+    expect(completionArgs(make(), 0)).toEqual(malformed);
   });
   it.each([undefined, null, "", "provider-1"])(
     "preserves delivered providerRef %s",
     (providerRef) => {
-      expect(completionArgs({ result: "delivered", providerRef })).toEqual({
+      expect(completionArgs({ result: "delivered", providerRef }, 0)).toEqual({
         result: "delivered",
         nextAttemptAt: null,
         providerRef: providerRef ?? null,
@@ -84,35 +83,53 @@ describe("completionArgs runtime boundary", () => {
   );
   it("rejects non-string provider references without invoking conversion hooks", () => {
     for (const providerRef of [0, false, 1n, Symbol("ref"), [], {}, { toPostgres: throwing }])
-      expect(completionArgs({ result: "delivered", providerRef })).toEqual(malformed);
+      expect(completionArgs({ result: "delivered", providerRef }, 0)).toEqual(malformed);
   });
   it.each(["\0", "\0provider", "provider\0ref", "provider\0"])(
     "rejects NUL-containing provider reference %j without changing the ID",
     (providerRef) => {
-      expect(completionArgs({ result: "delivered", providerRef })).toEqual(malformed);
+      expect(completionArgs({ result: "delivered", providerRef }, 0)).toEqual(malformed);
     },
   );
-  it("keeps invalid retry precedence and snapshots a valid future instant", () => {
+  it("A23: a retry is scheduled by the dispatcher, 15 s x 2^attempts (sum 1905 s), and the 8th failure dead-letters", () => {
     const now = () => new Date(1_000_000);
-    for (const nextAttemptAt of [undefined, null, "future", new Date(NaN), now(), new Date(0)])
-      expect(completionArgs({ result: "retry", nextAttemptAt, errorCode: "X" }, now)).toEqual({
-        ...malformed,
-        errorCode: "malformed_next_attempt",
-        rawErrorCode: "X",
-      });
-    const date = new Date(1_000_001);
-    const args = completionArgs({ result: "retry", nextAttemptAt: date, errorCode: "X" }, now);
-    expect(args).toEqual({
-      result: "retry",
-      nextAttemptAt: date,
-      providerRef: null,
-      errorCode: "x",
-      rawErrorCode: "X",
+    const waits = [0, 1, 2, 3, 4, 5, 6].map((attempts) => {
+      const args = completionArgs({ result: "retry", errorCode: "X" }, attempts, now);
+      expect(args).toMatchObject({ result: "retry", errorCode: "x", rawErrorCode: "X" });
+      return (args.nextAttemptAt!.getTime() - 1_000_000) / 1000;
     });
-    expect(args.nextAttemptAt).not.toBe(date);
-    expect(
-      completionArgs({ result: "retry", nextAttemptAt: date, errorCode: "x" }, throwing),
-    ).toEqual(malformed);
+    expect(waits).toEqual([15, 30, 60, 120, 240, 480, 960]);
+    expect(waits.reduce((a, b) => a + b, 0)).toBe(1905);
+    for (const attempts of [7, 8, -1, 1.5, Number.NaN]) {
+      expect(
+        completionArgs({ result: "retry", errorCode: "provider_down" }, attempts, now),
+      ).toEqual({
+        ...malformed,
+        errorCode: ATTEMPTS_EXHAUSTED,
+        rawErrorCode: "provider_down",
+      });
+    }
+    expect(completionArgs({ result: "dlq", errorCode: "Bad Payload" }, 0, now)).toMatchObject({
+      result: "dlq",
+      errorCode: "bad_payload",
+    });
+    expect(completionArgs({ result: "retry", errorCode: "x" }, 0, throwing)).toEqual(malformed);
+  });
+  it("A23: a projector-supplied nextAttemptAt is never read, however hostile", () => {
+    const now = () => new Date(1_000_000);
+    const get = vi.fn(throwing);
+    const hostile = Object.defineProperty({ result: "retry", errorCode: "x" }, "nextAttemptAt", {
+      get,
+    });
+    for (const outcome of [
+      hostile,
+      { result: "retry", errorCode: "x", nextAttemptAt: new Date(0) },
+      { result: "retry", errorCode: "x", nextAttemptAt: new Proxy(new Date(), {}) },
+      { result: "retry", errorCode: "x", nextAttemptAt: new Date(9e15) },
+    ]) {
+      expect(completionArgs(outcome, 2, now).nextAttemptAt).toEqual(new Date(1_060_000));
+    }
+    expect(get).not.toHaveBeenCalled();
   });
   it("preserves non-string error grammar and safely describes a revoked proxy", () => {
     for (const raw of [
@@ -128,11 +145,7 @@ describe("completionArgs runtime boundary", () => {
       revoked(),
     ]) {
       for (const result of ["retry", "dlq"]) {
-        const args = completionArgs({
-          result,
-          nextAttemptAt: new Date(Date.now() + 60_000),
-          errorCode: raw,
-        });
+        const args = completionArgs({ result, errorCode: raw }, 0);
         expect(args.errorCode).toBe("malformed_error_code");
         expect(args.rawErrorCode).toBe(raw);
         expect(() => boundRawErrorCode(args.rawErrorCode)).not.toThrow();
@@ -140,7 +153,7 @@ describe("completionArgs runtime boundary", () => {
     }
     expect(boundRawErrorCode(revoked())).toBe("[object]");
   });
-  it.each(["result", "providerRef", "nextAttemptAt", "errorCode"])("reads %s only once", (key) => {
+  it.each(["result", "providerRef", "errorCode"])("reads %s only once", (key) => {
     const outcome: Record<string, unknown> = {
       result: ["result", "providerRef"].includes(key) ? "delivered" : "retry",
       providerRef: "provider-1",
@@ -150,7 +163,7 @@ describe("completionArgs runtime boundary", () => {
     const value = outcome[key];
     const get = vi.fn().mockReturnValueOnce(value).mockImplementation(throwing);
     Object.defineProperty(outcome, key, { get });
-    expect(completionArgs(outcome).errorCode).not.toBe("malformed_outcome");
+    expect(completionArgs(outcome, 0).errorCode).not.toBe("malformed_outcome");
     expect(get).toHaveBeenCalledTimes(1);
   });
 });
@@ -167,7 +180,7 @@ function cycleFixture(
   options: {
     stale?: boolean;
     reject22023?: boolean;
-    failure?: { at: "phase1" | "claim" | "completion" | "fallback"; error: Error };
+    failure?: { at: "phase1" | "claim" | "envelope" | "completion" | "fallback"; error: Error };
   } = {},
 ) {
   let claimed = 0;
@@ -178,6 +191,11 @@ function cycleFixture(
   }));
   deliver.mockImplementationOnce(async () => first() as DeliveryOutcome);
   const query = vi.fn(async (sql: string, values: unknown[]) => {
+    if (sql === "SELECT projector_is_enabled($1) AS enabled") return { rows: [{ enabled: true }] };
+    if (sql === "SELECT * FROM outbox_claimed_event($1, $2, $3)") {
+      if (options.failure?.at === "envelope") throw options.failure.error;
+      return { rows: [{ event_type: "t.e", aggregate_id: values[0], sequence: 1, payload: {} }] };
+    }
     if (sql === "SELECT * FROM claim_outbox_batch($1)") {
       if (options.failure?.at === "phase1") throw options.failure.error;
       return { rows: [] };
@@ -202,8 +220,7 @@ function cycleFixture(
   });
   const run = () =>
     runDispatchCycle({ query } as unknown as pg.Pool, {
-      deliver,
-      requiredProjectors: ["test_projector"],
+      projectors: new Map([["test_projector", deliver]]),
       limit: 2,
     });
   return { run, deliver, query, completions };
@@ -228,10 +245,10 @@ describe("runDispatchCycle malformed completion containment", () => {
     ["result getter", () => accessor("result"), "dlq", "malformed_outcome"],
     ["error getter", () => accessor("errorCode"), "dlq", "malformed_outcome"],
     [
-      "Date proxy",
+      "Date proxy (ignored)",
       () => ({ result: "retry", nextAttemptAt: new Proxy(new Date(), {}) }),
-      "dlq",
-      "malformed_outcome",
+      "retry",
+      "malformed_error_code",
     ],
     [
       "Date method overrides",
@@ -240,10 +257,10 @@ describe("runDispatchCycle malformed completion containment", () => {
       "x",
     ],
     [
-      "invalid native Date",
+      "invalid native Date (ignored)",
       () => ({ result: "retry", nextAttemptAt: hostileDate(NaN), errorCode: "x" }),
-      "dlq",
-      "malformed_next_attempt",
+      "retry",
+      "x",
     ],
     [
       "revoked error code",
@@ -286,7 +303,7 @@ describe("runDispatchCycle malformed completion containment", () => {
     expect(fixture.completions[0]!.slice(0, 3)).toEqual(fixture.completions[1]!.slice(0, 3));
     expect(fixture.completions[1]!.slice(3)).toEqual(["dlq", null, null, "malformed_outcome"]);
   });
-  it.each(["phase1", "claim", "completion", "fallback"] as const)(
+  it.each(["phase1", "claim", "envelope", "completion", "fallback"] as const)(
     "propagates %s infrastructure faults unchanged",
     async (at) => {
       const error = Object.assign(new Error("database unavailable"), { code: "57P01" });
@@ -295,7 +312,9 @@ describe("runDispatchCycle malformed completion containment", () => {
         failure: { at, error },
       });
       await expect(fixture.run()).rejects.toBe(error);
-      expect(fixture.deliver.mock.calls.length).toBe(at === "phase1" || at === "claim" ? 0 : 1);
+      expect(fixture.deliver.mock.calls.length).toBe(
+        ["phase1", "claim", "envelope"].includes(at) ? 0 : 1,
+      );
       expect(fixture.completions).toHaveLength(at === "fallback" ? 2 : at === "completion" ? 1 : 0);
     },
   );

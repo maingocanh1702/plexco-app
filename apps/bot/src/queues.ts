@@ -6,15 +6,13 @@
  */
 
 /**
- * PLACEHOLDER — not a real channel/projector name. The only queue this repo
- * has ever registered: a periodic trigger for the outbox dispatch cycle
- * (dispatcher.ts). worker.ts registers a schedule against it (job-infra slice
- * 3a), gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED. Producers DO exist
- * (packages/db/src/session-service.ts inserts outbox_events for every session
- * command since 2026-08-14 — the old "no producer yet" text here was stale,
- * audit 2026-09-06 X-3): the flag stays off because the only deliverer is
- * productionStubDeliver, which DLQs every row terminally. worker.ts refuses
- * to schedule while that stub is configured — see its own doc comment.
+ * The only queue this repo registers: the periodic trigger for the outbox
+ * dispatch drain (dispatcher.ts) plus, once per tick, the stale-draft expiry
+ * (draft-expiry-job.ts). worker.ts registers a schedule against it (job-infra
+ * slice 3a), gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED (default false; the
+ * owner enables it, docs/runbooks/outbox-dispatch-enable-rollback.md). Producers
+ * exist (session-service.ts inserts outbox_events for every session command);
+ * which projectors receive an event is the 0056 registry's decision.
  */
 export const OUTBOX_DISPATCH_QUEUE = "outbox_dispatch";
 
@@ -42,7 +40,9 @@ export const PGBOSS_INTERNAL_SEND_IT_QUEUE = "__pgboss__send-it";
  * pg-boss's own cron granularity floor is one minute, and timekeeper.js's
  * cron() hard-codes a 60-second singleton debounce on every send it enqueues
  * — so anything finer than "every minute" would be silently absorbed by that
- * existing mechanism rather than actually running more often.
+ * existing mechanism rather than actually running more often. Sub-minute
+ * dispatch is the NOTIFY wake loop's job (outbox-wake.ts, D-11); this cron is
+ * the safety net that also drives the once-per-tick draft expiry.
  */
 export const OUTBOX_DISPATCH_CRON = "* * * * *";
 

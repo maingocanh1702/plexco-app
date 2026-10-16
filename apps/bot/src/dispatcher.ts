@@ -1,78 +1,57 @@
 import type pg from "pg";
+import {
+  claimedEvent,
+  projectorIsEnabled,
+  requiredProjectorsFor,
+  type ProjectorEvent,
+} from "./projector-registry.js";
 
 const DEFAULT_BATCH_LIMIT = 25;
 
 /**
- * PLACEHOLDER — not a real channel/projector name. This slice ships no
- * production delivery implementation (scope-deferred to the first concrete
- * projector slice); this identifier only exists so the fan-out/ack lifecycle
- * below has something real to exercise. Read TWICE below (prepare loop and
- * the ack call's required-projector argument) from this ONE array — never
- * duplicated into a second constant — so the two cannot diverge WITHIN ONE
- * PROCESS when a future slice adds a second projector.
- *
- * codex round-02 [P1], NOT fixed here — a hard requirement for whoever next
- * extends this array (most likely the first concrete projector slice): a
- * single in-memory constant only prevents prepare/ack divergence within one
- * running process. It does NOT prevent divergence ACROSS PROCESSES during a
- * rolling deploy that changes this array's length: an old replica can claim
- * an event, prepare only its stale (shorter) required set, and successfully
- * ack with that shorter array — ack_outbox_event only verifies the set IT
- * was given, not that the set is complete for the event's type. Since
- * claim_outbox_batch permanently excludes acked events, the new replica
- * (and the newly-added projector) never sees that event again. Closing this
- * needs either (a) a durable, versioned required-projectors-per-event-type
- * registry — 0023's own migration comment already names this as not built
- * yet, and this slice's manifest forbids a new migration to build it here —
- * or (b) an operational drain-before-enable deploy discipline (stop every
- * old replica before starting one with a changed array; never overlap).
- * Do not extend this array under an ordinary rolling deploy until one of
- * those is in place.
+ * DD-134 (a), signed 2026-10-16: at most 8 deliveries. Failure n (n = attempts + 1) with n < 8
+ * retries after 15 s x 2^(n-1): 15, 30, 60, 120, 240, 480, 960 s, seven waits, 1905 s in all; the
+ * 8th failure dead-letters with this code. The dispatcher is the ONLY retry scheduler (D-7).
  */
-export const STUB_PROJECTOR = "stub_projector";
-export const REQUIRED_PROJECTORS: readonly string[] = [STUB_PROJECTOR];
+export const MAX_DELIVERY_ATTEMPTS = 8;
+export const RETRY_BASE_MS = 15_000;
+export const ATTEMPTS_EXHAUSTED = "attempts_exhausted";
+
+/** The wait before the next try of a delivery claimed with `attempts` prior tries (0..6). */
+export function retryDelayMs(attempts: number): number {
+  return RETRY_BASE_MS * 2 ** attempts;
+}
 
 export interface ClaimedDeliveryJob {
   eventId: string;
   tenantId: string;
   projector: string;
   claimToken: string;
+  /** Prior completed tries of this delivery (0022), so a projector can see where it stands. */
   attempts: number;
+  /** The claimed event, read through this claim's token (0056 outbox_claimed_event). */
+  event: ProjectorEvent;
 }
 
+/**
+ * What a projector returns. `retry` is a retryable failure and `dlq` a terminal one; the dispatcher
+ * decides WHEN a retry runs and when retries are exhausted, so a nextAttemptAt a projector still
+ * attaches is ignored, never read (D-7).
+ */
 export type DeliveryOutcome =
   | { result: "delivered"; providerRef?: string }
-  | { result: "retry"; nextAttemptAt: Date; errorCode: string }
+  | { result: "retry"; errorCode: string }
   | { result: "dlq"; errorCode: string };
 
-/**
- * Retry/dlq policy lives HERE, in the caller's own decision, not in
- * runDispatchCycle below — the SQL contract (0022) deliberately stores
- * `attempts` but leaves backoff/max-attempt policy to the consumer, and
- * docs/autopilot-db-job-claim-lease-core.md §4.3 assigns that policy to the
- * first concrete projector slice, not this one. `attempts` (pre-completion,
- * from claim_projector_delivery_batch) is provided so a real implementation
- * can compute its own backoff/max-attempt cutoff from it.
- */
 export type DeliverFn = (job: ClaimedDeliveryJob) => Promise<DeliveryOutcome>;
 
+/** Projector name -> deliver function; production passes projectors/index.ts PROJECTORS. */
+export type ProjectorMap = ReadonlyMap<string, DeliverFn>;
+
 /**
- * Production placeholder wired into worker.ts. No real projector exists yet,
- * so every delivery is DLQed immediately rather than pretending to succeed
- * or retrying forever around work that cannot succeed.
- *
- * NOT safe to schedule (audit 2026-09-06 X-3 corrected the old text here,
- * which claimed "no producer inserts outbox_events"): the session command
- * family in packages/db/src/session-service.ts has inserted outbox_events
- * since 2026-08-14 (session.created/published/announcement_requested/
- * updated/closed/cancelled ...). With this stub scheduled, phase 1 acks each
- * event right after prepare and phase 2 DLQs its delivery — a terminal state
- * with no replay path (0022:264, backlog db-projector-dlq-no-replay-path) —
- * so a real product event dies at both ends. worker.ts therefore REFUSES to
- * register the schedule while this stub is the configured deliverer, on top
- * of the OUTBOX_DISPATCH_SCHEDULE_ENABLED flag defaulting off. Replacing this
- * stub with a real projector is the first concrete projector slice's job;
- * the DLQ flood it would produce is expected, not a regression in this file.
+ * The refusal sentinel (D-5): resolveOutboxDispatchEnablement (worker.ts) refuses to schedule while
+ * any configured projector is this function. It is no longer wired anywhere; it stays exported so
+ * that a projector map built from it can never be enabled by accident.
  */
 export const productionStubDeliver: DeliverFn = async () => ({
   result: "dlq",
@@ -80,9 +59,10 @@ export const productionStubDeliver: DeliverFn = async () => ({
 });
 
 export interface DispatchCycleOptions {
-  deliver: DeliverFn;
-  requiredProjectors: readonly string[];
+  projectors: ProjectorMap;
   limit?: number;
+  /** Clock for the retry schedule (tests); the DB re-checks it against clock_timestamp(). */
+  now?: () => Date;
 }
 
 export interface DispatchCycleSummary {
@@ -91,6 +71,10 @@ export interface DispatchCycleSummary {
   staleTokenSkips: number;
   processedDeliveries: number;
   staleCompletionSkips: number;
+  /** Claims whose envelope read found the lease already gone: no deliver() call. */
+  leaseLostSkips: number;
+  /** This cycle filled a batch (limit events, or limit deliveries for one projector): drain again. */
+  fullBatch: boolean;
 }
 
 interface ClaimedOutboxEvent {
@@ -114,20 +98,24 @@ interface ClaimedProjectorDelivery {
  * The full lifecycle shipped in 0022/0023, run as two independently-paced
  * phases per cycle call — NOT one tightly-coupled per-event sequence.
  *
- * Phase 1 (outer, per claimed OUTBOX event): prepare every required
- * projector, then ack. `ack_outbox_event`'s own SQL only requires that a
- * projector_deliveries ROW EXISTS for each required projector (0023) — not
- * that delivery has completed — so acking right after prepare is correct per
- * the SQL contract, not a shortcut: the outer outbox lease's job is "don't
- * lose track of an event until fan-out has been initiated for every
- * required consumer." Each projector's own delivery-with-retry durability is
- * independently owned by its projector_deliveries row's own lease/reclaim
- * (phase 2), decoupled from the outer event's lease.
+ * Phase 1 (outer, per claimed OUTBOX event): read the event's required set
+ * from the durable registry ONCE (outbox_required_projectors, 0056), prepare
+ * each member, then ack with that same array (D-5). `ack_outbox_event` only
+ * requires that a projector_deliveries ROW EXISTS for each member (0023), so
+ * acking right after prepare is the SQL contract, not a shortcut. Because the
+ * set is computed from the DB per event, two workers (or two code versions in
+ * a rolling deploy) cannot ack a set they did not prepare, and a projector or
+ * route added later never applies to an event acked before it: claims skip
+ * acked rows. An event with no enabled, routed projector acks with '{}'.
  *
- * Phase 2 (inner, per required projector): claim due/claimable delivery
- * rows — which may include rows prepared in phase 1 of THIS call, or an
- * earlier call, or a reclaimed-expired row — and complete them via the
- * injected `deliver` function. Not 1:1 with phase 1 within a single call.
+ * Phase 2 (inner, per projector of `projectors`, in name order, only when
+ * projector_is_enabled at cycle start): claim due/claimable delivery rows,
+ * read the event through the claim token (outbox_claimed_event), and complete
+ * them via that projector's deliver function. A registry-enabled name with no
+ * map entry is never claimed (its rows wait; one warning per cycle). Not 1:1
+ * with phase 1 within a single call. The retry policy (D-7) is applied here,
+ * once, in completionArgs: see its doc comment.
+ *
  * Claims and completes ONE ROW AT A TIME rather than claiming a whole batch
  * upfront (codex round-07 [P1]): claiming `limit` rows before the first
  * `deliver()` call stamps every row's five-minute lease at claim time, but
@@ -173,23 +161,32 @@ export async function runDispatchCycle(
   pool: pg.Pool,
   options: DispatchCycleOptions,
 ): Promise<DispatchCycleSummary> {
-  const { deliver, requiredProjectors, limit = DEFAULT_BATCH_LIMIT } = options;
+  const { projectors, limit = DEFAULT_BATCH_LIMIT, now = () => new Date() } = options;
   const summary: DispatchCycleSummary = {
     claimedEvents: 0,
     ackedEvents: 0,
     staleTokenSkips: 0,
     processedDeliveries: 0,
     staleCompletionSkips: 0,
+    leaseLostSkips: 0,
+    fullBatch: false,
   };
+  const names = [...projectors.keys()].sort();
+  const enabled = new Set<string>();
+  for (const name of names) if (await projectorIsEnabled(pool, name)) enabled.add(name);
 
-  // Phase 1: outer outbox claim -> prepare every required projector -> ack.
+  // Phase 1: outer outbox claim -> required set from the registry -> prepare each -> ack.
   const claimed = await pool.query<ClaimedOutboxEvent>("SELECT * FROM claim_outbox_batch($1)", [
     limit,
   ]);
   summary.claimedEvents = claimed.rows.length;
+  if (claimed.rows.length >= limit) summary.fullBatch = true;
+  const unmapped = new Set<string>();
 
   for (const event of claimed.rows) {
-    for (const projector of requiredProjectors) {
+    const required = await requiredProjectorsFor(pool, event.event_id);
+    for (const projector of required) {
+      if (!projectors.has(projector)) unmapped.add(projector);
       await pool.query("SELECT job_prepare_projector_delivery($1, $2)", [
         event.event_id,
         projector,
@@ -201,7 +198,7 @@ export async function runDispatchCycle(
     // this handler has a bug, not "another claimant owns this event".
     const ackResult = await pool.query<{ ack_outbox_event: boolean }>(
       "SELECT ack_outbox_event($1, $2, $3) AS ack_outbox_event",
-      [event.event_id, requiredProjectors, event.claim_token],
+      [event.event_id, required, event.claim_token],
     );
     const acked = ackResult.rows[0]?.ack_outbox_event === true;
     if (acked) {
@@ -212,14 +209,24 @@ export async function runDispatchCycle(
       summary.staleTokenSkips += 1;
     }
   }
+  for (const name of unmapped) {
+    console.warn(
+      `[dispatcher] projector ${name} is required by the registry but has no deliver module in this build; its deliveries wait`,
+    );
+  }
 
-  // Phase 2: inner per-projector delivery claim -> deliver -> complete, one
-  // row at a time (see the file-level doc comment for why: fresh leases,
-  // and no single poison row can head-of-line-block the rest).
-  for (const projector of requiredProjectors) {
+  // Phase 2: inner per-projector delivery claim -> envelope -> deliver -> complete, one row at a
+  // time (see the doc comment above for why: fresh leases, and no single poison row can
+  // head-of-line-block the rest).
+  for (const projector of names) {
+    const deliver = projectors.get(projector);
+    if (!deliver || !enabled.has(projector)) continue;
     let deliveriesThisCycle = 0;
     for (;;) {
-      if (deliveriesThisCycle >= limit) break;
+      if (deliveriesThisCycle >= limit) {
+        summary.fullBatch = true;
+        break;
+      }
       const claimedDeliveries = await pool.query<ClaimedProjectorDelivery>(
         "SELECT * FROM claim_projector_delivery_batch($1, 1)",
         [projector],
@@ -228,12 +235,20 @@ export async function runDispatchCycle(
       if (!row) break;
       deliveriesThisCycle += 1;
 
+      // D-6: zero rows = the lease was lost, or the projector is no longer registered, enabled and
+      // routed for the event (0056 3d). No deliver(); stop it for the cycle (the stale-stop rule).
+      const event = await claimedEvent(pool, row.event_id, row.projector, row.claim_token);
+      if (!event) {
+        summary.leaseLostSkips += 1; // lease lost or projector no longer registered/enabled/routed
+        break;
+      }
       const job: ClaimedDeliveryJob = {
         eventId: row.event_id,
         tenantId: row.tenant_id,
         projector: row.projector,
         claimToken: row.claim_token,
         attempts: row.attempts,
+        event,
       };
 
       let outcome: DeliveryOutcome;
@@ -246,17 +261,19 @@ export async function runDispatchCycle(
         // side effect may already have gone out and only the response
         // handling failed" (e.g. a timeout or a parse error after the
         // provider accepted the request) — retrying the latter risks a
-        // DUPLICATE external action. This slice has no typed/classified
-        // error contract to distinguish the two (and none is invented
-        // here — that would mean guessing at a future real projector's
-        // error shape), so an unclassified throw fails closed to 'dlq',
-        // never 'retry': the safer wrong answer is "stop and require
-        // manual attention", not "maybe send it again."
+        // DUPLICATE external action. A projector that knows a failure is
+        // retryable returns `retry`; an unclassified throw fails closed to
+        // 'dlq', never 'retry': the safer wrong answer is "stop and require
+        // manual attention" (and an owner replay), not "maybe send it again."
         outcome = { result: "dlq", errorCode: "deliver_threw" };
       }
 
-      const args = completionArgs(outcome);
-      if (args.rawErrorCode !== null && args.rawErrorCode !== args.errorCode) {
+      const args = completionArgs(outcome, job.attempts, now);
+      if (args.errorCode === ATTEMPTS_EXHAUSTED && args.rawErrorCode !== ATTEMPTS_EXHAUSTED) {
+        console.warn(
+          `[dispatcher] delivery failed ${MAX_DELIVERY_ATTEMPTS} times; last projector error_code ${JSON.stringify(boundRawErrorCode(args.rawErrorCode))} -> dlq ${ATTEMPTS_EXHAUSTED} (event ${job.eventId}, projector ${job.projector})`,
+        );
+      } else if (args.rawErrorCode !== null && args.rawErrorCode !== args.errorCode) {
         // The raw code comes from a projector we do not control, so it is untrusted free text:
         // it can carry a token-bearing URL, a response body, or arbitrary padding. The whole
         // point of logging it is to show WHAT was normalised away, and a bounded prefix does
@@ -342,10 +359,14 @@ export async function runDispatchCycle(
  *   - error codes are lower-cased, non-matching characters become `_`, an
  *     empty/leading-digit result is replaced by `malformed_error_code`, and
  *     the whole thing is cut to 64 chars;
- *   - a `retry` whose nextAttemptAt is not strictly in the future is turned
- *     into a `dlq` with `malformed_next_attempt` — a retry we cannot schedule
- *     is not a retry, and failing closed is the same choice deliver()'s own
- *     throw path makes.
+ *   - the retry schedule is the dispatcher's (DD-134 a, D-7): a `retry` claimed
+ *     with `attempts` a <= 6 becomes failed with next_attempt_at = now + 15 s x
+ *     2^a; at a >= 7 (the 8th failure) it becomes dlq `attempts_exhausted`,
+ *     and the projector's own code goes to the bounded log line only. A
+ *     projector-supplied nextAttemptAt is never read. The worker clock sets the
+ *     instant and the DB checks it against clock_timestamp(), so a worker/DB
+ *     skew of 15 s or more turns an early retry into dlq/malformed_outcome via
+ *     the 22023 fallback (replayable; the runbook requires NTP).
  * The original value is preserved in `rawErrorCode` for the log line.
  */
 export const ERROR_CODE_RE = /^[a-z][a-z0-9_]{0,63}$/;
@@ -396,6 +417,7 @@ export function normalizeErrorCode(raw: unknown): string {
 
 export function completionArgs(
   outcome: unknown,
+  attempts: number,
   now: () => Date = () => new Date(),
 ): {
   result: "delivered" | "retry" | "dlq";
@@ -430,23 +452,20 @@ export function completionArgs(
         };
       }
       case "retry": {
-        const rawAt = value.nextAttemptAt;
-        // Keep projector-owned Date methods out of pg's later parameter serialization.
-        const at = rawAt instanceof Date ? new Date(Date.prototype.getTime.call(rawAt)) : null;
-        const future = at !== null && !Number.isNaN(at.getTime()) && at.getTime() > now().getTime();
         const rawErrorCode = value.errorCode;
-        if (!future) {
+        // Fails closed: an attempts value that is not a small non-negative integer is exhausted.
+        if (!Number.isInteger(attempts) || attempts < 0 || attempts >= MAX_DELIVERY_ATTEMPTS - 1) {
           return {
             result: "dlq",
             nextAttemptAt: null,
             providerRef: null,
-            errorCode: "malformed_next_attempt",
-            rawErrorCode: typeof rawErrorCode === "string" ? rawErrorCode : null,
+            errorCode: ATTEMPTS_EXHAUSTED,
+            rawErrorCode,
           };
         }
         return {
           result: "retry",
-          nextAttemptAt: at,
+          nextAttemptAt: new Date(now().getTime() + retryDelayMs(attempts)),
           providerRef: null,
           errorCode: normalizeErrorCode(rawErrorCode),
           rawErrorCode,
