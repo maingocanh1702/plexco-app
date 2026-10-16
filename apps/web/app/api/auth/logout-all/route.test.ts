@@ -2,6 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { createDb, createWebSession, migrate, type DbHandle } from "@plexco/db";
 import { cookies } from "next/headers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  leaseTestRolePasswords,
+  ROLE_PW,
+  withDefinerReadLock,
+  type TestRolePasswordLease,
+} from "../../../../../../packages/db/src/test-harness.js";
 import { appDb, SESSION_COOKIE } from "../../../../lib/session-cookies";
 import { POST } from "./route";
 
@@ -20,7 +26,6 @@ vi.mock("next/headers", () => ({ cookies: vi.fn() }));
  * db name that can never collide with the packages/db suites' own DROP/CREATE.
  */
 const DB_NAME = "plexco_web_logout_all_check";
-const APP_PW = "plexco_test_app";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -37,6 +42,7 @@ function testUrl(base: string, opts: { db?: string; user?: string; password?: st
 let admin: DbHandle; // superuser INTO the base db — DROP/CREATE the throwaway
 let owner: DbHandle; // superuser INTO the throwaway db — seeds + assertions
 let originalDatabaseUrl: string | undefined;
+let passwords: TestRolePasswordLease | undefined;
 
 beforeAll(async () => {
   const base = process.env.DATABASE_URL_TEST;
@@ -53,16 +59,17 @@ beforeAll(async () => {
   await admin.pool.query(`CREATE DATABASE ${DB_NAME}`);
 
   const migrationUrl = testUrl(base, { db: DB_NAME });
-  await migrate(migrationUrl);
-  // 0000 created the app role; give it a login password for the route's pool.
-  await admin.pool.query(`ALTER ROLE app WITH LOGIN PASSWORD '${APP_PW}'`);
+  // The reader side of every definer lock this migrate() reaches, like setupRlsTestContext.
+  await withDefinerReadLock(base, () => migrate(migrationUrl));
+  // 0000 created the app role; its test password is leased until afterAll.
+  passwords = await leaseTestRolePasswords(base);
 
   owner = createDb(migrationUrl, { max: 2 });
 
   // The route's appDb() reads DATABASE_URL and memoises a singleton — point it
   // at the throwaway db AS the app role BEFORE the route first calls appDb().
   originalDatabaseUrl = process.env.DATABASE_URL;
-  process.env.DATABASE_URL = testUrl(base, { db: DB_NAME, user: "app", password: APP_PW });
+  process.env.DATABASE_URL = testUrl(base, { db: DB_NAME, user: "app", password: ROLE_PW.app });
   vi.stubEnv("DB_EXPECTED_ROLE", "app");
 }, 120_000);
 
@@ -70,6 +77,7 @@ afterAll(async () => {
   await appDb()
     .close()
     .catch(() => {});
+  await passwords?.release(); // after the only pool that logs in as app closed
   await owner?.close();
   await admin?.close();
   if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
