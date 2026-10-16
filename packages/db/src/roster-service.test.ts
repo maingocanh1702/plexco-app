@@ -234,11 +234,15 @@ describe("addMemberToSession", () => {
       ["cancelled", false],
     ] as const) {
       const { tenantId, actor, sessionId } = await world({ status });
-      const run = add(tenantId, actor, sessionId, { displayName: "X" });
-      if (ok) expect((await run).status).toBe("active");
+      if (ok)
+        expect((await add(tenantId, actor, sessionId, { displayName: "X" })).status).toBe("active");
       else {
+        // Counted BEFORE the command starts: a command started first could reject (unhandled) while
+        // this read is still pending, and could write before it.
         const before = await fx.counts(tenantId);
-        expect(await codeOf(run)).toBe("SESSION_NOT_OPEN");
+        expect(await codeOf(add(tenantId, actor, sessionId, { displayName: "X" }))).toBe(
+          "SESSION_NOT_OPEN",
+        );
         expect(await fx.counts(tenantId)).toEqual(before);
       }
     }
