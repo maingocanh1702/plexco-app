@@ -64,6 +64,15 @@ export function SessionForm(props: SessionFormProps) {
     if (focusSummary > 0) summaryRef.current?.focus();
   }, [focusSummary]);
 
+  // Mount only: the visibility toggle's refusal links here with #area or #slots; focus that field
+  // (the slots input exists only while "unlimited" is off, else its checkbox takes the focus).
+  useEffect(() => {
+    const h = window.location.hash;
+    const names = h === "#area" ? ["area"] : h === "#slots" ? ["slotsMax", "slotsUnlimited"] : [];
+    const field = names.map((name) => formRef.current?.elements.namedItem(name)).find(Boolean);
+    if (field instanceof HTMLElement) field.focus();
+  }, []);
+
   const set = <K extends keyof SessionFormValues>(key: K, value: SessionFormValues[K]) =>
     setValues((prev) => ({ ...prev, [key]: value }));
 
@@ -183,6 +192,7 @@ export function SessionForm(props: SessionFormProps) {
         />
         <TextField
           label={t("Khu vực", "Area")}
+          name="area"
           value={values.area}
           error={errors.area}
           maxLength={120}
@@ -210,6 +220,7 @@ export function SessionForm(props: SessionFormProps) {
         <div className={styles.check}>
           <input
             id={unlimitedId}
+            name="slotsUnlimited"
             type="checkbox"
             checked={values.slotsUnlimited}
             onChange={(e) => set("slotsUnlimited", e.target.checked)}
@@ -219,6 +230,7 @@ export function SessionForm(props: SessionFormProps) {
         {values.slotsUnlimited ? null : (
           <TextField
             label={t("Số chỗ tối đa", "Maximum slots")}
+            name="slotsMax"
             inputMode="numeric"
             className={styles.numeric}
             value={values.slotsMax}
