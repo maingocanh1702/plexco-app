@@ -4,8 +4,10 @@
  *    0055 person_profile_update (c_reject / c_visible).
  *  - the session text fields (area, venue_name, venue_address) apply hasHiddenChar to the RAW value
  *    in session-service.ts isOptionalText; sessions have no SQL twin (no DB CHECK, no migration).
- * Do not fork the character class: a second copy drifts. The web keeps one client mirror because
- * client code cannot import @plexco/db (FE-INV-3); the parity tests pin it.
+ * Do not fork the character class: a second copy drifts. The web keeps two client mirrors because
+ * client code cannot import @plexco/db (FE-INV-3): apps/web/lib/me-settings-client.ts and
+ * apps/web/lib/session-form-model.ts (pinned against this predicate over every code point by its
+ * test; the first by example tests in me-settings-client.test.ts).
  */
 
 /**
