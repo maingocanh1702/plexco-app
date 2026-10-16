@@ -83,6 +83,7 @@ const flush = () => vi.advanceTimersByTimeAsync(0);
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  pg.clients.length = 0; // per-test LISTEN clients: no assertion depends on test order
   vi.mocked(currentSession).mockResolvedValue(live);
   vi.mocked(resolveWebSession).mockResolvedValue(live);
   vi.mocked(rateLimited).mockResolvedValue(false);
