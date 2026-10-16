@@ -8,6 +8,8 @@ import {
   getSessionDetail,
   listSessions,
 } from "./session-read.js";
+import { getSessionOccupancy, sessionActiveRosterCount } from "./session-occupancy.js";
+import { withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 /** Host read models (session-read.ts): RLS isolation, ordering + keyset cursor, filter, clamp, DTO shape. */
@@ -22,14 +24,21 @@ afterAll(async () => {
 
 async function seedSession(
   tenantId: string,
-  opts: { startsAt: string; status?: string; id?: string },
+  opts: { startsAt: string; status?: string; id?: string; slotsMax?: number | null },
 ): Promise<string> {
   const { rows } = await ctx.owner.query<{ id: string }>(
-    `INSERT INTO sessions (id, tenant_id, sport_id, starts_at, ends_at, timezone, status, price_amount)
+    `INSERT INTO sessions (id, tenant_id, sport_id, starts_at, ends_at, timezone, status, price_amount, slots_max)
      VALUES (COALESCE($5::uuid, gen_random_uuid()), $1, $2, $3::timestamptz,
-             $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', $4, 50000)
+             $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', $4, 50000, $6)
      RETURNING id`,
-    [tenantId, ctx.badmintonSportId, opts.startsAt, opts.status ?? "open", opts.id ?? null],
+    [
+      tenantId,
+      ctx.badmintonSportId,
+      opts.startsAt,
+      opts.status ?? "open",
+      opts.id ?? null,
+      opts.slotsMax ?? null,
+    ],
   );
   return rows[0]!.id;
 }
@@ -132,6 +141,7 @@ describe("listSessions", () => {
         "priceAmount",
         "skillLevel",
         "slotsMax",
+        "slotsOpen",
         "sportId",
         "sportKey",
         "sportName",
@@ -229,6 +239,114 @@ describe("listSessions occupiedCount", () => {
     expect(listA.sessions.map((s) => s.id)).not.toContain(otherTenantSession);
     const listB = await listSessions(ctx.appDb.db, { tenantId: ctx.tenantB, limit: 50 });
     expect(listB.sessions.find((s) => s.id === otherTenantSession)!.occupiedCount).toBe(1);
+    // EQ9 on the helper path: B's note is invisible under A's tenant GUC (RLS), counted under B's.
+    const helperIn = (t: string) =>
+      withTenant(ctx.appDb.db, t, (tx) => getSessionOccupancy(tx, otherTenantSession));
+    expect([await helperIn(tenant), await helperIn(ctx.tenantB)]).toEqual([0, 1]);
+  });
+
+  // Equivalence matrix EQ1-EQ8 (OC-7): the helper, the list row and the detail counts give the
+  // same numbers for every fixture kind. A pending join request never occupies a slot.
+  type Kind = "active" | "waitlisted" | "left" | "note" | "pending";
+  const ALL: readonly Kind[] = ["active", "waitlisted", "left", "note", "pending"];
+  async function seedKinds(tenantId: string, sessionId: string, kinds: readonly Kind[]) {
+    for (const [i, kind] of kinds.entries()) {
+      const person = (
+        await ctx.owner.query<{ id: string }>(
+          `INSERT INTO persons (display_name) VALUES ($1) RETURNING id`,
+          [`EQ-${kind}-${i}`],
+        )
+      ).rows[0]!.id;
+      if (kind === "note") {
+        await ctx.owner.query(
+          `INSERT INTO session_guest_notes (tenant_id, session_id, created_by_person_id, guest_name)
+           VALUES ($1, $2, $3, 'Khach')`,
+          [tenantId, sessionId, person],
+        );
+      } else if (kind === "pending") {
+        await ctx.owner.query(
+          `INSERT INTO join_requests (tenant_id, session_id, person_id, expires_at)
+           VALUES ($1, $2, $3, now() + interval '1 day')`,
+          [tenantId, sessionId, person],
+        );
+      } else {
+        const membership = (
+          await ctx.owner.query<{ id: string }>(
+            `INSERT INTO memberships (tenant_id, person_id, display_name, status)
+             VALUES ($1, $2, $3, 'active') RETURNING id`,
+            [tenantId, person, `EQ-${kind}-${i}`],
+          )
+        ).rows[0]!.id;
+        await ctx.owner.query(
+          `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [tenantId, sessionId, membership, kind, kind === "waitlisted" ? 1 : null],
+        );
+      }
+    }
+  }
+  interface EqRow {
+    id: string;
+    kinds: readonly Kind[];
+    slotsMax: number | null;
+    lowerTo?: number;
+    occupied: number;
+    open: number | null;
+    active: number;
+  }
+  it.each<EqRow>([
+    { id: "EQ1", kinds: ["active"], slotsMax: 2, occupied: 1, open: 1, active: 1 },
+    { id: "EQ2", kinds: ["waitlisted"], slotsMax: 2, occupied: 0, open: 2, active: 0 },
+    { id: "EQ3", kinds: ["left"], slotsMax: 2, occupied: 0, open: 2, active: 0 },
+    { id: "EQ4", kinds: ["note"], slotsMax: 2, occupied: 1, open: 1, active: 0 },
+    { id: "EQ5", kinds: ["pending"], slotsMax: 2, occupied: 0, open: 2, active: 0 },
+    { id: "EQ6", kinds: ALL, slotsMax: 2, occupied: 2, open: 0, active: 1 },
+    { id: "EQ7", kinds: ALL, slotsMax: null, occupied: 2, open: null, active: 1 },
+    // Over cap: owner SQL lowers slots_max under 1 active + 1 note; slotsOpen clamps at 0.
+    {
+      id: "EQ8",
+      kinds: ["active", "note"],
+      slotsMax: 2,
+      lowerTo: 1,
+      occupied: 2,
+      open: 0,
+      active: 1,
+    },
+  ])("$id: helper = list = detail (occupied $occupied, slotsOpen $open)", async (row) => {
+    const tenantId = ctx.tenantA;
+    const sessionId = await seedSession(tenantId, {
+      startsAt: "2040-01-01T10:00:00Z",
+      slotsMax: row.slotsMax,
+    });
+    await seedKinds(tenantId, sessionId, row.kinds);
+    if (row.lowerTo !== undefined) {
+      await ctx.owner.query(`UPDATE sessions SET slots_max = $2 WHERE id = $1`, [
+        sessionId,
+        row.lowerTo,
+      ]);
+    }
+    const db = ctx.appDb.db;
+    const list = (await listSessions(db, { tenantId, limit: 50 })).sessions.find(
+      (s) => s.id === sessionId,
+    )!;
+    const detail = (await getSessionDetail(db, { tenantId, sessionId }))!;
+    // Occupancy and active count FIRST (the before-run on the base copies passes this one).
+    expect({
+      occupied: [
+        await withTenant(db, tenantId, (tx) => getSessionOccupancy(tx, sessionId)),
+        list.occupiedCount,
+        detail.counts.occupied,
+      ],
+      active: [
+        await withTenant(db, tenantId, (tx) => sessionActiveRosterCount(tx, sessionId)),
+        list.activeCount,
+        detail.counts.active,
+      ],
+    }).toEqual({
+      occupied: [row.occupied, row.occupied, row.occupied],
+      active: [row.active, row.active, row.active],
+    });
+    expect([list.slotsOpen, detail.counts.slotsOpen]).toEqual([row.open, row.open]);
   });
 });
 
@@ -282,6 +400,7 @@ describe("getSessionDetail", () => {
       waitlisted: 0,
       guestNotes: 1,
       occupied: 2,
+      slotsOpen: null, // slots_max NULL = unlimited
     });
     expect(detail!.players).toEqual([
       expect.objectContaining({

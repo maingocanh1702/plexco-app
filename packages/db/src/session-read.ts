@@ -11,7 +11,12 @@ import {
 import type { Db } from "./client.js";
 import { chargeRemaining } from "./payment-manual.js";
 import { effectiveByCharge } from "./roster-money-shared.js";
-import { sessionOccupancy } from "./session-service.js";
+import {
+  activeCountSql,
+  getSessionOccupancy,
+  occupiedCountSql,
+  slotsOpen,
+} from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -19,8 +24,9 @@ import { withTenant } from "./tenant.js";
  * `GET /api/sessions`, `GET /api/sessions/:id`). Authorization is the CALLER's job (the route runs
  * authorize(session.manage) first); this module guarantees tenant isolation: every query runs in
  * `withTenant` (RLS) AND repeats `tenant_id = $tenant` explicitly, so a missing policy could not
- * widen a read. The one exception is `sessionOccupancy` (shared with the commands, `counts.occupied`):
- * it filters by session id only, relying on RLS plus the id already verified in this tenant.
+ * widen a read. The one exception is `getSessionOccupancy` (session-occupancy.ts, shared with the
+ * commands, `counts.occupied`): it filters by session id only, relying on RLS plus the id already
+ * verified in this tenant. Both reads are unlocked, so their counts are advisory.
  *
  * Least disclosure: only the columns named below leave. In particular `public_sessions.
  * confirmed_count` (0033: deliberately NOT exposed) is never selected or projected -- counts are
@@ -103,10 +109,12 @@ export interface SessionScalars {
 }
 
 /** List row = scalars + roster counts (additive, M2b). `occupiedCount` (active players + guest notes)
- *  is the ONE capacity numerator the card shows against `slotsMax`; `activeCount` is players only. */
+ *  is the ONE capacity numerator the card shows against `slotsMax`; `activeCount` is players only;
+ *  `slotsOpen` = free slots from that same number (null when unlimited). */
 export interface SessionListItem extends SessionScalars {
   activeCount: number;
   occupiedCount: number;
+  slotsOpen: number | null;
 }
 
 export interface SessionListPage {
@@ -149,8 +157,15 @@ export interface SessionDetail extends SessionScalars {
     createdByPersonId: string;
     createdAt: Date;
   }[];
-  /** `occupied` = active players + guest notes: the ONE capacity formula (sessionOccupancy). */
-  counts: { active: number; waitlisted: number; guestNotes: number; occupied: number };
+  /** `occupied` = active players + guest notes: the ONE capacity formula (getSessionOccupancy);
+   *  `slotsOpen` = free slots from it, null when slots_max is NULL (unlimited). */
+  counts: {
+    active: number;
+    waitlisted: number;
+    guestNotes: number;
+    occupied: number;
+    slotsOpen: number | null;
+  };
 }
 
 const scalarColumns = {
@@ -197,7 +212,6 @@ export async function listSessions(db: Db, params: ListSessionsParams): Promise<
     throw new SessionReadError("INVALID_CURSOR", "malformed cursor");
   }
   const limit = clampSessionLimit(params.limit);
-  const activeCountSql = sql<number>`(select count(*)::int from ${players} where ${players.sessionId} = ${sessions.id} and ${players.tenantId} = ${tenantId} and ${players.status} = 'active')`;
 
   const rows = await withTenant(db, tenantId, (tx) =>
     tx
@@ -205,10 +219,10 @@ export async function listSessions(db: Db, params: ListSessionsParams): Promise<
         ...scalarColumns,
         // Correlated count under the same tenant GUC + explicit tenant filter (least disclosure:
         // a number, never the roster). Active only: waitlisted/left rows do not occupy a slot.
-        activeCount: activeCountSql,
-        // Occupied slots (BL-DSC-1: ONE capacity formula = active players + guest notes, same as
-        // sessionOccupancy). Same tenant GUC + explicit tenant filter on both counts.
-        occupiedCount: sql<number>`(${activeCountSql} + (select count(*)::int from ${sessionGuestNotes} where ${sessionGuestNotes.sessionId} = ${sessions.id} and ${sessionGuestNotes.tenantId} = ${tenantId}))::int`,
+        activeCount: activeCountSql(sessions.id, tenantId),
+        // Occupied slots (BL-DSC-1: ONE capacity formula = active players + guest notes, the
+        // builder behind getSessionOccupancy). Same tenant GUC + explicit tenant filter (OC-1).
+        occupiedCount: occupiedCountSql(sessions.id, tenantId),
         cursorStartsAt: sql<string>`to_char(${sessions.startsAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       })
       .from(sessions)
@@ -230,7 +244,10 @@ export async function listSessions(db: Db, params: ListSessionsParams): Promise<
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   return {
-    sessions: page.map(({ cursorStartsAt: _omit, ...scalars }) => scalars),
+    sessions: page.map(({ cursorStartsAt: _omit, ...scalars }) => ({
+      ...scalars,
+      slotsOpen: slotsOpen(scalars.slotsMax, scalars.occupiedCount),
+    })),
     pageInfo: {
       hasMore,
       nextCursor: hasMore && last ? encodeSessionCursor(last.cursorStartsAt, last.id) : null,
@@ -360,6 +377,7 @@ export async function getSessionDetail(
               };
             })(),
     }));
+    const occupied = await getSessionOccupancy(tx, sessionId);
     return {
       ...head,
       players: mapped,
@@ -368,7 +386,8 @@ export async function getSessionDetail(
         active: mapped.filter((p) => p.status === "active").length,
         waitlisted: mapped.filter((p) => p.status === "waitlisted").length,
         guestNotes: notes.length,
-        occupied: await sessionOccupancy(tx, sessionId),
+        occupied,
+        slotsOpen: slotsOpen(head.slotsMax, occupied),
       },
     };
   });

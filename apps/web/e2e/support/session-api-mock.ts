@@ -288,11 +288,14 @@ export async function installApiMock(
     };
     const activeOf = (s: MockSession) =>
       (s.players as { status: string }[]).filter((p) => p.status === "active").length;
-    // The real BE computes occupancy server-side (active players + guest notes); mirror it here.
+    // The real BE computes occupancy and slotsOpen server-side (session-occupancy.ts); mirror both.
+    const slotsOpenOf = (slotsMax: number | null, occupied: number) =>
+      slotsMax === null ? null : Math.max(0, slotsMax - occupied);
     const withActive = (s: MockSession) => ({
       ...view(s),
       activeCount: activeOf(s),
       occupiedCount: activeOf(s) + s.guestNotes.length,
+      slotsOpen: slotsOpenOf(s.slotsMax, activeOf(s) + s.guestNotes.length),
     });
 
     if (path === "/api/sessions" && method === "GET") {
@@ -371,6 +374,7 @@ export async function installApiMock(
               waitlisted,
               guestNotes: target.guestNotes.length,
               occupied: active + target.guestNotes.length,
+              slotsOpen: slotsOpenOf(target.slotsMax, active + target.guestNotes.length),
             },
           },
         }),

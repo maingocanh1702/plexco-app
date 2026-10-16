@@ -25,10 +25,10 @@ describe("zalo client", () => {
   });
 
   it("honours ZALO_BOT_API_BASE and trims a trailing slash", async () => {
-    process.env.ZALO_BOT_API_BASE = "https://stub.test/";
+    process.env.ZALO_BOT_API_BASE = "http://127.0.0.1:8080/";
     fetchMock.mockImplementation(async () => json({ ok: true }));
     await getMe(TOKEN);
-    expect(fetchMock.mock.calls[0]![0]).toBe(`https://stub.test/bot${TOKEN}/getMe`);
+    expect(fetchMock.mock.calls[0]![0]).toBe(`http://127.0.0.1:8080/bot${TOKEN}/getMe`);
   });
 
   it("setWebhook sends url + secret_token; sendMessage sends chat_id + text", async () => {

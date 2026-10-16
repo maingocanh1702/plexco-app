@@ -15,7 +15,7 @@ import {
   replayOrNull,
   requireActor,
 } from "./roster-money-shared.js";
-import { sessionOccupancy } from "./session-service.js";
+import { getSessionOccupancy } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -178,7 +178,7 @@ export async function addMemberToSession(
     }
 
     const full =
-      session.slotsMax !== null && (await sessionOccupancy(tx, sessionId)) >= session.slotsMax;
+      session.slotsMax !== null && (await getSessionOccupancy(tx, sessionId)) >= session.slotsMax;
     let waitlistPosition: number | null = null;
     if (full) {
       const [tail] = await tx
