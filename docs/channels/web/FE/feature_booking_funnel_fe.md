@@ -1,7 +1,7 @@
 # Feature: Channel Booking Funnel — FE Design Spec (Web Surfaces)
 
 > **Route(s):** `/s/:ref` · `/link/:handoff_id` · inline payment hold (bot surface)
-> **Source authority:** `../../../features/FE/feature_channel_booking_funnel.md` v1.1 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_channel_booking_funnel.md` v1.1 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4` · STALE PIN: source is now v1.4, FE spec not re-reviewed
 > **Source contract status:** Reviewed — booking flow, hold, link, settlement
 > **Projection/API contract:** Public session card from `public_sessions` whitelist; booking handoff single-use; payment hold per session
 > **Capability/availability:** Public (shared link landing); auth required for account link
@@ -359,3 +359,5 @@ _Changelog v0.1: Initial — 4 web surfaces (Shared Link, Account Link, Payment 
 _FE Design Spec — 2026-09-08 (cấu trúc, không bump version): thêm khối 📍 Đọc nhanh dưới header — feature nguồn · phase-1 (DD-114) · launch (DD-113) · surface PWA trước, native iOS/Android phase-2 (DD-69) · FE PENDING (DD-116) · as-built @ `e235ea4`. Pointer core docs BRD v3.10 · PRD v2.9 · TDD v3.2 · ROADMAP v3.17. Nội dung thiết kế không đổi._
 
 _Re-pin 2026-09-15 (cấu trúc, không bump version): as-built @ `e235ea4` theo `ROADMAP.md` v3.17 §📍 — 8 command session · 7 route nghiệp vụ · **0 màn FE**; FE PENDING (DD-116) không đổi, DD-119 vẫn 🟡 chưa ratify. Nội dung thiết kế không đổi._
+
+_Sync 2026-10-16 (không bump version): bỏ hàng `Confirmed count` và đổi `Slots available` sang `slots_open` từ `getSessionOccupancy()` theo DD-133 (owner ký 2026-10-16). Source pin vẫn STALE, FE spec chưa được review lại._

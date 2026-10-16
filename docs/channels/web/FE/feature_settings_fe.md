@@ -1,7 +1,7 @@
 # Feature: Host Settings — FE Design Spec
 
 > **Route(s):** `/dashboard/settings` · `/me/settings`
-> **Source authority:** `../../../features/FE/feature_user_settings.md` v0.9a + `../../../features/FE/feature_tenant_routing_authz.md` v2.7 + `../../../features/FE/feature_payment_reconcile.md` v1.10 + `../../../features/FE/feature_connector_onboarding.md` v1.0 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4`
+> **Source authority:** `../../../features/FE/feature_user_settings.md` v0.9a + `../../../features/FE/feature_tenant_routing_authz.md` v2.7 + `../../../features/FE/feature_payment_reconcile.md` v1.10 + `../../../features/FE/feature_connector_onboarding.md` v1.0 · baseline `0c5808fc7cf50d139bdd9c4ee79917bf4059c4f4` · STALE PIN: sources are now payment_reconcile v1.13 · tenant_routing_authz v2.9 (user_settings v0.10 and connector_onboarding v1.1 are Entry-points only), FE spec not re-reviewed
 > **Source authority (BE tokens):** `../../../features/BE/feature_tenant_routing_authz_tech.md` — capability string `content.manage` · `bank_account.manage` · `connector.secret_manage` và mã `TENANT_CONTEXT_REQUIRED` / `NOT_TENANT_ADMIN` / `TENANT_SUSPENDED` / `CAPABILITY_DENIED`; `../../../features/BE/feature_connector_onboarding_tech.md` — mã connector/bank. Ba capability string trên **không** có trong `feature_tenant_routing_authz.md` v2.7; FE lấy nguyên văn từ BE tech doc.
 > **Source contract status:** User settings + connector onboarding Draft; routing/authz + payment safety Reviewed
 > **Projection/API contract:** User/settings response DTO `UNPINNED`; active form implementation omitted until Reviewed
