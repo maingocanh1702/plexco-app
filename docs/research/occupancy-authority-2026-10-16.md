@@ -29,7 +29,7 @@ SS / SR / RS=`packages/db/src/session-service.ts` / `session-read.ts` / `roster-
 | Live code SS:2664-2670 `sessionOccupancy` | active + `count(session_guest_notes)`; pending and holds omitted as structurally zero (SS:2651-2662; `0014_players_waitlist.sql:80-81` enum has no `pending`; no hold table) |
 | Live code SR:200-211 `listSessions` | a SECOND hand-written SQL copy (backlog `docs/autopilot-backlog.md:6107` `list-sessions-occupied-count-single-source`) |
 | Live code `apps/web/components/sessions/roster-counts.tsx:11` | the client derives `free = max(0, slotsMax - counts.occupied)` |
-| `public_sessions` (`0006_discovery.sql:21`, `packages/db/schema.ts:1552`, view `0033_public_projection_fences.sql:132-145`) | `slots_open NOT NULL`, no `>= 0` CHECK, no writer; `confirmed_count` exists nowhere (`0033:69`, SR:25-27) |
+| `public_sessions` (`0006_discovery.sql:21`, `packages/db/schema.ts:1552`, view `0033_public_projection_fences.sql:132-145`) | `slots_open NOT NULL`, no `>= 0` CHECK, no writer (`app` DML revoked at `0036_revoke_app_dml_public_sessions.sql:36`); `confirmed_count` exists nowhere (`0033:69`, SR:25-27) |
 
 Root cause: the DD-32 mirror (DEC:3596, 2026-07-28) predates guest notes and pending invites (SES v2.21, SES-B:1125). Only SES section 4 and the live code know guest notes; only the live code knows the real `players` enum.
 `sessionOccupancy` callers: RS:180-181 (full => waitlisted, no charge); SS:1455-1462 (`CAPACITY_BELOW_ROSTER`, then `CAPACITY_BELOW_OCCUPANCY`); SS:2802 (`SESSION_FULL`); SS:3003; SR:371 (`counts.occupied`).
@@ -84,8 +84,8 @@ Reviewed specs get a version bump and a changelog row; the public-DTO parts wait
 - NOT needed: a `confirmed_count` column (contrary to MKT-B:51 and :71), a view change (`0033:140` already has `slots_open`), an index, a base-SELECT re-grant (`0033:232-238` stays).
 - Later, each owner-authorized with its own feature: the hold-table migration adds the hold term (and makes the function VOLATILE because of `clock_timestamp()`); the `players_status_chk` migration adds the pending term.
 
-## 7. Owner questions (folded into one decision, D1 = DD-133)
+## 7. Owner questions (parts (a) and (b) of D1 = DD-133, the public read model epic; parts (c)-(e) are decided in DD-133, not here)
 
-- Part (a): sign "Occupancy authority" as written in sections 2-3, including the public-DTO amendment of DEC:464 and BR:50. Proposal: yes. Resume iff `decisions.md` on `origin/main` holds an owner-signed DD-133 row adopting sections 2-3.
-- Part (b): authorize the stage-2 `session_occupancy(uuid)` function inside the L10 projector migration. Proposal: yes; it changes no table, column, view or index. Resume iff the signed DD-133 row records the authorization. Otherwise the projector stays blocked: no TS-only path exists for `app_worker`.
+- Part (a): sign "Occupancy authority" as written in sections 2-3, including the public-DTO amendment of DEC:464 and BR:50. Proposal: yes. Resume iff the owner's approval event (PR #58 merged, or "Phase 3 plan approved") signs DD-133 part (a) and L0 records it.
+- Part (b): authorize the stage-2 `session_occupancy(uuid)` function inside the L10 projector migration. Proposal: yes; it changes no table, column, view or index. Resume iff the same approval event signs DD-133 part (b). Otherwise the projector stays blocked: no TS-only path exists for `app_worker`.
 - Stage 1 (L7) never waits for either part, because it changes no semantics.
