@@ -18,6 +18,7 @@ import {
   type SessionListItemDto,
   type SportDto,
 } from "./sessions-api";
+import { useRealtime } from "./use-realtime";
 
 /** AUTH_REQUIRED anywhere means the cookie is gone: drop offline snapshots before the redirect. */
 function noteError(error: unknown): ApiClientError {
@@ -25,6 +26,41 @@ function noteError(error: unknown): ApiClientError {
     error instanceof ApiClientError ? error : new ApiClientError("CLIENT_UNKNOWN", "", 0);
   if (wrapped.code === "AUTH_REQUIRED") clearSessionSnapshots();
   return wrapped;
+}
+
+/** Live refresh is opt-in per view (lane L5, R-13); only these errors replace data on screen. */
+export interface LiveOptions {
+  live?: boolean;
+}
+const LIVE_STOP = new Set(["AUTH_REQUIRED", "FORBIDDEN"]);
+
+/** A view streams only when it opted in and is not in its error state (which turns live off). */
+export function liveStreamEnabled(options: LiveOptions | undefined, state: { status: string }) {
+  return options?.live === true && state.status !== "error";
+}
+
+/** R-16: at most one run in flight plus at most one queued rerun, with no fixed delay. */
+function useSingleFlight(task: () => Promise<void>): () => void {
+  const latest = useRef(task);
+  const flight = useRef({ running: false, queued: false });
+  useEffect(() => {
+    latest.current = task;
+  });
+  return useCallback(() => {
+    const f = flight.current;
+    if (f.running) {
+      f.queued = true;
+      return;
+    }
+    f.running = true;
+    void (async () => {
+      do {
+        f.queued = false;
+        await latest.current().catch(() => undefined);
+      } while (f.queued);
+      f.running = false;
+    })();
+  }, []);
 }
 
 export type Loadable<T> =
@@ -39,8 +75,15 @@ export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
   const [state, setState] = useState<Loadable<T>>({ status: "loading" });
   const [nonce, setNonce] = useState(0);
   const silent = useRef(false);
+  // For liveRefresh: the latest `load`, and a generation that discards a refetch from older deps.
+  const latestLoad = useRef(load);
+  const generation = useRef(0);
+  useEffect(() => {
+    latestLoad.current = load;
+  });
   useEffect(() => {
     const controller = new AbortController();
+    generation.current += 1;
     if (!silent.current) setState({ status: "loading" });
     silent.current = false;
     load(controller.signal).then(
@@ -59,14 +102,31 @@ export function useLoadable<T>(load: (signal: AbortSignal) => Promise<T>, deps: 
     silent.current = true;
     setNonce((n) => n + 1);
   }, []);
-  return { state, reload, refresh };
+  /** Silent refetch for a live change: keeps the data on screen unless access is gone. */
+  const liveRefresh = useCallback(async () => {
+    const gen = generation.current;
+    try {
+      const data = await latestLoad.current(new AbortController().signal);
+      if (gen === generation.current) setState({ status: "ready", data });
+    } catch (raw) {
+      const error = noteError(raw);
+      if (gen === generation.current && LIVE_STOP.has(error.code))
+        setState({ status: "error", error });
+    }
+  }, []);
+  return { state, reload, refresh, liveRefresh };
 }
 
-export function useSessionDetail(tenantId: string, sessionId: string) {
-  return useLoadable<SessionDetailDto>(
+export function useSessionDetail(tenantId: string, sessionId: string, options?: LiveOptions) {
+  const loadable = useLoadable<SessionDetailDto>(
     (signal) => getSession(tenantId, sessionId, signal),
     [tenantId, sessionId],
   );
+  const refreshLive = useSingleFlight(loadable.liveRefresh);
+  useRealtime(tenantId, liveStreamEnabled(options, loadable.state), (signal) => {
+    if (signal.kind === "resync" || signal.message.sessionId === sessionId) refreshLive();
+  });
+  return loadable;
 }
 
 export function useSports() {
@@ -81,7 +141,7 @@ export type ListState =
 
 const PAGE = 20;
 
-export function useSessionList(tenantId: string, tab: ListTab) {
+export function useSessionList(tenantId: string, tab: ListTab, options?: LiveOptions) {
   const [streams, setStreams] = useState<Stream[] | null>(null);
   const [state, setState] = useState<ListState>({ status: "loading" });
   const [loadingMore, setLoadingMore] = useState(false);
@@ -92,6 +152,8 @@ export function useSessionList(tenantId: string, tab: ListTab) {
   // generation must not write its (old-tab) rows over the new tab's state.
   const generation = useRef(0);
   const moreController = useRef<AbortController | null>(null);
+  // `streams` for liveRefresh, written next to every setStreams (no render lag).
+  const streamsRef = useRef<Stream[] | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -101,6 +163,7 @@ export function useSessionList(tenantId: string, tab: ListTab) {
     setLoadingMore(false);
     setState({ status: "loading" });
     setStreams(null);
+    streamsRef.current = null;
     setMoreError(null);
     Promise.all(
       tabStatuses(tab).map(async (status): Promise<Stream> => {
@@ -117,6 +180,7 @@ export function useSessionList(tenantId: string, tab: ListTab) {
         if (controller.signal.aborted) return;
         const visible = visibleSessions(loaded, tab, now.current);
         saveSnapshot(tenantId, tab, visible);
+        streamsRef.current = loaded;
         setStreams(loaded);
         setState({
           status: "ready",
@@ -172,6 +236,7 @@ export function useSessionList(tenantId: string, tab: ListTab) {
         }),
       );
       if (gen !== generation.current) return;
+      streamsRef.current = next;
       setStreams(next);
       setState({
         status: "ready",
@@ -185,6 +250,42 @@ export function useSessionList(tenantId: string, tab: ListTab) {
       if (gen === generation.current) setLoadingMore(false);
     }
   }, [streams, loadingMore, tenantId, tab]);
+
+  // Live refresh (R-16): refetch every loaded stream silently, up to 50 rows each, with no loading
+  // state. The generation is bumped at the start and again on apply, so a loadMore built on the
+  // stale cursors is discarded; only AUTH_REQUIRED/FORBIDDEN replace the list.
+  const liveRefresh = useCallback(async () => {
+    const current = streamsRef.current;
+    if (!current) return;
+    generation.current += 1;
+    const gen = generation.current;
+    moreController.current?.abort();
+    setLoadingMore(false);
+    try {
+      const next = await Promise.all(
+        current.map(async (s): Promise<Stream> => {
+          const limit = Math.min(50, Math.max(PAGE, s.items.length));
+          const page = await listSessions(tenantId, { status: s.status, limit });
+          const { nextCursor: cursor, hasMore } = page.pageInfo;
+          return { status: s.status, items: page.sessions, cursor, hasMore };
+        }),
+      );
+      if (gen !== generation.current) return;
+      generation.current += 1;
+      const visible = visibleSessions(next, tab, now.current);
+      saveSnapshot(tenantId, tab, visible);
+      streamsRef.current = next;
+      setStreams(next);
+      setLoadingMore(false);
+      const hasMore = hasMorePages(next, tab, now.current);
+      setState({ status: "ready", sessions: visible, hasMore, offlineSavedAt: null });
+    } catch (raw) {
+      const error = noteError(raw);
+      if (gen === generation.current && LIVE_STOP.has(error.code))
+        setState({ status: "error", error });
+    }
+  }, [tenantId, tab]);
+  useRealtime(tenantId, liveStreamEnabled(options, state), useSingleFlight(liveRefresh));
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   return { state, loadMore, loadingMore, moreError, reload };

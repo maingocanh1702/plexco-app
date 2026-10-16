@@ -17,7 +17,9 @@ export function SessionsListView({ tenantId }: { tenantId: string }) {
   const t = useT();
   const lang = useLang();
   const [tab, setTab] = useState<ListTab>("all");
-  const { state, loadMore, loadingMore, moreError, reload } = useSessionList(tenantId, tab);
+  const { state, loadMore, loadingMore, moreError, reload } = useSessionList(tenantId, tab, {
+    live: true,
+  });
   const base = `/c/${tenantId}/sessions`;
 
   const labels: Record<ListTab, string> = {

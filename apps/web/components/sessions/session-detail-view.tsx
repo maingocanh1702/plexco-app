@@ -34,7 +34,7 @@ export function SessionDetailView({
   const t = useT();
   const lang = useLang();
   const ctx = useTenantContext(tenantId);
-  const { state, reload, refresh } = useSessionDetail(tenantId, sessionId);
+  const { state, reload, refresh } = useSessionDetail(tenantId, sessionId, { live: true });
   const [tab, setTab] = useState("roster");
   const [pending, setPending] = useState<SessionTransition | null>(null);
   const [busy, setBusy] = useState(false);
