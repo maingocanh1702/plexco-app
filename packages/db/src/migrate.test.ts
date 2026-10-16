@@ -23,10 +23,14 @@ import {
   revokeAllChatDefinerMembers,
   revokeStaleChatDefinerMembership,
   revokeStaleDefinerMembership,
+  leaseTestRolePasswords,
+  ROLE_PW,
   setupNonSuperuserOwnerContext,
   withChatDefinerLock,
   withIdentityDefinerNameLock,
+  withJobDefinerBreakerLock,
   withJobDefinerLock,
+  type TestRolePasswordLease,
 } from "./test-harness.js";
 
 const actualFsPromises =
@@ -935,10 +939,9 @@ describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYP
       );
       expect(ownerAttrs.rows[0]).toEqual({ rolsuper: false, rolbypassrls: false });
 
-      // app's cluster-global test password is owned by setupRlsTestContext (ROLE_PW.app); set the
-      // SAME literal here so a concurrently running rls suite keeps connecting.
-      await ctx.superuser.query(`ALTER ROLE app WITH PASSWORD 'plexco_test_app'`);
-      appClient = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      // app's cluster-global test password, leased by the context until teardown().
+      await ctx.useRuntimeRolePasswords();
+      appClient = await connect(url(ctx.dbName, "app", ROLE_PW.app));
 
       // ctx.superuser is connected to DATABASE_URL_TEST — the BASE database, NOT this test's
       // per-test one (the harness only ever intends it for cluster-global role work, which is
@@ -1086,7 +1089,7 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
   it("JCL-2a: job_definer absent — migration fails, 0022 is not recorded", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl2_absent");
     try {
-      await withJobDefinerLock(BASE!, () =>
+      await withJobDefinerBreakerLock(BASE!, () =>
         hideRealJobDefiner(ctx.superuser, async () => {
           await expect(ctx.runMigration()).rejects.toThrow(/job_definer/i);
         }),
@@ -1100,7 +1103,7 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
   it("JCL-2b: job_definer with a wrong attribute — migration fails, 0022 is not recorded", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl2_wrongattr");
     try {
-      await withJobDefinerLock(BASE!, () =>
+      await withJobDefinerBreakerLock(BASE!, () =>
         hideRealJobDefiner(ctx.superuser, async () => {
           await ctx.superuser.query(
             `CREATE ROLE job_definer LOGIN NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
@@ -1121,7 +1124,7 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
   it("preserve-caught-error: a migration failure's rethrown Error attaches the original as .cause", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_cause_preserved");
     try {
-      await withJobDefinerLock(BASE!, () =>
+      await withJobDefinerBreakerLock(BASE!, () =>
         hideRealJobDefiner(ctx.superuser, async () => {
           let caught: unknown;
           try {
@@ -1153,7 +1156,7 @@ describe("JCL-2/JCL-3 job-core migration fails closed on job_definer preconditio
   it("JCL-3b: job_definer already granted to a runtime role — migration fails closed even though the migration role's own membership is correct", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_jcl3b_runtimemember");
     try {
-      await withJobDefinerLock(BASE!, async () => {
+      await withJobDefinerBreakerLock(BASE!, async () => {
         await ctx.bootstrapJobDefinerForOwner();
 
         await ctx.superuser.query(`GRANT job_definer TO app_worker`);
@@ -1366,11 +1369,8 @@ describe("0054 step 1 fails closed on identity_definer preconditions (JCL-2/JCL-
       await inDb.query(`GRANT SELECT ON schema_migrations TO ${owner}`);
       // ONE short window for every case. Exclusive identity_definer name lock FIRST (the shared
       // side is what identity-link-web.test.ts takes whenever it names that role), then the chat
-      // lock, which every migration reaching 0054 holds, so no other suite migrates while a case has
-      // identity_definer broken. In this order the chat lock is never held while waiting for a
-      // reader, and only for these runs: every setupRlsTestContext holds the job lock while it
-      // waits for the chat lock, so a longer hold here starved rls-invariants JCL-4 (30 s timeout)
-      // in three measured full runs. No job lock: nothing here touches job_definer.
+      // lock, whose state side every migration reaching 0054 holds, so no other suite migrates while
+      // a case has identity_definer broken. No job lock: nothing here touches job_definer.
       await withIdentityDefinerNameLock(BASE!, "exclusive", () =>
         withChatDefinerLock(BASE!, async () => {
           // bootstrapChatDefinerForOwner's one-member hand-off, inside the window only: `owner`
@@ -1743,6 +1743,7 @@ describe("DD29-8 0028's lock ordering avoids a deadlock with concurrent tenant_p
     let dbClient: pg.Client | undefined;
     let appClient: pg.Client | undefined;
     let migrationClient: pg.Client | undefined;
+    let passwords: TestRolePasswordLease | undefined;
     try {
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.query(`CREATE DATABASE ${dbName}`);
@@ -1765,27 +1766,9 @@ describe("DD29-8 0028's lock ordering avoids a deadlock with concurrent tenant_p
       });
 
       // Connect as `app` — the runtime role tenant_provision() is GRANTed to (already granted by
-      // 0012, part of the 0000-0027 replay above). `app` is a CLUSTER-GLOBAL role, shared with
-      // every other suite's own setRolePasswordRaceSafe(client, "app", "plexco_test_app", ...) —
-      // this MUST set the exact same password those use (a first version of this test picked its
-      // own literal instead and, by racing a concurrent suite's ALTER ROLE, broke every other
-      // connect-as-app test in the run with "password authentication failed"). Retry on the same
-      // "tuple concurrently updated" race test-harness.ts's own helper tolerates, since two
-      // concurrent ALTERs to the identical value can still MVCC-conflict.
-      const appPassword = "plexco_test_app";
-      for (let attempt = 0; ; attempt++) {
-        try {
-          await dbClient.query(`ALTER ROLE app WITH LOGIN PASSWORD '${appPassword}'`);
-          break;
-        } catch (error) {
-          if (String(error).includes("tuple concurrently updated") && attempt < 10) {
-            await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-            continue;
-          }
-          throw error;
-        }
-      }
-      appClient = await connect(url(dbName, "app", appPassword));
+      // 0012, part of the 0000-0027 replay above), on its leased test password (CLUSTER-GLOBAL role).
+      passwords = await leaseTestRolePasswords(BASE!);
+      appClient = await connect(url(dbName, "app", ROLE_PW.app));
 
       const personRow = await dbClient.query(
         `INSERT INTO persons (display_name) VALUES ('DD29 Lock Order Owner') RETURNING id`,
@@ -1834,6 +1817,7 @@ describe("DD29-8 0028's lock ordering avoids a deadlock with concurrent tenant_p
     } finally {
       if (migrationClient) await migrationClient.end();
       if (appClient) await appClient.end();
+      await passwords?.release();
       if (dbClient) await dbClient.end();
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
       await admin.end();
@@ -1955,6 +1939,7 @@ describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are c
     await admin.connect();
     let dbClient: pg.Client | undefined;
     let appClient: pg.Client | undefined;
+    let passwords: TestRolePasswordLease | undefined;
     try {
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
       await admin.query(`CREATE DATABASE ${dbName}`);
@@ -1979,22 +1964,9 @@ describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are c
       );
       expect(preCheck.rows.length).toBe(4);
 
-      // Connect as `app` — same password convention DD29-8 uses (shared cluster-global role;
-      // must match every other suite's own setRolePasswordRaceSafe(client, "app", ...) literal).
-      const appPassword = "plexco_test_app";
-      for (let attempt = 0; ; attempt++) {
-        try {
-          await dbClient.query(`ALTER ROLE app WITH LOGIN PASSWORD '${appPassword}'`);
-          break;
-        } catch (error) {
-          if (String(error).includes("tuple concurrently updated") && attempt < 10) {
-            await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-            continue;
-          }
-          throw error;
-        }
-      }
-      appClient = await connect(url(dbName, "app", appPassword));
+      // Connect as `app` on its leased test password, exactly as DD29-8 does.
+      passwords = await leaseTestRolePasswords(BASE!);
+      appClient = await connect(url(dbName, "app", ROLE_PW.app));
 
       const personRow = await dbClient.query(
         `INSERT INTO persons (display_name) VALUES ('DD29 A2 Phase Owner') RETURNING id`,
@@ -2021,6 +1993,7 @@ describe("DD29-3 0028 expand upgrade path: pre-existing subscriptions rows are c
       expect(subOutRow.status).toBe("active");
     } finally {
       if (appClient) await appClient.end();
+      await passwords?.release();
       if (dbClient) await dbClient.end();
       await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
       await admin.end();
@@ -2412,7 +2385,7 @@ describe("CLI failure-log sink never prints row values from a real Postgres uniq
   it("preserves the migration filename in the CLI sink's actual output on a per-file migration failure", async () => {
     const ctx = await setupNonSuperuserOwnerContext("plexco_migrate_filename_preserved");
     try {
-      await withJobDefinerLock(BASE!, () =>
+      await withJobDefinerBreakerLock(BASE!, () =>
         hideRealJobDefiner(ctx.superuser, async () => {
           let caught: unknown;
           try {
@@ -3069,7 +3042,7 @@ async function withManagedPostgresAdminRole<T>(
 
 describe("job_definer bootstrap script itself fails closed on runtime-role targets", () => {
   it("refuses a nonexistent configured migration target with the native missing-role error", async () => {
-    await withJobDefinerLock(BASE!, async () => {
+    await withJobDefinerBreakerLock(BASE!, async () => {
       const client = await connect(BASE!);
       const missing = `zz_missing_job_target_${randomUUID().replaceAll("-", "")}`;
       try {
@@ -3089,7 +3062,7 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
   }, 30_000);
 
   it("refuses to grant job_definer to a runtime role passed as the migration_role target", async () => {
-    await withJobDefinerLock(BASE!, async () => {
+    await withJobDefinerBreakerLock(BASE!, async () => {
       const admin = await connect(BASE!);
       try {
         await bootstrapJobDefiner(admin);
@@ -3113,7 +3086,7 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
   }, 30_000);
 
   it("refuses to proceed at all when job_definer is already granted to a runtime role beforehand", async () => {
-    await withJobDefinerLock(BASE!, async () => {
+    await withJobDefinerBreakerLock(BASE!, async () => {
       const admin = await connect(BASE!);
       try {
         await bootstrapJobDefiner(admin);
@@ -3157,7 +3130,7 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
     // gap), so both calls here target the SAME migration role — this case can only prove what the LOCK
     // TABLE mechanism actually guarantees: (a) genuine serialization, proven by TIMING, not by one call
     // being refused; (b) zero duplicate-grant errors when both callers agree on the same target.
-    await withJobDefinerLock(BASE!, async () => {
+    await withJobDefinerBreakerLock(BASE!, async () => {
       await bootstrapJobDefiner(admin);
       const scratchDb = "plexco_migrate_clusterlock_job";
       await admin.query(`DROP DATABASE IF EXISTS ${scratchDb}`);
@@ -3230,7 +3203,7 @@ describe("job_definer bootstrap script itself fails closed on runtime-role targe
     // both eligible to grant membership to themselves (PG16 auto-grants `roleName` ADMIN OPTION as the
     // actual creator here, SS5.4.2 -- a role's ADMIN OPTION is a property of the ROLE, not of any one
     // connection, so both racing connections -- also authenticated as `roleName` -- inherit it).
-    await withJobDefinerLock(BASE!, () =>
+    await withJobDefinerBreakerLock(BASE!, () =>
       withManagedPostgresAdminRole(async (roleName, password) => {
         await hideRealJobDefiner(admin, async () => {
           const setupClient = await connect(url(BASE_DB, roleName, password));
@@ -4173,7 +4146,7 @@ describe("chat_definer bootstrap script bootstraps idempotently and fails closed
       const notices: Array<{ severity?: string; message?: string }> = [];
       scratchClient.on("notice", (n) => notices.push({ severity: n.severity, message: n.message }));
       try {
-        await withJobDefinerLock(BASE!, () =>
+        await withJobDefinerBreakerLock(BASE!, () =>
           hideRealJobDefiner(admin, async () => {
             const jobSql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
             await expect(scratchClient.query(jobSql)).resolves.toBeDefined();
@@ -4366,8 +4339,8 @@ describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledg
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      await ctx.superuser.query(`ALTER ROLE app WITH PASSWORD 'plexco_test_app'`);
-      appClient = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      await ctx.useRuntimeRolePasswords();
+      appClient = await connect(url(ctx.dbName, "app", ROLE_PW.app));
       suDb = await connect(url(ctx.dbName));
       // narrow once, before first use: the `let` above stays optional for the finally block
       const su = suDb;
@@ -4494,8 +4467,8 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
         await ctx.bootstrapChatDefinerForOwner();
         return ctx.runMigration();
       });
-      await ctx.superuser.query(`ALTER ROLE app WITH PASSWORD 'plexco_test_app'`);
-      appClient = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      await ctx.useRuntimeRolePasswords();
+      appClient = await connect(url(ctx.dbName, "app", ROLE_PW.app));
       suDb = await connect(url(ctx.dbName));
       const su = suDb;
 
@@ -4618,7 +4591,7 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
       await insertRaceNote(appClient);
       await insertRaceNote(appClient);
 
-      appClient2 = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+      appClient2 = await connect(url(ctx.dbName, "app", ROLE_PW.app));
       await appClient2.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantAId]);
       const appPid = (await appClient.query(`SELECT pg_backend_pid() AS pid`)).rows[0] as {
         pid: number;
@@ -4817,38 +4790,10 @@ describe("0045 guest-note tenant context", () => {
             [tenantA, person],
           );
         });
-        // Exercise a shared-role catalog conflict without racing another suite by timing.
-        const passwordSetter = vi
-          .spyOn(ctx.superuser, "query")
-          .mockRejectedValueOnce(new Error("tuple concurrently updated"));
-        try {
-          for (const [role, password] of [
-            ["app", "plexco_test_app"],
-            ["readonly", "plexco_test_readonly"],
-          ] as const) {
-            for (let attempt = 0; ; attempt++) {
-              try {
-                await ctx.superuser.query(`ALTER ROLE ${role} WITH PASSWORD '${password}'`);
-                break;
-              } catch (error) {
-                if (String(error).includes("tuple concurrently updated") && attempt < 10) {
-                  await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-                  continue;
-                }
-                throw error;
-              }
-            }
-          }
-          expect(passwordSetter).toHaveBeenNthCalledWith(
-            2,
-            "ALTER ROLE app WITH PASSWORD 'plexco_test_app'",
-          );
-        } finally {
-          passwordSetter.mockRestore();
-        }
-        const app = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+        await ctx.useRuntimeRolePasswords();
+        const app = await connect(url(ctx.dbName, "app", ROLE_PW.app));
         clients.push(app);
-        const readonly = await connect(url(ctx.dbName, "readonly", "plexco_test_readonly"));
+        const readonly = await connect(url(ctx.dbName, "readonly", ROLE_PW.readonly));
         clients.push(readonly);
         const worker = await ctx.connectAsWorker();
         const adminBefore = (await app.query("SELECT * FROM tenant_ids_for_person($1)", [person]))
@@ -4862,7 +4807,7 @@ describe("0045 guest-note tenant context", () => {
           }));
         const dataBefore = await retainedRows();
         // Restrict cluster catalog reads to this migration's principals. Unrelated
-        // test files may create their own fixture owner roles concurrently.
+        // test files may grant job_definer to their own fixture owner roles concurrently.
         const principals = [
           ctx.ownerRole,
           "app",
@@ -4899,6 +4844,7 @@ describe("0045 guest-note tenant context", () => {
             await owner.query(
               `SELECT roleid, member, grantor, admin_option, inherit_option, set_option FROM pg_auth_members
             WHERE roleid IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1))
+                AND NOT (roleid = 'job_definer'::regrole AND member NOT IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1)))
                OR member IN (SELECT oid FROM pg_roles WHERE rolname = ANY($1)) ORDER BY roleid, member, grantor`,
               [principals],
             )
@@ -5046,7 +4992,7 @@ describe("0045 guest-note tenant context", () => {
         }
 
         const gucCase = async (prior: string | undefined, outcome: "match" | "deny" | "error") => {
-          const client = await connect(url(ctx.dbName, "app", "plexco_test_app"));
+          const client = await connect(url(ctx.dbName, "app", ROLE_PW.app));
           try {
             await client.query("BEGIN");
             if (prior !== undefined)

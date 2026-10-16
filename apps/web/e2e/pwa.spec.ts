@@ -60,7 +60,24 @@ test.describe("PWA assets", () => {
     await page.goto("/?auth_error=AUTH_STALE");
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Bạn đang offline");
     // Back online: the user returns to the page they asked for, not the static fallback.
+    // Sequenced on the browser, not the app: wait for the page's own "online" listener (the heading
+    // is server-rendered, the listener comes with hydration), then hold the page's script while
+    // setOffline(false) runs. Playwright lifts the page before the service worker, so the page's
+    // retry could reach a still-offline worker and get the fallback again (measured, 1 of 8 runs).
+    const cdp = await context.newCDPSession(page);
+    await expect
+      .poll(async () => {
+        const { result } = await cdp.send("Runtime.evaluate", { expression: "window" });
+        const target = { objectId: result.objectId! };
+        const { listeners } = await cdp.send("DOMDebugger.getEventListeners", target);
+        return listeners.some((listener) => listener.type === "online");
+      })
+      .toBe(true);
+    await cdp.send("Debugger.enable");
+    await cdp.send("Debugger.pause");
     await context.setOffline(false);
+    await cdp.send("Debugger.resume").catch(() => {}); // not paused if no script ran meanwhile
+    await cdp.send("Debugger.disable");
     await expect(page).toHaveURL(/\/\?auth_error=AUTH_STALE$/);
     await expect(page.getByRole("link", { name: "Tiếp tục với Google" })).toBeVisible();
   });

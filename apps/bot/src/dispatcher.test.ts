@@ -7,10 +7,12 @@ import { migrate } from "@plexco/db";
 import { describe, expect, it, vi } from "vitest";
 import { withTestContext } from "./test-harness.js";
 import {
+  ROLE_PW,
   bootstrapJobDefiner,
   setAppWorkerPasswordRaceSafe,
   testUrl,
   withJobDefinerLock,
+  type TestRolePasswordLease,
 } from "./test-db.js";
 import {
   REQUIRED_PROJECTORS,
@@ -22,13 +24,8 @@ import {
 } from "./dispatcher.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const APP_WORKER_PASSWORD = "plexco_test_worker_jrd";
-// codex round-04 [P2] — see preflight.test.ts's identical comment for the
-// full rationale: this file deliberately does NOT try to restore
-// app_worker's cluster-global password after its own suite finishes. An
-// earlier attempt at exactly that caused a live cross-file race (this
-// file's pool opening a new connection while a sibling file's afterAll
-// changed the password out from under it).
+// app_worker's password is CLUSTER-global: ROLE_PW.app_worker, leased for the fixture's lifetime
+// (setAppWorkerPasswordRaceSafe) and restored by the last participant on the cluster.
 
 // --- DB test setup: the stateless job_definer helpers now live in ./test-db.ts
 // (shared with preflight.test.ts and schedule.test.ts); this file still owns its
@@ -56,14 +53,16 @@ async function setupDispatcherContext(dbName: string): Promise<DispatcherTestCon
   const directUrl = testUrl(base, {
     db: dbName,
     user: "app_worker",
-    password: APP_WORKER_PASSWORD,
+    password: ROLE_PW.app_worker,
   });
   let created = false;
   let verify: pg.Client | undefined;
   let workerPool: pg.Pool | undefined;
+  let passwords: TestRolePasswordLease | undefined;
   const teardown = async () => {
     const closed = await Promise.allSettled([workerPool?.end(), verify?.end()]);
-    const errors = closed
+    const released = await Promise.allSettled([passwords?.release()]); // after app_worker closed
+    const errors = [...closed, ...released]
       .filter((result) => result.status === "rejected")
       .map((result) => result.reason);
     if (errors.length) throw new AggregateError(errors, "Failed to close fixture connections");
@@ -88,7 +87,7 @@ async function setupDispatcherContext(dbName: string): Promise<DispatcherTestCon
       await bootstrapJobDefiner(admin);
       await migrate(migrationUrl);
     });
-    await setAppWorkerPasswordRaceSafe(admin, APP_WORKER_PASSWORD);
+    passwords = await setAppWorkerPasswordRaceSafe(base);
     verify = new pg.Client({ connectionString: migrationUrl });
     await verify.connect();
     workerPool = new pg.Pool({ connectionString: directUrl });
@@ -137,7 +136,7 @@ it(
         this: pg.Client,
         ...args
       ) {
-        if (args[0] === "SELECT pg_advisory_lock($1)") return Promise.reject(failure);
+        if (String(args[0]).includes("advisory_lock")) return Promise.reject(failure);
         return Reflect.apply(originalQuery, this, args);
       });
       return {
@@ -695,9 +694,8 @@ describe("runDispatchCycle", () => {
         // codex round-04-class race, caught empirically (not by codex itself —
         // found by re-running this suite repeatedly after the round-04 fix):
         // job_definer membership is CLUSTER-global, and app_worker is INHERIT
-        // (0000's default), so while preflight.test.ts's "forbidden grants" test
-        // holds `GRANT job_definer TO app_worker` (even briefly, even under
-        // withJobDefinerLock's protection against bootstrap/migrate races),
+        // (0000's default), so while migrate.test.ts's JCL-3b or bootstrap-refusal
+        // test holds `GRANT job_definer TO app_worker` (a breaker window, even briefly),
         // app_worker AUTOMATICALLY exercises job_definer's own
         // `GRANT SELECT, UPDATE ON outbox_events` (0022) in EVERY database on
         // the cluster — including whichever throwaway database THIS test
@@ -1032,10 +1030,11 @@ describe("job_worker_heartbeat / job_worker_liveness (0041)", () => {
         );
         expect(stale.rows[0]!.alive).toBe(false);
 
-        // No table grant: the definer is the only door.
-        await expect(
-          ctx.workerPool.query("SELECT * FROM job_worker_heartbeats"),
-        ).rejects.toMatchObject({ code: "42501" });
+        // No table grant: the definer is the only door (read under the reader lock, as JRD-11).
+        const heartbeats = () => ctx.workerPool.query("SELECT * FROM job_worker_heartbeats");
+        await withJobDefinerLock(process.env.DATABASE_URL_TEST!, () =>
+          expect(heartbeats()).rejects.toMatchObject({ code: "42501" }),
+        );
         await expect(
           ctx.workerPool.query("SELECT job_worker_heartbeat($1, 'h', 1)", ["x".repeat(129)]),
         ).rejects.toMatchObject({ code: "22023" });

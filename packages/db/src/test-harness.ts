@@ -1,4 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -78,18 +80,135 @@ export async function expectErrorChainToMatch(promise: Promise<unknown>, pattern
  * container / local compose postgres). The harness:
  *   1. drops + recreates a dedicated database (never touches the url's own db),
  *   2. runs the real migration runner against it (current baseline 0000..0014),
- *   3. gives the cluster-global runtime roles passwords so tests can connect
+ *   3. after step 4, leases the cluster-global runtime roles' test passwords so tests can connect
  *      AS app/readonly — proving RLS/grants from the runtime roles' seats,
  *      never from superuser (FORCE RLS is meaningless to a superuser),
  *   4. seeds two tenants via the owner connection (tenant provisioning is an
  *      auth-slice concern; tests only need two isolated tenants to exist).
+ * teardown() closes the pools, ends the lease and drops the database.
  */
 
-const ROLE_PW: Record<string, string> = {
+/** The ONE spelling of the runtime roles' test passwords: every other test file imports ROLE_PW. */
+export const ROLE_PW = {
   app: "plexco_test_app",
   app_worker: "plexco_test_worker",
   readonly: "plexco_test_readonly",
-};
+} as const;
+
+export interface TestRolePasswordLease {
+  release(): Promise<void>;
+}
+
+type RoleRow = { rolname: string; rolpassword: string | null; rolcanlogin: boolean };
+type RoleSnapshot = Record<string, RoleRow | null>;
+
+/**
+ * Leases the roles' test passwords, held SHARED (participantKey) and written only under mutexKey:
+ * no two ALTER ROLEs race, no value changes under a live participant. The first of a set snapshots
+ * pg_authid password + LOGIN to a 0600 file outside the repo (never logged); the last restores and
+ * checks it; a killed run's file is kept, not overwritten; a role missing from it ends passwordless.
+ */
+export function createRolePasswordLeaser(config: {
+  passwords: Readonly<Record<string, string>>;
+  mutexKey: number;
+  participantKey: number;
+  storeDir: string;
+}): (base: string) => Promise<TestRolePasswordLease> {
+  const roles = Object.keys(config.passwords);
+  return async (base) => {
+    const client = new pg.Client({ connectionString: base });
+    let tearingDown = false;
+    guardClientErrors(client, () => tearingDown);
+    const rolesNow = async () => {
+      const sql = "SELECT rolname, rolpassword, rolcanlogin FROM pg_authid WHERE rolname = ANY($1)";
+      return new Map((await client.query<RoleRow>(sql, [roles])).rows.map((r) => [r.rolname, r]));
+    };
+    const lastOne = async () => {
+      const sql = "SELECT pg_try_advisory_lock($1) AS ok";
+      return (await client.query<{ ok: boolean }>(sql, [config.participantKey])).rows[0]!.ok;
+    };
+    const storeFile = async () => {
+      const sql = "SELECT system_identifier::text AS id FROM pg_control_system()";
+      const cluster = (await client.query<{ id: string }>(sql)).rows[0]!.id;
+      return path.join(config.storeDir, `${cluster}-${config.participantKey.toString(16)}.json`);
+    };
+    const inSession = async (work: () => Promise<void>) => {
+      try {
+        await work();
+      } catch (error) {
+        tearingDown = true;
+        await client.end().catch(() => {});
+        throw error;
+      }
+    };
+    await inSession(async () => {
+      await client.connect();
+      await client.query("SELECT pg_advisory_lock($1)", [config.mutexKey]);
+      if (await lastOne()) {
+        const file = await storeFile();
+        if (!existsSync(file)) {
+          const now = await rolesNow();
+          const snapshot = Object.fromEntries(roles.map((role) => [role, now.get(role) ?? null]));
+          mkdirSync(config.storeDir, { recursive: true, mode: 0o700 });
+          writeFileSync(`${file}.tmp`, JSON.stringify(snapshot), { mode: 0o600 });
+          renameSync(`${file}.tmp`, file);
+        }
+        await client.query("SELECT pg_advisory_unlock($1)", [config.participantKey]);
+      }
+      await client.query("SELECT pg_advisory_lock_shared($1)", [config.participantKey]);
+      for (const role of (await rolesNow()).keys()) {
+        const password = client.escapeLiteral(config.passwords[role]!);
+        await client.query(
+          `ALTER ROLE ${client.escapeIdentifier(role)} WITH LOGIN PASSWORD ${password}`,
+        );
+      }
+      await client.query("SELECT pg_advisory_unlock($1)", [config.mutexKey]);
+    });
+    let released = false;
+    return {
+      release: async () => {
+        if (released) return;
+        released = true;
+        await inSession(async () => {
+          await client.query("SELECT pg_advisory_lock($1)", [config.mutexKey]);
+          await client.query("SELECT pg_advisory_unlock_shared($1)", [config.participantKey]);
+          if (await lastOne()) {
+            const file = await storeFile();
+            const snapshot = JSON.parse(readFileSync(file, "utf8")) as RoleSnapshot;
+            for (const role of (await rolesNow()).keys()) {
+              const was = snapshot[role];
+              const login = was ? (was.rolcanlogin ? "LOGIN " : "NOLOGIN ") : "";
+              const password = was?.rolpassword ? client.escapeLiteral(was.rolpassword) : "NULL";
+              await client.query(
+                `ALTER ROLE ${client.escapeIdentifier(role)} WITH ${login}PASSWORD ${password}`,
+              );
+            }
+            const after = await rolesNow();
+            for (const [role, was] of Object.entries(snapshot)) {
+              const now = after.get(role);
+              const same = was
+                ? now?.rolpassword === was.rolpassword && now.rolcanlogin === was.rolcanlogin
+                : !now?.rolpassword;
+              if (!same) throw new Error(`role ${role}: the restore does not match the snapshot`);
+            }
+            rmSync(file);
+          }
+          await client.query("SELECT pg_advisory_unlock_all()");
+        });
+        tearingDown = true;
+        await client.end();
+      },
+    };
+  };
+}
+
+/** The runtime roles' lease, one for the db, bot and web suites ("rlpw" mutex, "rlpr" participants). */
+export const leaseTestRolePasswords = createRolePasswordLeaser({
+  passwords: ROLE_PW,
+  mutexKey: 0x726c7077,
+  participantKey: 0x726c7072,
+  storeDir: path.join(os.homedir(), ".plexco-test-role-snapshot"),
+});
 
 /**
  * Canonical job_definer bootstrap (DD-89/DD-90 Q5) — the SAME file `pnpm db:bootstrap` and the
@@ -325,18 +444,20 @@ export async function revokeAllChatDefinerMembers(client: pg.Client): Promise<st
  * that caller with no way to synchronize against migrate.test.ts's own hiding tests.
  */
 const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
+// "chad": the one-member SLOT of chat_definer and identity_definer, held by a hand-off until its
+// teardown. "chst": their STATE (0030/0054), shared in withDefinerReadLock and exclusive in each
+// breaker window (withChatDefinerLock, 0054 step 1 too). The reader locks never take chad; a
+// non-superuser hand-off takes it in its jobd reader hold and migrates under the slot, not chst.
+const CHAT_DEFINER_STATE_LOCK_KEY = 0x63687374; // "chst"
 
+/** A chat_definer or identity_definer breaker window: the slot, then the state, both exclusive. */
 export async function withChatDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
-  const { release } = await acquireChatDefinerLock(base);
-  try {
-    return await fn();
-  } finally {
-    await release();
-  }
+  const keys = [CHAT_DEFINER_LOCK_KEY, CHAT_DEFINER_STATE_LOCK_KEY];
+  return withAdvisoryLocks(base, keys, "exclusive", fn);
 }
 
 /**
- * Manual-release counterpart to withChatDefinerLock (codex round-05 [P1]): a caller whose
+ * The slot alone, released by hand (codex round-05 [P1]): a caller whose
  * chat_definer hand-off spans more than one function call -- bootstrap now, arbitrary test work
  * later, restore/drop at teardown -- cannot express that as one callback. The prior shape (separate
  * withChatDefinerLock calls for the bootstrap step and, independently, the teardown/restore step)
@@ -412,19 +533,41 @@ export async function acquireChatDefinerLock(
  */
 const JOB_DEFINER_LOCK_KEY = 0x6a6f6264; // "jobd"
 
+/** The reader side. Never call it inside a reader's fn: see withAdvisoryLocks. */
 export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  return withAdvisoryLocks(base, [JOB_DEFINER_LOCK_KEY], "shared", fn);
+}
+
+/** The exclusive side, for every window that breaks job_definer (JCL-2/3, bootstrap refusals). */
+export async function withJobDefinerBreakerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  return withAdvisoryLocks(base, [JOB_DEFINER_LOCK_KEY], "exclusive", fn);
+}
+
+/** The shared side of every definer a full migrate() reaches: 0022 (jobd), 0030 and 0054 (chst). */
+export async function withDefinerReadLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  const keys = [JOB_DEFINER_LOCK_KEY, CHAT_DEFINER_STATE_LOCK_KEY];
+  return withAdvisoryLocks(base, keys, "shared", fn);
+}
+
+/**
+ * Holds `keys` on one session while fn runs. Exclusive: in order. Shared: all-or-nothing, waiting on
+ * a busy key while holding nothing. A connect() or lock failure ends the session, error unchanged
+ * (audit 2026-09-06, test-harness-job-definer-lock-client-leak). Never take a reader lock inside a
+ * reader's fn: a breaker queued between the two waits on the outer, the inner on it: an unseen hang.
+ */
+export async function withAdvisoryLocks<T>(
+  base: string,
+  keys: readonly number[],
+  mode: "shared" | "exclusive",
+  fn: () => Promise<T>,
+): Promise<T> {
   const lockClient = new pg.Client({ connectionString: base });
   let tearingDown = false;
   guardClientErrors(lockClient, () => tearingDown);
-  // Same defect class the chat-definer twin fixed in 491a334, left behind by that lane's negative
-  // scope (audit 2026-09-06, row test-harness-job-definer-lock-client-leak): connect() and the
-  // lock query ran OUTSIDE any try, so a rejection there (Postgres not ready, a password another
-  // suite just rotated, max_connections) leaked a client nobody could end() — vitest then hung at
-  // teardown instead of failing fast. Inline, not a shared helper: the two hazard classes are kept
-  // apart on purpose (that lane's contract), and a named helper would merge them.
   try {
     await lockClient.connect();
-    await lockClient.query("SELECT pg_advisory_lock($1)", [JOB_DEFINER_LOCK_KEY]);
+    if (mode === "shared") await lockAllShared(lockClient, keys);
+    else for (const key of keys) await lockClient.query("SELECT pg_advisory_lock($1)", [key]);
   } catch (error) {
     tearingDown = true;
     await lockClient.end().catch(() => {});
@@ -434,8 +577,25 @@ export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>):
     return await fn();
   } finally {
     tearingDown = true;
-    await lockClient.query("SELECT pg_advisory_unlock($1)", [JOB_DEFINER_LOCK_KEY]).catch(() => {});
+    await lockClient.query("SELECT pg_advisory_unlock_all()").catch(() => {});
     await lockClient.end();
+  }
+}
+
+async function lockAllShared(client: pg.Client, keys: readonly number[]): Promise<void> {
+  for (;;) {
+    let busy: number | undefined;
+    for (const key of keys) {
+      const sql = "SELECT pg_try_advisory_lock_shared($1) AS ok";
+      if (!(await client.query<{ ok: boolean }>(sql, [key])).rows[0]!.ok) {
+        busy = key;
+        break;
+      }
+    }
+    if (busy === undefined) return;
+    await client.query("SELECT pg_advisory_unlock_all()");
+    await client.query("SELECT pg_advisory_lock_shared($1)", [busy]);
+    await client.query("SELECT pg_advisory_unlock_shared($1)", [busy]);
   }
 }
 
@@ -446,7 +606,7 @@ export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>):
  * "exclusive" = that window. A key of its own, NOT the job/chat locks: readers then never queue
  * behind a sibling suite's migration. Acquire it BEFORE the chat or job lock, never while holding
  * either: the window holds it while it waits for the chat lock, and a chat holder waiting for this
- * lock would close a cycle (and would sit on the chat lock every setupRlsTestContext waits for).
+ * lock would close a cycle (and would sit on the "chst" key every reader waits for).
  */
 const IDENTITY_DEFINER_NAME_LOCK_KEY = 0x69646e6d; // "idnm" — distinct from jobd/chad/plxc/jdlk/cdlk/idlk
 
@@ -510,38 +670,6 @@ function testUrl(base: string, opts: { db?: string; user?: string; password?: st
 }
 
 /**
- * Set a cluster-global role's password, race-tolerant so the DB suites can run
- * as parallel vitest workers (fileParallelism:true). Two independent races:
- *   - on a cold cluster the role may not exist yet when the PRE-migrate call
- *     runs (migrate() creates it moments later) — tolerated when allowMissing;
- *   - several suites ALTER the SAME cluster-global role at the same instant,
- *     which Postgres reports as "tuple concurrently updated" (a transient
- *     catalog-write conflict on the shared pg_authid row). Every suite sets the
- *     identical static password, so retrying always converges on that value.
- */
-async function setRolePasswordRaceSafe(
-  client: pg.Client,
-  role: string,
-  password: string,
-  allowMissing: boolean,
-): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await client.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${password}'`);
-      return;
-    } catch (e) {
-      const msg = String(e);
-      if (allowMissing && msg.includes("does not exist")) return;
-      if (msg.includes("tuple concurrently updated") && attempt < 10) {
-        await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
-        continue;
-      }
-      throw e;
-    }
-  }
-}
-
-/**
  * @param dbName Dedicated throwaway database for THIS test file. Vitest runs
  *   test files in parallel by default; every caller MUST pass a name unique
  *   to its own suite (codex round-02) — two suites sharing one name would
@@ -565,37 +693,20 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   await admin.connect();
   await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
   await admin.query(`CREATE DATABASE ${dbName}`);
-  // 3. runtime roles get passwords (cluster-global, idempotent, race-tolerant).
-  //    role missing = migrations never ran on this cluster; migrate() creates it below.
-  for (const [role, pw] of Object.entries(ROLE_PW)) {
-    await setRolePasswordRaceSafe(admin, role, pw, /* allowMissing */ true);
-  }
 
   // 2. real runner against the fresh db. job_definer is cluster-global and must exist (correctly)
-  // before migrate() reaches 0022 (which only asserts it, never creates it) — bootstrap+migrate
-  // run under the lock so this can never overlap a sibling file's own bootstrap+migrate with the
-  // JCL-2/3 negative tests' deliberately-broken window (see withJobDefinerLock). Also under
-  // withChatDefinerLock (codex round-02 [P2], same order as BR-6/JCL-1's own fix: job outer, chat
-  // inner) — migrate() runs through 0030, which ALTER FUNCTION ... OWNER TO chat_definer's three
-  // functions and so needs chat_definer to exist and be stable for that entire window; without
-  // this lock, a sibling file's negative test renaming/dropping chat_definer under
-  // withChatDefinerLock could intermittently race this ordinary migration.
+  // before migrate() reaches 0022 (which only asserts it, never creates it); 0030 and 0054 then
+  // need chat_definer and identity_definer intact; withDefinerReadLock keeps every breaker out.
   const migrationUrl = testUrl(base, { db: dbName });
-  const migrateResult = await withJobDefinerLock(base, () =>
-    withChatDefinerLock(base, async () => {
-      await bootstrapJobDefiner(admin);
-      return migrate(migrationUrl);
-    }),
-  );
+  const migrateResult = await withDefinerReadLock(base, async () => {
+    await bootstrapJobDefiner(admin);
+    return migrate(migrationUrl);
+  });
   await admin.end();
 
-  // roles now certainly exist (ensured by the runner + 0000) — set passwords
   const owner = new pg.Client({ connectionString: migrationUrl });
   guardClientErrors(owner, () => tearingDown);
   await owner.connect();
-  for (const [role, pw] of Object.entries(ROLE_PW)) {
-    await setRolePasswordRaceSafe(owner, role, pw, /* allowMissing */ false);
-  }
 
   // 4. two tenants + resolve a seeded sport
   const tenants = await owner.query(
@@ -606,6 +717,8 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
   );
   const sport = await owner.query(`SELECT id FROM sports WHERE key = 'badminton'`);
 
+  // last (step 3): lease the roles' test passwords, so a failed connect or seed never holds them
+  const passwords = await leaseTestRolePasswords(base);
   const appUrl = testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app });
   const readonlyUrl = testUrl(base, { db: dbName, user: "readonly", password: ROLE_PW.readonly });
   const workerUrl = testUrl(base, { db: dbName, user: "app_worker", password: ROLE_PW.app_worker });
@@ -632,11 +745,24 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
     remigrate: () => migrate(migrationUrl),
     teardown: async () => {
       tearingDown = true;
-      await appDb.close();
-      await readonlyPool.end();
-      await workerPool.end();
-      await superuserDb.close();
-      await owner.end();
+      const closed = await Promise.allSettled([
+        appDb.close(),
+        readonlyPool.end(),
+        workerPool.end(),
+        superuserDb.close(),
+        owner.end(),
+      ]);
+      await passwords.release(); // after every close settled: a failed close can't keep the lease
+      // No FORCE: every connection this context opened is closed, DROP DATABASE waits up to 5 s for
+      // sockets still closing, and a connection a caller leaked fails here instead of being killed.
+      const dropper = new pg.Client({ connectionString: base });
+      await dropper.connect();
+      try {
+        await dropper.query(`DROP DATABASE IF EXISTS ${dbName}`);
+      } finally {
+        await dropper.end();
+      }
+      for (const result of closed) if (result.status === "rejected") throw result.reason;
     },
   };
 }
@@ -658,8 +784,8 @@ export interface NonSuperuserOwnerContext {
    *  AND the runMigration() call that follows it reference job_definer BY NAME (bootstrap/grant here;
    *  the 0022 assertion + ownership transfers there), so the CALLER must wrap the whole
    *  "bootstrapJobDefinerForOwner() then runMigration()" sequence in ONE withJobDefinerLock — wrapping
-   *  each call separately leaves a gap between them, and locking inside both would deadlock a caller
-   *  that already holds the lock. */
+   *  each call separately leaves a gap between them, and locking inside both would nest a second
+   *  reader session in the caller's, which hangs once a breaker queues (see withAdvisoryLocks). */
   bootstrapJobDefinerForOwner: () => Promise<void>;
   /** idempotent chat_definer bootstrap (grants membership to ownerRole) — call before runMigration()
    *  whenever the migration will reach 0030 (chat-dm-safety-authority-core) or later under a
@@ -676,8 +802,9 @@ export interface NonSuperuserOwnerContext {
   bootstrapChatDefinerForOwner: () => Promise<void>;
   /** run the real migration runner AS the non-superuser owner (never superuser) */
   runMigration: () => Promise<MigrateResult>;
-  /** call AFTER a successful runMigration(): ensures app_worker's test password (superuser-backed,
-   *  since the role may have just been created by migrate()) and returns a pool connected as it */
+  /** after runMigration(): lease ROLE_PW until teardown() (idempotent) for a caller's own client */
+  useRuntimeRolePasswords: () => Promise<void>;
+  /** after runMigration(): useRuntimeRolePasswords() plus an app_worker pool ended by teardown() */
   connectAsWorker: () => Promise<pg.Pool>;
   /** same as connectAsWorker but for the HTTP runtime role `app` (the only grantee of the identity definers) */
   connectAsApp: () => Promise<pg.Pool>;
@@ -753,6 +880,12 @@ export async function setupNonSuperuserOwnerContext(
   // is created but before the underlying bootstrap finishes now awaits the SAME promise instead of
   // returning early into a still-incomplete bootstrap.
   let chatDefinerBootstrapPromise: Promise<void> | null = null;
+  // Memoized the same way (assigned synchronously): one lease per context, ended in teardown().
+  let passwordLease: Promise<TestRolePasswordLease> | null = null;
+  const useRuntimeRolePasswords = async (): Promise<void> => {
+    passwordLease ??= leaseTestRolePasswords(base);
+    await passwordLease;
+  };
 
   const bootstrapJobDefinerForOwner = async () => {
     // job_definer needs BYPASSRLS, and PG16 forbids a role from creating (or being granted) a
@@ -826,7 +959,7 @@ export async function setupNonSuperuserOwnerContext(
   };
 
   const connectAsApp = async (): Promise<pg.Pool> => {
-    await setRolePasswordRaceSafe(admin, "app", ROLE_PW.app!, /* allowMissing */ false);
+    await useRuntimeRolePasswords();
     const pool = new pg.Pool({
       connectionString: testUrl(base, { db: dbName, user: "app", password: ROLE_PW.app }),
       max: 4,
@@ -837,12 +970,7 @@ export async function setupNonSuperuserOwnerContext(
   };
 
   const connectAsWorker = async (): Promise<pg.Pool> => {
-    await setRolePasswordRaceSafe(
-      admin,
-      "app_worker",
-      ROLE_PW.app_worker!,
-      /* allowMissing */ false,
-    );
+    await useRuntimeRolePasswords();
     const pool = new pg.Pool({
       connectionString: testUrl(base, {
         db: dbName,
@@ -864,6 +992,7 @@ export async function setupNonSuperuserOwnerContext(
     bootstrapJobDefinerForOwner,
     bootstrapChatDefinerForOwner,
     runMigration: () => migrate(ownerUrl),
+    useRuntimeRolePasswords,
     connectAsWorker,
     connectAsApp,
     teardown: async () => {
@@ -896,6 +1025,8 @@ export async function setupNonSuperuserOwnerContext(
           // both) — no separate REVOKE step needed.
           await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
           await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
+          // Last, so a throwing release can't skip the drops; a failed acquisition already threw.
+          await (passwordLease && (await passwordLease.catch(() => null)))?.release();
         } finally {
           // codex round-02 [P1]: DROP ROLE above may itself have thrown, in which case ownerRole
           // still exists and may still hold the chat_definer slot — revoke it explicitly and
