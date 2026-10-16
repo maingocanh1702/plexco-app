@@ -440,6 +440,22 @@ Table projector_deliveries {
   error_code text
 }
 
+// 0056: durable projector registry (GLOBAL, job_definer-owned, reached only through definers).
+Table outbox_projectors {
+  name text [pk]
+  enabled boolean [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+// 0056: event_type NULL = every event of the aggregate (web_realtime only).
+Table outbox_projector_routes {
+  projector text [not null]
+  aggregate_type text [not null]
+  event_type text
+  created_at timestamptz [not null]
+}
+
 Table surface_refs {
   id uuid [pk]
   aggregate_id uuid [not null]
@@ -672,6 +688,7 @@ Ref: bank_accounts.provider_connection_id > provider_connections.id
 Ref: processed_commands.tenant_id > tenants.id
 Ref: outbox_events.tenant_id > tenants.id
 Ref: projector_deliveries.event_id > outbox_events.id
+Ref: outbox_projector_routes.projector > outbox_projectors.name
 Ref: join_requests.tenant_id > tenants.id
 Ref: join_requests.session_id > sessions.id
 Ref: join_requests.person_id > persons.id

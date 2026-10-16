@@ -633,6 +633,8 @@ export const sessions = pgTable("sessions", {
 }, (t) => ({
   tenantStatusIdx: index("idx_sessions_tenant_status").on(t.tenantId, t.status),
   startsIdx: index("idx_sessions_starts_at").on(t.startsAt).where(sql`${t.status} = 'open'`),
+  // 0056: the stale-draft auto-expiry claim scan (job_expire_stale_drafts).
+  draftStartsIdx: index("idx_sessions_draft_starts_at").on(t.startsAt).where(sql`${t.status} = 'draft'`),
   timeChk: check("sessions_time_chk", sql`${t.endsAt} > ${t.startsAt}`),
   priceChk: check("sessions_price_chk", sql`${t.priceAmount} >= 0`),
   slotsChk: check("sessions_slots_chk", sql`${t.slotsMax} IS NULL OR ${t.slotsMax} > 0`),
@@ -1524,6 +1526,39 @@ export const jobAuditEvents = pgTable("job_audit_events", {
   operationIdx: index("idx_job_audit_events_operation_id").on(t.operationId),
 }));
 
+// 0056: the durable projector registry (DD-134, Phase 3 L3). GLOBAL (no tenant_id), owned by
+// job_definer, zero grants: workers read it only through outbox_required_projectors() and
+// projector_is_enabled(); the owner flips a projector with outbox_projector_set_enabled().
+export const outboxProjectors = pgTable("outbox_projectors", {
+  name: text("name").primaryKey(),
+  enabled: boolean("enabled").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  nameChk: check("outbox_projectors_name_chk", sql`${t.name} ~ '^[a-z][a-z0-9_]{0,63}$'`),
+}));
+
+// 0056: event type -> projector routes. A later lane adds rows in its OWN migration; event_type
+// NULL means every event of the aggregate and is reserved to web_realtime (wildcardChk).
+export const outboxProjectorRoutes = pgTable("outbox_projector_routes", {
+  projector: text("projector").notNull().references(() => outboxProjectors.name),
+  aggregateType: text("aggregate_type").notNull(),
+  eventType: text("event_type"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uq: unique("outbox_projector_routes_uq")
+    .on(t.projector, t.aggregateType, t.eventType).nullsNotDistinct(),
+  aggregateTypeChk: check("outbox_projector_routes_aggregate_type_chk",
+    sql`${t.aggregateType} ~ '^[a-z][a-z0-9_]{0,63}$'`),
+  eventTypeChk: check("outbox_projector_routes_event_type_chk",
+    sql`${t.eventType} IS NULL OR (char_length(${t.eventType}) <= 128 AND ${t.eventType} ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$')`),
+  wildcardChk: check("outbox_projector_routes_wildcard_chk",
+    sql`${t.eventType} IS NOT NULL OR ${t.projector} = 'web_realtime'`),
+  // DD-134 (c): zalo_dm admits exactly the four signed DM types.
+  zaloDmChk: check("outbox_projector_routes_zalo_dm_chk",
+    sql`${t.projector} <> 'zalo_dm' OR (${t.aggregateType} = 'session' AND ${t.eventType} IS NOT NULL AND ${t.eventType} IN ('session.updated', 'session.cancelled', 'session.announcement_requested', 'player.promoted'))`),
+}));
+
 export const surfaceRefs = pgTable("surface_refs", {
   id: uuid("id").primaryKey().defaultRandom(),
   aggregateId: uuid("aggregate_id").notNull(),
@@ -1782,6 +1817,8 @@ export const jobWorkerHeartbeats = pgTable("job_worker_heartbeats", {
   pid: integer("pid").notNull(),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  // 0056: the boolean that gated boss.work in that process; NULL from a pre-0056 caller = off.
+  scheduleEnabled: boolean("schedule_enabled"),
 }, (t) => ({
   workerIdChk: check("job_worker_heartbeats_worker_id_chk", sql`char_length(${t.workerId}) BETWEEN 1 AND 128`),
   pidChk: check("job_worker_heartbeats_pid_chk", sql`${t.pid} > 0`),
