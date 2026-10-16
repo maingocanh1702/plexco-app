@@ -6214,6 +6214,25 @@ notes: |
   PR #54 body ghi scan đỏ trên main từ lần chạy theo lịch 2026-09-30 (chưa đo lại ngày bắt đầu). Cách sửa theo tiền lệ AP-51 (`deps-osv-transitive-floors`): nâng floor qua override trong `pnpm-workspace.yaml`, rồi chạy lại scan.
   source: PR #54 body · Security run 38456110453 (đo tại main `9c07a33`)
 
+## task: braces-ghsa-vfj7-no-fixed-version
+title: braces 3.0.3 (GHSA-vfj7-8cjw-p6xm, High) chưa có bản sửa; chỉ nằm trên đường lint qua @next/eslint-plugin-next
+status: idea
+risk: P2
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: [package.json, pnpm-lock.yaml]
+manifest: null
+merged_probe: null
+_probe_note: probe do slice tác giả đưa vào; chưa có.
+_readiness: NOT_CODE_READY — upstream chưa phát hành bản sửa; mở lại khi có trigger ghi trong notes.
+notes: |
+  Advisory GHSA-vfj7-8cjw-p6xm (CVE-2026-93687), severity High (CVSS 8.7), package `braces`, đang cài 3.0.3, bản sửa đầu tiên: chưa có (OSV: introduced 0, last_affected 3.0.3; npm latest 3.0.3, đo 2026-10-16).
+  Lý do không sửa trong L1b p3-osv-advisories: decision table dòng "no fixed version published" (không bump, không override, không ignore trong `osv-scanner.toml`).
+  Đường kéo vào: `@next/eslint-plugin-next@15.5.20` (root devDependency, pin chính xác) -> `fast-glob@3.3.1` (pin chính xác, cũng có trong plugin 15.5.27, 15.5.28, 16.0.0 và bản mới nhất 16.4.2) -> `micromatch@4.0.8` (npm latest, `^3.0.3`) -> `braces@3.0.3`; chỉ chạy lúc lint.
+  Trigger mở lại: OSV thêm event `fixed` cho braces, hoặc một bản micromatch, fast-glob hay @next/eslint-plugin-next cùng major bỏ braces; khi đó chạy lại decision table của L1b, gồm cả điều kiện 7 ngày của `minimumReleaseAge`.
+  source: L1b p3-osv-advisories step 0 · Security run 38851467389 (main c762c90)
+
 ## task: offline-page-csp-nonce-missing
 title: Trang `/offline` prerender không mang nonce: bật `CSP_SCRIPT_NONCE_ENABLED=true` sẽ chặn mọi script của trang này
 status: idea
