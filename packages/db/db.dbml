@@ -456,6 +456,15 @@ Table outbox_projector_routes {
   created_at timestamptz [not null]
 }
 
+// 0057: per-recipient zalo_dm dispositions (GLOBAL, job_definer-owned, reached only through definers).
+Table zalo_dm_recipient_deliveries {
+  event_id uuid [not null]
+  channel_identity_id uuid [not null]
+  outcome text [not null]
+  error_code text
+  created_at timestamptz [not null]
+}
+
 Table surface_refs {
   id uuid [pk]
   aggregate_id uuid [not null]
@@ -689,6 +698,8 @@ Ref: processed_commands.tenant_id > tenants.id
 Ref: outbox_events.tenant_id > tenants.id
 Ref: projector_deliveries.event_id > outbox_events.id
 Ref: outbox_projector_routes.projector > outbox_projectors.name
+Ref: zalo_dm_recipient_deliveries.event_id > outbox_events.id
+Ref: zalo_dm_recipient_deliveries.channel_identity_id > channel_identities.id
 Ref: join_requests.tenant_id > tenants.id
 Ref: join_requests.session_id > sessions.id
 Ref: join_requests.person_id > persons.id
