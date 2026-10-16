@@ -694,9 +694,8 @@ describe("runDispatchCycle", () => {
         // codex round-04-class race, caught empirically (not by codex itself —
         // found by re-running this suite repeatedly after the round-04 fix):
         // job_definer membership is CLUSTER-global, and app_worker is INHERIT
-        // (0000's default), so while preflight.test.ts's "forbidden grants" test
-        // holds `GRANT job_definer TO app_worker` (even briefly, even under
-        // withJobDefinerLock's protection against bootstrap/migrate races),
+        // (0000's default), so while migrate.test.ts's JCL-3b or bootstrap-refusal
+        // test holds `GRANT job_definer TO app_worker` (a breaker window, even briefly),
         // app_worker AUTOMATICALLY exercises job_definer's own
         // `GRANT SELECT, UPDATE ON outbox_events` (0022) in EVERY database on
         // the cluster — including whichever throwaway database THIS test

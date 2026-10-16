@@ -103,11 +103,10 @@ type RoleRow = { rolname: string; rolpassword: string | null; rolcanlogin: boole
 type RoleSnapshot = Record<string, RoleRow | null>;
 
 /**
- * Leases the roles' test passwords: held SHARED (participantKey) while in use, written only under
- * mutexKey, so no two ALTER ROLEs race and none changes under a live participant. The first of a set
- * snapshots pg_authid password + LOGIN to a 0600 file outside the repo, never logged; the last
- * restores and checks it. A killed run's file is kept by the next set, so a test value never
- * overwrites it. A role absent at the snapshot ends with no password. A failure ends the session.
+ * Leases the roles' test passwords, held SHARED (participantKey) and written only under mutexKey:
+ * no two ALTER ROLEs race, no value changes under a live participant. The first of a set snapshots
+ * pg_authid password + LOGIN to a 0600 file outside the repo (never logged); the last restores and
+ * checks it; a killed run's file is kept, not overwritten; a role missing from it ends passwordless.
  */
 export function createRolePasswordLeaser(config: {
   passwords: Readonly<Record<string, string>>;
@@ -445,10 +444,9 @@ export async function revokeAllChatDefinerMembers(client: pg.Client): Promise<st
  * that caller with no way to synchronize against migrate.test.ts's own hiding tests.
  */
 const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x6a6f6264) and "plxc" (0x706c7863)
-// "chad" is the one-member SLOT of chat_definer and identity_definer, held by a membership hand-off
-// until its teardown. "chst" is their STATE: every migrate() reaching 0030/0054 holds its shared
-// side (withDefinerReadLock), every breaker window its exclusive side (withChatDefinerLock, 0054
-// step 1 included). A hand-off moves membership only, so a reader never waits on one.
+// "chad": the one-member SLOT of chat_definer and identity_definer, held by a hand-off until its
+// teardown. "chst": their STATE, shared by each migrate() reaching 0030/0054 (withDefinerReadLock),
+// exclusive in each breaker window (withChatDefinerLock, 0054 step 1 too). Readers never take chad.
 const CHAT_DEFINER_STATE_LOCK_KEY = 0x63687374; // "chst"
 
 /** A chat_definer or identity_definer breaker window: the slot, then the state, both exclusive. */
@@ -525,16 +523,16 @@ export async function acquireChatDefinerLock(
  * same class of hazard BR-1 documents for app/app_worker/readonly, except those tests dodge it by
  * never touching the shared roles at all (migrate.test.ts:24-25). job_definer's negative-path
  * proofs have no such option (they must actually break it), so this advisory lock makes "must be
- * correct" (every bootstrap+migrate call: withJobDefinerLock, shared) and "deliberately broken for
- * one assertion" (the JCL-2/3 negative tests: withJobDefinerBreakerLock, exclusive) mutually
- * exclusive: whichever side holds the lock, the other blocks until it's released, so the two windows
- * can never overlap. A leftover ABSENT role self-heals (the next
+ * correct" (every bootstrap+migrate call) and "deliberately broken for one assertion" (the JCL-2/3
+ * negative tests) mutually exclusive: whichever side holds the lock, the other blocks until it's
+ * released, so the two windows can never overlap. A leftover ABSENT role self-heals (the next
  * lock-holder's bootstrap recreates it) — a leftover WRONG-ATTRIBUTE role does NOT (bootstrap
  * fails closed on drift instead of silently fixing it), so every caller that intentionally
  * corrupts the attributes MUST drop the role again before releasing the lock.
  */
 const JOB_DEFINER_LOCK_KEY = 0x6a6f6264; // "jobd"
 
+/** The reader side; JCL-2/3 windows hold the breaker side. Never nest: see withAdvisoryLocks. */
 export async function withJobDefinerLock<T>(base: string, fn: () => Promise<T>): Promise<T> {
   return withAdvisoryLocks(base, [JOB_DEFINER_LOCK_KEY], "shared", fn);
 }
@@ -552,7 +550,8 @@ export async function withDefinerReadLock<T>(base: string, fn: () => Promise<T>)
 /**
  * Holds `keys` on one session while fn runs. Exclusive: in order. Shared: all-or-nothing, waiting on
  * a busy key while holding nothing. A connect() or lock failure ends the session, error unchanged
- * (audit 2026-09-06, test-harness-job-definer-lock-client-leak). Exported for test-harness.test.ts.
+ * (audit 2026-09-06, test-harness-job-definer-lock-client-leak). Never nest one hold in another's
+ * fn: a breaker queued between them waits on the outer, the inner on it: a hang Postgres can't see.
  */
 export async function withAdvisoryLocks<T>(
   base: string,
@@ -695,8 +694,7 @@ export async function setupRlsTestContext(dbName: string): Promise<RlsTestContex
 
   // 2. real runner against the fresh db. job_definer is cluster-global and must exist (correctly)
   // before migrate() reaches 0022 (which only asserts it, never creates it); 0030 and 0054 then
-  // need chat_definer and identity_definer intact. Both run on the reader side of those definers'
-  // locks, so no breaker window can overlap them, and sibling readers never make this wait.
+  // need chat_definer and identity_definer intact; withDefinerReadLock keeps every breaker out.
   const migrationUrl = testUrl(base, { db: dbName });
   const migrateResult = await withDefinerReadLock(base, async () => {
     await bootstrapJobDefiner(admin);
@@ -784,8 +782,8 @@ export interface NonSuperuserOwnerContext {
    *  AND the runMigration() call that follows it reference job_definer BY NAME (bootstrap/grant here;
    *  the 0022 assertion + ownership transfers there), so the CALLER must wrap the whole
    *  "bootstrapJobDefinerForOwner() then runMigration()" sequence in ONE withJobDefinerLock — wrapping
-   *  each call separately leaves a gap between them, and locking inside both would deadlock a caller
-   *  that already holds the lock. */
+   *  each call separately leaves a gap between them, and locking inside both would nest a second
+   *  reader session in the caller's, which hangs once a breaker queues (see withAdvisoryLocks). */
   bootstrapJobDefinerForOwner: () => Promise<void>;
   /** idempotent chat_definer bootstrap (grants membership to ownerRole) — call before runMigration()
    *  whenever the migration will reach 0030 (chat-dm-safety-authority-core) or later under a
@@ -802,11 +800,9 @@ export interface NonSuperuserOwnerContext {
   bootstrapChatDefinerForOwner: () => Promise<void>;
   /** run the real migration runner AS the non-superuser owner (never superuser) */
   runMigration: () => Promise<MigrateResult>;
-  /** call AFTER a successful runMigration(): leases the runtime roles' test passwords (ROLE_PW)
-   *  until teardown(); idempotent. For a caller that connects with its own pg.Client. */
+  /** after runMigration(): lease ROLE_PW until teardown() (idempotent) for a caller's own client */
   useRuntimeRolePasswords: () => Promise<void>;
-  /** call AFTER a successful runMigration(): useRuntimeRolePasswords(), then a pool connected as
-   *  app_worker, ended by teardown() */
+  /** after runMigration(): useRuntimeRolePasswords() plus an app_worker pool ended by teardown() */
   connectAsWorker: () => Promise<pg.Pool>;
   /** same as connectAsWorker but for the HTTP runtime role `app` (the only grantee of the identity definers) */
   connectAsApp: () => Promise<pg.Pool>;
