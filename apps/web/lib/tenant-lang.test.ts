@@ -242,6 +242,13 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // screens (landing `?auth_error`, create-club form), which render Vietnamese by DD-118 bucket b.
   "lib/auth-error-message.ts": "b",
   "lib/new-club-form.ts": "b",
+  // (a) L5 web live sync: the stream is admitted by the host read gate (session.manage proven for
+  // this tenant) and built inside runWithLang; its pre-auth 401 stays Vietnamese like the gate's.
+  "app/api/realtime/subscribe/route.ts": "a",
+  // (c) L5: re-authorization, LISTEN fan-out and the client EventSource hub emit no user text.
+  "lib/realtime-auth.ts": "c",
+  "lib/realtime-listener.ts": "c",
+  "lib/use-realtime.ts": "c",
 };
 
 function discoverRouteFiles(dir: string, prefix: string): string[] {
