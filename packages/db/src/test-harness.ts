@@ -1015,8 +1015,6 @@ export async function setupNonSuperuserOwnerContext(
         try {
           await ownerPool.end();
           for (const p of workerPools) await p.end();
-          // After every runtime-role pool closed; a failed acquisition already failed its caller.
-          await (passwordLease && (await passwordLease.catch(() => null)))?.release();
           // codex round-07 [P1]: closing connections alone leaves the database, the cluster-global
           // ownerRole, and its job_definer/chat_definer membership behind — a LOGIN role with a
           // known, fixed password and BYPASSRLS-via-membership on a shared local cluster. Drop the
@@ -1026,6 +1024,8 @@ export async function setupNonSuperuserOwnerContext(
           // both) — no separate REVOKE step needed.
           await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
           await admin.query(`DROP ROLE IF EXISTS ${ownerRole}`);
+          // Last, so a throwing release can't skip the drops; a failed acquisition already threw.
+          await (passwordLease && (await passwordLease.catch(() => null)))?.release();
         } finally {
           // codex round-02 [P1]: DROP ROLE above may itself have thrown, in which case ownerRole
           // still exists and may still hold the chat_definer slot — revoke it explicitly and
