@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import pg from "pg";
 import { migrate } from "@plexco/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -17,6 +20,41 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const delivered: DeliverFn = async () => ({ result: "delivered" });
+const CLI = path.join(HERE, "..", "..", "..", "scripts", "outbox-dlq-replay.mjs");
+
+/** Runs the owner CLI (D-10) as a real process; DATABASE_URL_MIGRATION is its only credential. */
+async function runCli(args: string[], url: string) {
+  const env = { ...process.env, DATABASE_URL_MIGRATION: url };
+  try {
+    const { stdout, stderr } = await promisify(execFile)(process.execPath, [CLI, ...args], { env });
+    return { code: 0, stdout, stderr };
+  } catch (error) {
+    const e = error as { code?: number; stdout?: string; stderr?: string };
+    return { code: e.code ?? -1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+  }
+}
+
+describe("scripts/outbox-dlq-replay.mjs (D-10)", () => {
+  it("refuses bad arguments with exit 2 before connecting, and never prints the credential", async () => {
+    const url = "postgres://plexco:cli_secret_pw@127.0.0.1:9/none";
+    const refused = [
+      [],
+      ["drop"],
+      ["replay", "--event", "not-a-uuid", "--projector", "web_realtime"],
+      ["replay", "--event", randomUUID()],
+      ["list", "--limit", "501"],
+      ["list", "--projector", "Bad-Name"],
+    ];
+    for (const args of refused) {
+      const result = await runCli(args, url);
+      expect(result.code, args.join(" ")).toBe(2);
+      expect(result.stderr).toContain("invalid_argument");
+    }
+    const down = await runCli(["list"], url);
+    expect(down.code).toBe(1);
+    expect(down.stdout + down.stderr).not.toContain("cli_secret_pw");
+  });
+});
 
 describe("projector modules (D-5, D-8, A24)", () => {
   it("maps exactly the three registry names to placeholders that dead-letter projector_not_implemented with no I/O", async () => {
@@ -210,5 +248,47 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     );
     expect(attempts).toEqual([0]);
     expect(await deliveries(eventId)).toMatchObject([{ status: "delivered", error_code: null }]);
+  });
+
+  it("the owner CLI lists a dlq row without its payload and replays it once; a second replay or an unknown pair exits 2 (D-10, A9-A11)", async () => {
+    const eventId = await insertEvent("reg_test_aggregate", "reg.test.event");
+    await cycle(
+      new Map([["reg_probe", async () => ({ result: "dlq", errorCode: "cli_terminal" })]]),
+    );
+    const url = testUrl(base, { db: dbName });
+    const replay = (event: string) =>
+      runCli(["replay", "--event", event, "--projector", "reg_probe"], url);
+    await withJobDefinerLock(base, async () => {
+      const list = await runCli(["list", "--projector", "reg_probe"], url);
+      expect(list.code).toBe(0);
+      const rows = list.stdout
+        .trim()
+        .split("\n")
+        .slice(0, -1)
+        .map((line) => JSON.parse(line));
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          event_id: eventId,
+          projector: "reg_probe",
+          error_code: "cli_terminal",
+        }),
+      );
+      expect(rows.some((row) => "payload" in row)).toBe(false);
+      expect((await replay(eventId)).code).toBe(0);
+      const again = await replay(eventId);
+      expect(again.code).toBe(2);
+      expect(again.stderr).toContain("delivery_not_in_dlq: the delivery is pending");
+      const missing = await replay(randomUUID());
+      expect(missing.code).toBe(2);
+      expect(missing.stderr).toContain("delivery_not_found");
+    });
+    expect(await deliveries(eventId)).toMatchObject([{ status: "pending", attempts: 0 }]);
+    const audit = await verify.query(
+      "SELECT actor, reason FROM job_audit_events WHERE job_id = $1 AND actor = 'owner'",
+      [eventId],
+    );
+    expect(audit.rows).toEqual([{ actor: "owner", reason: "projector_delivery_replayed" }]);
+    await cycle(new Map([["reg_probe", delivered]]));
+    expect(await deliveries(eventId)).toMatchObject([{ status: "delivered" }]);
   });
 });
