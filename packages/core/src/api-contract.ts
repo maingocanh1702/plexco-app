@@ -82,11 +82,18 @@
  * JOIN_REQUEST_NOT_FOUND (404), LEAVE_REQUIRES_HOST (409), REQUEST_DECIDED (409), REQUEST_EXPIRED (409)
  * and SESSION_NOT_JOINABLE (400) arrived with player self-join (M9: POST /api/sessions/:id/join and
  * /leave, the join-request cancel/approve/reject routes); D3 (DD-135), readiness p3-m9-join-core 4.6.
+ *
+ * INVALID_CHANNEL (400) and SESSION_ALREADY_ENDED (409) returned with POST /api/sessions/:id/announce
+ * (M6), as the DD-56 deferral (b) required; both are pinned in feature_session_management_tech.md
+ * section 3. ANNOUNCE_DELIVERY_DISABLED (409) is that route's refusal when the DB shows no live dispatch
+ * schedule or a disabled zalo_dm projector (DD-134 (f); proposed, pending owner sign-off), so the route
+ * never answers announced:true while nothing can deliver.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
   "ALLOCATION_NOT_FOUND",
   "ALREADY_JOINED",
+  "ANNOUNCE_DELIVERY_DISABLED",
   "AUTH_INVALID",
   "AUTH_REQUIRED",
   "AUTH_STALE",
@@ -105,6 +112,7 @@ export const API_ERROR_CODES = [
   "GUEST_NOTE_LIMIT_REACHED",
   "GUEST_NOTE_NOT_FOUND",
   "INVALID_BODY",
+  "INVALID_CHANNEL",
   "INVALID_TIME_RANGE",
   "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
@@ -129,6 +137,7 @@ export const API_ERROR_CODES = [
   "REQUEST_EXPIRED",
   "REVERSAL_EXCEEDS_EFFECTIVE",
   "REVERSAL_NOT_SUPPORTED",
+  "SESSION_ALREADY_ENDED",
   "SESSION_FULL",
   "SESSION_NOT_FOUND",
   "SESSION_NOT_JOINABLE",

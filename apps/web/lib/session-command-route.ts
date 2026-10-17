@@ -2,6 +2,8 @@ import { isApiErrorCode, type ApiErrorCode, type ApiErrorDetails } from "@plexco
 import { runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
   RosterMoneyError,
+  SessionAnnounceAuthorizationError,
+  SessionAnnounceError,
   SessionCancelAuthorizationError,
   SessionCancelError,
   SessionCloseAuthorizationError,
@@ -23,9 +25,9 @@ import { resolveTenantLang } from "./tenant-lang";
 
 /**
  * Shared entry gate + error mapper for host commands and explicitly opted-in guest-note routes.
- * Announce is NOT among them — its only observable effect is delivery and
- * nothing can deliver yet, so it returns with the slice that provides a real projector (DD-56
- * amendment, clause 1).
+ * Announce returned with the slice that provides a real projector (DD-56 amendment, clause 1;
+ * DD-134 (f)): its only observable effect is delivery, so announceSession refuses with
+ * ANNOUNCE_DELIVERY_DISABLED unless the DB proves the dispatch schedule live and zalo_dm enabled.
  *
  * ONE choke-point on purpose: DD-56 bans adapters from scattering `role === ...` across routes.
  * The actor gate is the capability primitive `authorize()` (tenant-capability-authority-core,
@@ -514,6 +516,11 @@ const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   ["REQUEST_DECIDED", 409],
   ["REQUEST_EXPIRED", 409],
   ["SESSION_NOT_JOINABLE", 400],
+  // Web MVP Phase 3 lane L4b (M6 host announce), raised as SessionAnnounceError: the refusal while
+  // the DB cannot prove delivery (A-D1), the zalo-only channel rule (A-D4) and the §3 catalog :322.
+  ["ANNOUNCE_DELIVERY_DISABLED", 409],
+  ["INVALID_CHANNEL", 400],
+  ["SESSION_ALREADY_ENDED", 409],
   // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
   // (feature_session_management_tech.md §3), which is authority here — this route does not get
   // to pick a status for a spec-pinned code. Since DD-131 OD-1 only cancel emits it: a refusal to
@@ -570,6 +577,13 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
     ["Số tiền vượt quá khoản còn thiếu.", "The amount exceeds the remaining balance."],
   ],
   ["ALREADY_JOINED", ["Người chơi đã có trong buổi này.", "This player is already on the roster."]],
+  [
+    "ANNOUNCE_DELIVERY_DISABLED",
+    [
+      "Chưa thể gửi thông báo: hệ thống gửi tin đang tắt.",
+      "Announcements can't be delivered right now: message delivery is off.",
+    ],
+  ],
   [
     "CHARGE_ALREADY_SETTLED",
     ["Khoản thu này đã được thanh toán đủ.", "This charge is already fully paid."],
@@ -669,6 +683,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "commandId was already used for a different request.",
     ],
   ],
+  ["INVALID_CHANNEL", ["Kênh thông báo không hợp lệ.", "Invalid announcement channel."]],
   [
     "INVALID_TIME_RANGE",
     ["Thời gian kết thúc phải sau thời gian bắt đầu.", "End time must be after start time."],
@@ -687,6 +702,7 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "Changing the price with existing charges requires a policy.",
     ],
   ],
+  ["SESSION_ALREADY_ENDED", ["Buổi chơi đã kết thúc.", "Session has already ended."]],
   ["SESSION_NOT_FOUND", [SESSION_NOT_FOUND_MESSAGE[0], SESSION_NOT_FOUND_MESSAGE[1]]],
   [
     "SESSION_NOT_OPEN",
@@ -716,10 +732,12 @@ export function mapSessionCommandError(error: unknown): Response | null {
     error instanceof SessionUpdateError ||
     error instanceof SessionCloseError ||
     error instanceof SessionCancelError ||
+    error instanceof SessionAnnounceError ||
     error instanceof SessionPublishAuthorizationError ||
     error instanceof SessionUpdateAuthorizationError ||
     error instanceof SessionCloseAuthorizationError ||
-    error instanceof SessionCancelAuthorizationError;
+    error instanceof SessionCancelAuthorizationError ||
+    error instanceof SessionAnnounceAuthorizationError;
   if (!isDomain) return null;
 
   const code = (error as { code: string }).code;

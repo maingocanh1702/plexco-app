@@ -739,7 +739,8 @@ export type AnnounceSessionErrorCode =
   | "SESSION_NOT_OPEN"
   | "SESSION_ALREADY_ENDED"
   | "INVALID_CHANNEL"
-  | "COMMAND_ID_CONFLICT";
+  | "COMMAND_ID_CONFLICT"
+  | "ANNOUNCE_DELIVERY_DISABLED";
 
 export class SessionAnnounceError extends Error {
   readonly code: AnnounceSessionErrorCode;
@@ -779,7 +780,8 @@ const failAnnounce = (code: AnnounceSessionErrorCode, message: string): never =>
  * reacts to the outbox row's tenant_id) — a raw destination, or another tenant's target, can never be
  * announced from here. This command validates membership and emits; it does not resolve or send.
  * (codex round-01 [P1] introduced the closed-enum constraint; round-02 [P1] narrowed it to the
- * phase-1 set — the earlier platform-superset wrongly admitted Telegram.)
+ * phase-1 set — the earlier platform-superset wrongly admitted Telegram.) The local-only MVP command
+ * accepts zalo only (DD-134 (f)); the enum stays for isStoredAnnounceResult.
  */
 export type AnnounceChannel = "zalo" | "messenger";
 const ANNOUNCE_CHANNELS: ReadonlySet<AnnounceChannel> = new Set(["zalo", "messenger"]);
@@ -797,6 +799,10 @@ export interface AnnounceSessionInputPayload {
 export interface AnnounceSessionParams {
   tenantId: string; // trusted routing context, asserted as a UUID by withTenant
   commandId: string; // idempotency key from trusted context
+  /** Trusted: the verified web session's person (never the body), a UUID. It goes into the event
+   *  so the zalo_dm projector DMs exactly this host (0057); an id only, never PII. Not part of the
+   *  stored result or of dedup. */
+  requestedByPersonId: string;
   input: AnnounceSessionInputPayload;
 }
 
@@ -831,6 +837,12 @@ export async function announceSession(
   params: AnnounceSessionParams,
 ): Promise<AnnounceSessionResult> {
   const { tenantId, commandId, input } = params;
+  // Trusted context: a non-UUID requester is a programming fault (like withTenant's tenantId
+  // assertion), refused before any transaction opens.
+  if (typeof params.requestedByPersonId !== "string" || !UUID_RE.test(params.requestedByPersonId)) {
+    throw new Error("announceSession: requestedByPersonId must be a UUID");
+  }
+  const requestedByPersonId = params.requestedByPersonId.toLowerCase();
   return withTenant(db, tenantId, async (tx) => {
     // Billing suspension — FAIL-FAST, BEFORE dedup and state lookup, mirroring publish:
     // announce_session is ❌ under suspension (DD-110), so a suspended tenant must get
@@ -845,6 +857,19 @@ export async function announceSession(
       throw new SessionAnnounceAuthorizationError();
     }
 
+    // Delivery guard (DD-134 (f)), DB truth only, never a process env: announce's only effect is a
+    // delivery, so refuse unless a fresh worker heartbeat reports a live dispatch schedule AND the
+    // zalo_dm projector is enabled. ONE statement on THIS transaction, after suspension and BEFORE
+    // validation and dedup: a refusal writes nothing, and a replay is never answered while nothing
+    // can deliver. Anything but two TRUEs (false, NULL, no heartbeat row) is not ready.
+    const delivery = await tx.execute(
+      sql`select outbox_dispatch_schedule_live() as "scheduleLive", projector_is_enabled('zalo_dm') as "zaloDmEnabled"`,
+    );
+    const ready = delivery.rows[0] as { scheduleLive: unknown; zaloDmEnabled: unknown } | undefined;
+    if (ready?.scheduleLive !== true || ready.zaloDmEnabled !== true) {
+      failAnnounce("ANNOUNCE_DELIVERY_DISABLED", "announcement delivery is not live");
+    }
+
     // Validate the payload shape UP FRONT (typed error, never a raw TypeError). `input` is
     // untrusted user payload (only tenantId/commandId are trusted context). A bad sessionId
     // fails closed as SESSION_NOT_FOUND (never revealing existence); a bad channel is
@@ -857,9 +882,10 @@ export async function announceSession(
     }
     // channel is a CLOSED logical enum (AnnounceChannel), not a free string: anything outside the
     // recognised platform set — empty, NUL/whitespace, oversized, a raw destination id, or another
-    // tenant's target — fails closed here as INVALID_CHANNEL, before it can reach the outbox.
-    if (!isAnnounceChannel(input.channel)) {
-      failAnnounce("INVALID_CHANNEL", "channel must be a recognised channel type (zalo/messenger)");
+    // tenant's target — fails closed here as INVALID_CHANNEL, before it can reach the outbox. The
+    // MVP delivers zalo only, so messenger fails closed too (A-D4).
+    if (input.channel !== "zalo") {
+      failAnnounce("INVALID_CHANNEL", "channel must be zalo");
     }
     // Canonicalize the id ONCE (lowercase) — used for the FOR SHARE query, the replay equality
     // check, and the stored result — so an upper-case UUID literal does not store a lower-case
@@ -950,8 +976,9 @@ export async function announceSession(
     }
 
     // Emit the canonical announcement request (§4 Events: session.announcement_requested, payload
-    // {session_id, channel}). This is the durable canonical write (FE SES-UC-3); the channel
-    // projector consumes it, sends to the group and retries downstream (FE edge #10), not here.
+    // {session_id, channel, requested_by_person_id}: ids only, no PII and no destination id; zalo_dm
+    // DMs that one host, 0057). This is the durable canonical write (FE SES-UC-3); the channel
+    // projector consumes it, sends and retries downstream (FE edge #10), not here.
     // Per-aggregate sequence COALESCE(MAX,0)+1 fenced by outbox_agg_seq_uq; lease/ack stay NULL.
     // No session-row mutation and no status change (§4).
     await tx.insert(outboxEvents).values({
@@ -960,7 +987,7 @@ export async function announceSession(
       aggregateId: sessionId,
       sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${sessionId}), 0) + 1`,
       type: "session.announcement_requested",
-      payload: { session_id: sessionId, channel },
+      payload: { session_id: sessionId, channel, requested_by_person_id: requestedByPersonId },
     });
 
     const stored: StoredAnnounceResult = { sessionId, channel };
