@@ -4,7 +4,7 @@ import { markPaid } from "./payment-manual.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession } from "./roster-service.js";
-import { joinSession, leaveSession } from "./session-join-service.js";
+import { hasLiveMembership, joinSession, leaveSession } from "./session-join-service.js";
 import { getSessionOccupancy, slotsOpen } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
@@ -60,7 +60,7 @@ const chargesOf = (tenantId: string, playerId: string | null) =>
   );
 
 /** A person with a membership of the given status in the tenant (owner seed). */
-async function seedMember(tenantId: string, status: "active" | "guest" = "active") {
+async function seedMember(tenantId: string, status: "active" | "guest" | "left" = "active") {
   const name = `Member ${nextCommandId()}`;
   const personId = await fx.seedPerson(name);
   const m = await fx.row(
@@ -728,5 +728,28 @@ describe("joinSession on a join_policy 'approval' session", () => {
     expect(rb).toMatchObject({ outcome: "requested", playerId: null, waitlistPosition: null });
     expect(rb.requestId).not.toBe(v.requestId);
     expect(await requests()).toBe(2);
+  });
+});
+
+describe("hasLiveMembership (the route's P-3 audience gate, R1B-6)", () => {
+  it("R1B-6: as the app role, an active and a guest member -> true; a left member, another club's member and an unknown person -> false", async () => {
+    const { tenantId } = await world();
+    const other = await world();
+    const active = await seedMember(tenantId);
+    const guest = await seedMember(tenantId, "guest");
+    const left = await seedMember(tenantId, "left");
+    const foreign = await seedMember(other.tenantId);
+    const live = (bound: string, asked: string, personId: string) =>
+      withTenant(ctx.appDb.db, bound, (tx) => hasLiveMembership(tx, asked, personId));
+    expect(await live(tenantId, tenantId, active.personId)).toBe(true);
+    expect(await live(tenantId, tenantId, guest.personId)).toBe(true);
+    expect(await live(tenantId, tenantId, left.personId)).toBe(false);
+    expect(await live(tenantId, tenantId, foreign.personId)).toBe(false);
+    expect(await live(tenantId, tenantId, "00000000-0000-4000-8000-000000000000")).toBe(false);
+    expect(await live(tenantId, tenantId, "not-a-uuid")).toBe(false);
+    // The foreign member IS live in their own club (so the false above is the tenant scoping, not a
+    // seed gap), and a transaction bound to this club cannot see it even when asked for that club.
+    expect(await live(other.tenantId, other.tenantId, foreign.personId)).toBe(true);
+    expect(await live(tenantId, other.tenantId, foreign.personId)).toBe(false);
   });
 });
