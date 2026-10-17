@@ -255,6 +255,39 @@ const decide = (tx: Tx, requestId: string, status: string, decidedBy: string) =>
     .set({ status, decidedBy, decidedAt: sql`now()` })
     .where(eq(joinRequests.id, requestId));
 
+/**
+ * R1A-1: a roster exit (self-leave, host remove) supersedes the PENDING request of the exiting
+ * player's person for that session, so a later approve answers REQUEST_DECIDED instead of seating
+ * them again with a revived charge. Runs in the caller's transaction, which already holds the
+ * session row lock (lock order 4.2: sessions before join_requests); `decidedBy` is whoever ended
+ * the seat. No event of its own: the exit's `player.removed` stays the ONE event of that roster
+ * change. At most one row matches (idx_join_requests_active); a player without a membership has none.
+ */
+export async function closePendingJoinRequestOnExit(
+  tx: Tx,
+  tenantId: string,
+  sessionId: string,
+  playerId: string,
+  decidedBy: string,
+): Promise<void> {
+  const personOfPlayer = tx
+    .select({ personId: memberships.personId })
+    .from(players)
+    .innerJoin(memberships, eq(memberships.id, players.membershipId))
+    .where(and(eq(players.id, playerId), eq(players.sessionId, sessionId)));
+  await tx
+    .update(joinRequests)
+    .set({ status: "cancelled", decidedBy, decidedAt: sql`now()` })
+    .where(
+      and(
+        eq(joinRequests.tenantId, tenantId),
+        eq(joinRequests.sessionId, sessionId),
+        eq(joinRequests.status, "pending"),
+        inArray(joinRequests.personId, personOfPlayer),
+      ),
+    );
+}
+
 const approvalResult = (s: StoredApproval, replayed: boolean): ApproveJoinRequestResult => ({
   requestId: s.requestId,
   status: "approved",
@@ -277,7 +310,7 @@ export async function approveJoinRequest(
     if (stored !== null) return approvalResult(stored, true);
     const { requestId, sessionId } = scope;
 
-    const session = await lockSession(tx, sessionId);
+    const session = await lockSession(tx, tenantId, sessionId);
     const request = await lockPending(tx, requestId);
     if (session === undefined || session.status !== "open" || session.started) {
       return fail("SESSION_NOT_JOINABLE", "session is not open for joining");
@@ -353,7 +386,7 @@ async function closeRequest(
   const stored = await replayFor(tx, tenantId, scope, commandType, isStoredClose);
   if (stored !== null) return { requestId: stored.requestId, status, replayed: true };
   const { requestId, sessionId, actor } = scope;
-  await lockSession(tx, sessionId); // lock order 4.2: sessions before join_requests, as approve
+  await lockSession(tx, tenantId, sessionId); // lock order 4.2: sessions before join_requests, as approve
   await lockPending(tx, requestId);
   await decide(tx, requestId, status, actor);
   await emitSessionEvent(tx, tenantId, sessionId, `join_request.${status}`, {

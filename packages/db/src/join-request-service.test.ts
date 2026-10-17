@@ -9,8 +9,8 @@ import {
 } from "./join-request-service.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
-import { addMemberToSession } from "./roster-service.js";
-import { joinSession } from "./session-join-service.js";
+import { addMemberToSession, removePlayerFromSession } from "./roster-service.js";
+import { joinSession, leaveSession } from "./session-join-service.js";
 import { getSessionOccupancy } from "./session-occupancy.js";
 import { updateSession } from "./session-service.js";
 import { withTenant } from "./tenant.js";
@@ -472,6 +472,97 @@ describe("cancel and the one not-found answer (P-10, P-11)", () => {
     expect(await codeOf(approve(b.tenantId, a.host, bReq))).toBe("FORBIDDEN");
     expect(await state(a.tenantId)).toEqual(beforeA);
     expect(await state(b.tenantId)).toEqual(beforeB);
+  });
+});
+
+describe("a roster exit closes the person's pending request (R1A-1)", () => {
+  /** The member requested, then the host seated them directly (host-add leaves the request pending). */
+  async function requestedThenHostAdded() {
+    const w = await world({ slotsMax: 3 });
+    const m = await seedMember(w.tenantId);
+    const requestId = await openRequest(w.tenantId, m.personId, w.sessionId);
+    const added = await addMemberToSession(ctx.appDb.db, {
+      tenantId: w.tenantId,
+      actorPersonId: w.host,
+      commandId: nextCommandId(),
+      sessionId: w.sessionId,
+      member: { membershipId: m.membershipId },
+      source: "host_add",
+    });
+    expect(await requestRow(w.tenantId, requestId)).toMatchObject({ status: "pending" });
+    return { ...w, m, requestId, playerId: added.playerId };
+  }
+  /** Approving the stale request is REQUEST_DECIDED and changes no row: counters, player, charge. */
+  async function staleApproveRefused(
+    tenantId: string,
+    host: string,
+    requestId: string,
+    playerId: string,
+  ) {
+    const before = await state(tenantId);
+    expect(await codeOf(approve(tenantId, host, requestId))).toBe("REQUEST_DECIDED");
+    expect(await state(tenantId)).toEqual(before);
+    expect(await playerOf(tenantId, playerId)).toMatchObject({ status: "left" });
+    expect((await chargesOf(tenantId, playerId)).map((c) => c.status)).toEqual(["void"]);
+    expect(await requestRow(tenantId, requestId)).toMatchObject({ status: "cancelled" });
+  }
+
+  it("R1A-1: pending request -> host-add -> self-leave closes it as cancelled in the same tx with NO extra event; the host's approve of the stale request -> REQUEST_DECIDED with zero writes", async () => {
+    const { tenantId, host, sessionId, m, requestId, playerId } = await requestedThenHostAdded();
+    const before = await state(tenantId);
+    const seen = (await events(tenantId, sessionId)).length;
+    const left = await leaveSession(ctx.appDb.db, {
+      tenantId,
+      personId: m.personId,
+      sessionId,
+      commandId: nextCommandId(),
+    });
+    expect(left).toEqual({ playerId, status: "left", replayed: false });
+    expect(await requestRow(tenantId, requestId)).toMatchObject({
+      status: "cancelled",
+      decided_by: m.personId,
+      decided: true,
+    });
+    const added = (await events(tenantId, sessionId)).slice(seen).map((e) => e.type);
+    expect(added).toEqual(["player.removed"]);
+    expect(await state(tenantId)).toEqual({
+      ...before,
+      events: before.events + 1,
+      commands: before.commands + 1,
+    });
+    await staleApproveRefused(tenantId, host, requestId, playerId);
+  });
+
+  it("R1A-1: the host-remove variant closes the removed person's pending request (decided_by the host, NO extra event) and leaves another person's pending request alone; approving the stale one -> REQUEST_DECIDED with zero writes", async () => {
+    const { tenantId, host, sessionId, requestId, playerId } = await requestedThenHostAdded();
+    const bystander = await seedMember(tenantId);
+    const otherRequest = await openRequest(tenantId, bystander.personId, sessionId);
+    const before = await state(tenantId);
+    const seen = (await events(tenantId, sessionId)).length;
+    await removePlayerFromSession(ctx.appDb.db, {
+      tenantId,
+      actorPersonId: host,
+      commandId: nextCommandId(),
+      sessionId,
+      playerId,
+    });
+    expect(await requestRow(tenantId, requestId)).toMatchObject({
+      status: "cancelled",
+      decided_by: host,
+      decided: true,
+    });
+    expect(await requestRow(tenantId, otherRequest)).toMatchObject({ status: "pending" });
+    const added = (await events(tenantId, sessionId)).slice(seen).map((e) => e.type);
+    expect(added).toEqual(["player.removed"]);
+    expect(await state(tenantId)).toEqual({
+      ...before,
+      events: before.events + 1,
+      commands: before.commands + 1,
+    });
+    await staleApproveRefused(tenantId, host, requestId, playerId);
+    expect(await pendingOf(tenantId, host, sessionId)).toEqual([
+      expect.objectContaining({ requestId: otherRequest }),
+    ]);
   });
 });
 

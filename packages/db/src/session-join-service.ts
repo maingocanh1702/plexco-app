@@ -2,7 +2,7 @@ import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { charges, memberships, players, sessions } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
 import type { Db, Tx } from "./client.js";
-import { openJoinRequest } from "./join-request-service.js";
+import { closePendingJoinRequestOnExit, openJoinRequest } from "./join-request-service.js";
 import {
   effectiveByCharge,
   emitSessionEvent,
@@ -119,8 +119,9 @@ async function playerGate(tx: Tx, params: LeaveSessionParams, badSession: Roster
 
 /** sessions FOR UPDATE: every players writer of a session serializes on this row (4.2). Re-taking
  *  it in a transaction that already holds it is a no-op. P-2: "past" = starts_at <= now().
+ *  R1A-3: RLS plus an explicit tenant filter (defense in depth, like liveMembership).
  *  Exported for join-request-service.ts only (not from index.ts). */
-export async function lockSession(tx: Tx, sessionId: string) {
+export async function lockSession(tx: Tx, tenantId: string, sessionId: string) {
   const [row] = await tx
     .select({
       status: sessions.status,
@@ -131,7 +132,7 @@ export async function lockSession(tx: Tx, sessionId: string) {
       started: sql<boolean>`${sessions.startsAt} <= now()`,
     })
     .from(sessions)
-    .where(eq(sessions.id, sessionId))
+    .where(and(eq(sessions.id, sessionId), eq(sessions.tenantId, tenantId)))
     .for("update");
   return row;
 }
@@ -217,7 +218,7 @@ export async function joinSession(db: Db, params: JoinSessionParams): Promise<Jo
     );
     if (stored !== null) return joinResult(stored, true);
 
-    const session = await lockSession(tx, sessionId);
+    const session = await lockSession(tx, tenantId, sessionId);
     const membership = await liveMembership(tx, tenantId, personId);
     // P-3: a caller who is not a live member of ?tenant= gets ONE answer before any session fact.
     if (membership === undefined && params.allowGuestMembership !== true) {
@@ -317,7 +318,7 @@ export async function leaveSession(
     );
     if (stored !== null) return { playerId: stored.playerId, status: "left", replayed: true };
 
-    const session = await lockSession(tx, sessionId);
+    const session = await lockSession(tx, tenantId, sessionId);
     const membership = await liveMembership(tx, tenantId, personId);
     if (session === undefined || membership === undefined) {
       return fail("PLAYER_NOT_FOUND", "player not found in this session");
@@ -349,6 +350,8 @@ export async function leaveSession(
       .update(players)
       .set({ status: "left", waitlistPosition: null })
       .where(eq(players.id, player.id));
+    // R1A-1: the leave supersedes the person's pending request (no second event).
+    await closePendingJoinRequestOnExit(tx, tenantId, sessionId, player.id, personId);
     await emitSessionEvent(tx, tenantId, sessionId, "player.removed", {
       session_id: sessionId,
       player_id: player.id,
@@ -379,7 +382,7 @@ export async function promoteFromWaitlist(
   tenantId: string,
   sessionId: string,
 ): Promise<number> {
-  const session = await lockSession(tx, sessionId);
+  const session = await lockSession(tx, tenantId, sessionId);
   if (session === undefined || session.status !== "open" || session.started) return 0;
   const skipped: string[] = [];
   let promoted = 0;

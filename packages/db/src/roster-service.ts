@@ -16,6 +16,7 @@ import {
   requireActor,
 } from "./roster-money-shared.js";
 // Call-time-only cycle (P-19): session-join-service.ts imports seatPlayer/upsertCharge from here.
+import { closePendingJoinRequestOnExit } from "./join-request-service.js";
 import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
@@ -401,6 +402,8 @@ export async function removePlayerFromSession(
       .update(players)
       .set({ status: "left", waitlistPosition: null })
       .where(eq(players.id, playerId));
+    // R1A-1: the removal supersedes the person's pending join request (no second event).
+    await closePendingJoinRequestOnExit(tx, tenantId, sessionId, playerId, actor);
     await emitSessionEvent(tx, tenantId, sessionId, "player.removed", {
       session_id: sessionId,
       player_id: playerId,
