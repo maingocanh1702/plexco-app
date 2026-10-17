@@ -1810,6 +1810,35 @@ describe("announceSession", () => {
 // UpdateSession gives authorizeTenantAction('update_open_session') its production
 // caller: DENY-when-suspended for an OPEN session, while a DRAFT is DD-105-exempt
 // and never calls the resolver (U6, the DD-110 D4 negative test).
+// DT-10 rollback probe (the A-5 pattern of session-join-service.test.ts): while `run` executes, a
+// BEFORE INSERT trigger refuses every player.promoted outbox row, so the triggering command must
+// roll back whole. Returns the error text ("" when nothing threw).
+async function withPromotedInsertRefused(run: () => Promise<unknown>): Promise<string> {
+  await ctx.owner.query(
+    `CREATE FUNCTION l8_refuse_player_promoted() RETURNS trigger LANGUAGE plpgsql AS $$
+     BEGIN
+       IF NEW.type = 'player.promoted' THEN
+         RAISE EXCEPTION 'l8 test: player.promoted insert refused';
+       END IF;
+       RETURN NEW;
+     END $$`,
+  );
+  await ctx.owner.query(
+    `CREATE TRIGGER l8_refuse_player_promoted BEFORE INSERT ON outbox_events
+     FOR EACH ROW EXECUTE FUNCTION l8_refuse_player_promoted()`,
+  );
+  try {
+    await run();
+    return "";
+  } catch (e) {
+    const err = e as { message?: string; cause?: { message?: string } };
+    return `${err.message} ${err.cause?.message}`;
+  } finally {
+    await ctx.owner.query(`DROP TRIGGER l8_refuse_player_promoted ON outbox_events`);
+    await ctx.owner.query(`DROP FUNCTION l8_refuse_player_promoted()`);
+  }
+}
+
 describe("updateSession", () => {
   const future = () => new Date(Date.now() + 24 * 3600 * 1000);
 
@@ -2169,15 +2198,17 @@ describe("updateSession", () => {
   );
 
   it.each([3, null])(
-    "U-CAPACITY: private cap %s accepts the exact occupied floor or unlimited; left/waitlisted players do not consume slots",
+    "U-CAPACITY: private cap %s accepts the exact occupied floor or unlimited; left/waitlisted players do not consume slots (unlimited then promotes the waitlisted one, P-7)",
     async (slotsMax) => {
       const tenantId = await seedTenant("active", "active");
       const { sessionId, version } = await seedSession(tenantId);
       const playerId = await seedActivePlayer(tenantId, sessionId);
       await addGuest(tenantId, sessionId, playerId);
       await addGuest(tenantId, sessionId, playerId);
+      const others: string[] = [];
       for (const status of ["left", "waitlisted"]) {
         const otherPlayer = await seedActivePlayer(tenantId, sessionId);
+        others.push(otherPlayer);
         await ctx.owner.query(
           `UPDATE players SET status = $2, waitlist_position = $3 WHERE id = $1`,
           [otherPlayer, status, status === "waitlisted" ? 1 : null],
@@ -2193,15 +2224,118 @@ describe("updateSession", () => {
         version: version + 1,
       });
       expect(after.notes).toEqual(before.notes);
-      expect(after.events).toHaveLength(before.events.length + 1);
-      expect(after.events.at(-1)).toMatchObject({
+      // P-7: cap 3 = occupancy 3 leaves no free seat; unlimited seats the waitlisted player.
+      const promoted = slotsMax === null ? 1 : 0;
+      expect(after.events).toHaveLength(before.events.length + 1 + promoted);
+      expect(after.events[before.events.length]).toMatchObject({
         type: "session.updated",
         sequence: 3,
         payload: { changed_fields: ["slots_max"] },
       });
+      expect(after.events.slice(before.events.length + 1).map((e) => e.type)).toEqual(
+        Array<string>(promoted).fill("player.promoted"),
+      );
+      expect((await row(`SELECT status FROM players WHERE id = $1`, [others[1]])).status).toBe(
+        slotsMax === null ? "active" : "waitlisted",
+      );
       expect(after.commands).toHaveLength(before.commands.length + 1);
     },
   );
+
+  it.each([
+    { from: 1, to: 3, promoted: 2 },
+    { from: 1, to: null, promoted: 3 },
+    { from: 8, to: 2, promoted: 1 },
+  ])(
+    "DT-10/P-6/P-7: slots_max $from -> $to promotes $promoted waitlisted player(s) FIFO in the same tx: one charge each at the current price, joined_at untouched, no renumbering, no money moved, one player.promoted each after session.updated",
+    async ({ from, to, promoted }) => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId, {
+        slotsMax: from,
+        priceAmount: 90000,
+      });
+      await seedActivePlayer(tenantId, sessionId);
+      const waitlist: string[] = [];
+      for (const position of [1, 2, 3]) {
+        const id = await seedActivePlayer(tenantId, sessionId);
+        await ctx.owner.query(
+          `UPDATE players SET status = 'waitlisted', waitlist_position = $2 WHERE id = $1`,
+          [id, position],
+        );
+        waitlist.push(id);
+      }
+      const player = (id: string) =>
+        row(
+          `SELECT status, waitlist_position, joined_at, membership_id FROM players WHERE id = $1`,
+          [id],
+        );
+      const before = await Promise.all(waitlist.map((id) => player(id)));
+
+      const result = await update(tenantId, { sessionId, expectedVersion: version, slotsMax: to });
+
+      expect(result).toMatchObject({ version: version + 1, replayed: false });
+      const charges = await rows(
+        `SELECT id, player_id, amount_due, status FROM charges WHERE session_id = $1`,
+        [sessionId],
+      );
+      expect(charges).toHaveLength(promoted);
+      const events = await updatedEvents(sessionId);
+      expect(events.map((e) => e.type)).toEqual([
+        "session.updated",
+        ...Array<string>(promoted).fill("player.promoted"),
+      ]);
+      for (const [i, id] of waitlist.entries()) {
+        const now = await player(id);
+        expect(now.joined_at).toEqual(before[i].joined_at);
+        if (i >= promoted) {
+          expect(now).toMatchObject({ status: "waitlisted", waitlist_position: i + 1 });
+          continue;
+        }
+        expect(now).toMatchObject({ status: "active", waitlist_position: null });
+        const charge = charges.find((c) => c.player_id === id);
+        expect(charge).toMatchObject({ amount_due: 90000, status: "open" });
+        expect(events[i + 1]).toMatchObject({ sequence: i + 2 });
+        expect(events[i + 1].payload).toEqual({
+          session_id: sessionId,
+          player_id: id,
+          membership_id: now.membership_id,
+          charge_id: charge.id,
+          amount_due: 90000,
+        });
+      }
+      const active = await row(
+        `SELECT count(*)::int AS n FROM players WHERE session_id = $1 AND status = 'active'`,
+        [sessionId],
+      );
+      expect(active.n).toBe(1 + promoted);
+      const allocations = await row(
+        `SELECT count(*)::int AS n FROM payment_allocations WHERE tenant_id = $1`,
+        [tenantId],
+      );
+      expect(allocations.n).toBe(0);
+    },
+  );
+
+  it("DT-10 rollback (capacity): a slots_max raise whose player.promoted insert fails rolls back whole (slots_max, version, events, ledger, waitlist and charges unchanged)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { slotsMax: 1 });
+    await seedActivePlayer(tenantId, sessionId);
+    const waitlisted = await seedActivePlayer(tenantId, sessionId);
+    await ctx.owner.query(
+      `UPDATE players SET status = 'waitlisted', waitlist_position = 1 WHERE id = $1`,
+      [waitlisted],
+    );
+    const before = await capacityState(tenantId, sessionId);
+    const err = await withPromotedInsertRefused(() =>
+      update(tenantId, { sessionId, expectedVersion: version, slotsMax: 2 }),
+    );
+    expect(err).toMatch(/player\.promoted insert refused/);
+    expect(await capacityState(tenantId, sessionId)).toEqual(before);
+    expect(await row(`SELECT status FROM players WHERE id = $1`, [waitlisted])).toEqual({
+      status: "waitlisted",
+    });
+    expect(await rows(`SELECT id FROM charges WHERE session_id = $1`, [sessionId])).toEqual([]);
+  });
 
   it("U-CAPACITY: public unlimited still refuses with MISSING_DISCOVERY_FIELDS and preserves guests", async () => {
     const tenantId = await seedTenant("active", "active");
@@ -3301,6 +3435,21 @@ describe("closeSession (B1 of the split)", () => {
     const payload = (evs[0] as { payload: Record<string, unknown> }).payload;
     expect(Object.keys(payload).sort()).toEqual(["close_reason", "session_id"]);
     expect(payload).toMatchObject({ session_id: sessionId, close_reason: "manual" });
+  });
+
+  it("P-7: close never promotes: an OPEN session with free seats and a waitlisted player closes with that player still waitlisted (no charge, no player.promoted)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { status: "open" });
+    const waitlisted = await seedRosterPlayer(tenantId, sessionId, "waitlisted");
+    await close(tenantId, { sessionId, expectedVersion: version });
+    expect(await sessionState(sessionId)).toMatchObject({ status: "closed" });
+    expect(
+      await row(`SELECT status, waitlist_position FROM players WHERE id = $1`, [waitlisted]),
+    ).toEqual({ status: "waitlisted", waitlist_position: 1 });
+    expect(await rows(`SELECT id FROM charges WHERE session_id = $1`, [sessionId])).toEqual([]);
+    expect((await sessionEvents(sessionId)).map((e) => (e as { type: string }).type)).toEqual([
+      "session.closed",
+    ]);
   });
 
   it("C2: closing a DRAFT is SESSION_NOT_OPEN (only open -> closed), zero mutation", async () => {
@@ -4860,5 +5009,82 @@ describe("guest notes", () => {
     await remove(ctx.tenantA, personId, { sessionId, noteId: created.noteId });
     await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 2" });
     expect(await notesOf(sessionId)).toHaveLength(1);
+  });
+
+  // A waitlisted player at an explicit position (person -> membership -> players row).
+  async function seedWaitlisted(sessionId: string, position: number) {
+    const personId = await seedPerson(ctx.tenantA, sessionId, { playerStatus: null });
+    const m = await row(`SELECT id FROM memberships WHERE tenant_id = $1 AND person_id = $2`, [
+      ctx.tenantA,
+      personId,
+    ]);
+    const p = await row(
+      `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position)
+       VALUES ($1, $2, $3, 'waitlisted', $4) RETURNING id, joined_at`,
+      [ctx.tenantA, sessionId, m.id, position],
+    );
+    return {
+      playerId: p.id as string,
+      membershipId: m.id as string,
+      joinedAt: p.joined_at as Date,
+    };
+  }
+
+  it("DT-10/P-6/P-7: deleting a guest note that frees a seat promotes the lowest waitlist position in the same tx (ONE charge at the current price, one player.promoted after guest_note.deleted); the next stays waitlisted", async () => {
+    const sessionId = await seedSession(ctx.tenantA, { slotsMax: 2 });
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const created = await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 1" });
+    const w1 = await seedWaitlisted(sessionId, 1);
+    const w2 = await seedWaitlisted(sessionId, 2);
+
+    await remove(ctx.tenantA, personId, { sessionId, noteId: created.noteId });
+
+    expect(
+      await row(`SELECT status, waitlist_position, joined_at FROM players WHERE id = $1`, [
+        w1.playerId,
+      ]),
+    ).toEqual({ status: "active", waitlist_position: null, joined_at: w1.joinedAt });
+    expect(
+      await row(`SELECT status, waitlist_position FROM players WHERE id = $1`, [w2.playerId]),
+    ).toEqual({ status: "waitlisted", waitlist_position: 2 });
+    const charges = await rows(
+      `SELECT id, player_id, amount_due, status FROM charges WHERE session_id = $1`,
+      [sessionId],
+    );
+    expect(charges).toEqual([
+      { id: expect.any(String), player_id: w1.playerId, amount_due: 120000, status: "open" },
+    ]);
+    const events = await eventsOf(sessionId);
+    expect(events.map((e) => e.type)).toEqual([
+      "guest_note.created",
+      "guest_note.deleted",
+      "player.promoted",
+    ]);
+    expect(events[1].payload).toMatchObject({ occupancy_after: 1 });
+    expect(events[2].payload).toEqual({
+      session_id: sessionId,
+      player_id: w1.playerId,
+      membership_id: w1.membershipId,
+      charge_id: charges[0].id,
+      amount_due: 120000,
+    });
+  });
+
+  it("DT-10 rollback (guest-note delete): a failing player.promoted insert rolls the delete back whole (note kept, no new event, still waitlisted, no charge)", async () => {
+    const sessionId = await seedSession(ctx.tenantA, { slotsMax: 2 });
+    const personId = await seedPerson(ctx.tenantA, sessionId);
+    const created = await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 1" });
+    const w = await seedWaitlisted(sessionId, 1);
+    const eventsBefore = await eventsOf(sessionId);
+    const err = await withPromotedInsertRefused(() =>
+      remove(ctx.tenantA, personId, { sessionId, noteId: created.noteId }),
+    );
+    expect(err).toMatch(/player\.promoted insert refused/);
+    expect(await notesOf(sessionId)).toHaveLength(1);
+    expect(await eventsOf(sessionId)).toEqual(eventsBefore);
+    expect(await row(`SELECT status FROM players WHERE id = $1`, [w.playerId])).toEqual({
+      status: "waitlisted",
+    });
+    expect(await rows(`SELECT id FROM charges WHERE session_id = $1`, [sessionId])).toEqual([]);
   });
 });

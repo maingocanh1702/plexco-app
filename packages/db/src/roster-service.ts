@@ -15,6 +15,8 @@ import {
   replayOrNull,
   requireActor,
 } from "./roster-money-shared.js";
+// Call-time-only cycle (P-19): session-join-service.ts imports seatPlayer/upsertCharge from here.
+import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 
@@ -28,9 +30,10 @@ import { withTenant } from "./tenant.js";
  * pricing is M9); a WAITLISTED player has none (DD-45). A `left` player's charge is `void` and, on
  * re-join, is reused (never a second charge, UNIQUE (tenant, session, player)).
  *
- * NOT built here (deliberately): waitlist auto-promotion when a slot frees (the DD-45 engine does
- * not exist -- removing an active player leaves the slot free for the next host-add), pay_code
- * issuance (BL-PAY-3), eligibility policy beyond status/capacity (DD-41 evaluateSessionEligibility).
+ * Removing an ACTIVE player frees a seat: promoteFromWaitlist (session-join-service.ts, P-6/P-7)
+ * seats the waitlist head(s) in the same transaction, under the session lock already held.
+ * NOT built here (deliberately): pay_code issuance (BL-PAY-3), eligibility policy beyond
+ * status/capacity (DD-41 evaluateSessionEligibility).
  */
 
 export type AddMemberSource = "host_add";
@@ -403,6 +406,8 @@ export async function removePlayerFromSession(
       player_id: playerId,
       previous_status: player.status,
     });
+    // DT-10 / P-6 / P-7: an ACTIVE player's seat is now free (a waitlisted row frees none).
+    if (player.status === "active") await promoteFromWaitlist(tx, tenantId, sessionId);
     await recordCommand(tx, tenantId, commandId, REMOVE_TYPE, {
       sessionId,
       actorPersonId: actor,

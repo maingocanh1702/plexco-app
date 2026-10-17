@@ -16,6 +16,8 @@ import type { Db, Tx } from "./client.js";
 import { chargeRemaining } from "./payment-manual.js";
 import { raisePublicSessionFence } from "./public-session-fence.js";
 import { effectiveByCharge } from "./roster-money-shared.js";
+// Call-time-only cycle (P-19), like roster-money-shared.ts's import of this module.
+import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy, sessionActiveRosterCount } from "./session-occupancy.js";
 import { hasHiddenChar } from "./text-safety.js";
 import { withTenant } from "./tenant.js";
@@ -996,9 +998,10 @@ export async function announceSession(
  * PRICE_CHANGE_REQUIRES_POLICY (edge #4/#5) rather than resolved — applying an
  * impact_policy resolution is the payments/review_policy subsystem, which does not
  * exist on base. Capacity first preserves the active-roster refusal, then checks
- * shared occupancy, which includes guest notes. Live holds and waitlist promotion
- * on a capacity increase (edge #15) remain unbuilt; a capacity change mutates only
- * sessions.slots_max. The active-roster count and the charge-existence
+ * shared occupancy, which includes guest notes. Live holds remain unbuilt; ANY
+ * slots_max change (incl. a raise to NULL = unlimited) then fills every free seat
+ * from the waitlist FIFO in the same tx (promoteFromWaitlist, P-6/P-7, edge #15),
+ * after the session.updated row. The active-roster count and the charge-existence
  * probe read `players` / `charges` (both Drizzle-declared) under the tenant GUC (RLS
  * choke-point). An `open` session past its starts_at is a privileged correction, not
  * a normal update (edge #11 realized for update, the same past-boundary cancel uses
@@ -1592,6 +1595,10 @@ export async function updateSession(
     if (changes.visibility === "private") {
       await raisePublicSessionFence(tx, updated!.id, "visibility_private");
     }
+
+    // DT-10 / P-6 / P-7: any slots_max change may free seats. promoteFromWaitlist re-reads the new
+    // slots_max under the session lock taken above; it is a no-op unless open and not started.
+    if (changes.slotsMax !== undefined) await promoteFromWaitlist(tx, tenantId, updated!.id);
 
     const stored: StoredUpdateResult = {
       sessionId: updated!.id,
@@ -2890,13 +2897,10 @@ export async function createGuestNote(
  * open, and withdrawing a guest from a session that has since closed is not an error the spec
  * describes. The ownership check is the authority here, not the session's lifecycle.
  *
- * WAITLIST PROMOTION IS DELIBERATELY ABSENT. The spec's step 4 says a freed slot should "trigger
- * waitlist auto-promote". That mechanism does not exist anywhere in this repo — there are no
- * join/leave/waitlist-entry functions and nothing has ever written players.status='waitlisted' —
- * so there is no candidate to promote and no promotion function to call. The occupancy recompute
- * the same step calls for IS implemented (and published on the event, so the freed slot is
- * observable); the promotion call is left as this comment rather than a stub, because a stub would
- * be an invented implementation of an unbuilt subsystem. It lands with the waitlist engine.
+ * Step 4's "trigger waitlist auto-promote" (P-6/P-7): after the guest_note.deleted row, the freed
+ * seat goes to the waitlist head through promoteFromWaitlist, in this transaction and under the
+ * session lock above. It is a no-op unless the session is open and not started, which is why the
+ * delete itself still needs no status guard.
  */
 export async function deleteGuestNote(
   db: Db,
@@ -2978,9 +2982,9 @@ export async function deleteGuestNote(
       failGuestNote("GUEST_NOTE_NOT_FOUND", "guest note not found in tenant context");
     }
 
-    // Step 4 — the freed slot, recomputed AFTER the delete so it reflects the release. Published
-    // on the event rather than dropped, which is what makes the recompute observable; the
-    // promotion this number is meant to feed does not exist yet (see the doc comment above).
+    // Step 4 — the freed slot, recomputed AFTER the delete (and before the promotion below) so it
+    // reflects the release. Published on the event rather than dropped, which is what makes the
+    // recompute observable.
     const occupancyAfter = await getSessionOccupancy(tx, sessionId);
 
     await tx.insert(outboxEvents).values({
@@ -3004,6 +3008,9 @@ export async function deleteGuestNote(
         occupancy_after: occupancyAfter,
       },
     });
+
+    // Step 4 (DT-10 / P-6 / P-7): the freed seat promotes the waitlist head, same tx, same lock.
+    await promoteFromWaitlist(tx, tenantId, sessionId);
 
     const stored: StoredGuestNoteResult = { noteId, sessionId, actorPersonId: personId };
     await tx.insert(processedCommands).values({
