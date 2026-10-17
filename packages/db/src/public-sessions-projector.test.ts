@@ -438,6 +438,79 @@ describe("PSP-5 fence immediate-deny then the writer's CAS-clear (A-7, D3)", () 
   });
 });
 
+describe("PSP-5c the writer runs only under READ COMMITTED (D8, s2 S2-SF-1)", () => {
+  /** The writer's outcome on client `c`: its disposition, or the SQLSTATE it failed with. */
+  const outcomeOn = async (c: pg.PoolClient, sid: string) => {
+    try {
+      const r = await c.query("SELECT public_sessions_project_session($1, NULL) AS d", [sid]);
+      return r.rows[0].d as string;
+    } catch (e) {
+      return String((e as { code?: string }).code);
+    }
+  };
+
+  it("PSP-5c (a): app_worker inside REPEATABLE READ or SERIALIZABLE gets 25000 and the writer changes nothing", async () => {
+    const t = await club();
+    const sid = await session(t);
+    expect(await project(sid)).toBe("upserted");
+    await raise(t, sid); // under READ COMMITTED the writer would rotate the row and clear this fence
+    const row = await baseRow(sid);
+    const token = (await fenceToken(sid))!;
+    for (const level of ["REPEATABLE READ", "SERIALIZABLE"]) {
+      const w = await ctx.workerPool.connect();
+      let outcome: string | undefined;
+      try {
+        await w.query(`BEGIN ISOLATION LEVEL ${level}`);
+        outcome = await outcomeOn(w, sid);
+        await w.query("COMMIT"); // after a failed call Postgres turns it into a rollback
+      } finally {
+        await w.query("ROLLBACK").catch(() => undefined);
+        w.release();
+      }
+      expect(await baseRow(sid)).toEqual(row);
+      expect(await fenceToken(sid)).toBe(token);
+      expect(outcome).toBe("25000");
+    }
+  });
+
+  it("PSP-5c (b): a REPEATABLE READ snapshot taken while S was public cannot replay it after the delete and the clear", async () => {
+    const t = await club();
+    const sid = await session(t);
+    expect(await project(sid)).toBe("upserted");
+    const lid = await listingId(sid);
+    expect(await viewRow(lid)).toBeDefined();
+    const a = await ctx.workerPool.connect();
+    let outcome: string | undefined;
+    try {
+      await a.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+      await a.query("SELECT pg_current_snapshot()"); // A's snapshot: S public and projected
+      // The host flip: private plus the DD-12 raise in one source transaction (session-service).
+      await asApp(t, async (c) => {
+        await c.query("UPDATE sessions SET visibility = 'private' WHERE id = $1", [sid]);
+        await c.query("SELECT raise_public_session_fence($1, 'visibility_private')", [sid]);
+      });
+      expect(await project(sid)).toBe("deleted"); // B: autocommit, READ COMMITTED
+      expect(await fenceToken(sid)).toBeNull();
+      outcome = await outcomeOn(a, sid);
+      await a.query("COMMIT"); // after a failed call Postgres turns it into a rollback
+    } finally {
+      await a.query("ROLLBACK").catch(() => undefined);
+      a.release();
+    }
+    // The leak first (red at f46e832: A's stale upsert, under a fresh public_listing_id, is served):
+    // every view row the public reader sees, mapped to its session through the public lookup.
+    const served = await reader(
+      `SELECT v.public_listing_id FROM public_session_share_v v
+         CROSS JOIN LATERAL public_listing_resolve(v.public_listing_id) r WHERE r.session_id = $1`,
+      [sid],
+    );
+    expect(served).toEqual([]);
+    expect(await resolveListing(lid)).toEqual([]);
+    expect(await baseRow(sid)).toBeUndefined();
+    expect(outcome).toBe("25000");
+  });
+});
+
 describe("PSP-6 idempotent writer; a forged event recomputes from canonical rows only (A-10)", () => {
   it("PSP-6: re-delivery is unchanged with no version bump; a real change bumps by one; forged ids write nothing", async () => {
     const t = await club();

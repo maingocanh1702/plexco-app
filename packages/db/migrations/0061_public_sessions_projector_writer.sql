@@ -189,6 +189,13 @@ DECLARE
   v_fence_token   uuid;
   v_disposition   text;
 BEGIN
+  -- D8 (s2 S2-SF-1): D3's observe-then-recompute order needs a fresh snapshot per statement after
+  -- the lock (READ COMMITTED); a caller-held or imported REPEATABLE READ / SERIALIZABLE snapshot
+  -- could replay a past public state.
+  IF current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+    RAISE EXCEPTION 'public_sessions_project_session: transaction isolation %',
+      current_setting('transaction_isolation') USING ERRCODE = '25000';
+  END IF;
   -- P-11: one writer per session at a time; the slug definers take the same lock.
   PERFORM pg_advisory_xact_lock(hashtextextended('public-sessions:' || p_session_id::text, 0));
   -- D3 (s1 S-1): observe the DD-12 fence token BEFORE any canonical read. A raise commits with its
