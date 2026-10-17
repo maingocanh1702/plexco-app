@@ -113,11 +113,19 @@ describe("POST /api/sessions/:id/leave (L8 M9)", () => {
     expect(leaveSession).not.toHaveBeenCalled();
   });
 
-  it("P-13: leave spends the tenant bucket session-self-service only, never a per-person bucket", async () => {
-    await POST(req({ commandId: "c1" }), ctx());
-    const keys = vi.mocked(rateLimited).mock.calls.map(([key]) => key);
-    expect(keys).toContain(`session-self-service:${TENANT}`);
-    expect(keys.filter((key) => key.endsWith(`:${PERSON}`))).toEqual([]);
+  it("P-24 (R1B-1/S1-1): the 21st leave in an hour by one person -> RATE_LIMITED 429 (session-leave 20/3600 s, checked before the tenant bucket); the tenant bucket is spared, another person still leaves", async () => {
+    const counts = new Map<string, number>();
+    vi.mocked(rateLimited).mockImplementation(async (key: string, limit = 20) => {
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      return counts.get(key)! > limit;
+    });
+    const statuses: number[] = [];
+    for (let i = 1; i <= 21; i += 1) {
+      statuses.push((await POST(req({ commandId: `c${i}` }), ctx())).status);
+    }
+    expect(statuses).toEqual([...Array<number>(20).fill(200), 429]);
+    expect(rateLimited).toHaveBeenCalledWith(`session-leave:${PERSON}`, 20, 3600);
+    expect(counts.get(`session-self-service:${TENANT}`)).toBe(20); // the 21st stopped first
   });
 
   it.each([

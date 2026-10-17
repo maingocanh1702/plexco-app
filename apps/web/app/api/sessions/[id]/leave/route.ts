@@ -1,6 +1,9 @@
 import { leaveSession } from "@plexco/db";
 import { ok } from "../../../../../lib/api-envelope";
-import { handleSessionCommand } from "../../../../../lib/session-command-route";
+import {
+  SESSION_LEAVE_PERSON_LIMIT,
+  handleSessionCommand,
+} from "../../../../../lib/session-command-route";
 import { appDb, currentSession } from "../../../../../lib/session-cookies";
 
 /**
@@ -10,8 +13,11 @@ import { appDb, currentSession } from "../../../../../lib/session-cookies";
  * other case is LEAVE_REQUIRES_HOST 409 with zero writes (P-4: "ask the host"). Body: `commandId`.
  *
  * Tenant from `?tenant=` (selfService gate, P-3), person from the session cookie, never the body
- * (HARD RULES 1, 4). Quota (P-13): the tenant bucket `session-self-service` only, no per-person
- * bucket (leaves are bounded by joins, and a replayed leave is idempotent).
+ * (HARD RULES 1, 4). Quotas (P-24, replacing P-13's "no per-person bucket"; default applied,
+ * pending owner sign-off): the per-person `session-leave` 20/3600 s first, then the tenant bucket
+ * `session-self-service` 60/60 s, as join does. The tenant hit lands at the gate before the
+ * command runs, so a replayed or empty leave still spends it: the person bucket keeps one member
+ * from filling the club-wide bucket (R1B-1, S1-1).
  */
 export async function POST(
   request: Request,
@@ -35,6 +41,6 @@ export async function POST(
         replayed: result.replayed,
       });
     },
-    { selfService: true },
+    { selfService: true, personLimit: SESSION_LEAVE_PERSON_LIMIT },
   );
 }

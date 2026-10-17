@@ -140,6 +140,13 @@ export const JOIN_REQUEST_CANCEL_PERSON_LIMIT: Readonly<PersonLimit> = {
   limit: 20,
   windowSeconds: 3600,
 };
+/** P-24 (R1B-1/S1-1; replaces P-13's "leave has no person bucket"): the tenant hit lands at the
+ *  gate before the command runs, so without it one member could keep the club-wide bucket full. */
+export const SESSION_LEAVE_PERSON_LIMIT: Readonly<PersonLimit> = {
+  bucket: "session-leave",
+  limit: 20,
+  windowSeconds: 3600,
+};
 
 /** True when this PERSON has exhausted `limit` (exported so L10b shares the join bucket). */
 export function personThrottled(limit: Readonly<PersonLimit>, personId: string): Promise<boolean> {
