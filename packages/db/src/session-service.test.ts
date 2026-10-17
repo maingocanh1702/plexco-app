@@ -1673,6 +1673,7 @@ describe("announceSession", () => {
       vi.unstubAllEnvs();
     }
     expect(await outboxFor(sessionId)).toHaveLength(0);
+    expect(await pcCount(tenantId)).toBe(0);
   });
 
   it("A-7 ready -> one event whose payload is exactly {session_id, channel, requested_by_person_id}: an id only, lowercased", async () => {
@@ -1741,6 +1742,7 @@ describe("announceSession", () => {
     const err = await announce(tenantId, { sessionId, channel: CH }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SessionAnnounceAuthorizationError);
     expect(await outboxFor(sessionId)).toHaveLength(0);
+    expect(await pcCount(tenantId)).toBe(0);
   });
 
   it("A-13 a commandId reused for another session -> COMMAND_ID_CONFLICT, still one event", async () => {
