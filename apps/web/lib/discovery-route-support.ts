@@ -6,7 +6,7 @@ import {
   type DiscoveryListFilter,
   type DiscoveryListingRow,
 } from "@plexco/db";
-import { err, NO_STORE } from "./api-envelope";
+import { err, NO_STORE, ok } from "./api-envelope";
 import { decodeDiscoveryCursor, isCalendarDay } from "./discovery-cursor";
 import { log } from "./log";
 import { SESSION_NOT_FOUND_MESSAGE } from "./session-command-route";
@@ -235,6 +235,28 @@ export function discoveryInvalidFilter(): Response {
 /** A configuration or database failure: an empty 500 (fail closed, nothing to leak). */
 export function discoveryServerError(): Response {
   return new Response(null, { status: 500, headers: { "cache-control": NO_STORE } });
+}
+
+/**
+ * One-listing GET (readiness 4.5), shared by the detail and share routes so both answer alike:
+ * the limiter, the shape check before any DB call, then the whitelist `{ listing }` or the ONE
+ * 404. Any failure is the empty 500; the key is never logged.
+ */
+export async function serveDiscoveryListing(
+  request: Request,
+  key: string,
+  wellFormed: (key: string) => boolean,
+  read: (pool: Pool, key: string) => Promise<DiscoveryListingRow | null>,
+): Promise<Response> {
+  try {
+    const limited = discoveryRateLimited(request);
+    if (limited) return limited;
+    if (!wellFormed(key)) return discoveryNotFound();
+    const row = await read(await discoveryPool(), key);
+    return row ? ok({ listing: toDiscoveryListingDto(row) }) : discoveryNotFound();
+  } catch {
+    return discoveryServerError();
+  }
 }
 
 /** Test seam: forget the limiter windows and the readonly handle, a poisoned one included. */
