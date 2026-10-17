@@ -27,9 +27,9 @@ describe("API_ERROR_CODES registry", () => {
   it("registers every literal the FIVE shipped session routes can emit", () => {
     // Scoped deliberately, and NOT "every literal in §3" as an earlier revision claimed
     // (codex round-02 [P3]): §3 also pins INVALID_CHANNEL and SESSION_ALREADY_ENDED, which belong
-    // to announce — still unshipped, still gated by DD-56 clause 1. Those return to this registry
-    // with their route, exactly as CANCEL_REQUIRES_REVIEW just did. Claiming full §3 coverage
-    // would imply this test guards codes nothing can currently emit.
+    // to announce. They returned to this registry with the announce route (DD-56 deferral (b),
+    // DD-134 (f)) and are asserted by the announce test below, exactly as CANCEL_REQUIRES_REVIEW
+    // returned with its route.
     //
     // THREE became FIVE when the close and cancel routes shipped, and that is the whole reason
     // CANCEL_REQUIRES_REVIEW appears below: the earlier revision of this comment named it as an
@@ -56,6 +56,21 @@ describe("API_ERROR_CODES registry", () => {
       "SESSION_NOT_OPEN",
       "SPORT_INACTIVE",
       "STALE_VERSION",
+      "TENANT_SUSPENDED",
+    ]) {
+      expect(isApiErrorCode(code)).toBe(true);
+    }
+  });
+
+  it("registers every literal the announce route can emit (DD-56 deferral (b), DD-134 (f))", () => {
+    // ANNOUNCE_DELIVERY_DISABLED is the DB-truth delivery guard's refusal (proposed, A-D1).
+    for (const code of [
+      "ANNOUNCE_DELIVERY_DISABLED",
+      "COMMAND_ID_CONFLICT",
+      "INVALID_CHANNEL",
+      "SESSION_ALREADY_ENDED",
+      "SESSION_NOT_FOUND",
+      "SESSION_NOT_OPEN",
       "TENANT_SUSPENDED",
     ]) {
       expect(isApiErrorCode(code)).toBe(true);
