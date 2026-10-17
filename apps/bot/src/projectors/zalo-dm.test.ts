@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
 import { fmtMoney } from "@plexco/core";
-import { migrate } from "@plexco/db";
+import { announceSession, createDb, migrate } from "@plexco/db";
 import {
   __resetAuthSecretCacheForTest,
   blobToText,
@@ -399,6 +399,69 @@ describe("zalo_dm projector against the 0057 definers and the stub (as app_worke
     expect(text).toMatch(/^Bạn đã có chỗ trong buổi chơi lúc .+\. Phí: /);
     expect(text.endsWith(`Phí: ${fmtMoney(95_000)}. Xem: ${link}`)).toBe(true);
     expect(text).not.toMatch(/Private Hall|Zdm Worker|120[.,]?000/); // Z-13: the fee is the only money
+  });
+
+  it("I-1 (L4b): the real announceSession -> one DM to the requesting host only; nothing while dispatch is off", async () => {
+    const c = await club();
+    // authorizeTenantAction refuses a tenant without a subscriptions row (AUTHZ3).
+    await q(
+      `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+       VALUES ($1, 'free', 1, 'active', now(), now() + interval '30 days')`,
+      [c.tenant],
+    );
+    const host = await player(c, "chat-i1-host", "none"); // the requester: linked, no roster row
+    await player(c, "chat-i1-player"); // a linked roster player, who must get nothing
+    const base = process.env.DATABASE_URL_TEST!;
+    // The producer as the web route runs it: the app role (RLS on), ROLE_PW.app under the lease.
+    const app = createDb(
+      testUrl(base, { db: "plexco_bot_zalo_dm", user: "app", password: ROLE_PW.app }),
+    );
+    const announce = (commandId: string) =>
+      announceSession(app.db, {
+        tenantId: c.tenant,
+        commandId,
+        requestedByPersonId: host.person,
+        input: { sessionId: c.session, channel: "zalo" },
+      });
+    const events = () =>
+      q("SELECT id, payload FROM outbox_events WHERE tenant_id = $1 AND type = $2", [
+        c.tenant,
+        "session.announcement_requested",
+      ]);
+    const cycle = () =>
+      runDispatchCycle(ctx.worker, { projectors: new Map([["zalo_dm", deliver]]) });
+    const from = stub.calls.length;
+    try {
+      // Dispatch off (no fresh schedule_enabled heartbeat): refused, no event, nothing delivered.
+      await q("DELETE FROM job_worker_heartbeats");
+      await expect(announce("cmd-i1-off")).rejects.toMatchObject({
+        code: "ANNOUNCE_DELIVERY_DISABLED",
+      });
+      await cycle();
+      expect([await events(), stub.calls.length]).toEqual([[], from]);
+
+      await ctx.worker.query("SELECT job_worker_heartbeat($1, 'h', 1, true)", [
+        `i1-${randomUUID()}`,
+      ]);
+      expect(await announce("cmd-i1")).toMatchObject({ channel: "zalo", replayed: false });
+      const [ev, ...more] = await events();
+      expect([ev!.payload, more]).toEqual([
+        { session_id: c.session, channel: "zalo", requested_by_person_id: host.person },
+        [],
+      ]);
+      expect(stub.calls.length).toBe(from); // delivery happens only through dispatch
+      await cycle();
+      await cycle(); // a second cycle neither re-claims nor resends
+      expect(
+        await q("SELECT status, provider_ref FROM projector_deliveries WHERE event_id = $1", [
+          ev!.id,
+        ]),
+      ).toEqual([{ status: "delivered", provider_ref: "sent" }]);
+      expect(chats(from)).toEqual(["chat-i1-host"]);
+    } finally {
+      await q("DELETE FROM job_worker_heartbeats");
+      await app.close();
+    }
   });
 
   it("DM-7/DM-5/DM-2: an 'en' club gets the English pair (0đ when free), once; an unlinked promoted player is a no-op", async () => {
