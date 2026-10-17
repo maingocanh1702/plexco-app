@@ -1037,13 +1037,6 @@ describe("mapSessionCommandError", () => {
     const suspended = mapSessionCommandError(new SessionAnnounceAuthorizationError());
     expect(suspended!.status).toBe(403);
     expect((await envelope(suspended!)).error).toMatchObject({ code: "TENANT_SUSPENDED" });
-    // The shared mapper is CRITICAL (7 session route flows): L4b only ADDS rows, so every
-    // pre-existing pinned row still maps exactly as before.
-    for (const [error, code, statusCode] of MAPPED_CASES) {
-      const mapped = mapSessionCommandError(error)!;
-      const { error: body } = await envelope(mapped);
-      expect([mapped.status, body]).toMatchObject([statusCode, { code, statusCode }]);
-    }
   });
 
   it.each(MAPPED_CASES)("maps %s onto the pinned code+status", async (error, code, statusCode) => {
