@@ -88,11 +88,22 @@ describe("formatVndInput / parseVndInput", () => {
 
 // L8 DM-9 (A1): the promotion DM renders its fee with @plexco/core's fmtMoney while the web renders
 // amounts with formatVnd; one amount must read the same on both surfaces over the int4 domain.
+// R1B-5: readiness 4.8's pinned amounts plus a fixed-seed sweep (no Math.random): 200 amounts per
+// digit count 1..10 at a Knuth-multiplier stride from seed 0x5eed, so every grouping class is hit.
+const SWEEP = Array.from({ length: 2000 }, (_, i) => {
+  const low = i % 10 === 0 ? 0 : 10 ** (i % 10);
+  const span = Math.min(INT4_MAX, 10 ** ((i % 10) + 1) - 1) - low + 1;
+  return low + ((0x5eed + Math.floor(i / 10) * 2654435761) % span);
+});
 describe("DM-9: fmtMoney (bot DM) === formatVnd (web) for every whole int4 amount class", () => {
-  it.each([0, 5, 999, 1000, 50000, 1234567, 100000000, INT4_MAX])(
+  it.each([0, 1, 999, 1000, 150000, 2310000, INT4_MAX])(
     "fmtMoney(%i) equals formatVnd of the same amount",
     (amount) => {
       expect(fmtMoney(amount)).toBe(formatVnd(amount));
     },
   );
+  it("the seeded sweep (2000 amounts, every digit count 1..10) has zero mismatches", () => {
+    expect(new Set(SWEEP.map((n) => String(n).length)).size).toBe(10);
+    expect(SWEEP.filter((n) => fmtMoney(n) !== formatVnd(n))).toEqual([]);
+  });
 });
