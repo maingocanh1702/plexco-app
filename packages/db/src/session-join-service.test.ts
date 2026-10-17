@@ -506,6 +506,50 @@ describe("joinSession", () => {
     // players, charges, payment_allocations, outbox_events, processed_commands, memberships.
     expect(await state(tenantId)).toEqual(before);
   });
+
+  /** RD-4 precondition (owner-forged): P's membership is left while its seat in S stays active. */
+  const endedSeat = async () => {
+    const { tenantId, sessionId } = await world({ visibility: "public" });
+    const { personId, membershipId } = await seedMember(tenantId);
+    expect((await join(tenantId, personId, sessionId)).outcome).toBe("active");
+    await ctx.owner.query(`UPDATE memberships SET status = 'left' WHERE id = $1`, [membershipId]);
+    return { tenantId, sessionId, personId };
+  };
+
+  it("A-14b (L10b R1-1, guest path): P first guest-joins ANOTHER public session of the club (minting a live guest membership), then guest-joins S where the left membership's seat is live -> ALREADY_JOINED with zero writes", async () => {
+    const { tenantId, sessionId, personId } = await endedSeat();
+    const elsewhere = await fx.seedSession(tenantId);
+    await makePublic(elsewhere);
+    const step1 = await join(tenantId, personId, elsewhere, { allowGuestMembership: true });
+    expect(step1.outcome).toBe("active");
+    const before = await state(tenantId);
+    const run = join(tenantId, personId, sessionId, { allowGuestMembership: true });
+    expect(await codeOf(run)).toBe("ALREADY_JOINED");
+    expect(await state(tenantId)).toEqual(before);
+  });
+
+  it("A-14c (L10b R1-1, member path): P holding a live active membership again joins S without allowGuestMembership, where the left membership's seat is live -> ALREADY_JOINED with zero writes", async () => {
+    const { tenantId, sessionId, personId } = await endedSeat();
+    await ctx.owner.query(
+      `INSERT INTO memberships (tenant_id, person_id, display_name, status)
+       VALUES ($1, $2, 'Again', 'active')`,
+      [tenantId, personId],
+    );
+    const before = await state(tenantId);
+    expect(await codeOf(join(tenantId, personId, sessionId))).toBe("ALREADY_JOINED");
+    expect(await state(tenantId)).toEqual(before);
+  });
+
+  it("A-14d (L10b R1-1): a live membership's own seat in S keeps L8's answer on both routes -> the current outcome (replayed false) with zero writes", async () => {
+    const { tenantId, sessionId } = await endedSeat();
+    const q = await seedMember(tenantId);
+    const seated = await join(tenantId, q.personId, sessionId);
+    const before = await state(tenantId);
+    for (const allowGuestMembership of [false, true]) {
+      expect(await join(tenantId, q.personId, sessionId, { allowGuestMembership })).toEqual(seated);
+    }
+    expect(await state(tenantId)).toEqual(before);
+  });
 });
 
 describe("leaveSession and FIFO promotion", () => {
