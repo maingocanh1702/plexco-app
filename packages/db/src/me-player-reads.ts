@@ -14,9 +14,10 @@ import { chargeRemaining, chargeStatusFor } from "./payment-manual.js";
  * unknown club makes the whole summary unknown (no partial sum).
  */
 const CLUBS_CAP = 100;
-const SESSIONS_CAP = 50;
-const REQUESTS_CAP = 50;
-const OPEN_CHARGES_CAP = 200;
+/** Each is also its 0059 definer's per-tenant LIMIT (cap + 1); the M-5 catalog test pins the pair. */
+export const SESSIONS_CAP = 50;
+export const REQUESTS_CAP = 50;
+export const OPEN_CHARGES_CAP = 200;
 
 export interface MyClub {
   clubRef: string;

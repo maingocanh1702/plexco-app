@@ -2,6 +2,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import {
+  OPEN_CHARGES_CAP,
+  REQUESTS_CAP,
+  SESSIONS_CAP,
   listMyClubs,
   listMyJoinRequests,
   listMySessions,
@@ -183,7 +186,7 @@ const unknown = (reasonCode: string, retryable = false) => ({
 });
 const zero = { kind: "known_zero", currency: "VND", asOf: expect.any(String) };
 
-describe("0059 catalog (A-12, A-13)", () => {
+describe("0059 catalog (A-12, A-13, M-5)", () => {
   it("A-12: four SECURITY DEFINER plpgsql VOLATILE functions, one uuid argument, pinned search_path, owned like person_profile_read", async () => {
     const { rows } = await ctx.owner.query(
       `SELECT p.proname, p.prosecdef, p.provolatile, p.proconfig, l.lanname,
@@ -237,6 +240,22 @@ describe("0059 catalog (A-12, A-13)", () => {
         explicit_acl: true,
         public_grant: false,
       });
+    }
+  });
+
+  it("M-5: each capped definer's per-tenant SQL LIMIT is its TypeScript cap + 1, so raising one side alone fails here", async () => {
+    const caps: Record<string, number> = {
+      account_my_sessions: SESSIONS_CAP,
+      account_my_open_charges: OPEN_CHARGES_CAP,
+      account_my_join_requests: REQUESTS_CAP,
+    };
+    for (const [fn, cap] of Object.entries(caps)) {
+      const { rows } = await ctx.owner.query<{ def: string }>(
+        `SELECT pg_get_functiondef($1::text::regprocedure) AS def`,
+        [`public.${fn}(uuid)`],
+      );
+      const limits = [...rows[0]!.def.matchAll(/\bLIMIT\s+(\d+)/gi)].map((m) => Number(m[1]));
+      expect(limits, fn).toEqual([cap + 1]);
     }
   });
 });
