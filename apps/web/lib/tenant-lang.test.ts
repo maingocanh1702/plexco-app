@@ -139,6 +139,17 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/sessions/[id]/players/[playerId]/route.ts": "a",
   "app/api/sessions/[id]/mark-paid/route.ts": "a",
   "app/api/sessions/[id]/payments/[allocationId]/reverse/route.ts": "a",
+  // (a) — L8 (M9): the five player and join-request commands delegate to handleSessionCommand, whose
+  // entry gate proves ?tenant= (P-3 live membership via selfService, or session.manage for approve and
+  // reject) BEFORE the runWithLang seam; they emit only ok(...). The host read GET delegates to
+  // handleSessionRead (lib/session-read-route.ts, "a" below): session.manage, then runWithLang, like the
+  // GET in app/api/sessions/[id]/route.ts; its service errors map inside that handler.
+  "app/api/sessions/[id]/join/route.ts": "a",
+  "app/api/sessions/[id]/leave/route.ts": "a",
+  "app/api/join-requests/[id]/route.ts": "a",
+  "app/api/join-requests/[id]/approve/route.ts": "a",
+  "app/api/join-requests/[id]/reject/route.ts": "a",
+  "app/api/sessions/[id]/join-requests/route.ts": "a",
   // (b) — the tenant does not exist yet: this is the tenant-CREATION route, every t() is an error
   // path, and at the locale check the value is still an unvalidated request-body field. Reading it
   // would be a SECOND language source, which DD-118 forbids.
