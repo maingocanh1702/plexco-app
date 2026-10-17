@@ -1818,8 +1818,9 @@ describe("announceSession", () => {
   it("COMMAND_ID_CONFLICT: an AnnounceSession ledger row with a corrupt/domain-invalid result_ref fails closed (never replayed) -- zero new outbox", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId } = await seedSession(tenantId, "open");
-    // Type-valid (AnnounceSession) but result_ref fails isStoredAnnounceResult: null, non-object,
-    // missing sessionId, non-UUID sessionId, and an unrecognised channel are ALL corrupt -> conflict.
+    // Type-valid (AnnounceSession) but never replayable for this zalo request: null, non-object,
+    // missing sessionId, non-UUID sessionId and an unrecognised channel fail isStoredAnnounceResult;
+    // a valid pre-change messenger row fails the replay's channel match. ALL -> conflict.
     const corrupt: unknown[] = [
       null,
       42,
@@ -1827,6 +1828,7 @@ describe("announceSession", () => {
       { channel: CH },
       { sessionId: "not-a-uuid", channel: CH },
       { sessionId, channel: "whatsapp" },
+      { sessionId, channel: "messenger" },
     ];
     for (const result of corrupt) {
       const commandId = cmdId();
