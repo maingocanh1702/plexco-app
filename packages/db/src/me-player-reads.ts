@@ -9,8 +9,9 @@ import { chargeRemaining, chargeStatusFor } from "./payment-manual.js";
  * tenant by tenant. Own money only: another person's charge never leaves the database.
  *
  * Lists are ordered here (M-6) and capped at cap + 1 rows (M-5): `truncated` says the cap cut them.
- * Money follows the readiness contract section 4.3: a value that cannot be derived is `unknown`,
- * never 0, and an unknown club makes the whole summary unknown (no partial sum).
+ * Each SELECT list below IS the DTO allowlist (toDto only renames and formats). Money follows the
+ * readiness contract section 4.3: a value that cannot be derived is `unknown`, never 0, and an
+ * unknown club makes the whole summary unknown (no partial sum).
  */
 const CLUBS_CAP = 100;
 const SESSIONS_CAP = 50;
@@ -68,29 +69,11 @@ type Unknown = {
   retryable: boolean;
 };
 type KnownZero = { kind: "known_zero"; currency: "VND"; asOf: string };
+type Amount = { kind: "known_amount"; currency: "VND"; totalOutstanding: number; asOf: string };
 
 export type SelfPaymentStatus =
-  | KnownZero
-  | {
-      kind: "known_amount";
-      currency: "VND";
-      totalOutstanding: number;
-      chargeCount: number;
-      items: MyChargeItem[];
-      asOf: string;
-    }
-  | Unknown;
-
-export type SelfPaymentSummary =
-  | KnownZero
-  | {
-      kind: "known_amount";
-      currency: "VND";
-      totalOutstanding: number;
-      clubCount: number;
-      asOf: string;
-    }
-  | Unknown;
+  KnownZero | (Amount & { chargeCount: number; items: MyChargeItem[] }) | Unknown;
+export type SelfPaymentSummary = KnownZero | (Amount & { clubCount: number }) | Unknown;
 
 export interface MyClubCharges {
   clubRef: string;
@@ -103,29 +86,26 @@ export interface MyCharges {
   summary: SelfPaymentSummary;
 }
 
-const iso = (v: Date | string): string => new Date(v).toISOString();
 const unknown = (reasonCode: Unknown["reasonCode"], retryable = false): Unknown => ({
   kind: "unknown",
   reasonCode,
   retryable,
 });
 
-async function capped<R extends pg.QueryResultRow, T>(
-  pool: pg.Pool,
-  sql: string,
-  accountId: string,
-  cap: number,
-  map: (row: R) => T,
-): Promise<{ items: T[]; truncated: boolean }> {
-  const { rows } = await pool.query<R>(sql, [accountId, cap + 1]);
-  return { items: rows.slice(0, cap).map(map), truncated: rows.length > cap };
+/** snake_case row -> camelCase DTO with timestamps as ISO strings; adds and drops nothing. */
+function toDto<T>(row: Record<string, unknown>): T {
+  const dto: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    const camel = key.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
+    dto[camel] = value instanceof Date ? value.toISOString() : value;
+  }
+  return dto as T;
 }
 
-type ClubRow = {
-  club_ref: string;
-  club_label: string;
-  membership_status: "active" | "guest";
-};
+async function capped<T>(pool: pg.Pool, sql: string, accountId: string, cap: number) {
+  const { rows } = await pool.query(`${sql} LIMIT $2`, [accountId, cap + 1]);
+  return { items: rows.slice(0, cap).map((row) => toDto<T>(row)), truncated: rows.length > cap };
+}
 
 const CLUBS_SQL = `SELECT club_ref, club_label, membership_status FROM account_my_clubs($1::uuid)`;
 
@@ -134,17 +114,8 @@ export async function listMyClubs(
   pool: pg.Pool,
   accountId: string,
 ): Promise<{ clubs: MyClub[]; truncated: boolean }> {
-  const { items, truncated } = await capped<ClubRow, MyClub>(
-    pool,
-    `${CLUBS_SQL} ORDER BY club_label COLLATE "C", club_ref COLLATE "C" LIMIT $2`,
-    accountId,
-    CLUBS_CAP,
-    (r) => ({
-      clubRef: r.club_ref,
-      clubLabel: r.club_label,
-      membershipStatus: r.membership_status,
-    }),
-  );
+  const sql = `${CLUBS_SQL} ORDER BY club_label COLLATE "C", club_ref COLLATE "C"`;
+  const { items, truncated } = await capped<MyClub>(pool, sql, accountId, CLUBS_CAP);
   return { clubs: items, truncated };
 }
 
@@ -153,41 +124,10 @@ export async function listMySessions(
   pool: pg.Pool,
   accountId: string,
 ): Promise<{ sessions: MySession[]; truncated: boolean }> {
-  const { items, truncated } = await capped(
-    pool,
-    `SELECT session_id, club_ref, club_label, sport_key, starts_at, ends_at, timezone, area,
-            my_status, waitlist_position, venue_name, venue_address
-       FROM account_my_sessions($1::uuid) ORDER BY starts_at, session_id LIMIT $2`,
-    accountId,
-    SESSIONS_CAP,
-    (r: {
-      session_id: string;
-      club_ref: string;
-      club_label: string;
-      sport_key: string;
-      starts_at: Date;
-      ends_at: Date;
-      timezone: string;
-      area: string | null;
-      my_status: MySession["myStatus"];
-      waitlist_position: number | null;
-      venue_name: string | null;
-      venue_address: string | null;
-    }): MySession => ({
-      sessionId: r.session_id,
-      clubRef: r.club_ref,
-      clubLabel: r.club_label,
-      sportKey: r.sport_key,
-      startsAt: iso(r.starts_at),
-      endsAt: iso(r.ends_at),
-      timezone: r.timezone,
-      area: r.area,
-      myStatus: r.my_status,
-      waitlistPosition: r.waitlist_position,
-      venueName: r.venue_name,
-      venueAddress: r.venue_address,
-    }),
-  );
+  const sql = `SELECT session_id, club_ref, club_label, sport_key, starts_at, ends_at, timezone, area,
+                      my_status, waitlist_position, venue_name, venue_address
+                 FROM account_my_sessions($1::uuid) ORDER BY starts_at, session_id`;
+  const { items, truncated } = await capped<MySession>(pool, sql, accountId, SESSIONS_CAP);
   return { sessions: items, truncated };
 }
 
@@ -196,43 +136,15 @@ export async function listMyJoinRequests(
   pool: pg.Pool,
   accountId: string,
 ): Promise<{ requests: MyJoinRequest[]; truncated: boolean }> {
-  const { items, truncated } = await capped(
-    pool,
-    `SELECT request_id, session_id, club_ref, club_label, starts_at, area, status, created_at,
-            decided_at, expires_at
-       FROM account_my_join_requests($1::uuid) ORDER BY created_at DESC, request_id DESC LIMIT $2`,
-    accountId,
-    REQUESTS_CAP,
-    (r: {
-      request_id: string;
-      session_id: string;
-      club_ref: string;
-      club_label: string;
-      starts_at: Date;
-      area: string | null;
-      status: MyJoinRequest["status"];
-      created_at: Date;
-      decided_at: Date | null;
-      expires_at: Date;
-    }): MyJoinRequest => ({
-      requestId: r.request_id,
-      sessionId: r.session_id,
-      clubRef: r.club_ref,
-      clubLabel: r.club_label,
-      startsAt: iso(r.starts_at),
-      area: r.area,
-      status: r.status,
-      createdAt: iso(r.created_at),
-      decidedAt: r.decided_at === null ? null : iso(r.decided_at),
-      expiresAt: iso(r.expires_at),
-    }),
-  );
+  const sql = `SELECT request_id, session_id, club_ref, club_label, starts_at, area, status,
+                      created_at, decided_at, expires_at
+                 FROM account_my_join_requests($1::uuid) ORDER BY created_at DESC, request_id DESC`;
+  const { items, truncated } = await capped<MyJoinRequest>(pool, sql, accountId, REQUESTS_CAP);
   return { requests: items, truncated };
 }
 
-type ChargeRow = {
-  club_ref: string;
-  club_label: string;
+type ClubRow = { club_ref: string; club_label: string };
+type ChargeRow = ClubRow & {
   session_id: string;
   starts_at: Date;
   amount_due: number | null;
@@ -243,40 +155,43 @@ type ChargeRow = {
 
 /** A consistent open|partial charge, or null when its amounts cannot be derived (section 4.3). */
 function chargeItem(r: ChargeRow): MyChargeItem | null {
-  const due = r.amount_due;
-  const effective = r.effective_allocated;
-  const status = r.charge_status;
-  if (typeof due !== "number" || typeof effective !== "number") return null;
-  if (!Number.isInteger(due) || !Number.isInteger(effective)) return null;
+  const { amount_due: due, effective_allocated: effective, charge_status: status } = r;
+  if (
+    !Number.isInteger(due) ||
+    !Number.isInteger(effective) ||
+    due === null ||
+    effective === null
+  ) {
+    return null;
+  }
   if (effective !== r.amount_allocated || effective < 0 || effective > due) return null;
   if ((status !== "open" && status !== "partial") || chargeStatusFor(due, effective) !== status) {
     return null;
   }
+  const remaining = chargeRemaining(due, effective, status);
+  const startsAt = r.starts_at.toISOString();
   return {
     sessionRef: r.session_id,
-    startsAt: iso(r.starts_at),
+    startsAt,
     amountDue: due,
     amountAllocated: effective,
-    remaining: chargeRemaining(due, effective, status),
+    remaining,
     status,
   };
 }
 
 function clubStatus(rows: ChargeRow[], asOf: string): SelfPaymentStatus {
   if (rows.length === 0) return { kind: "known_zero", currency: "VND", asOf };
-  const items: MyChargeItem[] = [];
-  for (const row of rows) {
-    const item = chargeItem(row);
-    if (!item) return unknown("LEDGER_INCONSISTENT");
-    items.push(item);
-  }
-  const totalOutstanding = items.reduce((sum, i) => sum + i.remaining, 0);
+  const items = rows.map(chargeItem);
+  if (items.some((i) => i === null)) return unknown("LEDGER_INCONSISTENT");
+  const known = items as MyChargeItem[];
+  const totalOutstanding = known.reduce((sum, i) => sum + i.remaining, 0);
   return {
     kind: "known_amount",
     currency: "VND",
     totalOutstanding,
-    chargeCount: items.length,
-    items,
+    chargeCount: known.length,
+    items: known,
     asOf,
   };
 }
@@ -296,20 +211,14 @@ export async function readMyCharges(pool: pg.Pool, accountId: string): Promise<M
     client = await pool.connect();
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     clubRows = (await client.query<ClubRow>(CLUBS_SQL, [accountId])).rows;
-    chargeRows = (
-      await client.query<ChargeRow>(
-        `SELECT club_ref, club_label, session_id, starts_at, amount_due, amount_allocated,
-                effective_allocated, charge_status
-           FROM account_my_open_charges($1::uuid) ORDER BY starts_at, session_id LIMIT $2`,
-        [accountId, OPEN_CHARGES_CAP + 1],
-      )
-    ).rows;
+    const sql = `SELECT club_ref, club_label, session_id, starts_at, amount_due, amount_allocated,
+                        effective_allocated, charge_status
+                   FROM account_my_open_charges($1::uuid) ORDER BY starts_at, session_id LIMIT $2`;
+    chargeRows = (await client.query<ChargeRow>(sql, [accountId, OPEN_CHARGES_CAP + 1])).rows;
     await client.query("COMMIT");
   } catch {
-    if (client) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      client.release(true);
-    }
+    await client?.query("ROLLBACK").catch(() => undefined);
+    client?.release(true);
     return { clubs: [], summary: unknown("READ_FAILED", true) };
   }
   client.release();
@@ -334,17 +243,13 @@ export async function readMyCharges(pool: pg.Pool, accountId: string): Promise<M
   if (list.some((c) => c.status.kind === "unknown")) {
     return { clubs: list, summary: unknown("LEDGER_INCONSISTENT") };
   }
-  let totalOutstanding = 0;
-  let clubCount = 0;
-  for (const c of list) {
-    if (c.status.kind === "known_amount" && c.status.totalOutstanding > 0) {
-      totalOutstanding += c.status.totalOutstanding;
-      clubCount += 1;
-    }
-  }
+  // A known_amount club always owes > 0 (open|partial on a consistent ledger), so clubCount counts
+  // exactly the clubs with totalOutstanding > 0 and 0 clubs owing means every club is known_zero.
+  const owing = list.flatMap((c) => (c.status.kind === "known_amount" ? [c.status] : []));
+  const totalOutstanding = owing.reduce((sum, s) => sum + s.totalOutstanding, 0);
   const summary: SelfPaymentSummary =
-    clubCount === 0
+    owing.length === 0
       ? { kind: "known_zero", currency: "VND", asOf }
-      : { kind: "known_amount", currency: "VND", totalOutstanding, clubCount, asOf };
+      : { kind: "known_amount", currency: "VND", totalOutstanding, clubCount: owing.length, asOf };
   return { clubs: list, summary };
 }
