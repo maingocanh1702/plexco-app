@@ -1,6 +1,11 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Db } from "./client.js";
+import { ClubConfigError } from "./club-config.js";
+import { getPublicAlias, setPublicAlias, validatePublicAlias } from "./public-alias.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 // 0060 (tenant public alias) as the real roles app / app_worker / readonly and the trusted owner
@@ -557,5 +562,193 @@ describe("0060 owner decisions (A-9, A-10, A-12, A-14, A-15, A-18, A-21, A-26)",
     );
     expect(rows.length).toBeGreaterThan(0);
     for (const { payload } of rows) expect(Object.keys(payload)).toEqual(["status"]);
+  });
+});
+
+// ---- the TS module as role app (ctx.appDb) and the owner CLI ----
+const NO_DB = {} as Db; // any DB use throws a TypeError, so INVALID_INPUT on it proves none happened
+const codeOf = (p: Promise<unknown>) =>
+  p.then(
+    () => "ok",
+    (e: unknown) => (e instanceof ClubConfigError ? e.code : String(e)),
+  );
+const tsAccepts = (v: string) => codeOf(Promise.resolve().then(() => validatePublicAlias(v)));
+const setTs = (tenantId: string, actor: string, publicAlias: unknown, commandId = randomUUID()) =>
+  setPublicAlias(ctx.appDb.db, { tenantId, actorPersonId: actor, commandId, publicAlias });
+const commands = async (tenantId: string) =>
+  (
+    await ctx.owner.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM processed_commands WHERE tenant_id = $1`,
+      [tenantId],
+    )
+  ).rows[0]!.n;
+/** A club that passes the tenant-status axis (authorizeTenantAction fails closed without a row). */
+async function activeClub(status = "active") {
+  const c = await club();
+  await ctx.owner.query(`UPDATE tenants SET status = $2 WHERE id = $1`, [c.tenantId, status]);
+  await ctx.owner.query(
+    `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+     VALUES ($1, 'free', 1, $2, now(), 'infinity')`,
+    [c.tenantId, status],
+  );
+  return c;
+}
+/** The set definer's verdict as app with the GUC, rolled back: true = accepted, false = 22023. */
+async function sqlAccepts(tenantId: string, actor: string, input: string) {
+  const c = await ctx.appPool.connect();
+  try {
+    await c.query("BEGIN");
+    await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+    const state = await sqlState(
+      c.query(`SELECT * FROM tenant_public_alias_set($1, $2, $3)`, [tenantId, actor, input]),
+    );
+    if (state !== "ok" && state !== "22023") throw new Error(`unexpected SQLSTATE ${state}`);
+    return state === "ok";
+  } finally {
+    await c.query("ROLLBACK");
+    c.release();
+  }
+}
+
+describe("setPublicAlias / getPublicAlias as app (A-1, A-4, A-5, A-12, A-19, A-20, A-26)", () => {
+  it("A-1/A-26: trims, stores pending with one event; results carry exactly their keys", async () => {
+    const { tenantId, ownerId } = await activeClub();
+    const set = await setTs(tenantId, ownerId, "  CLB Cầu Lông Q7  ");
+    const state = { publicAlias: "CLB Cầu Lông Q7", publicAliasStatus: "pending" };
+    expect(set).toStrictEqual({ ...state, changed: true, replayed: false });
+    const read = await getPublicAlias(ctx.appDb.db, { tenantId });
+    expect(read).toStrictEqual(state);
+    expect((await events(tenantId)).map((e) => e.type)).toEqual(["tenant.public_alias_set"]);
+    expect(JSON.stringify([set, read])).not.toMatch(/Secret/);
+  });
+
+  it("A-4/A-12: TS refuses before any DB call and agrees with the SQL definer per sample", async () => {
+    const { tenantId, ownerId } = await activeClub();
+    for (const bad of [null, 42, ...SAMPLES.filter((s) => !s[2]).map((s) => s[1])]) {
+      const p = setPublicAlias(NO_DB, {
+        tenantId,
+        actorPersonId: ownerId,
+        commandId: randomUUID(),
+        publicAlias: bad,
+      });
+      expect(await codeOf(p), JSON.stringify(bad)).toBe("INVALID_INPUT");
+    }
+    for (const [label, input, accepted] of SAMPLES) {
+      const sqlOk = await sqlAccepts(tenantId, ownerId, input);
+      expect(sqlOk, label).toBe(accepted);
+      expect(await tsAccepts(input), label).toBe(sqlOk ? "ok" : "INVALID_INPUT");
+    }
+    expect(await snapshot(tenantId)).toMatchObject({ public_alias: null, events: 0 });
+  });
+
+  it("A-5: no content.manage, a non-member or another club's owner is FORBIDDEN, zero writes", async () => {
+    const { tenantId } = await activeClub();
+    const other = await activeClub();
+    for (const actor of [await admin(tenantId, "admin", false), await person(), other.ownerId]) {
+      expect(await codeOf(setTs(tenantId, actor, "Alias A"))).toBe("FORBIDDEN");
+    }
+    expect(await snapshot(tenantId)).toMatchObject({ public_alias: null, events: 0 });
+    expect(await commands(tenantId)).toBe(0);
+  });
+
+  it("A-19: a replay after approval writes nothing; same text is no change; a foreign id conflicts", async () => {
+    const { tenantId, ownerId } = await activeClub();
+    const cmd = randomUUID();
+    await setTs(tenantId, ownerId, "Alias A", cmd);
+    await decide(tenantId, "approved", sha("Alias A"));
+    const before = [await snapshot(tenantId), await commands(tenantId)];
+    expect(await setTs(tenantId, ownerId, "Alias B", cmd)).toStrictEqual({
+      publicAlias: "Alias A",
+      publicAliasStatus: "approved",
+      changed: false,
+      replayed: true,
+    });
+    expect([await snapshot(tenantId), await commands(tenantId)]).toEqual(before);
+    expect(await setTs(tenantId, ownerId, " Alias A ")).toMatchObject({
+      publicAliasStatus: "approved",
+      changed: false,
+      replayed: false,
+    });
+    const foreign = randomUUID();
+    await ctx.owner.query(
+      `INSERT INTO processed_commands (tenant_id, command_id, command_type) VALUES ($1, $2, 'UpdateClubConfig')`,
+      [tenantId, foreign],
+    );
+    expect(await codeOf(setTs(tenantId, ownerId, "Alias B", foreign))).toBe("COMMAND_ID_CONFLICT");
+    expect(await snapshot(tenantId)).toMatchObject({ public_alias_status: "approved", events: 2 });
+  });
+
+  it("A-20: a suspended tenant is TENANT_SUSPENDED with zero writes", async () => {
+    const { tenantId, ownerId } = await activeClub("suspended");
+    expect(await codeOf(setTs(tenantId, ownerId, "Alias A"))).toBe("TENANT_SUSPENDED");
+    expect(await snapshot(tenantId)).toMatchObject({ public_alias: null, events: 0 });
+    expect(await commands(tenantId)).toBe(0);
+  });
+});
+
+describe("owner CLI scripts/public-alias-moderate.mjs (A-13)", () => {
+  const script = fileURLToPath(
+    new URL("../../../scripts/public-alias-moderate.mjs", import.meta.url),
+  );
+  const ownerUrl = new URL(process.env.DATABASE_URL_TEST ?? "postgres://unset");
+  ownerUrl.pathname = "/plexco_public_alias";
+  const outputs: string[] = [];
+  const cli = (args: string[], url: string | null = ownerUrl.toString()) => {
+    const env: Record<string, string> = { PATH: process.env.PATH ?? "" };
+    if (url !== null) env.DATABASE_URL_MIGRATION = url;
+    const r = spawnSync(process.execPath, [script, ...args], { env, encoding: "utf8" });
+    outputs.push(r.stdout, r.stderr);
+    return { code: r.status, out: r.stdout, err: r.stderr };
+  };
+
+  it("A-13: list, approve, reject, wrong digest, bad args, env unset; no name or secret printed", async () => {
+    const { tenantId, ownerId } = await club();
+    await setAlias(tenantId, ownerId, "Alias A");
+    const list = cli(["list"]);
+    expect(list.code).toBe(0);
+    const lines = list.out
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Row);
+    for (const l of lines)
+      expect(Object.keys(l)).toEqual(["tenantId", "publicAlias", "aliasSha256"]);
+    expect(lines).toContainEqual({ tenantId, publicAlias: "Alias A", aliasSha256: sha("Alias A") });
+    const decision = (cmd: string, digest = sha("Alias A")) =>
+      cli([cmd, "--tenant", tenantId, "--sha256", digest]);
+    const wrong = decision("approve", sha("Alias Z"));
+    expect(wrong).toMatchObject({ code: 2, err: expect.stringMatching(/^refused: /) });
+    for (const [cmd, status] of [
+      ["approve", "approved"],
+      ["reject", "rejected"],
+    ] as const) {
+      const r = decision(cmd);
+      expect(r.code, r.err).toBe(0);
+      expect(JSON.parse(r.out)).toStrictEqual({ tenantId, status });
+    }
+    expect(decision("reject").code).toBe(2); // same-status decision: 55000
+    const d = sha("x");
+    for (const bad of [
+      [],
+      ["list", "extra"],
+      ["toString"],
+      ["approve"],
+      ["approve", "--tenant", "nope", "--sha256", d],
+      ["reject", "--tenant", tenantId, "--sha256", d.toUpperCase()],
+      ["approve", "--tenant", tenantId, "--sha256", d, "--tenant", tenantId],
+      ["approve", "--tenant", tenantId, "--sha256", d, "--force", "1"],
+    ]) {
+      expect(cli(bad).code, bad.join(" ")).toBe(2);
+    }
+    expect(cli(["list"], null)).toMatchObject({
+      code: 1,
+      err: expect.stringMatching(/DATABASE_URL_MIGRATION is not set/),
+    });
+    const secret = "pw-never-printed-0060";
+    expect(cli(["list"], `postgres://nobody:${secret}@127.0.0.1:1/x`).code).toBe(1);
+    expect((await audits(tenantId)).map((a) => a.decided_by)).toEqual(["owner-cli", "owner-cli"]);
+    const all = outputs.join("\n");
+    for (const s of [TENANT_NAME, PERSON_NAME, ownerUrl.toString(), secret, ownerUrl.password]) {
+      if (s) expect(all).not.toContain(s);
+    }
   });
 });
