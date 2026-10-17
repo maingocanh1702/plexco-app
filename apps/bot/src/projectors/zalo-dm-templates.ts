@@ -1,18 +1,22 @@
+import { fmtMoney } from "@plexco/core";
 import { getLang, t } from "@plexco/core/i18n";
 
 /**
  * Zalo DM copy (readiness 3.10, Z-13; default applied, pending owner sign-off). Every string is
  * t(vi, en) (HARD RULE 5): call renderZaloDm inside runWithLang(tenant locale) (DD-118). No
- * venue, address, price, roster or name ever goes into a DM: the announce text is meant to be
- * forwarded and venue_name is private until join (DD-06).
+ * venue, address, roster or name ever goes into a DM: the announce text is meant to be forwarded
+ * and venue_name is private until join (DD-06). No price either, with ONE exception: 'promoted'
+ * (L8; Z-11, DD-134 (c), P-16) is the single fee-bearing DM. It carries the promoted player's own
+ * charge amount_due through @plexco/core's fmtMoney and goes to that player only (0057 definer).
  */
-export type ZaloDmTemplate = "updated" | "cancelled" | "announce";
+export type ZaloDmTemplate = "updated" | "cancelled" | "announce" | "promoted";
 
-/** Event type -> template (Z-11). L8 adds player.promoted here together with its own route row. */
+/** Event type -> template (Z-11); player.promoted is L8's, routed to zalo_dm by 0058. */
 export const ZALO_DM_TEMPLATES: ReadonlyMap<string, ZaloDmTemplate> = new Map([
   ["session.updated", "updated"],
   ["session.cancelled", "cancelled"],
   ["session.announcement_requested", "announce"],
+  ["player.promoted", "promoted"],
 ]);
 
 /** session.updated fields that warrant a DM, grouped under one label each, in this order. */
@@ -29,6 +33,8 @@ export interface ZaloDmValues {
   /** session.updated changed_fields (only the relevant ones are labelled). */
   fields: readonly string[];
   link: string;
+  /** player.promoted only: the promotion charge's amount_due (VND, whole int4; 0 = free). */
+  amountDue?: number;
 }
 
 /** starts_at in the session's own time zone, short date and time; never throws ("" if invalid). */
@@ -67,6 +73,17 @@ export function renderZaloDm(template: ZaloDmTemplate, v: ZaloDmValues): string 
       { start, link: v.link },
     );
     return fill(t("Tin mời để chuyển tiếp:\n{text}", "Ready to forward:\n{text}"), { text });
+  }
+  if (template === "promoted") {
+    // zalo-dm.ts admits only a whole int4 amount_due (DM-6); were it absent, "{fee}" stays visible.
+    const fee = v.amountDue === undefined ? "{fee}" : fmtMoney(v.amountDue);
+    return fill(
+      t(
+        "Bạn đã có chỗ trong buổi chơi lúc {start}. Phí: {fee}. Xem: {link}",
+        "You now have a spot in the session at {start}. Fee: {fee}. See: {link}",
+      ),
+      { start, fee, link: v.link },
+    );
   }
   const fields = FIELD_GROUPS.filter(([group]) => group.some((f) => v.fields.includes(f)))
     .map(([, label]) => label())
