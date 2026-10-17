@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type pg from "pg";
+import { sql, type SQL } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DISCOVERY_PAGE_LIMIT_MAX,
@@ -10,6 +10,7 @@ import {
   type DiscoveryListFilter,
   type DiscoveryListPage,
 } from "./public-discovery-read.js";
+import { withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 // The anonymous discovery read (L10b) over the 0061 guarded view, read AS the real readonly role.
@@ -57,22 +58,13 @@ const VIEW_COLS = [
   "age_max",
 ];
 
-/** One app transaction with the tenant GUC set, like withTenant. */
-async function asApp<T>(tenantId: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
-  const c = await ctx.appPool.connect();
-  try {
-    await c.query("BEGIN");
-    await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
-    const result = await fn(c);
-    await c.query("COMMIT");
-    return result;
-  } catch (error) {
-    await c.query("ROLLBACK");
-    throw error;
-  } finally {
-    c.release();
-  }
-}
+/** One statement AS THE APP ROLE under the tenant GUC (withTenant): its first row. */
+const asApp = (tenantId: string, query: SQL) =>
+  withTenant(
+    ctx.appDb.db,
+    tenantId,
+    async (tx) => (await tx.execute(query)).rows[0] as Record<string, unknown>,
+  );
 
 async function club(alias = "CLB Discover"): Promise<string> {
   const [t] = await owner(
@@ -82,7 +74,7 @@ async function club(alias = "CLB Discover"): Promise<string> {
   return t!.id as string;
 }
 interface SessionSeed {
-  startsAt?: Date;
+  startsAt?: Date | string; // a timestamptz text carries microseconds, a JS Date cannot
   area?: string;
   price?: number;
   slotsMax?: number;
@@ -124,24 +116,12 @@ const project = async (sid: string) =>
 const listingId = async (sid: string) =>
   (await owner("SELECT public_listing_id FROM public_sessions WHERE id = $1", [sid]))[0]!
     .public_listing_id as string;
-const rotate = (tenantId: string, sid: string) =>
-  asApp(
-    tenantId,
-    async (c) =>
-      (await c.query("SELECT public_session_share_slug_rotate($1) AS s", [sid])).rows[0]
-        .s as string,
-  );
-const revoke = (tenantId: string, sid: string) =>
-  asApp(
-    tenantId,
-    async (c) =>
-      (await c.query("SELECT public_session_share_slug_revoke($1) AS ok", [sid])).rows[0]
-        .ok as boolean,
-  );
+const rotate = async (tenantId: string, sid: string) =>
+  (await asApp(tenantId, sql`SELECT public_session_share_slug_rotate(${sid}) AS s`)).s as string;
+const revoke = async (tenantId: string, sid: string) =>
+  (await asApp(tenantId, sql`SELECT public_session_share_slug_revoke(${sid}) AS ok`)).ok as boolean;
 const raiseFence = (tenantId: string, sid: string) =>
-  asApp(tenantId, (c) =>
-    c.query("SELECT raise_public_session_fence($1, 'visibility_private')", [sid]),
-  );
+  asApp(tenantId, sql`SELECT raise_public_session_fence(${sid}, 'visibility_private')`);
 
 const list = (f: DiscoveryListFilter) => listDiscoveryListings(ctx.readonlyPool, f);
 const detail = (lid: string) => readDiscoveryListing(ctx.readonlyPool, lid);
@@ -234,19 +214,24 @@ describe("PDR-3 every miss resolves nothing (A-3)", () => {
     const fresh = await rotate(t, a.sid);
     await miss(null, a.slug); // rotated away
     expect(await share(fresh)).not.toBeNull();
-    expect(await revoke(t, a.sid)).toBe(true);
-    await miss(null, fresh); // revoked
+    // Near misses of the slug WHILE it is live (R1-4): a normalizing read would resolve them.
+    const flipped = [...fresh]
+      .map((c) => (c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase()))
+      .join("");
     for (const bad of [
       "",
       "short",
       `${fresh}x`,
       `${fresh.slice(0, 21)}!`,
       `${fresh.slice(0, 21)}${String.fromCodePoint(0x202e)}`,
+      flipped,
       a.sid,
       a.lid,
     ]) {
       await miss(null, bad);
     }
+    expect(await revoke(t, a.sid)).toBe(true);
+    await miss(null, fresh); // revoked
     await miss(a.sid, null); // a raw session uuid in place of a listing id
 
     const b = await listed(t);
@@ -281,11 +266,15 @@ describe("PDR-3 every miss resolves nothing (A-3)", () => {
 describe("PDR-4 keyset pages and the accepted filters (A-4)", () => {
   it("A-4: starts_at ASC then public_listing_id ASC, an equal-starts_at tie across a page boundary, the last page and each filter", async () => {
     const area = `A4 ${randomUUID()}`;
+    // The clock is read once (R1-4): seeds and expectations share these instants. The tie sits
+    // 123 microseconds past t48, so a millisecond cursor would fail the page boundary below.
+    const [t24, t48, t72] = [at(24), at(48), at(72)];
+    const tie = usText(t48).replace(/000Z$/, "123Z");
     const t = await club();
-    const early = await session(t, { area, startsAt: at(24) });
-    const tieA = await session(t, { area, startsAt: at(48) });
-    const tieB = await session(t, { area, startsAt: at(48) });
-    const late = await session(t, { area, startsAt: at(72), price: 80000, slotsMax: 1 });
+    const early = await session(t, { area, startsAt: t24 });
+    const tieA = await session(t, { area, startsAt: tie });
+    const tieB = await session(t, { area, startsAt: tie });
+    const late = await session(t, { area, startsAt: t72, price: 80000, slotsMax: 1 });
     await seat(t, late); // full: slots_open 0
     for (const sid of [early, tieA, tieB, late]) expect(await project(sid)).toBe("upserted");
     const ties = [await listingId(tieA), await listingId(tieB)].sort();
@@ -293,13 +282,13 @@ describe("PDR-4 keyset pages and the accepted filters (A-4)", () => {
 
     const p1 = await list({ area, limit: 2 });
     expect(ids(p1)).toEqual(order.slice(0, 2));
-    expect(p1.next).toEqual({ startsAt: usText(at(48)), publicListingId: ties[0] });
+    expect(p1.next).toEqual({ startsAt: tie, publicListingId: ties[0] });
     const p2 = await list({ area, limit: 2, after: p1.next! });
     expect(ids(p2)).toEqual(order.slice(2));
     expect(p2.next).toBeNull(); // the last page
     expect(await list({ area, limit: 4 })).toMatchObject({ next: null });
     expect((await list({ area, limit: 3 })).next).toEqual({
-      startsAt: usText(at(48)),
+      startsAt: tie,
       publicListingId: ties[1],
     });
     expect(ids(await list({ area, limit: DISCOVERY_PAGE_LIMIT_MAX }))).toEqual(order);
@@ -312,9 +301,10 @@ describe("PDR-4 keyset pages and the accepted filters (A-4)", () => {
     expect(await f({ sport: "badminton" })).toEqual(order);
     expect(await f({ sport: "zz_unknown" })).toEqual([]);
     expect(await f({ area: area.slice(0, -1) })).toEqual([]); // exact match only
-    expect(await f({ startAfter: at(48) })).toEqual(order.slice(1)); // >= inclusive
-    expect(await f({ startBefore: at(48) })).toEqual(order.slice(0, 1)); // < exclusive
-    expect(await f({ startAfter: at(24), startBefore: at(72) })).toEqual(order.slice(0, 3));
+    expect(await f({ startAfter: t48 })).toEqual(order.slice(1));
+    expect(await f({ startBefore: t48 })).toEqual(order.slice(0, 1));
+    // >= inclusive (early sits exactly at t24) and < exclusive (late sits exactly at t72)
+    expect(await f({ startAfter: t24, startBefore: t72 })).toEqual(order.slice(0, 3));
     expect(await f({ maxPrice: 50000 })).toEqual(order.slice(0, 3)); // <= inclusive
     expect(await f({ maxPrice: 49999 })).toEqual([]);
     expect(await f({ availableOnly: true })).toEqual(order.slice(0, 3));
