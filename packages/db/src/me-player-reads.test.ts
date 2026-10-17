@@ -211,18 +211,26 @@ describe("0059 catalog (A-12, A-13)", () => {
     }
   });
 
-  it("A-13: EXECUTE is revoked from PUBLIC and granted to app only (not app_worker, not readonly)", async () => {
+  it("A-13: EXECUTE is revoked from PUBLIC and held by exactly the owner and app (no app_worker, readonly or other role)", async () => {
     for (const fn of FNS) {
-      const { rows } = await ctx.owner.query(
+      const { rows } = await ctx.owner.query<{ owner: string; execute_grantees: string[] }>(
         `SELECT has_function_privilege('app', $1::text, 'EXECUTE') AS app,
                 has_function_privilege('app_worker', $1::text, 'EXECUTE') AS worker,
                 has_function_privilege('readonly', $1::text, 'EXECUTE') AS ro,
                 p.proacl IS NOT NULL AS explicit_acl,
-                EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS public_grant
+                EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS public_grant,
+                pg_get_userbyid(p.proowner)::text AS owner,
+                ARRAY(SELECT (CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                                   ELSE pg_get_userbyid(a.grantee) END)::text
+                        FROM aclexplode(p.proacl) a
+                       WHERE a.privilege_type = 'EXECUTE') AS execute_grantees
            FROM pg_proc p WHERE p.oid = $1::text::regprocedure`,
         [`public.${fn}(uuid)`],
       );
-      expect(rows[0], fn).toEqual({
+      const { owner, execute_grantees: grantees, ...flags } = rows[0]!;
+      // the exact grantee set, owner derived from proowner: a stray GRANT EXECUTE to any role fails
+      expect([...grantees].sort(), fn).toEqual([owner, "app"].sort());
+      expect(flags, fn).toEqual({
         app: true,
         worker: false,
         ro: false,
