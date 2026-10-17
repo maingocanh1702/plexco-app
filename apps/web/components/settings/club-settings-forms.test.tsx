@@ -82,7 +82,7 @@ describe("ClubProfileForm", () => {
     for (const [text, message] of [
       [" ", "Nhập tên công khai."],
       ["x".repeat(61), "Tên công khai tối đa 60 ký tự."],
-      ["a‮b", "Tên công khai có ký tự không được phép."],
+      ["a\u202Eb", "Tên công khai có ký tự không được phép."],
     ] as const) {
       expect(publicAliasStep(club, text, false, vn)).toEqual({ kind: "problem", message });
     }

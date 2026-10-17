@@ -240,7 +240,7 @@ describe("public alias (L10a): { commandId, publicAlias } travels alone", () => 
     expect(updateClubConfig).not.toHaveBeenCalled();
   });
 
-  it.each(["", "   ", "x".repeat(61), "a‮b", "a​b", "a\u0007b", "a b", "⠀"])(
+  it.each(["", "   ", "x".repeat(61), "a\u202Eb", "a\u200Bb", "a\u0007b", "a\u2028b", "\u2800"])(
     "A-4: alias %j -> 400 INVALID_BODY (the module's rule); the club is never read",
     async (text) => {
       const res = await alias(text);
