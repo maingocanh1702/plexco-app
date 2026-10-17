@@ -23,7 +23,8 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moves to 26.04 from 2026-10-19 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
     # Suite xanh chạy dưới ~10 phút; cap để run treo không ăn 6h quota mặc định.
     timeout-minutes: 20
     services:
@@ -109,7 +110,8 @@ jobs:
   # pool (apps/web/playwright.config.ts). Separate from `verify` so a browser flake cannot mask
   # the DB suite and vice versa.
   e2e-web:
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moves to 26.04 from 2026-10-19 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)
