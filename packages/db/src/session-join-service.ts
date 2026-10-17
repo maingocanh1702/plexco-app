@@ -202,7 +202,7 @@ export async function mintGuestMembership(
 }
 
 /** Self-join (readiness 4.3). Re-derives everything under the session lock, so it is also the
- *  confirm-time check behind L10b's join-by-slug route. */
+ *  confirm-time check behind L10b's public_listing_id join route. */
 export async function joinSession(db: Db, params: JoinSessionParams): Promise<JoinSessionResult> {
   const { tenantId } = params;
   return withTenant(db, tenantId, async (tx) => {

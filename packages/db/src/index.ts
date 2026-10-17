@@ -273,3 +273,16 @@ export {
   type SetPublicAliasParams,
   type SetPublicAliasResult,
 } from "./public-alias.js";
+// Phase 3 L10b: the anonymous discovery read over public_session_share_v, as the readonly role.
+export {
+  DISCOVERY_PAGE_LIMIT_MAX,
+  listDiscoveryListings,
+  readDiscoveryListing,
+  readDiscoveryListingByShareSlug,
+  resolveDiscoveryListing,
+  type DiscoveryKeyset,
+  type DiscoveryListFilter,
+  type DiscoveryListingRow,
+  type DiscoveryListingTarget,
+  type DiscoveryListPage,
+} from "./public-discovery-read.js";
