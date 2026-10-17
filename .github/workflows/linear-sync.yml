@@ -38,7 +38,8 @@ concurrency:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moves to 26.04 from 2026-10-19 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
     # Sync khỏe chạy ~1-2 phút; các run 15-23 phút gần đây là treo/retry — cap lại để một
     # lần treo không ăn cả giờ quota.
     timeout-minutes: 10

@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # PR branches run through the pull_request event only, which avoids a duplicate run per
+  # push (owner decision 2026-10-18); pushes to main still run.
   push:
-    branches: [main, "feat/**"]
+    branches: [main]
   pull_request:
 
 # Least-privilege token (audit 2026-09-06 X-6): this workflow only reads the checkout and
@@ -21,7 +23,8 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moves to 26.04 from 2026-10-19 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
     # Suite xanh chạy dưới ~10 phút; cap để run treo không ăn 6h quota mặc định.
     timeout-minutes: 20
     services:
@@ -46,7 +49,7 @@ jobs:
           # Full history REQUIRED: the "Review-readiness policy" step below runs
           # `git merge-base --is-ancestor <AUTHORITY_SHA> <main>` for every pinned
           # verdict, and a shallow checkout has neither those commits nor main's
-          # history. Necessary but NOT sufficient: on pull_request / feat/** runs
+          # history. Necessary but NOT sufficient: on pull_request runs
           # there is no local branch named main, only refs/remotes/origin/main —
           # scripts/check-review-readiness.mjs resolveMainRef() handles that
           # (audit 2026-09-06 X-1: 50/50 pins failed AUTHORITY_NOT_MAIN off-main).
@@ -107,7 +110,8 @@ jobs:
   # pool (apps/web/playwright.config.ts). Separate from `verify` so a browser flake cannot mask
   # the DB suite and vice versa.
   e2e-web:
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moves to 26.04 from 2026-10-19 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)

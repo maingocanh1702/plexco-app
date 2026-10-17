@@ -23,7 +23,8 @@ concurrency:
 jobs:
   semgrep:
     name: Semgrep CE
-    runs-on: ubuntu-latest
+    # pinned: ubuntu-latest moves to 26.04 from 2026-10-19 (actions/runner-images#14748)
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     if: github.actor != 'dependabot[bot]'
     container:
