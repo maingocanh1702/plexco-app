@@ -248,3 +248,17 @@ export {
   type MyChannel,
   type MyProfile,
 } from "./me-settings.js";
+// Phase 3 L9: the signed-in player's own cross-club reads (0059 definers).
+export {
+  listMyClubs,
+  listMyJoinRequests,
+  listMySessions,
+  readMyCharges,
+  type MyCharges,
+  type MyClub,
+  type MyClubCharges,
+  type MyJoinRequest,
+  type MySession,
+  type SelfPaymentStatus,
+  type SelfPaymentSummary,
+} from "./me-player-reads.js";
