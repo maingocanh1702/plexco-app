@@ -42,7 +42,7 @@ export function clubNameProblem(raw: string): ClubNameProblem | null {
 export type PublicAliasProblem = ClubNameProblem;
 
 /**
- * Client mirror of validatePublicAlias (@plexco/db public-alias.ts, the 0060 set definer): trim only,
+ * Client mirror of validatePublicAlias (packages/db/src/public-alias.ts, the 0060 set definer): trim only,
  * 1..60 CODE POINTS (not UTF-16 units, unlike clubNameProblem), no hidden character (hasHiddenChar,
  * the pinned text-safety mirror) and at least one visible one, i.e. neither whitespace nor
  * Default_Ignorable (`\p{DI}`): an invisible-only alias renders blank, so it reads as "empty".
