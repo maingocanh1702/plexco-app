@@ -110,6 +110,16 @@ describe("zalo_dm projector before any DB call (Z-4, Z-10, Z-12)", () => {
     expect(noDb.query).toHaveBeenCalledTimes(expected.result === "dlq" ? 0 : 1);
   });
 
+  it("DM-6 (R1B-3): a player.promoted whose player_id is missing or not a uuid -> dlq malformed_payload before any DB call", async () => {
+    noDb.query.mockClear();
+    for (const player_id of [undefined, null, 42, "", "player-1", `${randomUUID()}x`]) {
+      const out = await go("player.promoted", { player_id, amount_due: 150_000 });
+      expect(out, `player_id ${String(player_id)}`).toEqual(dlq("malformed_payload"));
+    }
+    expect(noDb.query).not.toHaveBeenCalled();
+    expect(stub.calls).toHaveLength(0);
+  });
+
   it("Z-13: an Invalid Date start time renders without throwing", () => {
     const v = { startsAt: new Date(Number.NaN), timeZone: "UTC", fields: [], link: "/l" };
     expect(() => renderZaloDm("cancelled", v)).not.toThrow();

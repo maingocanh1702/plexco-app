@@ -105,6 +105,10 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
       const requester = payload.requested_by_person_id;
       if (typeof requester !== "string" || !UUID_RE.test(requester)) return dlq("no_requester");
     } else if (template === "promoted") {
+      // DM-6 (R1B-3): the recipient is the promoted player_id, a uuid (a missing one would match
+      // nobody and end as a silent noop_no_recipients instead of a dead letter).
+      const playerId = payload.player_id;
+      if (typeof playerId !== "string" || !UUID_RE.test(playerId)) return dlq("malformed_payload");
       // DM-6: the fee is the promotion charge's amount_due, a whole int4 (0 = a free session).
       const amount = payload.amount_due;
       const whole = typeof amount === "number" && Number.isSafeInteger(amount);
