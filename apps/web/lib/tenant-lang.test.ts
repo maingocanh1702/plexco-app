@@ -168,6 +168,11 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/me/profile/route.ts": "b",
   "app/api/me/channels/route.ts": "b",
   "app/api/me/channels/[id]/detach/route.ts": "b",
+  // (b) — Phase 3 L9: the signed-in player's own cross-club reads (account-scoped, no tenant routed).
+  "app/api/me/clubs/route.ts": "b",
+  "app/api/me/sessions/route.ts": "b",
+  "app/api/me/charges/route.ts": "b",
+  "app/api/me/requests/route.ts": "b",
   "lib/me-route-gate.ts": "b",
   "app/api/auth/logout/route.ts": "b",
   "app/api/auth/logout-all/route.ts": "b",
