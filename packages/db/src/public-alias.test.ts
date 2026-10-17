@@ -492,12 +492,15 @@ describe("0060 owner decisions (A-9, A-10, A-12, A-14, A-15, A-18, A-21, A-26)",
     expect(before).toMatchObject({ public_alias: "Alias B", public_alias_status: "pending" });
   });
 
-  it("A-15/A-21: no view reads the new columns; seeded and undecided tenants are never approved", async () => {
+  it("A-15/A-21: only public_session_share_v (0061) reads the new columns; seeded and undecided tenants are never approved", async () => {
     const { rows: views } = await ctx.owner.query(
       `SELECT view_name FROM information_schema.view_column_usage
         WHERE table_name = 'tenants' AND column_name IN ('public_alias', 'public_alias_status')`,
     );
-    expect(views).toEqual([]);
+    expect(views).toEqual([
+      { view_name: "public_session_share_v" },
+      { view_name: "public_session_share_v" },
+    ]);
     const { rows: seeded } = await ctx.owner.query<Row>(
       `SELECT public_alias, public_alias_status FROM tenants WHERE id = ANY($1::uuid[])`,
       [[ctx.tenantA, ctx.tenantB]],
