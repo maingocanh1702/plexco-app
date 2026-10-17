@@ -1,4 +1,12 @@
-import { authorize, ClubConfigError, getClubConfig, updateClubConfig } from "@plexco/db";
+import {
+  authorize,
+  ClubConfigError,
+  getClubConfig,
+  getPublicAlias,
+  setPublicAlias,
+  updateClubConfig,
+  validatePublicAlias,
+} from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../../lib/session-cookies";
 import { GET, PATCH } from "./route";
@@ -14,6 +22,8 @@ vi.mock("@plexco/db", async (importOriginal) => {
     authorize: vi.fn(),
     updateClubConfig: vi.fn(),
     getClubConfig: vi.fn(),
+    getPublicAlias: vi.fn(),
+    setPublicAlias: vi.fn(),
     withTenant: vi.fn(async (_d: unknown, _t: string, fn: (tx: unknown) => unknown) => fn({})),
   };
 });
@@ -39,6 +49,8 @@ const club = {
   defaultPriceAmount: 50000,
   defaultVisibility: "private",
 };
+const NONE = { publicAlias: null, publicAliasStatus: null };
+const PENDING = { publicAlias: "CLB Q7", publicAliasStatus: "pending" } as const;
 
 const patchReq = (body: unknown, opts: { tenant?: string; type?: string; raw?: string } = {}) =>
   new Request(`https://plexco.app/api/onboarding/club?tenant=${opts.tenant ?? TENANT}`, {
@@ -68,13 +80,18 @@ beforeEach(() => {
   vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "owner" });
   vi.mocked(updateClubConfig).mockResolvedValue({ club, step: "verified", replayed: false });
   vi.mocked(getClubConfig).mockResolvedValue(club);
+  vi.mocked(getPublicAlias).mockResolvedValue(NONE);
+  vi.mocked(setPublicAlias).mockImplementation(async (_db, p) => {
+    validatePublicAlias(p.publicAlias); // the module's own rule, so A-4 runs through the route
+    return { ...PENDING, changed: true, replayed: false };
+  });
 });
 
 describe("PATCH /api/onboarding/club", () => {
   it("configures the club and returns { club, step: verified }", async () => {
     const res = await PATCH(patchReq({ commandId: "c1", name: "CLB", defaultPriceAmount: 50000 }));
     expect(res.status).toBe(200);
-    expect((await env(res)).data).toEqual({ club, step: "verified" });
+    expect((await env(res)).data).toEqual({ club: { ...club, ...NONE }, step: "verified" });
     expect(updateClubConfig).toHaveBeenCalledWith(expect.anything(), {
       tenantId: TENANT,
       actorPersonId: "p",
@@ -179,7 +196,7 @@ describe("GET /api/onboarding/club", () => {
   it("returns the current config for an authorized actor", async () => {
     const res = await GET(getReq());
     expect(res.status).toBe(200);
-    expect((await env(res)).data).toEqual({ club });
+    expect((await env(res)).data).toEqual({ club: { ...club, ...NONE } });
   });
 
   it("403 for a denied actor; config never read", async () => {
@@ -191,5 +208,90 @@ describe("GET /api/onboarding/club", () => {
   it("requires no CSRF (read only)", async () => {
     vi.mocked(csrfOk).mockReturnValue(false);
     expect((await GET(getReq())).status).toBe(200);
+  });
+});
+
+describe("public alias (L10a): { commandId, publicAlias } travels alone", () => {
+  const alias = (publicAlias: unknown, extra: Record<string, unknown> = {}) =>
+    PATCH(patchReq({ commandId: "c1", publicAlias, ...extra }));
+
+  it("A-1: sets it as THIS actor and answers the club with both fields; no config command", async () => {
+    const res = await alias("  CLB Q7  ");
+    expect(res.status).toBe(200);
+    expect((await env(res)).data).toEqual({ club: { ...club, ...PENDING } });
+    expect(setPublicAlias).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: TENANT,
+      actorPersonId: "p",
+      commandId: "c1",
+      publicAlias: "  CLB Q7  ",
+    });
+    expect(updateClubConfig).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["mixed with a config field", { publicAlias: "CLB Q7", name: "CLB" }],
+    ["null (clearing is unsupported, M-7)", { publicAlias: null }],
+    ["a number", { publicAlias: 7 }],
+    ["a client-sent publicAliasStatus", { publicAliasStatus: "approved" }],
+  ])("A-23: 400 INVALID_BODY for %s; neither command is called", async (_l, fields) => {
+    const res = await PATCH(patchReq({ commandId: "c1", ...fields }));
+    expect([res.status, (await env(res)).error?.code]).toEqual([400, "INVALID_BODY"]);
+    expect(setPublicAlias).not.toHaveBeenCalled();
+    expect(updateClubConfig).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "   ", "x".repeat(61), "a\u202Eb", "a\u200Bb", "a\u0007b", "a\u2028b", "\u2800"])(
+    "A-4: alias %j -> 400 INVALID_BODY (the module's rule); the club is never read",
+    async (text) => {
+      const res = await alias(text);
+      expect([res.status, (await env(res)).error?.code]).toEqual([400, "INVALID_BODY"]);
+      expect(getClubConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["FORBIDDEN", 403, "FORBIDDEN"],
+    ["TENANT_SUSPENDED", 403, "TENANT_SUSPENDED"],
+    ["COMMAND_ID_CONFLICT", 409, "COMMAND_ID_CONFLICT"],
+  ] as const)("A-5/A-20/A-19: %s maps to %i %s, never a 2xx", async (code, status, apiCode) => {
+    vi.mocked(setPublicAlias).mockRejectedValue(new ClubConfigError(code, "m"));
+    const res = await alias("CLB Q7");
+    expect([res.status, (await env(res)).error?.code]).toEqual([status, apiCode]);
+  });
+
+  it("A-5: every denial reason gets a byte-identical 403 (the gate, then the definer re-check)", async () => {
+    // Identical bytes but the per-response meta.requestId, which is random by design.
+    const forbidden = async (r: Promise<Response>) =>
+      (await (await r).text()).replace(/"requestId":"req_[^"]+"/, "");
+    const gate = new Set<string>();
+    for (const reason of ["not_a_member", "no_capability", "other_tenant"]) {
+      vi.mocked(authorize).mockResolvedValue({ allowed: false, reason });
+      gate.add(await forbidden(alias("CLB Q7")));
+    }
+    expect(gate.size).toBe(1);
+    expect(setPublicAlias).not.toHaveBeenCalled();
+    vi.mocked(authorize).mockResolvedValue({ allowed: true, role: "owner" });
+    const recheck = new Set<string>();
+    for (const reason of ["no_capability", "tenant mismatch"]) {
+      vi.mocked(setPublicAlias).mockRejectedValueOnce(new ClubConfigError("FORBIDDEN", reason));
+      recheck.add(await forbidden(alias("CLB Q7")));
+    }
+    expect(recheck.size).toBe(1);
+  });
+
+  it("A-19: a replay or a same-text no-op answers 200 with the CURRENT state (approval kept)", async () => {
+    const approved = { publicAlias: "CLB Q7", publicAliasStatus: "approved" } as const;
+    vi.mocked(setPublicAlias).mockResolvedValue({ ...approved, changed: false, replayed: true });
+    expect((await env(await alias("CLB Q7"))).data).toEqual({ club: { ...club, ...approved } });
+  });
+
+  it("A-23: GET and the config PATCH carry both fields; an unmapped alias error propagates", async () => {
+    vi.mocked(getPublicAlias).mockResolvedValue(PENDING);
+    expect((await env(await GET(getReq()))).data).toEqual({ club: { ...club, ...PENDING } });
+    const res = await PATCH(patchReq({ commandId: "c2", name: "CLB" }));
+    expect((await env(res)).data).toEqual({ club: { ...club, ...PENDING }, step: "verified" });
+    expect(setPublicAlias).not.toHaveBeenCalled();
+    vi.mocked(setPublicAlias).mockRejectedValue(new Error("db down"));
+    await expect(alias("CLB Q7")).rejects.toThrow("db down");
   });
 });

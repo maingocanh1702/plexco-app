@@ -13,7 +13,15 @@ export interface ClubConfigDto {
   defaultSportKey: string | null;
   defaultPriceAmount: number | null;
   defaultVisibility: string | null;
+  /**
+   * The moderated public club name (0060). The route always sends both fields (null when unset);
+   * they are optional here so a DTO without them (an e2e mock) still types and reads as no alias.
+   */
+  publicAlias?: string | null;
+  publicAliasStatus?: PublicAliasStatusDto | null;
 }
+
+export type PublicAliasStatusDto = "pending" | "approved" | "rejected";
 
 export interface ClubPatchBody {
   name?: string;
@@ -22,6 +30,8 @@ export interface ClubPatchBody {
   defaultSportKey?: string;
   defaultPriceAmount?: number;
   defaultVisibility?: "private" | "public";
+  /** Sent ALONE with its commandId: the route refuses it next to any config field. */
+  publicAlias?: string;
 }
 
 export type ZaloStatus =

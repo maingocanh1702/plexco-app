@@ -145,6 +145,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/check-dev-login-exclusion.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/check-dev-login-exclusion.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/outbox-dlq-replay.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/public-alias-moderate.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 
 - **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69.
 - **`scripts/autopilot-ephemeral-review-worktree.test.mjs`** — No canonical copy.
@@ -165,6 +166,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/check-dev-login-exclusion.mjs`** — No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config; the scanned globs are listed once, in the script header.
 - **`scripts/check-dev-login-exclusion.test.mjs`** — No canonical copy. Tests the guard on planted occurrences, a clean tree, the git listing and this repository.
 - **`scripts/outbox-dlq-replay.mjs`** — No canonical copy. Repo-owned owner CLI (L3): DLQ inspect and replay through job_definer definers.
+- **`scripts/public-alias-moderate.mjs`** — No canonical copy. Repo-owned owner CLI (L10a): public alias moderation (list pending, approve, reject) through the 0060 owner-only definers.
 
 ---
 

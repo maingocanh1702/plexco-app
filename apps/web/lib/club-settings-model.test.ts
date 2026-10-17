@@ -1,3 +1,4 @@
+import { validatePublicAlias } from "@plexco/db";
 import { describe, expect, it } from "vitest";
 import type { ClubConfigDto } from "./club-settings-client";
 import {
@@ -7,6 +8,7 @@ import {
   defaultsValues,
   normalizePriceInput,
   profileValues,
+  publicAliasProblem,
   timezoneOptions,
   unsureAfter,
 } from "./club-settings-model";
@@ -40,6 +42,45 @@ describe("clubNameProblem (same count as club-config-validation.ts: UTF-16 units
     ["a" + ch(0x2028) + "b", null],
   ])("%j -> %s", (input, expected) => {
     expect(clubNameProblem(input)).toBe(expected);
+  });
+});
+
+describe("publicAliasProblem (A-24: M-1..M-3, the rule of validatePublicAlias)", () => {
+  it.each([
+    ["  CLB Cầu Lông Q7  ", null],
+    // Code points, unlike the club name: 60 astral emoji are 120 UTF-16 units and still fit.
+    [ch(0x1f600).repeat(60), null],
+    [ch(0x1f600).repeat(61), "too_long"],
+    ["", "empty"],
+    ["   ", "empty"],
+    [ch(0xfe0f), "empty"], // a lone variation selector renders blank
+    [ch(0x3164), "invalid_chars"],
+    [ch(0x2800), "invalid_chars"],
+    ["a" + ch(0x202e) + "b", "invalid_chars"],
+    ["a" + ch(0x200b) + "b", "invalid_chars"],
+    ["a" + ch(0x07) + "b", "invalid_chars"],
+    ["a" + ch(0x2028) + "b", "invalid_chars"], // refused here, accepted in a club name
+    ["a" + ch(0xad) + "b", "invalid_chars"],
+  ])("%j -> %s", (input, expected) => {
+    expect(publicAliasProblem(input)).toBe(expected);
+  });
+
+  it("accepts exactly what validatePublicAlias accepts, alone and embedded, over every scalar", () => {
+    const accepts = (s: string) => {
+      try {
+        return validatePublicAlias(s).length > 0;
+      } catch {
+        return false;
+      }
+    };
+    const mismatches: number[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      for (const s of [ch(cp), "a" + ch(cp) + "b"]) {
+        if ((publicAliasProblem(s) === null) !== accepts(s)) mismatches.push(cp);
+      }
+    }
+    expect(mismatches).toEqual([]);
   });
 });
 

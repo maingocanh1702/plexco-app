@@ -136,7 +136,23 @@ Table tenants {
   locale text [not null]
   timezone text [not null]
   created_at timestamptz [not null]
+  public_alias text [note: '0060: 1..60 code points; NULL iff public_alias_status is NULL']
+  public_alias_status text [note: 'pending | approved | rejected; approved only by an owner decision']
 }
+
+// 0060: append-only owner moderation decisions (FORCE RLS, zero grants for runtime roles).
+Table tenant_public_alias_audit {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  decision text [not null, note: 'approved | rejected']
+  alias text [not null]
+  decided_by text [not null]
+  decided_at timestamptz [not null]
+  indexes {
+    (tenant_id, decided_at)
+  }
+}
+Ref: tenant_public_alias_audit.tenant_id > tenants.id
 
 Table memberships {
   id uuid [pk]

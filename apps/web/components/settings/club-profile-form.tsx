@@ -6,12 +6,13 @@ import {
   buildProfilePatch,
   clubNameProblem,
   profileValues,
+  publicAliasProblem,
   timezoneOptions,
   unsureAfter,
   type ClubPatchField,
   type ProfileFormValues,
 } from "../../lib/club-settings-model";
-import { useT } from "../../lib/i18n-client";
+import { useT, type TFn } from "../../lib/i18n-client";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
@@ -26,7 +27,7 @@ import styles from "./settings-layout.module.css";
  * mirrors the route's own count (UTF-16 units, club-config-validation.ts), so a name the route would
  * refuse is pinned to the field instead of coming back as a generic INVALID_BODY.
  */
-export function ClubProfileForm({
+function ProfileForm({
   tenantId,
   csrfToken,
   club,
@@ -153,6 +154,187 @@ export function ClubProfileForm({
           {t("Bạn đang offline — kết nối lại để lưu.", "You are offline — reconnect to save.")}
         </p>
       )}
+    </form>
+  );
+}
+
+/** The club profile: ProfileForm, then, as its own form and command, the moderated public name. */
+export function ClubProfileForm(props: Parameters<typeof ProfileForm>[0]) {
+  return (
+    <>
+      <ProfileForm {...props} />
+      <PublicAliasForm {...props} />
+    </>
+  );
+}
+
+export type PublicAliasStep =
+  | { kind: "problem"; message: string }
+  | { kind: "unchanged"; message: string }
+  | { kind: "send"; publicAlias: string };
+
+/**
+ * What submitting the public name does (pure, so the forms test pins it without a DOM): a problem
+ * for the field, "unchanged" (the trimmed text equals the stored alias, whatever its status: the
+ * server would no-op it, so nothing is sent), or the text to send ALONE. `unsure` = an uncertain
+ * failure may have stored another text since `club` was read, so the stored alias proves nothing.
+ */
+export function publicAliasStep(
+  club: ClubConfigDto,
+  raw: string,
+  unsure: boolean,
+  t: TFn,
+): PublicAliasStep {
+  const problem = publicAliasProblem(raw);
+  if (problem) {
+    const message =
+      problem === "empty"
+        ? t("Nhập tên công khai.", "Enter a public name.")
+        : problem === "too_long"
+          ? t("Tên công khai tối đa 60 ký tự.", "The public name can have at most 60 characters.")
+          : t(
+              "Tên công khai có ký tự không được phép.",
+              "The public name contains characters that are not allowed.",
+            );
+    return { kind: "problem", message };
+  }
+  const publicAlias = raw.trim();
+  if (!unsure && publicAlias === club.publicAlias) {
+    return {
+      kind: "unchanged",
+      message: t("Tên công khai không thay đổi.", "The public name has not changed."),
+    };
+  }
+  return { kind: "send", publicAlias };
+}
+
+/** The status line; no alias, or a status this client does not know, never claims to be public. */
+function aliasStatusNote(status: string | null | undefined, t: TFn): string {
+  switch (status) {
+    case "pending":
+      return t(
+        "Đang chờ duyệt — CLB chưa hiện công khai.",
+        "Waiting for approval — the club is not shown publicly yet.",
+      );
+    case "approved":
+      return t(
+        "Đã duyệt — tên này được phép hiện công khai.",
+        "Approved — this name may be shown publicly.",
+      );
+    case "rejected":
+      return t(
+        "Bị từ chối — đổi tên để gửi duyệt lại.",
+        "Rejected — change the name to request approval again.",
+      );
+    default:
+      return t(
+        "Chưa có tên công khai — CLB chưa hiện công khai.",
+        "No public name yet — the club is not shown publicly.",
+      );
+  }
+}
+
+/**
+ * The club's public name (tenants.public_alias, 0060): its own field, submit and commandId, sent as
+ * { publicAlias, commandId }. Every set waits for the platform owner's approval; until one is
+ * approved nothing of the club is public, and tenants.name never is.
+ */
+function PublicAliasForm({
+  tenantId,
+  csrfToken,
+  club,
+  onSaved,
+}: {
+  tenantId: string;
+  csrfToken: string;
+  club: ClubConfigDto;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const online = useOnlineStatus();
+  const command = useCommandId();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [text, setText] = useState(() => club.publicAlias ?? "");
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [focusKey, setFocusKey] = useState(0);
+  // The `club` an uncertain failure was read from (see ProfileForm's `unsure`); a reload ends it.
+  const unsureOf = useRef<ClubConfigDto | null>(null);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+    const step = publicAliasStep(club, text, unsureOf.current === club, t);
+    setFieldError(step.kind === "problem" ? step.message : null);
+    if (step.kind === "problem") {
+      formRef.current?.querySelector("input")?.focus();
+      return;
+    }
+    if (step.kind === "unchanged") {
+      setMessage(step.message);
+      setFocusKey((n) => n + 1);
+      return;
+    }
+    setBusy(true);
+    try {
+      const body = { publicAlias: step.publicAlias };
+      // Bound to this exact text, as above: an identical retry replays, an edit is a new command.
+      const commandId = command.get(JSON.stringify(body));
+      await patchClubConfig({ tenantId, csrfToken }, { ...body, commandId });
+      command.settle();
+      unsureOf.current = null;
+      setMessage(t("Đã gửi tên công khai để duyệt.", "Public name sent for approval."));
+      onSaved();
+    } catch (failure) {
+      command.settle(failure);
+      if (!isDefiniteFailure(failure)) unsureOf.current = club;
+      setError(failure);
+    } finally {
+      setBusy(false);
+      setFocusKey((n) => n + 1);
+    }
+  }
+
+  return (
+    <form ref={formRef} className={styles.form} onSubmit={(e) => void submit(e)} noValidate>
+      <TextField
+        label={t("Tên công khai của CLB", "Club public name")}
+        hint={t(
+          "Hiện trên trang công khai sau khi được duyệt. Tối đa 60 ký tự.",
+          "Shown on public pages after approval. Up to 60 characters.",
+        )}
+        value={text}
+        error={fieldError}
+        maxLength={200}
+        onChange={(e) => {
+          setText(e.target.value);
+          setFieldError(null);
+        }}
+      />
+      <p className={styles.caption}>{aliasStatusNote(club.publicAliasStatus, t)}</p>
+      {club.publicAliasStatus === "approved" ? (
+        <p className={styles.caption}>
+          {t(
+            "Đổi tên đã duyệt sẽ đưa CLB về chờ duyệt.",
+            "Changing an approved name sends it back for approval.",
+          )}
+        </p>
+      ) : null}
+      <FormFeedback
+        focusKey={focusKey}
+        error={error}
+        message={message}
+        onRetry={() => formRef.current?.requestSubmit()}
+        onReload={onSaved}
+      />
+      <div className={styles.actions}>
+        <Button type="submit" disabled={busy || !online} aria-busy={busy ? true : undefined}>
+          {busy ? t("Đang gửi…", "Submitting…") : t("Gửi duyệt", "Submit for approval")}
+        </Button>
+      </div>
     </form>
   );
 }

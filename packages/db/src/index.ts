@@ -262,3 +262,14 @@ export {
   type SelfPaymentStatus,
   type SelfPaymentSummary,
 } from "./me-player-reads.js";
+// Phase 3 L10a: the club's moderated public alias (0060 definers; approval is owner-only, by CLI).
+export {
+  getPublicAlias,
+  PUBLIC_ALIAS_MAX,
+  setPublicAlias,
+  validatePublicAlias,
+  type PublicAliasState,
+  type PublicAliasStatus,
+  type SetPublicAliasParams,
+  type SetPublicAliasResult,
+} from "./public-alias.js";
