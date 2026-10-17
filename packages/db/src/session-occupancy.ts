@@ -1,5 +1,5 @@
 import { sql, type AnyColumn, type SQL } from "drizzle-orm";
-import { players, sessionGuestNotes } from "../schema.js";
+import { players } from "../schema.js";
 import type { Tx } from "./client.js";
 
 /**
@@ -39,10 +39,14 @@ export function activeCountSql(sessionId: SessionRef, tenantId?: string): SQL<nu
   return sql<number>`(select count(*)::int from ${players} where ${players.sessionId} = ${sessionId}${tenantTerm(players.tenantId, tenantId)} and ${players.status} = 'active')`;
 }
 
-/** THE formula as one SQL expression: active players + guest notes. The only per-session
- *  guest-note count in production code. */
-export function occupiedCountSql(sessionId: SessionRef, tenantId?: string): SQL<number> {
-  return sql<number>`(${activeCountSql(sessionId, tenantId)} + (select count(*)::int from ${sessionGuestNotes} where ${sessionGuestNotes.sessionId} = ${sessionId}${tenantTerm(sessionGuestNotes.tenantId, tenantId)}))::int`;
+/** THE formula as one SQL expression: the 0061 function session_occupancy(uuid) = active players +
+ *  guest notes, the same body the public_sessions writer recomputes slots_open with, so the host
+ *  reads and the public projection can never drift. SECURITY INVOKER: under `app` it stays
+ *  RLS-scoped to the caller's tenant GUC. `_tenantId` is kept for signature compatibility only:
+ *  OC-1 is kept by the list's explicit outer tenant filter (session-read.ts), and rows keyed by a
+ *  session id are tenant-exact. Not inlined (its pinned search_path), so one call per listed row. */
+export function occupiedCountSql(sessionId: SessionRef, _tenantId?: string): SQL<number> {
+  return sql<number>`session_occupancy(${sessionId})`;
 }
 
 /** One statement per wrapper (OC-2), inside the caller's transaction. */

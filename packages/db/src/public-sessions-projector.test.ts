@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { PgDialect } from "drizzle-orm/pg-core";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { getSessionOccupancy } from "./session-occupancy.js";
+import { sessions } from "../schema.js";
+import { clearPublicSessionFence } from "./public-session-fence.js";
+import { getSessionOccupancy, occupiedCountSql } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 import { setupRlsTestContext, withJobDefinerLock, type RlsTestContext } from "./test-harness.js";
 
@@ -363,6 +367,33 @@ describe("PSP-5 fence immediate-deny then CAS-clear (A-7)", () => {
     expect(await fenceToken(sid)).toBeNull();
     expect(await viewRow(lid)).toBeDefined();
   });
+
+  it("PSP-5b: clearPublicSessionFence (the TS CAS wrapper) as app_worker keeps a re-raised fence and clears the observed one; app is denied", async () => {
+    const t = await club();
+    const sid = await session(t);
+    expect(await project(sid)).toBe("upserted");
+    const lid = await listingId(sid);
+    const workerDb = drizzle(ctx.workerPool);
+    await raise(t, sid);
+    const stale = (await fenceToken(sid))!;
+    await raise(t, sid); // a newer raise between observe and clear wins
+    expect(await clearPublicSessionFence(workerDb, sid, stale)).toBe(false);
+    expect(await viewRow(lid)).toBeUndefined();
+    const current = (await fenceToken(sid))!;
+    expect(await clearPublicSessionFence(workerDb, sid, current)).toBe(true);
+    expect(await clearPublicSessionFence(workerDb, sid, current)).toBe(false); // already gone
+    expect(await viewRow(lid)).toBeDefined();
+    await raise(t, sid);
+    const token = (await fenceToken(sid))!;
+    const denied = await withTenant(ctx.appDb.db, t, (tx) =>
+      clearPublicSessionFence(tx, sid, token),
+    ).then(
+      () => "ok",
+      (e: { code?: string; cause?: { code?: string } }) => String(e.cause?.code ?? e.code),
+    );
+    expect(denied).toBe("42501");
+    expect(await fenceToken(sid)).toBe(token);
+  });
 });
 
 describe("PSP-6 idempotent writer; a forged event recomputes from canonical rows only (A-10)", () => {
@@ -424,6 +455,19 @@ describe("PSP-7 slots_open parity with fixture literal counts (A-13)", () => {
         Number((await c.query("SELECT session_occupancy($1) AS n", [sid])).rows[0].n),
       ),
     ).toBe(0);
+  });
+
+  it("PSP-7b: occupiedCountSql emits session_occupancy(x) for a bound id and for the list's correlated column", () => {
+    const dialect = new PgDialect();
+    const sid = randomUUID();
+    expect(dialect.sqlToQuery(occupiedCountSql(sid))).toMatchObject({
+      sql: "session_occupancy($1)",
+      params: [sid],
+    });
+    expect(dialect.sqlToQuery(occupiedCountSql(sessions.id, randomUUID()))).toMatchObject({
+      sql: 'session_occupancy("sessions"."id")',
+      params: [],
+    });
   });
 });
 
