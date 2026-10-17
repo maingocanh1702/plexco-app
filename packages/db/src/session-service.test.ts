@@ -2184,23 +2184,38 @@ describe("updateSession", () => {
   // Project a session into the public read model as the async projector would, so the guarded
   // view public_session_share_v serves it (a live, non-expired row). DD-12 fence test scaffolding.
   async function projectToPublic(sessionId: string, tenantId: string): Promise<void> {
+    // 0061: the view serves club_display_name live from an approved alias (no stored copy).
+    await ctx.owner.query(
+      `UPDATE tenants SET public_alias = 'Club A', public_alias_status = 'approved' WHERE id = $1`,
+      [tenantId],
+    );
     await ctx.owner.query(
       `INSERT INTO public_sessions
          (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-          price_amount, slots_open, club_display_name, join_policy, expires_at)
+          price_amount, slots_open, join_policy, expires_at)
        VALUES ($1, $1, $2, 'badminton', now() + interval '1 day',
-          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'Club A', 'open',
+          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'open',
           now() + interval '1 day')`,
       [sessionId, tenantId],
     );
   }
   // The guarded public view (discovery role); denies IMMEDIATELY when a fence is raised.
-  const viewHasSession = async (sessionId: string): Promise<boolean> =>
-    (
-      await ctx.readonlyPool.query(`SELECT 1 FROM public_session_share_v WHERE session_id = $1`, [
-        sessionId,
-      ])
-    ).rows.length > 0;
+  // 0061: the view never serves session_id; the owner looks up the opaque listing id first.
+  const viewHasSession = async (sessionId: string): Promise<boolean> => {
+    const base = await ctx.owner.query(
+      `SELECT public_listing_id FROM public_sessions WHERE session_id = $1`,
+      [sessionId],
+    );
+    if (base.rows.length === 0) return false;
+    return (
+      (
+        await ctx.readonlyPool.query(
+          `SELECT 1 FROM public_session_share_v WHERE public_listing_id = $1`,
+          [base.rows[0].public_listing_id],
+        )
+      ).rows.length > 0
+    );
+  };
   // The base public_sessions row still present (proves the async projector has NOT run yet).
   const baseStillProjected = async (sessionId: string): Promise<boolean> =>
     (await ctx.owner.query(`SELECT 1 FROM public_sessions WHERE session_id = $1`, [sessionId])).rows
@@ -3561,22 +3576,37 @@ describe("closeSession (B1 of the split)", () => {
   }
 
   async function projectToPublic(sessionId: string, tenantId: string): Promise<void> {
+    // 0061: the view serves club_display_name live from an approved alias (no stored copy).
+    await ctx.owner.query(
+      `UPDATE tenants SET public_alias = 'Club A', public_alias_status = 'approved' WHERE id = $1`,
+      [tenantId],
+    );
     await ctx.owner.query(
       `INSERT INTO public_sessions
          (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-          price_amount, slots_open, club_display_name, join_policy, expires_at)
+          price_amount, slots_open, join_policy, expires_at)
        VALUES ($1, $1, $2, 'badminton', now() + interval '1 day',
-          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'Club A', 'open',
+          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'open',
           now() + interval '1 day')`,
       [sessionId, tenantId],
     );
   }
-  const viewHasSession = async (sessionId: string): Promise<boolean> =>
-    (
-      await ctx.readonlyPool.query(`SELECT 1 FROM public_session_share_v WHERE session_id = $1`, [
-        sessionId,
-      ])
-    ).rows.length > 0;
+  // 0061: the view never serves session_id; the owner looks up the opaque listing id first.
+  const viewHasSession = async (sessionId: string): Promise<boolean> => {
+    const base = await ctx.owner.query(
+      `SELECT public_listing_id FROM public_sessions WHERE session_id = $1`,
+      [sessionId],
+    );
+    if (base.rows.length === 0) return false;
+    return (
+      (
+        await ctx.readonlyPool.query(
+          `SELECT 1 FROM public_session_share_v WHERE public_listing_id = $1`,
+          [base.rows[0].public_listing_id],
+        )
+      ).rows.length > 0
+    );
+  };
   const fenceReason = async (sessionId: string): Promise<string | null> =>
     (
       (
@@ -4030,22 +4060,37 @@ describe("cancelSession (B2 of the split)", () => {
   }
 
   async function projectToPublic(sessionId: string, tenantId: string): Promise<void> {
+    // 0061: the view serves club_display_name live from an approved alias (no stored copy).
+    await ctx.owner.query(
+      `UPDATE tenants SET public_alias = 'Club A', public_alias_status = 'approved' WHERE id = $1`,
+      [tenantId],
+    );
     await ctx.owner.query(
       `INSERT INTO public_sessions
          (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-          price_amount, slots_open, club_display_name, join_policy, expires_at)
+          price_amount, slots_open, join_policy, expires_at)
        VALUES ($1, $1, $2, 'badminton', now() + interval '1 day',
-          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'Club A', 'open',
+          now() + interval '1 day' + interval '2 hours', 'Quận 1', 120000, 4, 'open',
           now() + interval '1 day')`,
       [sessionId, tenantId],
     );
   }
-  const viewHasSession = async (sessionId: string): Promise<boolean> =>
-    (
-      await ctx.readonlyPool.query(`SELECT 1 FROM public_session_share_v WHERE session_id = $1`, [
-        sessionId,
-      ])
-    ).rows.length > 0;
+  // 0061: the view never serves session_id; the owner looks up the opaque listing id first.
+  const viewHasSession = async (sessionId: string): Promise<boolean> => {
+    const base = await ctx.owner.query(
+      `SELECT public_listing_id FROM public_sessions WHERE session_id = $1`,
+      [sessionId],
+    );
+    if (base.rows.length === 0) return false;
+    return (
+      (
+        await ctx.readonlyPool.query(
+          `SELECT 1 FROM public_session_share_v WHERE public_listing_id = $1`,
+          [base.rows[0].public_listing_id],
+        )
+      ).rows.length > 0
+    );
+  };
   const fenceReason = async (sessionId: string): Promise<string | null> =>
     (
       (

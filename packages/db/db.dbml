@@ -497,16 +497,30 @@ Table public_sessions {
   starts_at timestamptz [not null]
   ends_at timestamptz [not null]
   area text [not null]
-  skill_level text
   price_amount integer [not null]
   slots_open integer [not null]
-  club_display_name text [not null]
-  host_display_name text
   join_policy text [not null]
   projected_at timestamptz [not null]
   expires_at timestamptz [not null]
-  public_projection_version bigint [not null, default: 0, note: '0033 — control metadata (non-PII), whitelist-exception DD-73/DD-78']
-  Note: '0033: base SELECT REVOKED khỏi readonly + app; consumer chỉ đọc qua guarded view public_session_share_v (security_barrier, anti-join fence). CHECK id = session_id.'
+  public_projection_version bigint [not null, default: 0, note: '0033 — control metadata (non-PII); 0061: view không còn trả']
+  title text [note: '0061 DD-41 / BL-DSC-1 — nullable, NULL tới khi sessions có nguồn']
+  session_type text
+  level_min_rank integer
+  level_max_rank integer
+  level_strict boolean
+  gender_restriction text
+  age_min integer
+  age_max integer
+  public_listing_id uuid [not null, unique, default: `(encode(public.gen_random_bytes(16), 'hex')::uuid)`, note:'0061 P-2 — opaque 128-bit CSPRNG, đổi mỗi lần session rời public; row key của view']
+  Note: '0033: base SELECT REVOKED khỏi readonly + app; consumer chỉ đọc qua guarded view public_session_share_v (security_barrier, anti-join fence). CHECK id = session_id. 0061: bỏ skill_level, club_display_name (view đọc LIVE alias đã duyệt), host_display_name (không project person); writer = SECURITY DEFINER EXECUTE app_worker.'
+}
+
+Table public_session_share_slugs {
+  slug_hash bytea [pk, note: "sha256('plexco/session-share-slug/v1:' || raw slug); CHECK octet_length = 32 (public_session_share_slugs_hash_len_chk)"]
+  session_id uuid [not null, note: 'unique khi revoked_at IS NULL (uq_public_session_share_slugs_active)']
+  created_at timestamptz [not null, default: `clock_timestamp()`]
+  revoked_at timestamptz [note:'tombstone khi revoke/rotate']
+  Note: '0061 P-3 (DD-83 / DD-75): share-link registry hash-only — raw slug chỉ trả 1 lần cho host, không lưu/log. Không RLS, không FK, không grant runtime; mọi truy cập qua SECURITY DEFINER rotate / revoke / lookup.'
 }
 
 Table public_projection_fences {
@@ -517,7 +531,7 @@ Table public_projection_fences {
   deny_scope text [not null, note: "CHECK IN ('public','all')"]
   reason text [not null]
   created_at timestamptz [not null]
-  Note: 'GLOBAL PROTECTED, denial-only (DD-12 8a, migration 0033) — không RLS, zero grant cho app/readonly; mọi truy cập qua narrow SECURITY DEFINER fn: raise_public_session_fence (app) · current_public_session_fence_token / clear_public_session_fence (app_worker)'
+  Note: 'GLOBAL PROTECTED, denial-only (DD-12 8a, migration 0033) — không RLS, zero grant cho app/readonly; mọi truy cập qua narrow SECURITY DEFINER fn: raise_public_session_fence (app) · current_public_session_fence_token / clear_public_session_fence (0061 D3: job_definer, chỉ gọi bên trong writer public_sessions_project_session; app_worker bị REVOKE)'
 }
 
 Table join_requests {

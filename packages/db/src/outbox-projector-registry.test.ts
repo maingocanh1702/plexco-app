@@ -111,29 +111,60 @@ const required = async (eventId: string) =>
   (await worker("SELECT outbox_required_projectors($1) AS p", [eventId])).rows[0].p as string[];
 
 describe("A1-A3 migration, seeds and route invariants", () => {
-  it("A1: 61 migrations apply with tail 0060 and re-run idempotently", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(61);
+  it("A1: 62 migrations apply with tail 0061 and re-run idempotently", async () => {
+    expect(ctx.migrateResult.applied.length).toBe(62);
     expect(ctx.migrateResult.applied).toContain("0056_outbox_projector_registry_dlq_replay.sql");
-    expect(ctx.migrateResult.applied.at(-1)).toBe("0060_tenant_public_alias.sql");
+    expect(ctx.migrateResult.applied.at(-1)).toBe("0061_public_sessions_projector_writer.sql");
     const again = await ctx.remigrate();
     expect(again.applied).toEqual([]);
-    expect(again.skipped.length).toBe(61);
+    expect(again.skipped.length).toBe(62);
   });
 
   // DM-8 (L8): exactly four zalo_dm routes, the three 0057 session types plus 0058's player.promoted
   // (DD-134 (c): the one promotion DM). No other L8 event type (player.added, player.waitlisted,
   // player.removed, join_request.*) gets a zalo_dm route, and every projector stays disabled.
-  it("A2: three projectors, all disabled; the web_realtime wildcard route plus the four zalo_dm routes (0057's three + 0058's player.promoted)", async () => {
+  it("A2: three projectors, all disabled; 0061's fifteen public_sessions routes, the web_realtime wildcard route and the four zalo_dm routes (0057's three + 0058's player.promoted)", async () => {
     expect(await rows("SELECT name, enabled FROM outbox_projectors ORDER BY name")).toEqual([
       { name: "public_sessions", enabled: false },
       { name: "web_realtime", enabled: false },
       { name: "zalo_dm", enabled: false },
     ]);
+    // 0061 (readiness 4.7 (e), P-14): twelve session-aggregate routes and three tenant alias routes.
+    const publicSessionsRoutes = [
+      ...[
+        "guest_note.created",
+        "guest_note.deleted",
+        "join_request.approved",
+        "player.added",
+        "player.promoted",
+        "player.removed",
+        "player.waitlisted",
+        "session.cancelled",
+        "session.closed",
+        "session.published",
+        "session.updated",
+        "session.visibility_changed",
+      ].map((event_type) => ({
+        projector: "public_sessions",
+        aggregate_type: "session",
+        event_type,
+      })),
+      ...[
+        "tenant.public_alias_approved",
+        "tenant.public_alias_rejected",
+        "tenant.public_alias_set",
+      ].map((event_type) => ({
+        projector: "public_sessions",
+        aggregate_type: "tenant",
+        event_type,
+      })),
+    ];
     expect(
       await rows(
         "SELECT projector, aggregate_type, event_type FROM outbox_projector_routes ORDER BY projector, event_type",
       ),
     ).toEqual([
+      ...publicSessionsRoutes,
       { projector: "web_realtime", aggregate_type: "session", event_type: null },
       { projector: "zalo_dm", aggregate_type: "session", event_type: "player.promoted" },
       {
@@ -200,6 +231,7 @@ describe("A1-A3 migration, seeds and route invariants", () => {
       ]);
     }
     expect(await rows("SELECT projector FROM outbox_projector_routes ORDER BY projector")).toEqual([
+      ...Array.from({ length: 15 }, () => ({ projector: "public_sessions" })),
       { projector: "web_realtime" },
       { projector: "zalo_dm" },
       { projector: "zalo_dm" },
@@ -389,22 +421,30 @@ describe("A6-A8 authorization and catalog posture", () => {
       expect(await aclOf("app_worker", "n.nspname <> 'pgboss'")).toEqual([]);
       const narrow = await aclOf(
         "job_definer",
-        "c.relname IN ('sessions', 'players', 'charges', 'outbox_events', 'public_sessions')",
+        `c.relname IN ('sessions', 'players', 'charges', 'outbox_events', 'public_sessions',
+                       'tenants', 'sports', 'session_guest_notes', 'public_projection_fences')`,
       );
       const cols = (rel: string, priv: string) =>
         narrow
           .filter((r) => r.rel === rel && r.priv === priv)
           .map((r) => (r.col as string | null) ?? "<table>")
           .sort();
-      // 0057 (L4) adds sessions (ends_at, timezone) and the players columns of the zalo_dm targets definer.
+      // 0057 (L4) adds sessions (ends_at, timezone) and the players columns of the zalo_dm targets definer;
+      // 0061 adds the six sessions columns the public_sessions writer recomputes from.
       expect(cols("sessions", "SELECT")).toEqual([
+        "area",
         "ends_at",
         "id",
+        "join_policy",
+        "price_amount",
+        "slots_max",
+        "sport_id",
         "starts_at",
         "status",
         "tenant_id",
         "timezone",
         "version",
+        "visibility",
       ]);
       expect(cols("sessions", "UPDATE")).toEqual(["status", "updated_at", "version"]);
       expect(cols("players", "SELECT")).toEqual([
@@ -425,16 +465,90 @@ describe("A6-A8 authorization and catalog posture", () => {
         "type",
       ]);
       expect(cols("outbox_events", "SELECT")).toEqual(["<table>"]); // 0022, unchanged
-      expect(narrow.filter((r) => r.rel === "public_sessions")).toEqual([]);
+      // 0061 (readiness 4.8): the writer definer's grants on public_sessions are column-narrow except
+      // DELETE; public_listing_id is never inserted (its DEFAULT) and id, session_id, tenant_id and
+      // public_listing_id are never updated.
+      const psCols = [
+        "age_max",
+        "age_min",
+        "area",
+        "ends_at",
+        "expires_at",
+        "gender_restriction",
+        "id",
+        "join_policy",
+        "level_max_rank",
+        "level_min_rank",
+        "level_strict",
+        "price_amount",
+        "projected_at",
+        "public_listing_id",
+        "public_projection_version",
+        "session_id",
+        "session_type",
+        "slots_open",
+        "sport_key",
+        "starts_at",
+        "tenant_id",
+        "title",
+      ];
+      const notUpdated = ["id", "public_listing_id", "session_id", "tenant_id"];
+      expect(cols("public_sessions", "SELECT")).toEqual(psCols);
+      expect(cols("public_sessions", "INSERT")).toEqual(
+        psCols.filter((c) => c !== "public_listing_id"),
+      );
+      expect(cols("public_sessions", "UPDATE")).toEqual(
+        psCols.filter((c) => !notUpdated.includes(c)),
+      );
+      expect(cols("public_sessions", "DELETE")).toEqual(["<table>"]);
+      expect(
+        [...new Set(narrow.filter((r) => r.rel === "public_sessions").map((r) => r.priv))].sort(),
+      ).toEqual(["DELETE", "INSERT", "SELECT", "UPDATE"]);
+      // 0061 (r1 N-1, D5): the writer's other canonical reads are column-narrow SELECT only.
+      const reads = ["tenants", "sports", "session_guest_notes", "public_projection_fences"];
+      expect(cols("tenants", "SELECT")).toEqual([
+        "id",
+        "public_alias",
+        "public_alias_status",
+        "status",
+      ]);
+      expect(cols("sports", "SELECT")).toEqual(["id", "key"]);
+      expect(cols("session_guest_notes", "SELECT")).toEqual(["session_id"]);
+      expect(cols("public_projection_fences", "SELECT")).toEqual([
+        "deny_scope",
+        "surface",
+        "target_id",
+        "target_kind",
+      ]);
+      expect(narrow.filter((r) => reads.includes(r.rel as string) && r.priv !== "SELECT")).toEqual(
+        [],
+      );
       expect(
         narrow.filter(
-          (r) => ["sessions", "players", "charges"].includes(r.rel as string) && r.col === null,
+          (r) =>
+            ["sessions", "players", "charges", ...reads].includes(r.rel as string) &&
+            r.col === null,
         ),
       ).toEqual([]);
       const fence = await one(
         "SELECT has_function_privilege('job_definer', 'raise_public_session_fence(uuid, text)', 'EXECUTE') AS ok",
       );
       expect(fence.ok).toBe(true);
+      // D3 (s1 S-1): only the writer's owner (job_definer) may observe or CAS-clear a fence;
+      // app_worker's 0033 EXECUTE is revoked, so no runtime role can call either function.
+      for (const sig of [
+        "current_public_session_fence_token(uuid)",
+        "clear_public_session_fence(uuid, uuid)",
+      ]) {
+        const g = await one(
+          `SELECT ARRAY(SELECT a.grantee::regrole::text FROM aclexplode(p.proacl) a
+                         WHERE a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+                         ORDER BY 1) AS grantees
+             FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+          [sig],
+        );
+        expect(g.grantees, sig).toEqual(["job_definer"]);
+      }
     });
   });
 });
@@ -819,17 +933,24 @@ describe("A16-A22 stale-draft auto-expiry (job_expire_stale_drafts)", () => {
       await seedSession(tenantId, "cancelled"),
     ];
     const manual = await seedSession(tenantId, "draft", new Date(Date.now() + 48 * HOUR));
+    // 0061: the view serves only clubs with an approved alias (read live) and is keyed
+    // by the opaque public_listing_id, never session_id.
     await ctx.owner.query(
-      `INSERT INTO public_sessions (id, session_id, tenant_id, sport_key, starts_at, ends_at, area, price_amount, slots_open, club_display_name, join_policy, expires_at)
-       VALUES ($1, $1, $2, 'badminton', now(), now() + interval '2 hours', 'D1', 1, 1, 'Club', 'open', now() + interval '1 day')`,
+      "UPDATE tenants SET public_alias = 'Club', public_alias_status = 'approved' WHERE id = $1",
+      [tenantId],
+    );
+    const listing = await one(
+      `INSERT INTO public_sessions (id, session_id, tenant_id, sport_key, starts_at, ends_at, area, price_amount, slots_open, join_policy, expires_at)
+       VALUES ($1, $1, $2, 'badminton', now(), now() + interval '2 hours', 'D1', 1, 1, 'open', now() + interval '1 day')
+       RETURNING public_listing_id`,
       [auto, tenantId],
     );
     const visible = async () =>
       Number(
         (
           await ctx.readonlyPool.query(
-            "SELECT count(*) AS n FROM public_session_share_v WHERE session_id = $1",
-            [auto],
+            "SELECT count(*) AS n FROM public_session_share_v WHERE public_listing_id = $1",
+            [listing.public_listing_id],
           )
         ).rows[0].n,
       );

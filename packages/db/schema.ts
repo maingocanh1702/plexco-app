@@ -1614,19 +1614,31 @@ export const publicSessions = pgTable("public_sessions", {
   startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
   endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
   area: text("area").notNull(),
-  skillLevel: text("skill_level"),
   priceAmount: integer("price_amount").notNull(),
   slotsOpen: integer("slots_open").notNull(),
-  clubDisplayName: text("club_display_name").notNull(),
-  hostDisplayName: text("host_display_name"),
   joinPolicy: text("join_policy").notNull(),
   projectedAt: timestamp("projected_at", { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  // control metadata (non-PII) — the sole whitelist-exception column DD-73
-  // permits in the guarded public view; DD-78 authorization-before-cache key.
-  // Added by 0033_public_projection_fences.sql (ALTER TABLE ADD COLUMN DEFAULT 0).
+  // control metadata (non-PII), added by 0033; the 0061 view no longer serves it.
+  // 1 on insert, +1 only when a projected column changes (P-5).
   publicProjectionVersion: bigint("public_projection_version", { mode: "number" }).notNull().default(0),
+  // 0061 (DD-41 / BL-DSC-1): nullable, written NULL until sessions gains a source (P-1).
+  // skill_level, club_display_name (served live from the approved alias) and
+  // host_display_name (persons are never projected) were dropped by 0061.
+  title: text("title"),
+  sessionType: text("session_type"),
+  levelMinRank: integer("level_min_rank"),
+  levelMaxRank: integer("level_max_rank"),
+  levelStrict: boolean("level_strict"),
+  genderRestriction: text("gender_restriction"),
+  ageMin: integer("age_min"),
+  ageMax: integer("age_max"),
+  // 0061 (P-2): opaque 128 CSPRNG bits, never updated; a new value on every re-entry
+  // because the row is deleted whenever the session leaves public. The view's row key.
+  publicListingId: uuid("public_listing_id").notNull()
+    .default(sql`(encode(public.gen_random_bytes(16), 'hex'))::uuid`),
 }, (t) => ({
+  publicListingUq: uniqueIndex("uq_public_sessions_public_listing_id").on(t.publicListingId),
   // plain btree — a WHERE starts_at > now() predicate is invalid (now() is
   // STABLE, not IMMUTABLE); mirrors the 0006 fix
   startsIdx: index("idx_public_starts").on(t.startsAt),
@@ -1656,6 +1668,23 @@ export const publicProjectionFences = pgTable("public_projection_fences", {
 }, (t) => ({
   pk: primaryKey({ columns: [t.surface, t.targetKind, t.targetId] }),
   denyScopeChk: check("public_projection_fences_deny_scope_chk", sql`${t.denyScope} IN ('public','all')`),
+}));
+
+// public_session_share_slugs — host share-link registry (0061, P-3; DD-83 / DD-75).
+// Hash-only: slug_hash = sha256('plexco/session-share-slug/v1:' || raw slug); the raw
+// slug is returned once by rotate and never stored or logged. revoked_at is the
+// tombstone; at most one active slug per session. No RLS, no FK and no runtime grant
+// (like the fence table) — every access goes through the 0061 SECURITY DEFINER
+// rotate / revoke / lookup functions.
+export const publicSessionShareSlugs = pgTable("public_session_share_slugs", {
+  slugHash: bytea("slug_hash").primaryKey(),
+  sessionId: uuid("session_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (t) => ({
+  hashLenChk: check("public_session_share_slugs_hash_len_chk", sql`octet_length(${t.slugHash}) = 32`),
+  activeUq: uniqueIndex("uq_public_session_share_slugs_active")
+    .on(t.sessionId).where(sql`${t.revokedAt} IS NULL`),
 }));
 
 export const joinRequests = pgTable("join_requests", {

@@ -9,6 +9,7 @@ import { migrate } from "@plexco/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runDispatchCycle, type ClaimedDeliveryJob, type DeliverFn } from "./dispatcher.js";
 import { PROJECTORS } from "./projectors/index.js";
+import { deliverPublicSessions } from "./projectors/public-sessions.js";
 import {
   ROLE_PW,
   bootstrapJobDefiner,
@@ -57,23 +58,24 @@ describe("scripts/outbox-dlq-replay.mjs (D-10)", () => {
 });
 
 describe("projector modules (D-5, D-8, A24)", () => {
-  it("maps exactly the three registry names; the remaining placeholder dead-letters projector_not_implemented with no I/O", async () => {
+  it("maps exactly the three registry names to the real projectors; public_sessions dead-letters config_missing with no I/O when unconfigured", async () => {
     const clientQuery = vi.spyOn(pg.Client.prototype, "query");
     const poolQuery = vi.spyOn(pg.Pool.prototype, "query");
+    vi.stubEnv("DATABASE_URL_DIRECT", "");
     try {
       expect([...PROJECTORS.keys()]).toEqual(["public_sessions", "web_realtime", "zalo_dm"]);
+      // All three are real projectors, each tested in its own file: web_realtime (P3-S3 L5),
+      // zalo_dm (P3-S3 L4) and public_sessions (P3-S7 L10, projectors/public-sessions.test.ts).
+      expect(PROJECTORS.get("public_sessions")).toBe(deliverPublicSessions);
       const job = { eventId: "e", projector: "p", attempts: 0 } as unknown as ClaimedDeliveryJob;
-      // web_realtime (P3-S3 L5) and zalo_dm (P3-S3 L4) are real projectors, each tested in its own file.
-      for (const [name, deliver] of PROJECTORS) {
-        if (name !== "public_sessions") continue;
-        await expect(deliver(job)).resolves.toEqual({
-          result: "dlq",
-          errorCode: "projector_not_implemented",
-        });
-      }
+      await expect(deliverPublicSessions(job)).resolves.toEqual({
+        result: "dlq",
+        errorCode: "config_missing",
+      });
       expect(clientQuery).not.toHaveBeenCalled();
       expect(poolQuery).not.toHaveBeenCalled();
     } finally {
+      vi.unstubAllEnvs();
       vi.restoreAllMocks();
     }
   });
