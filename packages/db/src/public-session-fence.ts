@@ -18,8 +18,9 @@ export type PublicSessionFenceReason = "visibility_private" | "cancelled" | "clo
  *
  * Shared core so every privacy-reducing session command stays thin: updateSession raises
  * 'visibility_private' on ANY public->private edit (no status gate — see updateSession); a later
- * cancel/close slice reuses this with 'cancelled'/'closed'. The projector-worker later CAS-clears the
- * fence after convergence (a separate lane); this helper only RAISES.
+ * cancel/close slice reuses this with 'cancelled'/'closed'. The 0061 writer
+ * (public_sessions_project_session) later CAS-clears the fence after convergence; this helper only
+ * RAISES.
  */
 export async function raisePublicSessionFence(
   tx: Tx,
@@ -30,12 +31,13 @@ export async function raisePublicSessionFence(
 }
 
 /**
- * CAS-clear the session's DD-12 fence after the projector converged (0033
- * clear_public_session_fence): the fence is deleted ONLY while its token is still the one the
- * caller observed through current_public_session_fence_token before projecting, so a newer raise
- * (a new token) always wins and a stale clear is a no-op. Both functions are EXECUTE app_worker
- * only: call it on an app_worker connection (a transaction or a plain handle). Returns true when
- * the fence was cleared, false when it was already gone or re-raised.
+ * CAS-clear the session's DD-12 fence (0033 clear_public_session_fence): the fence is deleted ONLY
+ * while its token is still the one the caller observed through current_public_session_fence_token,
+ * so a newer raise (a new token) always wins and a stale clear is a no-op. NO runtime role can call
+ * it (D3, s1 S-1: 0061 revokes app_worker's EXECUTE; app, app_worker and readonly get 42501): the
+ * runtime clear happens only inside the 0061 writer, after its canonical recompute. This wrapper
+ * serves owner tooling and tests on the owner connection. Returns true when the fence was cleared,
+ * false when it was already gone or re-raised.
  */
 export async function clearPublicSessionFence(
   db: Pick<Db, "execute"> | Tx,

@@ -346,18 +346,17 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
   const baseRows = async (sessionId: string) =>
     (await ctx.owner.query(`SELECT * FROM public_sessions WHERE session_id = $1`, [sessionId]))
       .rows;
+  // D3 (s1 S-1): no runtime role may observe or clear a fence; only the 0061 writer does, as
+  // job_definer. These helpers exercise the 0033 functions themselves on the owner connection.
   const observeToken = async (sessionId: string) =>
-    (
-      await ctx.workerPool.query(`SELECT current_public_session_fence_token($1::uuid) AS t`, [
-        sessionId,
-      ])
-    ).rows[0].t as string | null;
+    (await ctx.owner.query(`SELECT current_public_session_fence_token($1::uuid) AS t`, [sessionId]))
+      .rows[0].t as string | null;
   const clearFence = async (sessionId: string, token: string) =>
     (
-      await ctx.workerPool.query(
-        `SELECT clear_public_session_fence($1::uuid, $2::uuid) AS cleared`,
-        [sessionId, token],
-      )
+      await ctx.owner.query(`SELECT clear_public_session_fence($1::uuid, $2::uuid) AS cleared`, [
+        sessionId,
+        token,
+      ])
     ).rows[0].cleared as boolean;
 
   it("(a) IMMEDIATE DENY: after a private/cancel raise and BEFORE any projector run, the row is gone from the guarded view while the base projection row still exists", async () => {
@@ -629,14 +628,21 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     expect((await viewRows(sid)).length).toBe(0);
   });
 
-  it("fence race (CONCURRENT two-client lock-wait + recheck, decisions.md:923) — a worker clearing a STALE token blocks behind a newer raise, re-checks under READ COMMITTED and no-ops so denial survives; then it clears the CURRENT token and converges", async () => {
+  it("fence race (CONCURRENT two-client lock-wait + recheck, decisions.md:923, D3) — the WRITER observes T1, blocks at its last-statement CAS-clear behind a newer raise, re-checks under READ COMMITTED and keeps T2 so denial survives; its next run clears T2 and converges", async () => {
     const sid = await seedProjectedSession(ctx.tenantA, 9);
+    // createIn makes a past private session: make it eligible so the writer takes the rotated path.
+    await ctx.owner.query(
+      `UPDATE sessions SET visibility = 'public', area = 'D1', slots_max = 8, join_policy = 'open',
+              starts_at = now() + interval '1 day', ends_at = now() + interval '1 day 2 hours'
+        WHERE id = $1`,
+      [sid],
+    );
     await raiseAs(ctx.tenantA, sid, "cancelled");
     const t1 = await observeToken(sid);
     expect((await viewRows(sid)).length).toBe(0);
 
     const source = await ctx.appPool.connect(); // client A — the source transition (raise)
-    const worker = await ctx.workerPool.connect(); // client B — the projector worker (clear)
+    const worker = await ctx.workerPool.connect(); // client B — the projector writer
     try {
       const workerPid = (await worker.query(`SELECT pg_backend_pid() AS pid`)).rows[0]
         .pid as number;
@@ -646,11 +652,13 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
       await source.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
       await source.query(`SELECT raise_public_session_fence($1::uuid, 'closed')`, [sid]);
 
-      // B tries to clear the STALE token T1 — it must block on A's uncommitted upsert.
-      const staleClear = worker.query(
-        `SELECT clear_public_session_fence($1::uuid, $2::uuid) AS cleared`,
-        [sid, t1],
+      // B's writer observes the committed T1, rotates, then blocks at its CAS-clear of T1 on
+      // A's uncommitted upsert (D3: the clear is the writer's last statement).
+      const writerRun = worker.query(
+        `SELECT public_sessions_project_session($1::uuid, NULL) AS d`,
+        [sid],
       );
+      writerRun.catch(() => undefined); // awaited below; never an unhandled rejection meanwhile
       // Deterministically wait until B is genuinely blocked ON A (not a fixed sleep).
       for (let i = 0; ; i++) {
         const { rows } = await ctx.owner.query(
@@ -658,25 +666,26 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
           [workerPid],
         );
         if ((rows[0].n as number) > 0) break;
-        if (i > 200) throw new Error("worker's clear never blocked on the source's fence-row lock");
+        if (i > 200)
+          throw new Error("writer's CAS-clear never blocked on the source's fence-row lock");
         await new Promise((r) => setTimeout(r, 25));
       }
       // Commit A → T2 is now current. B unblocks and re-checks its WHERE against the
       // committed row (token is T2, not T1) under READ COMMITTED → deletes nothing.
       await source.query("COMMIT");
-      expect((await staleClear).rows[0].cleared).toBe(false);
-      expect((await viewRows(sid)).length).toBe(0); // denial SURVIVED the stale worker
+      expect((await writerRun).rows[0].d).toBe("rotated");
+      expect((await viewRows(sid)).length).toBe(0); // denial SURVIVED the writer's stale clear
       const t2 = await observeToken(sid);
+      expect(t2).toBeTruthy();
       expect(t2).not.toBe(t1);
 
-      // Other interleaving: the worker clears the CURRENT token → converges, row visible again.
-      const goodClear = (
-        await worker.query(`SELECT clear_public_session_fence($1::uuid, $2::uuid) AS cleared`, [
-          sid,
-          t2,
-        ])
-      ).rows[0].cleared as boolean;
-      expect(goodClear).toBe(true);
+      // B's next run observes T2 and clears it as its last statement → converges, row visible.
+      const next = await worker.query(
+        `SELECT public_sessions_project_session($1::uuid, NULL) AS d`,
+        [sid],
+      );
+      expect(next.rows[0].d).toBe("rotated");
+      expect(await observeToken(sid)).toBeNull();
       expect((await viewRows(sid)).length).toBe(1);
     } finally {
       await source.query("ROLLBACK").catch(() => {});
@@ -685,7 +694,7 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     }
   });
 
-  it("EXECUTE grants: only app may raise; only app_worker may observe/clear; readonly may call none", async () => {
+  it("EXECUTE grants: only app may raise; NO runtime role may observe/clear (D3: only the 0061 writer, as job_definer); readonly may call none", async () => {
     const sid = await seedProjectedSession(ctx.tenantA, 5);
     const anyUuid = randomUUID();
     // readonly cannot raise / observe / clear
@@ -705,13 +714,16 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     await expect(
       ctx.workerPool.query(`SELECT raise_public_session_fence($1::uuid, 'cancelled')`, [sid]),
     ).rejects.toThrow(/permission denied/i);
-    // app cannot observe / clear (projector-worker-only)
-    await expect(
-      ctx.appPool.query(`SELECT current_public_session_fence_token($1::uuid)`, [sid]),
-    ).rejects.toThrow(/permission denied/i);
-    await expect(
-      ctx.appPool.query(`SELECT clear_public_session_fence($1::uuid, $2::uuid)`, [sid, anyUuid]),
-    ).rejects.toThrow(/permission denied/i);
+    // neither app nor app_worker can observe / clear (D3, s1 S-1: the clear runs only inside
+    // public_sessions_project_session, after a canonical recompute)
+    for (const pool of [ctx.appPool, ctx.workerPool]) {
+      await expect(
+        pool.query(`SELECT current_public_session_fence_token($1::uuid)`, [sid]),
+      ).rejects.toThrow(/permission denied/i);
+      await expect(
+        pool.query(`SELECT clear_public_session_fence($1::uuid, $2::uuid)`, [sid, anyUuid]),
+      ).rejects.toThrow(/permission denied/i);
+    }
   });
 
   it("raise is tenant-scoped and fail-closed: a session outside the caller tenant, and a call with no tenant context, are both refused and write no fence (DD-75 derive+verify server-side)", async () => {

@@ -178,11 +178,18 @@ const raise = (tenantId: string, sid: string) =>
   asApp(tenantId, (c) =>
     c.query("SELECT raise_public_session_fence($1, 'visibility_private')", [sid]),
   );
+/** D3: no runtime role may observe or clear a fence (only the writer, as job_definer); the owner reads it. */
 const fenceToken = async (sid: string) =>
-  (await worker("SELECT current_public_session_fence_token($1) AS t", [sid]))[0]!.t as
-    string | null;
-const casClear = async (sid: string, token: string) =>
-  (await worker("SELECT clear_public_session_fence($1, $2) AS ok", [sid, token]))[0]!.ok as boolean;
+  (await owner("SELECT current_public_session_fence_token($1) AS t", [sid]))[0]!.t as string | null;
+/** Resolves once backend `pid` waits on a lock another session holds (no fixed sleep). */
+async function blockedOn(pid: number): Promise<void> {
+  for (let i = 0; i <= 200; i++) {
+    const [r] = await owner("SELECT cardinality(pg_blocking_pids($1)) AS n", [pid]);
+    if ((r!.n as number) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`backend ${pid} never blocked`);
+}
 const rotate = (tenantId: string | null, sid: string) =>
   asApp(
     tenantId,
@@ -292,6 +299,7 @@ describe("PSP-3 NULL slots_max is audited, never projected (A-4, R-1)", () => {
     const t = await club();
     const sid = await session(t);
     expect(await project(sid)).toBe("upserted");
+    const slug = await rotate(t, sid); // D6 (r1 N-3): a host slug minted before the R-1 branch
     const [ev] = await owner(
       `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
        VALUES ($1, 'session', $2, 1, 'session.updated', '{}') RETURNING id`,
@@ -322,6 +330,13 @@ describe("PSP-3 NULL slots_max is audited, never projected (A-4, R-1)", () => {
           fn_name: "public_sessions_project_session",
         },
       ]);
+      const tomb = await q(
+        "SELECT revoked_at FROM public_session_share_slugs WHERE session_id = $1",
+        [sid],
+      );
+      expect(tomb.rows).toHaveLength(1);
+      expect(tomb.rows[0].revoked_at).not.toBeNull(); // the R-1 branch tombstones the active slug
+      expect((await q("SELECT * FROM public_share_slug_resolve($1)", [slug])).rowCount).toBe(0);
     } finally {
       await q("ROLLBACK");
     }
@@ -351,48 +366,75 @@ describe("PSP-4 an alias rejection hides the club at once, with no projector run
   });
 });
 
-describe("PSP-5 fence immediate-deny then CAS-clear (A-7)", () => {
-  it("PSP-5: a raise hides the row at once; a stale token clears nothing; the observed current token clears", async () => {
+describe("PSP-5 fence immediate-deny then the writer's CAS-clear (A-7, D3)", () => {
+  it("PSP-5: a raise hides the row at once; the writer clears only the token it observed, so a raise committed after that observation stays", async () => {
     const t = await club();
     const sid = await session(t);
     expect(await project(sid)).toBe("upserted");
     const lid = await listingId(sid);
     await raise(t, sid);
-    expect(await viewRow(lid)).toBeUndefined();
+    expect(await viewRow(lid)).toBeUndefined(); // immediate deny, before any projector run
     const observed = (await fenceToken(sid))!;
-    await raise(t, sid); // a newer raise between observe and clear wins
-    expect(await casClear(sid, observed)).toBe(false);
-    expect(await viewRow(lid)).toBeUndefined();
-    expect(await casClear(sid, (await fenceToken(sid))!)).toBe(true);
+    // The owner holds the row, so the writer blocks at its first write, AFTER its observation.
+    const w = await ctx.workerPool.connect();
+    await ctx.owner.query("BEGIN");
+    try {
+      const pid = (await w.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+      await ctx.owner.query("SELECT 1 FROM public_sessions WHERE id = $1 FOR UPDATE", [sid]);
+      const run = w.query("SELECT public_sessions_project_session($1, NULL) AS d", [sid]);
+      run.catch(() => undefined);
+      await blockedOn(pid);
+      await raise(t, sid); // committed while the writer waits, after its observation
+      const newer = (await fenceToken(sid))!;
+      expect(newer).not.toBe(observed);
+      await ctx.owner.query("COMMIT");
+      expect((await run).rows[0].d).toBe("rotated");
+      expect(await fenceToken(sid)).toBe(newer); // the newer raise stays
+      expect(await viewRow(await listingId(sid))).toBeUndefined();
+    } finally {
+      await ctx.owner.query("ROLLBACK").catch(() => undefined);
+      w.release();
+    }
+    expect(await project(sid)).toBe("rotated"); // the next run observes and clears the newer token
     expect(await fenceToken(sid)).toBeNull();
-    expect(await viewRow(lid)).toBeDefined();
+    expect(await viewRow(await listingId(sid))).toBeDefined();
   });
 
-  it("PSP-5b: clearPublicSessionFence (the TS CAS wrapper) as app_worker keeps a re-raised fence and clears the observed one; app is denied", async () => {
+  it("PSP-5b: app_worker and app get 42501 on both fence functions (the S-1 bare clear is refused); the TS CAS wrapper serves the owner only", async () => {
     const t = await club();
     const sid = await session(t);
     expect(await project(sid)).toBe("upserted");
     const lid = await listingId(sid);
-    const workerDb = drizzle(ctx.workerPool);
-    await raise(t, sid);
-    const stale = (await fenceToken(sid))!;
-    await raise(t, sid); // a newer raise between observe and clear wins
-    expect(await clearPublicSessionFence(workerDb, sid, stale)).toBe(false);
-    expect(await viewRow(lid)).toBeUndefined();
-    const current = (await fenceToken(sid))!;
-    expect(await clearPublicSessionFence(workerDb, sid, current)).toBe(true);
-    expect(await clearPublicSessionFence(workerDb, sid, current)).toBe(false); // already gone
-    expect(await viewRow(lid)).toBeDefined();
     await raise(t, sid);
     const token = (await fenceToken(sid))!;
-    const denied = await withTenant(ctx.appDb.db, t, (tx) =>
-      clearPublicSessionFence(tx, sid, token),
-    ).then(
-      () => "ok",
-      (e: { code?: string; cause?: { code?: string } }) => String(e.cause?.code ?? e.code),
-    );
-    expect(denied).toBe("42501");
+    // s1 S-1: a compromised worker un-fencing a just-privatised session without a recompute.
+    const s1 = "SELECT clear_public_session_fence($1, current_public_session_fence_token($1))";
+    expect(await sqlState(ctx.workerPool.query(s1, [sid]))).toBe("42501");
+    for (const pool of [ctx.workerPool, ctx.appPool]) {
+      const observe = pool.query("SELECT current_public_session_fence_token($1)", [sid]);
+      expect(await sqlState(observe)).toBe("42501");
+      const clear = pool.query("SELECT clear_public_session_fence($1, $2)", [sid, token]);
+      expect(await sqlState(clear)).toBe("42501");
+    }
+    const drizzleState = (p: Promise<unknown>) =>
+      p.then(
+        () => "ok",
+        (e: { code?: string; cause?: { code?: string } }) => String(e.cause?.code ?? e.code),
+      );
+    const viaWorker = clearPublicSessionFence(drizzle(ctx.workerPool), sid, token);
+    expect(await drizzleState(viaWorker)).toBe("42501");
+    const viaApp = withTenant(ctx.appDb.db, t, (tx) => clearPublicSessionFence(tx, sid, token));
+    expect(await drizzleState(viaApp)).toBe("42501");
     expect(await fenceToken(sid)).toBe(token);
+    expect(await viewRow(lid)).toBeUndefined();
+    // The wrapper's CAS semantics on the owner connection (owner tooling and tests only).
+    const ownerDb = drizzle(ctx.owner);
+    await raise(t, sid); // a newer raise: the stale token clears nothing
+    expect(await clearPublicSessionFence(ownerDb, sid, token)).toBe(false);
+    const current = (await fenceToken(sid))!;
+    expect(await clearPublicSessionFence(ownerDb, sid, current)).toBe(true);
+    expect(await clearPublicSessionFence(ownerDb, sid, current)).toBe(false); // already gone
+    expect(await viewRow(lid)).toBeDefined();
   });
 });
 
@@ -615,11 +657,18 @@ describe("PSP-9 share slugs: hash-only, shown once, revoke and rotate (A-15)", (
 });
 
 describe("PSP-10 public_listing_id is unique, 128-bit and rotated on leaving public (A-16, P-16)", () => {
-  it("PSP-10: a new id after leaving and re-entering public, and after a fence; old ids resolve nothing", async () => {
+  it("PSP-10: a new id after leaving and re-entering public, and after a fence; old ids and slugs resolve nothing", async () => {
     const unique = await owner(
       "SELECT indexdef FROM pg_indexes WHERE tablename = 'public_sessions' AND indexdef LIKE 'CREATE UNIQUE INDEX%(public_listing_id)'",
     );
     expect(unique).toHaveLength(1);
+    // r1 N-2: the DEFAULT is 128 CSPRNG bits (gen_random_uuid() would carry only 122).
+    const [def] = await owner(
+      `SELECT pg_get_expr(d.adbin, d.adrelid) AS e FROM pg_attrdef d
+         JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+        WHERE d.adrelid = 'public_sessions'::regclass AND a.attname = 'public_listing_id'`,
+    );
+    expect(def!.e).toMatch(/^\(encode\((public\.)?gen_random_bytes\(16\), 'hex'::text\)\)::uuid$/);
     const t = await club();
     const sid = await session(t);
     expect(await project(sid)).toBe("upserted");
@@ -633,14 +682,22 @@ describe("PSP-10 public_listing_id is unique, 128-bit and rotated on leaving pub
     const lid2 = await listingId(sid);
     expect(lid2).not.toBe(lid1);
     expect(await resolveListing(lid1)).toEqual([]);
+    const slug = await rotate(t, sid); // r1 SF-1: a host slug minted for the second listing
     await raise(t, sid); // a public -> private -> public flip the projector only sees afterwards
     expect(await project(sid)).toBe("rotated");
     const lid3 = await listingId(sid);
     expect(new Set([lid1, lid2, lid3]).size).toBe(3);
-    expect(await resolveListing(lid3)).toEqual([]); // still fenced
-    expect(await casClear(sid, (await fenceToken(sid))!)).toBe(true);
+    // D3: the writer CAS-cleared the fence it observed, so the replaced row is served at once ...
+    expect(await fenceToken(sid)).toBeNull();
     expect(await resolveListing(lid3)).toEqual([{ tenant_id: t, session_id: sid }]);
     expect(await resolveListing(lid2)).toEqual([]);
+    // ... and the slug minted for the old listing resolves nothing: the rotation tombstoned it.
+    expect(await resolveSlug(slug)).toEqual([]);
+    const [tomb] = await owner(
+      "SELECT revoked_at FROM public_session_share_slugs WHERE session_id = $1",
+      [sid],
+    );
+    expect(tomb!.revoked_at).not.toBeNull();
   });
 });
 

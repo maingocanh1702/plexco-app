@@ -9,8 +9,9 @@
 --   2. session_occupancy(uuid): THE occupancy formula (active players + guest notes) as one
 --      SECURITY INVOKER function, so the TS reads and the writer share one definition.
 --   3. Writer definers (EXECUTE app_worker): recompute one session's row from canonical rows only,
---      never from an event payload; the tenant fan-out candidates (also the R-2 backfill) and the
---      expiry sweep.
+--      never from an event payload, the session writer observing then CAS-clearing the DD-12 fence
+--      itself (D3: no runtime role keeps EXECUTE on the 0033 observe/clear); the tenant fan-out
+--      candidates (also the R-2 backfill) and the expiry sweep.
 --   4. Share-link registry: hash-only slugs (raw slug shown once), tombstoned on revoke, rotate and
 --      listing delete; two lookups for the discovery role.
 --   5. public_session_share_v REPLACED: exactly 17 whitelisted columns, keyed by public_listing_id
@@ -75,6 +76,13 @@ GRANT UPDATE (sport_key, starts_at, ends_at, area, price_amount, slots_open, joi
   public_projection_version, title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction,
   age_min, age_max) ON public_sessions TO job_definer;
 GRANT DELETE ON public_sessions TO job_definer;
+-- D3 (s1 S-1): the DD-12 fence is observed and CAS-cleared only INSIDE the writer, around its
+-- canonical recompute, so no runtime role keeps the bare 0033 clear. Both functions are owned by
+-- the migration role, hence these statements sit here, outside the SET ROLE bracket.
+GRANT EXECUTE ON FUNCTION current_public_session_fence_token(uuid), clear_public_session_fence(uuid, uuid)
+  TO job_definer;
+REVOKE EXECUTE ON FUNCTION current_public_session_fence_token(uuid), clear_public_session_fence(uuid, uuid)
+  FROM app_worker;
 
 -- ---------------------------------------------------------------------------
 -- Step 2: everything below is created AS job_definer (the 0056:61-69 bracket).
@@ -178,9 +186,15 @@ DECLARE
   v_slots_open    integer;
   v_existed       boolean;
   v_rows          integer;
+  v_fence_token   uuid;
+  v_disposition   text;
 BEGIN
   -- P-11: one writer per session at a time; the slug definers take the same lock.
   PERFORM pg_advisory_xact_lock(hashtextextended('public-sessions:' || p_session_id::text, 0));
+  -- D3 (s1 S-1): observe the DD-12 fence token BEFORE any canonical read. A raise commits with its
+  -- source transition, so every token observed here predates the rows read below; the last
+  -- statement CAS-clears exactly this token, and a raise committed after this read survives.
+  v_fence_token := current_public_session_fence_token(p_session_id);
 
   SELECT s.tenant_id, s.status, s.visibility, s.starts_at, s.ends_at, s.area, s.price_amount,
          s.slots_max, s.join_policy, sp.key, t.status, t.public_alias_status
@@ -214,89 +228,95 @@ BEGIN
       VALUES (p_event_id, v_tenant_id, 'system', 'public_projection_ineligible_unlimited',
               'public_sessions_project_session', gen_random_uuid());
     END IF;
-    RETURN 'ineligible_unlimited';
-  END IF;
-
-  IF NOT v_listable THEN
+    v_disposition := 'ineligible_unlimited';
+  ELSIF NOT v_listable THEN
     -- draft, private, closed, cancelled, past, blank area, no approved alias, suspended or
     -- cancelled tenant, or no such session: no row; the active slug dies with the listing.
     DELETE FROM public_sessions WHERE id = p_session_id;
     GET DIAGNOSTICS v_rows = ROW_COUNT;
     UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
      WHERE session_id = p_session_id AND revoked_at IS NULL;
-    RETURN CASE WHEN v_rows > 0 THEN 'deleted' ELSE 'absent' END;
+    v_disposition := CASE WHEN v_rows > 0 THEN 'deleted' ELSE 'absent' END;
+  ELSE
+    v_slots_open := greatest(0, v_slots_max - session_occupancy(p_session_id));
+
+    IF EXISTS (
+      SELECT 1 FROM public_projection_fences f
+      WHERE f.surface = 'session_share'
+        AND f.target_kind = 'session'
+        AND f.target_id = p_session_id
+        AND f.deny_scope IN ('public','all')
+    ) THEN
+      -- P-16: an eligible recompute under a fence replaces the row (new public_listing_id, active
+      -- slug tombstoned), so a public -> private -> public flip seen only afterwards still rotates.
+      DELETE FROM public_sessions WHERE id = p_session_id;
+      INSERT INTO public_sessions (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+          price_amount, slots_open, join_policy, projected_at, expires_at, public_projection_version,
+          title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction,
+          age_min, age_max)
+      VALUES (p_session_id, p_session_id, v_tenant_id, v_sport_key, v_starts_at, v_ends_at, v_area,
+          v_price_amount, v_slots_open, v_join_policy, now(), v_starts_at, 1,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+      UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
+       WHERE session_id = p_session_id AND revoked_at IS NULL;
+      v_disposition := 'rotated';
+    ELSE
+      v_existed := EXISTS (SELECT 1 FROM public_sessions WHERE id = p_session_id);
+      -- P-5: version 1 on insert, +1 only when a projected column changed (re-delivery = no write).
+      -- public_listing_id is never updated. The DD-41 columns are written NULL (P-1).
+      INSERT INTO public_sessions AS ps (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+          price_amount, slots_open, join_policy, projected_at, expires_at, public_projection_version,
+          title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction,
+          age_min, age_max)
+      VALUES (p_session_id, p_session_id, v_tenant_id, v_sport_key, v_starts_at, v_ends_at, v_area,
+          v_price_amount, v_slots_open, v_join_policy, now(), v_starts_at, 1,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      ON CONFLICT (id) DO UPDATE SET
+          sport_key = EXCLUDED.sport_key,
+          starts_at = EXCLUDED.starts_at,
+          ends_at = EXCLUDED.ends_at,
+          area = EXCLUDED.area,
+          price_amount = EXCLUDED.price_amount,
+          slots_open = EXCLUDED.slots_open,
+          join_policy = EXCLUDED.join_policy,
+          projected_at = EXCLUDED.projected_at,
+          expires_at = EXCLUDED.expires_at,
+          public_projection_version = ps.public_projection_version + 1,
+          title = EXCLUDED.title,
+          session_type = EXCLUDED.session_type,
+          level_min_rank = EXCLUDED.level_min_rank,
+          level_max_rank = EXCLUDED.level_max_rank,
+          level_strict = EXCLUDED.level_strict,
+          gender_restriction = EXCLUDED.gender_restriction,
+          age_min = EXCLUDED.age_min,
+          age_max = EXCLUDED.age_max
+        WHERE (ps.sport_key, ps.starts_at, ps.ends_at, ps.area, ps.price_amount, ps.slots_open,
+               ps.join_policy, ps.expires_at, ps.title, ps.session_type, ps.level_min_rank,
+               ps.level_max_rank, ps.level_strict, ps.gender_restriction, ps.age_min, ps.age_max)
+              IS DISTINCT FROM
+              (EXCLUDED.sport_key, EXCLUDED.starts_at, EXCLUDED.ends_at, EXCLUDED.area,
+               EXCLUDED.price_amount, EXCLUDED.slots_open, EXCLUDED.join_policy, EXCLUDED.expires_at,
+               EXCLUDED.title, EXCLUDED.session_type, EXCLUDED.level_min_rank, EXCLUDED.level_max_rank,
+               EXCLUDED.level_strict, EXCLUDED.gender_restriction, EXCLUDED.age_min, EXCLUDED.age_max);
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+      IF NOT v_existed THEN
+        -- P-17: a new listing never inherits a slug minted for an earlier one.
+        UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
+         WHERE session_id = p_session_id AND revoked_at IS NULL;
+        v_disposition := 'upserted';
+      ELSE
+        v_disposition := CASE WHEN v_rows > 0 THEN 'upserted' ELSE 'unchanged' END;
+      END IF;
+    END IF;
   END IF;
 
-  v_slots_open := greatest(0, v_slots_max - session_occupancy(p_session_id));
-
-  IF EXISTS (
-    SELECT 1 FROM public_projection_fences f
-    WHERE f.surface = 'session_share'
-      AND f.target_kind = 'session'
-      AND f.target_id = p_session_id
-      AND f.deny_scope IN ('public','all')
-  ) THEN
-    -- P-16: an eligible recompute under a fence replaces the row (new public_listing_id, active
-    -- slug tombstoned), so a public -> private -> public flip seen only afterwards still rotates.
-    DELETE FROM public_sessions WHERE id = p_session_id;
-    INSERT INTO public_sessions (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-        price_amount, slots_open, join_policy, projected_at, expires_at, public_projection_version,
-        title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction,
-        age_min, age_max)
-    VALUES (p_session_id, p_session_id, v_tenant_id, v_sport_key, v_starts_at, v_ends_at, v_area,
-        v_price_amount, v_slots_open, v_join_policy, now(), v_starts_at, 1,
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
-    UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
-     WHERE session_id = p_session_id AND revoked_at IS NULL;
-    RETURN 'rotated';
+  -- D3: every path above leaves the row converged, so the CAS-clear of the OBSERVED token is the
+  -- last statement; a newer token (a raise after the observation) is never cleared by this run.
+  IF v_fence_token IS NOT NULL THEN
+    PERFORM clear_public_session_fence(p_session_id, v_fence_token);
   END IF;
-
-  v_existed := EXISTS (SELECT 1 FROM public_sessions WHERE id = p_session_id);
-  -- P-5: version 1 on insert, +1 only when a projected column changed (re-delivery = no write).
-  -- public_listing_id is never updated. The DD-41 columns are written NULL (P-1).
-  INSERT INTO public_sessions AS ps (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-      price_amount, slots_open, join_policy, projected_at, expires_at, public_projection_version,
-      title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction,
-      age_min, age_max)
-  VALUES (p_session_id, p_session_id, v_tenant_id, v_sport_key, v_starts_at, v_ends_at, v_area,
-      v_price_amount, v_slots_open, v_join_policy, now(), v_starts_at, 1,
-      NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
-  ON CONFLICT (id) DO UPDATE SET
-      sport_key = EXCLUDED.sport_key,
-      starts_at = EXCLUDED.starts_at,
-      ends_at = EXCLUDED.ends_at,
-      area = EXCLUDED.area,
-      price_amount = EXCLUDED.price_amount,
-      slots_open = EXCLUDED.slots_open,
-      join_policy = EXCLUDED.join_policy,
-      projected_at = EXCLUDED.projected_at,
-      expires_at = EXCLUDED.expires_at,
-      public_projection_version = ps.public_projection_version + 1,
-      title = EXCLUDED.title,
-      session_type = EXCLUDED.session_type,
-      level_min_rank = EXCLUDED.level_min_rank,
-      level_max_rank = EXCLUDED.level_max_rank,
-      level_strict = EXCLUDED.level_strict,
-      gender_restriction = EXCLUDED.gender_restriction,
-      age_min = EXCLUDED.age_min,
-      age_max = EXCLUDED.age_max
-    WHERE (ps.sport_key, ps.starts_at, ps.ends_at, ps.area, ps.price_amount, ps.slots_open,
-           ps.join_policy, ps.expires_at, ps.title, ps.session_type, ps.level_min_rank,
-           ps.level_max_rank, ps.level_strict, ps.gender_restriction, ps.age_min, ps.age_max)
-          IS DISTINCT FROM
-          (EXCLUDED.sport_key, EXCLUDED.starts_at, EXCLUDED.ends_at, EXCLUDED.area,
-           EXCLUDED.price_amount, EXCLUDED.slots_open, EXCLUDED.join_policy, EXCLUDED.expires_at,
-           EXCLUDED.title, EXCLUDED.session_type, EXCLUDED.level_min_rank, EXCLUDED.level_max_rank,
-           EXCLUDED.level_strict, EXCLUDED.gender_restriction, EXCLUDED.age_min, EXCLUDED.age_max);
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-
-  IF NOT v_existed THEN
-    -- P-17: a new listing never inherits a slug minted for an earlier one.
-    UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
-     WHERE session_id = p_session_id AND revoked_at IS NULL;
-    RETURN 'upserted';
-  END IF;
-  RETURN CASE WHEN v_rows > 0 THEN 'upserted' ELSE 'unchanged' END;
+  RETURN v_disposition;
 END;
 $$;
 

@@ -7,12 +7,13 @@ import type { Queryable } from "../projector-registry.js";
  * session types and 3 tenant alias types, 0061) only names WHICH sessions to recompute: its payload
  * is never read, so a forged or stale event causes at most a recompute from canonical rows.
  *
- * Per session: observe the DD-12 fence token, recompute the public row from canonical rows
- * (public_sessions_project_session, 0061), then CAS-clear the fence only while its token is still
- * the observed one (0033), on the delete and the upsert path alike, so a newer raise always wins. A
- * tenant event does the same for each of the tenant's candidates. Every delivery ends with a
- * bounded expiry sweep. All SQL is raw EXECUTE of SECURITY DEFINER functions on the app_worker
- * seat (P-18), which holds no privilege on public_sessions itself.
+ * Per session: one call to public_sessions_project_session (0061), which observes the DD-12 fence
+ * token, recomputes the public row from canonical rows and, as its last statement, CAS-clears the
+ * fence only while its token is still the observed one, on every path, so a newer raise always
+ * wins. app_worker cannot call the 0033 observe/clear functions at all (D3, s1 S-1). A tenant event
+ * does the same for each of the tenant's candidates. Every delivery ends with a bounded expiry
+ * sweep. All SQL is raw EXECUTE of SECURITY DEFINER functions on the app_worker seat (P-18), which
+ * holds no privilege on public_sessions itself.
  *
  * Outcomes (P-13): delivered, with the disposition as providerRef; any DB failure is a retry the
  * dispatcher bounds (MAX_DELIVERY_ATTEMPTS, then attempts_exhausted); an unknown aggregate type,
@@ -45,20 +46,12 @@ export interface PublicSessionsDeps {
 }
 
 export function createPublicSessionsDeliver({ db }: PublicSessionsDeps): DeliverFn {
-  /** One session, in this order: observe the fence, recompute, CAS-clear on the observed token. */
+  /** One session: the writer observes the fence, recomputes and CAS-clears in one call (D3). */
   async function projectSession(sessionId: string, eventId: string): Promise<string> {
-    const fence = await db.query<{ token: string | null }>(
-      "SELECT current_public_session_fence_token($1) AS token",
-      [sessionId],
-    );
     const projected = await db.query<{ disposition: string }>(
       "SELECT public_sessions_project_session($1, $2) AS disposition",
       [sessionId, eventId],
     );
-    const token = fence.rows[0]?.token ?? null;
-    if (token !== null) {
-      await db.query("SELECT clear_public_session_fence($1, $2)", [sessionId, token]);
-    }
     return String(projected.rows[0]?.disposition);
   }
 

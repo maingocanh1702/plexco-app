@@ -421,7 +421,8 @@ describe("A6-A8 authorization and catalog posture", () => {
       expect(await aclOf("app_worker", "n.nspname <> 'pgboss'")).toEqual([]);
       const narrow = await aclOf(
         "job_definer",
-        "c.relname IN ('sessions', 'players', 'charges', 'outbox_events', 'public_sessions')",
+        `c.relname IN ('sessions', 'players', 'charges', 'outbox_events', 'public_sessions',
+                       'tenants', 'sports', 'session_guest_notes', 'public_projection_fences')`,
       );
       const cols = (rel: string, priv: string) =>
         narrow
@@ -503,15 +504,51 @@ describe("A6-A8 authorization and catalog posture", () => {
       expect(
         [...new Set(narrow.filter((r) => r.rel === "public_sessions").map((r) => r.priv))].sort(),
       ).toEqual(["DELETE", "INSERT", "SELECT", "UPDATE"]);
+      // 0061 (r1 N-1, D5): the writer's other canonical reads are column-narrow SELECT only.
+      const reads = ["tenants", "sports", "session_guest_notes", "public_projection_fences"];
+      expect(cols("tenants", "SELECT")).toEqual([
+        "id",
+        "public_alias",
+        "public_alias_status",
+        "status",
+      ]);
+      expect(cols("sports", "SELECT")).toEqual(["id", "key"]);
+      expect(cols("session_guest_notes", "SELECT")).toEqual(["session_id"]);
+      expect(cols("public_projection_fences", "SELECT")).toEqual([
+        "deny_scope",
+        "surface",
+        "target_id",
+        "target_kind",
+      ]);
+      expect(narrow.filter((r) => reads.includes(r.rel as string) && r.priv !== "SELECT")).toEqual(
+        [],
+      );
       expect(
         narrow.filter(
-          (r) => ["sessions", "players", "charges"].includes(r.rel as string) && r.col === null,
+          (r) =>
+            ["sessions", "players", "charges", ...reads].includes(r.rel as string) &&
+            r.col === null,
         ),
       ).toEqual([]);
       const fence = await one(
         "SELECT has_function_privilege('job_definer', 'raise_public_session_fence(uuid, text)', 'EXECUTE') AS ok",
       );
       expect(fence.ok).toBe(true);
+      // D3 (s1 S-1): only the writer's owner (job_definer) may observe or CAS-clear a fence;
+      // app_worker's 0033 EXECUTE is revoked, so no runtime role can call either function.
+      for (const sig of [
+        "current_public_session_fence_token(uuid)",
+        "clear_public_session_fence(uuid, uuid)",
+      ]) {
+        const g = await one(
+          `SELECT ARRAY(SELECT a.grantee::regrole::text FROM aclexplode(p.proacl) a
+                         WHERE a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner
+                         ORDER BY 1) AS grantees
+             FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+          [sig],
+        );
+        expect(g.grantees, sig).toEqual(["job_definer"]);
+      }
     });
   });
 });

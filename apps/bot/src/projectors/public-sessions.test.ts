@@ -191,9 +191,10 @@ describe("public_sessions projector against the 0061 definers (as app_worker)", 
         [(await baseRow(sid))!.public_listing_id],
       )
     ).rows[0] as Row | undefined;
+  /** D3: no runtime role may observe a fence (only the 0061 writer, as job_definer); the owner reads it. */
   const fenceToken = async (sid: string) =>
-    (await ctx.workerPool.query("SELECT current_public_session_fence_token($1) AS t", [sid]))
-      .rows[0].t as string | null;
+    (await owner("SELECT current_public_session_fence_token($1) AS t", [sid]))[0]!.t as
+      string | null;
   /** The host's command path: raise the DD-12 fence in a tenant-scoped app transaction. */
   async function raise(tenantId: string, sid: string, reason: string): Promise<void> {
     const c = await ctx.appPool.connect();
@@ -269,7 +270,7 @@ describe("public_sessions projector against the 0061 definers (as app_worker)", 
       expect(await viewRow(sid)).toMatchObject({ club_display_name: "CLB Q7" });
   });
 
-  it("PSB-4: private, cancel and close delete the row; the fence is CAS-cleared only while its token is the observed one (A-8)", async () => {
+  it("PSB-4: private, cancel and close delete the row; the writer CAS-clears only the fence token it observed, so a later raise survives (A-8, D3)", async () => {
     const t = await club();
     const flips: [string, string][] = [
       ["visibility_private", "UPDATE sessions SET visibility = 'private' WHERE id = $1"],
@@ -287,14 +288,18 @@ describe("public_sessions projector against the 0061 definers (as app_worker)", 
       expect(await baseRow(sid)).toBeUndefined();
       expect(await fenceToken(sid)).toBeNull();
     }
-    // A newer raise between the observe and the clear survives: the CAS clear is a no-op.
+    // D3 (s1 S-1): the writer observes and CAS-clears inside public_sessions_project_session, so
+    // the projector sends only the writer and the sweep, and a raise committed after the writer's
+    // observation (here: after its commit) survives to the next delivery.
     const sid = await session(t);
     expect(await deliver(sessionJob(sid))).toEqual(delivered("upserted"));
     await raise(t, sid, "visibility_private");
     const observed = await fenceToken(sid);
     await owner("UPDATE sessions SET visibility = 'private' WHERE id = $1", [sid]);
+    const sent: string[] = [];
     const racing = {
       query: async (text: string, params?: unknown[]) => {
+        sent.push(text);
         const result = await ctx.workerPool.query(text, params);
         if (text.includes("public_sessions_project_session"))
           await raise(t, sid, "visibility_private");
@@ -304,6 +309,10 @@ describe("public_sessions projector against the 0061 definers (as app_worker)", 
     expect(await createPublicSessionsDeliver({ db: racing })(sessionJob(sid))).toEqual(
       delivered("deleted"),
     );
+    expect(sent).toEqual([
+      "SELECT public_sessions_project_session($1, $2) AS disposition",
+      "SELECT public_sessions_sweep_expired($1)",
+    ]);
     const survivor = await fenceToken(sid);
     expect(survivor).not.toBeNull();
     expect(survivor).not.toBe(observed);
