@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(61); // 0000..0060 (0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
+    expect(ctx.migrateResult.applied.length).toBe(62); // 0000..0061 (0061 public sessions projector writer, 0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(61);
+    expect(second.skipped.length).toBe(62);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -168,13 +168,19 @@ describe("fail-closed without tenant context (BL-TEN-1)", () => {
 });
 
 describe("public read model (INV-3 / HR2 / DD-12)", () => {
-  it("public_sessions columns are EXACTLY the approved whitelist", async () => {
-    const { rows } = await ctx.owner.query(
-      `SELECT column_name FROM information_schema.columns
-       WHERE table_schema = 'public' AND table_name = 'public_sessions'`,
-    );
-    const cols = rows.map((r: { column_name: string }) => r.column_name).sort();
-    expect(cols).toEqual(
+  it("public_sessions columns are EXACTLY the approved whitelist, and the guarded view EXACTLY its 17", async () => {
+    const columnsOf = async (rel: string) =>
+      (
+        await ctx.owner.query(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`,
+          [rel],
+        )
+      ).rows.map((r: { column_name: string }) => r.column_name);
+    // 0061: skill_level (BL-DSC-1 retired), club_display_name (served live from the
+    // tenant's approved alias) and host_display_name (persons are never projected) are
+    // dropped; the 8 DD-41 columns and the opaque public_listing_id are added.
+    expect((await columnsOf("public_sessions")).sort()).toEqual(
       [
         "id",
         "session_id",
@@ -183,21 +189,46 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
         "starts_at",
         "ends_at",
         "area",
-        "skill_level",
         "price_amount",
         "slots_open",
-        "club_display_name",
-        "host_display_name",
         "join_policy",
         "projected_at",
         "expires_at",
-        // control metadata (non-PII) — the SOLE whitelist-exception column DD-73
-        // permits for the guarded view / DD-78 cache gate (added by 0033). It is
-        // a monotonic version counter, not money/PII; the smell test below still
-        // guards the class.
+        // control metadata (non-PII, 0033): a monotonic version counter that the
+        // replaced view never serves (0061).
         "public_projection_version",
+        "title",
+        "session_type",
+        "level_min_rank",
+        "level_max_rank",
+        "level_strict",
+        "gender_restriction",
+        "age_min",
+        "age_max",
+        "public_listing_id",
       ].sort(),
     );
+    // The view serves exactly these, in order: never session_id, tenant_id,
+    // public_projection_version, a share slug, host_display_name or confirmed_count.
+    expect(await columnsOf("public_session_share_v")).toEqual([
+      "public_listing_id",
+      "sport_key",
+      "starts_at",
+      "ends_at",
+      "area",
+      "price_amount",
+      "slots_open",
+      "club_display_name",
+      "join_policy",
+      "title",
+      "session_type",
+      "level_min_rank",
+      "level_max_rank",
+      "level_strict",
+      "gender_restriction",
+      "age_min",
+      "age_max",
+    ]);
   });
 
   it("no public column smells like money/PII/roster", async () => {
@@ -262,12 +293,18 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
   ): Promise<string> {
     const session = await createIn(tenantId, hour);
     const expires = opts.expiresInPast ? "now() - interval '1 minute'" : "now() + interval '1 day'";
+    // 0061: the view serves club_display_name live from the tenant's approved alias and
+    // hides tenants without one, so the seed approves an alias instead of storing a name.
+    await ctx.owner.query(
+      `UPDATE tenants SET public_alias = 'Club A', public_alias_status = 'approved' WHERE id = $1`,
+      [tenantId],
+    );
     await ctx.owner.query(
       `INSERT INTO public_sessions
          (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-          price_amount, slots_open, club_display_name, join_policy, expires_at)
+          price_amount, slots_open, join_policy, expires_at)
        VALUES ($1, $1, $2, 'badminton', now(), now() + interval '2 hours', 'D1',
-          110000, 4, 'Club A', 'open', ${expires})`,
+          110000, 4, 'open', ${expires})`,
       [session.id, tenantId],
     );
     return session.id;
@@ -291,12 +328,21 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     }
   };
 
-  const viewRows = async (sessionId: string) =>
-    (
-      await ctx.readonlyPool.query(`SELECT * FROM public_session_share_v WHERE session_id = $1`, [
-        sessionId,
-      ])
+  // 0061: the view never serves session_id; the owner reads the row's opaque
+  // public_listing_id from the base, then the view is read by that id as readonly.
+  const viewRows = async (sessionId: string) => {
+    const base = await ctx.owner.query(
+      `SELECT public_listing_id FROM public_sessions WHERE session_id = $1`,
+      [sessionId],
+    );
+    if (base.rows.length === 0) return [];
+    return (
+      await ctx.readonlyPool.query(
+        `SELECT * FROM public_session_share_v WHERE public_listing_id = $1`,
+        [base.rows[0].public_listing_id],
+      )
     ).rows;
+  };
   const baseRows = async (sessionId: string) =>
     (await ctx.owner.query(`SELECT * FROM public_sessions WHERE session_id = $1`, [sessionId]))
       .rows;
@@ -461,9 +507,9 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
       ctx.appPool.query(
         `INSERT INTO public_sessions
            (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-            price_amount, slots_open, club_display_name, join_policy, expires_at)
+            price_amount, slots_open, join_policy, expires_at)
          VALUES ($1, $1, $2, 'badminton', now(), now() + interval '2 hours', 'D1',
-            1, 1, 'x', 'open', now() + interval '1 day')`,
+            1, 1, 'open', now() + interval '1 day')`,
         [sid, ctx.tenantA],
       ),
       "app must be denied direct INSERT on public_sessions",
@@ -485,19 +531,19 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     ).rejects.toThrow(/permission denied/i);
   });
 
-  it("(c) the guarded view exposes EXACTLY the BL-DSC-1 existing fields + session_id + public_projection_version — no retired skill_level, no expires_at, no tenant_id, no money/PII, no fence/token", async () => {
+  it("(c) the guarded view exposes EXACTLY the BL-DSC-1 fields + the DD-41 columns + public_listing_id — no session_id, no public_projection_version, no host name, no retired skill_level, no expires_at, no tenant_id, no money/PII, no fence/token", async () => {
     const { rows } = await ctx.owner.query(
       `SELECT column_name FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'public_session_share_v'`,
     );
     const cols = (rows as { column_name: string }[]).map((r) => r.column_name).sort();
-    // DD-73:914 — the guarded view follows BL-DSC-1, NOT 0006. skill_level is
-    // retired; expires_at is only the freshness filter; both are excluded. The
-    // sole non-BL-DSC-1 columns are session_id (row identity) and the sanctioned
-    // control column public_projection_version.
+    // DD-73:914 — the guarded view follows BL-DSC-1, NOT 0006. 0061 replaces it:
+    // the row identity is the opaque public_listing_id (never session_id), the
+    // control column is no longer served, club_display_name is the live approved
+    // alias, and persons (host_display_name) are never projected.
     expect(cols).toEqual(
       [
-        "session_id",
+        "public_listing_id",
         "sport_key",
         "starts_at",
         "ends_at",
@@ -505,13 +551,27 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
         "price_amount",
         "slots_open",
         "club_display_name",
-        "host_display_name",
         "join_policy",
-        "public_projection_version",
+        "title",
+        "session_type",
+        "level_min_rank",
+        "level_max_rank",
+        "level_strict",
+        "gender_restriction",
+        "age_min",
+        "age_max",
       ].sort(),
     );
-    expect(cols).not.toContain("skill_level"); // DD-73:914 retired — must not resurface in the guarded view
-    expect(cols).not.toContain("tenant_id"); // HR2: internal routing, never serialized
+    for (const hidden of [
+      "session_id",
+      "public_projection_version",
+      "host_display_name",
+      "confirmed_count",
+      "skill_level", // DD-73:914 retired — must not resurface in the guarded view
+      "tenant_id", // HR2: internal routing, never serialized
+    ]) {
+      expect(cols).not.toContain(hidden);
+    }
     const smelly = cols.filter((c) =>
       /(phone|email|debt|paid|roster|member|account|secret|token|venue_address|fence)/i.test(c),
     );
@@ -537,9 +597,9 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
       ctx.owner.query(
         `INSERT INTO public_sessions
            (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
-            price_amount, slots_open, club_display_name, join_policy, expires_at)
+            price_amount, slots_open, join_policy, expires_at)
          VALUES ($1, $2, $3, 'badminton', now(), now() + interval '2 hours', 'D1',
-            110000, 4, 'Club A', 'open', now() + interval '1 day')`,
+            110000, 4, 'open', now() + interval '1 day')`,
         [randomUUID(), randomUUID(), ctx.tenantA],
       ),
     ).rejects.toThrow(/public_sessions_id_session_id_chk/);
@@ -1750,12 +1810,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(61); // 0000..0060
+      expect(res.applied.length).toBe(62); // 0000..0061
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(61);
+        expect(rows.length).toBe(62);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2033,7 +2093,9 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0060_tenant_public_alias.sql");
+        expect(res.applied[res.applied.length - 1]).toBe(
+          "0061_public_sessions_projector_writer.sql",
+        );
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -2061,6 +2123,15 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
             // 0057 (Phase 3 L4): zalo_dm delivery targets + per-recipient record.
             "zalo_dm_delivery_targets",
             "zalo_dm_record_recipient",
+            // 0061 (Phase 3 L10): public_sessions writer, occupancy, share-slug registry, lookups.
+            "session_occupancy",
+            "public_sessions_project_session",
+            "public_sessions_tenant_candidates",
+            "public_sessions_sweep_expired",
+            "public_session_share_slug_rotate",
+            "public_session_share_slug_revoke",
+            "public_share_slug_resolve",
+            "public_listing_resolve",
           ].sort(),
         );
       });
@@ -2525,6 +2596,15 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
           // 0057 (Phase 3 L4): zalo_dm delivery targets + per-recipient record.
           "zalo_dm_delivery_targets",
           "zalo_dm_record_recipient",
+          // 0061 (Phase 3 L10): public_sessions writer, occupancy, share-slug registry, lookups.
+          "session_occupancy",
+          "public_sessions_project_session",
+          "public_sessions_tenant_candidates",
+          "public_sessions_sweep_expired",
+          "public_session_share_slug_rotate",
+          "public_session_share_slug_revoke",
+          "public_share_slug_resolve",
+          "public_listing_resolve",
         ].sort(),
       );
 
@@ -4608,10 +4688,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (61) matches the actual migrations/ directory listing, and the tail is 0060", async () => {
+    it("UCC-8: MIGRATION_COUNT (62) matches the actual migrations/ directory listing, and the tail is 0061", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(61);
-      expect(files[files.length - 1]).toBe("0060_tenant_public_alias.sql");
+      expect(files.length).toBe(62);
+      expect(files[files.length - 1]).toBe("0061_public_sessions_projector_writer.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
