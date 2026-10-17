@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessions } from "../schema.js";
 import {
   createSession,
@@ -39,6 +39,7 @@ import { tenantRepo, withTenant } from "./tenant.js";
 import {
   expectErrorChainToMatch,
   setupRlsTestContext,
+  withJobDefinerLock,
   type RlsTestContext,
 } from "./test-harness.js";
 
@@ -1360,8 +1361,64 @@ describe("announceSession", () => {
     return { sessionId: r.id, version: r.version };
   }
 
-  const announce = (tenantId: string, input: AnnounceSessionInputPayload, commandId = cmdId()) =>
-    announceSession(ctx.appDb.db, { tenantId, commandId, input });
+  // Delivery readiness (DD-134 (f), A-D2): announce refuses unless the DB shows a fresh
+  // schedule_enabled worker heartbeat AND an enabled zalo_dm projector. Ready by default here:
+  // heartbeats through the app_worker seat (EXECUTE app_worker only), zalo_dm through the owner
+  // path (no grant), counts through ctx.owner; restored in afterAll.
+  const HOST: string = randomUUID(); // the trusted requester: a verified web session's person id
+  const setZaloDm = (on: boolean) =>
+    withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
+      await ctx.owner.query("BEGIN");
+      try {
+        await ctx.owner.query("SET LOCAL ROLE job_definer");
+        await ctx.owner.query("SELECT outbox_projector_set_enabled('zalo_dm', $1)", [on]);
+        await ctx.owner.query("COMMIT");
+      } catch (error) {
+        await ctx.owner.query("ROLLBACK");
+        throw error;
+      }
+    });
+  const heartbeat = (scheduleEnabled: boolean | null) =>
+    ctx.workerPool.query("SELECT job_worker_heartbeat($1, 'h', 1, $2::boolean)", [
+      `announce-${randomUUID()}`,
+      scheduleEnabled,
+    ]);
+  const clearHeartbeats = () => ctx.owner.query("DELETE FROM job_worker_heartbeats");
+  beforeAll(() => setZaloDm(true));
+  beforeEach(async () => {
+    await clearHeartbeats();
+    await heartbeat(true);
+  });
+  afterAll(async () => {
+    try {
+      await setZaloDm(false);
+    } finally {
+      await clearHeartbeats();
+    }
+  });
+
+  const announce = (
+    tenantId: string,
+    input: AnnounceSessionInputPayload,
+    commandId = cmdId(),
+    requestedByPersonId = HOST,
+  ) => announceSession(ctx.appDb.db, { tenantId, commandId, requestedByPersonId, input });
+  const pcCount = async (tenantId: string) =>
+    (await rows(`SELECT 1 FROM processed_commands WHERE tenant_id = $1`, [tenantId])).length;
+  const openSession = async () => {
+    const tenantId = await seedTenant("active", "active");
+    return { tenantId, ...(await seedSession(tenantId, "open")) };
+  };
+  async function expectDeliveryDisabled(
+    tenantId: string,
+    sessionId: string,
+    opts: { commandId?: string; channel?: string } = {},
+  ): Promise<void> {
+    const input = { sessionId, channel: (opts.channel ?? CH) as AnnounceChannel };
+    const err = await announce(tenantId, input, opts.commandId).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionAnnounceError);
+    expect((err as SessionAnnounceError).code).toBe("ANNOUNCE_DELIVERY_DISABLED");
+  }
 
   const outboxFor = (sessionId: string) =>
     rows(
@@ -1403,7 +1460,7 @@ describe("announceSession", () => {
       aggregate_type: "session",
       sequence: 1,
       type: "session.announcement_requested",
-      payload: { session_id: sessionId, channel: CH },
+      payload: { session_id: sessionId, channel: CH, requested_by_person_id: HOST },
       claimed_at: null,
       acked_at: null,
     });
@@ -1484,12 +1541,19 @@ describe("announceSession", () => {
     expect(await outboxFor(sessionId)).toHaveLength(0);
   });
 
-  it("INVALID_CHANNEL: anything outside the closed channel enum is rejected before any mutation (empty, raw id, unknown platform, wrong case, non-string)", async () => {
+  it("INVALID_CHANNEL (A-10): every channel except the string zalo is rejected before any mutation (messenger, wrong case, missing, empty, raw id, unknown platform, non-string)", async () => {
     const tenantId = await seedTenant("active", "active");
     const { sessionId } = await seedSession(tenantId, "open");
     // A raw destination id ("zalo-group-abc123") -- the would-be cross-tenant target codex round-01
-    // flagged -- an unknown platform, a wrong-case value, empty, and non-strings are ALL refused.
+    // flagged -- an unknown platform, a wrong-case value, empty, and non-strings are ALL refused, and
+    // so is messenger: it is out of the MVP (A-D4), so the command accepts zalo only.
+    const missing = await announce(tenantId, {
+      sessionId,
+    } as unknown as AnnounceSessionInputPayload).catch((e: unknown) => e);
+    expect((missing as SessionAnnounceError).code).toBe("INVALID_CHANNEL");
     for (const badChannel of [
+      "messenger",
+      "Zalo",
       "",
       "zalo-group-abc123",
       "whatsapp",
@@ -1507,6 +1571,7 @@ describe("announceSession", () => {
       expect((err as SessionAnnounceError).code).toBe("INVALID_CHANNEL");
     }
     expect(await outboxFor(sessionId)).toHaveLength(0); // no event emitted for any rejected channel
+    expect(await pcCount(tenantId)).toBe(0);
   });
 
   it("SESSION_NOT_FOUND: an unknown sessionId, and a malformed payload, fail closed", async () => {
@@ -1521,6 +1586,7 @@ describe("announceSession", () => {
       const err = await announceSession(ctx.appDb.db, {
         tenantId,
         commandId: cmdId(),
+        requestedByPersonId: HOST,
         input: badInput as unknown as AnnounceSessionInputPayload,
       }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(SessionAnnounceError);
@@ -1562,6 +1628,143 @@ describe("announceSession", () => {
     expect(await outboxFor(sessionId)).toHaveLength(1); // no replay event emitted
   });
 
+  it.each<[string, () => Promise<unknown>]>([
+    ["A-1 no heartbeat row", async () => undefined],
+    ["A-2 a fresh heartbeat with schedule_enabled false", () => heartbeat(false)],
+    ["A-3 a fresh heartbeat with schedule_enabled NULL", () => heartbeat(null)],
+    [
+      "A-4 a schedule_enabled heartbeat last seen 91 s ago",
+      async () => {
+        await heartbeat(true);
+        await ctx.owner.query(
+          `UPDATE job_worker_heartbeats SET started_at = x.t, last_seen_at = x.t
+             FROM (SELECT clock_timestamp() - interval '91 seconds' AS t) x`,
+        );
+      },
+    ],
+  ])("%s -> ANNOUNCE_DELIVERY_DISABLED, zero writes", async (_label, arrange) => {
+    const { tenantId, sessionId } = await openSession();
+    await clearHeartbeats();
+    await arrange();
+    await expectDeliveryDisabled(tenantId, sessionId);
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+    expect(await pcCount(tenantId)).toBe(0);
+  });
+
+  it("A-5 a fresh schedule_enabled heartbeat but zalo_dm disabled -> ANNOUNCE_DELIVERY_DISABLED, zero writes", async () => {
+    const { tenantId, sessionId } = await openSession();
+    await setZaloDm(false);
+    try {
+      await expectDeliveryDisabled(tenantId, sessionId);
+    } finally {
+      await setZaloDm(true);
+    }
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+    expect(await pcCount(tenantId)).toBe(0);
+  });
+
+  it("A-6 OUTBOX_DISPATCH_SCHEDULE_ENABLED=true in the process env changes nothing: no heartbeat -> refused", async () => {
+    const { tenantId, sessionId } = await openSession();
+    await clearHeartbeats();
+    vi.stubEnv("OUTBOX_DISPATCH_SCHEDULE_ENABLED", "true");
+    try {
+      await expectDeliveryDisabled(tenantId, sessionId);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+  });
+
+  it("A-7 ready -> one event whose payload is exactly {session_id, channel, requested_by_person_id}: an id only, lowercased", async () => {
+    const { tenantId, sessionId } = await openSession();
+    const requester = randomUUID();
+    await announce(tenantId, { sessionId, channel: CH }, cmdId(), requester.toUpperCase());
+    const events = await outboxFor(sessionId);
+    expect(events).toHaveLength(1);
+    const payload = events[0]!.payload as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual([
+      "channel",
+      "requested_by_person_id",
+      "session_id",
+    ]);
+    expect(payload).toEqual({
+      session_id: sessionId,
+      channel: CH,
+      requested_by_person_id: requester,
+    });
+  });
+
+  it("A-8 a refusal stores nothing: the same commandId succeeds once delivery is ready (replayed false, one event)", async () => {
+    const { tenantId, sessionId } = await openSession();
+    const commandId = cmdId();
+    await clearHeartbeats();
+    await expectDeliveryDisabled(tenantId, sessionId, { commandId });
+    await heartbeat(true);
+    const result = await announce(tenantId, { sessionId, channel: CH }, commandId);
+    expect(result).toEqual({ sessionId, channel: CH, replayed: false });
+    expect(await outboxFor(sessionId)).toHaveLength(1);
+  });
+
+  it("A-9 a replay while not ready is refused (never announced:true); ready again -> the stored result; one event throughout", async () => {
+    const { tenantId, sessionId } = await openSession();
+    const commandId = cmdId();
+    await announce(tenantId, { sessionId, channel: CH }, commandId);
+    await clearHeartbeats();
+    await expectDeliveryDisabled(tenantId, sessionId, { commandId });
+    expect(await outboxFor(sessionId)).toHaveLength(1);
+    await heartbeat(true);
+    const replay = await announce(tenantId, { sessionId, channel: CH }, commandId);
+    expect(replay).toEqual({ sessionId, channel: CH, replayed: true });
+    expect(await outboxFor(sessionId)).toHaveLength(1);
+  });
+
+  it("A-11 a requestedByPersonId that is not a UUID throws a plain Error (a programming fault), zero writes", async () => {
+    const { tenantId, sessionId } = await openSession();
+    for (const bad of ["", "host-1", `${HOST} `, 42, null]) {
+      const err = await announce(
+        tenantId,
+        { sessionId, channel: CH },
+        cmdId(),
+        bad as unknown as string,
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(SessionAnnounceError);
+    }
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+    expect(await pcCount(tenantId)).toBe(0);
+  });
+
+  it("A-12 suspension is checked before the delivery guard: a suspended tenant while not ready -> TENANT_SUSPENDED", async () => {
+    const tenantId = await seedTenant("suspended", "active");
+    const { sessionId } = await seedSession(tenantId, "open");
+    await clearHeartbeats();
+    const err = await announce(tenantId, { sessionId, channel: CH }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SessionAnnounceAuthorizationError);
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+  });
+
+  it("A-13 a commandId reused for another session -> COMMAND_ID_CONFLICT, still one event", async () => {
+    const { tenantId, sessionId } = await openSession();
+    const other = await seedSession(tenantId, "open");
+    const commandId = cmdId();
+    await announce(tenantId, { sessionId, channel: CH }, commandId);
+    await expectAnnounceReject(
+      () => announce(tenantId, { sessionId: other.sessionId, channel: CH }, commandId),
+      "COMMAND_ID_CONFLICT",
+      other.sessionId,
+    );
+    expect(await outboxFor(sessionId)).toHaveLength(1);
+    expect(await outboxFor(other.sessionId)).toHaveLength(0);
+  });
+
+  it("A-14 the guard runs before validation: channel messenger while not ready -> ANNOUNCE_DELIVERY_DISABLED, zero writes", async () => {
+    const { tenantId, sessionId } = await openSession();
+    await clearHeartbeats();
+    await expectDeliveryDisabled(tenantId, sessionId, { channel: "messenger" });
+    expect(await outboxFor(sessionId)).toHaveLength(0);
+    expect(await pcCount(tenantId)).toBe(0);
+  });
+
   it("COMMAND_ID_CONFLICT: a commandId reused for a different session or a different channel fails closed", async () => {
     const tenantId = await seedTenant("active", "active");
     const a = await seedSession(tenantId, "open");
@@ -1575,15 +1778,15 @@ describe("announceSession", () => {
       "COMMAND_ID_CONFLICT",
       b.sessionId,
     );
-    // same commandId, same session, DIFFERENT (but valid) channel -> also a conflict (exact-request
-    // idempotency: the stored channel was "zalo", so a "messenger" replay is not that request)
+    // same commandId, same session, messenger -> INVALID_CHANNEL: validation runs before dedup and
+    // the MVP accepts zalo only (A-D4), so a messenger request never reaches the replay check
     const err = await announce(
       tenantId,
       { sessionId: a.sessionId, channel: "messenger" },
       commandId,
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SessionAnnounceError);
-    expect((err as SessionAnnounceError).code).toBe("COMMAND_ID_CONFLICT");
+    expect((err as SessionAnnounceError).code).toBe("INVALID_CHANNEL");
   });
 
   it("COMMAND_ID_CONFLICT: a foreign command_type under this commandId fails closed -- never replayed as an announce, zero new outbox and the foreign ledger row untouched", async () => {
@@ -1687,7 +1890,7 @@ describe("announceSession", () => {
         [tenantId, sessionId, JSON.stringify({ session_id: sessionId, channel: "zalo" })],
       );
 
-      pending = announce(tenantId, { sessionId, channel: "messenger" });
+      pending = announce(tenantId, { sessionId, channel: CH });
       // If announce used FOR SHARE it would NOT block here, so this wait is what discriminates the fix
       // from the bug: it throws if the concurrent announce never blocks on the holder's lock.
       await waitUntilBlockedBy(holderPid);
@@ -1696,13 +1899,15 @@ describe("announceSession", () => {
       committed = true;
       const result = await pending;
       pending = undefined;
-      expect(result).toMatchObject({ sessionId, channel: "messenger", replayed: false });
+      expect(result).toMatchObject({ sessionId, channel: CH, replayed: false });
 
       const events = await outboxFor(sessionId);
       const seqs = events.map((e) => (e as { sequence: number }).sequence).sort((x, y) => x - y);
       expect(seqs).toEqual([1, 2]); // both requests persisted, consecutive, no collision
+      // B's row is the one carrying the requester (the holder's seeded row has none)
       const bRow = events.find(
-        (e) => (e as { payload: { channel?: string } }).payload.channel === "messenger",
+        (e) =>
+          (e as { payload: { requested_by_person_id?: string } }).payload.requested_by_person_id,
       );
       expect((bRow as { sequence: number }).sequence).toBe(2);
     } finally {
