@@ -24,8 +24,16 @@
 -- and tenant_ids_for_person, 0037, covers admin tenants only), sets the GUC transaction-locally per
 -- tenant and restores the caller's previous value at the end (0037 idiom). Under a superuser owner
 -- RLS is bypassed, so EVERY tenant-table reference also carries tenant_id = v_tenant: the explicit
--- person and tenant predicates carry the isolation whatever the owner. Cost: one indexed probe per
--- tenant per call (known limit).
+-- person and tenant predicates carry the isolation whatever the owner.
+-- COST (known limit): each call loops over EVERY tenant. Per tenant, memberships, players and
+-- charges are read through tenant_id-leading indexes (0002, 0003, 0019, 0020): a (tenant_id,
+-- person_id) probe for memberships, index ranges over the tenant's players and open|partial charges.
+-- join_requests has NO (tenant_id, person_id) index (its only secondary index is the partial unique
+-- (session_id, person_id) WHERE status = 'pending', 0006_discovery.sql), so account_my_join_requests,
+-- which also reads approved and rejected rows, costs one join_requests scan per tenant per call.
+-- Bounded today only by the local-only scale and the per-account bucket me-requests-read (30 per
+-- 60 s). The cap + 1 LIMIT bounds the rows returned, not the rows read. Follow-up before any
+-- non-local deployment: an index on join_requests (tenant_id, person_id) with its schema.ts mirror.
 --
 -- Never reads tenant_admins (no admin shortcut); never selects a person's name or phone,
 -- memberships.display_name or pay_code, payment_allocations.created_by, join_requests.decided_by or
@@ -209,6 +217,7 @@ BEGIN
   IF v_person IS NULL THEN RETURN; END IF;
   FOR v_tenant IN SELECT t.id FROM public.tenants t ORDER BY t.id LOOP
     PERFORM set_config('app.tenant_id', v_tenant::text, true);
+    -- one join_requests scan per tenant per call: no (tenant_id, person_id) index (COST, header)
     RETURN QUERY
       SELECT jr.id, jr.session_id, t.slug, t.name, s.starts_at, s.area, jr.status,
              jr.created_at, jr.decided_at, jr.expires_at
