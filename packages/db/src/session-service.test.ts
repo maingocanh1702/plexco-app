@@ -1558,6 +1558,8 @@ describe("announceSession", () => {
       "zalo-group-abc123",
       "whatsapp",
       "ZALO",
+      " zalo ",
+      ["zalo"],
       42,
       null,
       undefined,
