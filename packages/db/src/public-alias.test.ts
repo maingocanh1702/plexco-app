@@ -232,15 +232,16 @@ describe("0060 set definer as app (A-1..A-5, A-22)", () => {
     expect(await snapshot(a.tenantId)).toEqual(before);
   });
 
-  it("A-5: authorization runs before the text checks: a denied actor with refused text is 42501", async () => {
+  it("A-5: authorization runs before the text checks: a denied actor with refused or NULL text is 42501", async () => {
     const a = await club();
     await setAlias(a.tenantId, a.ownerId, "Alias A");
     const before = await snapshot(a.tenantId);
     const actors = { "no admin row": await person(), "active member": await member(a.tenantId) };
     for (const [label, actor] of Object.entries(actors)) {
-      for (const text of ["", "x".repeat(61)]) {
-        const state = await sqlState(setAlias(a.tenantId, actor, text));
-        expect(state, `${label}: ${text.length} code points`).toBe("42501");
+      // NULL pins the separate NULL check (0060 set definer) behind authorization too.
+      for (const text of ["", "x".repeat(61), null]) {
+        const state = await sqlState(setAlias(a.tenantId, actor, text as string));
+        expect(state, `${label}: ${text === null ? "NULL" : text.length}`).toBe("42501");
       }
     }
     expect(await snapshot(a.tenantId)).toEqual(before);
@@ -568,6 +569,43 @@ describe("0060 owner decisions (A-9, A-10, A-12, A-14, A-15, A-18, A-21, A-26)",
       public_alias: "Alias 3",
       public_alias_status: "pending",
     });
+  });
+
+  it("A-18: an owner decide on the reviewed digest that waits behind a club edit is 55000", async () => {
+    const { tenantId, ownerId } = await club();
+    await setAlias(tenantId, ownerId, "Alias Reviewed");
+    const c1 = await ctx.appPool.connect();
+    const d = await ctx.superuserDb.pool.connect();
+    let decision: Promise<string> = Promise.resolve("not started");
+    try {
+      // The club edit holds the club-config advisory key and the tenants row lock until COMMIT.
+      await c1.query("BEGIN");
+      await c1.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      await c1.query("SELECT tenant_public_alias_set($1, $2, $3)", [tenantId, ownerId, "Alias X"]);
+      const pid = (await d.query<{ pid: number }>(`SELECT pg_backend_pid() AS pid`)).rows[0]!.pid;
+      decision = sqlState(
+        d.query(`SELECT * FROM tenant_public_alias_decide($1, 'approved', $2, 'owner-cli')`, [
+          tenantId,
+          sha("Alias Reviewed"),
+        ]),
+      );
+      await blocked(pid);
+      await c1.query("COMMIT");
+      expect(await decision).toBe("55000");
+    } finally {
+      await c1.query("ROLLBACK"); // no-op after COMMIT; on an early failure it frees the decide
+      c1.release();
+      await decision;
+      d.release();
+    }
+    expect(await snapshot(tenantId)).toEqual({
+      public_alias: "Alias X",
+      public_alias_status: "pending",
+      audits: 0,
+      events: 2,
+    });
+    const types = (await events(tenantId)).map((e) => e.type);
+    expect(types).toEqual(["tenant.public_alias_set", "tenant.public_alias_set"]);
   });
 
   it("A-26: results carry only their pinned keys, no name, and every payload is exactly {status}", async () => {
