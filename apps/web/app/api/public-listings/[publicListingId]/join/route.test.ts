@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetDiscoveryRouteSupportForTests } from "../../../../../lib/discovery-route-support";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
+import { resolveTenantLang } from "../../../../../lib/tenant-lang";
 import { GET as getDetail } from "../../../discover/[publicListingId]/route";
 import { POST } from "./route";
 
@@ -25,6 +26,11 @@ vi.mock("../../../../../lib/session-cookies", async (importOriginal) => ({
   currentSession: vi.fn(),
   csrfOk: vi.fn(),
   rateLimited: vi.fn(),
+}));
+
+vi.mock("../../../../../lib/tenant-lang", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../../../lib/tenant-lang")>()),
+  resolveTenantLang: vi.fn(),
 }));
 
 const ID = "0b5c7a7e-1f2d-4c3b-9a8e-6d5f4e3c2b1a";
@@ -89,6 +95,7 @@ beforeEach(() => {
   vi.mocked(readDiscoveryListing).mockResolvedValue(null);
   vi.mocked(resolveDiscoveryListing).mockResolvedValue({ tenantId: TENANT, sessionId: SESSION });
   vi.mocked(joinSession).mockResolvedValue(JOINED);
+  vi.mocked(resolveTenantLang).mockResolvedValue("vi");
 });
 
 afterEach(() => {
@@ -189,6 +196,29 @@ describe("POST /api/public-listings/:publicListingId/join (L10b, readiness 4.6)"
   ] as const)("L8's %s maps through mapSessionCommandError to %i", async (code, status) => {
     vi.mocked(joinSession).mockRejectedValue(new RosterMoneyError(code, "internal detail"));
     expect(await errorCode(await post(BODY))).toEqual([status, code]);
+  });
+
+  it("DD-118: an L8 refusal after the resolve answers in the club's language; a refusal before it keeps the default and never reads that language", async () => {
+    vi.mocked(resolveTenantLang).mockResolvedValue("en");
+    const errorText = async (res: Response) => [
+      res.status,
+      ((await res.json()) as { error: { message: string } }).error.message,
+    ];
+
+    vi.mocked(currentSession).mockResolvedValueOnce(null);
+    expect(await errorText(await post(BODY))).toEqual([401, "Chưa đăng nhập."]);
+    vi.mocked(resolveDiscoveryListing).mockResolvedValueOnce(null);
+    expect((await post(BODY)).status).toBe(404);
+    expect(resolveTenantLang).not.toHaveBeenCalled();
+
+    vi.mocked(joinSession).mockRejectedValueOnce(
+      new RosterMoneyError("SESSION_NOT_JOINABLE", "internal detail"),
+    );
+    expect(await errorText(await post(BODY))).toEqual([
+      400,
+      "This session is not open for joining.",
+    ]);
+    expect(vi.mocked(resolveTenantLang).mock.calls.map((call) => call[1])).toEqual([TENANT]);
   });
 
   it("a non-domain failure is rethrown (500), never turned into a success or a 404", async () => {
