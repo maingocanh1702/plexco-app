@@ -518,11 +518,21 @@ export const tenants = pgTable("tenants", {
   locale: text("locale").notNull().default("vi"),
   timezone: text("timezone").notNull().default("Asia/Ho_Chi_Minh"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // 0060: moderated public alias; written only by tenant_public_alias_set / _decide (no grant on
+  // tenants). Only an owner decision makes it approved; nothing of a tenant is public without one.
+  publicAlias: text("public_alias"),
+  publicAliasStatus: text("public_alias_status"),
 }, (t) => ({
   statusChk: check("tenants_status_chk",
     sql`${t.status} IN ('trialing','active','past_due','suspended','cancelled')`),
   // 0039 (audit 2026-09-06 W-8): the route trims + rejects empty; the DB bounds the length.
   nameLenChk: check("tenants_name_len_chk", sql`char_length(${t.name}) BETWEEN 1 AND 120`),
+  publicAliasPairChk: check("tenants_public_alias_pair_chk",
+    sql`(${t.publicAlias} IS NULL) = (${t.publicAliasStatus} IS NULL)`),
+  publicAliasLenChk: check("tenants_public_alias_len_chk",
+    sql`${t.publicAlias} IS NULL OR char_length(${t.publicAlias}) BETWEEN 1 AND 60`),
+  publicAliasStatusChk: check("tenants_public_alias_status_chk",
+    sql`${t.publicAliasStatus} IS NULL OR ${t.publicAliasStatus} IN ('pending', 'approved', 'rejected')`),
 }));
 
 export const memberships = pgTable("memberships", {
@@ -1932,4 +1942,24 @@ export const tenantCapabilityGrantAudit = pgTable("tenant_capability_grant_audit
     foreignColumns: [tenantCapabilityGrants.tenantId, tenantCapabilityGrants.id],
     name: "tenant_capability_grant_audit_tenant_grant_fk",
   }),
+}));
+
+// 0060: one row per owner moderation decision on a tenant public alias. Written only by
+// tenant_public_alias_decide; append-only trigger; FORCE RLS; zero grants for app / app_worker /
+// readonly (the owner reads it as the migration role). No ON DELETE CASCADE.
+export const tenantPublicAliasAudit = pgTable("tenant_public_alias_audit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  decision: text("decision").notNull(),
+  alias: text("alias").notNull(),
+  decidedBy: text("decided_by").notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+}, (t) => ({
+  decisionChk: check("tenant_public_alias_audit_decision_chk",
+    sql`${t.decision} IN ('approved', 'rejected')`),
+  aliasLenChk: check("tenant_public_alias_audit_alias_len_chk",
+    sql`char_length(${t.alias}) BETWEEN 1 AND 60`),
+  decidedByChk: check("tenant_public_alias_audit_decided_by_chk",
+    sql`${t.decidedBy} ~ '^[a-z0-9][a-z0-9._-]{0,31}$'`),
+  tenantIdx: index("idx_tenant_public_alias_audit_tenant").on(t.tenantId, t.decidedAt),
 }));
