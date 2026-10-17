@@ -1,5 +1,12 @@
 import { runWithLang, t } from "@plexco/core/i18n";
-import { ClubConfigError, getClubConfig, updateClubConfig, type ClubConfigPatch } from "@plexco/db";
+import {
+  ClubConfigError,
+  getClubConfig,
+  getPublicAlias,
+  setPublicAlias,
+  updateClubConfig,
+  type ClubConfigPatch,
+} from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import { resolveClubGate } from "../../../../lib/club-config-route";
 import { readBoundedBody } from "../../../../lib/read-bounded-body";
@@ -9,6 +16,8 @@ import { appDb } from "../../../../lib/session-cookies";
 /**
  * PATCH /api/onboarding/club?tenant=<uuid> — club configuration step (WAO). Authority:
  * authorize(content.manage). GET returns the current values. See club-config-route.ts for order.
+ * The public alias (0060) is its own command, sent ALONE as { commandId, publicAlias }: every set
+ * waits for the platform owner's approval. Every club answer carries publicAlias + publicAliasStatus.
  */
 const MAX_BODY_BYTES = 8 * 1024;
 const PATCH_LIMIT = { bucket: "club-config", limit: 10 };
@@ -27,9 +36,11 @@ const invalid = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "I
 export async function GET(request: Request): Promise<Response> {
   const gate = await resolveClubGate(request, { csrf: false, tenantBucket: GET_LIMIT });
   if (gate instanceof Response) return gate;
-  return runWithLang(gate.lang, async () =>
-    ok({ club: await getClubConfig(appDb().db, { tenantId: gate.tenantId }) }),
-  );
+  return runWithLang(gate.lang, async () => {
+    const params = { tenantId: gate.tenantId };
+    const club = await getClubConfig(appDb().db, params);
+    return ok({ club: { ...club, ...(await getPublicAlias(appDb().db, params)) } });
+  });
 }
 
 export async function PATCH(request: Request): Promise<Response> {
@@ -65,19 +76,38 @@ export async function PATCH(request: Request): Promise<Response> {
       return err("INVALID_BODY", t("Thiếu commandId.", "Missing commandId."), 400);
     }
     // Only declared keys travel on; the command validates values. Unknown keys are rejected.
-    const allowed = new Set<string>(["commandId", ...FIELDS]);
+    const allowed = new Set<string>(["commandId", "publicAlias", ...FIELDS]);
     if (Object.keys(body).some((k) => !allowed.has(k))) return invalid();
+    // The alias travels with its commandId only, as a string (M-7: clearing is unsupported).
+    const isAlias = "publicAlias" in body;
+    if (isAlias && (Object.keys(body).length !== 2 || typeof body.publicAlias !== "string")) {
+      return invalid();
+    }
     const patch: Record<string, unknown> = {};
     for (const key of FIELDS) if (key in body) patch[key] = body[key];
+    const tenantId = gate.tenantId;
+    const actorPersonId = gate.personId;
 
     try {
+      if (isAlias) {
+        const set = await setPublicAlias(appDb().db, {
+          tenantId,
+          actorPersonId,
+          commandId,
+          publicAlias: body.publicAlias,
+        });
+        const club = await getClubConfig(appDb().db, { tenantId });
+        const { publicAlias, publicAliasStatus } = set;
+        return ok({ club: { ...club, publicAlias, publicAliasStatus } });
+      }
       const result = await updateClubConfig(appDb().db, {
-        tenantId: gate.tenantId,
-        actorPersonId: gate.personId,
+        tenantId,
+        actorPersonId,
         commandId,
         patch: patch as ClubConfigPatch,
       });
-      return ok({ club: result.club, step: result.step });
+      const alias = await getPublicAlias(appDb().db, { tenantId });
+      return ok({ club: { ...result.club, ...alias }, step: result.step });
     } catch (error) {
       if (error instanceof ClubConfigError) {
         switch (error.code) {

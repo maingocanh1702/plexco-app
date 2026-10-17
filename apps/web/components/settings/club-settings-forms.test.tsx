@@ -4,7 +4,7 @@ import type { ClubConfigDto } from "../../lib/club-settings-client";
 import { LangProvider, makeT } from "../../lib/i18n-client";
 import { SessionProvider } from "../../lib/use-session";
 import { ClubDefaultsForm } from "./club-defaults-form";
-import { ClubProfileForm } from "./club-profile-form";
+import { ClubProfileForm, publicAliasStep } from "./club-profile-form";
 import { FormFeedback } from "./form-feedback";
 import { ZaloConnectCard } from "./zalo-connect-card";
 import {
@@ -40,6 +40,52 @@ describe("ClubProfileForm", () => {
     expect(html).toContain("Club language");
     expect(html).toContain("no per-member language");
     expect(html).toContain("Asia/Ho_Chi_Minh");
+  });
+
+  // A-25, M-18: the public-name block. A DTO without the two fields (the e2e mock) reads as none.
+  const STATES = [
+    [undefined, "Chưa có tên công khai — CLB chưa hiện công khai."],
+    ["pending", "Đang chờ duyệt — CLB chưa hiện công khai."],
+    ["approved", "Đã duyệt — tên này được phép hiện công khai."],
+    ["rejected", "Bị từ chối — đổi tên để gửi duyệt lại."],
+  ] as const;
+  it.each(STATES)("public name, status %s: only its own vi copy", (status, copy) => {
+    const withAlias = status ? { ...club, publicAlias: "CLB Q7", publicAliasStatus: status } : club;
+    const html = wrap(
+      <ClubProfileForm tenantId="t" csrfToken="x" club={withAlias} onSaved={vi.fn()} />,
+      "vi",
+    );
+    expect(STATES.filter(([, c]) => html.includes(c)).map(([, c]) => c)).toEqual([copy]);
+    const warning = "Đổi tên đã duyệt sẽ đưa CLB về chờ duyệt.";
+    expect(html.includes(warning)).toBe(status === "approved");
+    expect(html).toContain("Tên công khai của CLB");
+    expect(html).toContain("Hiện trên trang công khai sau khi được duyệt. Tối đa 60 ký tự.");
+    expect(html).toContain("Gửi duyệt");
+    expect(html.includes('value="CLB Q7"')).toBe(status !== undefined);
+  });
+
+  it("public name submit: unchanged text sends nothing, an edit goes alone, problems stay on the field", () => {
+    const vn = makeT("vi");
+    const approved = { ...club, publicAlias: "CLB Q7", publicAliasStatus: "approved" } as const;
+    const unchanged = { kind: "unchanged", message: "Tên công khai không thay đổi." };
+    expect(publicAliasStep(approved, "  CLB Q7 ", false, vn)).toEqual(unchanged);
+    expect(publicAliasStep(approved, "CLB Q8 ", false, vn)).toEqual({
+      kind: "send",
+      publicAlias: "CLB Q8",
+    });
+    // After an uncertain failure the loaded alias proves nothing: the same text is sent again.
+    expect(publicAliasStep(approved, "CLB Q7", true, vn)).toEqual({
+      kind: "send",
+      publicAlias: "CLB Q7",
+    });
+    expect(publicAliasStep(club, "CLB Q7", false, vn).kind).toBe("send");
+    for (const [text, message] of [
+      [" ", "Nhập tên công khai."],
+      ["x".repeat(61), "Tên công khai tối đa 60 ký tự."],
+      ["a‮b", "Tên công khai có ký tự không được phép."],
+    ] as const) {
+      expect(publicAliasStep(club, text, false, vn)).toEqual({ kind: "problem", message });
+    }
   });
 });
 

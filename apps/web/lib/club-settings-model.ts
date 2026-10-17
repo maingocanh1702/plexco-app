@@ -1,5 +1,6 @@
 import type { ClubConfigDto, ClubPatchBody } from "./club-settings-client";
 import { INT4_MAX, formatVndInput, parseVndInput } from "./money";
+import { hasHiddenChar } from "./session-form-model";
 
 /**
  * Pure model of the club settings forms: option lists and "what changed" -> PATCH body. The route
@@ -36,6 +37,23 @@ export function clubNameProblem(raw: string): ClubNameProblem | null {
   if (name.length < 1) return "empty";
   if (name.length > 120) return "too_long";
   return /[\p{Cc}\p{Cf}]/u.test(name) ? "invalid_chars" : null;
+}
+
+export type PublicAliasProblem = ClubNameProblem;
+
+/**
+ * Client mirror of validatePublicAlias (@plexco/db public-alias.ts, the 0060 set definer): trim only,
+ * 1..60 CODE POINTS (not UTF-16 units, unlike clubNameProblem), no hidden character (hasHiddenChar,
+ * the pinned text-safety mirror) and at least one visible one, i.e. neither whitespace nor
+ * Default_Ignorable (`\p{DI}`): an invisible-only alias renders blank, so it reads as "empty".
+ */
+export function publicAliasProblem(raw: string): PublicAliasProblem | null {
+  const alias = raw.trim();
+  const length = [...alias].length;
+  if (length < 1) return "empty";
+  if (length > 60) return "too_long";
+  if (hasHiddenChar(alias)) return "invalid_chars";
+  return /[^\s\p{DI}]/u.test(alias) ? null : "empty";
 }
 
 export const COMMON_TIMEZONES = [
