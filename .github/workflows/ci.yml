@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # PR branches run through the pull_request event only, which avoids a duplicate run per
+  # push (owner decision 2026-10-18); pushes to main still run.
   push:
-    branches: [main, "feat/**"]
+    branches: [main]
   pull_request:
 
 # Least-privilege token (audit 2026-09-06 X-6): this workflow only reads the checkout and
@@ -46,7 +48,7 @@ jobs:
           # Full history REQUIRED: the "Review-readiness policy" step below runs
           # `git merge-base --is-ancestor <AUTHORITY_SHA> <main>` for every pinned
           # verdict, and a shallow checkout has neither those commits nor main's
-          # history. Necessary but NOT sufficient: on pull_request / feat/** runs
+          # history. Necessary but NOT sufficient: on pull_request runs
           # there is no local branch named main, only refs/remotes/origin/main —
           # scripts/check-review-readiness.mjs resolveMainRef() handles that
           # (audit 2026-09-06 X-1: 50/50 pins failed AUTHORITY_NOT_MAIN off-main).
