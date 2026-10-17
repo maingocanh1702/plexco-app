@@ -1,4 +1,4 @@
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import { charges, memberships, players, sessions } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
 import type { Db, Tx } from "./client.js";
@@ -255,6 +255,28 @@ export async function joinSession(db: Db, params: JoinSessionParams): Promise<Jo
     }
     if (existing !== undefined && (await rejoinUnprovable(tx, sessionId, existing.id))) {
       return fail("REJOIN_REQUIRES_REVIEW", "prior payments need review first");
+    }
+    // RD-4 (L10b readiness 4.6), guest path only: a caller whose membership here ended (left or
+    // merged) can still hold a live seat in this session through it, and minting a guest
+    // membership below would seat the same person twice. Refused before any write.
+    if (membership === undefined) {
+      const [seated] = await tx
+        .select({ id: players.id })
+        .from(players)
+        .innerJoin(memberships, eq(memberships.id, players.membershipId))
+        .where(
+          and(
+            eq(players.tenantId, tenantId),
+            eq(players.sessionId, sessionId),
+            ne(players.status, "left"),
+            eq(memberships.tenantId, tenantId),
+            eq(memberships.personId, personId),
+          ),
+        )
+        .limit(1);
+      if (seated !== undefined) {
+        return fail("ALREADY_JOINED", "caller already holds a seat in this session");
+      }
     }
     // join_policy 'approval' opens a join request only (readiness 4.3, DT-7): no membership,
     // player, charge or held seat. It stays BEFORE mintGuestMembership, so a visitor's request

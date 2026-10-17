@@ -454,6 +454,58 @@ describe("joinSession", () => {
     );
     expect(await state(tenantId)).toEqual(before);
   });
+
+  it("A-13 (L10b 4.6): the guest path on a private-again, closed, cancelled or started session -> SESSION_NOT_JOINABLE with zero writes; on a full open public session -> waitlisted", async () => {
+    const { tenantId, sessionId } = await world({ slotsMax: 1, visibility: "public" });
+    const refused = [
+      await fx.seedSession(tenantId),
+      await fx.seedSession(tenantId, { status: "closed" }),
+      await fx.seedSession(tenantId, { status: "cancelled" }),
+      await fx.seedSession(tenantId),
+    ];
+    for (const sid of refused) await makePublic(sid);
+    // private-again: public once, then private (the public view row lags until the projector runs;
+    // joinSession reads the canonical session).
+    await ctx.owner.query(`UPDATE sessions SET visibility = 'private' WHERE id = $1`, [refused[0]]);
+    await makeStarted(refused[3]!);
+    const visitor = await fx.seedPerson();
+    const before = await state(tenantId);
+    for (const sid of refused) {
+      expect(await codeOf(join(tenantId, visitor, sid, { allowGuestMembership: true }))).toBe(
+        "SESSION_NOT_JOINABLE",
+      );
+    }
+    expect(await state(tenantId)).toEqual(before);
+
+    const seated = await seedMember(tenantId);
+    expect((await join(tenantId, seated.personId, sessionId)).outcome).toBe("active");
+    const guest = await join(tenantId, visitor, sessionId, { allowGuestMembership: true });
+    expect(guest).toMatchObject({ outcome: "waitlisted", waitlistPosition: 1 });
+  });
+
+  it("A-14 (L10b RD-4): a person whose membership is left or merged while their players row in this session is still active or waitlisted -> ALREADY_JOINED on the guest path with zero writes (no second membership or seat)", async () => {
+    const { tenantId, sessionId } = await world({ slotsMax: 1, visibility: "public" });
+    const seated = await seedMember(tenantId);
+    const queued = await seedMember(tenantId);
+    const survivor = await seedMember(tenantId);
+    expect((await join(tenantId, seated.personId, sessionId)).outcome).toBe("active");
+    expect((await join(tenantId, queued.personId, sessionId)).outcome).toBe("waitlisted");
+    // Owner-forged: each membership ends while its seat in this session stays live.
+    await ctx.owner.query(`UPDATE memberships SET status = 'left' WHERE id = $1`, [
+      seated.membershipId,
+    ]);
+    await ctx.owner.query(
+      `UPDATE memberships SET status = 'merged', merged_into_membership_id = $2 WHERE id = $1`,
+      [queued.membershipId, survivor.membershipId],
+    );
+    const before = await state(tenantId);
+    for (const { personId } of [seated, queued]) {
+      const run = join(tenantId, personId, sessionId, { allowGuestMembership: true });
+      expect(await codeOf(run)).toBe("ALREADY_JOINED");
+    }
+    // players, charges, payment_allocations, outbox_events, processed_commands, memberships.
+    expect(await state(tenantId)).toEqual(before);
+  });
 });
 
 describe("leaveSession and FIFO promotion", () => {
