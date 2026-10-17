@@ -288,18 +288,41 @@ describe("closeSession — open-debt guard (DD-131 OD-1)", () => {
 });
 
 describe("cancelSession — recorded-money guard (DD-131 OD-1)", () => {
-  it("CX-1: the void charge of a removed, UNPAID player does not block cancel (a waitlisted player left on the roster does not either)", async () => {
+  it("CX-1: the void charges of removed, UNPAID players do not block cancel (removing A promotes the waitlisted B, then B is removed too)", async () => {
     const w = await world({ slotsMax: 1 });
     const active = await join(w, "A");
     const waiting = await join(w, "B");
     expect(waiting).toMatchObject({ status: "waitlisted", chargeId: null });
     await remove(w, active.playerId);
     expect(await chargeOf(active.chargeId!)).toMatchObject({ status: "void", amount_allocated: 0 });
+    // L8 P-7: the freed seat promotes B in the same tx: active, exactly one open charge, one event.
+    const promotedPlayer = await fx.row(`SELECT status FROM players WHERE id = $1`, [
+      waiting.playerId,
+    ]);
+    expect(promotedPlayer.status).toBe("active");
+    const promotedCharges = await fx.rows(
+      `SELECT id, status, amount_allocated FROM charges WHERE player_id = $1`,
+      [waiting.playerId],
+    );
+    expect(promotedCharges).toEqual([
+      { id: expect.any(String), status: "open", amount_allocated: 0 },
+    ]);
+    const promotedChargeId = String(promotedCharges[0].id);
+    const promoted = (await fx.events(w.sessionId)).filter((e) => e.type === "player.promoted");
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0].payload).toMatchObject({
+      player_id: waiting.playerId,
+      charge_id: promotedChargeId,
+    });
+    // B is unpaid too: removing B voids the promoted charge and leaves nobody to promote.
+    await remove(w, waiting.playerId);
+    expect(await chargeOf(promotedChargeId)).toMatchObject({ status: "void", amount_allocated: 0 });
     const v = await version(w.sessionId);
     expect(await cancel(w, v)).toMatchObject({ status: "cancelled", version: v + 1 });
     const cancelled = (await fx.events(w.sessionId)).find((e) => e.type === "session.cancelled");
     expect(cancelled?.payload).toMatchObject({ roster_count: 0, has_paid: false });
     expect(await chargeOf(active.chargeId!)).toMatchObject({ status: "void" });
+    expect(await chargeOf(promotedChargeId)).toMatchObject({ status: "void" });
   });
 
   it("CX-2: an ACTIVE roster still refuses (owner gate #3), unpaid or paid — zero mutation", async () => {

@@ -157,11 +157,12 @@ const audits = (tenant: string) =>
 const status = (rows: Row[]) =>
   rows.map((r) => [r.disposition, r.bot_token_enc ?? null, r.recipient_user_id_enc ?? null]);
 
-it("A29/A23: three zalo_dm routes, zalo_dm disabled, 0056 CHECK intact; definer posture; no runtime grant", async () => {
+it("A29/A23: four zalo_dm routes (0058 adds player.promoted), zalo_dm disabled, 0056 CHECK intact; definer posture; no runtime grant", async () => {
   const routes = await q(
     "SELECT event_type FROM outbox_projector_routes WHERE projector = 'zalo_dm' ORDER BY 1",
   );
   expect(routes.map((r) => r.event_type)).toEqual([
+    "player.promoted",
     "session.announcement_requested",
     "session.cancelled",
     "session.updated",
@@ -438,24 +439,17 @@ describe("zalo_dm_delivery_targets / zalo_dm_record_recipient (zalo_dm enabled)"
     }
   });
 
-  it("A8: player.promoted has no L4 route; with a test-only route only the payload player is returned", async () => {
+  it("A8: 0058 routes player.promoted to zalo_dm; a claim returns only the payload player", async () => {
+    // The route row is the real one 0058 ships (L8, DD-134 (c)); this test never inserts or deletes a route row.
+    const route = await q(
+      "SELECT aggregate_type FROM outbox_projector_routes WHERE projector = 'zalo_dm' AND event_type = 'player.promoted'",
+    );
+    expect(route.map((r) => r.aggregate_type)).toEqual(["session"]);
     const a = await club();
     const promoted = await member(a);
     const pid = await player(a, promoted);
     await player(a, await member(a));
-    expect(await targets(await claimed(a, "player.promoted", { player_id: pid }))).toEqual([]);
-    const route =
-      "INSERT INTO outbox_projector_routes (projector, aggregate_type, event_type) VALUES ('zalo_dm', 'session', 'player.promoted')";
-    await ownerPath((c) => c.query(route));
-    try {
-      const rows = await targets(await claimed(a, "player.promoted", { player_id: pid }));
-      expect(rows.map((r) => r.channel_identity_id)).toEqual([promoted.identity]);
-    } finally {
-      await ownerPath((c) =>
-        c.query(
-          "DELETE FROM outbox_projector_routes WHERE projector = 'zalo_dm' AND event_type = 'player.promoted'",
-        ),
-      );
-    }
+    const rows = await targets(await claimed(a, "player.promoted", { player_id: pid }));
+    expect(rows.map((r) => r.channel_identity_id)).toEqual([promoted.identity]);
   });
 });

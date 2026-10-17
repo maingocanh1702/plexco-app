@@ -8,8 +8,10 @@ import {
   SessionPublishError,
   SessionUpdateAuthorizationError,
   SessionUpdateError,
+  RosterMoneyError,
   createSession,
   guestNoteTenantForPerson,
+  hasLiveMembership,
   tenantLocale,
   authorize,
   withTenant,
@@ -21,6 +23,8 @@ import { fileURLToPath } from "node:url";
 import { runWithLang, t } from "@plexco/core/i18n";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  JOIN_REQUEST_CANCEL_PERSON_LIMIT,
+  SESSION_JOIN_PERSON_LIMIT,
   mapSessionCommandError,
   handleSessionCommand,
   readExpectedVersion,
@@ -44,6 +48,7 @@ vi.mock("@plexco/db", async (importOriginal) => {
     ),
     guestNoteTenantForPerson: vi.fn(),
     createSession: vi.fn(),
+    hasLiveMembership: vi.fn(),
     tenantLocale: vi.fn(),
   };
 });
@@ -106,6 +111,7 @@ beforeEach(() => {
   vi.mocked(rateLimited).mockResolvedValue(false);
   vi.mocked(authorize).mockResolvedValue(ALLOW_OWNER);
   vi.mocked(guestNoteTenantForPerson).mockResolvedValue(null);
+  vi.mocked(hasLiveMembership).mockResolvedValue(false);
   vi.mocked(tenantLocale).mockResolvedValue(null); // default: unresolvable tenant falls back to vi
 });
 
@@ -406,6 +412,150 @@ describe("explicit guest-note context", () => {
           commandId: "Missing commandId.",
         }[kind],
       );
+    },
+  );
+});
+
+describe("player self-service context (L8 P-3, P-13)", () => {
+  const JOIN = { selfService: true, personLimit: SESSION_JOIN_PERSON_LIMIT } as const;
+
+  it("P-3: a live member of ?tenant= without session.manage passes; the membership read takes ?tenant= and the COOKIE person, never body ids", async () => {
+    vi.mocked(authorize).mockResolvedValue(DENY);
+    vi.mocked(hasLiveMembership).mockResolvedValue(true);
+    const body = { commandId: "c1", personId: "evil", tenantId: OTHER_TENANT };
+    const result = await resolveSessionCommandContext(req(body), LIMIT, JOIN);
+    expect(result).toMatchObject({ tenantId: TENANT, commandId: "c1" });
+    expect(hasLiveMembership).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(hasLiveMembership).mock.calls[0]!.slice(1)).toEqual([TENANT, "person-1"]);
+  });
+
+  it("P-3: anyone else gets the SAME FORBIDDEN 403 as a host route (no oracle), before the locale and both quotas", async () => {
+    vi.mocked(authorize).mockResolvedValue(DENY);
+    const plain = (await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT)) as Response;
+    const self = (await resolveSessionCommandContext(
+      req({ commandId: "c1" }),
+      LIMIT,
+      JOIN,
+    )) as Response;
+    expect(self.status).toBe(403);
+    expect((await envelope(self)).error).toEqual((await envelope(plain)).error);
+    expect(tenantLocale).not.toHaveBeenCalled();
+    expect(rateLimited).toHaveBeenCalledTimes(2); // the actor ceiling only, once per request
+  });
+
+  it("without the option a plain member stays FORBIDDEN, and a session.manage host never needs the membership read", async () => {
+    vi.mocked(authorize).mockResolvedValue(DENY);
+    vi.mocked(hasLiveMembership).mockResolvedValue(true);
+    const denied = (await resolveSessionCommandContext(
+      req({ commandId: "c1" }),
+      LIMIT,
+    )) as Response;
+    expect(denied.status).toBe(403);
+    vi.mocked(authorize).mockResolvedValue(ALLOW_OWNER);
+    const host = await resolveSessionCommandContext(req({ commandId: "c2" }), LIMIT, JOIN);
+    expect(host).toMatchObject({ tenantId: TENANT, commandId: "c2" });
+    expect(hasLiveMembership).not.toHaveBeenCalled();
+  });
+
+  it("a membership-read failure propagates (never allow, never a fake 403) before the locale and the quotas", async () => {
+    vi.mocked(authorize).mockResolvedValue(DENY);
+    const failure = new Error("database unavailable");
+    vi.mocked(hasLiveMembership).mockRejectedValue(failure);
+    const request = req({ commandId: "c1" });
+    await expect(resolveSessionCommandContext(request, LIMIT, JOIN)).rejects.toBe(failure);
+    expect(tenantLocale).not.toHaveBeenCalled();
+    expect(rateLimited).toHaveBeenCalledTimes(1);
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it("order: actor ceiling, admin lookup, membership, locale, person bucket, tenant bucket", async () => {
+    const order: string[] = [];
+    vi.mocked(rateLimited).mockImplementation(async (bucket) => {
+      order.push(bucket.split(":")[0]!);
+      return false;
+    });
+    vi.mocked(authorize).mockImplementation(async () => {
+      order.push("admin");
+      return DENY;
+    });
+    vi.mocked(hasLiveMembership).mockImplementation(async () => {
+      order.push("member");
+      return true;
+    });
+    vi.mocked(tenantLocale).mockImplementation(async () => {
+      order.push("locale");
+      return null;
+    });
+    await resolveSessionCommandContext(req({ commandId: "c1" }), LIMIT, JOIN);
+    expect(order).toEqual([
+      "session-actor",
+      "admin",
+      "member",
+      "locale",
+      "session-join",
+      "session-test",
+    ]);
+  });
+
+  it("P-13: the person bucket is keyed on the COOKIE person, answers 429 in the tenant language and spares the tenant bucket", async () => {
+    vi.mocked(tenantLocale).mockResolvedValue("en");
+    vi.mocked(rateLimited).mockImplementation(async (bucket) => bucket.startsWith("session-join:"));
+    const request = req({ commandId: "c1", personId: "evil" });
+    const result = (await resolveSessionCommandContext(request, LIMIT, JOIN)) as Response;
+    expect(result.status).toBe(429);
+    expect((await envelope(result)).error).toMatchObject({
+      code: "RATE_LIMITED",
+      message: "Too many requests — wait.",
+    });
+    expect(rateLimited).toHaveBeenCalledWith("session-join:person-1", 10, 3600);
+    const buckets = vi.mocked(rateLimited).mock.calls.map(([bucket]) => bucket);
+    expect(buckets).not.toContain(`${LIMIT.bucket}:${TENANT}`);
+    expect(request.bodyUsed).toBe(false);
+  });
+
+  it("P-13: pins the shared person buckets (L10b's join-by-slug route spends the join one)", () => {
+    expect(SESSION_JOIN_PERSON_LIMIT).toEqual({
+      bucket: "session-join",
+      limit: 10,
+      windowSeconds: 3600,
+    });
+    expect(JOIN_REQUEST_CANCEL_PERSON_LIMIT).toEqual({
+      bucket: "join-request-cancel",
+      limit: 20,
+      windowSeconds: 3600,
+    });
+  });
+});
+
+describe("mapSessionCommandError — the five L8 codes carry the P-17 copy", () => {
+  const COPY = [
+    [
+      "SESSION_NOT_JOINABLE",
+      "Buổi chơi không nhận đăng ký.",
+      "This session is not open for joining.",
+    ],
+    ["REQUEST_DECIDED", "Yêu cầu này đã được xử lý.", "This request has already been decided."],
+    ["REQUEST_EXPIRED", "Yêu cầu này đã hết hạn.", "This request has expired."],
+    ["JOIN_REQUEST_NOT_FOUND", "Không tìm thấy yêu cầu tham gia.", "Join request not found."],
+    [
+      "LEAVE_REQUIRES_HOST",
+      "Bạn không thể tự rời buổi này, hãy nhờ chủ kèo.",
+      "You cannot leave this session yourself; ask the host.",
+    ],
+  ] as const;
+
+  it.each(COPY)(
+    "%s answers from one t(vi, en) pair, never the internal detail",
+    async (code, vi, en) => {
+      for (const [lang, expected] of [
+        ["vi", vi],
+        ["en", en],
+      ] as const) {
+        const response = await runWithLang(lang, async () =>
+          mapSessionCommandError(new RosterMoneyError(code, "internal detail")),
+        );
+        expect((await envelope(response!)).error?.message).toBe(expected);
+      }
     },
   );
 });
@@ -850,6 +1000,12 @@ const MAPPED_CASES: ReadonlyArray<readonly [Error, string, number]> = [
   [new SessionUpdateAuthorizationError(), "TENANT_SUSPENDED", 403],
   [new SessionCloseAuthorizationError(), "TENANT_SUSPENDED", 403],
   [new SessionCancelAuthorizationError(), "TENANT_SUSPENDED", 403],
+  // L8 (M9) player self-join codes, raised as RosterMoneyError (P-4, P-10, P-11, P-17).
+  [new RosterMoneyError("SESSION_NOT_JOINABLE", "internal"), "SESSION_NOT_JOINABLE", 400],
+  [new RosterMoneyError("REQUEST_DECIDED", "internal"), "REQUEST_DECIDED", 409],
+  [new RosterMoneyError("REQUEST_EXPIRED", "internal"), "REQUEST_EXPIRED", 409],
+  [new RosterMoneyError("JOIN_REQUEST_NOT_FOUND", "internal"), "JOIN_REQUEST_NOT_FOUND", 404],
+  [new RosterMoneyError("LEAVE_REQUIRES_HOST", "internal"), "LEAVE_REQUIRES_HOST", 409],
 ];
 
 describe("mapSessionCommandError", () => {

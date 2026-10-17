@@ -86,6 +86,30 @@ export {
   type RemovePlayerParams,
   type RemovePlayerResult,
 } from "./roster-service.js";
+// Web MVP Phase 3 lane L8 (M9): player self-join, self-leave and FIFO waitlist promotion.
+export {
+  // The web entry gate's P-3 audience check (apps/web/lib/session-command-route.ts selfService).
+  hasLiveMembership,
+  joinSession,
+  leaveSession,
+  type JoinSessionParams,
+  type JoinSessionResult,
+  type LeaveSessionParams,
+  type LeaveSessionResult,
+} from "./session-join-service.js";
+// L8 (M9): join requests on approval sessions (openJoinRequest stays internal to joinSession).
+export {
+  approveJoinRequest,
+  cancelJoinRequest,
+  listPendingJoinRequests,
+  rejectJoinRequest,
+  type ApproveJoinRequestResult,
+  type CancelJoinRequestParams,
+  type DecideJoinRequestParams,
+  type JoinRequestClosedResult,
+  type ListPendingJoinRequestsParams,
+  type PendingJoinRequest,
+} from "./join-request-service.js";
 export {
   chargeStatusFor,
   markPaid,

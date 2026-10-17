@@ -445,6 +445,115 @@ describe("removePlayerFromSession", () => {
     ).toEqual([{ status: "open", amount_due: 70000 }]);
   });
 
+  it("DT-10/P-6/P-7: removing an ACTIVE player promotes the lowest waitlist position in the same tx: ONE charge at the current price, joined_at untouched, no renumbering, no money moved, one player.promoted after player.removed", async () => {
+    const { tenantId, actor, sessionId } = await world({ slotsMax: 1, priceAmount: 70000 });
+    const a = await add(tenantId, actor, sessionId, { displayName: "A" });
+    const w1 = await add(tenantId, actor, sessionId, { displayName: "W1" });
+    const w2 = await add(tenantId, actor, sessionId, { displayName: "W2" });
+    expect([w1.waitlistPosition, w2.waitlistPosition]).toEqual([1, 2]);
+    const playerRow = (id: string) =>
+      fx.row(`SELECT status, waitlist_position, joined_at FROM players WHERE id = $1`, [id]);
+    const joinedAt = (await playerRow(w1.playerId)).joined_at;
+    const before = await fx.counts(tenantId);
+
+    await remove(tenantId, actor, sessionId, a.playerId);
+
+    expect(await playerRow(w1.playerId)).toEqual({
+      status: "active",
+      waitlist_position: null,
+      joined_at: joinedAt,
+    });
+    expect(await playerRow(w2.playerId)).toMatchObject({
+      status: "waitlisted",
+      waitlist_position: 2,
+    });
+    const charges = await fx.rows(
+      `SELECT id, player_id, status, amount_due FROM charges WHERE session_id = $1 AND player_id <> $2`,
+      [sessionId, a.playerId],
+    );
+    expect(charges).toEqual([
+      { id: expect.any(String), player_id: w1.playerId, status: "open", amount_due: 70000 },
+    ]);
+    // players and allocations unchanged: a promotion flips a status and moves no money.
+    expect(await fx.counts(tenantId)).toEqual({
+      ...before,
+      charges: before.charges + 1,
+      outbox: before.outbox + 2,
+      commands: before.commands + 1,
+    });
+    const events = await fx.events(sessionId);
+    expect(events.slice(-2).map((e) => e.type)).toEqual(["player.removed", "player.promoted"]);
+    expect(events.at(-1).payload).toEqual({
+      session_id: sessionId,
+      player_id: w1.playerId,
+      membership_id: w1.membershipId,
+      charge_id: charges[0].id,
+      amount_due: 70000,
+    });
+    const active = await fx.row(
+      `SELECT count(*)::int AS n FROM players WHERE session_id = $1 AND status = 'active'`,
+      [sessionId],
+    );
+    expect(active.n).toBe(1);
+  });
+
+  it("P-6/P-7: removing a WAITLISTED player, or an active one after the start, promotes nobody (no charge, no player.promoted, positions kept)", async () => {
+    const { tenantId, actor, sessionId } = await world({ slotsMax: 1 });
+    const a = await add(tenantId, actor, sessionId, { displayName: "A" });
+    const w1 = await add(tenantId, actor, sessionId, { displayName: "W1" });
+    const w2 = await add(tenantId, actor, sessionId, { displayName: "W2" });
+    await remove(tenantId, actor, sessionId, w1.playerId);
+    await fx.row(`UPDATE sessions SET starts_at = now() - interval '1 hour' WHERE id = $1`, [
+      sessionId,
+    ]);
+    await remove(tenantId, actor, sessionId, a.playerId);
+    expect(
+      await fx.row(`SELECT status, waitlist_position FROM players WHERE id = $1`, [w2.playerId]),
+    ).toEqual({ status: "waitlisted", waitlist_position: 2 });
+    expect(await fx.rows(`SELECT id FROM charges WHERE player_id = $1`, [w2.playerId])).toEqual([]);
+    expect((await fx.events(sessionId)).map((e) => e.type)).not.toContain("player.promoted");
+  });
+
+  it("DT-10 rollback (host remove): a test trigger failing the player.promoted insert rolls the whole remove back (still active, charge open, waitlist intact, no event, no ledger row)", async () => {
+    const { tenantId, actor, sessionId } = await world({ slotsMax: 1 });
+    const a = await add(tenantId, actor, sessionId, { displayName: "A" });
+    const w = await add(tenantId, actor, sessionId, { displayName: "W" });
+    const before = await fx.counts(tenantId);
+    await ctx.owner.query(
+      `CREATE FUNCTION l8_fail_promoted_on_remove() RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF NEW.type = 'player.promoted' THEN
+           RAISE EXCEPTION 'l8 test: player.promoted insert refused';
+         END IF;
+         RETURN NEW;
+       END $$`,
+    );
+    await ctx.owner.query(
+      `CREATE TRIGGER l8_fail_promoted_on_remove BEFORE INSERT ON outbox_events
+       FOR EACH ROW EXECUTE FUNCTION l8_fail_promoted_on_remove()`,
+    );
+    const err = await remove(tenantId, actor, sessionId, a.playerId)
+      .then(
+        () => null,
+        (e: unknown) => e as { message?: string; cause?: { message?: string } },
+      )
+      .finally(async () => {
+        await ctx.owner.query(`DROP TRIGGER l8_fail_promoted_on_remove ON outbox_events`);
+        await ctx.owner.query(`DROP FUNCTION l8_fail_promoted_on_remove()`);
+      });
+    expect(`${err?.message} ${err?.cause?.message}`).toMatch(/player\.promoted insert refused/);
+    expect(await fx.counts(tenantId)).toEqual(before);
+    expect((await fx.row(`SELECT status FROM players WHERE id = $1`, [a.playerId])).status).toBe(
+      "active",
+    );
+    expect((await fx.row(`SELECT status FROM charges WHERE id = $1`, [a.chargeId])).status).toBe(
+      "open",
+    );
+    expect(
+      await fx.row(`SELECT status, waitlist_position FROM players WHERE id = $1`, [w.playerId]),
+    ).toEqual({ status: "waitlisted", waitlist_position: 1 });
+  });
+
   it("frozen roster (closed session), cross-tenant, malformed ids and suspended tenant are refused", async () => {
     const { tenantId, actor, sessionId } = await world();
     const r = await add(tenantId, actor, sessionId, { displayName: "X" });

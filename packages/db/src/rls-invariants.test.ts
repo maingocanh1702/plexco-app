@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(58); // 0000..0057 (0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
+    expect(ctx.migrateResult.applied.length).toBe(59); // 0000..0058 (0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(58);
+    expect(second.skipped.length).toBe(59);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1750,12 +1750,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(58); // 0000..0057
+      expect(res.applied.length).toBe(59); // 0000..0058
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(58);
+        expect(rows.length).toBe(59);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2033,7 +2033,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0057_zalo_delivery_targets_definer.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0058_player_self_join.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4608,10 +4608,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (58) matches the actual migrations/ directory listing, and the tail is 0057", async () => {
+    it("UCC-8: MIGRATION_COUNT (59) matches the actual migrations/ directory listing, and the tail is 0058", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(58);
-      expect(files[files.length - 1]).toBe("0057_zalo_delivery_targets_definer.sql");
+      expect(files.length).toBe(59);
+      expect(files[files.length - 1]).toBe("0058_player_self_join.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
@@ -4827,6 +4827,159 @@ describe("0051 create_host_added_person definer (web MVP M2c host-add)", () => {
     } finally {
       await client.query(`SELECT set_config('app.tenant_id', '', false)`);
       client.release();
+    }
+  });
+});
+
+// 0058 (Phase 3 L8): the one narrow definer that gives a person a guest membership in the caller's
+// own club. `persons` has no grant to `app` (0009), so a self-join by a person without a membership
+// (and L10b's join-by-slug) can only mint one here. A-7, definer half: GUC binding, active person,
+// live membership reused, ONE guest row under concurrency, never a name match, app-only EXECUTE.
+describe("0058 create_guest_membership definer (Phase 3 L8 self-join, A-7)", () => {
+  const FN = "public.create_guest_membership(uuid, uuid)";
+  const CALL = `SELECT public.create_guest_membership($1::uuid, $2::uuid) AS id`;
+  const person = async (name: string) =>
+    (await ctx.owner.query(`INSERT INTO persons (display_name) VALUES ($1) RETURNING id`, [name]))
+      .rows[0].id as string;
+  const seed = async (tenant: string, who: string, status: string, name: string | null) =>
+    (
+      await ctx.owner.query(
+        `INSERT INTO memberships (tenant_id, person_id, status, display_name) VALUES ($1, $2, $3, $4) RETURNING id`,
+        [tenant, who, status, name],
+      )
+    ).rows[0].id as string;
+
+  it("EXECUTE: app only; SECURITY DEFINER with search_path pinned (pg_temp LAST), owned like 0051; app still cannot read persons", async () => {
+    const can = async (role: string) =>
+      (await ctx.owner.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [role, FN]))
+        .rows[0].ok as boolean;
+    expect(await can("app")).toBe(true);
+    expect(await can("app_worker")).toBe(false);
+    expect(await can("readonly")).toBe(false);
+    const { rows } = await ctx.owner.query(
+      `SELECT p.prosecdef, p.proconfig, p.proacl::text AS acl, p.proowner = q.proowner AS same_owner
+         FROM pg_proc p, pg_proc q
+        WHERE p.oid = $1::regprocedure
+          AND q.oid = 'public.create_host_added_person(uuid, uuid, text)'::regprocedure`,
+      [FN],
+    );
+    expect(rows[0].prosecdef).toBe(true);
+    expect(rows[0].proconfig).toContain("search_path=pg_catalog, public, pg_temp");
+    expect(rows[0].acl).not.toBeNull();
+    expect(rows[0].acl).not.toMatch(/(^|[{,])=X/);
+    expect(rows[0].same_owner).toBe(true);
+    const priv = await ctx.owner.query(
+      `SELECT has_table_privilege('app', 'persons', 'SELECT') AS s`,
+    );
+    expect(priv.rows[0].s).toBe(false);
+  });
+
+  it("refuses an unset, malformed or foreign tenant GUC and a person who is not active; writes nothing", async () => {
+    const p = await person("Khách");
+    const gone = await person("Đã xoá");
+    await ctx.owner.query(`UPDATE persons SET status = 'deleted' WHERE id = $1`, [gone]);
+    const client = await ctx.appPool.connect();
+    try {
+      const call = (tenant: string, who: string) => client.query(CALL, [tenant, who]);
+      for (const guc of ["", "not-a-uuid", ctx.tenantB]) {
+        await client.query(`SELECT set_config('app.tenant_id', $1, false)`, [guc]);
+        await expect(call(ctx.tenantA, p), guc).rejects.toThrow(/tenant context mismatch/);
+      }
+      await client.query(`SELECT set_config('app.tenant_id', $1, false)`, [ctx.tenantA]);
+      for (const who of [gone, randomUUID()]) {
+        await expect(call(ctx.tenantA, who)).rejects.toThrow(/person is not active/);
+      }
+    } finally {
+      await client.query(`SELECT set_config('app.tenant_id', '', false)`);
+      client.release();
+    }
+    const n = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM memberships WHERE person_id = ANY($1::uuid[])`,
+      [[p, gone]],
+    );
+    expect(n.rows[0].n).toBe(0);
+  });
+
+  it("returns a live (active or guest) membership as is, else inserts ONE guest row named from persons; idempotent; never a name match; nothing else touched", async () => {
+    const member = await person("Thành viên");
+    const guest = await person("Khách cũ");
+    const visitor = await person("Khách vãng lai");
+    const namesake = await person("Khách vãng lai");
+    const mActive = await seed(ctx.tenantA, member, "active", "Tên ở CLB");
+    const mGuest = await seed(ctx.tenantA, guest, "guest", null);
+    const mLeft = await seed(ctx.tenantA, visitor, "left", "cũ");
+    const mOther = await seed(ctx.tenantB, visitor, "active", "Ở CLB B");
+    const mNamesake = await seed(ctx.tenantA, namesake, "active", "Khách vãng lai");
+    const snapshot = async () =>
+      (
+        await ctx.owner.query(
+          `SELECT id, tenant_id, person_id, status, display_name FROM memberships WHERE person_id = ANY($1::uuid[]) ORDER BY id`,
+          [[member, guest, visitor, namesake]],
+        )
+      ).rows;
+    const before = await snapshot();
+    const client = await ctx.appPool.connect();
+    try {
+      await client.query(`SELECT set_config('app.tenant_id', $1, false)`, [ctx.tenantA]);
+      const call = async (who: string) =>
+        (await client.query(CALL, [ctx.tenantA, who])).rows[0].id as string;
+      expect(await call(member)).toBe(mActive);
+      expect(await call(guest)).toBe(mGuest);
+      const created = await call(visitor);
+      expect([mActive, mGuest, mLeft, mOther, mNamesake]).not.toContain(created);
+      expect(await call(visitor)).toBe(created);
+      const after = await snapshot();
+      expect(after.filter((r) => r.id !== created)).toEqual(before);
+      expect(after.find((r) => r.id === created)).toEqual({
+        id: created,
+        tenant_id: ctx.tenantA,
+        person_id: visitor,
+        status: "guest",
+        display_name: "Khách vãng lai",
+      });
+    } finally {
+      await client.query(`SELECT set_config('app.tenant_id', '', false)`);
+      client.release();
+    }
+  });
+
+  it("two concurrent first calls for one (tenant, person) end with ONE guest membership and the same id", async () => {
+    const who = await person("Song song");
+    const c1 = await ctx.appPool.connect();
+    const c2 = await ctx.appPool.connect();
+    try {
+      for (const c of [c1, c2]) {
+        await c.query("BEGIN");
+        await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      }
+      const first = (await c1.query(CALL, [ctx.tenantA, who])).rows[0].id as string;
+      const pid2 = (await c2.query("SELECT pg_backend_pid() AS pid")).rows[0].pid as number;
+      const second = c2.query(CALL, [ctx.tenantA, who]);
+      // Keep c1 open until c2 waits on c1's uncommitted unique-index entry, so this exercises the
+      // ON CONFLICT DO NOTHING + re-read branch rather than a sequential second call.
+      let blocked = false;
+      for (let i = 0; i < 150 && !blocked; i++) {
+        const w = await ctx.owner.query(
+          `SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1`,
+          [pid2],
+        );
+        blocked = w.rows[0]?.wait_event_type === "Lock";
+        if (!blocked) await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(blocked).toBe(true);
+      await c1.query("COMMIT");
+      expect((await second).rows[0].id).toBe(first);
+      await c2.query("COMMIT");
+      const n = await ctx.owner.query(
+        `SELECT count(*)::int AS n FROM memberships WHERE tenant_id = $1 AND person_id = $2`,
+        [ctx.tenantA, who],
+      );
+      expect(n.rows[0].n).toBe(1);
+    } finally {
+      for (const c of [c1, c2]) {
+        await c.query("ROLLBACK").catch(() => undefined);
+        c.release();
+      }
     }
   });
 });

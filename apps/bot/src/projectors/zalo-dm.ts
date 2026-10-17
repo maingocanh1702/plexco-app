@@ -14,8 +14,9 @@ import { DM_RELEVANT_FIELDS, renderZaloDm, ZALO_DM_TEMPLATES } from "./zalo-dm-t
 /**
  * The zalo_dm projector (lane L4, DD-134 (c); readiness Z-4..Z-15, each a default pending owner
  * sign-off). It DMs, through the Zalo Bot API, the linked ACTIVE roster players of a session whose
- * time, venue or price changed (session.updated) or that was cancelled, and the requesting host of
- * session.announcement_requested. Recipients, the bot secret and the per-recipient dispositions go
+ * time, venue or price changed (session.updated) or that was cancelled, the requesting host of
+ * session.announcement_requested and, for player.promoted (L8, P-16), the promoted player only,
+ * with that player's own fee. Recipients, the bot secret and the per-recipient dispositions go
  * ONLY through the two 0057 definers (app_worker holds no table grant): the targets definer writes
  * the decrypt audit rows before it returns any ciphertext, so an audit failure decrypts nothing.
  *
@@ -29,6 +30,7 @@ const ATTEMPT_BUDGET_MS = 120_000; // Z-14: below the 5 min claim lease
 const SEND_TIMEOUT_MS = 5_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FALLBACK_TIME_ZONE = "Asia/Ho_Chi_Minh";
+const INT4_MAX = 2_147_483_647; // charges.amount_due is int4
 
 const delivered = (providerRef: string): DeliveryOutcome => ({ result: "delivered", providerRef });
 const retry = (errorCode: string): DeliveryOutcome => ({ result: "retry", errorCode });
@@ -89,6 +91,7 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
     if (!template) return dlq("unexpected_event_type");
     const payload = isRecord(job.event.payload) ? job.event.payload : {};
     let fields: readonly string[] = [];
+    let amountDue: number | undefined;
     if (template === "updated") {
       const changed: unknown = payload.changed_fields;
       if (!Array.isArray(changed) || !changed.every((f) => typeof f === "string")) {
@@ -101,6 +104,16 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
     } else if (template === "announce") {
       const requester = payload.requested_by_person_id;
       if (typeof requester !== "string" || !UUID_RE.test(requester)) return dlq("no_requester");
+    } else if (template === "promoted") {
+      // DM-6 (R1B-3): the recipient is the promoted player_id, a uuid (a missing one would match
+      // nobody and end as a silent noop_no_recipients instead of a dead letter).
+      const playerId = payload.player_id;
+      if (typeof playerId !== "string" || !UUID_RE.test(playerId)) return dlq("malformed_payload");
+      // DM-6: the fee is the promotion charge's amount_due, a whole int4 (0 = a free session).
+      const amount = payload.amount_due;
+      const whole = typeof amount === "number" && Number.isSafeInteger(amount);
+      if (!whole || amount < 0 || amount > INT4_MAX) return dlq("malformed_payload");
+      amountDue = amount;
     }
 
     // 2. Configuration (Z-4, Z-5), before any DB call, decrypt or send.
@@ -151,6 +164,7 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
       timeZone: head.timezone ?? FALLBACK_TIME_ZONE,
       fields,
       link,
+      amountDue,
     };
     const text = runWithLang(head.locale === "en" ? "en" : "vi", () =>
       renderZaloDm(template, values),

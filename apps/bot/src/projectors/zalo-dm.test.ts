@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
+import { fmtMoney } from "@plexco/core";
 import { migrate } from "@plexco/db";
 import {
   __resetAuthSecretCacheForTest,
@@ -85,8 +86,36 @@ describe("zalo_dm projector before any DB call (Z-4, Z-10, Z-12)", () => {
     const announce = (payload: unknown) => go("session.announcement_requested", payload);
     for (const payload of [{ channel: "zalo" }, { requested_by_person_id: "host" }, null])
       await expect(announce(payload)).resolves.toEqual(dlq("no_requester"));
-    const promoted = go("player.promoted", { player_id: randomUUID() });
-    await expect(promoted).resolves.toEqual(dlq("unexpected_event_type"));
+    const unrouted = go("player.added", { player_id: randomUUID() }); // L8 routes player.promoted only
+    await expect(unrouted).resolves.toEqual(dlq("unexpected_event_type"));
+    expect(noDb.query).not.toHaveBeenCalled();
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it.each([
+    ["missing", undefined, dlq("malformed_payload")],
+    ["fractional", 1.5, dlq("malformed_payload")],
+    ["negative", -1, dlq("malformed_payload")],
+    ["above int4", 2_147_483_648, dlq("malformed_payload")],
+    ["a numeric string", "150000", dlq("malformed_payload")],
+    [
+      "at the int4 max, admitted (the injected definer error comes next)",
+      2_147_483_647,
+      retry("targets_read_failed"),
+    ],
+  ])("DM-6: a player.promoted amount_due %s", async (_name, amount, expected) => {
+    noDb.query.mockClear();
+    const out = await go("player.promoted", { player_id: randomUUID(), amount_due: amount });
+    expect(out).toEqual(expected);
+    expect(noDb.query).toHaveBeenCalledTimes(expected.result === "dlq" ? 0 : 1);
+  });
+
+  it("DM-6 (R1B-3): a player.promoted whose player_id is missing or not a uuid -> dlq malformed_payload before any DB call", async () => {
+    noDb.query.mockClear();
+    for (const player_id of [undefined, null, 42, "", "player-1", `${randomUUID()}x`]) {
+      const out = await go("player.promoted", { player_id, amount_due: 150_000 });
+      expect(out, `player_id ${String(player_id)}`).toEqual(dlq("malformed_payload"));
+    }
     expect(noDb.query).not.toHaveBeenCalled();
     expect(stub.calls).toHaveLength(0);
   });
@@ -247,13 +276,15 @@ describe("zalo_dm projector against the 0057 definers and the stub (as app_worke
       );
       ci = r.id as string;
     }
-    if (status !== "none")
-      await q(
-        `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position, joined_at)
-         VALUES ($1, $2, $3, $4, $5, now() - interval '1 hour')`,
-        [c.tenant, c.session, m.id, status, status === "waitlisted" ? 1 : null],
-      );
-    return { person: p.id as string, ci, chat };
+    const row =
+      status === "none"
+        ? undefined
+        : await one(
+            `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position, joined_at)
+             VALUES ($1, $2, $3, $4, $5, now() - interval '1 hour') RETURNING id`,
+            [c.tenant, c.session, m.id, status, status === "waitlisted" ? 1 : null],
+          );
+    return { person: p.id as string, ci, chat, id: row?.id as string };
   }
   type Member = Awaited<ReturnType<typeof player>>;
   const byIdentity = (l: Member, r: Member) => (l.ci! < r.ci! ? -1 : 1); // the definer's ORDER BY
@@ -345,6 +376,48 @@ describe("zalo_dm projector against the 0057 definers and the stub (as app_worke
     expect(text).not.toMatch(/Private Hall|120[.,]?000/);
     const unlinked = await player(c, null, "none");
     await expectOutcome(announce(unlinked.person), dlq("requester_unlinked"));
+    expect(stub.calls.length).toBe(from + 1);
+  });
+
+  it("DM-1/DM-3/DM-4/DM-5 through the dispatcher: one promotion -> one DM with its fee, to the promoted player only", async () => {
+    const c = await club();
+    await roster(c, 2); // DM-3: linked active players who were not promoted get nothing
+    const promoted = await player(c, "chat-dm1");
+    const from = stub.calls.length;
+    const payload = { player_id: promoted.id, amount_due: 95_000 };
+    const ev = await insertEvent(c, "player.promoted", payload);
+    const cycle = () =>
+      runDispatchCycle(ctx.worker, { projectors: new Map([["zalo_dm", deliver]]) });
+    await cycle();
+    await cycle(); // DM-5: a second cycle neither re-claims nor resends the delivered event
+    expect(
+      await q("SELECT status, provider_ref FROM projector_deliveries WHERE event_id = $1", [ev.id]),
+    ).toEqual([{ status: "delivered", provider_ref: "sent" }]);
+    expect(chats(from)).toEqual(["chat-dm1"]);
+    const text = stub.calls[from]!.text;
+    const link = `${APP}/c/${c.tenant}/sessions/${c.session}`;
+    expect(text).toMatch(/^Bạn đã có chỗ trong buổi chơi lúc .+\. Phí: /);
+    expect(text.endsWith(`Phí: ${fmtMoney(95_000)}. Xem: ${link}`)).toBe(true);
+    expect(text).not.toMatch(/Private Hall|Zdm Worker|120[.,]?000/); // Z-13: the fee is the only money
+  });
+
+  it("DM-7/DM-5/DM-2: an 'en' club gets the English pair (0đ when free), once; an unlinked promoted player is a no-op", async () => {
+    const c = await club({ locale: "en" });
+    await roster(c, 1);
+    const linked = await player(c, "chat-dm7");
+    const unlinked = await player(c, null);
+    const from = stub.calls.length;
+    const promote = (m: Member, amount_due: number) =>
+      claim(c, "player.promoted", { player_id: m.id, amount_due });
+    const j = await promote(linked, 0);
+    await expectOutcome(j, delivered("sent"));
+    await expectOutcome(j, delivered("noop_all_recorded")); // DM-5: a redelivery skips the recorded DM
+    expect(await dispositions(j)).toEqual([{ ci: linked.ci, outcome: "sent", error_code: null }]);
+    expect(chats(from)).toEqual(["chat-dm7"]);
+    const enText =
+      /^You now have a spot in the session at .+\. Fee: 0đ\. See: https:\/\/app\.test\/c\//;
+    expect(stub.calls[from]!.text).toMatch(enText);
+    await expectOutcome(promote(unlinked, 50_000), delivered("noop_no_recipients")); // DM-2
     expect(stub.calls.length).toBe(from + 1);
   });
 
