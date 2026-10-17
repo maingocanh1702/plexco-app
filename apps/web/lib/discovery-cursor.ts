@@ -38,6 +38,11 @@ function mac(head: string): string {
   return createHmac("sha256", cursorKey()).update(head).digest("base64url");
 }
 
+/** Resolve the key now: the list route calls it at entry, so a bad key is the 500 on every page. */
+export function assertDiscoveryCursorKey(): void {
+  cursorKey();
+}
+
 /** The public_listing_id shape (a uuid, any case): check it before a value reaches a ::uuid cast. */
 export function isPublicListingId(value: string): boolean {
   return PUBLIC_LISTING_ID.test(value);

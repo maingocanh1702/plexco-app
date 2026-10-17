@@ -1,6 +1,6 @@
 import { listDiscoveryListings } from "@plexco/db";
 import { ok } from "../../../lib/api-envelope";
-import { encodeDiscoveryCursor } from "../../../lib/discovery-cursor";
+import { assertDiscoveryCursorKey, encodeDiscoveryCursor } from "../../../lib/discovery-cursor";
 import {
   discoveryInvalidFilter,
   discoveryPool,
@@ -11,11 +11,14 @@ import {
 } from "../../../lib/discovery-route-support";
 
 /**
- * GET /api/discover -- the anonymous discovery list (readiness 4.4): the per-IP limiter, filters
- * validated before any DB call, whitelist items, a signed keyset cursor. Any failure is the empty 500.
+ * GET /api/discover -- the anonymous discovery list (readiness 4.4): the cursor key resolved at
+ * entry (a missing or short production key is the 500 on every page, not only on one with a next
+ * cursor), the per-IP limiter, filters validated before any DB call, whitelist items, a signed
+ * keyset cursor. Any failure is the empty 500.
  */
 export async function GET(request: Request): Promise<Response> {
   try {
+    assertDiscoveryCursorKey();
     const limited = discoveryRateLimited(request);
     if (limited) return limited;
     const filter = parseDiscoveryListQuery(new URL(request.url).searchParams);

@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { t } from "@plexco/core/i18n";
 import {
   createDb,
@@ -20,45 +21,39 @@ import { clientIp } from "./session-cookies";
 
 type Pool = DbHandle["pool"];
 let discoveryHandle: DbHandle | null = null;
+// The probed pool, or a poisoned handle's rejected promise, which then rejects every call.
 let discoveryReady: Promise<Pool> | null = null;
-let discoveryPoisoned: string | null = null;
+// One probe (security N-1): Postgres answers a row only while current_user is NOSUPERUSER NOBYPASSRLS.
+const ROLE_PROBE =
+  "SELECT current_user AS u, session_user AS s FROM pg_roles r WHERE r.rolname = current_user AND NOT r.rolsuper AND NOT r.rolbypassrls";
 
 /**
- * The readonly pool, behind an always-on, once-per-process assert that current_user and
- * session_user are `readonly`, awaited before the first query. A missing DISCOVERY_DATABASE_URL or
- * a role mismatch poisons the handle: every call rejects and the route answers 500 (fail closed).
- * An unavailable probe rejects only this call; the next one retries.
+ * The readonly pool, behind an always-on, once-per-process assert awaited before the first query:
+ * current_user and session_user are `readonly`, and current_user is neither SUPERUSER nor
+ * BYPASSRLS. A missing DISCOVERY_DATABASE_URL or any other probe answer poisons the handle: every
+ * call rejects and the route answers 500 (fail closed). An unavailable probe rejects only this
+ * call; the next one re-probes the same handle.
  */
 export function discoveryPool(): Promise<Pool> {
-  if (discoveryPoisoned) return Promise.reject(new Error(discoveryPoisoned));
-  if (!discoveryReady) {
-    const attempt = openDiscoveryPool();
-    discoveryReady = attempt;
-    void attempt.catch(() => {
-      if (!discoveryPoisoned && discoveryReady === attempt) discoveryReady = null;
-    });
-  }
-  return discoveryReady;
+  return (discoveryReady ??= openDiscoveryPool());
 }
 
 async function openDiscoveryPool(): Promise<Pool> {
   const url = process.env.DISCOVERY_DATABASE_URL;
-  if (!url) throw poisonDiscovery("DISCOVERY_DATABASE_URL is not set: refusing to serve discovery");
+  if (!url) throw new Error("DISCOVERY_DATABASE_URL is not set: refusing to serve discovery");
   discoveryHandle ??= createDb(url, { max: 5 });
-  const { rows } = await discoveryHandle.pool.query<{ u: string; s: string }>(
-    "SELECT current_user AS u, session_user AS s",
-  );
+  const { rows } = await discoveryHandle.pool
+    .query<{ u: string; s: string }>(ROLE_PROBE)
+    .catch((error: unknown) => {
+      discoveryReady = null;
+      throw error;
+    });
   const row = rows[0];
   if (!row || row.u !== "readonly" || row.s !== "readonly") {
     log.error("discovery.db.role.mismatch", { currentUser: row?.u, sessionUser: row?.s });
-    throw poisonDiscovery("DISCOVERY_DATABASE_URL does not connect as readonly: refusing to serve");
+    throw new Error("DISCOVERY_DATABASE_URL is not a plain readonly role: refusing to serve");
   }
   return discoveryHandle.pool;
-}
-
-function poisonDiscovery(reason: string): Error {
-  discoveryPoisoned = reason;
-  return new Error(reason);
 }
 
 const DISCOVERY_RATE_LIMIT = 60;
@@ -69,14 +64,17 @@ const DISCOVERY_RATE_MAX_KEYS = 10_000;
 const discoveryWindows = new Map<string, { count: number; resetAt: number }>();
 
 /**
- * null while `discover:<clientIp>` is within 60 requests per fixed 60 s window, else the 429.
- * clientIp throws on a production ingress misconfiguration (the route answers 500).
+ * null while `discover:<key>` is within 60 requests per fixed 60 s window, else the 429; the key
+ * is the clientIp, an IPv6 one cut to its /64 (rateLimitKey). clientIp throws on a production
+ * ingress misconfiguration (the route answers 500).
  * ponytail: in-process counters, so the ceiling is per process and per replica and resets on
- * restart (locally every request shares the one bucket `local`); upgrade path (readiness O-6): a
- * readonly-executable limiter definer (an owner migration) or ingress rate limits.
+ * restart (locally every request shares the one bucket `local`); and 10 000 distinct IPv4
+ * addresses or IPv6 /64s can still fill the key map, which then answers every new visitor 429
+ * until those windows end. Upgrade path (readiness O-6): ingress rate limits or a
+ * readonly-executable limiter definer (an owner migration).
  */
 export function discoveryRateLimited(request: Request): Response | null {
-  const key = `discover:${clientIp(request)}`;
+  const key = `discover:${rateLimitKey(clientIp(request))}`;
   const now = Date.now();
   let bucket = discoveryWindows.get(key);
   if (bucket && bucket.resetAt <= now) {
@@ -98,6 +96,27 @@ export function discoveryRateLimited(request: Request): Response | null {
   bucket.count += 1;
   if (bucket.count <= DISCOVERY_RATE_LIMIT) return null;
   return rateLimitedResponse(Math.ceil((bucket.resetAt - now) / 1000));
+}
+
+/**
+ * The limiter key of a clientIp value: an IPv6 address is its /64, the first four hextets of the
+ * fully expanded address, so every spelling of one /64 shares a key. IPv4 and the non-IP
+ * fallbacks (`local`, `fly:untrusted`, ...) are unchanged.
+ */
+function rateLimitKey(ip: string): string {
+  if (isIP(ip) !== 6) return ip;
+  const [address = ""] = ip.toLowerCase().split("%"); // drop a zone index
+  const [head = "", tail] = address.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  // `::` stands for the missing zero hextets; a dotted IPv4 tail fills two.
+  const missing = 8 - left.length - right.length - (right.at(-1)?.includes(".") ? 1 : 0);
+  const hextets =
+    tail === undefined ? left : [...left, ...Array<string>(missing).fill("0"), ...right];
+  return hextets
+    .slice(0, 4)
+    .map((hextet) => hextet.padStart(4, "0"))
+    .join(":");
 }
 
 function rateLimitedResponse(retryAfterSeconds: number): Response {
@@ -122,9 +141,8 @@ const FILTER_INSTANT =
 
 function parseFilterInstant(value: string): Date | null {
   const day = FILTER_INSTANT.exec(value)?.[1];
-  if (!day || !isCalendarDay(day)) return null;
-  const at = new Date(value);
-  return Number.isNaN(at.getTime()) ? null : at;
+  // A FILTER_INSTANT match on a real calendar day is always a valid Date.
+  return day && isCalendarDay(day) ? new Date(value) : null;
 }
 
 /**
@@ -264,5 +282,4 @@ export function resetDiscoveryRouteSupportForTests(): void {
   discoveryWindows.clear();
   discoveryHandle = null;
   discoveryReady = null;
-  discoveryPoisoned = null;
 }
