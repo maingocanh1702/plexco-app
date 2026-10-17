@@ -100,8 +100,11 @@ async function main(argv, env) {
     console.error("error: DATABASE_URL_MIGRATION is not set (the owner credential)");
     return 1;
   }
-  const client = new pg.Client({ connectionString: url, application_name: "plexco_public_alias_cli" });
+  // Built inside the try: pg parses the URL in the constructor, so a malformed one ends in the
+  // redacted `error:` line below rather than an uncaught stack trace.
+  let client;
   try {
+    client = new pg.Client({ connectionString: url, application_name: "plexco_public_alias_cli" });
     await client.connect();
     await run(args, client);
     return 0;
@@ -114,7 +117,7 @@ async function main(argv, env) {
     console.error(`error: ${error?.code ? `${error.code} ` : ""}${message}`);
     return 1;
   } finally {
-    await client.end().catch(() => {});
+    await client?.end().catch(() => {});
   }
 }
 

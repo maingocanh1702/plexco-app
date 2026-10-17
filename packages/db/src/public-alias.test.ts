@@ -65,6 +65,15 @@ async function admin(tenantId: string, role: string, active = true): Promise<str
   );
   return id;
 }
+/** A person with an ACTIVE membership (a player) in the tenant and no tenant_admins row. */
+async function member(tenantId: string): Promise<string> {
+  const id = await person();
+  await ctx.owner.query(
+    `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active')`,
+    [tenantId, id],
+  );
+  return id;
+}
 async function club(): Promise<{ tenantId: string; ownerId: string }> {
   const { rows } = await ctx.owner.query<{ id: string }>(
     `INSERT INTO tenants (name, slug) VALUES ($1, $2) RETURNING id`,
@@ -212,12 +221,27 @@ describe("0060 set definer as app (A-1..A-5, A-22)", () => {
     const cases: [string, string, string | null][] = [
       ["inactive admin", await admin(a.tenantId, "admin", false), a.tenantId],
       ["no admin row", await person(), a.tenantId],
+      ["active member, no admin row", await member(a.tenantId), a.tenantId],
       ["owner of another tenant", b.ownerId, a.tenantId],
       ["GUC of another tenant", a.ownerId, b.tenantId],
       ["GUC unset", a.ownerId, null],
     ];
     for (const [label, actor, guc] of cases) {
       expect(await sqlState(setAlias(a.tenantId, actor, "Alias Z", guc)), label).toBe("42501");
+    }
+    expect(await snapshot(a.tenantId)).toEqual(before);
+  });
+
+  it("A-5: authorization runs before the text checks: a denied actor with refused text is 42501", async () => {
+    const a = await club();
+    await setAlias(a.tenantId, a.ownerId, "Alias A");
+    const before = await snapshot(a.tenantId);
+    const actors = { "no admin row": await person(), "active member": await member(a.tenantId) };
+    for (const [label, actor] of Object.entries(actors)) {
+      for (const text of ["", "x".repeat(61)]) {
+        const state = await sqlState(setAlias(a.tenantId, actor, text));
+        expect(state, `${label}: ${text.length} code points`).toBe("42501");
+      }
     }
     expect(await snapshot(a.tenantId)).toEqual(before);
   });
@@ -251,9 +275,13 @@ describe("0060 privileges (A-6, A-7, A-8, A-11, A-16)", () => {
                 has_table_privilege($1, 'public.tenant_public_alias_audit', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE') AS audit_any,
                 has_table_privilege($1, 'public.tenants', 'INSERT, UPDATE') AS tenants_write,
                 has_column_privilege($1, 'public.tenants', 'public_alias', 'INSERT, UPDATE') AS alias_col,
-                has_column_privilege($1, 'public.tenants', 'public_alias_status', 'INSERT, UPDATE') AS status_col`,
+                has_column_privilege($1, 'public.tenants', 'public_alias_status', 'INSERT, UPDATE') AS status_col,
+                has_table_privilege($1, 'public.tenants', 'SELECT') AS tenants_select,
+                has_column_privilege($1, 'public.tenants', 'public_alias', 'SELECT') AS alias_select,
+                has_column_privilege($1, 'public.tenants', 'public_alias_status', 'SELECT') AS status_select`,
         [role],
       );
+      // The read half: pending or rejected text reaches no role except through the read definer.
       expect(rows[0], role).toEqual({
         set_fn: role === "app",
         read_fn: role === "app",
@@ -263,6 +291,9 @@ describe("0060 privileges (A-6, A-7, A-8, A-11, A-16)", () => {
         tenants_write: false,
         alias_col: false,
         status_col: false,
+        tenants_select: false,
+        alias_select: false,
+        status_select: false,
       });
     }
   });
@@ -641,10 +672,15 @@ describe("setPublicAlias / getPublicAlias as app (A-1, A-4, A-5, A-12, A-19, A-2
     expect(await snapshot(tenantId)).toMatchObject({ public_alias: null, events: 0 });
   });
 
-  it("A-5: no content.manage, a non-member or another club's owner is FORBIDDEN, zero writes", async () => {
+  it("A-5: no content.manage, an active member, a non-member or another club's owner is FORBIDDEN, zero writes", async () => {
     const { tenantId } = await activeClub();
     const other = await activeClub();
-    for (const actor of [await admin(tenantId, "admin", false), await person(), other.ownerId]) {
+    for (const actor of [
+      await admin(tenantId, "admin", false),
+      await person(),
+      await member(tenantId),
+      other.ownerId,
+    ]) {
       expect(await codeOf(setTs(tenantId, actor, "Alias A"))).toBe("FORBIDDEN");
     }
     expect(await snapshot(tenantId)).toMatchObject({ public_alias: null, events: 0 });
@@ -745,6 +781,11 @@ describe("owner CLI scripts/public-alias-moderate.mjs (A-13)", () => {
     });
     const secret = "pw-never-printed-0060";
     expect(cli(["list"], `postgres://nobody:${secret}@127.0.0.1:1/x`).code).toBe(1);
+    // A malformed owner URL (fake marker password) fails inside the CLI's try: its own error line.
+    const malformed = cli(["list"], "postgres://u:NOTASECRETMARK@[bad-host");
+    expect(malformed).toMatchObject({ code: 1, err: expect.stringMatching(/^error: /m) });
+    expect(malformed.err).not.toMatch(/^\s+at /m);
+    expect(malformed.out + malformed.err).not.toContain("NOTASECRETMARK");
     expect((await audits(tenantId)).map((a) => a.decided_by)).toEqual(["owner-cli", "owner-cli"]);
     const all = outputs.join("\n");
     for (const s of [TENANT_NAME, PERSON_NAME, ownerUrl.toString(), secret, ownerUrl.password]) {
