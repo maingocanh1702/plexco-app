@@ -1,4 +1,6 @@
 import {
+  SessionAnnounceAuthorizationError,
+  SessionAnnounceError,
   SessionCancelAuthorizationError,
   SessionCancelError,
   SessionCloseAuthorizationError,
@@ -1009,6 +1011,41 @@ const MAPPED_CASES: ReadonlyArray<readonly [Error, string, number]> = [
 ];
 
 describe("mapSessionCommandError", () => {
+  it("M-1 maps the three announce codes with their t(vi, en) pairs, and both announce error classes", async () => {
+    const COPY = [
+      [
+        "ANNOUNCE_DELIVERY_DISABLED",
+        409,
+        "Chưa thể gửi thông báo: hệ thống gửi tin đang tắt.",
+        "Announcements can't be delivered right now: message delivery is off.",
+      ],
+      ["INVALID_CHANNEL", 400, "Kênh thông báo không hợp lệ.", "Invalid announcement channel."],
+      ["SESSION_ALREADY_ENDED", 409, "Buổi chơi đã kết thúc.", "Session has already ended."],
+    ] as const;
+    for (const [code, statusCode, viText, enText] of COPY) {
+      for (const [lang, message] of [
+        ["vi", viText],
+        ["en", enText],
+      ] as const) {
+        const response = await runWithLang(lang, async () =>
+          mapSessionCommandError(new SessionAnnounceError(code, "internal detail")),
+        );
+        expect(response!.status).toBe(statusCode);
+        expect((await envelope(response!)).error).toMatchObject({ code, statusCode, message });
+      }
+    }
+    const suspended = mapSessionCommandError(new SessionAnnounceAuthorizationError());
+    expect(suspended!.status).toBe(403);
+    expect((await envelope(suspended!)).error).toMatchObject({ code: "TENANT_SUSPENDED" });
+    // The shared mapper is CRITICAL (7 session route flows): L4b only ADDS rows, so every
+    // pre-existing pinned row still maps exactly as before.
+    for (const [error, code, statusCode] of MAPPED_CASES) {
+      const mapped = mapSessionCommandError(error)!;
+      const { error: body } = await envelope(mapped);
+      expect([mapped.status, body]).toMatchObject([statusCode, { code, statusCode }]);
+    }
+  });
+
   it.each(MAPPED_CASES)("maps %s onto the pinned code+status", async (error, code, statusCode) => {
     const response = mapSessionCommandError(error);
     expect(response).not.toBeNull();

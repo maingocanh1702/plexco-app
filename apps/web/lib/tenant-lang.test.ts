@@ -130,6 +130,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/sessions/[id]/publish/route.ts": "a",
   "app/api/sessions/[id]/close/route.ts": "a",
   "app/api/sessions/[id]/cancel/route.ts": "a",
+  // (a) — announce (L4b) delegates to handleSessionCommand the same way and emits only ok(...).
+  "app/api/sessions/[id]/announce/route.ts": "a",
   // (a) — same wiring as the five above: both delegate to handleSessionCommand and call
   // withGuestNoteErrors (lib/session-guest-note-route.ts) INSIDE that handler, so both run
   // within runWithLang. Neither emits t() directly; the error mapping does.
