@@ -49,7 +49,7 @@ services:
       DB_EXPECTED_ROLE: app
       # Readonly DSN for the public discovery read (apps/web/lib/discovery-route-support.ts).
       DISCOVERY_DATABASE_URL: postgres://readonly:plexco_dev_readonly@postgres:5432/plexco
-      # Discovery ingress serves only /healthz + /discover* (apps/web/middleware.ts); web serves all.
+      # Discovery ingress serves only /healthz, /discover* and /api/discover* (apps/web/middleware.ts); web serves all.
     env_file:
       # secret dev (SEPAY_WEBHOOK_SECRET, GOOGLE_OAUTH_*, ...) — optional để
       # `docker compose up` chạy được trước khi copy .env.example → .env.
