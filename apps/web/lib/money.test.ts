@@ -1,3 +1,4 @@
+import { fmtMoney } from "@plexco/core";
 import { describe, expect, it } from "vitest";
 import { INT4_MAX, formatVnd, formatVndInput, parseVndInput } from "./money";
 
@@ -83,4 +84,15 @@ describe("formatVndInput / parseVndInput", () => {
     expect(parseVndInput("2147483647")).toBe(2147483647);
     expect(parseVndInput("2147483648")).toBeNaN();
   });
+});
+
+// L8 DM-9 (A1): the promotion DM renders its fee with @plexco/core's fmtMoney while the web renders
+// amounts with formatVnd; one amount must read the same on both surfaces over the int4 domain.
+describe("DM-9: fmtMoney (bot DM) === formatVnd (web) for every whole int4 amount class", () => {
+  it.each([0, 5, 999, 1000, 50000, 1234567, 100000000, INT4_MAX])(
+    "fmtMoney(%i) equals formatVnd of the same amount",
+    (amount) => {
+      expect(fmtMoney(amount)).toBe(formatVnd(amount));
+    },
+  );
 });

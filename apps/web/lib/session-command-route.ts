@@ -13,6 +13,7 @@ import {
   SessionUpdateError,
   authorize,
   guestNoteTenantForPerson,
+  hasLiveMembership,
   withTenant,
 } from "@plexco/db";
 import { err } from "./api-envelope";
@@ -121,6 +122,60 @@ export async function mayManageSessions(tenantId: string, personId: string): Pro
   return decision.allowed;
 }
 
+/** A per-PERSON quota (L8 P-13), keyed `<bucket>:<personId>` with the person from the cookie. */
+export interface PersonLimit {
+  bucket: string;
+  limit: number;
+  windowSeconds: number;
+}
+
+/** Self-join and join requests share ONE bucket; L10b's join-by-slug route spends the same one. */
+export const SESSION_JOIN_PERSON_LIMIT: Readonly<PersonLimit> = {
+  bucket: "session-join",
+  limit: 10,
+  windowSeconds: 3600,
+};
+export const JOIN_REQUEST_CANCEL_PERSON_LIMIT: Readonly<PersonLimit> = {
+  bucket: "join-request-cancel",
+  limit: 20,
+  windowSeconds: 3600,
+};
+
+/** True when this PERSON has exhausted `limit` (exported so L10b shares the join bucket). */
+export function personThrottled(limit: Readonly<PersonLimit>, personId: string): Promise<boolean> {
+  return rateLimited(`${limit.bucket}:${personId}`, limit.limit, limit.windowSeconds);
+}
+
+/** Route opt-ins for the entry gate. A route passes at most one association option. */
+export interface SessionCommandOptions {
+  /** Guest-note adapters: association through the note's own session. */
+  guestNoteSessionId?: string;
+  /** Player routes (L8 P-3): without session.manage, a live (active or guest) member of ?tenant=. */
+  selfService?: boolean;
+  /** Per-person quota (P-13), checked after association and language, before the tenant bucket. */
+  personLimit?: Readonly<PersonLimit>;
+}
+
+/**
+ * The opted-in association proof for a caller WITHOUT session.manage: the guest note's tenant, or
+ * ?tenant= itself when the caller is a live member there (one short withTenant read under RLS).
+ * Null = not associated (the one FORBIDDEN 403). An infrastructure error propagates.
+ */
+async function associatedTenant(
+  personId: string,
+  tenantId: string,
+  options: SessionCommandOptions,
+): Promise<string | null> {
+  if (options.guestNoteSessionId !== undefined) {
+    return guestNoteTenantForPerson(appDb().pool, personId, tenantId, options.guestNoteSessionId);
+  }
+  if (options.selfService !== true) return null;
+  const member = await withTenant(appDb().db, tenantId, (tx) =>
+    hasLiveMembership(tx, tenantId, personId),
+  );
+  return member ? tenantId : null;
+}
+
 /**
  * Rejects a commandId that cannot survive the trip to `processed_commands` intact.
  *
@@ -168,7 +223,7 @@ export interface SessionCommandContext {
 export async function resolveSessionCommandContext(
   request: Request,
   rateLimit: { bucket: string; limit: number },
-  options: { guestNoteSessionId?: string } = {},
+  options: SessionCommandOptions = {},
 ): Promise<Response | SessionCommandContext> {
   const session = await currentSession();
   if (!session) return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
@@ -199,16 +254,8 @@ export async function resolveSessionCommandContext(
 
   if (!(await mayManageSessions(tenantId, session.personId))) {
     // Only adapters opt in. This proves association; commands own permissions and actor-bound replay.
-    const guestTenant =
-      options.guestNoteSessionId === undefined
-        ? null
-        : await guestNoteTenantForPerson(
-            appDb().pool,
-            session.personId,
-            tenantId,
-            options.guestNoteSessionId,
-          );
-    if (guestTenant === null) {
+    const associated = await associatedTenant(session.personId, tenantId, options);
+    if (associated === null) {
       // Same 403 for missing, foreign or unrelated targets; no tenant-existence oracle.
       return err(
         "FORBIDDEN",
@@ -216,7 +263,7 @@ export async function resolveSessionCommandContext(
         403,
       );
     }
-    tenantId = guestTenant;
+    tenantId = associated;
   }
 
   // Language is resolvable HERE, and this line must stay ABOVE the per-tenant 429 below. The
@@ -240,9 +287,17 @@ export async function resolveSessionCommandContext(
   // drift apart silently. Read the contract and the threat model there.
   const lang: Lang = await resolveTenantLang(appDb().db, tenantId);
 
-  // Per-tenant limit (BE tech spec §3 "Rate Limits" scopes these per tenant), now reached only by
-  // an authorized actor for THAT tenant. Answered in the tenant's language, unlike v1.
-  if (await rateLimited(`${rateLimit.bucket}:${tenantId}`, rateLimit.limit, 60)) {
+  // The opt-in per-person limit first (P-13; the COOKIE person, never a body id), so a person over
+  // their own quota stops spending the tenant's shared bucket. Then the per-tenant limit (BE tech
+  // spec §3 "Rate Limits" scopes these per tenant), now reached only by an authorized actor for
+  // THAT tenant. Both answered in the tenant's language, unlike v1.
+  const personLimited =
+    options.personLimit !== undefined &&
+    (await personThrottled(options.personLimit, session.personId));
+  if (
+    personLimited ||
+    (await rateLimited(`${rateLimit.bucket}:${tenantId}`, rateLimit.limit, 60))
+  ) {
     return runWithLang(lang, async () =>
       err("RATE_LIMITED", t("Quá nhiều yêu cầu — đợi.", "Too many requests — wait."), 429),
     );
@@ -446,6 +501,12 @@ const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   ["REMOVE_REQUIRES_REVIEW", 409],
   ["REVERSAL_EXCEEDS_EFFECTIVE", 409],
   ["REVERSAL_NOT_SUPPORTED", 409],
+  // Web MVP Phase 3 lane L8 (M9 player self-join), raised as RosterMoneyError (P-4, P-10, P-11).
+  ["JOIN_REQUEST_NOT_FOUND", 404],
+  ["LEAVE_REQUIRES_HOST", 409],
+  ["REQUEST_DECIDED", 409],
+  ["REQUEST_EXPIRED", 409],
+  ["SESSION_NOT_JOINABLE", 400],
   // 400, not the 409 its "conflict" shape suggests. Transcribed verbatim from the §3 catalog
   // (feature_session_management_tech.md §3), which is authority here — this route does not get
   // to pick a status for a spec-pinned code. Since DD-131 OD-1 only cancel emits it: a refusal to
@@ -549,6 +610,22 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
     [
       "Chỉ hoàn tác được khoản thu tiền mặt hoặc chuyển khoản do chủ CLB ghi nhận.",
       "Only cash or host-attested transfer payments can be reversed here.",
+    ],
+  ],
+  // L8 (M9) copy, verbatim from readiness pin P-17. LEAVE_REQUIRES_HOST is PLAYER copy ("ask the
+  // host"): self-leave does not reuse the host-facing REMOVE_REQUIRES_REVIEW pair (P-4).
+  [
+    "SESSION_NOT_JOINABLE",
+    ["Buổi chơi không nhận đăng ký.", "This session is not open for joining."],
+  ],
+  ["REQUEST_DECIDED", ["Yêu cầu này đã được xử lý.", "This request has already been decided."]],
+  ["REQUEST_EXPIRED", ["Yêu cầu này đã hết hạn.", "This request has expired."]],
+  ["JOIN_REQUEST_NOT_FOUND", ["Không tìm thấy yêu cầu tham gia.", "Join request not found."]],
+  [
+    "LEAVE_REQUIRES_HOST",
+    [
+      "Bạn không thể tự rời buổi này, hãy nhờ chủ kèo.",
+      "You cannot leave this session yourself; ask the host.",
     ],
   ],
   [
@@ -713,7 +790,7 @@ export async function handleSessionCommand(
   request: Request,
   rateLimit: { bucket: string; limit: number },
   handler: (context: SessionCommandContext) => Promise<Response>,
-  options: { guestNoteSessionId?: string } = {},
+  options: SessionCommandOptions = {},
 ): Promise<Response> {
   const context = await resolveSessionCommandContext(request, rateLimit, options);
   if (context instanceof Response) return context;

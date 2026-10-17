@@ -88,6 +88,8 @@ export {
 } from "./roster-service.js";
 // Web MVP Phase 3 lane L8 (M9): player self-join, self-leave and FIFO waitlist promotion.
 export {
+  // The web entry gate's P-3 audience check (apps/web/lib/session-command-route.ts selfService).
+  hasLiveMembership,
   joinSession,
   leaveSession,
   type JoinSessionParams,
