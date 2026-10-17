@@ -18,7 +18,7 @@ describe("pathAllowedForRole (audit W-10)", () => {
     }
   });
 
-  it("discovery serves ONLY /healthz and /discover*", () => {
+  it("discovery serves ONLY /healthz, /discover* and the A-16 discovery read GETs", () => {
     expect(pathAllowedForRole("/healthz", "discovery")).toBe(true);
     expect(pathAllowedForRole("/discover", "discovery")).toBe(true);
     expect(pathAllowedForRole("/discover/abc", "discovery")).toBe(true);
@@ -29,14 +29,30 @@ describe("pathAllowedForRole (audit W-10)", () => {
       "/api/onboarding/start",
       "/healthz/",
       "/discoverx",
-      "/api/discover",
+      "/api/discoverx",
     ]) {
       expect(pathAllowedForRole(p, "discovery"), p).toBe(false);
     }
   });
 
-  it("the allowlist is exactly two anchored patterns (a third entry is a decision, not a drift)", () => {
-    expect(DISCOVERY_PATH_ALLOWLIST).toHaveLength(2);
+  it("A-16: discovery serves the three read GETs, never the join or /api/sessions; web and worker unchanged", () => {
+    const allowed = ["/api/discover", "/api/discover/abc", "/api/discover/share/abc"];
+    const denied = [
+      "/api/public-listings/abc/join",
+      "/api/sessions",
+      "/api/sessions/abc/join",
+      "/api/discover/x/join",
+      "/api/discover/share/x/y",
+    ];
+    for (const p of allowed) expect(pathAllowedForRole(p, "discovery"), p).toBe(true);
+    for (const p of denied) expect(pathAllowedForRole(p, "discovery"), p).toBe(false);
+    for (const role of ["web", "worker"] as const) {
+      for (const p of [...allowed, ...denied]) expect(pathAllowedForRole(p, role), p).toBe(true);
+    }
+  });
+
+  it("the allowlist is exactly five anchored patterns (a sixth entry is a decision, not a drift)", () => {
+    expect(DISCOVERY_PATH_ALLOWLIST).toHaveLength(5);
   });
 
   it("parseProcessRole fails closed to web (the surface-serving role) on junk, and recognises discovery/worker", () => {

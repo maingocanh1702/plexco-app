@@ -11,7 +11,8 @@
  * PROCESS_ROLE=discovery, anything outside the discovery surface is 404 at the edge, before a
  * handler or a DB connection is touched. The surface is /healthz (Fly http_check) and /discover*
  * (the public read model route, DD-12 — not built yet; reserved here so it needs no middleware
- * change to land).
+ * change to land), plus the three public read GETs /api/discover, /api/discover/<id> and
+ * /api/discover/share/<slug>; the join POST and every /api/sessions path stay web-only.
  *
  * CSP NONCE (backlog `web-csp-script-src-nonce`, gap left open by lane A6 on purpose) — behind
  * CSP_SCRIPT_NONCE_ENABLED="true". The App Router bootstraps every page with inline scripts, so
@@ -25,7 +26,13 @@
 
 export type ProcessRole = "web" | "discovery" | "worker";
 
-export const DISCOVERY_PATH_ALLOWLIST: readonly RegExp[] = [/^\/healthz$/, /^\/discover(\/|$)/];
+export const DISCOVERY_PATH_ALLOWLIST: readonly RegExp[] = [
+  /^\/healthz$/,
+  /^\/discover(\/|$)/,
+  /^\/api\/discover$/,
+  /^\/api\/discover\/[^/]+$/,
+  /^\/api\/discover\/share\/[^/]+$/,
+];
 
 export function parseProcessRole(raw: string | undefined): ProcessRole {
   const v = raw?.trim().toLowerCase();
