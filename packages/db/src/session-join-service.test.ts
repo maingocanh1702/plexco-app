@@ -982,4 +982,46 @@ describe("joinSession and promotion derive the charge (DD-39 self_join, promotio
       ]);
     },
   );
+
+  // R-R5-b SHOULD_FIX-1: the selector takes only a seat-holding (active|guest) membership, the set
+  // the 0062 derivation definer accepts, so an ended one no longer rolls the opener back.
+  it.each(["left", "merged"] as const)(
+    "R-R5-b leave in gender mode, %s-membership head: the leave commits, that head stays waitlisted with no charge, the next is promoted at price_female",
+    async (ended) => {
+      const { tenantId, sessionId } = await world({ slotsMax: 1 });
+      await priceByGender(sessionId);
+      const [a, head, female] = [
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+      ];
+      const ra = await join(tenantId, a.personId, sessionId);
+      const rh = await join(tenantId, head.personId, sessionId);
+      const rf = await join(tenantId, female.personId, sessionId);
+      await storeGender(head.personId, "male");
+      await storeGender(female.personId, "female");
+      // Owner-forged: latent today, no code writes 'left' or 'merged' on a waitlisted membership.
+      const into = ended === "merged" ? (await seedMember(tenantId)).membershipId : null;
+      await ctx.owner.query(
+        `UPDATE memberships SET status = $2, merged_into_membership_id = $3 WHERE id = $1`,
+        [head.membershipId, ended, into],
+      );
+      const seen = (await events(tenantId, sessionId)).length;
+
+      await leave(tenantId, a.personId, sessionId);
+
+      expect(await playerRow(tenantId, ra.playerId)).toMatchObject({ status: "left" });
+      expect(await playerRow(tenantId, rh.playerId)).toMatchObject({
+        status: "waitlisted",
+        waitlist_position: 1,
+      });
+      expect(await chargesOf(tenantId, rh.playerId)).toEqual([]);
+      const promoted = await chargesOf(tenantId, rf.playerId);
+      expect(promoted).toEqual([{ id: expect.any(String), amount_due: 80000, status: "open" }]);
+      expect((await events(tenantId, sessionId)).slice(seen).map((e) => e.type)).toEqual([
+        "player.removed",
+        "player.promoted",
+      ]);
+    },
+  );
 });

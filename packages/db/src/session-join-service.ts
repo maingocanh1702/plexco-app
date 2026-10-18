@@ -420,19 +420,24 @@ export async function promoteFromWaitlist(
     session.slotsMax === null ||
     (await getSessionOccupancy(tx, sessionId)) < session.slotsMax
   ) {
+    // R-R5-b: only a membership that may hold a seat (active|guest, the set host-add, liveMembership
+    // and the 0062 derivation definer accept); a left / merged one stays waitlisted, never promoted.
+    // The lock stays on players only (memberships are never locked FOR UPDATE here, 4.2 order).
     const [next] = await tx
       .select({ id: players.id, membershipId: players.membershipId })
       .from(players)
+      .innerJoin(memberships, eq(memberships.id, players.membershipId))
       .where(
         and(
           eq(players.sessionId, sessionId),
           eq(players.status, "waitlisted"),
+          inArray(memberships.status, ["active", "guest"]),
           skipped.length > 0 ? notInArray(players.id, skipped) : undefined,
         ),
       )
       .orderBy(players.waitlistPosition, players.joinedAt, players.id)
       .limit(1)
-      .for("update");
+      .for("update", { of: players });
     if (next === undefined) break;
     if (await rejoinUnprovable(tx, sessionId, next.id)) {
       skipped.push(next.id);

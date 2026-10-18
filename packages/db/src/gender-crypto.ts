@@ -17,14 +17,21 @@ import { authKeyVersion, deriveAesKey, resolveAuthSecretKey } from "./secret-key
 export type Gender = "male" | "female" | "other" | "undisclosed";
 
 // Mirrors GENDER_VALUES in packages/core/src/api-contract.ts: packages/db does not depend on @plexco/core.
-const GENDERS: ReadonlySet<string> = new Set(["male", "female", "other", "undisclosed"]);
+const GENDERS: readonly Gender[] = ["male", "female", "other", "undisclosed"];
 const GENDER_KEY_INFO = "plexco:person-gender-enc:v1";
-const MIN_BLOB_BYTES = 12 + 16 + 1;
+// R-R5-b S-1: every value seals as ONE fixed-length plaintext (the UTF-8 value, then zero bytes up to
+// 16; the longest value has 11), so every blob is 12 + 16 + 16 = 44 bytes and its length tells nothing.
+const PADDED_BYTES = 16;
 
 /** The fixed message of the Error the self-read raises on `{ ok: false }` (U-12): no person data. */
 export const GENDER_OPEN_FAILED = "gender ciphertext could not be opened";
 
 const aad = (personId: string) => Buffer.from(`plexco:person-gender-aad:v1:${personId}`, "utf8");
+const padded = (gender: string) =>
+  Buffer.concat([
+    Buffer.from(gender, "utf8"),
+    Buffer.alloc(PADDED_BYTES - Buffer.byteLength(gender)),
+  ]);
 
 async function genderKey(): Promise<Buffer> {
   return deriveAesKey(await resolveAuthSecretKey(), GENDER_KEY_INFO);
@@ -34,20 +41,23 @@ export async function encryptPersonGender(
   personId: string,
   gender: Gender,
 ): Promise<{ enc: Buffer; keyVersion: string }> {
-  const enc = sealAesGcm(await genderKey(), Buffer.from(gender, "utf8"), aad(personId));
+  const enc = sealAesGcm(await genderKey(), padded(gender), aad(personId));
   return { enc, keyVersion: authKeyVersion() };
 }
 
-/** Checks the stored key version BEFORE any open (a NULL version never matches); KMS errors fail too. */
+/** Checks the stored key version BEFORE any open (a NULL version never matches); KMS errors fail too,
+ *  and so does a blob under 29 bytes (openAesGcm's own guard throws inside the try). */
 export async function openPersonGender(
   personId: string,
   enc: Buffer,
   keyVersion: string | null,
 ): Promise<{ ok: true; gender: Gender } | { ok: false }> {
-  if (keyVersion !== authKeyVersion() || enc.length < MIN_BLOB_BYTES) return { ok: false };
+  if (keyVersion !== authKeyVersion()) return { ok: false };
   try {
-    const value = openAesGcm(await genderKey(), enc, aad(personId)).toString("utf8");
-    return GENDERS.has(value) ? { ok: true, gender: value as Gender } : { ok: false };
+    const plain = openAesGcm(await genderKey(), enc, aad(personId));
+    // The pad is checked and stripped in one step: only the exact padded form of one of the four opens.
+    const gender = GENDERS.find((g) => padded(g).equals(plain));
+    return gender === undefined ? { ok: false } : { ok: true, gender };
   } catch {
     return { ok: false };
   }
