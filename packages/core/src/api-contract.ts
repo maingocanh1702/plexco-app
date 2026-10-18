@@ -103,6 +103,7 @@ export const API_ERROR_CODES = [
   "CAPACITY_BELOW_ROSTER",
   "CHANNEL_NOT_LINKED",
   "CHARGE_ALREADY_SETTLED",
+  "CHARGE_DERIVATION_UNAVAILABLE",
   "CHARGE_NOT_PAYABLE",
   "CLOSE_BLOCKED_OPEN_DEBT",
   "COMMAND_ID_CONFLICT",
@@ -110,11 +111,13 @@ export const API_ERROR_CODES = [
   "CSRF_INVALID",
   "DISCOVERY_RATE_LIMITED",
   "FORBIDDEN",
+  "GENDER_FORBIDDEN",
   "GUEST_NOTE_LIMIT_REACHED",
   "GUEST_NOTE_NOT_FOUND",
   "INVALID_BODY",
   "INVALID_CHANNEL",
   "INVALID_FILTER",
+  "INVALID_GENDER",
   "INVALID_TIME_RANGE",
   "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
@@ -154,6 +157,13 @@ export const API_ERROR_CODES = [
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
+
+/**
+ * The DD-39 self-declared gender value set (decisions.md:542-556), in its order. The settings API
+ * rejects anything else with INVALID_GENDER; packages/db/src/gender-crypto.ts mirrors it (packages/db
+ * does not depend on @plexco/core).
+ */
+export const GENDER_VALUES = ["male", "female", "other", "undisclosed"] as const;
 
 /** One entry of CLOSE_BLOCKED_OPEN_DEBT's list: a player whose charge still has an open balance.
  *  Id + display name ONLY (DD-131 OD-1): never an amount, a membership/person id or a contact. */
