@@ -875,7 +875,7 @@ const priceByGender = (sessionId: string) =>
     sessionId,
   ]);
 
-describe("joinSession derives the charge (DD-39 self_join)", () => {
+describe("joinSession and promotion derive the charge (DD-39 self_join, promotion)", () => {
   const saved = new Map(GENDER_ENV.map((k) => [k, process.env[k]]));
   beforeAll(() => {
     process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
@@ -929,4 +929,57 @@ describe("joinSession derives the charge (DD-39 self_join)", () => {
     expect((await chargesOf(tenantId, first.playerId))[0]).toMatchObject({ amount_due: 120000 });
     expect((await chargesOf(tenantId, next.playerId))[0]).toMatchObject({ amount_due: 80000 });
   });
+
+  // L11 step 5 (T-6 leaveSession matrix, T-21 fee read-back): promotion derives too (RD-1, RD-15).
+  it.each(["corrupt", "retired", "foreign"] as const)(
+    "T-6/T-21 leave, %s head: the head stays waitlisted (no charge, no DM), ONE waitlist.charge_derivation_failed, the next is promoted at price_male with the fee read back",
+    async (how) => {
+      const { tenantId, sessionId } = await world({ slotsMax: 1 });
+      await priceByGender(sessionId);
+      const [a, head, male] = [
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+      ];
+      const ra = await join(tenantId, a.personId, sessionId);
+      const rh = await join(tenantId, head.personId, sessionId);
+      const rm = await join(tenantId, male.personId, sessionId);
+      await storeGender(head.personId, how);
+      await storeGender(male.personId, "male");
+      const seen = (await events(tenantId, sessionId)).length;
+
+      await leave(tenantId, a.personId, sessionId);
+
+      expect(await playerRow(tenantId, ra.playerId)).toMatchObject({ status: "left" });
+      expect(await playerRow(tenantId, rh.playerId)).toMatchObject({
+        status: "waitlisted",
+        waitlist_position: 1,
+      });
+      expect(await chargesOf(tenantId, rh.playerId)).toEqual([]);
+      const promoted = await chargesOf(tenantId, rm.playerId);
+      expect(promoted).toEqual([{ id: expect.any(String), amount_due: 120000, status: "open" }]);
+      expect((await events(tenantId, sessionId)).slice(seen)).toEqual([
+        expect.objectContaining({ type: "player.removed" }),
+        {
+          type: "waitlist.charge_derivation_failed",
+          payload: {
+            session_id: sessionId,
+            player_id: rh.playerId,
+            membership_id: head.membershipId,
+            reason: "CHARGE_DERIVATION_UNAVAILABLE",
+          },
+        },
+        {
+          type: "player.promoted",
+          payload: {
+            session_id: sessionId,
+            player_id: rm.playerId,
+            membership_id: male.membershipId,
+            charge_id: promoted[0]!.id,
+            amount_due: 120000,
+          },
+        },
+      ]);
+    },
+  );
 });

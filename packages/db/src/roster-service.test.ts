@@ -595,7 +595,7 @@ async function storeGender(personId: string, how: GenderSeed) {
   );
 }
 
-describe("addMemberToSession derives the charge (DD-39 host_add)", () => {
+describe("addMemberToSession and removal promotion derive the charge (DD-39 host_add, promotion)", () => {
   const saved = new Map(GENDER_ENV.map((k) => [k, process.env[k]]));
   beforeAll(() => {
     process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
@@ -641,4 +641,46 @@ describe("addMemberToSession derives the charge (DD-39 host_add)", () => {
       expect(await fx.counts(w.tenantId)).toEqual(before);
     },
   );
+
+  it("T-6 removePlayerFromSession, corrupt head: the head stays waitlisted with no charge, ONE failure event, the next is promoted with its own derived charge", async () => {
+    const { tenantId, actor, sessionId } = await world({ slotsMax: 1, priceAmount: 100000 });
+    await ctx.owner.query(
+      `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
+      [sessionId],
+    );
+    const a = await add(tenantId, actor, sessionId, { displayName: "A" });
+    const headMembership = await fx.seedMembership(tenantId);
+    const head = await add(tenantId, actor, sessionId, { membershipId: headMembership });
+    const next = await add(tenantId, actor, sessionId, { displayName: "W2" });
+    const p = await fx.row(`SELECT person_id FROM memberships WHERE id = $1`, [headMembership]);
+    await storeGender(p.person_id as string, "corrupt");
+
+    await remove(tenantId, actor, sessionId, a.playerId);
+
+    const status = (id: string) =>
+      fx.row(`SELECT status, waitlist_position FROM players WHERE id = $1`, [id]);
+    expect(await status(a.playerId)).toMatchObject({ status: "left" });
+    expect(await status(head.playerId)).toEqual({ status: "waitlisted", waitlist_position: 1 });
+    expect(await status(next.playerId)).toEqual({ status: "active", waitlist_position: null });
+    const { rows: open } = await ctx.owner.query(
+      `SELECT player_id, amount_due FROM charges WHERE session_id = $1 AND status <> 'void'`,
+      [sessionId],
+    );
+    expect(open).toEqual([{ player_id: next.playerId, amount_due: 100000 }]);
+    const { rows: ev } = await ctx.owner.query(
+      `SELECT type, payload FROM outbox_events WHERE aggregate_id = $1 ORDER BY sequence`,
+      [sessionId],
+    );
+    expect(ev.slice(-3).map((e: { type: string }) => e.type)).toEqual([
+      "player.removed",
+      "waitlist.charge_derivation_failed",
+      "player.promoted",
+    ]);
+    expect(ev[ev.length - 2].payload).toEqual({
+      session_id: sessionId,
+      player_id: head.playerId,
+      membership_id: headMembership,
+      reason: "CHARGE_DERIVATION_UNAVAILABLE",
+    });
+  });
 });

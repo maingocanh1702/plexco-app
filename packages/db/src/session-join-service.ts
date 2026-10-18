@@ -1,6 +1,7 @@
 import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import { charges, memberships, players, sessions } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
+import { deriveChargeAmount } from "./charge-derivation.js";
 import type { Db, Tx } from "./client.js";
 import { closePendingJoinRequestOnExit, openJoinRequest } from "./join-request-service.js";
 import {
@@ -402,8 +403,9 @@ export async function leaveSession(
  * holds the session row lock. Only while the session is open and before its start: fills every
  * free seat (slots_max NULL = unlimited) in (waitlist_position, joined_at, id) order, skipping a
  * P-8 unprovable candidate (it stays waitlisted). Each promoted row: active, position cleared,
- * joined_at untouched, ONE charge at the current price, ONE `player.promoted` whose amount_due is
- * read back from that charge. No renumbering, and no money moves. Returns how many it promoted.
+ * joined_at untouched, ONE charge at the derived price (DD-39), ONE `player.promoted` whose
+ * amount_due is read back from that charge. An underivable candidate stays waitlisted (RD-1). No
+ * renumbering, and no money moves. Returns how many it promoted.
  */
 export async function promoteFromWaitlist(
   tx: Tx,
@@ -436,6 +438,31 @@ export async function promoteFromWaitlist(
       skipped.push(next.id);
       continue;
     }
+    // DD-39 call site 2 (readiness 4.4 / 4.5, RD-1): derive BEFORE the candidate's first write. A
+    // stored gender that cannot be opened leaves this candidate waitlisted (same position, no
+    // charge, no DM), writes ONE audit event and moves on to the next FIFO candidate; the opener's
+    // seat-freeing write still commits. Never a fallback price.
+    const derived = await deriveChargeAmount(tx, {
+      context: "promotion",
+      sessionId,
+      membershipId: next.membershipId,
+      actorPersonId: null,
+      prices: {
+        priceAmount: session.price,
+        priceMale: session.priceMale,
+        priceFemale: session.priceFemale,
+      },
+    });
+    if (!derived.ok) {
+      await emitSessionEvent(tx, tenantId, sessionId, "waitlist.charge_derivation_failed", {
+        session_id: sessionId,
+        player_id: next.id,
+        membership_id: next.membershipId,
+        reason: derived.code,
+      });
+      skipped.push(next.id);
+      continue;
+    }
     await tx
       .update(players)
       .set({ status: "active", waitlistPosition: null })
@@ -446,7 +473,7 @@ export async function promoteFromWaitlist(
       sessionId,
       next.id,
       next.membershipId,
-      session.price,
+      derived.amount,
     );
     const [charge] = await tx
       .select({ amountDue: charges.amountDue })

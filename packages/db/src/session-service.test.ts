@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessions } from "../schema.js";
+import { encryptPersonGender } from "./gender-crypto.js";
+import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
 import {
   createSession,
   publishSession,
@@ -2050,6 +2052,48 @@ async function withPromotedInsertRefused(run: () => Promise<unknown>): Promise<s
   }
 }
 
+// L11 step 5 (readiness p3-m9-gender-pricing T-6): a waitlist head whose stored gender cannot be
+// opened stays waitlisted; the next FIFO candidate is promoted with its own derived charge (RD-1).
+const GENDER_ENV = ["ENCRYPTION_KEY", "KMS_PROVIDER", "KMS_KEY_ID"];
+async function withGenderKey(body: () => Promise<void>): Promise<void> {
+  const saved = new Map(GENDER_ENV.map((k) => [k, process.env[k]]));
+  process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
+  for (const k of GENDER_ENV.slice(1)) delete process.env[k];
+  __resetAuthSecretCacheForTest();
+  try {
+    await body();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    __resetAuthSecretCacheForTest();
+  }
+}
+/** Owner seed: a consented male blob with its last byte flipped on the head's person + gender prices. */
+async function corruptHead(sessionId: string, membershipId: string): Promise<void> {
+  const { person_id: personId } = await row(`SELECT person_id FROM memberships WHERE id = $1`, [
+    membershipId,
+  ]);
+  const { enc, keyVersion } = await encryptPersonGender(personId as string, "male");
+  enc.writeUInt8(enc.readUInt8(enc.length - 1) ^ 0xff, enc.length - 1);
+  await ctx.owner.query(
+    `UPDATE persons SET gender_enc = $2, gender_key_version = $3, gender_pricing_consent = true
+      WHERE id = $1`,
+    [personId, enc, keyVersion],
+  );
+  await ctx.owner.query(
+    `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
+    [sessionId],
+  );
+}
+const derivationFailed = (sessionId: string, playerId: string, membershipId: string) => ({
+  session_id: sessionId,
+  player_id: playerId,
+  membership_id: membershipId,
+  reason: "CHARGE_DERIVATION_UNAVAILABLE",
+});
+
 describe("updateSession", () => {
   const future = () => new Date(Date.now() + 24 * 3600 * 1000);
 
@@ -2541,6 +2585,51 @@ describe("updateSession", () => {
       expect(allocations.n).toBe(0);
     },
   );
+
+  it("T-6 updateSession slots_max 1 -> 2: a corrupt-gender head stays waitlisted (no charge, no DM, one waitlist.charge_derivation_failed) and the next FIFO candidate is promoted at its own derived charge", () =>
+    withGenderKey(async () => {
+      const tenantId = await seedTenant("active", "active");
+      const { sessionId, version } = await seedSession(tenantId, {
+        slotsMax: 1,
+        priceAmount: 90000,
+      });
+      await seedActivePlayer(tenantId, sessionId);
+      const head = await seedActivePlayer(tenantId, sessionId);
+      const next = await seedActivePlayer(tenantId, sessionId);
+      for (const [id, position] of [
+        [head, 1],
+        [next, 2],
+      ] as const) {
+        await ctx.owner.query(
+          `UPDATE players SET status = 'waitlisted', waitlist_position = $2 WHERE id = $1`,
+          [id, position],
+        );
+      }
+      const { membership_id: headMembership } = await row(
+        `SELECT membership_id FROM players WHERE id = $1`,
+        [head],
+      );
+      await corruptHead(sessionId, headMembership as string);
+
+      const result = await update(tenantId, { sessionId, expectedVersion: version, slotsMax: 2 });
+
+      expect(result).toMatchObject({ version: version + 1, replayed: false });
+      expect(await sessionState(sessionId)).toMatchObject({ slots_max: 2, version: version + 1 });
+      expect(
+        await row(`SELECT status, waitlist_position FROM players WHERE id = $1`, [head]),
+      ).toEqual({ status: "waitlisted", waitlist_position: 1 });
+      expect(
+        await rows(`SELECT player_id, amount_due FROM charges WHERE session_id = $1`, [sessionId]),
+      ).toEqual([{ player_id: next, amount_due: 90000 }]);
+      const events = await updatedEvents(sessionId);
+      expect(events.map((e) => e.type)).toEqual([
+        "session.updated",
+        "waitlist.charge_derivation_failed",
+        "player.promoted",
+      ]);
+      expect(events[1].payload).toEqual(derivationFailed(sessionId, head, headMembership));
+      expect(events[2].payload).toMatchObject({ player_id: next, amount_due: 90000 });
+    }));
 
   it("DT-10 rollback (capacity): a slots_max raise whose player.promoted insert fails rolls back whole (slots_max, version, events, ledger, waitlist and charges unchanged)", async () => {
     const tenantId = await seedTenant("active", "active");
@@ -5325,6 +5414,35 @@ describe("guest notes", () => {
       amount_due: 120000,
     });
   });
+
+  it("T-6 deleteGuestNote: a corrupt-gender head stays waitlisted (no charge, no DM, one waitlist.charge_derivation_failed), the next FIFO candidate is promoted and the delete commits", () =>
+    withGenderKey(async () => {
+      const sessionId = await seedSession(ctx.tenantA, { slotsMax: 2 });
+      const personId = await seedPerson(ctx.tenantA, sessionId);
+      const created = await create(ctx.tenantA, personId, { sessionId, guestName: "Khách 1" });
+      const w1 = await seedWaitlisted(sessionId, 1);
+      const w2 = await seedWaitlisted(sessionId, 2);
+      await corruptHead(sessionId, w1.membershipId);
+
+      await remove(ctx.tenantA, personId, { sessionId, noteId: created.noteId });
+
+      expect(await notesOf(sessionId)).toHaveLength(0);
+      expect(
+        await row(`SELECT status, waitlist_position FROM players WHERE id = $1`, [w1.playerId]),
+      ).toEqual({ status: "waitlisted", waitlist_position: 1 });
+      expect(
+        await rows(`SELECT player_id, amount_due FROM charges WHERE session_id = $1`, [sessionId]),
+      ).toEqual([{ player_id: w2.playerId, amount_due: 120000 }]);
+      const events = await eventsOf(sessionId);
+      expect(events.map((e) => e.type)).toEqual([
+        "guest_note.created",
+        "guest_note.deleted",
+        "waitlist.charge_derivation_failed",
+        "player.promoted",
+      ]);
+      expect(events[2].payload).toEqual(derivationFailed(sessionId, w1.playerId, w1.membershipId));
+      expect(events[3].payload).toMatchObject({ player_id: w2.playerId, amount_due: 120000 });
+    }));
 
   it("DT-10 rollback (guest-note delete): a failing player.promoted insert rolls the delete back whole (note kept, no new event, still waitlisted, no charge)", async () => {
     const sessionId = await seedSession(ctx.tenantA, { slotsMax: 2 });
