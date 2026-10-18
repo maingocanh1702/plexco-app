@@ -92,6 +92,7 @@ describe("GET /api/me/profile", () => {
       profile: { displayName: "Lan", gender: "female", genderConsent: true },
       genderCollection: true,
     });
+    expect((await GET(get())).headers.get("cache-control")).toBe(NO_STORE);
   });
 
   it("OFF: a stored gender comes back unmasked, so the OFF remove button can show", async () => {
@@ -104,6 +105,7 @@ describe("GET /api/me/profile", () => {
       profile: { displayName: "Lan", gender: "male", genderConsent: false },
       genderCollection: false,
     });
+    expect((await GET(get())).headers.get("cache-control")).toBe(NO_STORE);
   });
 
   it("404 when the account has no active Person", async () => {

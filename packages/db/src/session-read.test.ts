@@ -472,7 +472,8 @@ describe("getSessionDetail", () => {
     const single = await seedSession(ctx.tenantA, { startsAt: "2036-01-02T10:00:00Z" });
     const g = await getSessionDetail(ctx.appDb.db, { tenantId: ctx.tenantA, sessionId: gendered });
     expect([g!.priceAmount, g!.priceMale, g!.priceFemale]).toEqual([50000, 120000, 80000]);
-    // Exact key sets: any added gender or per-gender key on the detail or on a player fails.
+    // Exact top-level key sets of the detail and of a player: an added gender or per-gender key
+    // there fails. Nested keys are not pinned: players[0].charge is null (no charges row seeded).
     expect(Object.keys(g!).sort()).toEqual(
       "allowPlayerInvite area counts createdAt endsAt guestNotes id joinPolicy players priceAmount priceFemale priceMale skillLevel slotsMax sportId sportKey sportName startsAt status timezone updatedAt venueAddress venueName version visibility"
         .split(" ")
