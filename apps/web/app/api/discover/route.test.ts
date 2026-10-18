@@ -37,6 +37,11 @@ const ROW = {
   age_min: null,
   age_max: null,
 };
+// DD-39 4.6 (T-20): the twelve exact keys no public JSON may carry (gender_restriction is DD-41).
+const GENDER_KEYS =
+  `gender_enc gender_key_version gender_pricing_consent price_male price_female genderEnc
+  genderKeyVersion genderPricingConsent priceMale priceFemale gender genderConsent`.split(/\s+/);
+const GENDER_LEAK: object = Object.fromEntries(GENDER_KEYS.map((k) => [k, 1]));
 // Columns outside the whitelist: the key-by-key mapper must never serve them (readiness 4.4).
 const LEAKY = { ...ROW, tenant_id: TENANT, session_id: SESSION, confirmed_count: 7, slots_max: 10 };
 const DTO = {
@@ -89,7 +94,7 @@ afterEach(() => {
 describe("GET /api/discover", () => {
   it("A-5: the whitelist page { items, nextCursor } in the DD-60 envelope, no-store; the cursor resumes the keyset", async () => {
     vi.mocked(listDiscoveryListings).mockResolvedValueOnce({
-      rows: [LEAKY, { ...ROW, public_listing_id: ID2, title: "Evening drills" }],
+      rows: [LEAKY, { ...ROW, ...GENDER_LEAK, public_listing_id: ID2, title: "Evening drills" }],
       next: NEXT,
     });
     const res = await get("?sport=pickleball&available_only=true&limit=2");
@@ -108,6 +113,7 @@ describe("GET /api/discover", () => {
     for (const hidden of [TENANT, SESSION, "confirmed", "slots_max", "slotsMax"]) {
       expect(text).not.toContain(hidden);
     }
+    for (const k of GENDER_KEYS) expect(text).not.toContain(`"${k}"`);
     expect(decodeDiscoveryCursor(body.data.nextCursor)).toEqual(NEXT);
     expect(listDiscoveryListings).toHaveBeenCalledWith(POOL, {
       sport: "pickleball",

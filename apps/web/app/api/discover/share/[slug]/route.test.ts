@@ -36,7 +36,12 @@ const ROW = {
   age_max: null,
 };
 // Columns outside the whitelist: the key-by-key mapper must never serve them (readiness 4.4).
-const LEAKY = { ...ROW, tenant_id: TENANT, session_id: SESSION, slots_max: 10 };
+// DD-39 4.6 (T-20): the twelve exact keys no public JSON may carry (gender_restriction is DD-41).
+const GENDER_KEYS =
+  `gender_enc gender_key_version gender_pricing_consent price_male price_female genderEnc
+  genderKeyVersion genderPricingConsent priceMale priceFemale gender genderConsent`.split(/\s+/);
+const GENDER_LEAK: object = Object.fromEntries(GENDER_KEYS.map((k) => [k, 1]));
+const LEAKY = { ...ROW, ...GENDER_LEAK, tenant_id: TENANT, session_id: SESSION, slots_max: 10 };
 const DTO = {
   publicListingId: ID,
   sportKey: "pickleball",
@@ -93,6 +98,7 @@ describe("GET /api/discover/share/[slug]", () => {
     });
     expect(Object.keys(body.data.listing).sort()).toEqual(Object.keys(DTO).sort());
     for (const hidden of [TENANT, SESSION, SLUG, "slots_max"]) expect(text).not.toContain(hidden);
+    for (const k of GENDER_KEYS) expect(text).not.toContain(`"${k}"`);
     expect(readDiscoveryListingByShareSlug).toHaveBeenCalledWith(POOL, SLUG);
   });
 

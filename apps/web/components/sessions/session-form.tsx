@@ -112,7 +112,8 @@ export function SessionForm(props: SessionFormProps) {
     };
   const byGender = values.priceMode === "gender";
 
-  const errorList = Object.values(errors);
+  // Deduped: two fields can carry one message (both per-gender prices), and the message is the key.
+  const errorList = [...new Set(Object.values(errors))];
   const sportOptions = [
     ...(mode === "create" ? [{ value: "", label: t("— Chọn môn —", "— Choose a sport —") }] : []),
     ...sports.map((s) => ({ value: s.id, label: s.name })),

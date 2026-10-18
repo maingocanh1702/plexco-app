@@ -17,9 +17,9 @@
 const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 } as const;
 export type LogLevel = keyof typeof LEVELS;
 
-/** Keys whose VALUES are never written, whatever they contain (case-insensitive substring). */
+/** Keys whose VALUES are never written, whatever they contain (case-insensitive substring); gender = DD-39 PII. */
 const REDACT_KEY =
-  /token|secret|cookie|handoff|password|authorization|verifier|nonce|code|state|key|hash/i;
+  /token|secret|cookie|handoff|password|authorization|verifier|nonce|code|state|key|hash|gender/i;
 
 export function parseLogLevel(raw: string | undefined): LogLevel {
   const v = raw?.trim().toLowerCase();

@@ -42,6 +42,11 @@ const OTHER = "66666666-6666-4666-8666-666666666666";
 const IP = "203.0.113.7";
 const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+// DD-39 4.6 (T-20): the twelve exact keys no public JSON may carry (gender_restriction is DD-41).
+const GENDER_KEYS =
+  `gender_enc gender_key_version gender_pricing_consent price_male price_female genderEnc
+  genderKeyVersion genderPricingConsent priceMale priceFemale gender genderConsent`.split(/\s+/);
+const GENDER_LEAK: object = Object.fromEntries(GENDER_KEYS.map((k) => [k, 1]));
 const BODY = JSON.stringify({ commandId: "cmd-1" });
 const JOINED = {
   outcome: "active",
@@ -149,6 +154,7 @@ describe("POST /api/public-listings/:publicListingId/join (L10b, readiness 4.6)"
       publicListingId: OTHER,
     });
     vi.mocked(joinSession).mockResolvedValueOnce({
+      ...GENDER_LEAK,
       outcome: "waitlisted",
       playerId: PLAYER,
       waitlistPosition: 3,
