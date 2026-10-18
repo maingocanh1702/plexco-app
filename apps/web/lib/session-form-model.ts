@@ -16,6 +16,10 @@ export interface SessionFormValues {
   venueAddress: string;
   area: string;
   price: string;
+  /** "gender": priceMale / priceFemale apply; an empty side is null (never 0) and falls back to `price`. */
+  priceMode: "single" | "gender";
+  priceMale: string;
+  priceFemale: string;
   slotsUnlimited: boolean;
   slotsMax: string;
   visibility: "private" | "public";
@@ -38,6 +42,9 @@ export const emptyFormValues = (): SessionFormValues => ({
   venueAddress: "",
   area: "",
   price: "0",
+  priceMode: "single",
+  priceMale: "",
+  priceFemale: "",
   slotsUnlimited: true,
   slotsMax: "",
   visibility: "private",
@@ -53,6 +60,9 @@ export function valuesFromSession(s: SessionDetailDto): SessionFormValues {
     venueAddress: s.venueAddress ?? "",
     area: s.area ?? "",
     price: formatVndInput(s.priceAmount),
+    priceMode: s.priceMale !== null || s.priceFemale !== null ? "gender" : "single",
+    priceMale: formatVndInput(s.priceMale),
+    priceFemale: formatVndInput(s.priceFemale),
     slotsUnlimited: s.slotsMax === null,
     slotsMax: s.slotsMax === null ? "" : String(s.slotsMax),
     visibility: s.visibility === "public" ? "public" : "private",
@@ -68,6 +78,10 @@ function slotsOf(v: SessionFormValues): number | null {
   const n = Number(digits);
   return n >= 1 && n <= INT4_MAX ? n : Number.NaN;
 }
+
+/** A per-gender price as sent: null in single mode or when left empty (never 0); NaN = invalid. */
+const genderSide = (v: SessionFormValues, raw: string): number | null =>
+  v.priceMode === "gender" ? parseVndInput(raw) : null;
 
 const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.trim());
 
@@ -167,6 +181,18 @@ export function validateForm(
   if (price === null) e.price = t("Nhập giá (0 nếu miễn phí).", "Enter a price (0 if free).");
   else if (Number.isNaN(price)) e.price = t("Giá không hợp lệ.", "The price is not valid.");
 
+  // Gender mode: the base price above stays required (it is the fallback); an empty side is null.
+  const male = genderSide(v, v.priceMale);
+  const female = genderSide(v, v.priceFemale);
+  if (v.priceMode === "gender" && male === null && female === null) {
+    e.priceMale = t(
+      "Nhập ít nhất một giá theo giới tính, hoặc chọn Một giá.",
+      "Enter at least one price by gender, or choose One price.",
+    );
+  }
+  if (Number.isNaN(male)) e.priceMale = t("Giá không hợp lệ.", "The price is not valid.");
+  if (Number.isNaN(female)) e.priceFemale = t("Giá không hợp lệ.", "The price is not valid.");
+
   const slots = slotsOf(v);
   if (slots !== null && Number.isNaN(slots)) {
     e.slotsMax = t(
@@ -200,6 +226,8 @@ export function buildCreateBody(
     endsAt: localInputToIso(v.endsAt, tz)!,
     timezone: tz,
     priceAmount: parseVndInput(v.price) as number,
+    priceMale: genderSide(v, v.priceMale),
+    priceFemale: genderSide(v, v.priceFemale),
     slotsMax: slotsOf(v),
     visibility: v.visibility,
     joinPolicy: v.joinPolicy,
@@ -234,6 +262,11 @@ export function buildUpdateBody(
   }
   const price = parseVndInput(v.price) as number;
   if (price !== original.priceAmount) body.priceAmount = price;
+  // Same rule per side; switching to one price sends null only for a side that was set.
+  const male = genderSide(v, v.priceMale);
+  if (male !== original.priceMale) body.priceMale = male;
+  const female = genderSide(v, v.priceFemale);
+  if (female !== original.priceFemale) body.priceFemale = female;
   const slots = slotsOf(v);
   if (slots !== original.slotsMax) body.slotsMax = slots;
   if (v.visibility !== original.visibility) body.visibility = v.visibility;
