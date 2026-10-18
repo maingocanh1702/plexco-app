@@ -270,6 +270,20 @@ describe("price by gender (DD-39, readiness 4.9)", () => {
     };
     expect(buildUpdateBody(toGender, session)).toEqual({ priceMale: 1 });
   });
+
+  it("a response without priceMale / priceFemale (older API) is one price and saves nothing extra", () => {
+    const older: Partial<SessionDetailDto> = { ...session };
+    delete older.priceMale;
+    delete older.priceFemale;
+    const legacy = older as SessionDetailDto;
+    const loaded = valuesFromSession(legacy);
+    expect(loaded).toMatchObject({ priceMode: "single", priceMale: "", priceFemale: "" });
+    expect(validateForm(loaded, TZ, en, loaded)).toEqual({});
+    expect(buildUpdateBody(loaded, legacy)).toBeNull();
+    expect(buildUpdateBody({ ...loaded, venueName: "Sân B" }, legacy)).toEqual({
+      venueName: "Sân B",
+    });
+  });
 });
 
 describe("validateForm hidden characters in venueName, venueAddress and area", () => {

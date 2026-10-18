@@ -60,7 +60,9 @@ export function valuesFromSession(s: SessionDetailDto): SessionFormValues {
     venueAddress: s.venueAddress ?? "",
     area: s.area ?? "",
     price: formatVndInput(s.priceAmount),
-    priceMode: s.priceMale !== null || s.priceFemale !== null ? "gender" : "single",
+    // An absent per-gender price (an older API response) reads as null: the one-price mode.
+    priceMode:
+      (s.priceMale ?? null) !== null || (s.priceFemale ?? null) !== null ? "gender" : "single",
     priceMale: formatVndInput(s.priceMale),
     priceFemale: formatVndInput(s.priceFemale),
     slotsUnlimited: s.slotsMax === null,
@@ -263,10 +265,11 @@ export function buildUpdateBody(
   const price = parseVndInput(v.price) as number;
   if (price !== original.priceAmount) body.priceAmount = price;
   // Same rule per side; switching to one price sends null only for a side that was set.
+  // An absent stored side (an older API response) compares as null, so an untouched form sends none.
   const male = genderSide(v, v.priceMale);
-  if (male !== original.priceMale) body.priceMale = male;
+  if (male !== (original.priceMale ?? null)) body.priceMale = male;
   const female = genderSide(v, v.priceFemale);
-  if (female !== original.priceFemale) body.priceFemale = female;
+  if (female !== (original.priceFemale ?? null)) body.priceFemale = female;
   const slots = slotsOf(v);
   if (slots !== original.slotsMax) body.slotsMax = slots;
   if (v.visibility !== original.visibility) body.visibility = v.visibility;
