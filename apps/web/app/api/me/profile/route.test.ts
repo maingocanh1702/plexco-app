@@ -188,7 +188,7 @@ describe("PATCH /api/me/profile", () => {
     const res = await PATCH(patch(good));
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("");
-    expect(error.mock.calls).toEqual([["PATCH /api/me/profile failed", "Error"]]);
+    expect(error.mock.calls).toEqual([["/api/me/profile failed", "PATCH", "Error"]]);
   });
 });
 
@@ -277,7 +277,7 @@ describe("T-10: no gender value reaches a console call", () => {
     expect(await res.text()).toBe("");
     // One spelling of the cache policy: the empty 500 sends the envelope's own constant.
     expect(res.headers.get("cache-control")).toBe(NO_STORE);
-    expect(error.mock.calls).toEqual([["GET /api/me/profile failed", "GenderOpenError"]]);
+    expect(error.mock.calls).toEqual([["/api/me/profile failed", "GET", "GenderOpenError"]]);
     for (const spy of rest) expect(spy).not.toHaveBeenCalled();
   });
 });

@@ -31,10 +31,7 @@ const invalidGender = () =>
 /** Read at call time, like the CSP_SCRIPT_NONCE_ENABLED reader (request-policy.ts): only "true". */
 const genderCollection = () => process.env.GENDER_COLLECTION_ENABLED === "true";
 const failed = (method: string, error: unknown) => {
-  console.error(
-    `${method} /api/me/profile failed`,
-    error instanceof Error ? error.name : "unknown",
-  );
+  console.error("/api/me/profile failed", method, error instanceof Error ? error.name : "unknown");
   return new Response(null, { status: 500, headers: { "cache-control": NO_STORE } });
 };
 
