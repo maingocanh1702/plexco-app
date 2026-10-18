@@ -34,7 +34,10 @@ export type RosterMoneyErrorCode =
   | "REVERSAL_EXCEEDS_EFFECTIVE"
   | "REVERSAL_NOT_SUPPORTED"
   | "INVALID_INPUT"
-  | "COMMAND_ID_CONFLICT";
+  | "COMMAND_ID_CONFLICT"
+  // Gender pricing (DD-39, readiness p3-m9-gender-pricing 4.4 / 4.10):
+  | "CHARGE_DERIVATION_UNAVAILABLE" // a stored gender could not be opened: no charge, no fallback price
+  | "GENDER_FORBIDDEN"; // the derivation definer refused the context (defect path, the tx aborts)
 
 export class RosterMoneyError extends Error {
   readonly code: RosterMoneyErrorCode;
