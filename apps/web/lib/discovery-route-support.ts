@@ -73,9 +73,13 @@ const discoveryWindows = new Map<string, { count: number; resetAt: number }>();
  * One holder of an IPv6 /48 (65 536 /64 keys, for example a free tunnel-broker allocation) or
  * many IPv4 sources can fill it, and then every new visitor is refused until up to one window
  * after the filling stops. That is the readiness O-6 ceiling of an in-process, per-replica
- * limiter, so exposing the discovery process beyond local requires an ingress rate limit or
- * the O-6 readonly-executable DB limiter (an owner migration) first; that is the upgrade path. A
- * per-/48 sub-cap was considered and not built, because the durable DB limiter replaces this one.
+ * limiter, so the exposure precondition is: no process that serves /api/discover* (the discovery
+ * process or the web process, each holding its own copy of this map) is exposed beyond local
+ * until this in-process limiter is replaced by the O-6 readonly-executable DB limiter (an owner
+ * migration), or by an ingress limit that counts each IPv6 /48 as one client; that is the upgrade
+ * path. A per-IP edge limit in front of this map does not close the fill (one request per /64 per
+ * window is enough). A per-/48 sub-cap was considered and not built, because the durable limiter
+ * replaces this one.
  */
 export function discoveryRateLimited(request: Request): Response | null {
   const key = `discover:${rateLimitKey(clientIp(request))}`;
