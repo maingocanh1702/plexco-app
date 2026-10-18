@@ -629,6 +629,17 @@ describe("addMemberToSession and removal promotion derive the charge (DD-39 host
     expect(r.status).toBe("active");
     const c = await fx.row(`SELECT amount_due FROM charges WHERE id = $1`, [r.chargeId]);
     expect(Number(c.amount_due)).toBe(120000);
+    // T-21: a gender was opened here, so a gender key or a per-gender price in the payload fails.
+    const added = (await fx.events(w.sessionId)).at(-1);
+    expect(added.type).toBe("player.added");
+    expect(added.payload).toEqual({
+      session_id: w.sessionId,
+      player_id: r.playerId,
+      membership_id: w.membershipId,
+      status: "active",
+      waitlist_position: null,
+      source: "host_add",
+    });
   });
 
   it.each(["corrupt", "retired", "foreign"] as const)(
@@ -667,6 +678,12 @@ describe("addMemberToSession and removal promotion derive the charge (DD-39 host
       [sessionId],
     );
     expect(open).toEqual([{ player_id: next.playerId, amount_due: 100000 }]);
+    // "No charge" for the head = zero charges rows of any status (a void row fails too).
+    const headCharges = await fx.row(
+      `SELECT count(*)::int AS n FROM charges WHERE player_id = $1`,
+      [head.playerId],
+    );
+    expect(headCharges.n).toBe(0);
     const { rows: ev } = await ctx.owner.query(
       `SELECT type, payload FROM outbox_events WHERE aggregate_id = $1 ORDER BY sequence`,
       [sessionId],

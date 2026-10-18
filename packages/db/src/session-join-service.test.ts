@@ -900,6 +900,18 @@ describe("joinSession and promotion derive the charge (DD-39 self_join, promotio
     expect(await chargesOf(tenantId, r.playerId)).toEqual([
       expect.objectContaining({ amount_due: 80000 }),
     ]);
+    // T-21: a gender was opened here, so a gender key or a per-gender price in the payload fails.
+    expect((await events(tenantId, sessionId)).at(-1)).toEqual({
+      type: "player.added",
+      payload: {
+        session_id: sessionId,
+        player_id: r.playerId,
+        membership_id: m.membershipId,
+        status: "active",
+        waitlist_position: null,
+        source: "self_join",
+      },
+    });
   });
 
   it.each(["corrupt", "retired", "foreign"] as const)(

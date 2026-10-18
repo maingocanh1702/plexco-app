@@ -2100,7 +2100,8 @@ async function withGenderKey(body: () => Promise<void>): Promise<void> {
     __resetAuthSecretCacheForTest();
   }
 }
-/** Owner seed: a consented male blob with its last byte flipped on the head's person + gender prices. */
+/** Owner seed: a consented male blob with its last byte flipped on the head's person + gender prices
+ * (price_male 130000 differs from every base price used here, so a next candidate charged it fails). */
 async function corruptHead(sessionId: string, membershipId: string): Promise<void> {
   const { person_id: personId } = await row(`SELECT person_id FROM memberships WHERE id = $1`, [
     membershipId,
@@ -2113,7 +2114,7 @@ async function corruptHead(sessionId: string, membershipId: string): Promise<voi
     [personId, enc, keyVersion],
   );
   await ctx.owner.query(
-    `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
+    `UPDATE sessions SET price_male = 130000, price_female = 80000 WHERE id = $1`,
     [sessionId],
   );
 }

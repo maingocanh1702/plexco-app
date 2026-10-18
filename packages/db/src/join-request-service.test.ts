@@ -762,6 +762,19 @@ describe("approveJoinRequest derives the charge (DD-39 host_add)", () => {
     expect(await chargesOf(tenantId, r.playerId)).toEqual([
       { amount_due: 120_000, status: "open" },
     ]);
+    // T-21: approve emits join_request.approved (no player.added); a gender key or a per-gender
+    // price in its payload fails.
+    expect((await events(tenantId, sessionId)).at(-1)).toEqual({
+      type: "join_request.approved",
+      payload: {
+        session_id: sessionId,
+        request_id: requestId,
+        player_id: r.playerId,
+        membership_id: m.membershipId,
+        status: "active",
+        waitlist_position: null,
+      },
+    });
   });
 
   it.each(["corrupt", "retired", "foreign"] as const)(
