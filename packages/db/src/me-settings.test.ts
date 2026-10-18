@@ -1,13 +1,18 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
+import type pg from "pg";
+import { GENDER_OPEN_FAILED, type Gender } from "./gender-crypto.js";
 import { issueLinkCode } from "./identity.js";
 import {
   detachMyChannel,
+  GenderOpenError,
+  InvalidGenderError,
   listMyChannels,
   readMyProfile,
   updateMyProfile,
   validateDisplayName,
 } from "./me-settings.js";
+import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 /**
@@ -80,7 +85,11 @@ const detachAudit = async (accountId: string) =>
 describe("person_profile_read / person_profile_update", () => {
   it("reads the account's own Person display name; unknown account -> null", async () => {
     const u = await webUser("Lan");
-    expect(await readMyProfile(ctx.appPool, u.accountId)).toEqual({ displayName: "Lan" });
+    expect(await readMyProfile(ctx.appPool, u.accountId)).toEqual({
+      displayName: "Lan",
+      gender: null,
+      genderConsent: false,
+    });
     expect(await readMyProfile(ctx.appPool, randomUUID())).toBeNull();
   });
 
@@ -91,6 +100,8 @@ describe("person_profile_read / person_profile_update", () => {
     ]);
     expect(await updateMyProfile(ctx.appPool, u.accountId, "  Lan Nguyen  ")).toEqual({
       displayName: "Lan Nguyen",
+      gender: null,
+      genderConsent: false,
     });
     const row = await ctx.owner.query(
       `SELECT display_name, phone_lookup_hash, status, merged_into_person_id FROM persons WHERE id = $1`,
@@ -359,6 +370,229 @@ describe("person_profile_read / person_profile_update", () => {
     await expect(
       ctx.appPool.query(`SELECT * FROM person_profile_update($1, NULL)`, [u.accountId]),
     ).rejects.toThrow(/required/);
+  });
+});
+
+/**
+ * DD-39 self-declared gender + pricing consent (readiness p3-m9-gender-pricing 4.7; the me-settings
+ * parts of T-9, T-10 and T-18). Runtime calls run as `app` through the 0062 definers; the owner only
+ * seeds and damages rows. The key is a fixed local ENCRYPTION_KEY (no KMS), restored afterwards.
+ */
+describe("person_gender_read / person_gender_update (DD-39 gender + pricing consent)", () => {
+  const GENDER_ENV = ["ENCRYPTION_KEY", "KMS_PROVIDER", "KMS_KEY_ID"];
+  const saved = new Map(GENDER_ENV.map((k) => [k, process.env[k]]));
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
+    for (const k of GENDER_ENV.slice(1)) delete process.env[k];
+    __resetAuthSecretCacheForTest();
+  });
+  afterAll(() => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    __resetAuthSecretCacheForTest();
+  });
+
+  const NO_GENDER = { gender_enc: null, gender_key_version: null, gender_pricing_consent: false };
+  const genderRow = async (personId: string) =>
+    (
+      await ctx.owner.query(
+        `SELECT gender_enc, gender_key_version, gender_pricing_consent FROM persons WHERE id = $1`,
+        [personId],
+      )
+    ).rows[0] as {
+      gender_enc: Buffer | null;
+      gender_key_version: string | null;
+      gender_pricing_consent: boolean;
+    };
+  /** Owner-side damage to a stored blob: the three decrypt failures of the self-read. */
+  async function damage(how: "corrupt" | "retired" | "foreign", personId: string): Promise<void> {
+    if (how === "corrupt") {
+      await ctx.owner.query(
+        `UPDATE persons SET gender_enc = set_byte(gender_enc, length(gender_enc) - 1,
+                get_byte(gender_enc, length(gender_enc) - 1) # 255) WHERE id = $1`,
+        [personId],
+      );
+    } else if (how === "retired") {
+      await ctx.owner.query(`UPDATE persons SET gender_key_version = 'retired-key' WHERE id = $1`, [
+        personId,
+      ]);
+    } else {
+      const other = await webUser("Other");
+      await updateMyProfile(ctx.appPool, other.accountId, undefined, { gender: "male" });
+      await ctx.owner.query(
+        `UPDATE persons t SET gender_enc = s.gender_enc, gender_key_version = s.gender_key_version
+           FROM persons s WHERE t.id = $1 AND s.id = $2`,
+        [personId, other.personId],
+      );
+    }
+  }
+  const failure = (p: Promise<unknown>) =>
+    p.then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+
+  it("a first declaration is consent OFF, the self-read returns it, the row holds ciphertext only", async () => {
+    const u = await webUser("Mai");
+    for (const gender of ["male", "female", "other", "undisclosed"] as const) {
+      const expected = { displayName: "Mai", gender, genderConsent: false };
+      expect(await updateMyProfile(ctx.appPool, u.accountId, undefined, { gender })).toEqual(
+        expected,
+      );
+      expect(await readMyProfile(ctx.appPool, u.accountId)).toEqual(expected);
+      const row = await genderRow(u.personId);
+      expect(row.gender_enc!.includes(Buffer.from(gender, "utf8"))).toBe(false);
+      expect(row.gender_key_version).not.toBeNull();
+      expect(row.gender_pricing_consent).toBe(false);
+    }
+    expect(
+      await updateMyProfile(ctx.appPool, randomUUID(), undefined, { gender: "male" }),
+    ).toBeNull();
+  });
+
+  it("consent is an explicit opt-in, withdrawing keeps the ciphertext, an absent field keeps its value", async () => {
+    const u = await webUser("Hoa");
+    await updateMyProfile(ctx.appPool, u.accountId, undefined, { gender: "male" });
+    const sealed = (await genderRow(u.personId)).gender_enc;
+    const as = (displayName: string, genderConsent: boolean) => ({
+      displayName,
+      gender: "male",
+      genderConsent,
+    });
+    const patch = (name: unknown, fields?: { genderConsent: boolean }) =>
+      updateMyProfile(ctx.appPool, u.accountId, name, fields);
+    expect(await patch(undefined, { genderConsent: true })).toEqual(as("Hoa", true));
+    expect(await patch("Hoa 2")).toEqual(as("Hoa 2", true));
+    expect(await patch(undefined, { genderConsent: false })).toEqual(as("Hoa 2", false));
+    expect(await patch(undefined)).toEqual(as("Hoa 2", false)); // empty patch: a no-op read
+    expect((await genderRow(u.personId)).gender_enc).toEqual(sealed);
+  });
+
+  it("gender null erases the triple and consent cannot outlive the value", async () => {
+    const u = await webUser("Lan");
+    const fields = { gender: "female" as const, genderConsent: true };
+    await updateMyProfile(ctx.appPool, u.accountId, undefined, fields);
+    expect(
+      await updateMyProfile(ctx.appPool, u.accountId, undefined, { ...fields, gender: null }),
+    ).toEqual({ displayName: "Lan", gender: null, genderConsent: false });
+    expect(await genderRow(u.personId)).toEqual(NO_GENDER);
+  });
+
+  it.each(["corrupt", "retired", "foreign"] as const)(
+    "a %s blob fails the self-read closed: a fixed-message GenderOpenError, never gender null",
+    async (how) => {
+      const u = await webUser("Kim");
+      await updateMyProfile(ctx.appPool, u.accountId, undefined, { gender: "female" });
+      await damage(how, u.personId);
+      const err = await failure(readMyProfile(ctx.appPool, u.accountId));
+      expect(err).toBeInstanceOf(GenderOpenError);
+      expect(err!.message).toBe(GENDER_OPEN_FAILED);
+      expect(JSON.stringify(err)).toBe('{"name":"GenderOpenError"}');
+      expect(err!.cause).toBeUndefined();
+    },
+  );
+
+  it("a mixed body is atomic: an unreadable stored blob rolls the name back, re-declaring recovers", async () => {
+    const u = await webUser("Kim");
+    await updateMyProfile(ctx.appPool, u.accountId, undefined, { gender: "female" });
+    await damage("corrupt", u.personId);
+    const damaged = await genderRow(u.personId);
+    const err = await failure(
+      updateMyProfile(ctx.appPool, u.accountId, "New", { genderConsent: true }),
+    );
+    expect(err).toBeInstanceOf(GenderOpenError);
+    expect((await personRow(u.personId)).display_name).toBe("Kim");
+    expect(await genderRow(u.personId)).toEqual(damaged);
+    expect(await updateMyProfile(ctx.appPool, u.accountId, undefined, { gender: "other" })).toEqual(
+      { displayName: "Kim", gender: "other", genderConsent: false },
+    );
+  });
+
+  it("a relink between the gender read and the write answers null and writes no person", async () => {
+    const u = await webUser("Kim");
+    const fresh = (
+      await ctx.owner.query<{ id: string }>(
+        `INSERT INTO persons (display_name) VALUES ('Fresh') RETURNING id`,
+      )
+    ).rows[0]!.id;
+    // Gender-only body: person_profile_update would lock accounts and block this owner UPDATE.
+    const racing = {
+      connect: async () => {
+        const client = await ctx.appPool.connect();
+        return {
+          query: async (text: string, values?: unknown[]) => {
+            if (text.includes("person_gender_update(")) {
+              await ctx.owner.query(`UPDATE accounts SET person_id = $2 WHERE id = $1`, [
+                u.accountId,
+                fresh,
+              ]);
+            }
+            return client.query(text, values);
+          },
+          release: (err?: Error) => client.release(err),
+        };
+      },
+    } as unknown as pg.Pool;
+    expect(await updateMyProfile(racing, u.accountId, undefined, { gender: "male" })).toBeNull();
+    expect(await genderRow(u.personId)).toEqual(NO_GENDER);
+    expect(await genderRow(fresh)).toEqual(NO_GENDER);
+  });
+
+  it.each([[""], ["Nam"], ["MALE"], [1], [{}], ["constructor"], [["male"]]])(
+    "refuses gender %j with a fixed-message InvalidGenderError and writes nothing",
+    async (bad) => {
+      const u = await webUser("Kim");
+      const err = await failure(
+        updateMyProfile(ctx.appPool, u.accountId, "Changed", { gender: bad as unknown as Gender }),
+      );
+      expect(err).toBeInstanceOf(InvalidGenderError);
+      expect(err!.message).toBe("gender must be one of the declared values");
+      expect(JSON.stringify(err)).toBe('{"name":"InvalidGenderError"}');
+      expect((await personRow(u.personId)).display_name).toBe("Kim");
+      expect(await genderRow(u.personId)).toEqual(NO_GENDER);
+    },
+  );
+
+  it("never writes to the console on a set, a read, a failed open or an invalid value", async () => {
+    const spies = (["error", "warn", "log", "info"] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation(() => undefined),
+    );
+    try {
+      const u = await webUser("Thu");
+      const fields = { gender: "female" as const, genderConsent: true };
+      await updateMyProfile(ctx.appPool, u.accountId, undefined, fields);
+      await readMyProfile(ctx.appPool, u.accountId);
+      await damage("corrupt", u.personId);
+      await failure(readMyProfile(ctx.appPool, u.accountId));
+      await failure(
+        updateMyProfile(ctx.appPool, u.accountId, undefined, { gender: "Nam" as Gender }),
+      );
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  it("one account can neither read nor write another account's gender", async () => {
+    const a = await webUser("A");
+    const b = await webUser("B");
+    await updateMyProfile(ctx.appPool, a.accountId, undefined, {
+      gender: "male",
+      genderConsent: true,
+    });
+    const sealedA = await genderRow(a.personId);
+    const bFields = { gender: "female" as const, genderConsent: false };
+    const bProfile = { displayName: "B", ...bFields };
+    expect(await updateMyProfile(ctx.appPool, b.accountId, undefined, bFields)).toEqual(bProfile);
+    expect(await readMyProfile(ctx.appPool, b.accountId)).toEqual(bProfile);
+    expect(await genderRow(a.personId)).toEqual(sealedA);
+    expect(await readMyProfile(ctx.appPool, a.accountId)).toEqual({
+      displayName: "A",
+      gender: "male",
+      genderConsent: true,
+    });
   });
 });
 

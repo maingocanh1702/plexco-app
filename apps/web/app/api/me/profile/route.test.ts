@@ -40,9 +40,11 @@ beforeEach(() => {
   });
   vi.mocked(csrfOk).mockReturnValue(true);
   vi.mocked(rateLimited).mockResolvedValue(false);
-  vi.mocked(readMyProfile).mockResolvedValue({ displayName: "Lan" });
-  vi.mocked(updateMyProfile).mockResolvedValue({ displayName: "Lan 2" });
+  vi.mocked(readMyProfile).mockResolvedValue({ displayName: "Lan", ...NO_GENDER });
+  vi.mocked(updateMyProfile).mockResolvedValue({ displayName: "Lan 2", ...NO_GENDER });
 });
+
+const NO_GENDER = { gender: null, genderConsent: false };
 
 describe("GET /api/me/profile", () => {
   it("401 without a session, no DB work", async () => {
@@ -52,10 +54,10 @@ describe("GET /api/me/profile", () => {
     expect(readMyProfile).not.toHaveBeenCalled();
   });
 
-  it("returns the display name only, resolved from the session account", async () => {
+  it("returns the profile, resolved from the session account", async () => {
     const res = await GET(get());
     expect(res.status).toBe(200);
-    expect((await env(res)).data).toEqual({ profile: { displayName: "Lan" } });
+    expect((await env(res)).data).toEqual({ profile: { displayName: "Lan", ...NO_GENDER } });
     expect(readMyProfile).toHaveBeenCalledWith({ tag: "pool" }, ACCOUNT);
   });
 
@@ -113,7 +115,7 @@ describe("PATCH /api/me/profile", () => {
   it("200 returns only the profile and uses the SESSION account", async () => {
     const res = await PATCH(patch(good));
     expect(res.status).toBe(200);
-    expect((await env(res)).data).toEqual({ profile: { displayName: "Lan 2" } });
+    expect((await env(res)).data).toEqual({ profile: { displayName: "Lan 2", ...NO_GENDER } });
     expect(updateMyProfile).toHaveBeenCalledWith({ tag: "pool" }, ACCOUNT, "Lan 2");
   });
 
