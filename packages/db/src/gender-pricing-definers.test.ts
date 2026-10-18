@@ -87,9 +87,10 @@ async function player(sessionId: string, membershipId: string, status: "active" 
 }
 
 type DeriveArgs = [string | null, string, string, string, string | null];
-/** charge_gender_for_derivation as app, committed (the definer never writes). */
-const derive = (...[tenantId, context, sessionId, membershipId, actor]: DeriveArgs) =>
-  asApp(
+/** charge_gender_for_derivation as app, committed; a successful call writes nothing (R 4.2). */
+const derive = async (...[tenantId, context, sessionId, membershipId, actor]: DeriveArgs) => {
+  const before = [await fx.counts(ctx.tenantA), await fx.counts(ctx.tenantB)];
+  const rows = await asApp(
     tenantId,
     async (q) =>
       (
@@ -102,6 +103,10 @@ const derive = (...[tenantId, context, sessionId, membershipId, actor]: DeriveAr
       ).rows,
     true,
   );
+  // Success path only: a refusal rolls back, which would hide any write from a counts pair.
+  expect([await fx.counts(ctx.tenantA), await fx.counts(ctx.tenantB)]).toEqual(before);
+  return rows;
+};
 
 describe("0062 catalog fences and constraints (T-19, T-14)", () => {
   it("GP-1: no role holds a privilege on the persons gender columns or SELECT on per-gender prices", async () => {
@@ -172,7 +177,7 @@ describe("0062 catalog fences and constraints (T-19, T-14)", () => {
 describe("0062 self definers as app (RD-6)", () => {
   const read = (accountId: string) =>
     asApp(null, async (q) => (await q(`SELECT * FROM person_gender_read($1)`, [accountId])).rows);
-  const update = (...args: [string, string, Buffer | null, string | null, boolean | null]) =>
+  const update = (...args: [string, string | null, Buffer | null, string | null, boolean | null]) =>
     asApp(
       null,
       async (q) => (await q(`SELECT * FROM person_gender_update($1, $2, $3, $4, $5)`, args)).rows,
@@ -231,6 +236,17 @@ describe("0062 self definers as app (RD-6)", () => {
       ).rejects.toMatchObject({ code: "42501" });
     }
   });
+
+  it("GP-4c: a non-active person is neither read nor written; a NULL expected person fails", async () => {
+    const gone = await webUser();
+    await ctx.owner.query(`UPDATE persons SET status = 'merged' WHERE id = $1`, [gone.personId]);
+    expect(await read(gone.accountId)).toEqual([]);
+    expect(await update(gone.accountId, gone.personId, BLOB, "v1", true)).toEqual([]);
+    const me = await webUser();
+    await expect(update(me.accountId, null, BLOB, "v1", true)).rejects.toMatchObject({
+      code: "22023",
+    });
+  });
 });
 
 describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
@@ -254,6 +270,11 @@ describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
       enc(g.personId),
     ]);
     expect(await derive(A, "host_add", sessionId, g.membershipId, admin)).toEqual([
+      enc(g.personId),
+    ]);
+    // A co_admin holds session.manage only as a preset (0047:77): this pins the capability key.
+    const coAdmin = await fx.seedAdmin(A, "co_admin");
+    expect(await derive(A, "host_add", sessionId, g.membershipId, coAdmin)).toEqual([
       enc(g.personId),
     ]);
     await player(sessionId, g.membershipId, "waitlisted");
@@ -284,14 +305,17 @@ describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
     ]);
   });
 
-  it("GP-6: every refusal is the identical GENDER_FORBIDDEN for set and NULL gender, zero writes", async () => {
+  it("GP-6: every refusal is the identical GENDER_FORBIDDEN for set and NULL gender, no row", async () => {
     const A = ctx.tenantA;
     const sessionId = await fx.seedSession(A);
+    const otherSessionId = await fx.seedSession(A);
     const adminB = await fx.seedAdmin(ctx.tenantB);
     const stranger = await fx.seedPerson();
-    const left = async (s: Subject) => {
-      await ctx.owner.query(`UPDATE memberships SET status = 'left' WHERE id = $1`, [
+    // 0002:30 statuses: active and guest are live; left and merged are not.
+    const unlive = async (s: Subject, status: "left" | "merged") => {
+      await ctx.owner.query(`UPDATE memberships SET status = $2 WHERE id = $1`, [
         s.membershipId,
+        status,
       ]);
     };
     const cases: [string, string, (s: Subject) => Promise<DeriveArgs>][] = [
@@ -315,7 +339,15 @@ describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
         "membership left",
         A,
         async (s) => {
-          await left(s);
+          await unlive(s, "left");
+          return [A, "self_join", sessionId, s.membershipId, s.personId];
+        },
+      ],
+      [
+        "membership merged",
+        A,
+        async (s) => {
+          await unlive(s, "merged");
           return [A, "self_join", sessionId, s.membershipId, s.personId];
         },
       ],
@@ -344,6 +376,14 @@ describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
         },
       ],
       [
+        "promotion, waitlisted in another session",
+        A,
+        async (s) => {
+          await player(otherSessionId, s.membershipId, "waitlisted");
+          return [A, "promotion", sessionId, s.membershipId, null];
+        },
+      ],
+      [
         "unknown session",
         A,
         async (s) => [A, "self_join", randomUUID(), s.membershipId, s.personId],
@@ -352,7 +392,6 @@ describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
     for (const [label, memberTenant, argsFor] of cases) {
       for (const gendered of [true, false]) {
         const args = await argsFor(await member(memberTenant, gendered));
-        const before = [await fx.counts(A), await fx.counts(ctx.tenantB)];
         const err = await derive(...args).then(
           (rows) => ({ rows }),
           (e: { code?: string; message?: string }) => ({ code: e.code, message: e.message }),
@@ -361,7 +400,6 @@ describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
           code: "42501",
           message: "GENDER_FORBIDDEN",
         });
-        expect([await fx.counts(A), await fx.counts(ctx.tenantB)], label).toEqual(before);
       }
     }
   });
