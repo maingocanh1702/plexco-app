@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   API_ERROR_CODES,
+  GENDER_VALUES,
   isApiErrorCode,
   type ApiEnvelope,
   type ApiError,
@@ -278,5 +279,17 @@ describe("player self-join (M9)", () => {
         "waitlistPosition",
       ]);
     }
+  });
+});
+
+describe("gender pricing (M9, DD-39)", () => {
+  it("registers the three literals of feature_user_settings_tech.md :113, :163, :164", () => {
+    for (const code of ["CHARGE_DERIVATION_UNAVAILABLE", "GENDER_FORBIDDEN", "INVALID_GENDER"]) {
+      expect(isApiErrorCode(code)).toBe(true);
+    }
+  });
+
+  it("pins GENDER_VALUES to the DD-39 value set, in its order", () => {
+    expect([...GENDER_VALUES]).toEqual(["male", "female", "other", "undisclosed"]);
   });
 });

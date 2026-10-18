@@ -35,6 +35,8 @@ const session: SessionDetailDto = {
   area: "Q7",
   skillLevel: null,
   priceAmount: 50000,
+  priceMale: null,
+  priceFemale: null,
   slotsMax: 12,
   visibility: "private",
   joinPolicy: "open",
@@ -125,6 +127,8 @@ describe("buildCreateBody", () => {
       endsAt: "2026-10-20T20:00:00+07:00",
       timezone: TZ,
       priceAmount: 50000,
+      priceMale: null,
+      priceFemale: null,
       slotsMax: null,
       visibility: "private",
       joinPolicy: "open",
@@ -197,6 +201,91 @@ describe("buildUpdateBody", () => {
 
 // Hidden-character rule (web mirror of packages/db/src/text-safety.ts). Characters are built with
 // fromCodePoint so no control or bidi character sits in this source.
+describe("price by gender (DD-39, readiness 4.9)", () => {
+  const vi = (v: string) => v;
+  const gendered: SessionDetailDto = { ...session, priceMale: 60000, priceFemale: null };
+
+  it("defaults to one price and loads gender mode when either side is stored (null => empty)", () => {
+    const single = { priceMode: "single", priceMale: "", priceFemale: "" };
+    expect(emptyFormValues()).toMatchObject(single);
+    expect(valuesFromSession(session)).toMatchObject(single);
+    expect(valuesFromSession(gendered)).toMatchObject({
+      priceMode: "gender",
+      priceMale: "60.000",
+      priceFemale: "",
+    });
+  });
+
+  it("gender mode keeps the base price required and needs at least one side (vi/en)", () => {
+    const e = validateForm(base({ priceMode: "gender", price: "" }), TZ, en);
+    expect(e.price).toBe("Enter a price (0 if free).");
+    expect(e.priceMale).toBe("Enter at least one price by gender, or choose One price.");
+    expect(validateForm(base({ priceMode: "gender" }), TZ, vi).priceMale).toBe(
+      "Nhập ít nhất một giá theo giới tính, hoặc chọn Một giá.",
+    );
+    expect(validateForm(base({ priceMode: "gender", priceFemale: "40.000" }), TZ, en)).toEqual({});
+  });
+
+  it("an int4 overflow on a side reuses the invalid-price message; single mode ignores the sides", () => {
+    const e = validateForm(
+      base({ priceMode: "gender", priceMale: "2.147.483.648", priceFemale: "1".repeat(20) }),
+      TZ,
+      en,
+    );
+    expect(e).toEqual({
+      priceMale: "The price is not valid.",
+      priceFemale: "The price is not valid.",
+    });
+    expect(validateForm(base({ priceMale: "2.147.483.648" }), TZ, en)).toEqual({});
+  });
+
+  it("create: a side is its parsed value or null in gender mode, null in single mode", () => {
+    const g = base({ price: "50.000", priceMode: "gender", priceMale: "60.000" });
+    expect(buildCreateBody(g, TZ)).toMatchObject({
+      priceAmount: 50000,
+      priceMale: 60000,
+      priceFemale: null,
+    });
+    const s = buildCreateBody(base({ priceMale: "60.000", priceFemale: "1" }), TZ);
+    expect(s).toMatchObject({ priceMale: null, priceFemale: null });
+  });
+
+  it("update: a side is sent only when it changed; switching to one price clears only set sides", () => {
+    expect(buildUpdateBody(valuesFromSession(gendered), gendered)).toBeNull();
+    const loaded = valuesFromSession(gendered);
+    expect(buildUpdateBody({ ...loaded, priceFemale: "40.000" }, gendered)).toEqual({
+      priceFemale: 40000,
+    });
+    expect(buildUpdateBody({ ...loaded, priceMale: "", priceFemale: "1" }, gendered)).toEqual({
+      priceMale: null,
+      priceFemale: 1,
+    });
+    expect(buildUpdateBody({ ...loaded, priceMode: "single" }, gendered)).toEqual({
+      priceMale: null,
+    });
+    const toGender = {
+      ...valuesFromSession(session),
+      priceMode: "gender" as const,
+      priceMale: "1",
+    };
+    expect(buildUpdateBody(toGender, session)).toEqual({ priceMale: 1 });
+  });
+
+  it("a response without priceMale / priceFemale (older API) is one price and saves nothing extra", () => {
+    const older: Partial<SessionDetailDto> = { ...session };
+    delete older.priceMale;
+    delete older.priceFemale;
+    const legacy = older as SessionDetailDto;
+    const loaded = valuesFromSession(legacy);
+    expect(loaded).toMatchObject({ priceMode: "single", priceMale: "", priceFemale: "" });
+    expect(validateForm(loaded, TZ, en, loaded)).toEqual({});
+    expect(buildUpdateBody(loaded, legacy)).toBeNull();
+    expect(buildUpdateBody({ ...loaded, venueName: "Sân B" }, legacy)).toEqual({
+      venueName: "Sân B",
+    });
+  });
+});
+
 describe("validateForm hidden characters in venueName, venueAddress and area", () => {
   const ch = (cp: number) => String.fromCodePoint(cp);
   const C8 = [0x0000, 0x202e, 0x200b, 0x2028, 0x2029, 0x000a, 0x0009, 0x001b];

@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { charges, memberships, players, sessions } from "../schema.js";
+import { deriveChargeAmount } from "./charge-derivation.js";
 import type { Db, Tx } from "./client.js";
 import { applyEffective, chargeStatusFor } from "./payment-manual.js";
 import {
@@ -27,8 +28,9 @@ import { withTenant } from "./tenant.js";
  *   authorize (session.manage + tenant manage_roster, FOR SHARE) -> command advisory lock + dedup
  *   (DD-117 D5, commandId only) -> session FOR UPDATE -> guards -> mutate -> outbox -> record.
  *
- * Money rule: an ACTIVE player has exactly ONE charge (amount_due = sessions.price_amount; gender
- * pricing is M9); a WAITLISTED player has none (DD-45). A `left` player's charge is `void` and, on
+ * Money rule: an ACTIVE player has exactly ONE charge (amount_due = deriveChargeAmount's result:
+ * price_amount, or price_male / price_female by the stored gender, DD-39); a WAITLISTED player has
+ * none (DD-45). A `left` player's charge is `void` and, on
  * re-join, is reused (never a second charge, UNIQUE (tenant, session, player)).
  *
  * Removing an ACTIVE player frees a seat: promoteFromWaitlist (session-join-service.ts, P-6/P-7)
@@ -158,7 +160,13 @@ export async function addMemberToSession(
     if (params.source !== "host_add") return fail("INVALID_INPUT", "unknown join source");
 
     const [session] = await tx
-      .select({ status: sessions.status, slotsMax: sessions.slotsMax, price: sessions.priceAmount })
+      .select({
+        status: sessions.status,
+        slotsMax: sessions.slotsMax,
+        price: sessions.priceAmount,
+        priceMale: sessions.priceMale,
+        priceFemale: sessions.priceFemale,
+      })
       .from(sessions)
       .where(eq(sessions.id, sessionId))
       .for("update");
@@ -188,6 +196,7 @@ export async function addMemberToSession(
       session,
       membershipId,
       existing?.id,
+      { context: "host_add", actorPersonId: actor },
     );
     const eventType = status === "waitlisted" ? "player.waitlisted" : "player.added";
     await emitSessionEvent(tx, tenantId, sessionId, eventType, {
@@ -232,12 +241,36 @@ export async function seatPlayer(
   tx: Tx,
   tenantId: string,
   sessionId: string,
-  session: { slotsMax: number | null; price: number },
+  session: {
+    slotsMax: number | null;
+    price: number;
+    priceMale: number | null;
+    priceFemale: number | null;
+  },
   membershipId: string,
   existingPlayerId: string | undefined,
+  derivation: { context: "self_join" | "host_add"; actorPersonId: string },
 ): Promise<SeatResult> {
   const full =
     session.slotsMax !== null && (await getSessionOccupancy(tx, sessionId)) >= session.slotsMax;
+  // DD-39 call site 1 (readiness 4.4 / 4.5): derive BEFORE any players or charges write; a stored
+  // gender that cannot be opened throws, so the caller's whole transaction rolls back (no player,
+  // no charge, no minted guest membership, no command row). Never a fallback price.
+  let amount: number | null = null;
+  if (!full) {
+    const derived = await deriveChargeAmount(tx, {
+      ...derivation,
+      sessionId,
+      membershipId,
+      prices: {
+        priceAmount: session.price,
+        priceMale: session.priceMale,
+        priceFemale: session.priceFemale,
+      },
+    });
+    if (!derived.ok) return fail(derived.code, "the charge could not be derived");
+    amount = derived.amount;
+  }
   let waitlistPosition: number | null = null;
   if (full) {
     const [tail] = await tx
@@ -265,8 +298,8 @@ export async function seatPlayer(
   }
 
   let chargeId: string | null = null;
-  if (!full)
-    chargeId = await upsertCharge(tx, tenantId, sessionId, playerId, membershipId, session.price);
+  if (amount !== null)
+    chargeId = await upsertCharge(tx, tenantId, sessionId, playerId, membershipId, amount);
   return { playerId, status, waitlistPosition, chargeId };
 }
 

@@ -42,6 +42,15 @@ describe("readSessionRealtimeEvent (R-1, A20)", () => {
     expect(Object.keys(read!).sort()).toEqual(["sessionId", "type", "version"]);
   });
 
+  it("T-22: the DD-39 waitlist.charge_derivation_failed event reads as exactly {type, sessionId, version}", async () => {
+    const event = await seedEvent(ctx.tenantA, "session", "waitlist.charge_derivation_failed");
+    expect(await readAs(ctx.tenantA, event.id)).toStrictEqual({
+      type: "waitlist.charge_derivation_failed",
+      sessionId: event.aggregateId,
+      version: 7,
+    });
+  });
+
   it("returns null for another tenant's event: RLS hides the row from the app role", async () => {
     const event = await seedEvent(ctx.tenantA);
     expect(await readAs(ctx.tenantB, event.id)).toBeNull();

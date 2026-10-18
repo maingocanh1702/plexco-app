@@ -158,6 +158,24 @@ describe("roster / payment errors", () => {
       "nope",
     );
   });
+
+  it("T-3: CHARGE_DERIVATION_UNAVAILABLE shows the server's gender-free message; a 503 is not definite", () => {
+    const pinned = "The price could not be worked out. Nothing was saved; please try again later.";
+    const e = err("CHARGE_DERIVATION_UNAVAILABLE", pinned, 503);
+    expect(describeSessionError(e, en)).toMatchObject({
+      code: "CHARGE_DERIVATION_UNAVAILABLE",
+      message: pinned,
+      known: true,
+    });
+    // zero writes behind it, so the retry reuses the same commandId (DD-117 D5)
+    expect(isDefiniteFailure(e)).toBe(false);
+  });
+
+  it("T-11: GENDER_FORBIDDEN keeps the generic fail-closed rendering, never the server text", () => {
+    const v = describeSessionError(err("GENDER_FORBIDDEN", "This action is not allowed.", 403), en);
+    expect(v).toMatchObject({ known: false, action: "retry" });
+    expect(v.message).toBe("Something unexpected went wrong. Try again later.");
+  });
 });
 
 describe("CLOSE_BLOCKED_OPEN_DEBT (DD-131 OD-1)", () => {

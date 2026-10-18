@@ -185,6 +185,24 @@ describe("PDR-1 the whitelist, read as readonly (A-1)", () => {
     }
     expect(await resolve(lid)).toStrictEqual({ tenantId: t, sessionId: sid });
   });
+
+  it("T-20: a gendered session (price_male / price_female set) still serves the 17 view columns with price_amount only", async () => {
+    const area = `T20 ${randomUUID()}`;
+    const t = await club("CLB Gender");
+    const sid = await session(t, { area });
+    await owner("UPDATE sessions SET price_male = 70000, price_female = 40000 WHERE id = $1", [
+      sid,
+    ]);
+    expect(await project(sid)).toBe("upserted");
+    const lid = await listingId(sid);
+    const slug = await rotate(t, sid);
+    const page = await list({ area, limit: 20 });
+    expect(page.rows).toHaveLength(1);
+    for (const row of [page.rows[0], await detail(lid), await share(slug)]) {
+      expect(Object.keys(row!)).toEqual(VIEW_COLS);
+      expect(row!.price_amount).toBe(50000);
+    }
+  });
 });
 
 describe("PDR-2 no base table for readonly, no lookup for app (A-2)", () => {

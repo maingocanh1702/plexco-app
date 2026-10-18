@@ -44,6 +44,9 @@ Table persons {
   status text [not null]
   merged_into_person_id uuid
   created_at timestamptz [not null]
+  gender_enc bytea [note: '0062 DD-39: person-bound AES-256-GCM ciphertext of male | female | other | undisclosed; no runtime-role column grant, only the 0062 SECURITY DEFINER functions read or write it']
+  gender_key_version text [note: '0062: NULL iff gender_enc is NULL (persons_gender_enc_version_chk)']
+  gender_pricing_consent boolean [not null, default: false, note: '0062: OFF => charge derivation reads no gender (price_amount)']
 }
 
 Table channel_identities {
@@ -209,6 +212,8 @@ Table sessions {
   version integer [not null]
   created_at timestamptz [not null]
   updated_at timestamptz [not null]
+  price_male integer [note: '0062 DD-39: NULL or >= 0 (sessions_price_male_chk); both per-gender prices NULL = single price, a NULL side falls back to price_amount']
+  price_female integer [note: '0062 DD-39: NULL or >= 0 (sessions_price_female_chk)']
 }
 
 Table session_recurrence_rules {

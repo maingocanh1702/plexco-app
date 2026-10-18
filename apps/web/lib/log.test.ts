@@ -38,6 +38,17 @@ describe("log — redaction and level (audit W-11)", () => {
     expect(out.expected).toBe("app");
   });
 
+  it("redacts the gender keys (T-23, R-C1-e): gender, genderConsent and gender_enc are never written", () => {
+    const out = sanitizeFields(
+      { gender: "female", genderConsent: true, gender_enc: "AQID", sessionId: "s1" },
+      "info",
+    );
+    for (const k of ["gender", "genderConsent", "gender_enc"]) {
+      expect(out[k], k).toBe("[redacted]");
+    }
+    expect(out.sessionId).toBe("s1");
+  });
+
   it("reduces an Error to name/message (+ SQLSTATE code), stack only at debug", () => {
     const err = Object.assign(new Error("permission denied for table sessions"), { code: "42501" });
     expect(sanitizeFields({ error: err }, "info").error).toEqual({

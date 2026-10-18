@@ -1,9 +1,11 @@
 import { sql, type SQL } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { encryptPersonGender, type Gender } from "./gender-crypto.js";
 import { markPaid } from "./payment-manual.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession } from "./roster-service.js";
+import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
 import { hasLiveMembership, joinSession, leaveSession } from "./session-join-service.js";
 import { getSessionOccupancy, slotsOpen } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
@@ -848,4 +850,190 @@ describe("hasLiveMembership (the route's P-3 audience gate, R1B-6)", () => {
     expect(await live(other.tenantId, other.tenantId, foreign.personId)).toBe(true);
     expect(await live(tenantId, other.tenantId, foreign.personId)).toBe(false);
   });
+});
+
+// L11 step 4 (readiness p3-m9-gender-pricing T-4, T-7 join, T-25): the self-join derives the charge
+// from the joining person's stored gender; a stored gender that cannot be opened charges nobody.
+const GENDER_ENV = ["ENCRYPTION_KEY", "KMS_PROVIDER", "KMS_KEY_ID"];
+type GenderSeed = Gender | "corrupt" | "retired" | "foreign";
+
+/** Owner seed of a consented gender on `personId`, or one of the three decrypt failures. */
+async function storeGender(personId: string, how: GenderSeed) {
+  const sealedFor = how === "foreign" ? await fx.seedPerson() : personId;
+  const gender: Gender = how === "corrupt" || how === "retired" || how === "foreign" ? "male" : how;
+  const { enc, keyVersion } = await encryptPersonGender(sealedFor, gender);
+  if (how === "corrupt") enc.writeUInt8(enc.readUInt8(enc.length - 1) ^ 0xff, enc.length - 1);
+  await ctx.owner.query(
+    `UPDATE persons SET gender_enc = $2, gender_key_version = $3, gender_pricing_consent = true
+      WHERE id = $1`,
+    [personId, enc, how === "retired" ? "retired-key" : keyVersion],
+  );
+}
+/** Prices a session by gender: male 120000, female 80000, base price_amount 100000. */
+const priceByGender = (sessionId: string) =>
+  ctx.owner.query(`UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`, [
+    sessionId,
+  ]);
+
+describe("joinSession and promotion derive the charge (DD-39 self_join, promotion)", () => {
+  const saved = new Map(GENDER_ENV.map((k) => [k, process.env[k]]));
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
+    for (const k of GENDER_ENV.slice(1)) delete process.env[k];
+    __resetAuthSecretCacheForTest();
+  });
+  afterAll(() => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    __resetAuthSecretCacheForTest();
+  });
+
+  it("T-7 join: a female member is charged price_female", async () => {
+    const { tenantId, sessionId } = await world();
+    await priceByGender(sessionId);
+    const m = await seedMember(tenantId);
+    await storeGender(m.personId, "female");
+    const r = await join(tenantId, m.personId, sessionId);
+    expect(r.outcome).toBe("active");
+    expect(await chargesOf(tenantId, r.playerId)).toEqual([
+      expect.objectContaining({ amount_due: 80000 }),
+    ]);
+    // T-21: a gender was opened here, so a gender key or a per-gender price in the payload fails.
+    expect((await events(tenantId, sessionId)).at(-1)).toEqual({
+      type: "player.added",
+      payload: {
+        session_id: sessionId,
+        player_id: r.playerId,
+        membership_id: m.membershipId,
+        status: "active",
+        waitlist_position: null,
+        source: "self_join",
+      },
+    });
+  });
+
+  it.each(["corrupt", "retired", "foreign"] as const)(
+    "T-4 guest join, %s blob: CHARGE_DERIVATION_UNAVAILABLE, the guest membership rolled back",
+    async (how) => {
+      const { tenantId, sessionId } = await world({ visibility: "public" });
+      await priceByGender(sessionId);
+      const visitor = await fx.seedPerson();
+      await storeGender(visitor, how);
+      const before = await state(tenantId);
+      const run = join(tenantId, visitor, sessionId, { allowGuestMembership: true });
+      expect(await codeOf(run)).toBe("CHARGE_DERIVATION_UNAVAILABLE");
+      expect(await state(tenantId)).toEqual(before);
+    },
+  );
+
+  it("T-25: a gender change keeps the old amount_due; the next new charge uses the new gender", async () => {
+    const { tenantId, sessionId } = await world();
+    const second = await fx.seedSession(tenantId);
+    await priceByGender(sessionId);
+    await priceByGender(second);
+    const m = await seedMember(tenantId);
+    await storeGender(m.personId, "male");
+    const first = await join(tenantId, m.personId, sessionId);
+    await storeGender(m.personId, "female");
+    const next = await join(tenantId, m.personId, second);
+    expect((await chargesOf(tenantId, first.playerId))[0]).toMatchObject({ amount_due: 120000 });
+    expect((await chargesOf(tenantId, next.playerId))[0]).toMatchObject({ amount_due: 80000 });
+  });
+
+  // L11 step 5 (T-6 leaveSession matrix, T-21 fee read-back): promotion derives too (RD-1, RD-15).
+  it.each(["corrupt", "retired", "foreign"] as const)(
+    "T-6/T-21 leave, %s head: the head stays waitlisted (no charge, no DM), ONE waitlist.charge_derivation_failed, the next is promoted at price_male with the fee read back",
+    async (how) => {
+      const { tenantId, sessionId } = await world({ slotsMax: 1 });
+      await priceByGender(sessionId);
+      const [a, head, male] = [
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+      ];
+      const ra = await join(tenantId, a.personId, sessionId);
+      const rh = await join(tenantId, head.personId, sessionId);
+      const rm = await join(tenantId, male.personId, sessionId);
+      await storeGender(head.personId, how);
+      await storeGender(male.personId, "male");
+      const seen = (await events(tenantId, sessionId)).length;
+
+      await leave(tenantId, a.personId, sessionId);
+
+      expect(await playerRow(tenantId, ra.playerId)).toMatchObject({ status: "left" });
+      expect(await playerRow(tenantId, rh.playerId)).toMatchObject({
+        status: "waitlisted",
+        waitlist_position: 1,
+      });
+      expect(await chargesOf(tenantId, rh.playerId)).toEqual([]);
+      const promoted = await chargesOf(tenantId, rm.playerId);
+      expect(promoted).toEqual([{ id: expect.any(String), amount_due: 120000, status: "open" }]);
+      expect((await events(tenantId, sessionId)).slice(seen)).toEqual([
+        expect.objectContaining({ type: "player.removed" }),
+        {
+          type: "waitlist.charge_derivation_failed",
+          payload: {
+            session_id: sessionId,
+            player_id: rh.playerId,
+            membership_id: head.membershipId,
+            reason: "CHARGE_DERIVATION_UNAVAILABLE",
+          },
+        },
+        {
+          type: "player.promoted",
+          payload: {
+            session_id: sessionId,
+            player_id: rm.playerId,
+            membership_id: male.membershipId,
+            charge_id: promoted[0]!.id,
+            amount_due: 120000,
+          },
+        },
+      ]);
+    },
+  );
+
+  // R-R5-b SHOULD_FIX-1: the selector takes only a seat-holding (active|guest) membership, the set
+  // the 0062 derivation definer accepts, so an ended one no longer rolls the opener back.
+  it.each(["left", "merged"] as const)(
+    "R-R5-b leave in gender mode, %s-membership head: the leave commits, that head stays waitlisted with no charge, the next is promoted at price_female",
+    async (ended) => {
+      const { tenantId, sessionId } = await world({ slotsMax: 1 });
+      await priceByGender(sessionId);
+      const [a, head, female] = [
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+        await seedMember(tenantId),
+      ];
+      const ra = await join(tenantId, a.personId, sessionId);
+      const rh = await join(tenantId, head.personId, sessionId);
+      const rf = await join(tenantId, female.personId, sessionId);
+      await storeGender(head.personId, "male");
+      await storeGender(female.personId, "female");
+      // Owner-forged: latent today, no code writes 'left' or 'merged' on a waitlisted membership.
+      const into = ended === "merged" ? (await seedMember(tenantId)).membershipId : null;
+      await ctx.owner.query(
+        `UPDATE memberships SET status = $2, merged_into_membership_id = $3 WHERE id = $1`,
+        [head.membershipId, ended, into],
+      );
+      const seen = (await events(tenantId, sessionId)).length;
+
+      await leave(tenantId, a.personId, sessionId);
+
+      expect(await playerRow(tenantId, ra.playerId)).toMatchObject({ status: "left" });
+      expect(await playerRow(tenantId, rh.playerId)).toMatchObject({
+        status: "waitlisted",
+        waitlist_position: 1,
+      });
+      expect(await chargesOf(tenantId, rh.playerId)).toEqual([]);
+      const promoted = await chargesOf(tenantId, rf.playerId);
+      expect(promoted).toEqual([{ id: expect.any(String), amount_due: 80000, status: "open" }]);
+      expect((await events(tenantId, sessionId)).slice(seen).map((e) => e.type)).toEqual([
+        "player.removed",
+        "player.promoted",
+      ]);
+    },
+  );
 });

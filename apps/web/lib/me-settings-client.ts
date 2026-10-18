@@ -1,3 +1,5 @@
+import type { GENDER_VALUES } from "@plexco/core";
+
 import { apiFetch } from "./api-client";
 
 /**
@@ -7,6 +9,14 @@ import { apiFetch } from "./api-client";
  */
 export interface ProfileDto {
   displayName: string | null;
+  /** The caller's own self-declared gender (DD-39); only this self-read ever carries it. */
+  gender: (typeof GENDER_VALUES)[number] | null;
+  genderConsent: boolean;
+}
+
+/** GET result: the profile plus the DD-54 collection flag (the control is hidden when false). */
+export interface ProfileView extends ProfileDto {
+  genderCollection: boolean;
 }
 
 export interface LinkedChannelDto {
@@ -16,14 +26,23 @@ export interface LinkedChannelDto {
   createdAt: string;
 }
 
-export async function getMyProfile(signal?: AbortSignal): Promise<ProfileDto> {
-  const data = await apiFetch<{ profile: ProfileDto }>("/api/me/profile", { signal });
-  return data.profile;
+export async function getMyProfile(signal?: AbortSignal): Promise<ProfileView> {
+  const data = await apiFetch<{ profile: ProfileDto; genderCollection: boolean }>(
+    "/api/me/profile",
+    { signal },
+  );
+  return { ...data.profile, genderCollection: data.genderCollection };
 }
 
+/** Sends only the fields given (an absent field keeps its stored value; `gender: null` erases). */
 export async function patchMyProfile(
   csrfToken: string,
-  body: { displayName: string; commandId: string },
+  body: {
+    displayName?: string;
+    gender?: ProfileDto["gender"];
+    genderConsent?: boolean;
+    commandId: string;
+  },
 ): Promise<ProfileDto> {
   const data = await apiFetch<{ profile: ProfileDto }>("/api/me/profile", {
     method: "PATCH",
@@ -31,6 +50,25 @@ export async function patchMyProfile(
     json: body,
   });
   return data.profile;
+}
+
+type GenderFields = Partial<Pick<ProfileDto, "gender" | "genderConsent">>;
+
+/**
+ * The gender part of a profile Save, diffed against the stored profile. Consent never goes out
+ * without a gender: the route rejects `{ gender: null, genderConsent: true }`, and with no stored
+ * gender me-settings would drop it while the form says "saved".
+ */
+export function genderChanges(
+  stored: ProfileDto,
+  gender: ProfileDto["gender"],
+  consent: boolean,
+): GenderFields {
+  const fields: GenderFields = {};
+  const nextConsent = gender !== null && consent;
+  if (gender !== stored.gender) fields.gender = gender;
+  if (nextConsent !== stored.genderConsent) fields.genderConsent = nextConsent;
+  return fields;
 }
 
 export async function listMyChannels(signal?: AbortSignal): Promise<LinkedChannelDto[]> {

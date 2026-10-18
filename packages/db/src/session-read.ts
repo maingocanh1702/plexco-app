@@ -123,6 +123,10 @@ export interface SessionListPage {
 }
 
 export interface SessionDetail extends SessionScalars {
+  /** DD-39 per-gender prices, host / manage read ONLY (never on the list or a public surface);
+   *  null = that side charges priceAmount. Prices only, never any person's gender. */
+  priceMale: number | null;
+  priceFemale: number | null;
   players: {
     id: string;
     membershipId: string;
@@ -269,8 +273,13 @@ export async function getSessionDetail(
   if (!UUID_RE.test(sessionId)) return null;
 
   return withTenant(db, tenantId, async (tx) => {
+    // scalarColumns stays shared with listSessions; the per-gender prices join the detail only.
     const [head] = await tx
-      .select(scalarColumns)
+      .select({
+        ...scalarColumns,
+        priceMale: sessions.priceMale,
+        priceFemale: sessions.priceFemale,
+      })
       .from(sessions)
       .innerJoin(sports, eq(sports.id, sessions.sportId))
       .where(and(eq(sessions.tenantId, tenantId), eq(sessions.id, sessionId)));

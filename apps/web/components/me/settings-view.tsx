@@ -57,6 +57,15 @@ export function SettingsView() {
   return (
     <main className={styles.page}>
       <h1>{t("Cài đặt tài khoản", "Account settings")}</h1>
+      {/* DD-39: only here (not on join results or charges), only while collection is on. */}
+      {profile.genderCollection && profile.gender === null ? (
+        <p role="status" className={styles.warning}>
+          {t(
+            "Bạn chưa đặt giới tính. Ở kèo có giá theo giới tính, bạn sẽ trả giá mặc định cho tới khi đặt.",
+            "You have not set your gender. In sessions priced by gender you pay the default price until you set it.",
+          )}
+        </p>
+      ) : null}
       <Card>
         <section className={styles.section} aria-labelledby="me-profile">
           <h2 id="me-profile">{t("Hồ sơ", "Profile")}</h2>

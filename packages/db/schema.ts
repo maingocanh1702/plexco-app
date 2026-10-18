@@ -46,11 +46,17 @@ export const persons = pgTable("persons", {
   status: text("status").notNull().default("active"), // active|merged|deleted
   mergedIntoPersonId: uuid("merged_into_person_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // 0062 (DD-39): self-declared gender as person-bound AES-256-GCM ciphertext. No runtime role holds a
+  // column grant; it is read and written only through the 0062 SECURITY DEFINER functions.
+  genderEnc: bytea("gender_enc"),
+  genderKeyVersion: text("gender_key_version"),
+  genderPricingConsent: boolean("gender_pricing_consent").notNull().default(false),
 }, (t) => ({
   verifiedPhoneUq: uniqueIndex("persons_verified_phone_unique")
     .on(t.phoneLookupHash)
     .where(sql`${t.phoneVerifiedAt} IS NOT NULL AND ${t.status} = 'active'`),
   statusChk: check("persons_status_chk", sql`${t.status} IN ('active','merged','deleted')`),
+  genderEncVersionChk: check("persons_gender_enc_version_chk", sql`(${t.genderEnc} IS NULL) = (${t.genderKeyVersion} IS NULL)`),
 }));
 
 export const channelIdentities = pgTable("channel_identities", {
@@ -640,6 +646,10 @@ export const sessions = pgTable("sessions", {
   // Declared LAST to match the physical column order 0044's ALTER TABLE ADD
   // COLUMN produces.
   allowPlayerInvite: boolean("allow_player_invite").notNull().default(true),
+  // 0062 (DD-39): per-gender prices, declared LAST to match 0062's ALTER TABLE ADD COLUMN order.
+  // Both NULL = single price (price_amount); at least one set = gender mode; a NULL side falls back to price_amount.
+  priceMale: integer("price_male"),
+  priceFemale: integer("price_female"),
 }, (t) => ({
   tenantStatusIdx: index("idx_sessions_tenant_status").on(t.tenantId, t.status),
   startsIdx: index("idx_sessions_starts_at").on(t.startsAt).where(sql`${t.status} = 'open'`),
@@ -647,6 +657,8 @@ export const sessions = pgTable("sessions", {
   draftStartsIdx: index("idx_sessions_draft_starts_at").on(t.startsAt).where(sql`${t.status} = 'draft'`),
   timeChk: check("sessions_time_chk", sql`${t.endsAt} > ${t.startsAt}`),
   priceChk: check("sessions_price_chk", sql`${t.priceAmount} >= 0`),
+  priceMaleChk: check("sessions_price_male_chk", sql`${t.priceMale} IS NULL OR ${t.priceMale} >= 0`),
+  priceFemaleChk: check("sessions_price_female_chk", sql`${t.priceFemale} IS NULL OR ${t.priceFemale} >= 0`),
   slotsChk: check("sessions_slots_chk", sql`${t.slotsMax} IS NULL OR ${t.slotsMax} > 0`),
   visChk: check("sessions_vis_chk", sql`${t.visibility} IN ('private','public')`),
   // 0024: a public session must have finite capacity — NULL (unlimited) stays valid for non-public only.

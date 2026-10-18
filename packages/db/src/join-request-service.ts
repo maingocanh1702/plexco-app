@@ -350,7 +350,11 @@ export async function approveJoinRequest(
         return fail("REJOIN_REQUIRES_REVIEW", "prior payments need review first");
       }
       membershipId = membership?.id ?? (await mintGuestMembership(tx, tenantId, request.personId));
-      seat = await seatPlayer(tx, tenantId, sessionId, session, membershipId, existing?.id);
+      // DD-39: approve derives as host_add with the approver as the actor (RD-3).
+      seat = await seatPlayer(tx, tenantId, sessionId, session, membershipId, existing?.id, {
+        context: "host_add",
+        actorPersonId: scope.actor,
+      });
     }
 
     await decide(tx, requestId, "approved", scope.actor);

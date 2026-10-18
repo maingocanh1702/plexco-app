@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { ApiClientError } from "../../lib/api-client";
 import { useT } from "../../lib/i18n-client";
 import { formatVndInput, parseVndInput } from "../../lib/money";
@@ -101,7 +101,19 @@ export function SessionForm(props: SessionFormProps) {
     }
   }
 
-  const errorList = Object.values(errors);
+  /** One onChange for the three VND inputs: regroup digits, keep the raw text while it is invalid. */
+  const setVnd =
+    (key: "price" | "priceMale" | "priceFemale") => (e: ChangeEvent<HTMLInputElement>) => {
+      const parsed = parseVndInput(e.target.value);
+      set(
+        key,
+        parsed === null ? "" : Number.isNaN(parsed) ? e.target.value : formatVndInput(parsed),
+      );
+    };
+  const byGender = values.priceMode === "gender";
+
+  // Deduped: two fields can carry one message (both per-gender prices), and the message is the key.
+  const errorList = [...new Set(Object.values(errors))];
   const sportOptions = [
     ...(mode === "create" ? [{ value: "", label: t("— Chọn môn —", "— Choose a sport —") }] : []),
     ...sports.map((s) => ({ value: s.id, label: s.name })),
@@ -140,7 +152,8 @@ export function SessionForm(props: SessionFormProps) {
           {t(
             "Buổi đang mở: bạn đổi được giờ, địa điểm, sức chứa (không thấp hơn số người đã tham gia) và cài đặt. Đổi giá chỉ được khi chưa có khoản thu nào.",
             "This session is open: you can change time, place, capacity (not below the current roster) and settings. The price can only change while there are no charges.",
-          )}
+          )}{" "}
+          {t("(kể cả giá theo giới tính)", "(including prices by gender)")}
         </p>
       ) : null}
 
@@ -203,20 +216,55 @@ export function SessionForm(props: SessionFormProps) {
 
       <fieldset className={styles.group}>
         <legend>{t("Giá & Chỗ", "Price & slots")}</legend>
+        <Select
+          label={t("Cách tính giá", "Pricing")}
+          options={[
+            { value: "single", label: t("Một giá cho mọi người", "One price for everyone") },
+            { value: "gender", label: t("Giá theo giới tính", "Price by gender") },
+          ]}
+          value={values.priceMode}
+          onChange={(e) => set("priceMode", e.target.value as SessionFormValues["priceMode"])}
+        />
         <TextField
-          label={t("Giá mỗi người (VND)", "Price per player (VND)")}
+          label={
+            byGender
+              ? t("Giá mặc định (VND)", "Default price (VND)")
+              : t("Giá mỗi người (VND)", "Price per player (VND)")
+          }
           inputMode="numeric"
           className={styles.numeric}
           value={values.price}
           error={errors.price}
-          onChange={(e) => {
-            const parsed = parseVndInput(e.target.value);
-            set(
-              "price",
-              parsed === null ? "" : Number.isNaN(parsed) ? e.target.value : formatVndInput(parsed),
-            );
-          }}
+          hint={
+            byGender
+              ? t(
+                  "Áp dụng cho người chưa đặt giới tính, không cho phép dùng giới tính để tính giá, hoặc chọn Khác / Không tiết lộ.",
+                  "Applies to players with no gender set, who have not allowed gender pricing, or who chose Other / Prefer not to say.",
+                )
+              : undefined
+          }
+          onChange={setVnd("price")}
         />
+        {byGender ? (
+          <>
+            <TextField
+              label={t("Giá nam (VND)", "Price for men (VND)")}
+              inputMode="numeric"
+              className={styles.numeric}
+              value={values.priceMale}
+              error={errors.priceMale}
+              onChange={setVnd("priceMale")}
+            />
+            <TextField
+              label={t("Giá nữ (VND)", "Price for women (VND)")}
+              inputMode="numeric"
+              className={styles.numeric}
+              value={values.priceFemale}
+              error={errors.priceFemale}
+              onChange={setVnd("priceFemale")}
+            />
+          </>
+        ) : null}
         <div className={styles.check}>
           <input
             id={unlimitedId}

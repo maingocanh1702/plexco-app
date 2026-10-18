@@ -363,6 +363,9 @@ export interface SessionFieldPayload {
   endsAt?: Date;
   timezone?: string;
   priceAmount?: number;
+  /** DD-39 per-gender prices (host create / update only); null clears that side to priceAmount. */
+  priceMale?: number | null;
+  priceFemale?: number | null;
   slotsMax?: number | null;
   visibility?: "private" | "public";
   area?: string | null;
@@ -389,6 +392,8 @@ export const present = (body: Record<string, unknown>, key: string): boolean =>
 const CREATE_FIELD_KEYS = [
   "timezone",
   "priceAmount",
+  "priceMale",
+  "priceFemale",
   "slotsMax",
   "visibility",
   "area",
@@ -516,6 +521,11 @@ const STATUS_BY_CODE: ReadonlyMap<ApiErrorCode, number> = new Map([
   ["REQUEST_DECIDED", 409],
   ["REQUEST_EXPIRED", 409],
   ["SESSION_NOT_JOINABLE", 400],
+  // Web MVP Phase 3 lane L11 (DD-39 gender pricing), raised as RosterMoneyError by host-add,
+  // approve and self-join. 503 = retryable, nothing written (LINK_UNAVAILABLE precedent, U-21);
+  // GENDER_FORBIDDEN is the defect path only (U-6). Default applied, pending owner sign-off.
+  ["CHARGE_DERIVATION_UNAVAILABLE", 503],
+  ["GENDER_FORBIDDEN", 403],
   // Web MVP Phase 3 lane L4b (M6 host announce), raised as SessionAnnounceError: the refusal while
   // the DB cannot prove delivery (A-D1), the zalo-only channel rule (A-D4) and the §3 catalog :322.
   ["ANNOUNCE_DELIVERY_DISABLED", 409],
@@ -595,6 +605,15 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
       "Payments can only be recorded for an active player.",
     ],
   ],
+  // DD-39: fixed text, no person data and no gender (readiness 4.10 [UNPINNED], default applied).
+  [
+    "CHARGE_DERIVATION_UNAVAILABLE",
+    [
+      "Chưa tính được giá. Chưa có gì được ghi lại, vui lòng thử lại sau.",
+      "The price could not be worked out. Nothing was saved; please try again later.",
+    ],
+  ],
+  ["GENDER_FORBIDDEN", ["Không được phép thực hiện thao tác này.", "This action is not allowed."]],
   [
     "FORBIDDEN",
     ["Bạn không có quyền thực hiện thao tác này.", "You are not permitted to do this."],

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { encryptPersonGender, type Gender } from "./gender-crypto.js";
 import {
   approveJoinRequest,
   cancelJoinRequest,
@@ -10,6 +11,7 @@ import {
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession, removePlayerFromSession } from "./roster-service.js";
+import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
 import { joinSession, leaveSession } from "./session-join-service.js";
 import { getSessionOccupancy } from "./session-occupancy.js";
 import { updateSession } from "./session-service.js";
@@ -705,4 +707,94 @@ describe("join-request events and races (A-9, A-4)", () => {
     );
     expect(n.n).toBe(1);
   });
+});
+
+// L11 step 4 (readiness p3-m9-gender-pricing T-5, T-7 approve): approve seats through seatPlayer as
+// host_add with the approver as the actor; a stored gender that cannot be opened charges nobody.
+const GENDER_ENV = ["ENCRYPTION_KEY", "KMS_PROVIDER", "KMS_KEY_ID"];
+type GenderSeed = Gender | "corrupt" | "retired" | "foreign";
+
+/** Owner seed of a consented gender on `personId`, or one of the three decrypt failures. */
+async function storeGender(personId: string, how: GenderSeed) {
+  const sealedFor = how === "foreign" ? await fx.seedPerson() : personId;
+  const gender: Gender = how === "corrupt" || how === "retired" || how === "foreign" ? "male" : how;
+  const { enc, keyVersion } = await encryptPersonGender(sealedFor, gender);
+  if (how === "corrupt") enc.writeUInt8(enc.readUInt8(enc.length - 1) ^ 0xff, enc.length - 1);
+  await ctx.owner.query(
+    `UPDATE persons SET gender_enc = $2, gender_key_version = $3, gender_pricing_consent = true
+      WHERE id = $1`,
+    [personId, enc, how === "retired" ? "retired-key" : keyVersion],
+  );
+}
+
+describe("approveJoinRequest derives the charge (DD-39 host_add)", () => {
+  const saved = new Map(GENDER_ENV.map((k) => [k, process.env[k]]));
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
+    for (const k of GENDER_ENV.slice(1)) delete process.env[k];
+    __resetAuthSecretCacheForTest();
+  });
+  afterAll(() => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    __resetAuthSecretCacheForTest();
+  });
+
+  /** A gendered approval session: male 120000, female 80000, base price_amount 100000. */
+  async function gendered(over: { visibility?: "public" } = {}) {
+    const w = await world({ slotsMax: 2, priceAmount: 100_000, ...over });
+    await ctx.owner.query(
+      `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
+      [w.sessionId],
+    );
+    return w;
+  }
+
+  it("T-7 approve: a male member's approved request is charged price_male", async () => {
+    const { tenantId, host, sessionId } = await gendered();
+    const m = await seedMember(tenantId);
+    await storeGender(m.personId, "male");
+    const requestId = await openRequest(tenantId, m.personId, sessionId);
+    const r = await approve(tenantId, host, requestId);
+    expect(r).toMatchObject({ status: "approved", outcome: "active" });
+    expect(await chargesOf(tenantId, r.playerId)).toEqual([
+      { amount_due: 120_000, status: "open" },
+    ]);
+    // T-21: approve emits join_request.approved (no player.added); a gender key or a per-gender
+    // price in its payload fails.
+    expect((await events(tenantId, sessionId)).at(-1)).toEqual({
+      type: "join_request.approved",
+      payload: {
+        session_id: sessionId,
+        request_id: requestId,
+        player_id: r.playerId,
+        membership_id: m.membershipId,
+        status: "active",
+        waitlist_position: null,
+      },
+    });
+  });
+
+  it.each(["corrupt", "retired", "foreign"] as const)(
+    "T-5 approve, %s blob: CHARGE_DERIVATION_UNAVAILABLE, no player, charge, guest membership, event or command; the request stays pending",
+    async (how) => {
+      const { tenantId, host, sessionId } = await gendered({ visibility: "public" });
+      const visitor = await fx.seedPerson("Visitor");
+      await storeGender(visitor, how);
+      const requestId = await openRequest(tenantId, visitor, sessionId, {
+        allowGuestMembership: true,
+      });
+      const before = await state(tenantId);
+      const code = await codeOf(approve(tenantId, host, requestId));
+      expect(code).toBe("CHARGE_DERIVATION_UNAVAILABLE");
+      expect(await state(tenantId)).toEqual(before);
+      expect(await requestRow(tenantId, requestId)).toMatchObject({
+        status: "pending",
+        decided_by: null,
+        decided: false,
+      });
+    },
+  );
 });

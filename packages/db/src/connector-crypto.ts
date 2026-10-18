@@ -67,37 +67,41 @@ async function connectorKey(): Promise<Buffer> {
   return deriveAesKey(await resolveConnectorSecretRoot(), CONNECTOR_ZALO_KEY_INFO);
 }
 
+/**
+ * The shared AES-256-GCM envelope (readiness p3-m9-gender-pricing RD-5): `iv(12) || tag(16) || ct`, a
+ * fresh random iv per seal, tag length pinned on cipher AND decipher. The connector and person-gender
+ * (gender-crypto.ts) blobs both use it; each caller owns its key label, its AAD and its version check.
+ */
+export function sealAesGcm(key: Buffer, plaintext: Buffer, aad: Buffer): Buffer {
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", key, iv, { authTagLength: TAG_BYTES });
+  cipher.setAAD(aad);
+  const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ct]);
+}
+
+/** Throws on a blob too short to hold iv + tag + one byte, and (from `final()`) on any tag mismatch. */
+export function openAesGcm(key: Buffer, enc: Buffer, aad: Buffer): Buffer {
+  if (enc.length < IV_BYTES + TAG_BYTES + 1) throw new Error("openAesGcm: malformed ciphertext");
+  const decipher = createDecipheriv("aes-256-gcm", key, enc.subarray(0, IV_BYTES), {
+    authTagLength: TAG_BYTES,
+  });
+  decipher.setAAD(aad);
+  decipher.setAuthTag(enc.subarray(IV_BYTES, IV_BYTES + TAG_BYTES));
+  return Buffer.concat([decipher.update(enc.subarray(IV_BYTES + TAG_BYTES)), decipher.final()]);
+}
+
 export async function encryptConnectorSecret(
   plaintext: string,
   binding: ConnectorBinding,
 ): Promise<{ enc: Buffer; keyVersion: string }> {
-  const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", await connectorKey(), iv, {
-    authTagLength: TAG_BYTES,
-  });
-  cipher.setAAD(aad(binding));
-  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return { enc: Buffer.concat([iv, cipher.getAuthTag(), ct]), keyVersion: connectorKeyVersion() };
+  const enc = sealAesGcm(await connectorKey(), Buffer.from(plaintext, "utf8"), aad(binding));
+  return { enc, keyVersion: connectorKeyVersion() };
 }
 
 /** Raw open (no version check, no audit): the caller has already checked the label and written its audit row. */
 export async function openConnectorSecret(enc: Buffer, binding: ConnectorBinding): Promise<string> {
-  if (enc.length < IV_BYTES + TAG_BYTES + 1)
-    throw new Error("connector secret: malformed ciphertext");
-  const decipher = createDecipheriv(
-    "aes-256-gcm",
-    await connectorKey(),
-    enc.subarray(0, IV_BYTES),
-    {
-      authTagLength: TAG_BYTES,
-    },
-  );
-  decipher.setAAD(aad(binding));
-  decipher.setAuthTag(enc.subarray(IV_BYTES, IV_BYTES + TAG_BYTES));
-  return Buffer.concat([
-    decipher.update(enc.subarray(IV_BYTES + TAG_BYTES)),
-    decipher.final(),
-  ]).toString("utf8");
+  return openAesGcm(await connectorKey(), enc, aad(binding)).toString("utf8");
 }
 
 /** bot_token_enc is a `text` column: base64url of the blob. */

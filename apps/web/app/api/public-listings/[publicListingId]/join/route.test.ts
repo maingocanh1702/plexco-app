@@ -42,6 +42,11 @@ const OTHER = "66666666-6666-4666-8666-666666666666";
 const IP = "203.0.113.7";
 const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+// DD-39 4.6 (T-20): the twelve exact keys no public JSON may carry (gender_restriction is DD-41).
+const GENDER_KEYS =
+  `gender_enc gender_key_version gender_pricing_consent price_male price_female genderEnc
+  genderKeyVersion genderPricingConsent priceMale priceFemale gender genderConsent`.split(/\s+/);
+const GENDER_LEAK: object = Object.fromEntries(GENDER_KEYS.map((k) => [k, 1]));
 const BODY = JSON.stringify({ commandId: "cmd-1" });
 const JOINED = {
   outcome: "active",
@@ -149,6 +154,7 @@ describe("POST /api/public-listings/:publicListingId/join (L10b, readiness 4.6)"
       publicListingId: OTHER,
     });
     vi.mocked(joinSession).mockResolvedValueOnce({
+      ...GENDER_LEAK,
       outcome: "waitlisted",
       playerId: PLAYER,
       waitlistPosition: 3,
@@ -219,6 +225,29 @@ describe("POST /api/public-listings/:publicListingId/join (L10b, readiness 4.6)"
       "This session is not open for joining.",
     ]);
     expect(vi.mocked(resolveTenantLang).mock.calls.map((call) => call[1])).toEqual([TENANT]);
+  });
+
+  it("DD-39 T-3: CHARGE_DERIVATION_UNAVAILABLE answers 503 with the gender-free pair in the club's language, no fallback join", async () => {
+    vi.mocked(joinSession).mockRejectedValue(
+      new RosterMoneyError("CHARGE_DERIVATION_UNAVAILABLE", "internal detail male"),
+    );
+    for (const [lang, message] of [
+      ["vi", "Chưa tính được giá. Chưa có gì được ghi lại, vui lòng thử lại sau."],
+      ["en", "The price could not be worked out. Nothing was saved; please try again later."],
+    ] as const) {
+      vi.mocked(resolveTenantLang).mockResolvedValueOnce(lang);
+      const res = await post(BODY);
+      const body = (await res.json()) as {
+        data: unknown;
+        error: { code: string; message: string };
+      };
+      expect([res.status, body.error.code, body.error.message]).toEqual([
+        503,
+        "CHARGE_DERIVATION_UNAVAILABLE",
+        message,
+      ]);
+      expect(JSON.stringify(body)).not.toMatch(/internal detail|outcome/);
+    }
   });
 
   it("a non-domain failure is rethrown (500), never turned into a success or a 404", async () => {

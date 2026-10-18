@@ -88,6 +88,12 @@
  * section 3. ANNOUNCE_DELIVERY_DISABLED (409) is that route's refusal when the DB shows no live dispatch
  * schedule or a disabled zalo_dm projector (DD-134 (f); proposed, pending owner sign-off), so the route
  * never answers announced:true while nothing can deliver.
+ *
+ * CHARGE_DERIVATION_UNAVAILABLE, GENDER_FORBIDDEN and INVALID_GENDER arrived with DD-39 gender pricing
+ * (M9), pinned in feature_user_settings_tech.md :113 (a stored gender that cannot be decrypted fails
+ * closed: no charge, never a fallback price), :163 (INVALID_GENDER 400) and :164 (GENDER_FORBIDDEN 403).
+ * CHARGE_DERIVATION_UNAVAILABLE answers 503 (retryable, LINK_UNAVAILABLE precedent; default applied,
+ * pending owner sign-off). No message for any of the three carries person data.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",
@@ -103,6 +109,7 @@ export const API_ERROR_CODES = [
   "CAPACITY_BELOW_ROSTER",
   "CHANNEL_NOT_LINKED",
   "CHARGE_ALREADY_SETTLED",
+  "CHARGE_DERIVATION_UNAVAILABLE",
   "CHARGE_NOT_PAYABLE",
   "CLOSE_BLOCKED_OPEN_DEBT",
   "COMMAND_ID_CONFLICT",
@@ -110,11 +117,13 @@ export const API_ERROR_CODES = [
   "CSRF_INVALID",
   "DISCOVERY_RATE_LIMITED",
   "FORBIDDEN",
+  "GENDER_FORBIDDEN",
   "GUEST_NOTE_LIMIT_REACHED",
   "GUEST_NOTE_NOT_FOUND",
   "INVALID_BODY",
   "INVALID_CHANNEL",
   "INVALID_FILTER",
+  "INVALID_GENDER",
   "INVALID_TIME_RANGE",
   "INVALID_WEBHOOK_SECRET",
   "INVITE_NOT_ALLOWED",
@@ -154,6 +163,13 @@ export const API_ERROR_CODES = [
 ] as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
+
+/**
+ * The DD-39 self-declared gender value set (decisions.md:542-556), in its order. The settings API
+ * rejects anything else with INVALID_GENDER; packages/db/src/gender-crypto.ts mirrors it (packages/db
+ * does not depend on @plexco/core).
+ */
+export const GENDER_VALUES = ["male", "female", "other", "undisclosed"] as const;
 
 /** One entry of CLOSE_BLOCKED_OPEN_DEBT's list: a player whose charge still has an open balance.
  *  Id + display name ONLY (DD-131 OD-1): never an amount, a membership/person id or a contact. */

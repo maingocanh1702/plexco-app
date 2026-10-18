@@ -84,6 +84,9 @@ export interface GuestNoteDto {
 }
 
 export interface SessionDetailDto extends SessionScalarsDto {
+  /** DD-39 per-gender prices (host / manage read only); null = that side charges priceAmount. */
+  priceMale: number | null;
+  priceFemale: number | null;
   players: RosterPlayerDto[];
   guestNotes: GuestNoteDto[];
   counts: {
@@ -119,6 +122,9 @@ export interface SessionFieldsBody {
   endsAt?: string;
   timezone?: string;
   priceAmount?: number;
+  /** DD-39: null clears that side (it then charges priceAmount); absent leaves it alone. */
+  priceMale?: number | null;
+  priceFemale?: number | null;
   slotsMax?: number | null;
   visibility?: "private" | "public";
   area?: string | null;
