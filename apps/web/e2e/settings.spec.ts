@@ -48,7 +48,9 @@ interface World {
    * secret moved on (a sign-in in another tab) while the page still holds the old one.
    */
   csrfToken: string;
-  profile: { displayName: string | null };
+  profile: { displayName: string | null; gender: string | null; genderConsent: boolean };
+  /** genderCollection of GET / PATCH /api/me/profile (the route's GENDER_COLLECTION_ENABLED). */
+  genderCollection: boolean;
   channels: { id: string; platform: string; status: string; createdAt: string }[];
   club: Record<string, unknown>;
   zalo: Record<string, unknown>;
@@ -71,7 +73,8 @@ async function install(page: Page): Promise<World> {
     calls: [],
     sessionRole: "owner",
     csrfToken: CSRF,
-    profile: { displayName: "Lan Nguyễn" },
+    profile: { displayName: "Lan Nguyễn", gender: null, genderConsent: false },
+    genderCollection: false,
     channels: [
       { id: ZALO_ID, platform: "zalo", status: "active", createdAt: "2026-10-01T00:00:00.000Z" },
       {
@@ -166,8 +169,13 @@ async function install(page: Page): Promise<World> {
       );
     }
     if (path === "/api/me/profile") {
-      if (method === "PATCH") world.profile = { displayName: String(body?.displayName) };
-      return json(route, 200, envelope({ profile: world.profile }));
+      // Like the route: a PATCH applies only the keys it sends; the commandId is not stored.
+      if (method === "PATCH" && body) {
+        const { commandId: _commandId, ...sent } = body;
+        world.profile = { ...world.profile, ...(sent as Partial<World["profile"]>) };
+      }
+      const data = { profile: world.profile, genderCollection: world.genderCollection };
+      return json(route, 200, envelope(data));
     }
     if (path === "/api/me/channels") {
       return json(route, 200, envelope({ channels: world.channels }));
@@ -251,6 +259,68 @@ test.describe("/me/settings", () => {
     expect(patches).toHaveLength(1);
     expect(patches[0]!.body).toMatchObject({ displayName: "Lan Mới" });
     expect(typeof patches[0]!.body?.commandId).toBe("string");
+  });
+
+  test("gender collection ON (T-2, T-24): the prompt shows while unset; set, then clear, each send ONE PATCH of only the gender fields; vi and en labels", async ({
+    page,
+  }) => {
+    const world = await install(page);
+    world.genderCollection = true;
+    const vi = {
+      prompt:
+        "Bạn chưa đặt giới tính. Ở kèo có giá theo giới tính, bạn sẽ trả giá mặc định cho tới khi đặt.",
+      gender: "Giới tính",
+      options: ["Chưa đặt", "Nam", "Nữ", "Khác", "Không tiết lộ"],
+      consent: "Cho phép CLB sử dụng giới tính để tính giá",
+      notShared: "Không chia sẻ giới tính",
+    };
+    const en = {
+      prompt:
+        "You have not set your gender. In sessions priced by gender you pay the default price until you set it.",
+      gender: "Gender",
+      options: ["Not set", "Male", "Female", "Other", "Prefer not to say"],
+      consent: "Allow clubs to use my gender for pricing",
+      notShared: "Gender not shared",
+    };
+    // Unset gender, consent off: the prompt, the 4.9 options in order and the consent-off caption.
+    const expectUnset = async (l: typeof vi) => {
+      await expect(page.getByRole("status").filter({ hasText: l.prompt })).toBeVisible();
+      const select = page.getByLabel(l.gender, { exact: true });
+      await expect(select).toHaveValue("");
+      await expect(select.locator("option")).toHaveText(l.options);
+      await expect(page.getByLabel(l.consent)).not.toBeChecked();
+      await expect(page.getByText(l.notShared)).toBeVisible();
+    };
+    await page.goto("/me/settings");
+    await expectUnset(vi);
+    const gender = page.getByLabel(vi.gender, { exact: true });
+    const consent = page.getByLabel(vi.consent);
+    const prompt = page.getByRole("status").filter({ hasText: vi.prompt });
+    const save = page.getByRole("button", { name: "Lưu", exact: true });
+
+    await gender.selectOption("female");
+    await consent.check();
+    await expect(page.getByText(vi.notShared)).toHaveCount(0);
+    await save.click();
+    await expect(page.getByRole("status").filter({ hasText: "Đã lưu hồ sơ." })).toBeVisible();
+    // The prompt goes only once the refetched profile carries the gender.
+    await expect(prompt).toHaveCount(0);
+    await expect(gender).toHaveValue("female");
+    await expect(consent).toBeChecked();
+
+    await gender.selectOption("");
+    await consent.uncheck();
+    await save.click();
+    await expect(prompt).toBeVisible();
+    expect(callsTo(world, "PATCH", "/api/me/profile").map((c) => c.body)).toEqual([
+      { gender: "female", genderConsent: true, commandId: expect.any(String) },
+      { gender: null, genderConsent: false, commandId: expect.any(String) },
+    ]);
+
+    await page.evaluate(() => window.localStorage.setItem("plx-lang", "en"));
+    await page.reload();
+    await expectUnset(en);
+    await expect(page.getByText(/giới tính/i)).toHaveCount(0);
   });
 
   test("an invalid name is pinned to the field and nothing is sent", async ({ page }) => {
