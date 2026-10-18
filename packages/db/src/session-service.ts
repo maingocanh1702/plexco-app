@@ -71,6 +71,9 @@ export interface CreateSessionInputPayload {
   timezone: string;
   visibility?: "private" | "public";
   priceAmount?: number;
+  /** DD-39 per-gender prices (host-side money): absent or null = NULL = price_amount. NEVER in an outbox payload. */
+  priceMale?: number | null;
+  priceFemale?: number | null;
   slotsMax?: number | null;
   area?: string | null;
   venueName?: string | null;
@@ -206,6 +209,12 @@ function validateInput(input: CreateSessionInputPayload): void {
   if (input.priceAmount !== undefined && !isInt4(input.priceAmount, 0)) {
     fail("INVALID_PRICE", "price_amount must be an integer in [0, 2147483647]");
   }
+  if (input.priceMale != null && !isInt4(input.priceMale, 0)) {
+    fail("INVALID_PRICE", "price_male must be an integer in [0, 2147483647] or null");
+  }
+  if (input.priceFemale != null && !isInt4(input.priceFemale, 0)) {
+    fail("INVALID_PRICE", "price_female must be an integer in [0, 2147483647] or null");
+  }
   if (input.slotsMax != null && !isInt4(input.slotsMax, 1)) {
     fail("INVALID_SLOTS", "slots_max must be an integer in [1, 2147483647] or null");
   }
@@ -292,6 +301,8 @@ export async function createSession(
         endsAt: input.endsAt,
         timezone: input.timezone,
         priceAmount: input.priceAmount ?? 0,
+        priceMale: input.priceMale ?? null,
+        priceFemale: input.priceFemale ?? null,
         slotsMax: input.slotsMax ?? null,
         area: input.area ?? null,
         venueName: input.venueName ?? null,
@@ -1100,6 +1111,9 @@ export interface UpdateSessionInputPayload {
   endsAt?: Date;
   timezone?: string;
   priceAmount?: number;
+  /** DD-39: undefined = leave alone; null = clear (that side falls back to price_amount). */
+  priceMale?: number | null;
+  priceFemale?: number | null;
   slotsMax?: number | null;
   visibility?: "private" | "public";
   area?: string | null;
@@ -1146,6 +1160,8 @@ interface SessionUpdateSet {
   endsAt?: Date;
   timezone?: string;
   priceAmount?: number;
+  priceMale?: number | null;
+  priceFemale?: number | null;
   slotsMax?: number | null;
   visibility?: string;
   area?: string | null;
@@ -1282,6 +1298,12 @@ export async function updateSession(
     if (input.priceAmount !== undefined && !isInt4(input.priceAmount, 0)) {
       failUpdate("INVALID_PRICE", "price_amount must be an integer in [0, 2147483647]");
     }
+    if (input.priceMale != null && !isInt4(input.priceMale, 0)) {
+      failUpdate("INVALID_PRICE", "price_male must be an integer in [0, 2147483647] or null");
+    }
+    if (input.priceFemale != null && !isInt4(input.priceFemale, 0)) {
+      failUpdate("INVALID_PRICE", "price_female must be an integer in [0, 2147483647] or null");
+    }
     if (input.slotsMax !== undefined && input.slotsMax !== null && !isInt4(input.slotsMax, 1)) {
       failUpdate("INVALID_SLOTS", "slots_max must be an integer in [1, 2147483647] or null");
     }
@@ -1310,6 +1332,8 @@ export async function updateSession(
         endsAt: sessions.endsAt,
         timezone: sessions.timezone,
         priceAmount: sessions.priceAmount,
+        priceMale: sessions.priceMale,
+        priceFemale: sessions.priceFemale,
         slotsMax: sessions.slotsMax,
         area: sessions.area,
         venueName: sessions.venueName,
@@ -1399,6 +1423,14 @@ export async function updateSession(
       changes.priceAmount = input.priceAmount;
       changedFields.push("price_amount");
     }
+    // DD-39 per-gender prices: applied, but NEVER named in changed_fields (R-C1-c), so the
+    // session.updated payload and its consumers keep their existing names.
+    if (input.priceMale !== undefined && input.priceMale !== current.priceMale) {
+      changes.priceMale = input.priceMale;
+    }
+    if (input.priceFemale !== undefined && input.priceFemale !== current.priceFemale) {
+      changes.priceFemale = input.priceFemale;
+    }
     if (input.slotsMax !== undefined && input.slotsMax !== current.slotsMax) {
       changes.slotsMax = input.slotsMax;
       changedFields.push("slots_max");
@@ -1428,8 +1460,9 @@ export async function updateSession(
     // field already equals current). Return the current state, record the dedup row
     // so a later replay short-circuits, no version bump, NO session.updated event.
     // expectedVersion is NOT checked here (goal state already reached — mirror
-    // publish's idempotent-no-op-wins-version).
-    if (changedFields.length === 0) {
+    // publish's idempotent-no-op-wins-version). Keyed on `changes`, not changedFields:
+    // a per-gender-only change has no changed_fields name but is NOT a no-op.
+    if (Object.keys(changes).length === 0) {
       const stored: StoredUpdateResult = {
         sessionId,
         status: current.status,
@@ -1517,8 +1550,13 @@ export async function updateSession(
     // (re-derive existing charges) is the payments/review_policy subsystem, absent on
     // base — so this refuses rather than silently mutating money. Drizzle-typed `charges`
     // existence probe under the tenant GUC (RLS). The retry-root dimension of edge #4 is
-    // vacuously absent (no promotion-retry table on base).
-    if (changes.priceAmount !== undefined) {
+    // vacuously absent (no promotion-retry table on base). DD-39: a per-gender price
+    // change, a single <-> gender mode switch included, is a price change too.
+    if (
+      changes.priceAmount !== undefined ||
+      changes.priceMale !== undefined ||
+      changes.priceFemale !== undefined
+    ) {
       const chargeRows = await tx
         .select({ x: sql`1` })
         .from(charges)
@@ -1582,15 +1620,18 @@ export async function updateSession(
     // Lease/ack columns stay NULL. The tenant is on the row's tenant_id COLUMN; the
     // PAYLOAD is EXACTLY the spec's {session_id, changed_fields[]} (§4 Events — no
     // tenant_id), where changed_fields are the canonical snake_case column names
-    // (never roster/amount). The dispatcher schedule stays OFF.
-    await tx.insert(outboxEvents).values({
-      tenantId,
-      aggregateType: "session",
-      aggregateId: updated!.id,
-      sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${updated!.id}), 0) + 1`,
-      type: "session.updated",
-      payload: { session_id: updated!.id, changed_fields: changedFields },
-    });
+    // (never roster/amount). The dispatcher schedule stays OFF. A per-gender-only change
+    // (DD-39, R-C1-c / U-4: no per-gender notice) bumps the version and emits NOTHING.
+    if (changedFields.length > 0) {
+      await tx.insert(outboxEvents).values({
+        tenantId,
+        aggregateType: "session",
+        aggregateId: updated!.id,
+        sequence: sql`coalesce((select max(${outboxEvents.sequence}) from ${outboxEvents} where ${outboxEvents.aggregateId} = ${updated!.id}), 0) + 1`,
+        type: "session.updated",
+        payload: { session_id: updated!.id, changed_fields: changedFields },
+      });
+    }
 
     // A visibility transition (public <-> private) ALSO emits the spec's specific
     // session.visibility_changed event (§4 Events: {session_id, new_visibility}) — the

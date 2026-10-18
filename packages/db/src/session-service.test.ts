@@ -308,6 +308,15 @@ describe("createSession", () => {
       [{ priceAmount: -1 }, "INVALID_PRICE"],
       [{ priceAmount: 1.5 }, "INVALID_PRICE"],
       [{ priceAmount: 2_147_483_648 }, "INVALID_PRICE"],
+      // T-14: a per-gender price is null (single price) or an int4 >= 0 (the route maps 400 INVALID_BODY)
+      [{ priceMale: -1 }, "INVALID_PRICE"],
+      [{ priceMale: 1.5 }, "INVALID_PRICE"],
+      [{ priceMale: 2_147_483_648 }, "INVALID_PRICE"],
+      [{ priceMale: "100" }, "INVALID_PRICE"],
+      [{ priceFemale: -1 }, "INVALID_PRICE"],
+      [{ priceFemale: 1.5 }, "INVALID_PRICE"],
+      [{ priceFemale: 2_147_483_648 }, "INVALID_PRICE"],
+      [{ priceFemale: "100" }, "INVALID_PRICE"],
       [{ slotsMax: 0 }, "INVALID_SLOTS"],
       [{ slotsMax: 2.5 }, "INVALID_SLOTS"],
       [{ area: 123 }, "INVALID_TEXT_FIELD"],
@@ -325,6 +334,27 @@ describe("createSession", () => {
     ];
     for (const [over, code] of bad) {
       await expectReject(() => createBad(over), code);
+    }
+  });
+
+  it("T-26 create: stores both, one or no per-gender price (absent or null = NULL); session.created carries none", async () => {
+    const cases: Array<[Partial<CreateSessionInputPayload>, unknown[]]> = [
+      [{ priceMale: 150000, priceFemale: 90000 }, [150000, 90000]],
+      [{ priceFemale: 0 }, [null, 0]],
+      [{ priceMale: null, priceFemale: null }, [null, null]],
+      [{}, [null, null]],
+    ];
+    for (const [over, want] of cases) {
+      const { sessionId } = await create(over);
+      const s = await row(`SELECT price_male, price_female FROM sessions WHERE id = $1`, [
+        sessionId,
+      ]);
+      expect([s.price_male, s.price_female]).toEqual(want);
+      const events = await rows(`SELECT payload FROM outbox_events WHERE aggregate_id = $1`, [
+        sessionId,
+      ]);
+      expect(events).toHaveLength(1);
+      expect(JSON.stringify(events)).not.toMatch(/price_?(male|female)/i);
     }
   });
 
@@ -2747,6 +2777,87 @@ describe("updateSession", () => {
       "PRICE_CHANGE_REQUIRES_POLICY",
     );
     expect(await sessionState(sessionId)).toMatchObject({ version, price_amount: 120000 });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  const genderPrices = (sessionId: string) =>
+    row(`SELECT version, price_male, price_female FROM sessions WHERE id = $1`, [sessionId]);
+
+  type Gp = number | null;
+  type PriceChange = Pick<UpdateSessionInputPayload, "priceMale" | "priceFemale">;
+  const T13_CASES: Array<[string, [Gp, Gp], PriceChange, [Gp, Gp]]> = [
+    ["a price_male-only change", [120000, 80000], { priceMale: 130000 }, [130000, 80000]],
+    ["a price_female-only change", [120000, 80000], { priceFemale: 70000 }, [120000, 70000]],
+    ["clearing one side (T-26)", [120000, 80000], { priceFemale: null }, [120000, null]],
+    ["a single -> gender mode switch", [null, null], { priceMale: 120000 }, [120000, null]],
+    [
+      "a gender -> single mode switch",
+      [120000, 80000],
+      { priceMale: null, priceFemale: null },
+      [null, null],
+    ],
+  ];
+  it.each(T13_CASES)(
+    "T-13: %s with a void charge => PRICE_CHANGE_REQUIRES_POLICY, zero writes; without charges it applies",
+    async (_name, [male, female], change, [wantMale, wantFemale]) => {
+      for (const charged of [true, false]) {
+        const tenantId = await seedTenant("active", "active");
+        const { sessionId } = await seedSession(tenantId, { priceAmount: 100000 });
+        await ctx.owner.query(
+          `UPDATE sessions SET price_male = $2, price_female = $3 WHERE id = $1`,
+          [sessionId, male, female],
+        );
+        if (charged) await seedCharge(tenantId, sessionId, { status: "void" });
+        const before = await genderPrices(sessionId);
+        const run = () =>
+          update(tenantId, { sessionId, expectedVersion: before.version, ...change });
+        if (charged) {
+          await expectUpdateReject(run, "PRICE_CHANGE_REQUIRES_POLICY");
+          expect(await genderPrices(sessionId)).toEqual(before);
+        } else {
+          expect((await run()).version).toBe(before.version + 1);
+          expect(await genderPrices(sessionId)).toEqual({
+            version: before.version + 1,
+            price_male: wantMale,
+            price_female: wantFemale,
+          });
+        }
+        // R-C1-c: no per-gender name in any changed_fields list, so no per-gender notice
+        expect(await updatedEvents(sessionId)).toHaveLength(0);
+      }
+    },
+  );
+
+  it("T-13/R-C1-c: price_amount + price_male => changed_fields stays ['price_amount']", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { priceAmount: 100000 });
+    await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      priceAmount: 90000,
+      priceMale: 1,
+    });
+    expect((await genderPrices(sessionId)).price_male).toBe(1);
+    const events = await updatedEvents(sessionId);
+    expect(events.map((e) => e.payload)).toEqual([
+      { session_id: sessionId, changed_fields: ["price_amount"] },
+    ]);
+  });
+
+  it("T-14 update: a per-gender price of -1, 1.5, 2147483648 or '100' => INVALID_PRICE, zero writes", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, { priceAmount: 100000 });
+    const before = await genderPrices(sessionId);
+    for (const key of ["priceMale", "priceFemale"]) {
+      for (const bad of [-1, 1.5, 2_147_483_648, "100"]) {
+        const input = { sessionId, expectedVersion: version, [key]: bad };
+        await expectUpdateReject(
+          () => update(tenantId, input as unknown as UpdateSessionInputPayload),
+          "INVALID_PRICE",
+        );
+      }
+    }
+    expect(await genderPrices(sessionId)).toEqual(before);
     expect(await updatedEvents(sessionId)).toHaveLength(0);
   });
 

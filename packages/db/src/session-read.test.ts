@@ -453,6 +453,19 @@ describe("getSessionDetail", () => {
       await getSessionDetail(ctx.appDb.db, { tenantId: ctx.tenantA, sessionId: "not-a-uuid" }),
     ).toBeNull();
   });
+
+  it("T-26 host read: carries price_male / price_female (both null on a single-price session)", async () => {
+    const gendered = await seedSession(ctx.tenantA, { startsAt: "2036-01-01T10:00:00Z" });
+    await ctx.owner.query(
+      `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
+      [gendered],
+    );
+    const single = await seedSession(ctx.tenantA, { startsAt: "2036-01-02T10:00:00Z" });
+    const g = await getSessionDetail(ctx.appDb.db, { tenantId: ctx.tenantA, sessionId: gendered });
+    expect([g!.priceAmount, g!.priceMale, g!.priceFemale]).toEqual([50000, 120000, 80000]);
+    const s = await getSessionDetail(ctx.appDb.db, { tenantId: ctx.tenantA, sessionId: single });
+    expect([s!.priceAmount, s!.priceMale, s!.priceFemale]).toEqual([50000, null, null]);
+  });
 });
 
 describe("cursor codec", () => {
