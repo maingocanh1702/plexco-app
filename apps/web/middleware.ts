@@ -4,7 +4,7 @@ import {
   cspNonceEnabled,
   newNonce,
   parseProcessRole,
-  pathAllowedForRole,
+  requestAllowedForRole,
 } from "./lib/request-policy";
 
 /**
@@ -25,8 +25,8 @@ const devLoginRouting: typeof import("./lib/dev-login/routing").devLoginRouting 
  * Edge middleware — thin adapter over lib/request-policy.ts (read the policy and its reasons
  * there; audit 2026-09-06 W-10 + backlog `web-csp-script-src-nonce`).
  *
- * 1. PROCESS_ROLE=discovery serves only the discovery surface; everything else is a 404 with no
- *    body and no handler run.
+ * 1. PROCESS_ROLE=discovery serves only GET and HEAD on the discovery surface; every other method
+ *    or path is a 404 with no body and no handler run.
  * 2. Development only: while the per-request dev-login gate is open (127.0.0.1 bind evidence
  *    included), the two virtual dev-login paths answer a 307 to their implementation routes. The
  *    Location is absolute and Next serves it as http://localhost:<port>/… for any loopback Host.
@@ -38,7 +38,7 @@ const devLoginRouting: typeof import("./lib/dev-login/routing").devLoginRouting 
  */
 export function middleware(request: NextRequest): NextResponse {
   const role = parseProcessRole(process.env.PROCESS_ROLE);
-  if (!pathAllowedForRole(request.nextUrl.pathname, role)) {
+  if (!requestAllowedForRole(request.method, request.nextUrl.pathname, role)) {
     return new NextResponse(null, { status: 404, headers: { "cache-control": "no-store" } });
   }
 

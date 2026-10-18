@@ -47,7 +47,9 @@ services:
       # Audit 2026-09-06 W-10: web asserts its DB role on first use and fails closed on mismatch
       # (apps/web/lib/session-cookies.ts appDb). Unset = no check (tests, ad-hoc tooling).
       DB_EXPECTED_ROLE: app
-      # Discovery ingress serves only /healthz + /discover* (apps/web/middleware.ts); web serves all.
+      # Readonly DSN for the public discovery read (apps/web/lib/discovery-route-support.ts).
+      DISCOVERY_DATABASE_URL: postgres://readonly:plexco_dev_readonly@postgres:5432/plexco
+      # Discovery ingress serves only /healthz, /discover* and /api/discover* (apps/web/middleware.ts); web serves all.
     env_file:
       # secret dev (SEPAY_WEBHOOK_SECRET, GOOGLE_OAUTH_*, ...) — optional để
       # `docker compose up` chạy được trước khi copy .env.example → .env.
@@ -146,6 +148,7 @@ services:
       # public_sessions/public views), không phải superuser. Password: khối "Role passwords".
       DATABASE_URL: postgres://readonly:plexco_dev_readonly@postgres:5432/plexco
       DB_EXPECTED_ROLE: readonly
+      DISCOVERY_DATABASE_URL: postgres://readonly:plexco_dev_readonly@postgres:5432/plexco
     ports:
       - "127.0.0.1:3001:3000"
     depends_on:

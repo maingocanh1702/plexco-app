@@ -267,6 +267,18 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/realtime-auth.ts": "c",
   "lib/realtime-listener.ts": "c",
   "lib/use-realtime.ts": "c",
+  // (b) L10b anonymous discovery list: no session, tenant unknown; t() keeps its default.
+  "app/api/discover/route.ts": "b",
+  // (b) L10b anonymous detail by public_listing_id: tenant unknown; its ONE 404 keeps the default.
+  "app/api/discover/[publicListingId]/route.ts": "b",
+  // (b) L10b DD-83 share slug (hash-only, resolved server-side): anonymous, the detail's 404.
+  "app/api/discover/share/[slug]/route.ts": "b",
+  // (a) L10b join: runWithLang once the resolve knows the tenant; earlier refusals stay Vietnamese.
+  "app/api/public-listings/[publicListingId]/join/route.ts": "a",
+  // (b) L10b shared discovery responders (404, INVALID_FILTER, 429): anonymous, tenant unknown.
+  "lib/discovery-route-support.ts": "b",
+  // (c) L10b opaque signed cursor and listing-id shape checks: no response body, no t().
+  "lib/discovery-cursor.ts": "c",
 };
 
 function discoverRouteFiles(dir: string, prefix: string): string[] {

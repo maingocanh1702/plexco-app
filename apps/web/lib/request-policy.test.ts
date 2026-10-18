@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { NextRequest } from "next/server";
+import { describe, expect, it, vi } from "vitest";
+import { middleware } from "../middleware";
 import {
   buildNonceCsp,
   cspNonceEnabled,
@@ -8,6 +10,7 @@ import {
   parseProcessRole,
   pathAllowedForRole,
   redirect,
+  requestAllowedForRole,
 } from "./request-policy";
 
 /** Audit 2026-09-06 W-10 — the discovery ingress must not serve the whole app. */
@@ -18,7 +21,7 @@ describe("pathAllowedForRole (audit W-10)", () => {
     }
   });
 
-  it("discovery serves ONLY /healthz and /discover*", () => {
+  it("discovery serves ONLY /healthz, /discover* and the A-16 discovery read GETs", () => {
     expect(pathAllowedForRole("/healthz", "discovery")).toBe(true);
     expect(pathAllowedForRole("/discover", "discovery")).toBe(true);
     expect(pathAllowedForRole("/discover/abc", "discovery")).toBe(true);
@@ -29,14 +32,71 @@ describe("pathAllowedForRole (audit W-10)", () => {
       "/api/onboarding/start",
       "/healthz/",
       "/discoverx",
-      "/api/discover",
+      "/api/discoverx",
     ]) {
       expect(pathAllowedForRole(p, "discovery"), p).toBe(false);
     }
   });
 
-  it("the allowlist is exactly two anchored patterns (a third entry is a decision, not a drift)", () => {
-    expect(DISCOVERY_PATH_ALLOWLIST).toHaveLength(2);
+  it("A-16: discovery serves the three read GETs, never the join or /api/sessions; web and worker unchanged", () => {
+    const allowed = ["/api/discover", "/api/discover/abc", "/api/discover/share/abc"];
+    const denied = [
+      "/api/public-listings/abc/join",
+      "/api/sessions",
+      "/api/sessions/abc/join",
+      "/api/discover/x/join",
+      "/api/discover/share/x/y",
+    ];
+    for (const p of allowed) expect(pathAllowedForRole(p, "discovery"), p).toBe(true);
+    for (const p of denied) expect(pathAllowedForRole(p, "discovery"), p).toBe(false);
+    for (const role of ["web", "worker"] as const) {
+      for (const p of [...allowed, ...denied]) expect(pathAllowedForRole(p, role), p).toBe(true);
+    }
+  });
+
+  it("N-2: discovery takes GET and HEAD only, any other method on any path is denied; web and worker take every method", () => {
+    const paths = [
+      "/api/discover",
+      "/discover",
+      "/discover/abc",
+      "/healthz",
+      "/api/discover/share/abc",
+    ];
+    const others = ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "get"];
+    for (const p of paths) {
+      for (const m of ["GET", "HEAD"]) {
+        expect(requestAllowedForRole(m, p, "discovery"), `${m} ${p}`).toBe(true);
+      }
+      for (const m of others) {
+        expect(requestAllowedForRole(m, p, "discovery"), `${m} ${p}`).toBe(false);
+      }
+    }
+    for (const m of ["GET", "HEAD", ...others]) {
+      expect(requestAllowedForRole(m, "/api/sessions", "discovery"), m).toBe(false);
+      for (const role of ["web", "worker"] as const) {
+        for (const p of [...paths, "/api/sessions"]) {
+          expect(requestAllowedForRole(m, p, role), `${role} ${m} ${p}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("N-2: the middleware gives a discovery POST /api/discover the gate's bodiless no-store 404 and lets the GET through", async () => {
+    const url = "http://localhost/api/discover";
+    vi.stubEnv("PROCESS_ROLE", "discovery");
+    try {
+      const denied = middleware(new NextRequest(url, { method: "POST" }));
+      expect(denied.status).toBe(404);
+      expect(denied.headers.get("cache-control")).toBe("no-store");
+      expect(await denied.text()).toBe("");
+      expect(middleware(new NextRequest(url)).status).toBe(200);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("the allowlist is exactly five anchored patterns (a sixth entry is a decision, not a drift)", () => {
+    expect(DISCOVERY_PATH_ALLOWLIST).toHaveLength(5);
   });
 
   it("parseProcessRole fails closed to web (the surface-serving role) on junk, and recognises discovery/worker", () => {
