@@ -87,7 +87,9 @@ async function player(sessionId: string, membershipId: string, status: "active" 
 }
 
 type DeriveArgs = [string | null, string, string, string, string | null];
-/** charge_gender_for_derivation as app, committed; a successful call writes nothing (R 4.2). */
+/** charge_gender_for_derivation as app, committed; a successful call writes nothing (R 4.2). The
+ *  check is the row counts of fx.counts' six tables in tenants A and B: it sees an INSERT or a
+ *  DELETE there, not an UPDATE and not a write to any other table. */
 const derive = async (...[tenantId, context, sessionId, membershipId, actor]: DeriveArgs) => {
   const before = [await fx.counts(ctx.tenantA), await fx.counts(ctx.tenantB)];
   const rows = await asApp(
@@ -272,7 +274,9 @@ describe("0062 charge_gender_for_derivation (RD-3; T-8, T-11, T-12)", () => {
     expect(await derive(A, "host_add", sessionId, g.membershipId, admin)).toEqual([
       enc(g.personId),
     ]);
-    // A co_admin holds session.manage only as a preset (0047:77): this pins the capability key.
+    // A co_admin holds session.manage only as a preset (0047:77): a swap to a non-preset key fails
+    // here, but a swap to another preset key survives: 0049:108-110 passes every preset key, so
+    // no test can kill that mutant.
     const coAdmin = await fx.seedAdmin(A, "co_admin");
     expect(await derive(A, "host_add", sessionId, g.membershipId, coAdmin)).toEqual([
       enc(g.personId),

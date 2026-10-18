@@ -94,6 +94,18 @@ describe("GET /api/me/profile", () => {
     });
   });
 
+  it("OFF: a stored gender comes back unmasked, so the OFF remove button can show", async () => {
+    vi.mocked(readMyProfile).mockResolvedValue({
+      displayName: "Lan",
+      gender: "male",
+      genderConsent: false,
+    });
+    expect((await env(await GET(get()))).data).toEqual({
+      profile: { displayName: "Lan", gender: "male", genderConsent: false },
+      genderCollection: false,
+    });
+  });
+
   it("404 when the account has no active Person", async () => {
     vi.mocked(readMyProfile).mockResolvedValue(null);
     const res = await GET(get());

@@ -460,9 +460,27 @@ describe("getSessionDetail", () => {
       `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
       [gendered],
     );
+    // One seeded player, so the player key pin below is not vacuous.
+    await ctx.owner.query(
+      `WITH p AS (INSERT INTO persons (display_name) VALUES ('P') RETURNING id),
+            m AS (INSERT INTO memberships (tenant_id, person_id, display_name, status)
+                  SELECT $1::uuid, id, 'Lan', 'active' FROM p RETURNING id)
+       INSERT INTO players (tenant_id, session_id, membership_id, status)
+       SELECT $1::uuid, $2::uuid, id, 'active' FROM m`,
+      [ctx.tenantA, gendered],
+    );
     const single = await seedSession(ctx.tenantA, { startsAt: "2036-01-02T10:00:00Z" });
     const g = await getSessionDetail(ctx.appDb.db, { tenantId: ctx.tenantA, sessionId: gendered });
     expect([g!.priceAmount, g!.priceMale, g!.priceFemale]).toEqual([50000, 120000, 80000]);
+    // Exact key sets: any added gender or per-gender key on the detail or on a player fails.
+    expect(Object.keys(g!).sort()).toEqual(
+      "allowPlayerInvite area counts createdAt endsAt guestNotes id joinPolicy players priceAmount priceFemale priceMale skillLevel slotsMax sportId sportKey sportName startsAt status timezone updatedAt venueAddress venueName version visibility"
+        .split(" ")
+        .sort(),
+    );
+    expect(Object.keys(g!.players[0]!).sort()).toEqual(
+      "charge displayName id joinedAt membershipId status waitlistPosition".split(" ").sort(),
+    );
     const s = await getSessionDetail(ctx.appDb.db, { tenantId: ctx.tenantA, sessionId: single });
     expect([s!.priceAmount, s!.priceMale, s!.priceFemale]).toEqual([50000, null, null]);
   });
