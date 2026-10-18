@@ -35,6 +35,8 @@ const session: SessionDetailDto = {
   area: "Q7",
   skillLevel: null,
   priceAmount: 50000,
+  priceMale: null,
+  priceFemale: null,
   slotsMax: 12,
   visibility: "private",
   joinPolicy: "open",

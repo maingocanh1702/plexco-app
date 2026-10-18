@@ -48,6 +48,8 @@ const DOMAIN_CODES = new Set([
   "CANCEL_REQUIRES_REVIEW",
   "CAPACITY_BELOW_OCCUPANCY",
   "CAPACITY_BELOW_ROSTER",
+  // DD-39: the server's fixed, gender-free 503 text; GENDER_FORBIDDEN stays generic on purpose
+  "CHARGE_DERIVATION_UNAVAILABLE",
   // the host collects the open balances and closes again: a domain refusal, never a reload
   "CLOSE_BLOCKED_OPEN_DEBT",
   "COMMAND_ID_CONFLICT",

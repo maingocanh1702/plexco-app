@@ -562,6 +562,41 @@ describe("mapSessionCommandError — the five L8 codes carry the P-17 copy", () 
   );
 });
 
+describe("mapSessionCommandError — DD-39 gender pricing codes (T-11, T-26)", () => {
+  const ROWS = [
+    [
+      "CHARGE_DERIVATION_UNAVAILABLE",
+      503,
+      "Chưa tính được giá. Chưa có gì được ghi lại, vui lòng thử lại sau.",
+      "The price could not be worked out. Nothing was saved; please try again later.",
+    ],
+    [
+      "GENDER_FORBIDDEN",
+      403,
+      "Không được phép thực hiện thao tác này.",
+      "This action is not allowed.",
+    ],
+  ] as const;
+
+  it.each(ROWS)(
+    "%s answers %i from one fixed t(vi, en) pair, never the internal detail",
+    async (code, status, vi, en) => {
+      for (const [lang, expected] of [
+        ["vi", vi],
+        ["en", en],
+      ] as const) {
+        const response = await runWithLang(lang, async () =>
+          mapSessionCommandError(new RosterMoneyError(code, "internal detail female")),
+        );
+        expect(response!.status).toBe(status);
+        const body = await envelope(response!);
+        expect([body.error?.code, body.error?.message]).toEqual([code, expected]);
+        expect(JSON.stringify(body)).not.toContain("internal detail");
+      }
+    },
+  );
+});
+
 describe("resolveSessionCommandContext — body size ceiling", () => {
   // codex round-02/2 [P2]: the request-COUNT limiter does not bound request SIZE, and Next.js App
   // Router route handlers have no built-in body limit.
@@ -1386,6 +1421,16 @@ describe("shapeSessionFields", () => {
 });
 
 describe("shapeCreateFields", () => {
+  it("DD-39: POST and PUT carry priceMale / priceFemale, a provided null is a clear, an absent side stays absent", () => {
+    const body = { priceMale: 120000, priceFemale: null };
+    for (const fields of [shapeCreateFields(body), shapeSessionFields(body)]) {
+      expect(fields).toEqual({ priceMale: 120000, priceFemale: null });
+    }
+    expect(Object.hasOwn(shapeSessionFields({ priceMale: 1 }), "priceFemale")).toBe(false);
+    // the shaper never validates: a bad value reaches the command, which answers INVALID_BODY
+    expect(shapeCreateFields({ priceFemale: "100" })).toEqual({ priceFemale: "100" });
+  });
+
   it("CARRIES venueAddress — it is part of createSession's vocabulary (DD-128 OD-4a)", () => {
     const fields = shapeCreateFields({
       venueAddress: "12 Nguyen Trai",

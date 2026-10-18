@@ -88,6 +88,12 @@
  * section 3. ANNOUNCE_DELIVERY_DISABLED (409) is that route's refusal when the DB shows no live dispatch
  * schedule or a disabled zalo_dm projector (DD-134 (f); proposed, pending owner sign-off), so the route
  * never answers announced:true while nothing can deliver.
+ *
+ * CHARGE_DERIVATION_UNAVAILABLE, GENDER_FORBIDDEN and INVALID_GENDER arrived with DD-39 gender pricing
+ * (M9), pinned in feature_user_settings_tech.md :113 (a stored gender that cannot be decrypted fails
+ * closed: no charge, never a fallback price), :163 (INVALID_GENDER 400) and :164 (GENDER_FORBIDDEN 403).
+ * CHARGE_DERIVATION_UNAVAILABLE answers 503 (retryable, LINK_UNAVAILABLE precedent; default applied,
+ * pending owner sign-off). No message for any of the three carries person data.
  */
 export const API_ERROR_CODES = [
   "ALLOCATION_EXCEEDS_FUNDS",

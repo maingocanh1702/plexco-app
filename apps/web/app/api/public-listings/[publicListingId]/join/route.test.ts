@@ -221,6 +221,29 @@ describe("POST /api/public-listings/:publicListingId/join (L10b, readiness 4.6)"
     expect(vi.mocked(resolveTenantLang).mock.calls.map((call) => call[1])).toEqual([TENANT]);
   });
 
+  it("DD-39 T-3: CHARGE_DERIVATION_UNAVAILABLE answers 503 with the gender-free pair in the club's language, no fallback join", async () => {
+    vi.mocked(joinSession).mockRejectedValue(
+      new RosterMoneyError("CHARGE_DERIVATION_UNAVAILABLE", "internal detail male"),
+    );
+    for (const [lang, message] of [
+      ["vi", "Chưa tính được giá. Chưa có gì được ghi lại, vui lòng thử lại sau."],
+      ["en", "The price could not be worked out. Nothing was saved; please try again later."],
+    ] as const) {
+      vi.mocked(resolveTenantLang).mockResolvedValueOnce(lang);
+      const res = await post(BODY);
+      const body = (await res.json()) as {
+        data: unknown;
+        error: { code: string; message: string };
+      };
+      expect([res.status, body.error.code, body.error.message]).toEqual([
+        503,
+        "CHARGE_DERIVATION_UNAVAILABLE",
+        message,
+      ]);
+      expect(JSON.stringify(body)).not.toMatch(/internal detail|outcome/);
+    }
+  });
+
   it("a non-domain failure is rethrown (500), never turned into a success or a 404", async () => {
     vi.mocked(joinSession).mockRejectedValue(new Error("boom"));
     await expect(post(BODY)).rejects.toThrow("boom");
