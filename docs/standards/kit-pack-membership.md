@@ -63,12 +63,12 @@ awk '/^# KIT_VERSION:/{print $3; exit}' scripts/autopilot-scope-gate
 | Field | Value |
 |---|---|
 | Canonical repository | ~/Projects/Claude template (branch main) |
-| **Canonical commit read at** | `a2ba3ba95ea7b5d2e3f65d2ca3868153d9b23f34` |
-| Also verified identical at | `c672eaf60cd77534a9c6ef3289163b032de74028` |
+| **Canonical commit read at** | `9e1e79043804767097f859ca201d42245cd9c50c` |
+| Also verified identical at | `795572ef6f0c3f6bd0d585939e099d2cc26b676e` |
 | Authority file | autopilot/parallel/autopilot-update.sh, function pack_pairs() (line 32) |
-| Measured on | 2026-09-02 |
+| Measured on | 2026-10-18 |
 
-Canonical moved between those two commits while this was being written and pack_pairs() was byte-identical across the move. Two independent reads agreeing is stronger than one. If git rev-parse HEAD no longer prints the pinned commit, every row below is a claim about the past.
+Re-measured 2026-10-18 for the KIT_VERSION 33 -> 42 sync. pack_pairs() is byte-identical at 795572e (the kit v42 bump, 2026-09-27) and at origin/main 9e1e790, and grew from 13 to 15 entries since the 2026-09-02 read (a2ba3ba / c672eaf): ap-evidence.sh and templates/autopilot-backlog-audit.yml. Two independent reads agreeing is stronger than one. If git rev-parse HEAD no longer prints the pinned commit, every row below is a claim about the past.
 
 Re-verify with:
 
@@ -89,7 +89,9 @@ parallel-scope-gate.md:docs/autopilot-parallel-scope-gate.md:100644
 manifests/_TEMPLATE.json:docs/autopilot-manifests/_TEMPLATE.json:100644
 readiness-evidence.TEMPLATE.json:docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json:100644
 ap-finish.sh:scripts/ap-finish.sh:100755
+ap-evidence.sh:scripts/ap-evidence.sh:100755
 ap-housekeep.sh:scripts/ap-housekeep.sh:100755
+templates/autopilot-backlog-audit.yml:.github/workflows/autopilot-backlog-audit.yml:100644
 ../autopilot-prompt-GENERIC.md:docs/autopilot-templates/autopilot-prompt-GENERIC.md:100644
 ../level3-workflow.md:docs/autopilot-templates/level3-workflow.md:100644
 ```
@@ -103,10 +105,10 @@ an observed run or failure. Reading its code is not enough; a document describin
 
 | Mechanism | Status | Invoked by | Latency | Measured |
 |---|---|---|---|---|
-| `kit-sync` | **active** | a human running autopilot-update.sh | next successful autopilot-update.sh run | 2026-09-02 |
+| `kit-sync` | **active** | a human running autopilot-update.sh | next successful autopilot-update.sh run | 2026-10-18 |
 | `session-hook` | **dormant** | NOTHING — the file exists but is registered nowhere | n/a while dormant | 2026-09-03 |
 
-**`kit-sync`** — autopilot-update.sh:174-178 — a single cp loop over pack_pairs(); there is no second copy path in that script
+**`kit-sync`** — autopilot-update.sh:186-197 (copy_pack; the cp is :190) — a single cp loop over pack_pairs(); there is no second copy path in that script. Observed run 2026-10-18: KIT_VERSION 33 -> 42 in this repo, canonical suite green, 8 targets updated, 2 added, 5 already identical.
 
 **`session-hook`** — ~/.claude/hooks/autopilot-sync.cjs exists (mtime 2026-06-23) and its code would copy autopilot-scope-gate. But ~/.claude/settings.json registers exactly two hooks — Notification -> claude-notify-hook.sh and PostToolUse -> claude-heartbeat-hook.sh. There is NO SessionStart hook. `grep -rn autopilot-sync ~/.claude/settings*.json` returns nothing, and nothing in the canonical kit invokes it.
 
@@ -120,6 +122,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 
 | File | Owner | Evidence | Overwritten by | Latency | `KIT_VERSION` header |
 |---|---|---|---|---|---|
+| `scripts/ap-evidence.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `scripts/ap-finish.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `scripts/ap-housekeep.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `scripts/ap-merge.sh` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
@@ -147,7 +150,8 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/outbox-dlq-replay.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/public-alias-moderate.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 
-- **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69.
+- **`scripts/ap-evidence.sh`** — Added to pack_pairs by kit v36; first installed here by the 2026-10-18 sync.
+- **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:81 (re-measured 2026-10-18; the 33 -> 42 sync printed it as UNSYNCED_DRIFT, as designed).
 - **`scripts/autopilot-ephemeral-review-worktree.test.mjs`** — No canonical copy.
 - **`scripts/autopilot-onboard-fixtures.sh`** — No canonical copy.
 - **`scripts/autopilot-onboard.sh`** — No canonical copy.
@@ -180,10 +184,12 @@ file happens to sit in.
 | `docs/autopilot-parallel-scope-gate.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `docs/autopilot-manifests/_TEMPLATE.json` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `docs/autopilot-manifests/_READINESS_EVIDENCE_TEMPLATE.json` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
+| `.github/workflows/autopilot-backlog-audit.yml` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `docs/autopilot-templates/autopilot-prompt-GENERIC.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `docs/autopilot-templates/level3-workflow.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
-- **`docs/autopilot-templates/level3-workflow.md`** — The ONE target measured as diverged: 205 consumer-only lines, 2 canonical-only. It carries section 6.1 autonomous_to_ready, which canonical does not define. That is a decision->code gap inside the consumer (DD-107 ratified the mode; no code implements it), NOT consumer drift — framing it as drift aims the fix at the wrong target.
+- **`.github/workflows/autopilot-backlog-audit.yml`** — Added to pack_pairs by kit v35; first installed here by the 2026-10-18 sync. Once pushed it runs on GitHub Actions (weekly schedule, push, workflow_dispatch) — a pack target outside scripts/ and docs/.
+- **`docs/autopilot-templates/level3-workflow.md`** — Measured 2026-09-02 as the ONE diverged target (205 consumer-only lines: section 6.1 autonomous_to_ready, which canonical did not define — a decision->code gap, DD-107 ratified the mode, not consumer drift). Resolved 2026-10-18 by porting upstream: 6.1 in generic form enters canonical through the template branch docs/level3-autonomous-to-ready (merge that first, or the next sync from main drops 6.1 again), the 33 -> 42 sync copied that file byte-for-byte, and the Plexco-specific instances (corpus map, authority table, Tier C items, precedent examples) moved to docs/standards/autonomous-to-ready.local.md, which is not a pack target, so kit-sync never overwrites it. Section 6.1 points to that file.
 
 ---
 

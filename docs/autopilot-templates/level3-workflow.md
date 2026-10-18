@@ -91,7 +91,10 @@ Rules:
 - `CONTEXT_SOURCES` names exact code/docs/decision/discussion inputs. Missing material context is an
   `AWAIT_CONTEXT`, not permission to invent it.
 - `APPLICABLE_SKILLS` names reusable instructions that must be loaded; new durable guidance is
-  captured as a Skill or lazy reference after the task.
+  captured as a Skill or lazy reference after the task. The default set is the four lazy Skills
+  under `autopilot/skills/` (`level3-orchestrator`, `level3-slice-writer`,
+  `codex-independent-review`, `kit-change-test-first`), installed as `~/.claude/skills/<name>`
+  symlinks by `install-global.sh`; each points at the canonical file rather than restating it.
 - `MODEL_POLICY` assigns planner/worker/reviewer roles and an explicit fallback. The mandatory
   independent code gate is the canonical pinned Codex wrapper; the implementing agent or a
   Claude/sub-agent review cannot replace it. Security-sensitive work also gets a security-focused
@@ -180,75 +183,72 @@ what to do next.
 Any failed assumption, scope expansion, security uncertainty, missing context or repeated review
 thrash drops the task back to supervised handling or HALT. Auto-merge is never implied by Level 3.
 
+The registry of classes that have earned `proactive_routine` is `autopilot/.autopilot/routines.json`
+(shape: `autopilot/parallel/routines.TEMPLATE.json`), owner-authored from evidence-ledger rows;
+`ap-dispatch.sh` starts only a class that is `enabled` there, and demotion on any exception is a
+`status: disabled` edit in that file.
+
 ### 6.1 `autonomous_to_ready` — run to READY without mid-flight owner decisions
 
 **Problem this solves.** Under `supervised`, the agent stops for a decision the moment one appears, even
-when the answer is derivable from the repo. Measured cost on `session-service-create-command-core` v1
-(2026-08-13): **four owner round-trips on budget alone** (300→360→440→470 compact), and the lane still
-ended `HALT MAX_ROUNDS` — the budget was never the binding constraint, the validation design was. Every
-one of those four stops produced a number, not an insight. Meanwhile three of the four authoring blockers
-(B1 acceptance matrix, B2 module home, B3 producer contract) were resolved by *reading the repo*; only B4
-was a genuine owner decision.
+when the answer is derivable from the repo. Each stop costs an owner round-trip and usually produces a
+number, not an insight; most authoring blockers turn out to be resolvable by *reading the repo*, and only a
+few are genuine owner decisions. A project records its measured cases in its local supplement.
 
 **The move is not "remove the owner". It is "batch the owner".** Owner involvement shifts from *interrupt*
 to *one review at READY*, reading a Decision Ledger. The agent decides in-flight and defends every decision
 in writing.
 
+**Local supplement.** A project that enables this mode keeps the concrete parts of this section in a local
+file outside the kit pack, by convention `docs/standards/autonomous-to-ready.local.md`, and its `CLAUDE.md`
+names that file: the always-load list, the maps of its doc corpus, the file behind each authority rung, its
+project-specific Tier C instances and its measured evidence. The pack never overwrites that file. This
+section states the rules; the supplement binds them to files.
+
 #### Context: the whole doc corpus is in scope — but it cannot be *loaded*
 
 The intent is right and non-negotiable: **no decision may be made while ignorant of a doc that governs it.**
-`DD-106` is what ignorance costs — a spec pass wrote a money contract into two Reviewed specs while
-`decisions.md` already held `DD-26` saying *"không thêm model 'buddy'"*. The doc existed. Nobody read it.
+The costly failure is a decision written against a doc that already existed and was simply not read.
 
-But "load every doc" is not a plan a machine can execute here. Measured at `1fdba1d`:
-
-| Set | Size | Roughly |
-|---|---|---|
-| Whole `docs/` corpus | 303 files · 8.5 MB · 1.13M words | **~2M+ tokens** |
-| Just the six core authority docs | 871 KB | **~220k+ tokens** |
-| `decisions.md` summary table only | 60 KB · 126 lines | ~18k tokens |
-
-The full corpus is an order of magnitude past any context window; even the six core docs overflow one on
-their own. The live proof is in this repo today: the `session-service` build session hit **98% context**
-having loaded only its own slice's context pack.
+But "load every doc" is not a plan a machine can execute. In a mature repo the full corpus is an order of
+magnitude past any context window, and even the core authority docs can overflow one on their own. The
+supplement records the project's measured corpus size.
 
 So the rule is **guaranteed coverage, not guaranteed loading** — three obligations, all executable:
 
-1. **Always load (small, non-negotiable):** `docs/00-start-here/HANDOFF.md` live-truth block ·
-   `decisions.md` **summary table** (the `| DD-nn |` rows, not the full bodies) ·
-   `docs/standards/review-code-readiness-gate.md` · the slice's own packet and manifest. This is the
-   constitution; it fits.
+1. **Always load (small, non-negotiable):** the project's always-load core, listed in the supplement:
+   typically the live-truth handoff block, the decision log's **summary table** (not the full bodies), the
+   readiness gate, and the slice's own packet and manifest. This is the constitution; it must fit.
 2. **Search the rest, and log the search.** Before any Tier A/B decision, run a corpus-wide search for the
    concepts the decision touches — entity names, column names, endpoint shapes, the feature noun — across
-   `docs/` **and** `packages/`/`apps/`. Then read the hits that matter. `docs/docs-inventory.md` and
-   `docs/features/README.md` are the maps.
-3. **Negative evidence counts, and must be recorded as such.** "Searched `decisions.md` for `buddy`, found
-   `DD-26`: don't add a buddy model" is the sentence that would have prevented `DD-106`. "Found nothing" is
+   the docs **and** the source tree. Then read the hits that matter. The supplement names the corpus maps.
+3. **Negative evidence counts, and must be recorded as such.** "Searched the decision log for X, found a
+   decision against X" is the sentence that prevents a contradicting decision. "Found nothing" is
    a valid and valuable ledger entry — but only if the query is written down so a reader can judge whether
    it was the right query. An unlogged search did not happen.
 
-> **A grep that returns nothing is evidence about the query, not proof about the repo.** This has already
-> misfired here twice: an `awk` written for backticks against a catalog that used em-dashes returned empty
-> twice and got read as "no data"; and the language-rule check returned zero hits for a rule that existed
-> but had never been written down. Before trusting a null result, verify the query finds a known-present
-> control case.
+> **A grep that returns nothing is evidence about the query, not proof about the repo.** A query written for
+> the wrong delimiter, or a check for a rule that was never written down, returns empty and reads as "no
+> data". Before trusting a null result, verify the query finds a known-present control case.
 
 #### Authority precedence — resolve conflicts without asking
 
-Docs in this repo **do** contradict each other; the 2026-08-13 audit found conflicts in specs, playbooks,
-templates and index files simultaneously. An autonomous lane therefore needs a written order. Earlier wins:
+Docs in a real repo **do** contradict each other: specs, playbooks, templates and index files at
+once. An autonomous lane therefore needs a written order. Earlier wins:
 
 | # | Authority | Why it outranks the next |
 |---|---|---|
-| 1 | **Runtime truth** — `pg_catalog`, applied migrations, canonical runner output, live code | Measurement, not intention. `schema.ts` declares; `pg_constraint` proves. |
-| 2 | **`packages/db/migrations/*.sql` + `schema.ts`** | `CLAUDE.md` marks these AUTHORITATIVE for schema/data-model/architecture. |
-| 3 | **`docs/standards/decisions.md`** | The decision log. Where a spec and a DD disagree, the DD wins and the spec must be corrected. |
-| 4 | **Reviewed spec** (`features/FE` + `features/BE` pair) | Contract baseline — but only the Reviewed parts. A 🟡-tagged section inside a Reviewed spec is **not** contract. |
+| 1 | **Runtime truth** — database catalog, applied migrations, canonical runner output, live code | Measurement, not intention. A schema file declares; the catalog proves. |
+| 2 | **Migrations + schema source** | The authoritative statement of schema and data model. |
+| 3 | **The decision log** | Where a spec and a decision disagree, the decision wins and the spec must be corrected. |
+| 4 | **Reviewed spec** | Contract baseline — but only the reviewed parts. A section the project marks as unsettled inside a reviewed spec is **not** contract. |
 | 5 | **Draft spec / plan / proposal** | Direction, not contract. Never a basis for implementing. |
-| 6 | **`ROADMAP.md`** for delivery order + dev progress · **BRD** scope · **PRD** behavior · **TDD** implementation contract | Each owns its own question and nothing else. |
-| 7 | **Index/summary docs** — `features/README.md`, `docs-inventory.md`, `BUILD-STATUS.md`, quick-reference tables | Convenience mirrors. They go stale first; the audit found 46/51 version cells wrong in one index. |
+| 6 | **Delivery and product docs** — roadmap, requirements, design and implementation contracts | Each owns its own question and nothing else. |
+| 7 | **Index/summary docs** — inventories, status tables, quick-reference tables | Convenience mirrors. They go stale first. |
 
-Four tie-breaks that have each already cost a session here:
+The supplement maps each rung to the project's files.
+
+Four tie-breaks:
 
 - **A lane's packet on its own branch outranks the copy on `main`.** A slice legitimately amends its own
   contract inside its commit; reading `main` and declaring a scope violation is the error.
@@ -256,8 +256,8 @@ Four tie-breaks that have each already cost a session here:
   go stale too, not just its numbers. Sweep for stale directives, not only stale counts.
 - **Where two docs both claim canonical, the one that names a decision ID wins**; if neither does, treat it
   as a Tier C conflict and AWAIT rather than picking.
-- **`Doc status ≠ Implementation status`.** `Reviewed` never implies runtime; `BUILD-STATUS`/`ROADMAP` axes
-  do, and only from runner output.
+- **Doc status ≠ implementation status.** "Reviewed" never implies runtime; only status that comes from
+  runner output does.
 
 #### Decision authority ladder
 
@@ -270,28 +270,26 @@ style error.
 | **B — judgment, reversible, in-scope** | Not written down, but the consequence stays inside the slice's declared scope and can be changed later by editing this slice's own files. Helper extraction, lock-key choice, validator placement, adding an invariant token, re-slicing after a budget overrun, opening a successor after an accepted HALT. | **Decide. Log with alternatives, reasoning, reversibility and the evidence read.** Flag at READY for batch review. |
 | **C — reserved** | Enumerated below. Irreversible, cross-slice, or contract-level. | **AWAIT.** One recommended option, trade-offs, binary resume condition. |
 
-**Tier C is exactly this list — nothing else, and nothing removed from it:**
+**Tier C is exactly this list — nothing else, and nothing removed from it.** A project's supplement may
+name concrete instances of an item; it never adds or removes items:
 
 1. Any new or changed **money contract**: a table, column, enum value, endpoint or allocation rule on the payment path.
-2. Any change to a **PII/identity** contract, or anything touching the 5 HARD RULES in `CLAUDE.md`.
+2. Any change to a **PII/identity** contract, or anything touching the project's hard rules in `CLAUDE.md`.
 3. Editing the **contract content of a spec already marked Reviewed** (fixing a broken link or a stale number is Tier A; adding an entity/column/endpoint is Tier C).
 4. A **migration** that changes schema semantics, or any migration on a tail shared with another in-flight lane.
-5. **Enablement**: flipping a feature flag or env that turns behaviour on in production, including `OUTBOX_DISPATCH_SCHEDULE_ENABLED` and `GOOGLE_OAUTH_*`.
+5. **Enablement**: flipping a feature flag or env that turns behaviour on in production (the supplement lists the project's flags).
 6. **Merge, deploy**, or any external side effect outside the worktree.
 7. Work that requires **expanding beyond the declared negative scope** — re-slice or AWAIT, never widen silently.
 8. A **contested** review finding: the agent believes the reviewer is wrong. Accepted findings are Tier B.
 
-> Tier C is not bureaucracy left over from a stricter era. `DD-106` (2026-08-13) exists because a spec pass
-> wrote a money contract — `buddy_payment_requests`, `payment_allocations.source='buddy'` — into two
-> **Reviewed** specs without a decision. Nobody was reckless; the contract simply had no cheap way to say
-> "this one needs an owner". Items 1–3 are that lesson, priced.
+> Tier C is not bureaucracy left over from a stricter era. Contract-level choices made without a decision
+> record are the expensive ones to unwind, and nobody has to be reckless for one to slip through; items 1–3
+> price that lesson. The supplement records the project's own incident behind each item.
 
 **One demotion rule, and it matters for lane selection.** A change that a decision record **explicitly
 authorizes by name** is **Tier A, not Tier C** — the owner already decided; executing a written decision is
-not making a new one. `DD-104 D2a` naming "action class hẹp `delete_draft_session` trong
-`authorizeTenantAction` (sửa contract billing, slice riêng)" is exactly this: editing that Reviewed billing
-spec is Tier A *for that edit*, because the DD says to. The test is narrow — the DD must name the artifact
-and the change, not merely approve the direction. A DD that says "we should improve X" authorizes nothing.
+not making a new one. The test is narrow — the decision must name the artifact
+and the change, not merely approve the direction. A decision that says "we should improve X" authorizes nothing.
 
 **Corollary for choosing work: rank candidate lanes by Tier C density, not by size.** A large lane whose
 decisions are all written down runs to READY untouched; a small lane with three undecided contract
@@ -310,9 +308,9 @@ gate.
 **Tie-breaks, in order — earlier wins:**
 
 1. **Fail-closed over convenient.** A wrong deny is recoverable; a wrong allow on the money or tenant path may not be.
-2. **One source of truth over a second definition.** Two definitions of the same predicate drift, and the drift is silent. (`0032` exists because `assert_dm_allowed` had grown a second reading of the same four toggles.)
+2. **One source of truth over a second definition.** Two definitions of the same predicate drift, and the drift is silent.
 3. **Fewer concepts over more.** A new table/role/abstraction must earn itself against reusing an existing one.
-4. **Consistent with existing precedent over locally optimal.** If `auth.ts` and `authorization.ts` live in `packages/db/src`, the new service does too — even if another location reads slightly nicer.
+4. **Consistent with existing precedent over locally optimal.** If similar services already live in one module, the new one does too — even if another location reads slightly nicer.
 5. **Reversible over clever.** Prefer the choice that a later slice can change without a migration or a contract amendment.
 
 When two options tie on all five, pick the one that leaves **more evidence for the next reader** — a named
@@ -350,7 +348,7 @@ reconstructed at the end.
 ```text
 ## D<n> · <tier A|B> · <one-line decision>
 Context:      <what forced a choice>
-Searched:     <exact queries run over docs/ and packages/, and their results —
+Searched:     <exact queries run over the docs and the source tree, and their results —
                including the ones that returned nothing>
 Alternatives: <what else was considered, and why not>
 Reasoning:    <which tie-break applied, and the 10x test>
@@ -359,7 +357,7 @@ Reversible:   <yes/no — if no, justify why this is not Tier C>
 ```
 
 `Searched:` is not decoration. It is the only field a reviewer can use to judge whether the agent decided
-from the corpus or from its own priors — and priors are exactly what produced `DD-106`.
+from the corpus or from its own priors — and priors are exactly the failure the ledger exists to expose.
 
 At READY the agent reports: outcome, evidence, **and the ledger**. The owner reviews all decisions in one
 pass. A Tier-B decision the owner rejects becomes a follow-up slice, not a re-litigation of the lane.
@@ -409,7 +407,7 @@ Every code-writing slice must declare commands that the final readiness gate exe
 1. run focused tests for the changed behavior;
 2. run the repository's canonical build/typecheck/lint/test command;
 3. run production-shaped or end-to-end verification when the behavior crosses a real boundary;
-4. inspect the exact diff against the pinned base;
+4. inspect the exact diff against the live `base_ref` tip (the first invocation fact below);
 5. receive an independent code review;
 6. receive security review when the change touches trust boundaries, auth, secrets, permissions,
    external input, money or deployment.
@@ -421,13 +419,18 @@ project-native scanners augment it.
 
 Three invocation facts, each of which has already cost a wasted round:
 
-- **`--base` is the slice's pinned `base_sha`, the same value every round — never `HEAD^`.** The base
-  is immutable by contract: the readiness gate reads it from the manifest and halts `BASE_STALE` once
-  the base ref moves. `HEAD^` coincides with it only while exactly one commit sits above the base;
-  after a follow-up fix commit `HEAD^` becomes the previous feature commit, so the round reviews the
-  fix alone and silently drops the rest of the slice out of the change set. Read `base_sha` from the
-  manifest or take a verified SHA from `git rev-parse` — never from `git log --oneline`, whose short
-  SHA the wrapper's adapter form rejects as `CODEX_REVIEW_CONTRACT_INVALID`.
+- **`--base` is the live `base_ref` tip the gate resolves for each round — recorded as
+  `diff_base_sha` in `gate-result.json` — never `HEAD^`.** Two fields, two jobs, since kit v26: the
+  manifest's `base_sha` stays pinned and immutable, and it is the LEGITIMACY field — the gate halts
+  `BASE_DRIFT` when it is not an ancestor of HEAD and `BASE_STALE` when the base branch changed a file
+  this slice declares or touches since it. It is not the diff window: once anything lands on the base
+  branch, `base_sha...HEAD` spans commits this slice never made, so the window is measured from the
+  live tip (`autopilot-review-readiness.mjs` `liveDiffState()`), which is exactly this slice's commits
+  whether or not it was rebased. While the base ref has not moved the two SHAs are the same. `HEAD^`
+  is neither: after a follow-up fix commit it is the previous feature commit, so the round reviews the
+  fix alone and silently drops the rest of the slice out of the change set. For a manual diagnostic
+  round, `git fetch` and take `git rev-parse origin/<default>` as a full SHA — never a short SHA from
+  `git log --oneline`, which the wrapper's adapter form rejects as `CODEX_REVIEW_CONTRACT_INVALID`.
 - **Know which component enforces what; the wrapper is thin.** Its three-argument adapter form
   `review --base <full SHA> <marker-prompt>` checks the SHA's shape and then asks the reviewer to
   review exactly `git diff <base>...HEAD`, explicitly permitting it to read live source for context;
