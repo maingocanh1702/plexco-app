@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { encryptPersonGender, type Gender } from "./gender-crypto.js";
 import { markPaid } from "./payment-manual.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession, removePlayerFromSession } from "./roster-service.js";
+import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 // Real-PG tests for the host roster commands, run as the `app` role through the RLS harness
@@ -573,4 +575,70 @@ describe("removePlayerFromSession", () => {
     await ctx.owner.query(`UPDATE tenants SET status = 'suspended' WHERE id = $1`, [tenantId]);
     expect(await codeOf(remove(tenantId, actor, sessionId, r.playerId))).toBe("TENANT_SUSPENDED");
   });
+});
+
+// L11 step 4 (readiness p3-m9-gender-pricing T-3 DB part, T-7 host-add): seatPlayer derives the
+// charge from the member's stored gender; a stored gender that cannot be opened charges nobody.
+const GENDER_ENV = ["ENCRYPTION_KEY", "KMS_PROVIDER", "KMS_KEY_ID"];
+type GenderSeed = Gender | "corrupt" | "retired" | "foreign";
+
+/** Owner seed of a consented gender on `personId`, or one of the three decrypt failures. */
+async function storeGender(personId: string, how: GenderSeed) {
+  const sealedFor = how === "foreign" ? await fx.seedPerson() : personId;
+  const gender: Gender = how === "corrupt" || how === "retired" || how === "foreign" ? "male" : how;
+  const { enc, keyVersion } = await encryptPersonGender(sealedFor, gender);
+  if (how === "corrupt") enc.writeUInt8(enc.readUInt8(enc.length - 1) ^ 0xff, enc.length - 1);
+  await ctx.owner.query(
+    `UPDATE persons SET gender_enc = $2, gender_key_version = $3, gender_pricing_consent = true
+      WHERE id = $1`,
+    [personId, enc, how === "retired" ? "retired-key" : keyVersion],
+  );
+}
+
+describe("addMemberToSession derives the charge (DD-39 host_add)", () => {
+  const saved = new Map(GENDER_ENV.map((k) => [k, process.env[k]]));
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
+    for (const k of GENDER_ENV.slice(1)) delete process.env[k];
+    __resetAuthSecretCacheForTest();
+  });
+  afterAll(() => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    __resetAuthSecretCacheForTest();
+  });
+
+  /** A gendered session (male 120000, female 80000, base 100000) and a member seeded with `how`. */
+  async function gendered(how: GenderSeed) {
+    const w = await world();
+    await ctx.owner.query(
+      `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
+      [w.sessionId],
+    );
+    const membershipId = await fx.seedMembership(w.tenantId);
+    const m = await fx.row(`SELECT person_id FROM memberships WHERE id = $1`, [membershipId]);
+    await storeGender(m.person_id as string, how);
+    return { ...w, membershipId };
+  }
+
+  it("T-7 host-add: a male member is charged price_male", async () => {
+    const w = await gendered("male");
+    const r = await add(w.tenantId, w.actor, w.sessionId, { membershipId: w.membershipId });
+    expect(r.status).toBe("active");
+    const c = await fx.row(`SELECT amount_due FROM charges WHERE id = $1`, [r.chargeId]);
+    expect(Number(c.amount_due)).toBe(120000);
+  });
+
+  it.each(["corrupt", "retired", "foreign"] as const)(
+    "T-3 host-add, %s blob: CHARGE_DERIVATION_UNAVAILABLE, no player, charge or command",
+    async (how) => {
+      const w = await gendered(how);
+      const before = await fx.counts(w.tenantId);
+      const run = add(w.tenantId, w.actor, w.sessionId, { membershipId: w.membershipId });
+      expect(await codeOf(run)).toBe("CHARGE_DERIVATION_UNAVAILABLE");
+      expect(await fx.counts(w.tenantId)).toEqual(before);
+    },
+  );
 });

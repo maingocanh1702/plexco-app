@@ -127,6 +127,8 @@ export async function lockSession(tx: Tx, tenantId: string, sessionId: string) {
       status: sessions.status,
       slotsMax: sessions.slotsMax,
       price: sessions.priceAmount,
+      priceMale: sessions.priceMale,
+      priceFemale: sessions.priceFemale,
       visibility: sessions.visibility,
       joinPolicy: sessions.joinPolicy,
       started: sql<boolean>`${sessions.startsAt} <= now()`,
@@ -300,7 +302,10 @@ export async function joinSession(db: Db, params: JoinSessionParams): Promise<Jo
     }
 
     const membershipId = membership?.id ?? (await mintGuestMembership(tx, tenantId, personId));
-    const seat = await seatPlayer(tx, tenantId, sessionId, session, membershipId, existing?.id);
+    const seat = await seatPlayer(tx, tenantId, sessionId, session, membershipId, existing?.id, {
+      context: "self_join",
+      actorPersonId: personId,
+    });
     const eventType = seat.status === "waitlisted" ? "player.waitlisted" : "player.added";
     await emitSessionEvent(tx, tenantId, sessionId, eventType, {
       session_id: sessionId,
