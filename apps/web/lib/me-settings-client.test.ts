@@ -1,5 +1,38 @@
-import { describe, expect, it } from "vitest";
-import { displayNameProblem, platformLabel } from "./me-settings-client";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { apiFetch } from "./api-client";
+import {
+  displayNameProblem,
+  getMyProfile,
+  patchMyProfile,
+  platformLabel,
+} from "./me-settings-client";
+
+vi.mock("./api-client", () => ({ apiFetch: vi.fn() }));
+
+describe("profile wrappers (4.9: gender, consent, genderCollection)", () => {
+  const profile = { displayName: "Lan", gender: "female", genderConsent: true } as const;
+  beforeEach(() => vi.mocked(apiFetch).mockReset());
+
+  it.each([true, false])(
+    "getMyProfile carries genderCollection %s with the profile",
+    async (on) => {
+      vi.mocked(apiFetch).mockResolvedValue({ profile, genderCollection: on });
+      await expect(getMyProfile()).resolves.toEqual({ ...profile, genderCollection: on });
+      expect(apiFetch).toHaveBeenCalledWith("/api/me/profile", { signal: undefined });
+    },
+  );
+
+  it("patchMyProfile sends only the given fields plus commandId and returns the profile", async () => {
+    vi.mocked(apiFetch).mockResolvedValue({ profile, genderCollection: true });
+    const body = { gender: null, genderConsent: false, commandId: "c1" };
+    await expect(patchMyProfile("csrf", body)).resolves.toEqual(profile);
+    expect(apiFetch).toHaveBeenCalledWith("/api/me/profile", {
+      method: "PATCH",
+      csrfToken: "csrf",
+      json: body,
+    });
+  });
+});
 
 describe("displayNameProblem (client mirror of the 0055 / validateDisplayName rule)", () => {
   it.each([

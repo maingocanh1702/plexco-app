@@ -21,9 +21,14 @@ const CHANNELS: LinkedChannelDto[] = [
 ];
 
 describe("SettingsProfileForm", () => {
+  const NO_GENDER = { gender: null, genderConsent: false } as const;
   it("renders a labelled, described display-name field and a submit button", () => {
     const html = wrap(
-      <SettingsProfileForm initial={{ displayName: "Lan" }} csrfToken="x" onSaved={vi.fn()} />,
+      <SettingsProfileForm
+        initial={{ displayName: "Lan", ...NO_GENDER }}
+        csrfToken="x"
+        onSaved={vi.fn()}
+      />,
     );
     expect(html).toContain("Display name");
     expect(html).toContain('value="Lan"');
@@ -33,7 +38,11 @@ describe("SettingsProfileForm", () => {
 
   it("renders in Vietnamese (HR5: t(vi,en))", () => {
     const html = wrap(
-      <SettingsProfileForm initial={{ displayName: null }} csrfToken="x" onSaved={vi.fn()} />,
+      <SettingsProfileForm
+        initial={{ displayName: null, ...NO_GENDER }}
+        csrfToken="x"
+        onSaved={vi.fn()}
+      />,
       "vi",
     );
     expect(html).toContain("Tên hiển thị");
