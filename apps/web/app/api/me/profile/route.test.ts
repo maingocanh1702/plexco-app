@@ -260,6 +260,7 @@ describe("T-10: no gender value reaches a console call", () => {
     const res = await GET(get());
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(error.mock.calls).toEqual([["GET /api/me/profile failed", "GenderOpenError"]]);
     for (const spy of rest) expect(spy).not.toHaveBeenCalled();
   });

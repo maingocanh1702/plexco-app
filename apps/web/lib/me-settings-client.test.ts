@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "./api-client";
 import {
   displayNameProblem,
+  genderChanges,
   getMyProfile,
   patchMyProfile,
   platformLabel,
@@ -31,6 +32,14 @@ describe("profile wrappers (4.9: gender, consent, genderCollection)", () => {
       csrfToken: "csrf",
       json: body,
     });
+  });
+
+  it("genderChanges: only the changed fields, and never genderConsent true with gender null", () => {
+    const stored = { displayName: "Lan", gender: "male", genderConsent: false } as const;
+    expect(genderChanges(stored, "male", false)).toEqual({});
+    expect(genderChanges(stored, "other", true)).toEqual({ gender: "other", genderConsent: true });
+    expect(genderChanges(stored, null, true)).toEqual({ gender: null });
+    expect(genderChanges({ ...stored, gender: null }, null, true)).toEqual({});
   });
 });
 

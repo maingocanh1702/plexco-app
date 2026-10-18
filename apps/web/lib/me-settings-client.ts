@@ -52,6 +52,25 @@ export async function patchMyProfile(
   return data.profile;
 }
 
+type GenderFields = Partial<Pick<ProfileDto, "gender" | "genderConsent">>;
+
+/**
+ * The gender part of a profile Save, diffed against the stored profile. Consent never goes out
+ * without a gender: the route rejects `{ gender: null, genderConsent: true }`, and with no stored
+ * gender me-settings would drop it while the form says "saved".
+ */
+export function genderChanges(
+  stored: ProfileDto,
+  gender: ProfileDto["gender"],
+  consent: boolean,
+): GenderFields {
+  const fields: GenderFields = {};
+  const nextConsent = gender !== null && consent;
+  if (gender !== stored.gender) fields.gender = gender;
+  if (nextConsent !== stored.genderConsent) fields.genderConsent = nextConsent;
+  return fields;
+}
+
 export async function listMyChannels(signal?: AbortSignal): Promise<LinkedChannelDto[]> {
   const data = await apiFetch<{ channels: LinkedChannelDto[] }>("/api/me/channels", { signal });
   return data.channels;

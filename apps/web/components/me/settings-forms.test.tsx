@@ -111,7 +111,8 @@ describe("SettingsProfileForm gender and pricing consent (DD-39, T-24)", () => {
     expect(vi).toContain("Cho phép CLB sử dụng giới tính để tính giá");
     expect(en).toContain("Gender not shared");
     expect(vi).toContain("Không chia sẻ giới tính");
-    expect(en).toContain('type="checkbox"');
+    // No consent without a gender: the box is disabled while gender is Not set.
+    expect(en).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""/);
     expect(en).not.toContain("Remove my saved gender");
   });
 
@@ -119,6 +120,7 @@ describe("SettingsProfileForm gender and pricing consent (DD-39, T-24)", () => {
     const html = form({ gender: "female", genderConsent: true });
     expect(html).toContain('<option value="female" selected="">');
     expect(html).toMatch(/<input[^>]*type="checkbox"[^>]*checked=""/);
+    expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*disabled/);
     expect(html).not.toContain("Gender not shared");
   });
 });

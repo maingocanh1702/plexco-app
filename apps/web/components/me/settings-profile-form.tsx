@@ -5,6 +5,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import {
   displayNameProblem,
+  genderChanges,
   patchMyProfile,
   type DisplayNameProblem,
   type ProfileDto,
@@ -40,6 +41,7 @@ export function SettingsProfileForm({
   const command = useCommandId();
   const formRef = useRef<HTMLFormElement>(null);
   const retry = useRef<() => void>(() => formRef.current?.requestSubmit());
+  const stored = useRef<ProfileDto>(initial); // the diff baseline, current before the refresh lands
   const [value, setValue] = useState(initial.displayName ?? "");
   const [gender, setGender] = useState<Gender | "">(initial.gender ?? "");
   const [consent, setConsent] = useState(initial.genderConsent);
@@ -70,15 +72,12 @@ export function SettingsProfileForm({
     retry.current = () => formRef.current?.requestSubmit();
     setSaved(false);
     setError(null);
-    const fields: ProfileFields = {};
-    if (initial.genderCollection) {
-      const next = gender === "" ? null : gender;
-      if (next !== initial.gender) fields.gender = next;
-      if (consent !== initial.genderConsent) fields.genderConsent = consent;
-    }
+    const fields: ProfileFields = initial.genderCollection
+      ? genderChanges(stored.current, gender === "" ? null : gender, consent)
+      : {};
     const displayName = value.trim();
     // The name goes out when it changed, or when nothing else did (the plain Save of before).
-    if (displayName === (initial.displayName ?? "") && Object.keys(fields).length > 0) {
+    if (displayName === (stored.current.displayName ?? "") && Object.keys(fields).length > 0) {
       setProblem(null);
       void save(fields);
       return;
@@ -109,6 +108,7 @@ export function SettingsProfileForm({
         commandId: command.get(JSON.stringify(fields)),
       });
       command.settle();
+      stored.current = profile;
       setValue(profile.displayName ?? "");
       setGender(profile.gender ?? "");
       setConsent(profile.genderConsent);
@@ -149,6 +149,7 @@ export function SettingsProfileForm({
             ]}
             onChange={(e) => {
               setGender(e.target.value as Gender | "");
+              if (e.target.value === "") setConsent(false);
               setSaved(false);
             }}
           />
@@ -156,6 +157,7 @@ export function SettingsProfileForm({
             <input
               type="checkbox"
               checked={consent}
+              disabled={gender === ""}
               onChange={(e) => {
                 setConsent(e.target.checked);
                 setSaved(false);

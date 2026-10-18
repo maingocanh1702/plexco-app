@@ -35,7 +35,7 @@ const failed = (method: string, error: unknown) => {
     `${method} /api/me/profile failed`,
     error instanceof Error ? error.name : "unknown",
   );
-  return new Response(null, { status: 500 });
+  return new Response(null, { status: 500, headers: { "cache-control": "private, no-store" } });
 };
 
 export async function GET(request: Request): Promise<Response> {
