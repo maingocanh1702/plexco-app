@@ -1,5 +1,6 @@
 import { readMyProfile, updateMyProfile } from "@plexco/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NO_STORE } from "../../../../lib/api-envelope";
 import { csrfOk, currentSession, rateLimited } from "../../../../lib/session-cookies";
 import { GET, PATCH } from "./route";
 
@@ -260,7 +261,8 @@ describe("T-10: no gender value reaches a console call", () => {
     const res = await GET(get());
     expect(res.status).toBe(500);
     expect(await res.text()).toBe("");
-    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    // One spelling of the cache policy: the empty 500 sends the envelope's own constant.
+    expect(res.headers.get("cache-control")).toBe(NO_STORE);
     expect(error.mock.calls).toEqual([["GET /api/me/profile failed", "GenderOpenError"]]);
     for (const spy of rest) expect(spy).not.toHaveBeenCalled();
   });

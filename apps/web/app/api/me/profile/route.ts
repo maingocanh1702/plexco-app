@@ -1,7 +1,7 @@
 import { GENDER_VALUES } from "@plexco/core";
 import { t } from "@plexco/core/i18n";
 import { DisplayNameError, readMyProfile, updateMyProfile } from "@plexco/db";
-import { err, ok } from "../../../../lib/api-envelope";
+import { err, NO_STORE, ok } from "../../../../lib/api-envelope";
 import { resolveMeGate, validCommandId } from "../../../../lib/me-route-gate";
 import { readBoundedBody } from "../../../../lib/read-bounded-body";
 import { appDb } from "../../../../lib/session-cookies";
@@ -35,7 +35,7 @@ const failed = (method: string, error: unknown) => {
     `${method} /api/me/profile failed`,
     error instanceof Error ? error.name : "unknown",
   );
-  return new Response(null, { status: 500, headers: { "cache-control": "private, no-store" } });
+  return new Response(null, { status: 500, headers: { "cache-control": NO_STORE } });
 };
 
 export async function GET(request: Request): Promise<Response> {

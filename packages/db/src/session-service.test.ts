@@ -341,6 +341,8 @@ describe("createSession", () => {
     const cases: Array<[Partial<CreateSessionInputPayload>, unknown[]]> = [
       [{ priceMale: 150000, priceFemale: 90000 }, [150000, 90000]],
       [{ priceFemale: 0 }, [null, 0]],
+      // A zero price is a real price ("men play free"), never NULL: pins `?? null` over `|| null`.
+      [{ priceMale: 0 }, [0, null]],
       [{ priceMale: null, priceFemale: null }, [null, null]],
       [{}, [null, null]],
     ];
@@ -2790,6 +2792,9 @@ describe("updateSession", () => {
     ["a price_male-only change", [120000, 80000], { priceMale: 130000 }, [130000, 80000]],
     ["a price_female-only change", [120000, 80000], { priceFemale: 70000 }, [120000, 70000]],
     ["clearing one side (T-26)", [120000, 80000], { priceFemale: null }, [120000, null]],
+    // A side edited down to 0 stores 0, not NULL (no silent fallback to price_amount).
+    ["a zero price_male", [120000, 80000], { priceMale: 0 }, [0, 80000]],
+    ["a zero price_female", [120000, 80000], { priceFemale: 0 }, [120000, 0]],
     ["a single -> gender mode switch", [null, null], { priceMale: 120000 }, [120000, null]],
     [
       "a gender -> single mode switch",
@@ -3053,6 +3058,27 @@ describe("updateSession", () => {
     const replay = await update(tenantId, noop, commandId);
     expect(replay).toMatchObject({ sessionId, status: "open", version, replayed: true });
     expect(await sessionState(sessionId)).toMatchObject({ version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+  });
+
+  it("U9 (DD-39): resending the stored priceMale and priceFemale on a charged gender-mode session is the no-op, not a reject", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId } = await seedSession(tenantId, { priceAmount: 100000 });
+    await ctx.owner.query(
+      `UPDATE sessions SET price_male = 120000, price_female = 80000 WHERE id = $1`,
+      [sessionId],
+    );
+    await seedCharge(tenantId, sessionId, { status: "void" });
+    const before = await genderPrices(sessionId);
+    // Unchanged per-gender prices leave the change-set empty, so the price guard never runs.
+    const result = await update(tenantId, {
+      sessionId,
+      expectedVersion: before.version,
+      priceMale: 120000,
+      priceFemale: 80000,
+    });
+    expect(result).toMatchObject({ sessionId, version: before.version, replayed: false });
+    expect(await genderPrices(sessionId)).toEqual(before);
     expect(await updatedEvents(sessionId)).toHaveLength(0);
   });
 
