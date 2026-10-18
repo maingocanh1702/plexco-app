@@ -68,10 +68,14 @@ const discoveryWindows = new Map<string, { count: number; resetAt: number }>();
  * is the clientIp, an IPv6 one cut to its /64 (rateLimitKey). clientIp throws on a production
  * ingress misconfiguration (the route answers 500).
  * ponytail: in-process counters, so the ceiling is per process and per replica and resets on
- * restart (locally every request shares the one bucket `local`); and 10 000 distinct IPv4
- * addresses or IPv6 /64s can still fill the key map, which then answers every new visitor 429
- * until those windows end. Upgrade path (readiness O-6): ingress rate limits or a
- * readonly-executable limiter definer (an owner migration).
+ * restart (locally every request shares the one bucket `local`). The map holds at most 10 000
+ * live keys, and a full map answers 429 to every new key until windows expire (fail closed).
+ * One holder of an IPv6 /48 (65 536 /64 keys, for example a free tunnel-broker allocation) or
+ * many IPv4 sources can fill it, and then every new visitor is refused until up to one window
+ * after the filling stops. That is the readiness O-6 ceiling of an in-process, per-replica
+ * limiter, so exposing the discovery process beyond local requires an ingress rate limit or
+ * the O-6 readonly-executable DB limiter (an owner migration) first; that is the upgrade path. A
+ * per-/48 sub-cap was considered and not built, because the durable DB limiter replaces this one.
  */
 export function discoveryRateLimited(request: Request): Response | null {
   const key = `discover:${rateLimitKey(clientIp(request))}`;
@@ -102,8 +106,10 @@ export function discoveryRateLimited(request: Request): Response | null {
  * The limiter key of a clientIp value: an IPv6 address is its /64, the first four hextets of the
  * fully expanded address, so every spelling of one /64 shares a key. An IPv4-mapped address
  * (::ffff:a.b.c.d or its hex form ::ffff:XXXX:XXXX) is keyed as the plain a.b.c.d, never as the
- * /64 0000:0000:0000:0000 that every mapped client would share. IPv4 and the non-IP fallbacks
- * (`local`, `fly:untrusted`, ...) are unchanged.
+ * /64 0000:0000:0000:0000 that every mapped client would share. The non-mapped IPv4-in-IPv6
+ * forms (::a.b.c.d, ::ffff:0:a.b.c.d, 64:ff9b::a.b.c.d) keep their /64 key, so the clients of
+ * each such form share one bucket; no supported ingress writes them. IPv4 and the non-IP
+ * fallbacks (`local`, `fly:untrusted`, ...) are unchanged.
  */
 function rateLimitKey(ip: string): string {
   if (isIP(ip) !== 6) return ip;
