@@ -1,10 +1,30 @@
+import { GENDER_VALUES } from "@plexco/core";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { LangProvider } from "../../lib/i18n-client";
-import type { LinkedChannelDto } from "../../lib/me-settings-client";
+import type { LinkedChannelDto, ProfileView } from "../../lib/me-settings-client";
 import { SessionProvider } from "../../lib/use-session";
 import { SettingsChannelsList } from "./settings-channels-list";
 import { SettingsProfileForm } from "./settings-profile-form";
+import { SettingsView } from "./settings-view";
+
+// SettingsView loads through useLoadable; a static render runs no effect, so it gets a ready state.
+const loaded = vi.hoisted(() => ({ profile: null as unknown }));
+vi.mock("../../lib/use-sessions-data", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useLoadable: () => ({
+    state: { status: "ready", data: { profile: loaded.profile, channels: [] } },
+    reload: () => undefined,
+    refresh: () => undefined,
+  }),
+}));
+
+const PROFILE: ProfileView = {
+  displayName: "Lan",
+  gender: null,
+  genderConsent: false,
+  genderCollection: true,
+};
 
 // The channel list reloads through the session context (a CSRF_INVALID needs its fresh csrfToken);
 // a static render runs no effect, so the provider never fetches here.
@@ -21,7 +41,7 @@ const CHANNELS: LinkedChannelDto[] = [
 ];
 
 describe("SettingsProfileForm", () => {
-  const NO_GENDER = { gender: null, genderConsent: false } as const;
+  const NO_GENDER = { gender: null, genderConsent: false, genderCollection: false } as const;
   it("renders a labelled, described display-name field and a submit button", () => {
     const html = wrap(
       <SettingsProfileForm
@@ -47,6 +67,80 @@ describe("SettingsProfileForm", () => {
     );
     expect(html).toContain("Tên hiển thị");
     expect(html).toContain("Lưu");
+  });
+});
+
+describe("SettingsProfileForm gender and pricing consent (DD-39, T-24)", () => {
+  const form = (initial: Partial<ProfileView>, lang: "vi" | "en" = "en") =>
+    wrap(
+      <SettingsProfileForm initial={{ ...PROFILE, ...initial }} csrfToken="x" onSaved={vi.fn()} />,
+      lang,
+    );
+
+  it("flag OFF: no selector, consent box or remove button while nothing is stored", () => {
+    const html = form({ genderCollection: false });
+    expect(html).not.toContain("<select");
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain("Remove my saved gender");
+  });
+
+  it("flag OFF with stored data: only the remove button", () => {
+    for (const stored of [{ gender: "female" }, { genderConsent: true }] as const) {
+      const html = form({ genderCollection: false, ...stored });
+      expect(html).toContain("Remove my saved gender");
+      expect(html).not.toContain("<select");
+      expect(html).not.toContain('type="checkbox"');
+    }
+    expect(form({ genderCollection: false, gender: "male" }, "vi")).toContain(
+      "Xoá giới tính đã lưu",
+    );
+  });
+
+  it("flag ON: GENDER_VALUES plus Not set with t(vi, en) labels, and the consent box", () => {
+    const en = form({});
+    const vi = form({}, "vi");
+    for (const v of GENDER_VALUES) expect(en).toContain(`<option value="${v}"`);
+    expect(en.match(/<option/g)).toHaveLength(GENDER_VALUES.length + 1);
+    for (const o of ["Not set", "Male", "Female", "Other", "Prefer not to say"])
+      expect(en).toContain(`>${o}</option>`);
+    for (const o of ["Chưa đặt", "Nam", "Nữ", "Khác", "Không tiết lộ"])
+      expect(vi).toContain(`>${o}</option>`);
+    expect(en).toContain(">Gender</label>");
+    expect(vi).toContain(">Giới tính</label>");
+    expect(en).toContain("Allow clubs to use my gender for pricing");
+    expect(vi).toContain("Cho phép CLB sử dụng giới tính để tính giá");
+    expect(en).toContain("Gender not shared");
+    expect(vi).toContain("Không chia sẻ giới tính");
+    expect(en).toContain('type="checkbox"');
+    expect(en).not.toContain("Remove my saved gender");
+  });
+
+  it("flag ON: shows the stored choice and consent; the not-shared caption only while consent is off", () => {
+    const html = form({ gender: "female", genderConsent: true });
+    expect(html).toContain('<option value="female" selected="">');
+    expect(html).toMatch(/<input[^>]*type="checkbox"[^>]*checked=""/);
+    expect(html).not.toContain("Gender not shared");
+  });
+});
+
+describe("SettingsView gender prompt (T-2, U-20)", () => {
+  const PROMPT =
+    "You have not set your gender. In sessions priced by gender you pay the default price until you set it.";
+  const page = (profile: Partial<ProfileView>, lang: "vi" | "en" = "en") => {
+    loaded.profile = { ...PROFILE, ...profile };
+    return wrap(<SettingsView />, lang);
+  };
+
+  it("a status paragraph above the Profile card, only with the flag ON and gender null", () => {
+    const html = page({});
+    expect(html).toMatch(/<p[^>]*role="status"[^>]*>You have not set your gender\./);
+    expect(html).toContain(PROMPT);
+    expect(html.indexOf(PROMPT)).toBeLessThan(html.indexOf('id="me-profile"'));
+    expect(page({}, "vi")).toContain(
+      "Bạn chưa đặt giới tính. Ở kèo có giá theo giới tính, bạn sẽ trả giá mặc định cho tới khi đặt.",
+    );
+    expect(page({ gender: "male" })).not.toContain(PROMPT);
+    expect(page({ genderCollection: false })).not.toContain(PROMPT);
   });
 });
 

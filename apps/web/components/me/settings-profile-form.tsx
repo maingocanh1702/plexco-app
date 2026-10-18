@@ -1,5 +1,6 @@
 "use client";
 
+import { GENDER_VALUES } from "@plexco/core";
 import { useRef, useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import {
@@ -7,21 +8,30 @@ import {
   patchMyProfile,
   type DisplayNameProblem,
   type ProfileDto,
+  type ProfileView,
 } from "../../lib/me-settings-client";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
 import { Button } from "../ui/button";
+import { Select } from "../ui/select";
 import { TextField } from "../ui/text-field";
 import { FormFeedback } from "../settings/form-feedback";
 import styles from "../settings/settings-layout.module.css";
 
-/** Display-name form. One commandId per attempt; the result region takes focus after every outcome. */
+type Gender = (typeof GENDER_VALUES)[number];
+type ProfileFields = Omit<Parameters<typeof patchMyProfile>[1], "commandId">;
+
+/**
+ * Display name plus, while the DD-54 flag is on, the caller's own gender and pricing consent
+ * (DD-39). One Save sends only the changed fields; with the flag off a stored gender or consent can
+ * only be removed. One commandId per attempt; the result region takes focus after every outcome.
+ */
 export function SettingsProfileForm({
   initial,
   csrfToken,
   onSaved,
 }: {
-  initial: ProfileDto;
+  initial: ProfileView;
   csrfToken: string;
   onSaved: (profile: ProfileDto) => void;
 }) {
@@ -29,7 +39,10 @@ export function SettingsProfileForm({
   const online = useOnlineStatus();
   const command = useCommandId();
   const formRef = useRef<HTMLFormElement>(null);
+  const retry = useRef<() => void>(() => formRef.current?.requestSubmit());
   const [value, setValue] = useState(initial.displayName ?? "");
+  const [gender, setGender] = useState<Gender | "">(initial.gender ?? "");
+  const [consent, setConsent] = useState(initial.genderConsent);
   const [problem, setProblem] = useState<DisplayNameProblem | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
@@ -45,27 +58,60 @@ export function SettingsProfileForm({
     ),
   };
 
-  async function submit(event: FormEvent) {
+  const genderLabel: Record<Gender, string> = {
+    male: t("Nam", "Male"),
+    female: t("Nữ", "Female"),
+    other: t("Khác", "Other"),
+    undisclosed: t("Không tiết lộ", "Prefer not to say"),
+  };
+
+  function submit(event: FormEvent) {
     event.preventDefault();
+    retry.current = () => formRef.current?.requestSubmit();
     setSaved(false);
     setError(null);
+    const fields: ProfileFields = {};
+    if (initial.genderCollection) {
+      const next = gender === "" ? null : gender;
+      if (next !== initial.gender) fields.gender = next;
+      if (consent !== initial.genderConsent) fields.genderConsent = consent;
+    }
+    const displayName = value.trim();
+    // The name goes out when it changed, or when nothing else did (the plain Save of before).
+    if (displayName === (initial.displayName ?? "") && Object.keys(fields).length > 0) {
+      setProblem(null);
+      void save(fields);
+      return;
+    }
     const found = displayNameProblem(value);
     setProblem(found);
     if (found) {
       formRef.current?.querySelector("input")?.focus();
       return;
     }
+    void save({ displayName, ...fields });
+  }
+
+  function remove() {
+    retry.current = remove;
+    setSaved(false);
+    setError(null);
+    void save({ gender: null, genderConsent: false });
+  }
+
+  async function save(fields: ProfileFields) {
     setBusy(true);
     try {
-      const displayName = value.trim();
-      // Bound to the value like the club forms (use-command-id.ts), although PATCH /api/me/profile
-      // stores nothing under the key today (it is idempotent by value).
+      // Bound to the sent JSON like the club forms (use-command-id.ts), although PATCH
+      // /api/me/profile stores nothing under the key today (it is idempotent by value).
       const profile = await patchMyProfile(csrfToken, {
-        displayName,
-        commandId: command.get(JSON.stringify({ displayName })),
+        ...fields,
+        commandId: command.get(JSON.stringify(fields)),
       });
       command.settle();
       setValue(profile.displayName ?? "");
+      setGender(profile.gender ?? "");
+      setConsent(profile.genderConsent);
       setSaved(true);
       onSaved(profile);
     } catch (failure) {
@@ -78,7 +124,7 @@ export function SettingsProfileForm({
   }
 
   return (
-    <form ref={formRef} className={styles.form} onSubmit={(e) => void submit(e)} noValidate>
+    <form ref={formRef} className={styles.form} onSubmit={submit} noValidate>
       <TextField
         label={t("Tên hiển thị", "Display name")}
         hint={t("Tên bạn muốn câu lạc bộ nhìn thấy.", "The name you want clubs to see.")}
@@ -92,17 +138,55 @@ export function SettingsProfileForm({
           setSaved(false);
         }}
       />
+      {initial.genderCollection ? (
+        <>
+          <Select
+            label={t("Giới tính", "Gender")}
+            value={gender}
+            options={[
+              { value: "", label: t("Chưa đặt", "Not set") },
+              ...GENDER_VALUES.map((v) => ({ value: v, label: genderLabel[v] })),
+            ]}
+            onChange={(e) => {
+              setGender(e.target.value as Gender | "");
+              setSaved(false);
+            }}
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => {
+                setConsent(e.target.checked);
+                setSaved(false);
+              }}
+            />{" "}
+            {t(
+              "Cho phép CLB sử dụng giới tính để tính giá",
+              "Allow clubs to use my gender for pricing",
+            )}
+          </label>
+          {consent ? null : (
+            <p className={styles.caption}>{t("Không chia sẻ giới tính", "Gender not shared")}</p>
+          )}
+        </>
+      ) : null}
       <FormFeedback
         focusKey={focusKey}
         error={error}
         message={saved ? t("Đã lưu hồ sơ.", "Profile saved.") : null}
-        onRetry={() => formRef.current?.requestSubmit()}
+        onRetry={() => retry.current()}
         onReload={() => window.location.reload()}
       />
       <div className={styles.actions}>
         <Button type="submit" disabled={busy || !online} aria-busy={busy ? true : undefined}>
           {busy ? t("Đang lưu…", "Saving…") : t("Lưu", "Save")}
         </Button>
+        {!initial.genderCollection && (initial.gender !== null || initial.genderConsent) ? (
+          <Button type="button" variant="secondary" disabled={busy || !online} onClick={remove}>
+            {t("Xoá giới tính đã lưu", "Remove my saved gender")}
+          </Button>
+        ) : null}
       </div>
       {online ? null : (
         <p className={styles.caption}>
