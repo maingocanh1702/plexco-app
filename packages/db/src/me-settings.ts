@@ -121,7 +121,8 @@ export async function readMyProfile(
  * ONE transaction: the display name (when sent) through person_profile_update, then the gender triple
  * through person_gender_update pinned to the Person read in this transaction. An absent field keeps
  * its stored value, gender null erases, and consent never outlives the ciphertext. null (route 404)
- * when the account has no active Person or was relinked meanwhile. The reply is the in-transaction
+ * when the account has no active Person, was relinked meanwhile, or a concurrent PATCH of it
+ * committed between this snapshot and the write (40001, nothing written). The reply is the in-transaction
  * re-read, so a stored blob that cannot be opened rolls everything back (GenderOpenError).
  */
 export async function updateMyProfile(
@@ -138,7 +139,9 @@ export async function updateMyProfile(
   const client = await pool.connect();
   let broken: Error | undefined;
   try {
-    await client.query("BEGIN");
+    // REPEATABLE READ: the triple read below is written back for absent fields, so a PATCH of this
+    // account committed after our snapshot must fail ours (40001), never be silently overwritten.
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
     const profile = await writeProfile(client, accountId, name, fields);
     await client.query(profile ? "COMMIT" : "ROLLBACK");
     return profile;
@@ -148,6 +151,8 @@ export async function updateMyProfile(
     } catch (rollbackError) {
       broken = rollbackError as Error; // a dead connection must not go back to the pool
     }
+    // serialization_failure: a concurrent PATCH or a relink won; rolled back whole => route 404.
+    if ((error as { code?: string }).code === "40001") return null;
     throw error;
   } finally {
     client.release(broken);

@@ -540,6 +540,34 @@ describe("person_gender_read / person_gender_update (DD-39 gender + pricing cons
     expect(await genderRow(fresh)).toEqual(NO_GENDER);
   });
 
+  it("a PATCH whose gender read went stale before its write rolls back, never restoring it", async () => {
+    const u = await webUser("Lan");
+    await updateMyProfile(ctx.appPool, u.accountId, undefined, { gender: "female" });
+    const male = { displayName: "Lan", gender: "male", genderConsent: false };
+    // PATCH A (consent only: a name would lock persons and block B) holds its transaction open after
+    // its gender read while PATCH B sets male and commits on another app connection; unserialized, A
+    // then writes back the female triple it read and the person later pays the female price.
+    const held = {
+      connect: async () => {
+        const client = await ctx.appPool.connect();
+        return {
+          query: async (text: string, values?: unknown[]) => {
+            if (text.includes("person_gender_update(")) {
+              const b = await updateMyProfile(ctx.appPool, u.accountId, undefined, {
+                gender: "male",
+              });
+              expect(b).toEqual(male);
+            }
+            return client.query(text, values);
+          },
+          release: (err?: Error) => client.release(err),
+        };
+      },
+    } as unknown as pg.Pool;
+    expect(await updateMyProfile(held, u.accountId, undefined, { genderConsent: true })).toBeNull();
+    expect(await readMyProfile(ctx.appPool, u.accountId)).toEqual(male);
+  });
+
   it.each([[""], ["Nam"], ["MALE"], [1], [{}], ["constructor"], [["male"]]])(
     "refuses gender %j with a fixed-message InvalidGenderError and writes nothing",
     async (bad) => {
