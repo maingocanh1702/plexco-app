@@ -12,7 +12,9 @@
  * handler or a DB connection is touched. The surface is /healthz (Fly http_check) and /discover*
  * (the public read model route, DD-12 — not built yet; reserved here so it needs no middleware
  * change to land), plus the three public read GETs /api/discover, /api/discover/<id> and
- * /api/discover/share/<slug>; the join POST and every /api/sessions path stay web-only.
+ * /api/discover/share/<slug>; the join POST and every /api/sessions path stay web-only. The
+ * discovery process answers GET and HEAD only (security review s1 N-2): any other method, on any
+ * path, allowlisted or not, gets the same 404 (requestAllowedForRole is the middleware's gate).
  *
  * CSP NONCE (backlog `web-csp-script-src-nonce`, gap left open by lane A6 on purpose) — behind
  * CSP_SCRIPT_NONCE_ENABLED="true". The App Router bootstraps every page with inline scripts, so
@@ -39,10 +41,24 @@ export function parseProcessRole(raw: string | undefined): ProcessRole {
   return v === "discovery" || v === "worker" ? v : "web";
 }
 
-/** true when the path may be served by this process role. */
+/** true when the path may be served by this process role, whatever the method. */
 export function pathAllowedForRole(pathname: string, role: ProcessRole): boolean {
   if (role !== "discovery") return true;
   return DISCOVERY_PATH_ALLOWLIST.some((re) => re.test(pathname));
+}
+
+/**
+ * The edge gate (W-10 + N-2): discovery serves only GET and HEAD on an allowlisted path; web and
+ * worker serve every request. Fetch upper-cases a get/head method, so the exact match drops no
+ * real read and fails closed on anything else.
+ */
+export function requestAllowedForRole(
+  method: string,
+  pathname: string,
+  role: ProcessRole,
+): boolean {
+  if (role !== "discovery") return true;
+  return (method === "GET" || method === "HEAD") && pathAllowedForRole(pathname, role);
 }
 
 /** Exactly the string "true" enables the nonce policy — fail closed on anything else. */

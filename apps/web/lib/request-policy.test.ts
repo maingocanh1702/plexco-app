@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { NextRequest } from "next/server";
+import { describe, expect, it, vi } from "vitest";
+import { middleware } from "../middleware";
 import {
   buildNonceCsp,
   cspNonceEnabled,
@@ -8,6 +10,7 @@ import {
   parseProcessRole,
   pathAllowedForRole,
   redirect,
+  requestAllowedForRole,
 } from "./request-policy";
 
 /** Audit 2026-09-06 W-10 — the discovery ingress must not serve the whole app. */
@@ -48,6 +51,47 @@ describe("pathAllowedForRole (audit W-10)", () => {
     for (const p of denied) expect(pathAllowedForRole(p, "discovery"), p).toBe(false);
     for (const role of ["web", "worker"] as const) {
       for (const p of [...allowed, ...denied]) expect(pathAllowedForRole(p, role), p).toBe(true);
+    }
+  });
+
+  it("N-2: discovery takes GET and HEAD only, any other method on any path is denied; web and worker take every method", () => {
+    const paths = [
+      "/api/discover",
+      "/discover",
+      "/discover/abc",
+      "/healthz",
+      "/api/discover/share/abc",
+    ];
+    const others = ["POST", "PUT", "PATCH", "DELETE", "OPTIONS", "get"];
+    for (const p of paths) {
+      for (const m of ["GET", "HEAD"]) {
+        expect(requestAllowedForRole(m, p, "discovery"), `${m} ${p}`).toBe(true);
+      }
+      for (const m of others) {
+        expect(requestAllowedForRole(m, p, "discovery"), `${m} ${p}`).toBe(false);
+      }
+    }
+    for (const m of ["GET", "HEAD", ...others]) {
+      expect(requestAllowedForRole(m, "/api/sessions", "discovery"), m).toBe(false);
+      for (const role of ["web", "worker"] as const) {
+        for (const p of [...paths, "/api/sessions"]) {
+          expect(requestAllowedForRole(m, p, role), `${role} ${m} ${p}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("N-2: the middleware gives a discovery POST /api/discover the gate's bodiless no-store 404 and lets the GET through", async () => {
+    const url = "http://localhost/api/discover";
+    vi.stubEnv("PROCESS_ROLE", "discovery");
+    try {
+      const denied = middleware(new NextRequest(url, { method: "POST" }));
+      expect(denied.status).toBe(404);
+      expect(denied.headers.get("cache-control")).toBe("no-store");
+      expect(await denied.text()).toBe("");
+      expect(middleware(new NextRequest(url)).status).toBe(200);
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

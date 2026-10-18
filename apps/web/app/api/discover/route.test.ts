@@ -204,6 +204,18 @@ describe("GET /api/discover", () => {
     expect((await get("", "2001:db8:0:1::1")).status).toBe(200);
   });
 
+  it("R1-2b: an IPv4-mapped IPv6 client is keyed as its IPv4 address, never the /64 every mapped client shares", async () => {
+    const spellings = [
+      "::ffff:192.0.2.1",
+      "::FFFF:c000:201",
+      "0:0:0:0:0:ffff:192.0.2.1",
+      "192.0.2.1",
+    ];
+    for (let i = 0; i < 60; i += 1) expect((await get("", spellings[i % 4])).status).toBe(200);
+    await expectError(await get("", "::ffff:c000:0201"), 429, "DISCOVERY_RATE_LIMITED");
+    expect((await get("", "::ffff:192.0.2.2")).status).toBe(200);
+  });
+
   it("A-7 (fake timers): a window resets at 60 s; a Map full of live windows frees them once they expire", async () => {
     vi.useFakeTimers();
     for (let i = 0; i < 61; i += 1) await get();

@@ -100,8 +100,10 @@ export function discoveryRateLimited(request: Request): Response | null {
 
 /**
  * The limiter key of a clientIp value: an IPv6 address is its /64, the first four hextets of the
- * fully expanded address, so every spelling of one /64 shares a key. IPv4 and the non-IP
- * fallbacks (`local`, `fly:untrusted`, ...) are unchanged.
+ * fully expanded address, so every spelling of one /64 shares a key. An IPv4-mapped address
+ * (::ffff:a.b.c.d or its hex form ::ffff:XXXX:XXXX) is keyed as the plain a.b.c.d, never as the
+ * /64 0000:0000:0000:0000 that every mapped client would share. IPv4 and the non-IP fallbacks
+ * (`local`, `fly:untrusted`, ...) are unchanged.
  */
 function rateLimitKey(ip: string): string {
   if (isIP(ip) !== 6) return ip;
@@ -113,10 +115,15 @@ function rateLimitKey(ip: string): string {
   const missing = 8 - left.length - right.length - (right.at(-1)?.includes(".") ? 1 : 0);
   const hextets =
     tail === undefined ? left : [...left, ...Array<string>(missing).fill("0"), ...right];
-  return hextets
-    .slice(0, 4)
-    .map((hextet) => hextet.padStart(4, "0"))
-    .join(":");
+  const padded = hextets.map((hextet) => hextet.padStart(4, "0")); // a dotted tail stays as is
+  if (padded.slice(0, 6).join(":") === "0000:0000:0000:0000:0000:ffff") {
+    const [high = "", low] = padded.slice(6);
+    if (low === undefined) return high; // ::ffff:a.b.c.d
+    return [high.slice(0, 2), high.slice(2), low.slice(0, 2), low.slice(2)]
+      .map((byte) => parseInt(byte, 16))
+      .join(".");
+  }
+  return padded.slice(0, 4).join(":");
 }
 
 function rateLimitedResponse(retryAfterSeconds: number): Response {
