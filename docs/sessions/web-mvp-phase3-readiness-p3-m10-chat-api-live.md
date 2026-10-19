@@ -90,11 +90,15 @@ Bodies (only these fields are read; never an author field, tech:1144): send `{cl
 - AUTH_REQUIRED 401: no session. CSRF_INVALID 403: missing or wrong x-csrf-token on a mutation, zero mutation (D-18).
 - INVALID_BODY 400: a non-uuid tenant, channel, message, reply, through-message or command id (note 30); a bad limit (D-1) or cursor (D-2); bad JSON.
 - The one CHAT_FORBIDDEN 403 body (byte-equal except meta.requestId; constant t(vi, en) text, never the tenant's language) for every reason: no tenant
-  membership, wrong tenant, not a chat member, unknown channel or message, DM or non-club id (CHAT_SAFETY_BLOCKED, D-15), non-author DELETE, D-23.
+  membership, wrong tenant, not a chat member, unknown channel or message (moderation: see the last bullet), DM or non-club id (CHAT_SAFETY_BLOCKED,
+  D-15), non-author DELETE, D-23.
 - TENANT_SUSPENDED 403 reaches members only (D-19). 200 with duplicate: true for CHAT_DUP_MESSAGE (D-8); a moderation replay returns the stored result.
 - 409: CHAT_IDEMPOTENCY_MISMATCH (cross-author clientMsgId; a commandId with a new fingerprint; generic, no data), CHAT_REPLY_INVALID, CHAT_EDIT_WINDOW_CLOSED,
   CHAT_EDIT_CONFLICT. 403 CHAT_CAPABILITY_REQUIRED on POST and PATCH in an admins_only channel (note 32 order: kind, member, post_policy, window).
 - 403 CHAT_MODERATION_FORBIDDEN; 413 CHAT_MESSAGE_TOO_LARGE; 422 CHAT_REASON_INVALID; 404 NOT_FOUND (POST read, through-message not in the channel).
+- Moderation, amended 2026-10-19 (conductor-approved): past the gate's tenant pre-gate (D-19) every in-tenant denial of POST moderation (unknown message,
+  a message of another channel or tenant, another tenant's channel, a DM-kind target, no chat.message.moderate) is the definer's one 403
+  CHAT_MODERATION_FORBIDDEN body; a caller who is not a live member of the tenant gets the one CHAT_FORBIDDEN body for every target (no outsider oracle).
 - Anything else (`CHAT_DB_ERROR:<SQLSTATE>`, incl. 23505 from one moderation commandId reused on two channels at once; any plain Error) -> rethrow ->
   fail-closed 500 with no text logged; the retry returns the stored result or the mismatch (note 32). L15 never widens chat-service.ts's sanitize (:50-64).
 ### 4.5 Rate limits (every chat 429 is CHAT_RATE_LIMITED)
