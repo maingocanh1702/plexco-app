@@ -418,6 +418,13 @@ describe("chat-service wrappers through withChatActor (0063, readiness 4.8)", ()
     const notify = /pg_catalog\.pg_notify\('chat_realtime', (v_id|p_message)::text\)/g;
     expect((sql.match(notify) ?? []).length).toBeGreaterThanOrEqual(4);
     expect((sql.match(/pg_notify/g) ?? []).length).toBe((sql.match(notify) ?? []).length);
+    // No NOTIFY statement form at all (bare, or built for EXECUTE format): every word NOTIFY left
+    // after comment stripping must be the tail of pg_notify. The samples pin the pattern itself.
+    const notifyStmt = /(?<![a-z_.])notify\b/i;
+    expect("NOTIFY chat_realtime, 'x'").toMatch(notifyStmt);
+    expect("EXECUTE format('NOTIFY %I, %L', c, v)").toMatch(notifyStmt);
+    expect("PERFORM pg_catalog.pg_notify('chat_realtime', v_id::text)").not.toMatch(notifyStmt);
+    expect(sql).not.toMatch(notifyStmt);
     expect(sql).not.toMatch(/pg_notify\([^)]*(body|note)/i);
     for (const raise of sql.match(/\bRAISE\b[^;]*;/g) ?? [])
       expect(raise).not.toMatch(/p_body|p_reason_note|\.body\b/);

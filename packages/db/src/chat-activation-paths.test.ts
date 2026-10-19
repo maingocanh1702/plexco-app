@@ -147,23 +147,25 @@ describe("chat provisioning per membership activation path (readiness section 6)
     ]);
     // A by-name person is minted with no gender, so its derivation cannot fail on its own at the
     // base: this file-local trigger seals an unopenable gender onto the minted person in the same
-    // transaction, so deriveChargeAmount (roster-service.ts:256-271) fails after the INSERT.
-    await q(`CREATE FUNCTION w2b_seal_unopenable_gender() RETURNS trigger LANGUAGE plpgsql
-             SECURITY DEFINER SET search_path = public, pg_temp AS $$
-             BEGIN
-               UPDATE persons SET gender_enc = decode(repeat('ab', 48), 'hex'),
-                      gender_key_version = 'retired-key', gender_pricing_consent = true
-                WHERE id = NEW.person_id;
-               RETURN NULL;
-             END $$`);
-    await q(`CREATE TRIGGER w2b_seal_unopenable_gender AFTER INSERT ON memberships FOR EACH ROW
-             WHEN (NEW.display_name LIKE 'Unpriceable %')
-             EXECUTE FUNCTION w2b_seal_unopenable_gender()`);
+    // transaction, so deriveChargeAmount (roster-service.ts:256-271) fails after the INSERT. The
+    // function and trigger are created inside the try, so the finally drops whatever exists even
+    // if the second CREATE fails.
     const saved = GENDER_ENV.map((k) => [k, process.env[k]] as const);
-    process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
-    for (const k of GENDER_ENV.slice(1)) delete process.env[k];
-    __resetAuthSecretCacheForTest();
     try {
+      await q(`CREATE FUNCTION w2b_seal_unopenable_gender() RETURNS trigger LANGUAGE plpgsql
+               SECURITY DEFINER SET search_path = public, pg_temp AS $$
+               BEGIN
+                 UPDATE persons SET gender_enc = decode(repeat('ab', 48), 'hex'),
+                        gender_key_version = 'retired-key', gender_pricing_consent = true
+                  WHERE id = NEW.person_id;
+                 RETURN NULL;
+               END $$`);
+      await q(`CREATE TRIGGER w2b_seal_unopenable_gender AFTER INSERT ON memberships FOR EACH ROW
+               WHEN (NEW.display_name LIKE 'Unpriceable %')
+               EXECUTE FUNCTION w2b_seal_unopenable_gender()`);
+      process.env.ENCRYPTION_KEY = Buffer.from("c".repeat(32)).toString("base64");
+      for (const k of GENDER_ENV.slice(1)) delete process.env[k];
+      __resetAuthSecretCacheForTest();
       const name = `Unpriceable ${randomUUID().slice(0, 8)}`;
       const before = await snapshot(w.tenantId);
       expect(before).toEqual({ channels: 0, members: [] });
@@ -177,8 +179,8 @@ describe("chat provisioning per membership activation path (readiness section 6)
         else process.env[k] = v;
       }
       __resetAuthSecretCacheForTest();
-      await q(`DROP TRIGGER w2b_seal_unopenable_gender ON memberships`);
-      await q(`DROP FUNCTION w2b_seal_unopenable_gender()`);
+      await q(`DROP TRIGGER IF EXISTS w2b_seal_unopenable_gender ON memberships`);
+      await q(`DROP FUNCTION IF EXISTS w2b_seal_unopenable_gender()`);
     }
   });
 
