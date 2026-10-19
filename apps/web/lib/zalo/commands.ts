@@ -5,11 +5,12 @@ import { t } from "@plexco/core/i18n";
  * resolution, link-code issuing and sending; this module only decides WHAT to say, so it is trivially
  * testable and has no I/O.
  *
- * Scope M3a: /start, /me, /link. /join, /pay, /leave and bare number replies are M9 ("coming soon").
- * `/link <code>` (consume a code on the bot side) is NOT here: consuming is lane M3b.
+ * Scope: /start, /me, /link. The M9 kinds join, leave, pay and number are parsed here and answered
+ * by player-commands.ts. `/link <code>` (consume a code on the bot side) is NOT here: lane M3b.
  * Replies are rendered with t(vi, en); the caller wraps this in runWithLang(bot locale) (DD-118).
  */
-export type ZaloCommandKind = "start" | "me" | "link" | "link_code" | "coming_soon" | "unknown";
+export type ZaloCommandKind =
+  "start" | "me" | "link" | "link_code" | "join" | "leave" | "pay" | "number" | "unknown";
 
 export interface ParsedZaloCommand {
   kind: ZaloCommandKind;
@@ -17,14 +18,16 @@ export interface ParsedZaloCommand {
   args: string[];
 }
 
-const COMING_SOON = new Set(["join", "pay", "leave"]);
 const MAX_TEXT = 500;
 
 export function parseZaloCommand(text: string): ParsedZaloCommand {
   const parts = text.trim().slice(0, MAX_TEXT).split(/\s+/).filter(Boolean);
   const first = (parts[0] ?? "").toLowerCase();
   const args = parts.slice(1);
-  if (/^\d{1,3}$/.test(first)) return { kind: "coming_soon", name: "number", args: [] };
+  // P-5: the whole message is one ASCII number token; its range is checked against the context.
+  if (parts.length === 1 && /^[0-9]{1,3}$/.test(first)) {
+    return { kind: "number", name: "number", args: [first] };
+  }
   // Zalo has no BotFather-style suffix; accept `/cmd` and bare `cmd`, drop a trailing `@botname`.
   const name = first.replace(/^\//, "").split("@")[0] ?? "";
   if (name === "start") return { kind: "start", name, args };
@@ -33,7 +36,8 @@ export function parseZaloCommand(text: string): ParsedZaloCommand {
     // `/link <code>`: consuming a code is a WEB action (Settings), never a bot command.
     return args.length === 0 ? { kind: "link", name, args } : { kind: "link_code", name, args: [] };
   }
-  if (COMING_SOON.has(name)) return { kind: "coming_soon", name, args };
+  // P-4: arguments are never parsed, echoed or logged, so they are dropped here.
+  if (name === "join" || name === "leave" || name === "pay") return { kind: name, name, args: [] };
   return { kind: "unknown", name, args };
 }
 
@@ -51,8 +55,8 @@ export interface ZaloReplyDeps {
 
 const helpText = () =>
   t(
-    "Lệnh có sẵn:\n/me - xem thông tin của bạn\n/link - liên kết tài khoản Plexco",
-    "Available commands:\n/me - see your info\n/link - link your Plexco account",
+    "Lệnh có sẵn:\n/me - xem thông tin của bạn\n/link - liên kết tài khoản Plexco\n/join - tham gia buổi chơi\n/leave - rời buổi chơi\n/pay - xem số tiền cần trả",
+    "Available commands:\n/me - see your info\n/link - link your Plexco account\n/join - join a session\n/leave - leave a session\n/pay - see what you owe",
   );
 
 export async function buildZaloReply(cmd: ParsedZaloCommand, deps: ZaloReplyDeps): Promise<string> {
@@ -99,9 +103,8 @@ export async function buildZaloReply(cmd: ParsedZaloCommand, deps: ZaloReplyDeps
         "Nhập mã liên kết trong Cài đặt trên web Plexco, không gửi cho bot.",
         "Enter the link code in Settings on the Plexco web app, not in this chat.",
       );
-    case "coming_soon":
-      return t("Tính năng này sắp có.", "This feature is coming soon.");
-    case "unknown":
+    // "unknown"; process-event.ts routes join/leave/pay/number to player-commands.ts (help = fail closed).
+    default:
       return `${t("Mình chưa hiểu lệnh này.", "I did not understand that command.")}\n${helpText()}`;
   }
 }
