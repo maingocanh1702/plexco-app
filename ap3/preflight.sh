@@ -29,7 +29,13 @@ set +e
 OUT="$(bash "$DIR/agent-readonly.sh" "$CWD" "$PROMPT" "$BUDGET" "$MODEL" "$COST")"
 RC=$?
 set -e
-if [ "$RC" -ne 0 ]; then echo "AP3_PREFLIGHT: UNAVAILABLE"; exit 3; fi
+# review round 2 (2026-10-18): a session that FAILED may still have spent money. agent-readonly.sh writes
+# that cost before it refuses the result (F9), so report it here too and the dispatcher's per-task
+# cost_total counts the failed attempt; null when no cost was reported (unknown, never 0).
+if [ "$RC" -ne 0 ]; then
+  echo "AP3_PREFLIGHT_COST: $(if [ -s "$COST" ]; then cat "$COST"; else echo null; fi)"
+  echo "AP3_PREFLIGHT: UNAVAILABLE"; exit 3
+fi
 printf '%s\n' "$OUT"
 echo "AP3_PREFLIGHT_COST: $(cat "$COST" 2>/dev/null || echo null)"
 LAST="$(printf '%s\n' "$OUT" | grep -vE '^[[:space:]]*$' | tail -1 | sed 's/[[:space:]]*$//' || true)"

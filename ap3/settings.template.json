@@ -28,7 +28,7 @@
     ],
     "deny": [
       "Bash(git push*)", "Bash(git reset --hard*)", "Bash(rm -rf *)",
-      "Read(./.env*)", "Read(~/.ssh/**)", "Read(~/.aws/**)",
+      "Read(./.env*)", "Read(//**/ap3/env)", "Read(~/.ssh/**)", "Read(~/.aws/**)",
       "WebFetch", "WebSearch"
     ]
   },

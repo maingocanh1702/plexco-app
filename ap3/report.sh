@@ -93,6 +93,12 @@ agent = sum(1 for r in rows if r.get("agent_resolved") is True)
 pf = sum(r["preflight_cost_usd"] for r in rows if isinstance(r.get("preflight_cost_usd"), (int, float)))
 rs = sum(r["resolver_cost_usd"] for r in rows if isinstance(r.get("resolver_cost_usd"), (int, float)))
 print("  agent_resolved_runs=%d  preflight_cost_usd=%.4f  resolver_cost_usd=%.4f" % (agent, pf, rs))
+# Reviewer fallback: runs where Codex was unavailable and a read-only Claude session reviewed instead
+# (never counted toward clean_runs); its spend is also outside the writer total_cost_usd
+fb = sum(1 for r in rows if r.get("reviewer_fallback") is True)
+fbr = sum(r["fallback_review_rounds"] for r in rows if isinstance(r.get("fallback_review_rounds"), int))
+fbc = sum(r["fallback_review_cost_usd"] for r in rows if isinstance(r.get("fallback_review_cost_usd"), (int, float)))
+print("  fallback_review_runs=%d  fallback_review_rounds=%d  fallback_review_cost_usd=%.4f" % (fb, fbr, fbc))
 PY
 )"
 printf '%s\n' "$OUT"

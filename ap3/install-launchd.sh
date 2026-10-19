@@ -21,6 +21,10 @@ PATHSET="$(printf '%s\n' \
 # XML-escape any value interpolated into the plist (a repo path could contain & < > " ').
 xmle() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'"'"'/\&apos;/g'; }
 TARGET_X="$(xmle "$TARGET")"; PATHSET_X="$(xmle "$PATHSET")"; HOME_X="$(xmle "$HOME")"; LOGDIR_X="$(xmle "$LOGDIR")"
+# USER and LOGNAME too (2026-10-18 review, F7): without them a launchd-started headless `claude` prints
+# "Not logged in" and every writer fails. The live Plexco plist was hand-fixed; a re-install must not
+# silently undo that. Taken from `id -un` (the account the plist is installed for), not the environment.
+USER_X="$(xmle "$(id -un)")"
 
 # AbandonProcessGroup=true is load-bearing: dispatch.sh exits right after STARTED and leaves the
 # writer (`nohup claude -p ... &`) running. launchd's default is to SIGKILL every process still in
@@ -42,7 +46,7 @@ $args
   </array>
   <key>WorkingDirectory</key><string>$TARGET_X</string>
   <key>EnvironmentVariables</key>
-  <dict><key>PATH</key><string>$PATHSET_X</string><key>HOME</key><string>$HOME_X</string></dict>
+  <dict><key>PATH</key><string>$PATHSET_X</string><key>HOME</key><string>$HOME_X</string><key>USER</key><string>$USER_X</string><key>LOGNAME</key><string>$USER_X</string></dict>
   <key>RunAtLoad</key><false/>
   <key>AbandonProcessGroup</key><true/>
 $sched

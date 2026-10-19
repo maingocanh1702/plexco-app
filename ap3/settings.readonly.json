@@ -4,7 +4,8 @@
     "allow": ["Read", "Glob", "Grep"],
     "deny": [
       "Edit", "Write", "Bash", "Agent",
-      "Read(./.env*)", "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.gnupg/**)",
+      "Read(./.env*)", "Read(//**/.env*)", "Read(//**/ap3/env)",
+      "Read(~/.ssh/**)", "Read(~/.aws/**)", "Read(~/.gnupg/**)",
       "Read(~/.codex/**)", "Read(~/.ap-watch.env)",
       "WebFetch", "WebSearch"
     ]
