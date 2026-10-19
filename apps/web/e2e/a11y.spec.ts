@@ -12,6 +12,8 @@ const SCREENS = [
   { name: "offline", path: "/offline" },
   // Unauthenticated: redirects to the landing page, which is what must be accessible.
   { name: "new-club (unauthenticated)", path: "/onboarding/new-club" },
+  // Anonymous discovery: no session and no API mock, the page only has to render its main (R B-2).
+  { name: "discover (anonymous)", path: "/discover" },
 ];
 const SCHEMES = ["light", "dark"] as const;
 const VIEWPORTS = [
