@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RealtimeAudience, RealtimeFrame } from "./realtime-auth";
+import type { ChatFrame, RealtimeAudience, RealtimeFrame } from "./realtime-auth";
 import {
   MAX_PENDING_EVENTS,
   MAX_STREAMS_PER_ACCOUNT,
@@ -10,6 +10,7 @@ import {
   openRealtimeStream,
   type ListenClient,
   type ListenerDeps,
+  type RealtimeListener,
   type RealtimeSubscriber,
 } from "./realtime-listener";
 
@@ -371,5 +372,17 @@ describe("chat realtime topic", () => {
     expect(chat).not.toBe(realtimeListener());
     expect(chat.stats()).toEqual({ subscribers: 0, accounts: 0, listening: false, pending: 0 });
     expect(CHAT_REALTIME_CHANNEL).toBe("chat_realtime");
+  });
+
+  it("C5 (B1 N1, N4): a non-L5 frame must pass its encoder; the channel is one of two constants", () => {
+    // Never called: these are compile-time locks, checked by tsc (pnpm typecheck covers lib/).
+    const typeOnly = (chat: RealtimeListener<ChatFrame>, deps: ListenerDeps) => {
+      // @ts-expect-error N1: without encode the chat stream would write L5's frame with no ids
+      openRealtimeStream(chat, audience, { recheck: async () => true });
+      openRealtimeStream(chat, audience, { recheck: async () => true, encode: () => "" });
+      // @ts-expect-error N4: the channel is interpolated into LISTEN, so only a code constant fits
+      createRealtimeListener({ ...deps, channel: "web_realtime; UNLISTEN *" });
+    };
+    expect(typeOnly).toBeTypeOf("function");
   });
 });

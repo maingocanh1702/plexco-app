@@ -48,7 +48,7 @@ export interface ListenClient {
 export interface ListenerDeps<F = RealtimeFrame> {
   connect(): Promise<ListenClient>;
   /** NOTIFY channel; default REALTIME_CHANNEL (L5). A code constant, never input. */
-  channel?: string;
+  channel?: typeof REALTIME_CHANNEL | typeof CHAT_REALTIME_CHANNEL;
   plan(
     eventId: string,
     groups: ReadonlyMap<string, ReadonlySet<RealtimeSubscriber<F>>>,
@@ -272,8 +272,9 @@ export function openRealtimeStream<F = RealtimeFrame>(
   options: {
     recheck(audience: RealtimeAudience): Promise<boolean>;
     signal?: AbortSignal;
-    encode?: (frame: F) => string;
-  },
+  } & ([F] extends [RealtimeFrame]
+    ? { encode?: (frame: F) => string }
+    : { encode: (frame: F) => string }),
 ): ReadableStream<Uint8Array> | null {
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closed = false;
@@ -298,7 +299,8 @@ export function openRealtimeStream<F = RealtimeFrame>(
     controller.enqueue(encoder.encode(text));
     if ((controller.desiredSize ?? 0) <= 0) finish();
   };
-  // L5 frames by default; the chat topic passes its own encoder (F is then ChatFrame).
+  // L5 frames by default; any other F (the chat topic's ChatFrame) must pass its own encoder: the
+  // options type requires one whenever F is not RealtimeFrame (B1 N1), so this cast holds.
   const encode = (options.encode ?? encodeFrame) as (frame: F) => string;
   const subscriber: RealtimeSubscriber<F> = {
     ...audience,
