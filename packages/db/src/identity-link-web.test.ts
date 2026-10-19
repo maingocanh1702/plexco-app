@@ -387,6 +387,7 @@ describe("linkZaloToAccount - refusals", () => {
     expect(await reparent(issued.linkCodeId, web.accountId)).toBe("invalid");
     expect(await reparent(issued.linkCodeId, other.accountId)).toBe("invalid");
     // ...and again once the blocker is gone, i.e. the source Person is empty now.
+    await ctx.owner.query(`DELETE FROM chat_members WHERE person_id = $1`, [zalo.personId]);
     await ctx.owner.query(`DELETE FROM memberships WHERE person_id = $1`, [zalo.personId]);
     expect(await reparent(issued.linkCodeId, other.accountId)).toBe("invalid");
     await expectNothingMoved(zalo);

@@ -308,8 +308,10 @@ describe("guest-note HTTP routes through real app-role authentication and comman
     const actor = await seedActor(
       kind === "foreign pairing" ? id : kind === "other session" ? await seedSession() : undefined,
     );
-    if (kind === "stranger")
+    if (kind === "stranger") {
+      await ctx.owner.query("DELETE FROM chat_members WHERE person_id = $1", [actor.personId]);
       await ctx.owner.query("DELETE FROM memberships WHERE person_id = $1", [actor.personId]);
+    }
     const path = kind === "unknown" ? randomUUID() : kind === "malformed" ? "bad-id" : id;
     const tenant = kind === "foreign pairing" ? ctx.tenantB : ctx.tenantA;
     for (const method of ["POST", "DELETE"]) {
