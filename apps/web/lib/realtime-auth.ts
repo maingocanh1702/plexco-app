@@ -1,3 +1,4 @@
+import type { ChatStreamFrame } from "@plexco/core";
 import {
   getChatMessage,
   hasLiveMembership,
@@ -104,11 +105,7 @@ export async function recheckSubscriber(audience: RealtimeAudience): Promise<boo
 }
 
 /** The chat topic's ONLY wire shape (D-12): ids only; content comes through the authorized GET. */
-export interface ChatFrame {
-  type: "chat.message";
-  channelId: string;
-  messageId: string;
-}
+export type ChatFrame = ChatStreamFrame;
 
 /** As encodeFrame (R-5): one `data:` line of exactly these three keys; no row field rides along. */
 export function encodeChatFrame(frame: ChatFrame): string {
