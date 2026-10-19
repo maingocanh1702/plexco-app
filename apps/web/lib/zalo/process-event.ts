@@ -1,11 +1,21 @@
 import { runWithLang } from "@plexco/core/i18n";
 import {
   LINK_CODE_TTL_SECONDS,
+  claimZaloReplyContext,
+  createZaloReplyContext,
   issueLinkCode,
+  joinSession,
+  leaveSession,
+  listOwnJoinableSessions,
+  listOwnLeavableSeats,
   pgErrorChainText,
   pgErrorHasCode,
+  readLatestZaloReplyContext,
+  readMyCharges,
   readZaloBotTokenEnc,
+  readZaloPayContext,
   resolveZaloIdentity,
+  resolveZaloLinkGate,
   withTenant,
   type Db,
   type DbHandle,
@@ -15,9 +25,17 @@ import { keyedHash } from "../auth-secrets";
 import { decryptConnectorSecret, encryptConnectorSecret, textToBlob } from "../connector-secrets";
 import { linkCodeKeys } from "../link-code-keys";
 import { log } from "../log";
+import {
+  SESSION_JOIN_PERSON_LIMIT,
+  SESSION_LEAVE_PERSON_LIMIT,
+  personThrottled,
+} from "../session-command-route";
 import { rateLimited } from "../session-cookies";
 import { sendMessage, ZaloApiError } from "./client";
 import { buildZaloReply, parseZaloCommand, type LinkIssueResult } from "./commands";
+import { runPlayerCommand, type PlayerCommandDeps } from "./player-commands";
+
+const PLAYER_KINDS: ReadonlySet<string> = new Set(["join", "leave", "pay", "number"]);
 
 /**
  * Inline processing of one STORED Zalo event (store-before-process is the caller's job).
@@ -87,8 +105,9 @@ export async function processZaloEvent(args: {
   handle: DbHandle;
   bot: ZaloBotRef;
   event: ZaloEventFields;
+  externalEventId: string;
 }): Promise<ProcessOutcome> {
-  const { handle, bot, event } = args;
+  const { handle, bot, event, externalEventId } = args;
   const db: Db = handle.db;
   // A non-DM is ignored outright: no identity, no reply, no link code. The webhook already drops it
   // before the store (no payload persisted); this is the same rule at the processor, fail closed.
@@ -116,12 +135,45 @@ export async function processZaloEvent(args: {
       displayName: event.displayName,
     }),
   );
+  // RC-1: own autocommit call outside every tenant transaction; any failure = NOT linked (P-28).
+  const gate = await resolveZaloLinkGate(handle.pool, identity.channelIdentityId).catch(
+    (error: unknown) => {
+      const code = (error as { code?: unknown } | null)?.code;
+      const sqlstate = typeof code === "string" && /^[0-9A-Z]{5}$/.test(code) ? code : "none";
+      log.error("zalo_link_gate_failed", { sqlstate });
+      return { linked: false, accountRef: null };
+    },
+  );
+  const { tenantId } = bot;
+  const { personId } = identity;
+  const ctxKey = { tenantId, botId: bot.botId, personId };
+  const commandId = `zalo:${externalEventId}`;
+  const deps: PlayerCommandDeps = {
+    gate,
+    listJoinable: () => listOwnJoinableSessions(db, { tenantId, personId }),
+    listLeavable: () => listOwnLeavableSeats(db, { tenantId, personId }),
+    saveContext: (contextType, itemIds) =>
+      createZaloReplyContext(db, { ...ctxKey, contextType, itemIds }),
+    latestContext: () => readLatestZaloReplyContext(db, ctxKey),
+    claimContext: (c) => claimZaloReplyContext(db, { ...ctxKey, id: c.id, version: c.version }),
+    join: (sessionId) => joinSession(db, { tenantId, personId, sessionId, commandId }),
+    leave: (sessionId) => leaveSession(db, { tenantId, personId, sessionId, commandId }),
+    throttled: (type) =>
+      personThrottled(
+        type === "join_list" ? SESSION_JOIN_PERSON_LIMIT : SESSION_LEAVE_PERSON_LIMIT,
+        personId,
+      ),
+    readCharges: (accountRef) => readMyCharges(handle.pool, accountRef),
+    payContext: (sessionIds) => readZaloPayContext(db, { tenantId, sessionIds }),
+    classify: classifyProcessingError,
+  };
 
   const lang = bot.locale === "en" ? "en" : "vi"; // DD-118: the bot's tenant locale, fail-closed vi
-  const reply = await runWithLang(lang, () =>
-    buildZaloReply(cmd, {
+  const reply = await runWithLang(lang, () => {
+    if (PLAYER_KINDS.has(cmd.kind)) return runPlayerCommand(cmd, deps);
+    return buildZaloReply(cmd, {
       displayName: identity.displayName,
-      hasAccount: identity.hasAccount,
+      hasAccount: gate.linked,
       isDirect: true,
       issueLinkCode: async (): Promise<LinkIssueResult> => {
         const keys = linkCodeKeys();
@@ -148,8 +200,8 @@ export async function processZaloEvent(args: {
           return { ok: false, reason: "unavailable" };
         }
       },
-    }),
-  );
+    });
+  });
 
   const botToken = await withTenant(db, bot.tenantId, async (tx) => {
     const enc = await readZaloBotTokenEnc(tx, bot.tenantId, bot.botId);

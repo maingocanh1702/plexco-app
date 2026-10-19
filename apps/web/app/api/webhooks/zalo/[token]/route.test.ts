@@ -1,9 +1,19 @@
 import {
+  claimZaloReplyContext,
+  createZaloReplyContext,
   finishInboundEvent,
   issueLinkCode,
+  joinSession,
+  leaveSession,
+  listOwnJoinableSessions,
+  listOwnLeavableSeats,
   markBotVerifiedActive,
+  readLatestZaloReplyContext,
+  readMyCharges,
+  readZaloPayContext,
   resolveZaloBotByToken,
   resolveZaloIdentity,
+  resolveZaloLinkGate,
   storeInboundEvent,
   readZaloBotTokenEnc,
   type ZaloBotRef,
@@ -36,6 +46,16 @@ vi.mock("@plexco/db", async (importOriginal) => {
     resolveZaloIdentity: vi.fn(),
     readZaloBotTokenEnc: vi.fn(),
     issueLinkCode: vi.fn(),
+    resolveZaloLinkGate: vi.fn(),
+    listOwnJoinableSessions: vi.fn(),
+    listOwnLeavableSeats: vi.fn(),
+    createZaloReplyContext: vi.fn(),
+    readLatestZaloReplyContext: vi.fn(),
+    claimZaloReplyContext: vi.fn(),
+    joinSession: vi.fn(),
+    leaveSession: vi.fn(),
+    readMyCharges: vi.fn(),
+    readZaloPayContext: vi.fn(),
     withTenant: vi.fn(async (_d: unknown, _t: string, fn: (tx: unknown) => unknown) => fn({})),
   };
 });
@@ -56,6 +76,20 @@ const TENANT = "11111111-1111-4111-8111-111111111111";
 const BOT = "22222222-2222-4222-8222-222222222222";
 const SECRET = "s3cret-token-value-0123456789abcdefghijklm";
 const BOT_TOKEN = "123456:bot-token-xyz";
+const ACC = "33333333-3333-4333-8333-333333333333";
+const S1 = "44444444-4444-4444-8444-444444444444";
+// Every @plexco/db call behind /join, /leave, /pay and a number reply (readiness 8, rule R).
+const PLAYER_DB = [
+  listOwnJoinableSessions,
+  listOwnLeavableSeats,
+  createZaloReplyContext,
+  readLatestZaloReplyContext,
+  claimZaloReplyContext,
+  joinSession,
+  leaveSession,
+  readMyCharges,
+  readZaloPayContext,
+];
 let bot: ZaloBotRef;
 
 const call = (
@@ -120,6 +154,9 @@ beforeEach(async () => {
   vi.mocked(readZaloBotTokenEnc).mockResolvedValue(blobToText(tokenEnc));
   vi.mocked(sendMessage).mockResolvedValue(undefined);
   audit.mockResolvedValue(undefined);
+  // Fail closed (readiness 8): not linked, and an unstubbed player-command call rejects (R-18).
+  vi.mocked(resolveZaloLinkGate).mockResolvedValue({ linked: false, accountRef: null });
+  for (const fn of PLAYER_DB) vi.mocked(fn).mockRejectedValue(new Error("unstubbed"));
 });
 
 describe("POST /api/webhooks/zalo/[token]", () => {
@@ -331,8 +368,50 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       displayName: "An",
       hasAccount: true,
     });
+    vi.mocked(resolveZaloLinkGate).mockResolvedValue({ linked: true, accountRef: ACC });
     await call({ body: update("/me", 9201) });
     expect(vi.mocked(sendMessage).mock.calls[0]![2]).toContain("Plexco account linked");
+  });
+
+  describe("M9 player commands: the link gate decides first (readiness 4.1, 4.7)", () => {
+    it("T-1: a linked sender's /join gets the numbered list of its joinable sessions", async () => {
+      vi.mocked(resolveZaloLinkGate).mockResolvedValue({ linked: true, accountRef: ACC });
+      vi.mocked(listOwnJoinableSessions).mockResolvedValue({
+        member: true,
+        sessions: [
+          {
+            sessionId: S1,
+            startsAt: "2026-10-24T11:00:00.000Z",
+            timezone: "Asia/Ho_Chi_Minh",
+            area: "Q1",
+            slotsOpen: 2,
+          },
+        ],
+      });
+      vi.mocked(createZaloReplyContext).mockResolvedValue({ id: "ctx-1", version: 1 });
+      await call({ body: update("/join", 9300) });
+      const lines = vi.mocked(sendMessage).mock.calls[0]![2].split("\n");
+      expect(lines[0]).toBe("Choose the session to join (reply with its number):");
+      expect(lines.slice(1)).toEqual([expect.stringMatching(/^1\. .+ · Q1 \(2 places left\)$/)]);
+      expect(vi.mocked(resolveZaloLinkGate).mock.calls.map((c) => c[1])).toEqual(["ci1"]);
+      const scope = { tenantId: TENANT, personId: "p1" };
+      expect(vi.mocked(listOwnJoinableSessions).mock.calls[0]![1]).toEqual(scope);
+      expect(vi.mocked(createZaloReplyContext).mock.calls[0]![1]).toEqual({
+        ...scope,
+        botId: BOT,
+        contextType: "join_list",
+        itemIds: [S1],
+      });
+    });
+
+    it("an unlinked sender's /join gets only the link prompt (R-19) and no player-command call", async () => {
+      await call({ body: update("/join", 9301) });
+      expect(vi.mocked(sendMessage).mock.calls.map((c) => c[2])).toEqual([
+        "Link your Plexco account before using this command. Type /link to get a link code.",
+      ]);
+      expect(resolveZaloLinkGate).toHaveBeenCalledTimes(1);
+      for (const fn of PLAYER_DB) expect(fn).not.toHaveBeenCalled();
+    });
   });
 
   it("per-bot rate limit -> 429 WEBHOOK_RATE_LIMITED", async () => {

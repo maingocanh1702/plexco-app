@@ -36,9 +36,9 @@ export const runtime = "nodejs";
  * per-bot bucket -> body -> parse -> [verified] -> [non-DM: ack, nothing stored] -> store (a
  * redelivery re-claims a failed or stale row, see storeInboundEvent) -> process -> 200 {message:"Success"}.
  * Processing failures are recorded on the event row and still answer 200 so Zalo does not retry
- * forever; only a failed STORE answers 5xx (nothing durable yet). One open follow-up against the
- * DD-126 shape, recorded in its note in feature_zalo_channel_tech.md section 3: processing runs
- * after the durable store but BEFORE the ack (DD-126: ack first, then process asynchronously).
+ * forever; only a failed STORE answers 5xx (nothing durable yet). Processing runs after the durable
+ * store but BEFORE the ack: DD-134 (d) amends OD-2 (DD-126's ack first, then process asynchronously)
+ * and accepts this synchronous order.
  * Every failed secret check (missing header, wrong value, unreadable stored secret) spends the same
  * per bot+IP bucket and answers the same 403 INVALID_WEBHOOK_SECRET per OD-2/DD-126 (2026-10-14); the 401 that
  * feature_connector_onboarding_tech.md section 3 pins stays for SePay (out of the MVP, OD-0).
@@ -145,7 +145,7 @@ export async function POST(
     let status: "processed" | "ignored" | "failed" = "processed";
     let errorCode: string | undefined;
     try {
-      status = await processZaloEvent({ handle, bot, event });
+      status = await processZaloEvent({ handle, bot, event, externalEventId });
     } catch (error) {
       status = "failed";
       errorCode = classifyProcessingError(error);
