@@ -600,12 +600,14 @@ describe("PSP-8 catalog of every 0061 function, the base deny and the view colum
   it.each(FNS)(
     "PSP-8 %s: owner job_definer, prosecdef %s, search_path pinned, EXECUTE exactly %j",
     async (sig, secdef, execs) => {
-      const [p] = await owner(
-        `SELECT pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS secdef, p.proconfig AS cfg,
+      const [p] = await withJobDefinerLock(BASE, () =>
+        owner(
+          `SELECT pg_get_userbyid(p.proowner) AS owner, p.prosecdef AS secdef, p.proconfig AS cfg,
          ARRAY(SELECT (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)::text
                FROM aclexplode(p.proacl) a WHERE a.privilege_type = 'EXECUTE') AS execs
        FROM pg_proc p WHERE p.oid = $1::regprocedure`,
-        [sig],
+          [sig],
+        ),
       );
       expect(p).toMatchObject({
         owner: "job_definer",
@@ -617,29 +619,31 @@ describe("PSP-8 catalog of every 0061 function, the base deny and the view colum
   );
 
   it("PSP-8b: no runtime role holds any privilege on the base table or the slug registry; only readonly reads the view", async () => {
-    for (const role of ["app", "app_worker", "readonly"]) {
-      const [r] = await owner(
-        `SELECT has_table_privilege($1, 'public_sessions', 'SELECT,INSERT,UPDATE,DELETE') AS t,
+    await withJobDefinerLock(BASE, async () => {
+      for (const role of ["app", "app_worker", "readonly"]) {
+        const [r] = await owner(
+          `SELECT has_table_privilege($1, 'public_sessions', 'SELECT,INSERT,UPDATE,DELETE') AS t,
                 has_any_column_privilege($1, 'public_sessions', 'SELECT,INSERT,UPDATE') AS c,
                 has_table_privilege($1, 'public_session_share_slugs', 'SELECT,INSERT,UPDATE,DELETE') AS s,
                 has_table_privilege($1, 'public_session_share_v', 'SELECT') AS v`,
-        [role],
+          [role],
+        );
+        expect(r).toEqual({ t: false, c: false, s: false, v: role === "readonly" });
+      }
+      const owners = await owner(
+        "SELECT relname, pg_get_userbyid(relowner) AS o FROM pg_class WHERE relname IN ('public_session_share_v', 'public_session_share_slugs') ORDER BY 1",
       );
-      expect(r).toEqual({ t: false, c: false, s: false, v: role === "readonly" });
-    }
-    const owners = await owner(
-      "SELECT relname, pg_get_userbyid(relowner) AS o FROM pg_class WHERE relname IN ('public_session_share_v', 'public_session_share_slugs') ORDER BY 1",
-    );
-    expect(owners).toEqual([
-      { relname: "public_session_share_slugs", o: "job_definer" },
-      { relname: "public_session_share_v", o: "job_definer" },
-    ]);
-    expect(await sqlState(ctx.readonlyPool.query("SELECT * FROM public_sessions"))).toBe("42501");
-    expect(await sqlState(ctx.appPool.query("SELECT 1 FROM public_sessions"))).toBe("42501");
-    expect(await sqlState(ctx.appPool.query("DELETE FROM public_sessions"))).toBe("42501");
-    expect(await sqlState(ctx.workerPool.query("SELECT 1 FROM public_session_share_slugs"))).toBe(
-      "42501",
-    );
+      expect(owners).toEqual([
+        { relname: "public_session_share_slugs", o: "job_definer" },
+        { relname: "public_session_share_v", o: "job_definer" },
+      ]);
+      expect(await sqlState(ctx.readonlyPool.query("SELECT * FROM public_sessions"))).toBe("42501");
+      expect(await sqlState(ctx.appPool.query("SELECT 1 FROM public_sessions"))).toBe("42501");
+      expect(await sqlState(ctx.appPool.query("DELETE FROM public_sessions"))).toBe("42501");
+      expect(await sqlState(ctx.workerPool.query("SELECT 1 FROM public_session_share_slugs"))).toBe(
+        "42501",
+      );
+    });
   });
 
   it("PSP-8c: session_occupancy runs as job_definer (the writer's owner) under BYPASSRLS", async () => {
