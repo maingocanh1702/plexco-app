@@ -733,13 +733,15 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
       [c.t, mod.personId],
     );
     const m = await send(c, a, "kept");
-    const [byMember, byMod] = [
+    const [byMember, byMod, unknown] = [
       await mutate("DELETE", b, c, m.id),
       await mutate("DELETE", mod, c, m.id),
+      await mutate("DELETE", b, c, randomUUID()),
     ];
+    // S2: byte-equal with T2's unknown-message deny, so a non-author gets no per-reason body.
+    const one = (r: typeof byMember) => JSON.stringify([r.status, r.body.data, r.body.error]);
     expect(byMember).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
-    expect(JSON.stringify(byMod.body.error)).toBe(JSON.stringify(byMember.body.error));
-    expect(byMod.status).toBe(403);
+    for (const r of [byMember, byMod]) expect(one(r)).toBe(one(unknown));
     expect(await row(m.id)).toEqual({ body: "kept", edit_count: 0, author_deleted_at: null });
   });
 
@@ -939,13 +941,21 @@ describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, rest
 
   it("T14 a member without chat.message.moderate -> 403 CHAT_MODERATION_FORBIDDEN; no change", async () => {
     const c = await club();
-    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const [a, b, mod] = [await actor(c.t), await actor(c.t), await moderator(c.t)];
     const m = await send(c, a, "flagged text");
     const before = await modRow(m.id);
+    const one = (r: Awaited<ReturnType<typeof mutate>>) =>
+      JSON.stringify([r.status, r.body.data, r.body.error]);
+    // S3: the one body of moderation T2 (a moderator on an unknown target), for an existing and an
+    // unknown target alike, so the missing capability is no enumeration oracle.
+    const ref = one(await mutate("POST", mod, c, randomUUID(), hide()));
     for (const who of [a, b]) {
-      const r = await mutate("POST", who, c, m.id, hide());
-      expect(r).toMatchObject({ status: 403, code: "CHAT_MODERATION_FORBIDDEN" });
-      expect(JSON.stringify(r.body)).not.toContain("flagged text");
+      for (const target of [m.id, randomUUID()]) {
+        const r = await mutate("POST", who, c, target, hide());
+        expect(r).toMatchObject({ status: 403, code: "CHAT_MODERATION_FORBIDDEN" });
+        expect(one(r)).toBe(ref);
+        expect(JSON.stringify(r.body)).not.toContain("flagged text");
+      }
     }
     expect(await modRow(m.id)).toEqual(before);
   });
