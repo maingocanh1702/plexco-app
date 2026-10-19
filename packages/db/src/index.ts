@@ -128,6 +128,21 @@ export {
 export { RosterMoneyError, type RosterMoneyErrorCode } from "./roster-money-shared.js";
 export { resolveCapability, type Capability, type CapabilityDecision } from "./capability.js";
 export {
+  ChatCommandError,
+  deleteChatMessage,
+  editChatMessage,
+  getChatMessage,
+  listChatMessages,
+  markChatRead,
+  moderateChatMessage,
+  sendChatMessage,
+  withChatActor,
+  type ChatActor,
+  type ChatCommandErrorCode,
+  type ChatMessage,
+  type ChatTx,
+} from "./chat-service.js";
+export {
   createSession,
   publishSession,
   announceSession,

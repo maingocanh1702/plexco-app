@@ -224,9 +224,9 @@ describe("chat-service wrappers through withChatActor (0063, readiness 4.8)", ()
   it("moderate hide, exact replay (the stored receipt), restore and markRead; a hidden message is a tombstone to others", async () => {
     const m = (await send(r, r.a, `${SENT}-2`)).id;
     const commandId = randomUUID();
-    const hidden = await hide(r, r.mod, m, "spam", commandId);
+    const hidden = await hide(r, r.mod, m, "other", commandId);
     expect(hidden).toEqual({ messageId: m, moderationState: expect.any(String), changed: true });
-    expect(await hide(r, r.mod, m, "spam", commandId)).toEqual(hidden);
+    expect(await hide(r, r.mod, m, "other", commandId)).toEqual(hidden);
     expect(await get(r, r.b, m)).toMatchObject({
       id: m,
       body: null,
