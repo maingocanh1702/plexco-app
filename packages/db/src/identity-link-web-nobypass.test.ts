@@ -146,9 +146,12 @@ describe("0054 under a NOBYPASSRLS migration owner", () => {
     );
     expect(audit.rows).toHaveLength(1);
     // Counted, not merely refused. Had the definer been unable to read through FORCE RLS, every
-    // FORCE-RLS reference onto persons would be listed as unprovable (not just memberships), and the
-    // refusal would survive the row's removal below. Exactly one blocker, which then disappears:
-    expect(audit.rows[0].detail.blocking_tables).toEqual(["memberships.person_id"]);
+    // FORCE-RLS reference onto persons would be listed as unprovable (not just these two), and the
+    // refusal would survive the rows' removal below. Exactly two blockers, which then disappear:
+    expect(audit.rows[0].detail.blocking_tables).toEqual([
+      "chat_members.person_id",
+      "memberships.person_id",
+    ]);
     await su.query(`DELETE FROM chat_members WHERE person_id = $1`, [zalo]);
     await su.query(`DELETE FROM memberships WHERE person_id = $1`, [zalo]);
     const again = await issueLinkCode(app, { channelIdentityId: ciId }, keys);

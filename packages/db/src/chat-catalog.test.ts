@@ -262,6 +262,31 @@ describe("0063 section 1: append-only tables and grants (DT-27)", () => {
     );
   });
 
+  it("RO-L14-6 (DT-27): identity_definer may SELECT exactly the three person-FK columns, nothing else", async () => {
+    const { rows } = await ctx.owner.query(
+      `SELECT concat_ws(':', c.relname, a.attname, p.priv) AS k
+       FROM pg_class c
+       JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+       CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('REFERENCES')) AS p(priv)
+       WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY($1)
+         AND has_column_privilege('identity_definer', c.oid, a.attnum, p.priv)`,
+      [NEW_TABLES],
+    );
+    expect(keys(rows)).toEqual([
+      "chat_command_receipts:actor_person_id:SELECT",
+      "chat_message_revisions:edited_by_person_id:SELECT",
+      "chat_moderation_audit:actor_person_id:SELECT",
+    ]);
+    const tableLevel = await ctx.owner.query(
+      `SELECT c.relname FROM pg_class c
+       WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY($1)
+         AND has_table_privilege('identity_definer', c.oid,
+           'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')`,
+      [NEW_TABLES],
+    );
+    expect(tableLevel.rows).toEqual([]);
+  });
+
   it("chat_definer may EXECUTE tenant_capability_authorize(uuid, text, uuid)", async () => {
     const { rows } = await ctx.owner.query(
       `SELECT has_function_privilege('chat_definer',

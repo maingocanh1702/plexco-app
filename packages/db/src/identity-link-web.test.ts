@@ -449,6 +449,78 @@ describe("linkZaloToAccount - refusals", () => {
     LOCK_WAIT_MS,
   );
 
+  it.each([
+    ["chat_message_revisions", "edited_by_person_id"],
+    ["chat_moderation_audit", "actor_person_id"],
+    ["chat_command_receipts", "actor_person_id"],
+  ])(
+    "RO-L14-6: one %s row naming the Zalo person blocks the link on %s; a Person without rows links",
+    async (table, column) => {
+      // Another member's message in the default channel: only the seeded row names the Zalo person.
+      const other = await ctx.owner.query<{ id: string }>(
+        `INSERT INTO persons (display_name) VALUES ('ro-l14-6') RETURNING id`,
+      );
+      const otherId = other.rows[0]!.id;
+      const membership = await ctx.owner.query<{ id: string }>(
+        `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id`,
+        [ctx.tenantA, otherId],
+      );
+      const membershipId = membership.rows[0]!.id;
+      const channel = await ctx.owner.query<{ channel_id: string }>(
+        `SELECT channel_id FROM chat_members WHERE membership_id = $1`,
+        [membershipId],
+      );
+      const channelId = channel.rows[0]!.channel_id;
+      const message = await ctx.owner.query<{ id: string }>(
+        `INSERT INTO chat_messages (channel_id, author_person_id, membership_id, body, client_msg_id)
+         VALUES ($1, $2, $3, 'x', $4) RETURNING id`,
+        [channelId, otherId, membershipId, randomUUID()],
+      );
+      const messageId = message.rows[0]!.id;
+      const web = await webUser();
+      const zalo = await zaloUser();
+      const seed: Record<string, [string, unknown[]]> = {
+        chat_message_revisions: [
+          `INSERT INTO chat_message_revisions (message_id, revision_no, previous_body, edited_by_person_id)
+           VALUES ($1, 1, 'x', $2)`,
+          [messageId, zalo.personId],
+        ],
+        chat_moderation_audit: [
+          `INSERT INTO chat_moderation_audit
+             (tenant_id, channel_id, message_id, actor_person_id, action, reason_code, reason_note)
+           VALUES ($1, $2, $3, $4, 'hide', 'spam', NULL)`,
+          [ctx.tenantA, channelId, messageId, zalo.personId],
+        ],
+        chat_command_receipts: [
+          `INSERT INTO chat_command_receipts
+             (tenant_id, actor_person_id, command_id, action, canonical_fingerprint, result_json)
+           VALUES ($1, $2, $3, 'message.hide', 'x', '{}')`,
+          [ctx.tenantA, zalo.personId, randomUUID()],
+        ],
+      };
+      const [sql, values] = seed[table]!;
+      await ctx.owner.query(sql, values);
+      const issued = await issueFor(zalo.ciId);
+      expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
+        outcome: "requires_review",
+      });
+      expect(await blockingTables(web.accountId)).toEqual([`${table}.${column}`]);
+      await expectNothingMoved(zalo);
+
+      // Counted, not unprovable: a Person with no row in the table is not blocked by it.
+      const web2 = await webUser();
+      const empty = await zaloUser();
+      expect(
+        await linkZaloToAccount(
+          ctx.appPool,
+          (await issueFor(empty.ciId)).code,
+          web2.accountId,
+          keys,
+        ),
+      ).toEqual({ outcome: "linked" });
+    },
+  );
+
   it(
     "a composite FK onto persons is unprovable even when readable and empty",
     async () =>
@@ -1181,7 +1253,10 @@ describe("FK-only emptiness: the person references the scan cannot see", () => {
     expect(await linkZaloToAccount(ctx.appPool, issued.code, web.accountId, keys)).toEqual({
       outcome: "requires_review",
     });
-    expect(await blockingTables(web.accountId)).toEqual(["memberships.person_id"]);
+    expect(await blockingTables(web.accountId)).toEqual([
+      "chat_members.person_id",
+      "memberships.person_id",
+    ]);
     await expectNothingMoved(zalo);
   });
 });

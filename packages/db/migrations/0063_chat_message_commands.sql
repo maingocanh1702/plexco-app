@@ -84,6 +84,10 @@ CREATE TRIGGER trg_chat_command_receipts_immutable BEFORE UPDATE OR DELETE ON ch
 REVOKE ALL ON chat_message_revisions, chat_moderation_audit, chat_command_receipts
   FROM PUBLIC, app, app_worker, readonly;
 GRANT INSERT, SELECT ON chat_message_revisions, chat_moderation_audit, chat_command_receipts TO chat_definer;
+-- RO-L14-6, contract 0054:72-75: every person FK must be readable by identity_definer, else every link is requires_review.
+GRANT SELECT (edited_by_person_id) ON chat_message_revisions TO identity_definer;
+GRANT SELECT (actor_person_id) ON chat_moderation_audit TO identity_definer;
+GRANT SELECT (actor_person_id) ON chat_command_receipts TO identity_definer;
 
 -- V-13: column grants are additive, so the table-level read is revoked FIRST, then the 14-column allowlist.
 REVOKE SELECT ON chat_messages FROM app;
