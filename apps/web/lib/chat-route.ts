@@ -218,7 +218,11 @@ export async function chatGate<K extends string = never>(
       }
       let raw: unknown;
       try {
-        raw = JSON.parse(read.text);
+        // A NUL (U+0000) in any string is INVALID_BODY: Postgres text refuses it (22021, a 500).
+        raw = JSON.parse(read.text, (_key, value: unknown) => {
+          if (typeof value === "string" && value.includes("\u0000")) throw new SyntaxError("NUL");
+          return value;
+        });
       } catch {
         return invalidBody(); // never bind, log or rethrow: V8 quotes the input in the message
       }

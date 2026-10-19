@@ -1033,6 +1033,40 @@ async function cursor(c: Club, a: Actor): Promise<string | null> {
   return rows[0]!.id;
 }
 
+describe("A N-1 a NUL (U+0000) in chat text -> 400 INVALID_BODY at the route, never the DB's 22021 500", () => {
+  const NUL = "a\u0000b"; // an escape, never a raw byte (Semgrep)
+
+  it("POST send with a NUL body -> 400, no message", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    expect(await post(a, c.t, c.c, msg(NUL))).toMatchObject({ status: 400, code: "INVALID_BODY" });
+    expect(await order(c)).toEqual([]);
+  });
+
+  it("PATCH with a NUL body -> 400, the row unchanged", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const m = await send(c, a, "original");
+    const r = await mutate("PATCH", a, c, m.id, edit(NUL, 0));
+    expect(r).toMatchObject({ status: 400, code: "INVALID_BODY" });
+    expect(await row(m.id)).toEqual({ body: "original", edit_count: 0, author_deleted_at: null });
+    expect(await order(c)).toEqual([m.id]);
+  });
+
+  it("hide with a NUL reasonCode or reasonNote -> 400, no state change and no audit", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const m = await send(c, a, "flagged text");
+    const before = await modRow(m.id);
+    for (const field of ["reasonCode", "reasonNote"]) {
+      const r = await mutate("POST", mod, c, m.id, hide({ [field]: NUL }));
+      expect(r).toMatchObject({ status: 400, code: "INVALID_BODY" });
+    }
+    expect(await modRow(m.id)).toEqual(before);
+    expect(await order(c)).toEqual([m.id]);
+  });
+});
+
 describe("GET /api/chat/channels (list)", () => {
   it("T1 no session -> 401; T22 an empty or non-uuid tenant -> 400, never echoed", async () => {
     const c = await club();
