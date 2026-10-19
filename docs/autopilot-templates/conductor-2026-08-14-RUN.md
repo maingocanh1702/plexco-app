@@ -48,7 +48,7 @@ tại** — slice 4 `tenant-capability-authority-core` (backlog `idea`, `scope: 
 Read these first, in this order:
   docs/00-start-here/HANDOFF.md
   docs/standards/review-code-readiness-gate.md
-  docs/autopilot-templates/level3-workflow.md — sections 4, 6.1, 7, 8, 9
+  docs/autopilot-templates/level3-workflow.md — sections 4, 7, 8, 9; docs/standards/plexco-level3-autonomy.md section 6.1
   docs/autopilot-templates/next-lanes-2026-08-14-RUN.md — the lane roster and its Tier C reasoning
 
 ROLE: you are a CONDUCTOR. You will run for 5-6 hours without asking the owner anything. You do

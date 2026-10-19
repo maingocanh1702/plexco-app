@@ -3833,6 +3833,11 @@ notes: |
   — đừng ghi một con số dòng lệch cố định, nó đã sai một lần rồi.
   **Trigger đóng:** đóng khi nội dung local được port vào canonical và bản pack được nhận sạch — đây
   chính là phần 3 của việc cần làm khi mở lane này.
+  **Cập nhật 2026-10-18 (lane `backend-handoff-kit-sync-r4`):** `docs/autopilot-templates/level3-workflow.md`
+  nay được sync byte-identical với canonical KIT 42 (`9e1e79043804767097f859ca201d42245cd9c50c`); nội
+  dung DD-107 (§6.1 + bổ sung §9) chuyển sang file consumer-owned `docs/standards/plexco-level3-autonomy.md`,
+  nên vế "cố ý KHÔNG được nhận" không còn đúng. Vế port nội dung lên canonical vẫn mở
+  (maingocanh1702/claude-template#13) — trigger đóng ở trên chưa thoả.
 
   **Vì sao `idea` (không phải `blocked`):** hướng sửa nằm ở canonical kit; repo này read-only với nó,
   và mục này chưa có `scope`/`manifest`/probe launchable. Cần owner mở lane bên canonical.
@@ -4851,7 +4856,7 @@ notes: |
   **Mâu thuẫn có thật, đã đo 2026-09-04.** Mục L1 của RUN packet hướng dẫn lane dựng route theo một
   shape mà **điều khoản 2 của DD-56 amendment #1 cấm** (mọi phân giải role phải đi qua đúng một
   choke-point; cấm `role === …` ở bất kỳ chỗ nào khác).
-  **Ai thắng đã có luật:** `docs/autopilot-templates/level3-workflow.md §6.1` xếp `decisions.md` (#3)
+  **Ai thắng đã có luật:** `docs/standards/plexco-level3-autonomy.md §6.1` xếp `decisions.md` (#3)
   **trên** RUN packet (#5) ⇒ **packet là thứ phải sửa**, không phải decision. Điều này đã được ghi
   thành **điều khoản 8 của DD-56 amendment #2** (`decisions.md`, 04/09) nên lane nào đọc packet cũng
   đã bị chặn đúng hướng; row này chỉ theo dõi chính cái edit vào packet.
@@ -6313,3 +6318,93 @@ notes: |
   khoảng 30 px phía trên header ở màn workspace session. Cách đo: chạy golden path theo runbook, mở DevTools, đo `getBoundingClientRect()` của header và vùng toast
   ở 375 px và desktop; nếu không tái hiện được thì đóng row này là `superseded`.
   source: local smoke run 2026-10-15 (PR #57; ảnh chụp, chưa xác minh)
+
+## task: canonical-scope-gate-pathname-decoding
+title: Canonical scope-gate executable does not decode quoted/newline Git filenames consistently
+task_kind: implementation
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity, review-integrity]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Canonical-first follow-up; not a runnable Plexco writer. Adoption source: 9e1e79043804767097f859ca201d42245cd9c50c. The adopted canonical correction fixes the
+  exact-scope guard in autopilot-review-readiness.mjs with NUL-delimited Git output. The
+  older shell scope-gate executable has its own pre-existing quoted/newline filename limitations;
+  give that mechanism its own producer/consumer pathname contract and actual-CLI regressions.
+  Do not patch only the installed consumer copy, weaken exact scope, or invent a probe before
+  authoring a concrete slice against current canonical origin.
+  EDGE review at 782d714534d50f391850a02331c935a60d1e1cad also records conservative refusal of an admissible
+  U+0085-only reviewed window with core.quotepath=false by the earlier collector git_out().strip()
+  nonempty-window check. This under-count cannot grant false eligibility. The reachable two-file
+  later-origin-path hiding defect inside the landing helper is fixed; the earlier collector check
+  remains separate canonical work. Do not cite an ASCII-space-only probe rejected by admission as
+  reachable evidence, or promote this advisory to an automatic backend dependency.
+
+## task: canonical-generic-base-freshness-wording
+title: Canonical GENERIC still describes base-ref equality after ancestor-and-scope freshness landed
+task_kind: implementation
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [workflow-authority, kit-integrity]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Canonical-first documentation correction; not a runnable Plexco writer. Diagnostic review of
+  canonical 6e303f5 found pre-existing base_ref != BASE_SHA wording that conflicts with the actual
+  ancestor plus touched-scope freshness policy. Re-derive the exact enforcement before editing
+  the operational prompt; do not restore the retired global no-main-advance workaround or relax
+  pinned-base/diff binding. Keep this separate from the admitted scope/evidence/retry correction.
+
+## task: canonical-terminal-signal-exclusive-create
+title: Canonical terminal writers can follow dangling target symlinks
+task_kind: implementation
+status: idea
+risk: P1
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity, review-integrity, terminal-lifecycle]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Canonical-first follow-up; not a runnable Plexco writer. Adoption source: 9e1e79043804767097f859ca201d42245cd9c50c. Code review of source 5efc43d7d777f1234350bc807e4414d7639c31c7
+  found the pre-existing awaitReview writer still uses existsSync plus writeFileSync for AWAIT signals.
+  A dangling target symlink can evade the existence check. The adopted correction covers
+  evidence mode and its HALT path; evidence mode never invokes awaitReview. Give ready-mode AWAIT
+  persistence its own exact path/ownership contract and actual-CLI regression, preserving first-signal
+  behavior and native macOS compatibility. Do not patch only the consumer copy or claim the entire
+  lifecycle filesystem boundary is hardened by the evidence/HALT correction.
+  Code03 on 8843b6a886c20656d46e21fb89a35ea60a37991e also identified the unchanged shell
+  autopilot-scope-gate halt_gate signal redirection as the same pre-existing target-link class.
+  Include both existing ready-mode AWAIT and shell HALT writers in the bounded future contract,
+  with real CLI regressions and exclusive-create semantics rather than scattered caller guards.
+
+## task: canonical-live-scope-guidance-reconcile
+title: Canonical README and template guidance still describes retired scope pass-through
+task_kind: implementation
+status: idea
+risk: P2
+change_class: kit-maintenance
+depends_on: []
+invariants: [kit-integrity, workflow-authority]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Canonical-first follow-up; not a runnable consumer writer or an automatic backend prerequisite.
+  Runtime scope enforcement is corrected in the adopted source, while four unchanged guidance
+  sites still describe the retired behavior: README.md, autopilot/parallel/README.md,
+  autopilot/parallel/manifests/_TEMPLATE.json _verification_rule, and the comment above allowed_scope
+  in autopilot/parallel/ap-dispatch.sh. Reconcile these against actual current runtime in a bounded
+  text-only maintenance slice, preserving exact-scope checks and the separate class boundary.
+  A prepared five-file draft also covers canonical-generic-base-freshness-wording; if combined,
+  reconcile both rows from the same exact origin evidence. Do not change pinned-review policy,
+  historical incident narratives, or consumer copies independently. Only a demonstrated adoption
+  failure may promote a narrowly required correction ahead of the backend business path.

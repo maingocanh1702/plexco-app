@@ -5,7 +5,7 @@
 >
 > ⚡ **Mới: `autonomy_mode: autonomous_to_ready` (DD-107).** Lane chạy thẳng tới READY, **không dừng hỏi
 > owner giữa chừng**. Owner review **một lượt tại READY** qua Decision Ledger. Thang thẩm quyền A/B/C ở
-> `level3-workflow.md` §6.1 — **Tier C vẫn AWAIT, đúng 8 mục, không rút gọn.**
+> `plexco-level3-autonomy.md` §6.1 — **Tier C vẫn AWAIT, đúng 8 mục, không rút gọn.**
 >
 > ⛔ **FE vẫn PENDING theo lệnh owner 13/08** — không track `.pen`, không mở page/component. Lane D dưới đây
 > cố ý **không** chạm `docs/channels/web/FE/`.
@@ -57,7 +57,7 @@ Hoàn toàn rời khỏi S2: không chạm `packages/`, không thêm test, khôn
 
 ```text
 Read docs/00-start-here/HANDOFF.md, docs/standards/review-code-readiness-gate.md and
-docs/autopilot-templates/level3-workflow.md section 6.1 first.
+docs/standards/plexco-level3-autonomy.md section 6.1 first.
 
 AUTONOMY_MODE: autonomous_to_ready
 DECISION_LEDGER: .autopilot/state/docs-debt-2026-08-13/DECISIONS.md
@@ -119,7 +119,7 @@ Discriminator là **nội dung**, không phải hành vi ghi file.
 
 ```text
 Read docs/00-start-here/HANDOFF.md, docs/standards/review-code-readiness-gate.md and
-docs/autopilot-templates/level3-workflow.md section 6.1 first.
+docs/standards/plexco-level3-autonomy.md section 6.1 first.
 Then read the backlog block `classifier-blocks-kit-mandated-readiness-json`
 (docs/autopilot-backlog.md line 264) IN FULL, including the 2026-08-12 triage addendum. The
 addendum, not the title, is the specification.
@@ -388,7 +388,7 @@ trước (L2 nhiều khả năng nhất, vì nó thêm test real-PG).
 
 ```text
 Read docs/00-start-here/HANDOFF.md, docs/standards/review-code-readiness-gate.md and
-docs/autopilot-templates/level3-workflow.md sections 4, 6.1 and 7 first.
+docs/autopilot-templates/level3-workflow.md sections 4 and 7; docs/standards/plexco-level3-autonomy.md section 6.1 first.
 
 ROLE: you are a CONDUCTOR, not a writer. You will run for 5-6 hours without asking the owner
 anything. You do not write product code yourself. You spawn one sub-agent per lane, each with
@@ -574,7 +574,7 @@ AUTONOMY_MODE: autonomous_to_ready
 DECISION_LEDGER: .autopilot/state/<feature>/DECISIONS.md
 ```
 
-Rồi theo `level3-workflow.md` §6.1:
+Rồi theo `plexco-level3-autonomy.md` §6.1:
 
 **Context — corpus thuộc phạm vi, nhưng không nạp được.** Đo tại `1fdba1d`: `docs/` là **303 file / 8,5 MB
 / ~2 triệu token**; riêng 6 doc lõi đã ~220k. Không cửa sổ context nào chứa nổi — bằng chứng sống là chính

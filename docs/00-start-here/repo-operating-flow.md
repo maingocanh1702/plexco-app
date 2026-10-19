@@ -63,7 +63,7 @@ niệm đã có (`persons` / `accounts` / `channel_identities` / `memberships`).
 ## 2. Thang authority — ai thắng ai khi hai doc mâu thuẫn
 
 Docs trong repo này **có** mâu thuẫn nhau (audit 2026-08-13 tìm thấy xung đột đồng thời ở spec,
-playbook, template và index). Nên có thang viết sẵn — `level3-workflow.md` §6.1. Bậc trên thắng:
+playbook, template và index). Nên có thang viết sẵn — `plexco-level3-autonomy.md` §6.1. Bậc trên thắng:
 
 | # | Authority | Vì sao trên bậc dưới |
 |---|---|---|
@@ -888,6 +888,7 @@ bán kính đó.
 | `.claude/commands/review-doc-plan.md` | Launcher `/review-doc-plan` |
 | `docs/autopilot-ONBOARDING.md` | **Entry point vận hành duy nhất** của Ray B |
 | `docs/autopilot-templates/level3-workflow.md` | **Contract canonical của Ray B** |
+| `docs/standards/plexco-level3-autonomy.md` | Phần mở rộng Plexco của Ray B (DD-107): §6.1 `autonomous_to_ready` + §9 terminal-state additions — consumer-owned, kit sync không ghi đè |
 | `docs/autopilot-templates/level3-handoff.md` | Thứ tự authority + checklist mở task mới |
 | `docs/autopilot-templates/autopilot-invariants.md` | Invariant ALWAYS-APPLY (@import vào `~/.claude/CLAUDE.md`) |
 | `docs/autopilot-templates/autopilot-prompt-GENERIC.md` | Worker contract — dùng làm send-file khi soạn prompt task |
@@ -1070,7 +1071,7 @@ Kết quả verify được trên đĩa:
 Thứ tự trong `ap-finish.sh` đáng nhớ: **archive state dir → remove worktree → ghi disposition →
 `cleanup`**. Archive đứng trước xoá là toàn bộ lý do v31 tồn tại (§6 bước 9).
 
-Successor **được pre-authorize** theo `level3-workflow.md` §6.1 — design cause gọi tên được (packet
+Successor **được pre-authorize** theo `plexco-level3-autonomy.md` §6.1 — design cause gọi tên được (packet
 reconcile manifest tích tụ 3 lớp thay vì author một manifest price-only sạch; reviewer attempt-01 đã
 đề nghị đúng cách kia) và finding đã accept — nhưng phải **register mới từ `main` sạch**.
 

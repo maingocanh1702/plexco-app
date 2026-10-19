@@ -2,7 +2,7 @@
 
 **Ngày:** 02/09/2026 · **Base đo:** `main@620b2bd` (ahead 1 vs `origin/main`) · **Mirror:** `../product/ROADMAP.md` v3.13 · `../standards/BUILD-STATUS.md` (khối 🔷 02/09)
 
-> **Đọc trước khi dùng:** `level3-workflow.md` §6.1 (`autonomous_to_ready`, thang Tier A/B/C, Decision Ledger) ·
+> **Đọc trước khi dùng:** `plexco-level3-autonomy.md` §6.1 (`autonomous_to_ready`, thang Tier A/B/C, Decision Ledger) ·
 > `../standards/review-code-readiness-gate.md` · `../sessions/2026-08-26-plexco-DIRECT-RUN.md` (conductor, vẫn hiệu lực).
 > Doc này **không thay** ba doc trên. Nó làm đúng một việc chúng chưa làm: **gom mọi quyết định owner còn lại
 > vào một lần ngồi**, rồi xếp phần còn lại theo thứ tự chạy được liên tục.
@@ -11,7 +11,7 @@
 
 ## 1. Vì sao doc này tồn tại — và cơ chế nó khai thác
 
-`level3-workflow.md` §6.1 đã có sẵn thứ ta cần, gồm cả **luật demotion** quyết định:
+`plexco-level3-autonomy.md` §6.1 đã có sẵn thứ ta cần, gồm cả **luật demotion** quyết định:
 
 > *"Một thay đổi mà một decision record **explicitly authorizes by name** là **Tier A, không phải Tier C** — owner đã quyết rồi; thi hành một quyết định đã viết không phải là ra quyết định mới."*
 
@@ -102,14 +102,14 @@ ALWAYS LOAD BEFORE ANY DECISION (non-negotiable, small enough to fit)
   - docs/00-start-here/HANDOFF.md, live-truth block only
   - docs/standards/decisions.md, the "| DD-nn |" summary table only (not full bodies)
   - docs/standards/review-code-readiness-gate.md
-  - docs/autopilot-templates/level3-workflow.md sections 6.1, 7, 8, 9
+  - docs/autopilot-templates/level3-workflow.md sections 7, 8, 9; docs/standards/plexco-level3-autonomy.md section 6.1
   - docs/product/ROADMAP.md block dated 2026-09-02, and this RUN document
   - the lane's own packet and manifest
   Do not attempt to load the whole docs/ corpus. It is ~2M tokens. Coverage is
   guaranteed by search-and-log, not by loading.
 
 DECISION AUTHORITY
-  Apply the Tier A/B/C ladder in level3-workflow.md section 6.1 verbatim.
+  Apply the Tier A/B/C ladder in plexco-level3-autonomy.md section 6.1 verbatim.
   Apply the demotion rule: a change that a decision record explicitly authorizes
   BY NAME is Tier A, not Tier C. The owner decision sheet in section 2 of this
   document is minted into decisions.md by lane W0-1. After W0-1 lands, executing

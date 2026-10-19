@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 
+import { Buffer } from "node:buffer";
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   readdirSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -67,6 +73,7 @@ const DURABLE_HALT_CODES = new Set([
 let durableStateDir;
 
 function deriveDurableStateDir(repo, manifestFile) {
+  durableStateDir = undefined;
   const relative = path.relative(repo, manifestFile).split(path.sep);
   if (
     relative.length === 4
@@ -75,7 +82,19 @@ function deriveDurableStateDir(repo, manifestFile) {
     && /^[a-z0-9][a-z0-9._-]*$/.test(relative[2])
     && relative[3] === "manifest.json"
   ) {
-    durableStateDir = path.dirname(manifestFile);
+    // Reject state ancestors before halt() is allowed to write through them, including dangling
+    // links. A lexical in-repo path alone does not establish a safe durable signal directory.
+    let directory = repo;
+    for (const segment of relative.slice(0, -1)) {
+      directory = path.join(directory, segment);
+      const entry = lstatSync(directory, { throwIfNoEntry: false });
+      if (!entry) break;
+      if (entry.isSymbolicLink() || !entry.isDirectory()) {
+        halt("CONTRACT_INVALID", `state directory must not contain symlink/non-directory ancestors: ${directory}`);
+      }
+    }
+    // Evidence mode cannot trust an absolute durable path between state reads and cwd pinning.
+    if (mode !== "evidence") durableStateDir = path.dirname(manifestFile);
   }
 }
 
@@ -94,6 +113,7 @@ function halt(code, message) {
             "resolution: close this terminal lifecycle and create a fresh successor task after fixing the cause",
             "",
           ].join("\n"),
+          { flag: "wx" },
         );
       }
     } catch {
@@ -199,18 +219,40 @@ function tryRun(command, args, cwd) {
 function parseArguments(argv) {
   const mode = argv[2];
   let manifest;
+  let acceptance;
+  let breakers;
   for (let index = 3; index < argv.length; index += 1) {
     if (argv[index] === "--manifest") {
       manifest = argv[index + 1];
+      index += 1;
+    } else if (argv[index] === "--acceptance") {
+      acceptance = argv[index + 1];
+      index += 1;
+    } else if (argv[index] === "--breakers") {
+      breakers = argv[index + 1];
       index += 1;
     } else {
       halt("READINESS_USAGE", `unknown argument: ${argv[index]}`);
     }
   }
-  if (!["register", "ready"].includes(mode) || !manifest) {
-    halt("READINESS_USAGE", "use: autopilot-review-readiness.mjs <register|ready> --manifest <path>");
+  if (!["register", "ready", "evidence"].includes(mode) || !manifest) {
+    halt(
+      "READINESS_USAGE",
+      "use: autopilot-review-readiness.mjs <register|ready> --manifest <path>"
+        + " | evidence --manifest <path> --acceptance <status> --breakers <status>",
+    );
   }
-  return { mode, manifest };
+  // kit v34 review round 3 finding 3: a non-empty check accepted a typo like "satisfed" and wrote it
+  // verbatim -- LEVEL3_EVIDENCE_WRITTEN reported success for a file `ready` would then reject. `ready`
+  // only ever passes on the exact strings "satisfied"/"clear" (see its own checks below); there is no
+  // legitimate reason for `evidence` to write anything else, so require the exact values up front.
+  if (mode === "evidence" && (acceptance !== "satisfied" || breakers !== "clear")) {
+    halt(
+      "READINESS_USAGE",
+      `evidence mode requires exactly --acceptance satisfied --breakers clear (got --acceptance ${acceptance || "<missing>"} --breakers ${breakers || "<missing>"})`,
+    );
+  }
+  return { mode, manifest, acceptance, breakers };
 }
 
 function readJson(file, label) {
@@ -308,7 +350,12 @@ function trustedReviewEnvironment() {
   return environment;
 }
 
-const { mode, manifest: manifestArgument } = parseArguments(process.argv);
+const {
+  mode,
+  manifest: manifestArgument,
+  acceptance: acceptanceArgument,
+  breakers: breakersArgument,
+} = parseArguments(process.argv);
 const repo = run("git", ["rev-parse", "--show-toplevel"], process.cwd());
 const manifestCandidate = path.resolve(process.cwd(), manifestArgument);
 deriveDurableStateDir(repo, manifestCandidate);
@@ -348,13 +395,76 @@ const stateDir = path.join(repo, ".autopilot", "state", feature);
 if (path.dirname(manifestPath) !== stateDir || path.basename(manifestPath) !== "manifest.json") {
   halt("CONTRACT_INVALID", `manifest must be ${path.join(".autopilot", "state", feature, "manifest.json")}`);
 }
-durableStateDir = stateDir;
+if (mode !== "evidence") durableStateDir = stateDir;
 if (mode === "ready") {
   for (const staleTerminal of ["READY.txt", "gate-result.json"]) {
     const stalePath = path.join(stateDir, staleTerminal);
     if (existsSync(stalePath)) {
       unlinkSync(stalePath);
     }
+  }
+}
+
+// One definition, two callers: `evidence` mode WRITES here, `ready` mode READS here. Both must agree
+// on the exact path or a generated file would not be where `ready` looks for it.
+function evidenceFilePath() {
+  const evidenceRelative = requireString(manifest.readiness_evidence_path, "readiness_evidence_path");
+  const expectedEvidenceRelative = path.join(".autopilot", "state", feature, "readiness.json");
+  if (evidenceRelative !== expectedEvidenceRelative) {
+    halt("CONTRACT_INVALID", `readiness_evidence_path must equal ${expectedEvidenceRelative}`);
+  }
+  return path.join(repo, evidenceRelative);
+}
+
+function writeReadinessEvidence(contents) {
+  evidenceFilePath();
+  // Evidence mode exits immediately after this write. Pin the directory as cwd, then use only
+  // basenames: replacing an ancestor with a symlink cannot redirect the temp, rename or HALT.
+  durableStateDir = undefined;
+  try {
+    process.chdir(stateDir);
+    if (realpathSync(".") !== stateDir) {
+      halt("CONTRACT_INVALID", "readiness directory does not resolve to the admitted state directory");
+    }
+  } catch (error) {
+    halt("CONTRACT_INVALID", `cannot enter readiness state directory: ${error.message}`);
+  }
+  durableStateDir = ".";
+  const target = "readiness.json";
+  const entry = lstatSync(target, { throwIfNoEntry: false });
+  if (entry && !entry.isFile()) {
+    halt("CONTRACT_INVALID", "readiness.json must be absent or a regular file, never a symlink");
+  }
+  const temporary = `.readiness-${randomUUID()}.tmp`;
+  let descriptor;
+  let created = false;
+  try {
+    descriptor = openSync(temporary, "wx", 0o600);
+    created = true;
+    writeFileSync(descriptor, contents);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporary, target);
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try { closeSync(descriptor); } catch { /* Preserve the original failure and finish cleanup. */ }
+    }
+    if (created) {
+      try { unlinkSync(temporary); } catch { /* The owned temp may already have been removed. */ }
+    }
+    halt("READINESS_COMMAND_FAILED", `readiness evidence was not replaced: ${error.message}`);
+  }
+}
+
+// kit v34 review round 3 finding 3: `evidence` used to write before this check ran at all, so an
+// unregistered or drifted manifest still reported LEVEL3_EVIDENCE_WRITTEN success, only to fail
+// `ready` moments later on the exact same manifest. One definition, called from both modes, so
+// neither can drift from what `ready` actually requires.
+function verifyManifestHashLock() {
+  const registeredHashPath = path.join(stateDir, "registered-manifest.sha256");
+  if (!existsSync(registeredHashPath) || readFileSync(registeredHashPath, "utf8").trim() !== manifestHash) {
+    halt("MANIFEST_DRIFT", "manifest changed after registration; HALT and create a successor task");
   }
 }
 
@@ -600,17 +710,46 @@ if (!existsSync(reviewerPath) || !statSync(reviewerPath).isFile() || (statSync(r
 
 const headSha = run("git", ["rev-parse", "HEAD"], repo);
 if (mode === "register") {
+  // item 4 of docs/kit-derive-dont-declare-EXECUTE-PROMPT.md (deriving this to an ancestor check, so
+  // register would accept HEAD already ahead of baseSha) was ATTEMPTED and DROPPED: kit v34 review
+  // round 1 found that register's collision check (autopilot-scope-gate) runs against DECLARED scope
+  // regardless of commit timing, so allowing commits before registration lets an agent sink real
+  // implementation work before discovering a scope/invariant collision that register-before-commit
+  // catches with zero cost. The prompt's own section 1 named this the item to drop first if the slice
+  // hit exactly this kind of trust-boundary complexity; it did. HEAD === baseSha stays exact equality.
   if (headSha !== baseSha) {
     halt("BASE_MISMATCH", `worktree HEAD=${headSha} expected=${baseSha}`);
   }
   process.stdout.write(`LEVEL3_REGISTER_VALID task=${taskId} feature=${feature} base=${baseSha}\n`);
   process.exit(0);
 }
-
-const registeredHashPath = path.join(stateDir, "registered-manifest.sha256");
-if (!existsSync(registeredHashPath) || readFileSync(registeredHashPath, "utf8").trim() !== manifestHash) {
-  halt("MANIFEST_DRIFT", "manifest changed after registration; HALT and create a successor task");
+if (mode === "evidence") {
+  // derive2 (kit v34, docs/kit-derive-dont-declare-EXECUTE-PROMPT.md section 1 item 2): task_id,
+  // feature, base_sha and head_sha are read from the SAME manifest/live-git-state `register`/`ready`
+  // already trust -- never re-typed by the caller. Only the two judgment calls git cannot make
+  // (acceptance/breakers) come from the caller. `ready`'s validation of the resulting file (identity
+  // match, unknown-key whitelist, freshness) is unchanged; this only replaces hand-typing with a
+  // mechanical writer that cannot mistype or malform what it writes.
+  // kit v34 review round 3 finding 3: verify the hash-lock BEFORE writing, not after -- otherwise an
+  // unregistered/drifted manifest still reports LEVEL3_EVIDENCE_WRITTEN success for a file `ready`
+  // will reject moments later on the exact same manifest.
+  verifyManifestHashLock();
+  writeReadinessEvidence(
+    `${JSON.stringify({
+      evidence_schema_version: VERSION,
+      task_id: taskId,
+      feature,
+      base_sha: baseSha,
+      head_sha: headSha,
+      acceptance: { status: acceptanceArgument },
+      breakers: { status: breakersArgument },
+    }, null, 2)}\n`,
+  );
+  process.stdout.write(`LEVEL3_EVIDENCE_WRITTEN feature=${feature} head=${headSha}\n`);
+  process.exit(0);
 }
+
+verifyManifestHashLock();
 function liveDiffState() {
   const liveHead = run("git", ["rev-parse", "HEAD"], repo);
   const liveBaseRefSha = run("git", ["rev-parse", `${baseRef}^{commit}`], repo);
@@ -638,15 +777,38 @@ function liveDiffState() {
   if (!Number.isInteger(commitCount) || commitCount < 1) {
     halt("EMPTY_DIFF", "HEAD has no commit beyond the pinned base");
   }
-  const files = run("git", ["diff", "--name-only", "--no-renames", `${diffBase}...${liveHead}`], repo)
-    .split("\n")
-    .filter(Boolean);
+  const fileBytes = runRaw("git", ["diff", "--name-only", "-z", "--no-renames", `${diffBase}...${liveHead}`], repo);
+  const fileText = fileBytes.toString("utf8");
+  if (!Buffer.from(fileText, "utf8").equals(fileBytes)) {
+    halt("SCOPE_DRIFT", "changed filenames cannot be represented exactly as UTF-8 scope paths");
+  }
+  const files = fileText.split("\0").filter(Boolean);
   if (files.length === 0) {
     halt("EMPTY_DIFF", "no tracked files differ from the pinned base");
   }
-  const outOfScope = files.filter((file) => !scope.includes(file));
-  if (outOfScope.length) {
-    halt("SCOPE_DRIFT", `out-of-scope files: ${outOfScope.join(", ")}`);
+  // kit v34 review round 2 finding 1: assertBaseUsable() above still only protects DECLARED scope --
+  // with SCOPE_DRIFT gone, a file this diff ACTUALLY touches but never declared is invisible to it. If
+  // the base branch independently changed that same undeclared file since baseSha, this diff would
+  // certify over a real conflict. Layered on top of assertBaseUsable(), not a replacement for it --
+  // `files` is guaranteed non-empty here (EMPTY_DIFF already halted above), so spreading it as a
+  // pathspec is safe (an empty array would mean "no restriction" to git, not "match nothing"; see
+  // SCOPE_PATHSPECS's own comment for why that distinction matters).
+  const actualFilesTouchedSinceBase = run(
+    "git",
+    ["diff", "--name-only", `${baseSha}..${diffBase}`, "--", ...files],
+    repo,
+  );
+  if (actualFilesTouchedSinceBase) {
+    halt(
+      "BASE_STALE",
+      `files this diff actually touches changed on ${baseRef} since ${baseSha}: ${actualFilesTouchedSinceBase.split("\n").join(", ")}`,
+    );
+  }
+  // Registered scope is an authorization ceiling. An undeclared file has not received the
+  // manifest's risk/security classification; halt before verification or any reviewer runs.
+  const outsideScope = files.filter((file) => !scope.includes(file));
+  if (outsideScope.length) {
+    halt("SCOPE_DRIFT", `changed files outside registered scope: ${outsideScope.join(", ")}`);
   }
   const selfCertifying = files.filter((file) => TRUSTED_GATE_FILES.has(file));
   if (selfCertifying.length) {
@@ -666,12 +828,7 @@ function liveDiffState() {
 }
 
 const initialState = liveDiffState();
-const evidenceRelative = requireString(manifest.readiness_evidence_path, "readiness_evidence_path");
-const expectedEvidenceRelative = path.join(".autopilot", "state", feature, "readiness.json");
-if (evidenceRelative !== expectedEvidenceRelative) {
-  halt("CONTRACT_INVALID", `readiness_evidence_path must equal ${expectedEvidenceRelative}`);
-}
-const evidencePath = path.join(repo, evidenceRelative);
+const evidencePath = evidenceFilePath();
 const evidence = readJson(evidencePath, "readiness evidence");
 // Fail closed on any key the whitelist does not name — at the top level AND inside acceptance/breakers.
 // A readiness.json is a precondition INPUT (identity + the writer's attestation that its work is done
@@ -800,12 +957,25 @@ function runVerificationGroup(group, commands) {
       stateDir,
       `gate-attempt-${attemptLabel}-verify-${group}-${String(index + 1).padStart(2, "0")}.txt`,
     );
+    // derive3 (kit v34, docs/kit-derive-dont-declare-EXECUTE-PROMPT.md section 1 item 3): a command
+    // proving negative_scope compliance (e.g. "nothing under forbidden/ changed since I began") had no
+    // live base to reference and so had to hardcode one -- exactly the base_sha diff-window trap
+    // v25/v26 already closed for the reviewer's own --base flag (see liveDiffState() above). Both
+    // values are exported so a command can derive whichever job it needs: the live diff-window base
+    // (robust to a legitimate rebase, same value the gate itself certifies against) and the frozen
+    // registration pin (legitimacy). Spread process.env first -- this must stay additive, never a
+    // narrower replacement of what a verification command already inherits.
     const result = spawnSync("/bin/bash", ["-lc", command], {
       cwd: repo,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: remainingMs(),
       maxBuffer: MAX_BUFFER,
+      env: {
+        ...process.env,
+        AUTOPILOT_BASE_SHA: baseSha,
+        AUTOPILOT_DIFF_BASE_SHA: initialState.diffBase,
+      },
     });
     writeProcessLog(file, {
       kind: "verification",
@@ -979,6 +1149,7 @@ if (existsSync(pendingFindingPath)) {
   unlinkSync(pendingFindingPath);
 }
 
+// Preserve the receipt schema; liveDiffState enforces the registered scope before and after review.
 const gateResultPath = path.join(stateDir, "gate-result.json");
 writeFileSync(
   gateResultPath,
@@ -992,6 +1163,9 @@ writeFileSync(
     head_sha: finalState.headSha,
     diff_sha256: finalState.diffHash,
     diff_files: finalState.files,
+    declared_scope: scope,
+    scope_expanded: false,
+    scope_expanded_files: [],
     manifest_sha256: manifestHash,
     attempt,
     generated_artifacts: generatedArtifacts.map((file) => artifactRecord(repo, file)),
