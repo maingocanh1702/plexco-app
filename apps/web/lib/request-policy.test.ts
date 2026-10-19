@@ -93,13 +93,13 @@ describe("pathAllowedForRole (audit W-10)", () => {
       ["POST", `${base}/messages/${id}/moderation`],
       ["POST", `${base}/read`],
       ["GET", "/api/chat/subscribe"],
-    ];
+    ] as const;
     for (const [m, p] of routes) {
-      expect(pathAllowedForRole(p!, "discovery"), p).toBe(false);
-      for (const method of [m!, "GET", "HEAD"]) {
-        expect(requestAllowedForRole(method, p!, "discovery"), `${method} ${p}`).toBe(false);
+      expect(pathAllowedForRole(p, "discovery"), p).toBe(false);
+      for (const method of [m, "GET", "HEAD"]) {
+        expect(requestAllowedForRole(method, p, "discovery"), `${method} ${p}`).toBe(false);
       }
-      expect(requestAllowedForRole(m!, p!, "web"), `${m} ${p}`).toBe(true);
+      expect(requestAllowedForRole(m, p, "web"), `${m} ${p}`).toBe(true);
     }
   });
 

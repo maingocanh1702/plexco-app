@@ -331,7 +331,7 @@ describe("in-app chat codes (M10, L14 readiness 4.6; feature_inapp_chat_tech.md 
 describe("chat wire DTOs (M10)", () => {
   const messageId = "5d1f7c2a-0000-4000-8000-000000000001";
   const channelId = "5d1f7c2a-0000-4000-8000-000000000002";
-  const createdAt = "2026-10-19 11:53:07.123456+00";
+  const createdAt = "2026-10-19T11:53:07.123Z";
 
   it("types a chat channel as allowlisted columns + unreadCount only (RO-L15-2)", () => {
     expectTypeOf<keyof ChatChannelDto>().toEqualTypeOf<
