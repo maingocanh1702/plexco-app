@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Db } from "./client.js";
 import { fixtures } from "./roster-money-fixtures.js";
 import { withTenant } from "./tenant.js";
@@ -822,6 +822,15 @@ describe("resolveZaloLinkGate (T-22, R1: the merged wrapper, role app)", () => {
     await expect(
       resolveZaloLinkGate(ctx.readonlyPool, await channelIdentity(p)),
     ).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("P-27 (stub pool, no DB row): query_timeout 2000 reaches pool.query; no row or a null account_ref -> not linked", async () => {
+    const text = expect.stringContaining("public.channel_identity_link_gate($1::uuid)");
+    for (const rows of [[], [{ linked: true, account_ref: null }]]) {
+      const query = vi.fn(async () => ({ rows }));
+      expect(await resolveZaloLinkGate({ query } as never, "ci-1")).toEqual(NOT_LINKED);
+      expect(query.mock.calls).toEqual([[{ text, values: ["ci-1"], query_timeout: 2000 }]]);
+    }
   });
 });
 
