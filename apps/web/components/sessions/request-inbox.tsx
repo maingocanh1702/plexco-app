@@ -215,7 +215,7 @@ function RequestRow({
   const [phase, setPhase] = useState<RowPhase>({ kind: "idle" });
 
   async function decide(action: Action) {
-    if (inFlight.current) return;
+    if (inFlight.current || !online) return;
     inFlight.current = true;
     setPhase({ kind: "pending", action });
     try {

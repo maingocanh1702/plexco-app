@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "../../lib/api-client";
 import { LangProvider } from "../../lib/i18n-client";
+import { formatVnd } from "../../lib/money";
 import {
   fetchPending,
   parsePending,
@@ -140,7 +141,7 @@ describe("RequestRowView", () => {
     );
     expect(text(html)).toContain("Lan Anh");
     expect(text(html)).toContain("2026");
-    for (const leak of ["lan@example.com", "0900000000", "150000", REQUEST_ID]) {
+    for (const leak of ["lan@example.com", "0900000000", "150000", formatVnd(150000), REQUEST_ID]) {
       expect(html).not.toContain(leak);
     }
   });

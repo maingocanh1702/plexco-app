@@ -223,7 +223,7 @@ export function describeReverseError(error: unknown, t: TFn): ErrorView {
 }
 
 /**
- * Player-screen copy (L12, readiness 4.5.1 B-10) for the codes of the discovery, join, leave and
+ * Player-screen copy (L12, readiness 4.5.1 B-10) for the codes of the discovery, join and
  * approval-inbox routes: the viewer's own language via t(), never the server `message`, and no
  * price, gender or amount in any text. A code not listed here goes to describeSessionError.
  */

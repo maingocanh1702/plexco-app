@@ -65,7 +65,7 @@ describe("DiscoverListView", () => {
     expect(html).not.toContain("/discover/");
   });
 
-  it("ready: one card per listing, linked by publicListingId and never showing it as text", () => {
+  it("links by publicListingId (B-17): ready shows one card per listing, never the id as text", () => {
     const untitled = { ...LISTING, publicListingId: "other-listing-7", title: null };
     const html = render(ready([LISTING, untitled]));
     expect(stateOf(html)).toBe("ready");
