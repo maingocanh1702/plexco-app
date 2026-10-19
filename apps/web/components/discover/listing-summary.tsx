@@ -18,7 +18,7 @@ const SPORTS = new Map<string, [string, string]>([
   ["basketball", ["Bóng rổ", "Basketball"]],
 ]);
 
-function sportLabel(key: string, t: TFn): string {
+export function sportLabel(key: string, t: TFn): string {
   const pair = SPORTS.get(key);
   return pair ? t(pair[0], pair[1]) : t("Buổi chơi", "Session");
 }
