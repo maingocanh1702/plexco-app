@@ -327,7 +327,7 @@ export async function readLatestZaloReplyContext(
  * Single-use claim (P-9): the conditional UPDATE in its own withTenant, before joinSession or
  * leaveSession. It re-checks consumed_at against the committed row, so concurrent claims consume at
  * most once. null = lost race, consumed, expired or version-mismatched (the stale reply, zero
- * mutation). The caller uuid-checks item_ids[n-1] and fails closed on any other context_type.
+ * mutation). The caller acts on item_ids[n-1] only if its re-read own list still has it, else R9.
  */
 export async function claimZaloReplyContext(
   db: Db,
