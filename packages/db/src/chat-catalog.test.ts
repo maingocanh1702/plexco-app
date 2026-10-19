@@ -123,10 +123,17 @@ describe("0063 section 1: append-only tables and grants (DT-27)", () => {
   });
 
   it("app, app_worker and readonly hold nothing on the new tables; readonly nothing on any chat table (S-10)", async () => {
+    // RO-L14-8: each role's OWN table and column ACL entries (or PUBLIC's), not has_*_privilege, which follows the
+    // cluster-role memberships migrate.test.ts grants app_worker for the length of a check
     const { rows } = await ctx.owner.query(
       `SELECT c.relname::text AS t, r.rname AS rname,
-              has_table_privilege(r.rname::name, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-              OR has_any_column_privilege(r.rname::name, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES') AS held
+              EXISTS (SELECT 1 FROM aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) x
+                       WHERE x.grantee IN (r.rname::regrole::oid, 0::oid) AND x.privilege_type IN
+                         ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'))
+              OR EXISTS (SELECT 1 FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
+                          WHERE a.attrelid = c.oid AND NOT a.attisdropped
+                            AND x.grantee IN (r.rname::regrole::oid, 0::oid)
+                            AND x.privilege_type IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')) AS held
        FROM pg_class c CROSS JOIN (VALUES ('app'), ('app_worker'), ('readonly')) AS r(rname)
        WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p', 'v', 'm')
          AND c.relname LIKE 'chat\\_%' AND (r.rname = 'readonly' OR c.relname::text = ANY($1::text[]))`,
@@ -348,9 +355,13 @@ describe("0063 function catalog (DT-27 function half)", () => {
         `SELECT p.proname, p.prosecdef, p.provolatile, p.proconfig, pg_get_userbyid(p.proowner) AS owner,
                 pg_get_function_identity_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result,
                 p.proacl IS NOT NULL AS explicit_acl,
-                has_function_privilege('app', p.oid, 'EXECUTE') AS app,
-                has_function_privilege('app_worker', p.oid, 'EXECUTE') AS worker,
-                has_function_privilege('readonly', p.oid, 'EXECUTE') AS ro,
+                -- RO-L14-8: the role's OWN EXECUTE entry (or PUBLIC's), not has_function_privilege (follows membership)
+                EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
+                         WHERE x.privilege_type = 'EXECUTE' AND x.grantee IN ('app'::regrole::oid, 0::oid)) AS app,
+                EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
+                         WHERE x.privilege_type = 'EXECUTE' AND x.grantee IN ('app_worker'::regrole::oid, 0::oid)) AS worker,
+                EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
+                         WHERE x.privilege_type = 'EXECUTE' AND x.grantee IN ('readonly'::regrole::oid, 0::oid)) AS ro,
                 ARRAY(SELECT (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)::text
                         FROM aclexplode(p.proacl) a WHERE a.privilege_type = 'EXECUTE') AS grantees
            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
