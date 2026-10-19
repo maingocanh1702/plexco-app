@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
-import { getDiscoveryListing, joinPublicListing, listDiscovery } from "./discover-api";
+import { getDiscoveryListing, joinPublicListing, listDiscovery, num } from "./discover-api";
 
 const LISTING = {
   publicListingId: "pl_abc",
@@ -132,6 +132,12 @@ describe("discovery reads", () => {
     const fn = mockFetch({ listing: LISTING });
     await getDiscoveryListing("pl/ab c");
     expect(callOf(fn)[0]).toBe("/api/discover/pl%2Fab%20c");
+  });
+
+  it("num accepts only safe integers, so a fraction or an unsafe amount fails closed (P-7)", () => {
+    expect([0, 80000, -1].map((v) => num(v))).toStrictEqual([0, 80000, -1]);
+    const rejected = [150000.5, 2 ** 53, Number.NaN, Number.POSITIVE_INFINITY, "80000", null];
+    expect(rejected.map((v) => num(v))).toStrictEqual(Array(6).fill(null));
   });
 });
 

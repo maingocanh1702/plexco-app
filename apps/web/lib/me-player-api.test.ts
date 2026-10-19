@@ -203,6 +203,21 @@ describe("my charges", () => {
     expect(summary).toStrictEqual(UNAVAILABLE);
   });
 
+  it("a fractional or beyond-2^53 amount is unavailable, never a known amount (P-7)", async () => {
+    const club = (clubRef: string, status: unknown) => ({ clubRef, clubLabel: clubRef, status });
+    mockFetch({
+      clubs: [
+        club("fraction", { ...CLUB_AMOUNT, totalOutstanding: 150000.5 }),
+        club("unsafe", { ...CLUB_AMOUNT, totalOutstanding: 2 ** 53 }),
+        club("item-fraction", { ...CLUB_AMOUNT, items: [{ ...ITEM, remaining: 0.5 }] }),
+      ],
+      summary: { ...KNOWN_AMOUNT, totalOutstanding: 150000.5, clubCount: 1 },
+    });
+    const { clubs, summary } = await getMyCharges();
+    expect(clubs.map((c) => c.status)).toStrictEqual(Array(3).fill(UNAVAILABLE));
+    expect(summary).toStrictEqual(UNAVAILABLE);
+  });
+
   it("passes a declared zero and a declared unavailable state through", async () => {
     mockFetch({
       clubs: [

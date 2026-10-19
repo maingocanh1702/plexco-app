@@ -129,6 +129,25 @@ describe("DiscoverDetailView", () => {
     expect(text(html)).not.toContain("join slot");
   });
 
+  it("every state has exactly one h1: the listing title when ready, else the page heading (Q8)", () => {
+    const states: DiscoverDetailState[] = [
+      { status: "loading" },
+      { status: "error", error: failure("NOT_FOUND", 404) },
+      { status: "error", error: failure("DISCOVERY_RATE_LIMITED", 429) },
+      { status: "offline" },
+      { status: "ready", listing: LISTING },
+    ];
+    for (const state of states) expect(render(state).match(/<h1[ >]/g)).toHaveLength(1);
+    expect(text(render({ status: "loading" }))).toContain("Game details");
+    expect(text(render({ status: "loading" }, "vi"))).toContain("Chi tiết kèo");
+  });
+
+  it("one open slot reads in the singular", () => {
+    const html = render({ status: "ready", listing: { ...LISTING, slotsOpen: 1 } });
+    expect(text(html)).toContain("1 spot open");
+    expect(text(html)).not.toContain("1 spots open");
+  });
+
   it("renders vi and en: distinct text in every state", () => {
     const states: DiscoverDetailState[] = [
       { status: "loading" },

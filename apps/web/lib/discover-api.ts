@@ -21,9 +21,9 @@ export const rec = (value: unknown): Rec | null =>
 export const str = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;
 
-/** A finite number, else null: a missing amount is never turned into 0. */
+/** A safe integer, else null: a missing, fractional or unsafe amount is never turned into 0. */
 export const num = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
+  typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 
 /** The value when it is one of `allowed`, else null (an unknown enum value has no label). */
 export function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {

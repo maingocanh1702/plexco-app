@@ -55,28 +55,28 @@ export function JoinPanelView({
 
   if (access === "loading") {
     return (
-      <div className={styles.panel} aria-busy="true">
-        <Skeleton width="8rem" height="var(--touch-target)" />
+      <div className={styles.panel} aria-busy="true" data-state="loading">
+        <Skeleton width="40%" height="var(--touch-target)" />
       </div>
     );
   }
   if (access === "signed-out") {
     return (
-      <div className={styles.panel}>
+      <div className={styles.panel} data-state="ready">
         <Button href="/">{t("Đăng nhập để tham gia.", "Sign in to join.")}</Button>
       </div>
     );
   }
   if (access === "web-only") {
     return (
-      <p className={styles.hint}>
+      <p className={styles.hint} data-state="ready">
         {t("Tham gia trên ứng dụng web Plexco.", "Join on the Plexco web app.")}
       </p>
     );
   }
   if (typeof access === "object") {
     return (
-      <div className={styles.panel}>
+      <div className={styles.panel} data-state="error">
         <ApiErrorNotice
           error={access.error}
           describe={describePlayerError}
@@ -101,7 +101,7 @@ export function JoinPanelView({
               )
             : null;
     return (
-      <div className={styles.panel}>
+      <div className={styles.panel} data-state="ready">
         {result ? (
           <p role="status" className={styles.result}>
             {result}
@@ -113,10 +113,13 @@ export function JoinPanelView({
   }
 
   const pending = phase.kind === "pending";
-  const next =
-    phase.kind === "failed" ? NEXT_STEP.get(describePlayerError(phase.error, t).code) : undefined;
+  const failure = phase.kind === "failed" ? describePlayerError(phase.error, t) : null;
+  const next = failure ? NEXT_STEP.get(failure.code) : undefined;
+  // A mapped action of none (R 4.5.2 S-3) leaves nothing to press again: no Join button.
+  const canJoin = failure?.action !== "none";
+  const dataState = pending ? "loading" : failure ? "error" : online ? "ready" : "offline";
   return (
-    <div className={styles.panel}>
+    <div className={styles.panel} data-state={dataState}>
       {phase.kind === "failed" ? (
         <ApiErrorNotice
           error={phase.error}
@@ -127,14 +130,21 @@ export function JoinPanelView({
           {next ? step(next) : null}
         </ApiErrorNotice>
       ) : null}
-      <Button onClick={onJoin} disabled={pending || !online} aria-busy={pending || undefined}>
-        {pending ? t("Đang gửi…", "Joining…") : t("Tham gia", "Join")}
-      </Button>
-      {online ? null : (
-        <p role="status" className={styles.hint}>
-          {t("Bạn đang offline. Kết nối lại để tham gia.", "You are offline. Reconnect to join.")}
-        </p>
-      )}
+      {canJoin ? (
+        <>
+          <Button onClick={onJoin} disabled={pending || !online} aria-busy={pending || undefined}>
+            {pending ? t("Đang gửi…", "Joining…") : t("Tham gia", "Join")}
+          </Button>
+          {online ? null : (
+            <p role="status" className={styles.hint}>
+              {t(
+                "Bạn đang offline. Kết nối lại để tham gia.",
+                "You are offline. Reconnect to join.",
+              )}
+            </p>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -158,7 +168,7 @@ export function JoinPanel({
   const inFlight = useRef(false);
 
   async function join() {
-    if (inFlight.current || !session) return;
+    if (inFlight.current || !session || !online) return;
     inFlight.current = true;
     setPhase({ kind: "pending" });
     try {

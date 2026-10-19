@@ -39,6 +39,10 @@ export function DiscoverDetailView({
         {t("Tất cả kèo", "All games")}
       </Button>
 
+      {state.status === "ready" ? null : (
+        <h1 className={styles.heading}>{t("Chi tiết kèo", "Game details")}</h1>
+      )}
+
       {state.status === "loading" ? (
         <div aria-busy="true">
           <ListingSkeleton />

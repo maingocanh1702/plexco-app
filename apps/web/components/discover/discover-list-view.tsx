@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listDiscovery, type DiscoveryFilter, type DiscoveryListing } from "../../lib/discover-api";
 import { useT } from "../../lib/i18n-client";
 import { describePlayerError } from "../../lib/session-error-ui";
@@ -169,6 +169,7 @@ export function DiscoverList() {
   const [filter, setFilter] = useState<DiscoveryFilter>({});
   const [state, setState] = useState<DiscoverListState>({ status: "loading" });
   const [more, setMore] = useState(IDLE);
+  const generation = useRef(0); // bumped by start(): a load-more settling later belongs to a replaced list
 
   useEffect(() => {
     let current = true; // a slower, older search never overwrites a newer one
@@ -187,6 +188,7 @@ export function DiscoverList() {
 
   // A fresh filter object every time, so Retry and Reset refetch even when nothing changed.
   const start = (next: DiscoveryFilter) => {
+    generation.current += 1;
     setState({ status: "loading" });
     setMore(IDLE);
     setFilter(next);
@@ -195,9 +197,11 @@ export function DiscoverList() {
   const loadMore = () => {
     if (state.status !== "ready" || state.nextCursor === null || more.busy) return;
     const cursor = state.nextCursor;
+    const mine = generation.current;
     setMore({ busy: true, error: null });
     listDiscovery({ ...filter, cursor }).then(
       (page) => {
+        if (generation.current !== mine) return; // a newer search replaced the list and reset more
         // Dropped when a newer search replaced the list while this page was in flight.
         setState((s) =>
           s.status === "ready" && s.nextCursor === cursor
@@ -206,7 +210,9 @@ export function DiscoverList() {
         );
         setMore(IDLE);
       },
-      (error: unknown) => setMore({ busy: false, error }),
+      (error: unknown) => {
+        if (generation.current === mine) setMore({ busy: false, error });
+      },
     );
   };
 

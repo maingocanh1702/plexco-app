@@ -65,7 +65,12 @@ export function ListingSummary({
         {listing.title ? <Badge>{sport}</Badge> : null}
         {listing.priceAmount === null ? null : <Badge>{formatVnd(listing.priceAmount)}</Badge>}
         {listing.slotsOpen === null ? null : (
-          <Badge>{t(`Còn ${listing.slotsOpen} chỗ`, `${listing.slotsOpen} spots open`)}</Badge>
+          <Badge>
+            {t(
+              `Còn ${listing.slotsOpen} chỗ`,
+              `${listing.slotsOpen} ${listing.slotsOpen === 1 ? "spot" : "spots"} open`,
+            )}
+          </Badge>
         )}
         {hint ? <Badge>{hint}</Badge> : null}
       </div>

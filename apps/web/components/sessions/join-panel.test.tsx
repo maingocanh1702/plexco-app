@@ -149,7 +149,8 @@ describe("JoinPanelView", () => {
       expect(text(html).includes("Sign in again")).toBe(view.action === "sign-in");
       for (const href of ["/discover", "/me/sessions"])
         expect(html.includes(`href="${href}"`)).toBe(href === link);
-      expect(html.match(/>Join<\/button>/g)).toHaveLength(1); // the Join button stays for a re-attempt
+      // The Join button stays for a re-attempt, except after a mapped action of none (R 4.5.2 S-3).
+      expect(html.match(/>Join<\/button>/g) ?? []).toHaveLength(view.action === "none" ? 0 : 1);
     },
   );
 
@@ -167,6 +168,44 @@ describe("JoinPanelView", () => {
     expect(/<button[^>]*>Join<\/button>/.exec(html)?.[0]).toContain('disabled=""');
     expect(html).toContain('role="status"');
     expect(text(html)).toContain("You are offline");
+  });
+
+  it("failed with a mapped action of none: no Join button to press again, no offline hint", () => {
+    for (const [code, status] of [
+      ["INVALID_BODY", 400],
+      ["NOT_FOUND", 404],
+      ["TENANT_SUSPENDED", 403],
+      ["FORBIDDEN", 403],
+      ["SESSION_NOT_FOUND", 404],
+      ["REJOIN_REQUIRES_REVIEW", 409],
+    ] as const) {
+      const error = failure(code, status);
+      expect(describePlayerError(error, makeT("en")).action).toBe("none");
+      const phase = { kind: "failed" as const, error };
+      expect(render({ phase })).not.toContain("<button");
+      expect(text(render({ phase, online: false }))).not.toContain("You are offline");
+    }
+  });
+
+  type PanelProps = Partial<ComponentProps<typeof JoinPanelView>>;
+  const DATA_STATES: [string, PanelProps, string][] = [
+    ["session loading", { access: "loading" }, "loading"],
+    ["signed out", { access: "signed-out" }, "ready"],
+    ["web-only", { access: "web-only" }, "ready"],
+    ["session read failed", { access: { error: failure("CLIENT_NETWORK_ERROR", 0) } }, "error"],
+    ["joined", { phase: done({ outcome: "active", waitlistPosition: null }) }, "ready"],
+    ["idle", {}, "ready"],
+    ["pending", { phase: { kind: "pending" } }, "loading"],
+    ["failed join", { phase: { kind: "failed", error: failure("RATE_LIMITED", 429) } }, "error"],
+    [
+      "failed join offline",
+      { phase: { kind: "failed", error: failure("RATE_LIMITED", 429) }, online: false },
+      "error",
+    ],
+    ["offline", { online: false }, "offline"],
+  ];
+  it.each(DATA_STATES)("P-19: the %s root renders data-state", (_name, over, expected) => {
+    expect(/^<[a-z]+[^>]*data-state="([a-z]+)"/.exec(render(over))?.[1]).toBe(expected);
   });
 
   it("renders vi and en: distinct text in every state", () => {
