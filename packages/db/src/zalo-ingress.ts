@@ -1,4 +1,5 @@
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import type pg from "pg";
 import type { Db, Tx } from "./client.js";
 import {
   channelInboundEvents,
@@ -195,6 +196,31 @@ export async function resolveZaloIdentity(
     displayName: r.display_name,
     hasAccount: r.has_account,
   };
+}
+
+/**
+ * RC-1 (R1) link gate: ONE autocommit call of the merged read gate public.channel_identity_link_gate
+ * (0064), on the pool and never inside withTenant or a transaction, so the 0034 core's FOR SHARE
+ * locks end with the statement. Linked only for (true, <account uuid>); any other row or no row is
+ * not linked. A rejection (42501 included) or the P-27 timeout propagates: the one call site maps it
+ * to not linked. Never cached. A read gate for a message handler, NOT the DD-50 pay-later resolver:
+ * no money action rests on it.
+ */
+export async function resolveZaloLinkGate(
+  pool: pg.Pool,
+  channelIdentityId: string,
+): Promise<{ linked: boolean; accountRef: string | null }> {
+  // @types/pg declares query_timeout on ClientConfig only; pg reads it per query (lib/client.js).
+  const query: pg.QueryConfig & { query_timeout: number } = {
+    text: "SELECT linked, account_ref FROM public.channel_identity_link_gate($1::uuid)",
+    values: [channelIdentityId],
+    query_timeout: 2000, // P-27
+  };
+  const { rows } = await pool.query<{ linked: boolean | null; account_ref: string | null }>(query);
+  const r = rows[0];
+  return r?.linked === true && typeof r.account_ref === "string"
+    ? { linked: true, accountRef: r.account_ref }
+    : { linked: false, accountRef: null };
 }
 
 /** Ciphertext of the bot token for the web process about to call Zalo (decrypt + audit are the caller's job). */

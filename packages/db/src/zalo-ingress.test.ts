@@ -11,6 +11,7 @@ import {
   getZaloOnboardingState,
   resolveZaloBotByToken,
   resolveZaloIdentity,
+  resolveZaloLinkGate,
   storeInboundEvent,
   ZaloConnectError,
 } from "./zalo-ingress.js";
@@ -750,5 +751,70 @@ describe("routing_audit_append", () => {
       ),
       /tenant context mismatch/,
     );
+  });
+});
+
+// T-22 seeds (owner role): the INSERT shapes of channel-identity-link-gate.test.ts LG-3g, LG-2b and
+// LG-2a, whose helpers are file-local there.
+async function channelIdentity(personId: string): Promise<string> {
+  const id = randomUUID();
+  await ctx.owner.query(
+    `INSERT INTO channel_identities
+       (id, person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status)
+       VALUES ($1, $2, 'zalo', $3, $4, 'active')`,
+    [id, personId, bytes(`enc-${id}`), `chan-hash-${id}`],
+  );
+  return id;
+}
+async function account(personId: string): Promise<string> {
+  const id = randomUUID();
+  await ctx.owner.query(`INSERT INTO accounts (id, person_id) VALUES ($1, $2)`, [id, personId]);
+  return id;
+}
+/** Verified = verified_at set; pending = verified_at NULL with pending_expires_at (lifecycle CHECK). */
+async function email(accountId: string, verified: boolean): Promise<void> {
+  const id = randomUUID();
+  await ctx.owner.query(
+    `INSERT INTO account_emails
+       (id, account_id, email_lookup_hash, email_enc, kms_key_version, verified_at, pending_expires_at)
+       VALUES ($1, $2, $3, $4, 'v1',
+               CASE WHEN $5::boolean THEN now() END,
+               CASE WHEN $5::boolean THEN NULL ELSE now() + interval '1 day' END)`,
+    [id, accountId, `email-${id}`, bytes(`enc-${id}`), verified],
+  );
+}
+
+describe("resolveZaloLinkGate (T-22, R1: the merged wrapper, role app)", () => {
+  const NOT_LINKED = { linked: false, accountRef: null };
+
+  it("half-linked: an account with only a pending email -> not linked", async () => {
+    const p = await person();
+    await email(await account(p), false);
+    expect(await resolveZaloLinkGate(ctx.appPool, await channelIdentity(p))).toEqual(NOT_LINKED);
+  });
+
+  it("half-linked: a legacy-only account (account_identities row, no email) -> not linked", async () => {
+    const p = await person();
+    await ctx.owner.query(
+      `INSERT INTO account_identities (id, account_id, platform, platform_user_hash, verified_at)
+         VALUES ($1, $2, 'telegram', $3, now())`,
+      [randomUUID(), await account(p), `tg-hash-${randomUUID()}`],
+    );
+    expect(await resolveZaloLinkGate(ctx.appPool, await channelIdentity(p))).toEqual(NOT_LINKED);
+  });
+
+  it("linked: a verified account -> linked with that account id", async () => {
+    const p = await person();
+    const ci = await channelIdentity(p);
+    const acc = await account(p);
+    await email(acc, true);
+    expect(await resolveZaloLinkGate(ctx.appPool, ci)).toEqual({ linked: true, accountRef: acc });
+  });
+
+  it("readonly has no EXECUTE on the wrapper -> rejects 42501 (the call site maps it to not linked)", async () => {
+    const p = await person();
+    await expect(
+      resolveZaloLinkGate(ctx.readonlyPool, await channelIdentity(p)),
+    ).rejects.toMatchObject({ code: "42501" });
   });
 });

@@ -48,6 +48,7 @@ export {
   readZaloBotTokenEnc,
   resolveZaloBotByToken,
   resolveZaloIdentity,
+  resolveZaloLinkGate,
   storeInboundEvent,
   type BeginZaloConnectResult,
   type ZaloBotRef,
