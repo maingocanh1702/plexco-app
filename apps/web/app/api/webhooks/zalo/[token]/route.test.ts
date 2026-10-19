@@ -426,17 +426,20 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     const WHO = { personId: "p1", channelIdentityId: "ci1", created: false, displayName: "An" };
     const GROUP = { id: "g-1", chat_type: "GROUP" };
     const PII = ["/pay", "/join", "/leave", '"/me"', '"1"', "zuser-1", "ci1", ACC, S1, S2, '"An"'];
+    // T-19: no log argument carries an amount the /pay rows use, raw or formatted.
+    for (const n of [100_000, 50_000, 150_000, 99_000, 249_000]) PII.push(String(n), formatVnd(n));
     const R = (...a: Parameters<typeof reply>) => runWithLang("en", () => reply(...a));
     const sent = () => vi.mocked(sendMessage).mock.calls.map((c) => c[2]);
     const linked = (accountRef = ACC) =>
       vi.mocked(resolveZaloLinkGate).mockResolvedValue({ linked: true, accountRef });
     const dm = (...a: Parameters<typeof update>) => call({ body: update(...a) });
+    const LEVELS = ["error", "warn", "info", "debug"] as const;
     beforeEach(() => {
-      for (const k of ["error", "warn", "info"] as const) vi.spyOn(log, k).mockReturnValue();
+      for (const k of LEVELS) vi.spyOn(log, k).mockReturnValue();
     });
     afterEach(() => {
       for (const t of sent()) expect(t).not.toMatch(/bank|ngân hàng|STK|QR|99[.,]000/i);
-      const j = JSON.stringify([log.error, log.warn, log.info].map((f) => vi.mocked(f).mock.calls));
+      const j = JSON.stringify(LEVELS.map((k) => vi.mocked(log[k]).mock.calls));
       for (const s of PII) expect(j).not.toContain(s);
     });
     it.each([
@@ -573,6 +576,8 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       { t: "T-15", c: FULL(OWN), ctx: false, want: R("R18") },
       { t: "T-14", c: FULL(ZERO), want: R("R16") },
     ])("$t: /pay -> $want", async (row) => {
+      const handle = { pool: {}, db: {} };
+      vi.mocked(appDb).mockReturnValue(handle as never);
       linked(row.acc);
       if (row.c) vi.mocked(readMyCharges).mockResolvedValue(row.c);
       const sessions = new Map([[S1, { timezone: TZ, area: "Q1" }]]);
@@ -580,9 +585,8 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       if (row.ctx !== false) vi.mocked(readZaloPayContext).mockResolvedValue({ slug, sessions });
       await dm("/pay", 9500);
       expect(sent()).toEqual([row.want]);
-      expect(vi.mocked(readMyCharges).mock.calls).toEqual(
-        row.acc ? [] : [[expect.anything(), ACC]],
-      );
+      expect(vi.mocked(readMyCharges).mock.calls).toEqual(row.acc ? [] : [[handle.pool, ACC]]);
+      if (!row.acc) expect(vi.mocked(readMyCharges).mock.calls[0]![0]).toBe(handle.pool);
       for (const c of vi.mocked(readZaloPayContext).mock.calls) expect(c[1].tenantId).toBe(TENANT);
     });
     it.each([
