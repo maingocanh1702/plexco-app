@@ -27,9 +27,11 @@ export GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false
 STATE="$REPO/ap3/state"; RUNS="$STATE/runs"; WT="$STATE/worktrees"
 ROUTINES="$REPO/ap3/routines.json"; TRUST="$STATE/trust.json"
 
-# ap3/env (gitignored secrets like DATABASE_URL_TEST) is sourced ONLY inside the writer subshell
-# (launch_writer), never globally — otherwise its values would reach the dispatcher, the
-# independent reviewer (a AP3_CODEX_PIN there could substitute a fake CLEAN), git and gh.
+# ap3/env (gitignored secrets like DATABASE_URL_TEST) is only ever sourced in subshells: the writer
+# (launch_writer) and verify_host, both via source_writer_env, plus db_env_get's single-key reads.
+# Never globally — otherwise its values would reach the dispatcher, the independent reviewer (a
+# AP3_CODEX_PIN there could substitute a fake CLEAN), git and gh. source_writer_env also unsets
+# AP3_DB_ADMIN_URL: that admin credential is for db_per_run's CREATE/DROP DATABASE only.
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 today() { date -u +%Y-%m-%d; }
@@ -57,6 +59,29 @@ db_env_get() { # <DATABASE_URL_TEST|AP3_DB_ADMIN_URL> -> the value, or empty if 
     AP3_DB_ADMIN_URL)  ( set -a; . "$REPO/ap3/env"; set +a; printf '%s' "${AP3_DB_ADMIN_URL:-}" ) ;;
   esac
 }
+# The writer's (and verify_host's) environment: every ap3/env key EXCEPT AP3_DB_ADMIN_URL.
+# The admin URL can create and drop databases; only db_env_get and retry.sh read it, each in its
+# own subshell. Writer-authored code runs under both callers, so the credential is kept out of
+# their environment. (verify_host still runs unsandboxed as the same user and could read ap3/env
+# from disk; its boundary is the CLEAN review. The sandboxed writer cannot: denyRead **/ap3/env.)
+# Invariant: every ap3/env key the dispatcher or retry.sh reads for itself (anything other than
+# DATABASE_URL_TEST) must be unset here too.
+# Call only inside a ( ... ) subshell, as `source_writer_env || exit 1`: it changes the calling
+# shell's environment, and it fails (closed) if the credential cannot be removed, e.g. when
+# ap3/env declares it readonly. Both callers run where errexit is suppressed, hence the explicit exit.
+source_writer_env() {
+  if [ -f "$REPO/ap3/env" ]; then set -a; . "$REPO/ap3/env"; set +a; fi
+  unset AP3_DB_ADMIN_URL 2>/dev/null
+  if [ -n "${AP3_DB_ADMIN_URL+x}" ]; then
+    echo "ap3: cannot withhold AP3_DB_ADMIN_URL from the writer (readonly in ap3/env?) -- refusing" >&2
+    return 1
+  fi
+}
+# Pre-check for the two callers: can the admin credential be withheld? Run BEFORE the launch /
+# verify_host subshell so a refusal is a named ENV_WITHHOLD_FAILED halt, not a STARTED run that
+# later dies as WRITER_ERROR (the in-subshell `|| exit 1` stays as the last line of defence).
+env_withhold_ok() { ( source_writer_env ) >/dev/null 2>&1; }
+ENV_WITHHOLD_MSG="ap3/env keeps AP3_DB_ADMIN_URL set after unset (declared readonly?) -- the writer would receive the db admin credential; fix ap3/env, then resume with retry.sh"
 rewrite_db_url() { # <original-url> <new-dbname> -> the URL with its path replaced
   URL="$1" NEWNAME="$2" python3 -c 'import os
 from urllib.parse import urlsplit, urlunsplit
@@ -181,7 +206,7 @@ pause_class() { # <class> <reason> [--keep-trust] — trust is re-earned by hand
 # own diff may have been fine, so trust is kept. Everything else (including MISSING_CONTEXT, a
 # bare HALT.md with no recognised reason, and REJECTED / "merged with human changes" below) is
 # writer-fault: the writer (or a human) produced something the run could not stand behind.
-OUTAGE_TERMINALS=" REVIEW_UNAVAILABLE PUSH_FAILED PR_FAILED REMOTE_TIP_MISMATCH EVIDENCE_FAILED FS_ISOLATION_UNSAFE NO_WRITER_SETTINGS DB_ISOLATION_LOST TELEMETRY_FAILED TASK_REFRESH_FAILED "
+OUTAGE_TERMINALS=" REVIEW_UNAVAILABLE PUSH_FAILED PR_FAILED REMOTE_TIP_MISMATCH EVIDENCE_FAILED FS_ISOLATION_UNSAFE NO_WRITER_SETTINGS DB_ISOLATION_LOST TELEMETRY_FAILED TASK_REFRESH_FAILED ENV_WITHHOLD_FAILED "
 terminal_kind() { # <reason> -> writer-fault | outage
   case "$OUTAGE_TERMINALS" in *" $1 "*) echo outage ;; *) echo writer-fault ;; esac
 }
@@ -667,8 +692,12 @@ finalize_ready() { # <slug> — review was CLEAN. Fail closed: READY means an OP
       fi
       vh_db_url_override="$DB_ISOLATION_URL"
     fi
+    if ! env_withhold_ok; then
+      halt "$slug" ENV_WITHHOLD_FAILED "$ENV_WITHHOLD_MSG"
+      return
+    fi
     ( cd "$wt"
-      if [ -f "$REPO/ap3/env" ]; then set -a; . "$REPO/ap3/env"; set +a; fi
+      source_writer_env || exit 1
       if [ -n "$vh_db_url_override" ]; then export DATABASE_URL_TEST="$vh_db_url_override"; fi
       bash -c "$verify_host"
     ) > "$RUNS/$slug/verify-host.txt" 2>&1 || vh_rc=$?
@@ -1158,7 +1187,8 @@ launch_writer() { # <slug> — start (or restart) the sandboxed coding session, 
   # `.claude/settings.json` (or ~/.claude, or a .local) could weaken the writer's sandbox/denies.
   # `--setting-sources ''` loads NONE of those scopes, so the contract stands alone (proved by
   # probe-settings-flag.sh: a hostile project `deny: Bash(git *)` is ignored with it, applied without).
-  # ap3/env is sourced INSIDE this subshell only, so secrets never reach the dispatcher/reviewer.
+  # ap3/env is sourced INSIDE this subshell only (source_writer_env, minus AP3_DB_ADMIN_URL), so
+  # secrets never reach the dispatcher/reviewer.
   # K23 follow-up: normally the writer's task is the copy committed on its own branch. After
   # `retry.sh --answer`, the owner's answer lives in the PINNED ap3/state/runs/<slug>/task.md --
   # the copy run_review and scope-check already read -- and --answer drops it here, inside the
@@ -1184,8 +1214,12 @@ launch_writer() { # <slug> — start (or restart) the sandboxed coding session, 
   # the fail-open: a writer deleting .ap3-run/TASK.md silently dropped every owner amendment).
   local wtask="$wt/.ap3-run/TASK.md"
   refresh_staged_task "$slug" || return 1
+  if ! env_withhold_ok; then
+    halt "$slug" ENV_WITHHOLD_FAILED "$ENV_WITHHOLD_MSG"
+    return 1
+  fi
   ( cd "$wt"
-    if [ -f "$REPO/ap3/env" ]; then set -a; . "$REPO/ap3/env"; set +a; fi
+    source_writer_env || exit 1
     if [ -n "$db_url_override" ]; then export DATABASE_URL_TEST="$db_url_override"; fi
     nohup env AP3_SLUG="$slug" AP3_TASK="$wtask" AP3_BASE_SHA="$base" \
       AP3_STATE="$RUNS/$slug" \
