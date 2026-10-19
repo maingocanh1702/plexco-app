@@ -1099,6 +1099,68 @@ export const chatMembers = pgTable("chat_members", {
     sql`(${t.lastReadCreatedAt} IS NULL) = (${t.lastReadMessageId} IS NULL)`),
 }));
 
+/** 0063 edit history (revision_no 1..5 is enforced by the edit function under the message row lock).
+ *  Append-only (UPDATE/DELETE trigger raises restrict_violation), FORCE RLS with no policy (no tenant_id),
+ *  no runtime-role grant; written only by chat_definer functions. No check(): a CHECK violation's DETAIL
+ *  would print previous_body. */
+export const chatMessageRevisions = pgTable("chat_message_revisions", {
+  messageId: uuid("message_id").notNull().references(() => chatMessages.id),
+  revisionNo: smallint("revision_no").notNull(),
+  previousBody: text("previous_body").notNull(),
+  editedByPersonId: uuid("edited_by_person_id").notNull().references(() => persons.id),
+  editedAt: timestamp("edited_at", { withTimezone: true }).notNull().default(sql`statement_timestamp()`),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.messageId, t.revisionNo] }),
+}));
+
+/** 0063 moderation audit: hide/restore only (mutes are out). Append-only, FORCE RLS + tenant_isolation
+ *  policy, no runtime-role grant; written only by chat_definer functions. Carries no message text. */
+export const chatModerationAudit = pgTable("chat_moderation_audit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id").notNull(),
+  channelId: uuid("channel_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  actorPersonId: uuid("actor_person_id").notNull().references(() => persons.id),
+  action: text("action").notNull(),
+  reasonCode: text("reason_code").notNull(),
+  reasonNote: text("reason_note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`statement_timestamp()`),
+}, (t) => ({
+  channelTenantFk: foreignKey({
+    columns: [t.channelId, t.tenantId],
+    foreignColumns: [chatChannels.id, chatChannels.tenantId],
+    name: "chat_moderation_audit_channel_tenant_fk",
+  }),
+  messageFk: foreignKey({
+    columns: [t.channelId, t.messageId],
+    foreignColumns: [chatMessages.channelId, chatMessages.id],
+    name: "chat_moderation_audit_message_fk",
+  }),
+  actionChk: check("chat_moderation_audit_action_chk", sql`${t.action} IN ('hide','restore')`),
+  reasonCodeChk: check("chat_moderation_audit_reason_code_chk",
+    sql`${t.reasonCode} IN ('spam','harassment','unsafe','off_topic','other')`),
+  reasonNoteChk: check("chat_moderation_audit_reason_note_chk",
+    sql`(${t.reasonCode} = 'other' AND ${t.reasonNote} IS NOT NULL AND octet_length(${t.reasonNote}) BETWEEN 1 AND 500)
+        OR (${t.reasonCode} <> 'other' AND ${t.reasonNote} IS NULL)`),
+}));
+
+/** 0063 command receipts (spec DDL verbatim; L14 writes only message.hide / message.restore). Append-only,
+ *  FORCE RLS + tenant_isolation policy, no runtime-role grant; written only by chat_definer functions.
+ *  Carries no message text. */
+export const chatCommandReceipts = pgTable("chat_command_receipts", {
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  actorPersonId: uuid("actor_person_id").notNull().references(() => persons.id),
+  commandId: uuid("command_id").notNull(),
+  action: text("action").notNull(),
+  canonicalFingerprint: text("canonical_fingerprint").notNull(),
+  resultJson: jsonb("result_json").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.tenantId, t.actorPersonId, t.commandId] }),
+  actionChk: check("chat_command_receipts_action_chk", sql`${t.action} IN ('channel.create','channel.rename',
+    'channel.set_default','channel.archive','message.hide','message.restore','member.mute')`),
+}));
+
 /* ===========================================================================
  * Payments ledger (TENANT-private, append-only)
  * ======================================================================== */

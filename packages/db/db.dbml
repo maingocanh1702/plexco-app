@@ -673,6 +673,45 @@ Table onboarding_steps {
   completed_at timestamptz
 }
 
+// 0063 chat command core: append-only, FORCE RLS, no runtime-role grant, written only by chat_definer
+// functions. Their chat_messages / chat_channels parents are not mirrored here yet (chat_* drift, see
+// the header), so those three refs are kept as comments at the end of Relationships.
+Table chat_message_revisions {
+  message_id uuid [not null]
+  revision_no smallint [not null]
+  previous_body text [not null]
+  edited_by_person_id uuid [not null]
+  edited_at timestamptz [not null]
+  indexes {
+    (message_id, revision_no) [pk]
+  }
+}
+
+Table chat_moderation_audit {
+  id uuid [pk]
+  tenant_id uuid [not null]
+  channel_id uuid [not null]
+  message_id uuid [not null]
+  actor_person_id uuid [not null]
+  action text [not null]
+  reason_code text [not null]
+  reason_note text
+  created_at timestamptz [not null]
+}
+
+Table chat_command_receipts {
+  tenant_id uuid [not null]
+  actor_person_id uuid [not null]
+  command_id uuid [not null]
+  action text [not null]
+  canonical_fingerprint text [not null]
+  result_json jsonb [not null]
+  created_at timestamptz [not null]
+  indexes {
+    (tenant_id, actor_person_id, command_id) [pk]
+  }
+}
+
 // ---- Relationships ----
 Ref: persons.merged_into_person_id > persons.id
 Ref: channel_identities.person_id > persons.id
@@ -751,4 +790,12 @@ Ref: notification_deliveries.tenant_id > tenants.id
 Ref: notification_deliveries.intent_id > notification_intents.id
 Ref: onboarding_runs.tenant_id > tenants.id
 Ref: onboarding_steps.run_id > onboarding_runs.id
+Ref: chat_message_revisions.edited_by_person_id > persons.id
+Ref: chat_moderation_audit.actor_person_id > persons.id
+Ref: chat_command_receipts.tenant_id > tenants.id
+Ref: chat_command_receipts.actor_person_id > persons.id
+// Parents not mirrored here yet (chat_* drift): uncomment when chat_channels / chat_messages land.
+// Ref: chat_message_revisions.message_id > chat_messages.id
+// Ref: chat_moderation_audit.(channel_id, tenant_id) > chat_channels.(id, tenant_id)
+// Ref: chat_moderation_audit.(channel_id, message_id) > chat_messages.(channel_id, id)
 // public_sessions & surface_refs intentionally have no FK (read-model / aggregate key)
