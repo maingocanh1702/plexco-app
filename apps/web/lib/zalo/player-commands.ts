@@ -1,4 +1,5 @@
-import { t } from "@plexco/core/i18n";
+import { getLang, t } from "@plexco/core/i18n";
+import { RosterMoneyError } from "@plexco/db";
 import type {
   claimZaloReplyContext,
   JoinableSessionsResult,
@@ -10,6 +11,9 @@ import type {
   readZaloPayContext,
   RosterMoneyErrorCode,
 } from "@plexco/db";
+import { log } from "../log";
+import { formatSessionDate, formatSessionTime } from "../session-time";
+import type { ParsedZaloCommand } from "./commands";
 
 /** M9 Zalo /join, /leave, /pay and number replies (readiness 4.4-4.7); rendered inside runWithLang. */
 export type ZaloListType = "join_list" | "leave_list";
@@ -27,6 +31,7 @@ export interface PlayerCommandDeps {
   throttled: (contextType: ZaloListType) => Promise<boolean>;
   readCharges: (accountRef: string) => ReturnType<typeof readMyCharges>;
   payContext: (sessionIds: string[]) => ReturnType<typeof readZaloPayContext>;
+  classify: (error: unknown) => string;
 }
 
 // The ONE mapping (4.7, RC-5): [vi, en] per row, one row per line so each pair reads side by side.
@@ -85,4 +90,50 @@ const BY_CODE = new Map<RosterMoneyErrorCode, ReplyId>([
 /** A RosterMoneyError code's 4.7 row; any other code is R-18 (fail closed, P-22). */
 export function replyIdForCode(code: string): ReplyId {
   return BY_CODE.get(code as RosterMoneyErrorCode) ?? "R18";
+}
+
+const ref = (s: { startsAt: string; timezone: string; area: string | null }, l = getLang()) =>
+  `${formatSessionDate(s.startsAt, s.timezone, l)} · ${formatSessionTime(s.startsAt, s.timezone, l)}${s.area ? ` · ${s.area}` : ""}`;
+const slots = (k: number | null) =>
+  k === 0 ? reply("R22full") : k && k > 0 ? reply("R22slots", { k }) : "";
+const OUTCOME = { active: "R1", waitlisted: "R2", requested: "R3" } as const;
+
+async function joinList(deps: PlayerCommandDeps): Promise<string> {
+  const list = await deps.listJoinable();
+  if (!list.member || list.sessions.length === 0) return reply(list.member ? "R21" : "R8");
+  const shown = list.sessions.slice(0, 9);
+  const ids = shown.map((s) => s.sessionId);
+  await deps.saveContext("join_list", ids);
+  const rows = shown.map((s, i) => reply("R22row", { n: i + 1, ref: ref(s) }) + slots(s.slotsOpen));
+  return [reply("R22head"), ...rows].concat(list.sessions[9] ? reply("R22more") : []).join("\n");
+}
+
+async function numberReply(token: string, deps: PlayerCommandDeps): Promise<string> {
+  const ctx = await deps.latestContext();
+  if (!ctx?.live || ctx.contextType !== "join_list") return reply("R9");
+  if (!/^[1-9]\d*$/.test(token) || +token > ctx.itemCount)
+    return reply("R20", { N: ctx.itemCount });
+  if (await deps.throttled(ctx.contextType)) return reply("R11");
+  const list = await deps.listJoinable();
+  if (!list.member) return reply("R8");
+  const claimed = await deps.claimContext({ id: ctx.id, version: ctx.version });
+  const row = list.sessions.find((s) => s.sessionId === claimed?.itemIds[+token - 1]);
+  if (!row) return reply("R9");
+  const r = await deps.join(row.sessionId);
+  return reply(OUTCOME[r.outcome], { ref: ref(row), n: r.waitlistPosition ?? "" });
+}
+
+/** join/leave/pay/number: the gate first (R-19), then one fail-closed catch (P-22, P-23). */
+export async function runPlayerCommand(cmd: ParsedZaloCommand, deps: PlayerCommandDeps) {
+  if (deps.gate.linked !== true) return reply("R19");
+  try {
+    if (cmd.kind === "join") return await joinList(deps);
+    if (cmd.kind === "number") return await numberReply(cmd.args[0] ?? "", deps);
+    return reply("R18");
+  } catch (error) {
+    const id = error instanceof RosterMoneyError ? replyIdForCode(error.code) : "R18";
+    const reason = error instanceof RosterMoneyError ? error.code : deps.classify(error);
+    if (id === "R18") log.error("zalo_player_command_failed", { command: cmd.kind, reason });
+    return reply(id);
+  }
 }

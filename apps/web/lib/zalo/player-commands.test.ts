@@ -1,6 +1,16 @@
 import { runWithLang } from "@plexco/core/i18n";
-import { describe, expect, it } from "vitest";
-import { reply, replyIdForCode, type ReplyId } from "./player-commands";
+import { RosterMoneyError } from "@plexco/db";
+import { describe, expect, it, vi } from "vitest";
+import { log } from "../log";
+import { formatSessionDate } from "../session-time";
+import type { ParsedZaloCommand } from "./commands";
+import {
+  reply,
+  replyIdForCode,
+  runPlayerCommand,
+  type PlayerCommandDeps,
+  type ReplyId,
+} from "./player-commands";
 
 // Every reply path asserts this (HARD RULE 2, D3): no bank detail, QR or pay code ever renders.
 const BANK = /bank|ngân hàng|\bstk\b|\bqr\b|số tài khoản|pay[_ ]?code|iban|swift/i;
@@ -65,5 +75,258 @@ describe("replyIdForCode (4.7 codes; fail-closed default R-18)", () => {
     const map = { ALREADY_JOINED: "R4", SESSION_NOT_JOINABLE: "R5", REJOIN_REQUIRES_REVIEW: "R6", CHARGE_DERIVATION_UNAVAILABLE: "R7", FORBIDDEN: "R8", SESSION_NOT_FOUND: "R9", PLAYER_NOT_FOUND: "R9", TENANT_SUSPENDED: "R10", LEAVE_REQUIRES_HOST: "R13", COMMAND_ID_CONFLICT: "R18", INVALID_INPUT: "R18", GENDER_FORBIDDEN: "R18", SESSION_NOT_OPEN: "R18", toString: "R18" };
     for (const [code, id] of Object.entries(map))
       expect([code, replyIdForCode(code)]).toEqual([code, id]);
+  });
+});
+
+// Join-path replies carry no amount at all, so no one's debt can appear (lane STOP line, D3).
+const expectSafe = (text: string) => {
+  expectNoBankData(text);
+  expect(text).not.toMatch(/\d\s?[đ₫]|vnd/i);
+};
+const AT = "2026-10-24T12:00:00.000Z"; // 19:00 in Asia/Ho_Chi_Minh: proves the session's own zone
+const sid = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+const row = (i: number, slotsOpen: number | null, area: string | null = "Sân A") => ({
+  sessionId: sid(i),
+  startsAt: AT,
+  timezone: "Asia/Ho_Chi_Minh",
+  area,
+  slotsOpen,
+});
+const JOIN: ParsedZaloCommand = { kind: "join", name: "join", args: [] };
+const num = (token: string): ParsedZaloCommand => ({
+  kind: "number",
+  name: "number",
+  args: [token],
+});
+const joined = (outcome: string, waitlistPosition: number | null = null) =>
+  vi.fn(async () => ({
+    outcome,
+    playerId: "pl-1",
+    waitlistPosition,
+    requestId: null,
+    replayed: false,
+  }));
+const unexpected = () => vi.fn(async () => Promise.reject(new Error("not stubbed")));
+const makeDeps = (over: Record<string, unknown> = {}) =>
+  ({
+    gate: { linked: true, accountRef: "acc-1" },
+    listJoinable: vi.fn(async () => ({
+      member: true,
+      sessions: [row(1, 2), row(2, 0, null), row(3, null)],
+    })),
+    listLeavable: unexpected(),
+    saveContext: vi.fn(async () => ({ id: "ctx-1", version: 4 })),
+    latestContext: vi.fn(async () => ({
+      id: "ctx-1",
+      version: 4,
+      contextType: "join_list",
+      itemCount: 3,
+      live: true,
+    })),
+    claimContext: vi.fn(async () => ({
+      contextType: "join_list",
+      itemIds: [sid(1), sid(2), sid(3)],
+    })),
+    join: joined("active"),
+    leave: unexpected(),
+    throttled: vi.fn(async () => false),
+    readCharges: unexpected(),
+    payContext: unexpected(),
+    classify: vi.fn(() => "PROCESSING_ERROR"),
+    ...over,
+  }) as unknown as PlayerCommandDeps;
+const run = (cmd: ParsedZaloCommand, d: PlayerCommandDeps, lang: "vi" | "en" = "en") =>
+  runWithLang(lang, () => runPlayerCommand(cmd, d));
+const EN = (id: ReplyId, vars: Record<string, string | number> = {}) =>
+  runWithLang("en", () => reply(id, vars));
+
+describe("runPlayerCommand: /join and the number reply on a join_list context (4.3, 4.4, 4.7)", () => {
+  it("R-19 when the gate is not linked: nothing else is read (T-4, T-5)", async () => {
+    for (const cmd of [JOIN, num("1")]) {
+      const d = makeDeps({ gate: { linked: false, accountRef: null } });
+      const text = await run(cmd, d);
+      expect(text).toBe(EN("R19"));
+      expectSafe(text);
+      for (const f of [
+        d.listJoinable,
+        d.saveContext,
+        d.latestContext,
+        d.throttled,
+        d.claimContext,
+        d.join,
+      ])
+        expect(f).not.toHaveBeenCalled();
+    }
+  });
+
+  it("/join lists the rows with {ref} and slot suffixes and stores them as join_list (P-10, P-20, R-22)", async () => {
+    const d = makeDeps();
+    const en = await run(JOIN, d);
+    const viText = await run(JOIN, makeDeps(), "vi");
+    const [de, dv] = [
+      formatSessionDate(AT, "Asia/Ho_Chi_Minh", "en"),
+      formatSessionDate(AT, "Asia/Ho_Chi_Minh", "vi"),
+    ];
+    expect(en.split("\n")).toEqual([
+      "Choose the session to join (reply with its number):",
+      `1. ${de} · 19:00 · Sân A (2 places left)`,
+      `2. ${de} · 19:00 (full: you join the waitlist)`,
+      `3. ${de} · 19:00 · Sân A`,
+    ]);
+    expect(viText.split("\n")).toEqual([
+      "Chọn buổi muốn tham gia (trả lời bằng số):",
+      `1. ${dv} · 19:00 · Sân A (còn 2 chỗ)`,
+      `2. ${dv} · 19:00 (đã đủ chỗ, vào danh sách chờ)`,
+      `3. ${dv} · 19:00 · Sân A`,
+    ]);
+    expect(d.saveContext).toHaveBeenCalledWith("join_list", [sid(1), sid(2), sid(3)]);
+    [en, viText].forEach(expectSafe);
+  });
+
+  it("a 10th row adds the more line and only the 9 shown ids are stored (RC-3, P-10)", async () => {
+    const sessions = Array.from({ length: 10 }, (_, i) => row(i + 1, 1));
+    const d = makeDeps({ listJoinable: vi.fn(async () => ({ member: true, sessions })) });
+    const lines = (await run(JOIN, d)).split("\n");
+    expect([lines.length, lines[9]?.startsWith("9. "), lines[10]]).toEqual([
+      11,
+      true,
+      EN("R22more"),
+    ]);
+    expect(d.saveContext).toHaveBeenCalledWith(
+      "join_list",
+      sessions.slice(0, 9).map((s) => s.sessionId),
+    );
+    expectSafe(lines.join("\n"));
+  });
+
+  it("R-8 for a non-member and R-21 for an empty list; no context row (P-3, P-10)", async () => {
+    for (const [list, id] of [
+      [{ member: false }, "R8"],
+      [{ member: true, sessions: [] }, "R21"],
+    ] as const) {
+      const d = makeDeps({ listJoinable: vi.fn(async () => list) });
+      const text = await run(JOIN, d);
+      expect(text).toBe(EN(id));
+      expectSafe(text);
+      expect(d.saveContext).not.toHaveBeenCalled();
+    }
+  });
+
+  it("number: R-9 without a live join_list context, R-20 out of range or with a leading zero (P-5, T-7)", async () => {
+    const cases: [Record<string, unknown>, string, string][] = [
+      [{ latestContext: vi.fn(async () => null) }, "1", EN("R9")],
+      [
+        {
+          latestContext: vi.fn(async () => ({
+            id: "c",
+            version: 1,
+            contextType: "join_list",
+            itemCount: 3,
+            live: false,
+          })),
+        },
+        "1",
+        EN("R9"),
+      ],
+      [
+        {
+          latestContext: vi.fn(async () => ({
+            id: "c",
+            version: 1,
+            contextType: "session_list",
+            itemCount: 3,
+            live: true,
+          })),
+        },
+        "1",
+        EN("R9"),
+      ],
+      [{}, "4", "Invalid number — choose 1 to 3."],
+      [{}, "0", "Invalid number — choose 1 to 3."],
+      [{}, "01", "Invalid number — choose 1 to 3."],
+    ];
+    for (const [over, token, want] of cases) {
+      const d = makeDeps(over);
+      const text = await run(num(token), d);
+      expect([token, text]).toEqual([token, want]);
+      expectSafe(text);
+      for (const f of [d.throttled, d.claimContext, d.join]) expect(f).not.toHaveBeenCalled();
+    }
+  });
+
+  it("R-11 when throttled: no claim and no join, so the context stays live (RC-6, P-26, T-23)", async () => {
+    const d = makeDeps({ throttled: vi.fn(async () => true) });
+    expect(await run(num("1"), d)).toBe(EN("R11"));
+    expect(d.throttled).toHaveBeenCalledWith("join_list");
+    for (const f of [d.claimContext, d.join]) expect(f).not.toHaveBeenCalled();
+  });
+
+  it("confirm claims the read version, joins the listed session and renders its state (R-1..R-3, T-6, T-8, T-16)", async () => {
+    const ref = `${formatSessionDate(AT, "Asia/Ho_Chi_Minh", "en")} · 19:00`;
+    const cases: [ReturnType<typeof joined>, string][] = [
+      [joined("active"), `You have a place in ${ref}.`],
+      [joined("waitlisted", 3), `${ref} is full. You are on the waitlist, position 3.`],
+      [joined("requested"), `Your request to join ${ref} was sent. The host will review it.`],
+    ];
+    for (const [join, want] of cases) {
+      const d = makeDeps({ join });
+      const text = await run(num("2"), d);
+      expect(text).toBe(want);
+      expectSafe(text);
+      expect(d.claimContext).toHaveBeenCalledWith({ id: "ctx-1", version: 4 });
+      expect(join).toHaveBeenCalledWith(sid(2));
+    }
+  });
+
+  it("confirm: R-9 on a lost claim or a session the live list no longer shows, R-8 for a lapsed member; no join", async () => {
+    const cases: [Record<string, unknown>, ReplyId][] = [
+      [{ claimContext: vi.fn(async () => null) }, "R9"],
+      [{ listJoinable: vi.fn(async () => ({ member: true, sessions: [row(1, 2)] })) }, "R9"],
+      [{ listJoinable: vi.fn(async () => ({ member: false })) }, "R8"],
+    ];
+    for (const [over, id] of cases) {
+      const d = makeDeps(over);
+      const text = await run(num("2"), d);
+      expect(text).toBe(EN(id));
+      expectSafe(text);
+      expect(d.join).not.toHaveBeenCalled();
+    }
+  });
+
+  it("codes map through the ONE table; R-18 codes and other throws log only {command, reason} (P-22, P-23, T-19)", async () => {
+    const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+    const boom = new Error("boom: message text");
+    const fails = (e: unknown) => vi.fn(async () => Promise.reject(e));
+    const cases: [ParsedZaloCommand, Record<string, unknown>, ReplyId, string | null][] = [
+      [num("1"), { join: fails(new RosterMoneyError("SESSION_NOT_JOINABLE", "x")) }, "R5", null],
+      [
+        num("1"),
+        { join: fails(new RosterMoneyError("CHARGE_DERIVATION_UNAVAILABLE", "x")) },
+        "R7",
+        null,
+      ],
+      [
+        num("1"),
+        { join: fails(new RosterMoneyError("COMMAND_ID_CONFLICT", "x")) },
+        "R18",
+        "COMMAND_ID_CONFLICT",
+      ],
+      [num("1"), { join: fails(boom) }, "R18", "PROCESSING_ERROR"],
+      [num("1"), { claimContext: fails(boom) }, "R18", "PROCESSING_ERROR"],
+      [JOIN, { listJoinable: fails(boom) }, "R18", "PROCESSING_ERROR"],
+    ];
+    for (const [cmd, over, id, reason] of cases) {
+      spy.mockClear();
+      const d = makeDeps(over);
+      const text = await run(cmd, d);
+      expect(text).toBe(EN(id));
+      expectSafe(text);
+      expect(spy.mock.calls).toEqual(
+        reason ? [["zalo_player_command_failed", { command: cmd.kind, reason }]] : [],
+      );
+      if (reason === "PROCESSING_ERROR") expect(d.classify).toHaveBeenCalledWith(boom);
+      else expect(d.classify).not.toHaveBeenCalled();
+    }
+    spy.mockRestore();
   });
 });
