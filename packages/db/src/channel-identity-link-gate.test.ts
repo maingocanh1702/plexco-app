@@ -204,7 +204,11 @@ const DENY_CASES: [string, () => Promise<string | null>][] = [
   ],
   [
     "LG-3e: merged person with no canonical pointer (merge pending)",
-    async () => makeChannelIdentity(await makePerson({ status: "merged", mergedInto: null })),
+    async () => {
+      const person = await makePerson({ status: "merged", mergedInto: null });
+      await addVerifiedEmail(await makeAccount(person)); // only the merged-person branch can deny
+      return makeChannelIdentity(person);
+    },
   ],
   ["LG-3f: no account", async () => makeChannelIdentity(await makePerson())],
   [
@@ -241,10 +245,9 @@ const DENY_CASES: [string, () => Promise<string | null>][] = [
 
 describe("channel_identity_link_gate decision table, as app (LG-1..LG-3; LG-4 on every call)", () => {
   it("LG-1: the core qualifies the identity -> (true, its account id), never the person id", async () => {
-    const { person, ci, account } = await seedQualified();
+    const { ci, account } = await seedQualified();
     const row = await gate(ci);
     expect(row).toEqual({ linked: true, account_ref: account });
-    expect(row.account_ref).not.toBe(person);
   });
 
   it("LG-1b: merged chain with every merged node tombstoned -> (true, the account on the active canonical)", async () => {
@@ -464,6 +467,7 @@ describe("channel_identity_link_gate lock footprint (LG-C1, LG-C2)", () => {
       expect(await gate(ci, client)).toEqual({ linked: true, account_ref: account });
       const { rows: xact } = await client.query(`SELECT pg_current_xact_id_if_assigned() AS x`);
       expect(xact[0].x).not.toBeNull(); // the FOR SHARE row locks assigned an xid: LG-6c's probe is live
+      const pid = await backendPid(client);
       const { rows } = await ctx.owner.query<{ rel: string; mode: string }>(
         `SELECT DISTINCT COALESCE(t.relname, c.relname)::text AS rel, l.mode
            FROM pg_locks l
@@ -472,8 +476,16 @@ describe("channel_identity_link_gate lock footprint (LG-C1, LG-C2)", () => {
            LEFT JOIN pg_index i ON i.indexrelid = c.oid
            LEFT JOIN pg_class t ON t.oid = i.indrelid
           WHERE l.pid = $1 AND l.locktype = 'relation' AND n.nspname = 'public'`,
-        [await backendPid(client)],
+        [pid],
       );
+      // and no advisory lock at all: one added to the wrapper or the core turns this red
+      const { rows: advisory } = await ctx.owner.query(
+        `SELECT l.classid, l.objid, l.objsubid, l.mode
+           FROM pg_locks l
+          WHERE l.pid = $1 AND l.locktype = 'advisory'`,
+        [pid],
+      );
+      expect(advisory).toEqual([]);
       const core = [
         "account_emails",
         "accounts",
