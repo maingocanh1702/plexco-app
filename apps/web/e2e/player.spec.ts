@@ -124,6 +124,9 @@ test("player journey discover -> join -> my sessions -> my charges", async ({ pa
   await page.getByRole("button", JOIN).click();
   await expect(page.getByText("Bạn đã có chỗ trong buổi này.")).toBeVisible();
   expect(api.callsTo("join")).toHaveLength(1);
+  // B-7, B-17: the POST goes to the listing's own join route (never a session uuid) with { commandId } only.
+  expect(api.callsTo("join")[0]?.path).toBe(`/api/public-listings/${LISTING_ID}/join`);
+  expect(api.callsTo("join")[0]?.body).toEqual({ commandId: expect.any(String) });
 
   // The server now holds the seat and its charge.
   api.reply("meSessions", ok({ sessions: [mySession()], truncated: false }));
@@ -336,6 +339,11 @@ test("me hub offline", async ({ page }) => {
   const { root } = await putScreenInState(page, "me hub", "offline");
   await expect(root).toHaveAttribute("data-state", "offline");
   await expect(root.locator('a[href^="/me/"]')).toHaveCount(4);
+  // R 4.6 S-4: the notice is MeFrame's banner (outside main), and the hub reads nothing, so no Retry.
+  await expect(
+    page.getByText("Bạn đang offline. Một số thao tác sẽ dùng được lại khi có mạng."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", RETRY)).toHaveCount(0);
 });
 
 test("join button offline", async ({ page }) => {
@@ -343,6 +351,7 @@ test("join button offline", async ({ page }) => {
   await expect(root).toHaveAttribute("data-state", "offline");
   await expect(page.getByRole("button", JOIN)).toBeDisabled();
   await expect(root.getByText("Bạn đang offline. Kết nối lại để tham gia.")).toBeVisible();
+  await expect(page.getByRole("button", RETRY)).toHaveCount(0); // R 4.6 S-3: a hint, never a Retry
   expect(api.callsTo("join")).toHaveLength(0);
   await page.context().setOffline(false);
   await expect(root).toHaveAttribute("data-state", "ready");
@@ -398,4 +407,90 @@ test("stale load more shows no error under a new list", async ({ page }) => {
   await settle(page);
   await expect(main.getByRole("alert")).toHaveCount(0);
   await expect(main.getByRole("button", { name: "Tải thêm" })).toBeEnabled();
+});
+
+// ---- S-10 host requests tab: a decide error, focus and offline (round 2: r2c 1, r2b 1) ----
+
+const APPROVE = { name: "Duyệt", exact: true } as const;
+const REJECT = { name: "Từ chối", exact: true } as const;
+const RELOAD = { name: "Tải lại dữ liệu", exact: true } as const;
+const NAMED = "Nguyễn Văn An"; // the mock's first pending request; the second has no display name
+const UNNAMED = "Người chơi chưa có tên";
+/** The host detail read: the roster rides on it, and the view's refresh refetches it. */
+const ROSTER_READ = /^\/api\/sessions\/[^/]+$/;
+/** What R8 / R9 answer: only the keys the outcome line reads (H-1). */
+const decided = (status: string, outcome: string | null = null) =>
+  ok({ request: { status, outcome, waitlistPosition: null } });
+/** This page's GETs of a path from now on, counted by the browser: the mock keeps no roster counter. */
+const gets = (page: Page, path: RegExp) => {
+  let seen = 0;
+  page.on("request", (r) => {
+    if (r.method() === "GET" && path.test(new URL(r.url()).pathname)) seen += 1;
+  });
+  return () => seen;
+};
+const hostRows = (page: Page) => ({
+  named: page.getByRole("listitem").filter({ hasText: NAMED }),
+  unnamed: page.getByRole("listitem").filter({ hasText: UNNAMED }),
+});
+
+test("host decide error: Reload refetches the list and the roster once, a decision focuses its outcome", async ({
+  page,
+}) => {
+  const { api } = await putScreenInState(page, "host requests tab", "ready", {
+    approve: decided("approved", "active"),
+    reject: decided("rejected"),
+  });
+  api.failNext("approve", fail("REQUEST_DECIDED", 409)); // the first Approve meets a mapped decide code
+  const { named, unnamed } = hostRows(page);
+  await expect(named).toBeVisible();
+  const rosterReads = gets(page, ROSTER_READ);
+  await named.getByRole("button", APPROVE).click();
+  const notice = named.getByRole("alert");
+  await expect(notice).toContainText("Yêu cầu này đã được xử lý.");
+  // F-1: the row Reload refetches the pending list AND the roster (a failed decision may have committed).
+  const lists = api.callsTo("hostRequests").length;
+  const roster = rosterReads();
+  await notice.getByRole("button", RELOAD).click();
+  await expect.poll(() => api.callsTo("hostRequests").length).toBe(lists + 1);
+  await expect.poll(rosterReads).toBe(roster + 1);
+  await settle(page);
+  expect(api.callsTo("hostRequests")).toHaveLength(lists + 1); // exactly one more of each
+  expect(rosterReads()).toBe(roster + 1);
+  await expect(notice).toHaveCount(0);
+  // F-5: a successful decision hands keyboard focus to its outcome line, for Approve and for Reject.
+  await named.getByRole("button", APPROVE).click();
+  await expect(page.getByText("Đã duyệt: có chỗ trong buổi.", { exact: true })).toBeFocused();
+  await unnamed.getByRole("button", REJECT).click();
+  await expect(page.getByText("Đã từ chối yêu cầu.", { exact: true })).toBeFocused();
+  expect(api.callsTo("approve")).toHaveLength(2);
+  expect(api.callsTo("reject")).toHaveLength(1);
+});
+
+test("host decision offline sends no POST, back online one press sends exactly one", async ({
+  page,
+}) => {
+  const { api } = await putScreenInState(page, "host requests tab", "ready", {
+    approve: decided("approved", "active"),
+  });
+  api.failNext("approve", NETWORK); // the first press is lost: the row offers Retry
+  const { named, unnamed } = hostRows(page);
+  await expect(named).toBeVisible();
+  await named.getByRole("button", APPROVE).click();
+  const retry = named.getByRole("alert").getByRole("button", RETRY);
+  await expect(retry).toBeVisible();
+  await page.context().setOffline(true);
+  await expect(named.getByRole("button", APPROVE)).toBeDisabled(); // useOnlineStatus has seen it
+  await retry.click({ force: true }); // offline: decide() must send nothing
+  await unnamed.getByRole("button", APPROVE).click({ force: true }); // a forced press of a disabled button
+  await settle(page);
+  expect(api.callsTo("approve")).toHaveLength(1);
+  // Online again, the same Retry sends exactly one more POST, with the same command id.
+  await page.context().setOffline(false);
+  await expect(named.getByRole("button", APPROVE)).toBeEnabled();
+  await retry.click();
+  await expect(page.getByText("Đã duyệt: có chỗ trong buổi.", { exact: true })).toBeVisible();
+  const posts = api.callsTo("approve");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.body?.commandId).toBe(posts[0]?.body?.commandId);
 });
