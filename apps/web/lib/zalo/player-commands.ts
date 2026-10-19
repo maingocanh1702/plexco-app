@@ -81,11 +81,16 @@ export function reply(id: ReplyId, vars: Record<string, string | number> = {}): 
   return t(vi, en).replace(/\{(\w+)\}/g, (m, k: string) => String(vars[k] ?? m));
 }
 
-// prettier-ignore
 const BY_CODE = new Map<RosterMoneyErrorCode, ReplyId>([
-  ["ALREADY_JOINED", "R4"], ["SESSION_NOT_JOINABLE", "R5"], ["REJOIN_REQUIRES_REVIEW", "R6"],
-  ["CHARGE_DERIVATION_UNAVAILABLE", "R7"], ["FORBIDDEN", "R8"], ["SESSION_NOT_FOUND", "R9"],
-  ["PLAYER_NOT_FOUND", "R9"], ["TENANT_SUSPENDED", "R10"], ["LEAVE_REQUIRES_HOST", "R13"],
+  ["ALREADY_JOINED", "R4"],
+  ["SESSION_NOT_JOINABLE", "R5"],
+  ["REJOIN_REQUIRES_REVIEW", "R6"],
+  ["CHARGE_DERIVATION_UNAVAILABLE", "R7"],
+  ["FORBIDDEN", "R8"],
+  ["SESSION_NOT_FOUND", "R9"],
+  ["PLAYER_NOT_FOUND", "R9"],
+  ["TENANT_SUSPENDED", "R10"],
+  ["LEAVE_REQUIRES_HOST", "R13"],
 ]);
 
 /** A RosterMoneyError code's 4.7 row; any other code is R-18 (fail closed, P-22). */

@@ -71,8 +71,22 @@ describe("reply (readiness 4.7, the ONE mapping R-1..R-22, P-13, P-30)", () => {
 
 describe("replyIdForCode (4.7 codes; fail-closed default R-18)", () => {
   it("maps each pinned code and every other code to R-18", () => {
-    // prettier-ignore
-    const map = { ALREADY_JOINED: "R4", SESSION_NOT_JOINABLE: "R5", REJOIN_REQUIRES_REVIEW: "R6", CHARGE_DERIVATION_UNAVAILABLE: "R7", FORBIDDEN: "R8", SESSION_NOT_FOUND: "R9", PLAYER_NOT_FOUND: "R9", TENANT_SUSPENDED: "R10", LEAVE_REQUIRES_HOST: "R13", COMMAND_ID_CONFLICT: "R18", INVALID_INPUT: "R18", GENDER_FORBIDDEN: "R18", SESSION_NOT_OPEN: "R18", toString: "R18" };
+    const map = {
+      ALREADY_JOINED: "R4",
+      SESSION_NOT_JOINABLE: "R5",
+      REJOIN_REQUIRES_REVIEW: "R6",
+      CHARGE_DERIVATION_UNAVAILABLE: "R7",
+      FORBIDDEN: "R8",
+      SESSION_NOT_FOUND: "R9",
+      PLAYER_NOT_FOUND: "R9",
+      TENANT_SUSPENDED: "R10",
+      LEAVE_REQUIRES_HOST: "R13",
+      COMMAND_ID_CONFLICT: "R18",
+      INVALID_INPUT: "R18",
+      GENDER_FORBIDDEN: "R18",
+      SESSION_NOT_OPEN: "R18",
+      toString: "R18",
+    };
     for (const [code, id] of Object.entries(map))
       expect([code, replyIdForCode(code)]).toEqual([code, id]);
   });
