@@ -221,8 +221,8 @@ export interface ChatChannelDto {
 }
 
 /** A readable chat message (history GET). No author person id or any other person identifier on
- *  the wire (RO-L15-3 g): `mine` + `authorType` only. createdAt is L14's text verbatim, the same
- *  string the history cursor carries (D-2). */
+ *  the wire (RO-L15-3 g): `mine` + `authorType` only. createdAt and editedAt are ISO-8601 UTC on
+ *  the wire; only the history cursor carries L14's raw timestamptz text (D-2, readiness 4.3). */
 export interface ChatLiveMessageDto {
   id: string;
   channelId: string;
