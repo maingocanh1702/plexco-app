@@ -1,8 +1,9 @@
 "use client";
 
 import type { PendingJoinRequestDto } from "@plexco/core";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { apiFetch, CLIENT_NETWORK_ERROR } from "../../lib/api-client";
+import { badResponse, rec, required, rows, str } from "../../lib/discover-api";
 import { useT, type TFn } from "../../lib/i18n-client";
 import { describePlayerError } from "../../lib/session-error-ui";
 import { tenantQuery, type SessionApiContext, type SessionDetailDto } from "../../lib/sessions-api";
@@ -32,6 +33,31 @@ export type RowPhase =
   | { kind: "failed"; action: Action; error: unknown };
 
 const TIMEOUT_MS = 15_000;
+
+/** The loadable's abort signal joined to the time limit (F-2); AbortSignal.any needs Safari 17.4, .timeout 16. */
+function withTimeout(signal: AbortSignal, ms: number): AbortSignal {
+  const merged = new AbortController();
+  for (const source of [signal, AbortSignal.timeout(ms)]) {
+    if (source.aborted) merged.abort();
+    else source.addEventListener("abort", () => merged.abort(), { once: true });
+  }
+  return merged.signal;
+}
+
+/** The R7 body rebuilt to the keys the inbox shows (H-1); any other shape is CLIENT_BAD_RESPONSE, never a crash (F-3). */
+export function parsePending(body: unknown): { requests: PendingJoinRequestDto[] } {
+  const requests = rows(rec(body)?.requests, (value) => {
+    const item = rec(value);
+    const keys = required(item, ["requestId", "createdAt"]);
+    if (!item || !keys) throw badResponse();
+    return { ...keys, displayName: str(item.displayName) };
+  });
+  return { requests };
+}
+
+/** The R7 read: bounded by the time limit and parsed, not cast (F-2, F-3). */
+export const fetchPending = (path: string, signal: AbortSignal, ms = TIMEOUT_MS) =>
+  apiFetch<unknown>(path, { signal: withTimeout(signal, ms) }).then(parsePending);
 
 /** The line comes from the decision response only; an unknown outcome claims nothing. */
 function resultLine(result: DecisionResult, t: TFn): string {
@@ -114,6 +140,11 @@ export function RequestInboxView({
   renderRow: (request: PendingJoinRequestDto) => ReactNode;
 }) {
   const t = useT();
+  // F-5: the decided row leaves the list and takes keyboard focus with it, so the outcome line takes it.
+  const resultRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    resultRef.current?.focus();
+  }, [result]);
   const offline =
     !online || (state.status === "error" && state.error.code === CLIENT_NETWORK_ERROR);
   const empty = state.status === "ready" && state.data.requests.length === 0;
@@ -121,7 +152,7 @@ export function RequestInboxView({
   return (
     <section className={styles.inbox} data-state={kind} aria-busy={kind === "loading" || undefined}>
       {result ? (
-        <p role="status" className={styles.result}>
+        <p ref={resultRef} tabIndex={-1} role="status" className={styles.result}>
           {resultLine(result, t)}
         </p>
       ) : null}
@@ -239,12 +270,17 @@ export function RequestInbox({
   const [result, setResult] = useState<DecisionResult | null>(null);
   const { state, reload, refresh } = useLoadable(
     (signal) =>
-      apiFetch<{ requests: PendingJoinRequestDto[] }>(
+      fetchPending(
         `/api/sessions/${encodeURIComponent(session.id)}/join-requests?${tenantQuery(ctx.tenantId)}`,
-        { signal },
+        signal,
       ),
     [session.id, ctx.tenantId],
   );
+  // The roster refetches with the list: a decision that errored may still have committed (F-1).
+  const refreshAll = () => {
+    refresh();
+    onChanged();
+  };
   return (
     <RequestInboxView
       state={state}
@@ -259,10 +295,9 @@ export function RequestInbox({
           online={online}
           onDecided={(decided) => {
             setResult(decided);
-            refresh(); // the decided row leaves the pending list (F-6)
-            onChanged();
+            refreshAll(); // the decided row leaves the pending list (F-6)
           }}
-          onReload={refresh}
+          onReload={refreshAll}
         />
       )}
     />

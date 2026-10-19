@@ -55,6 +55,7 @@ function ClubCharges({ status, onRetry }: { status: SelfPaymentStatus; onRetry: 
   }
   return (
     <>
+      <p className={styles.note}>{t("Còn phải trả", "Outstanding")}</p>
       <p className={styles.total}>{formatVnd(status.totalOutstanding)}</p>
       <ul className={discover.list}>
         {items.map((item) => {

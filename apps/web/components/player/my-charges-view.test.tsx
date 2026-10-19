@@ -177,6 +177,13 @@ describe("MyChargesView", () => {
     }
   });
 
+  it("each club's own total is labelled, not a bare amount (F-7)", () => {
+    const visible = text(render(KNOWN)).replace(/\s+/g, " ");
+    for (const amount of [60000, 25000]) {
+      expect(visible).toContain(`Outstanding ${formatVnd(amount)}`.replace(/\s+/g, " "));
+    }
+  });
+
   it("renders vi and en", () => {
     const inVi = text(render(KNOWN, "vi"));
     const inEn = text(render(KNOWN, "en"));

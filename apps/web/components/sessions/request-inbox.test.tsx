@@ -1,10 +1,16 @@
 import type { PendingJoinRequestDto } from "@plexco/core";
 import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
-import { ApiClientError } from "../../lib/api-client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "../../lib/api-client";
 import { LangProvider } from "../../lib/i18n-client";
-import { RequestInboxView, RequestRowView, type RowPhase } from "./request-inbox";
+import {
+  fetchPending,
+  parsePending,
+  RequestInboxView,
+  RequestRowView,
+  type RowPhase,
+} from "./request-inbox";
 import { SessionDetailView } from "./session-detail-view";
 
 // ApiErrorNotice calls useRouter(), and no app router is mounted in a static render.
@@ -265,6 +271,90 @@ describe("RequestInboxView", () => {
     for (const state of states) expect(inbox(state, {}, "vi")).not.toBe(inbox(state, {}, "en"));
     expect(text(inbox(ready(request()), {}, "vi"))).toContain("Duyệt");
     expect(text(inbox(ready(request()), {}, "en"))).toContain("Approve");
+  });
+});
+
+describe("pending list read", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const codeOf = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (error) {
+      return (error as ApiClientError).code;
+    }
+    return null;
+  };
+  // fetch as a hung server sees it: settles only when its signal aborts (at once if it already did).
+  const hang = (_url: string, init: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      const stop = () => reject(new DOMException("aborted", "AbortError"));
+      if (init.signal?.aborted) stop();
+      else init.signal?.addEventListener("abort", stop);
+    });
+  const answer = (data: unknown) =>
+    new Response(JSON.stringify({ data, meta: { requestId: "req-1" } }), { status: 200 });
+  const live = () => new AbortController().signal;
+  const stamp = "2026-10-18T03:00:00.000Z";
+
+  it.each([
+    ["the body is null", null],
+    ["there is no requests key", {}],
+    ["requests is not a list", { requests: "none" }],
+    ["a row is null", { requests: [null] }],
+    ["a row has no requestId", { requests: [{ displayName: "Lan Anh", createdAt: stamp }] }],
+    ["a row has no createdAt", { requests: [{ requestId: REQUEST_ID, displayName: "Lan Anh" }] }],
+  ])("F-3: %s => CLIENT_BAD_RESPONSE, not a crash in render", (_label, body) => {
+    expect(codeOf(() => parsePending(body))).toBe(CLIENT_BAD_RESPONSE);
+  });
+
+  it("F-3: each row is rebuilt to requestId, displayName and createdAt only", () => {
+    const extra = { ...request(), playerId: "p-1", phone: "0900000000" };
+    const nameless = { requestId: "r-2", createdAt: stamp };
+    expect(parsePending({ requests: [extra, nameless] })).toEqual({
+      requests: [request(), { ...nameless, displayName: null }],
+    });
+  });
+
+  it("F-3: a 200 whose body is not the list fails the read; a well-formed one passes", async () => {
+    vi.stubGlobal("fetch", async () => answer({ requests: "none" }));
+    await expect(fetchPending("/api/x", live())).rejects.toMatchObject({
+      code: CLIENT_BAD_RESPONSE,
+    });
+    vi.stubGlobal("fetch", async () => answer({ requests: [request()] }));
+    await expect(fetchPending("/api/x", live())).resolves.toEqual({ requests: [request()] });
+  });
+
+  it("F-2: a hung read ends in CLIENT_NETWORK_ERROR once the time limit passes", async () => {
+    vi.stubGlobal("fetch", hang);
+    await expect(fetchPending("/api/x", live(), 20)).rejects.toMatchObject({
+      code: CLIENT_NETWORK_ERROR,
+    });
+  });
+
+  it("F-2: the loadable's own abort still ends the read, even one already aborted", async () => {
+    vi.stubGlobal("fetch", hang);
+    const running = new AbortController();
+    const read = fetchPending("/api/x", running.signal, 60_000);
+    running.abort();
+    await expect(read).rejects.toMatchObject({ code: CLIENT_NETWORK_ERROR });
+    const gone = new AbortController();
+    gone.abort();
+    await expect(fetchPending("/api/x", gone.signal, 60_000)).rejects.toMatchObject({
+      code: CLIENT_NETWORK_ERROR,
+    });
+  });
+});
+
+describe("decision result line", () => {
+  it("F-5: it is a programmatic focus target (tabindex -1) for when the decided row leaves", () => {
+    const state: ComponentProps<typeof RequestInboxView>["state"] = {
+      status: "ready",
+      data: { requests: [request()] },
+    };
+    const tagOf = (html: string) => /<p[^>]*role="status"[^>]*>/.exec(html)?.[0] ?? "";
+    const decided = inbox(state, { result: { status: "approved", outcome: "active" } });
+    expect(tagOf(decided)).toContain('tabindex="-1"');
+    expect(tagOf(inbox(state))).toBe("");
   });
 });
 
