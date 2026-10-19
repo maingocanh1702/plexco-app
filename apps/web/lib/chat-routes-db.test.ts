@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   createWebSession,
   deleteChatMessage,
+  editChatMessage,
   moderateChatMessage,
   rateLimitCheck,
   sendChatMessage,
@@ -275,6 +276,21 @@ describe("GET /api/chat/channels/:id/messages (history)", () => {
     const live = await send(c, a, "kept text");
     const gone = await send(c, a, "deleted text");
     const hidden = await send(c, b, "hidden text");
+    // S4: each tombstone has a revision behind it, so a leaked editedAt or editCount would show.
+    for (const [who, msg] of [
+      [a, gone],
+      [b, hidden],
+    ] as const) {
+      const e = await asActor(c, who, (tx) =>
+        editChatMessage(tx, {
+          channelId: c.c,
+          messageId: msg.id,
+          body: "edited text",
+          expectedEditCount: 0,
+        }),
+      );
+      expect(e).toMatchObject({ editCount: 1, changed: true });
+    }
     await asActor(c, a, (tx) => deleteChatMessage(tx, { channelId: c.c, messageId: gone.id }));
     await asActor(c, mod, (tx) =>
       moderateChatMessage(tx, {
@@ -297,7 +313,9 @@ describe("GET /api/chat/channels/:id/messages (history)", () => {
       expect(m.tombstone).toBe(kind);
     }
     expect(byId.get(live.id)).toMatchObject({ body: "kept text", mine: false, tombstone: null });
-    expect(JSON.stringify(r.body)).not.toMatch(/deleted text|hidden text|authorPersonId/);
+    expect(JSON.stringify(r.body)).not.toMatch(
+      /deleted text|hidden text|edited text|authorPersonId/,
+    );
     const mine = (await get(a, c.t, c.c)).body.data.messages[0];
     expect(mine).toMatchObject({ id: hidden.id }); // newest first
     const first = (await get(a, c.t, c.c, "&limit=3")).body.data.messages[2];
