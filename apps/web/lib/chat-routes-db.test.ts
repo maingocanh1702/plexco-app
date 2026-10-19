@@ -24,6 +24,8 @@ import {
   PATCH as patchMessage,
 } from "../app/api/chat/channels/[id]/messages/[messageId]/route";
 import { GET as history, POST as postMessage } from "../app/api/chat/channels/[id]/messages/route";
+import { POST as postRead } from "../app/api/chat/channels/[id]/read/route";
+import { GET as listChannels } from "../app/api/chat/channels/route";
 import { decodeChatCursor, encodeChatCursor } from "./chat-route";
 import { appDb, hashToken, resetDbRoleViolationForTests } from "./session-cookies";
 
@@ -991,5 +993,208 @@ describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, rest
     for (const s of spies) s.mockRestore();
     expect(logged).not.toContain("flagged text");
     expect(logged).not.toContain("seed body");
+  });
+});
+
+/** GET channels; every chat response is no-store (N1). */
+async function channels(a: Actor | null, tenant: string) {
+  cookieJar.token = a?.token;
+  const res = await listChannels(
+    new Request(`https://plexco.app/api/chat/channels?tenant=${tenant}`),
+  );
+  expect(res.headers.get("cache-control")).toBe("no-store");
+  const body = (await res.json()) as Envelope;
+  return { status: res.status, body, code: body.error?.code };
+}
+
+/** The actor's read cursor in the channel, read as owner (null = never marked). */
+async function cursor(c: Club, a: Actor): Promise<string | null> {
+  const { rows } = await ctx.owner.query<{ id: string | null }>(
+    `SELECT last_read_message_id AS id FROM chat_members WHERE channel_id = $1 AND person_id = $2`,
+    [c.c, a.personId],
+  );
+  return rows[0]!.id;
+}
+
+describe("GET /api/chat/channels (list)", () => {
+  it("T1 no session -> 401; T22 an empty or non-uuid tenant -> 400, never echoed", async () => {
+    const c = await club();
+    expect(await channels(null, c.t)).toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+    const a = await actor(c.t);
+    for (const t of ["", "not-a-uuid"]) {
+      const r = await channels(a, t);
+      expect(r).toMatchObject({ status: 400, code: "INVALID_BODY" });
+      expect(JSON.stringify(r.body)).not.toContain("not-a-uuid");
+    }
+  });
+
+  it("T25 a member of two clubs -> 200 exactly ChatChannelDto for ?tenant= only; own rows not unread", async () => {
+    const [c, other] = [await club(), await club()];
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    await ctx.owner.query(
+      `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active')`,
+      [other.t, a.personId],
+    );
+    await seed(c, b, [ts(1), ts(2), ts(3)]);
+    await seed(c, a, [ts(4)]);
+    const r = await channels(a, c.t);
+    expect(r.status).toBe(200);
+    const general = { id: c.c, title: "general", sortOrder: 0, isDefault: true };
+    expect(r.body).toEqual({
+      data: { channels: [{ ...general, postPolicy: "all_members", unreadCount: 3 }] },
+      error: null,
+      meta: expect.anything(),
+    });
+    expect(JSON.stringify(r.body)).not.toContain("seed body");
+    expect((await channels(a, other.t)).body.data.channels).toMatchObject([{ id: other.c }]);
+  });
+
+  it("T2 cross-tenant, guest, a member with no readable channel (D-23) -> the one 403 body", async () => {
+    const [c, other, bare] = [await club(), await club(), await club()];
+    const stranger = await actor(other.t);
+    const [guest, member] = [await actor(c.t, "guest"), await actor(bare.t)];
+    await ctx.owner.query(`UPDATE chat_channels SET archived_at = now() WHERE id = $1`, [bare.c]);
+    const cases = [
+      await channels(stranger, c.t),
+      await channels(guest, c.t),
+      await channels(member, bare.t),
+      await get(stranger, c.t, c.c),
+    ];
+    const one = (r: (typeof cases)[number]) =>
+      JSON.stringify([r.status, r.body.data, r.body.error]);
+    expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
+  });
+
+  it("T23 a suspended club: its member -> TENANT_SUSPENDED, a non-member -> the one body", async () => {
+    const off = await club(false);
+    const [m, stranger] = [await actor(off.t), await actor((await club()).t)];
+    expect(await channels(m, off.t)).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
+    expect(await channels(stranger, off.t)).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+  });
+});
+
+async function markRead(
+  a: Actor | null,
+  tenant: string,
+  channel: string,
+  payload: unknown,
+  csrf: string | null | undefined = a?.csrf,
+) {
+  cookieJar.token = a?.token;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (csrf) headers["x-csrf-token"] = csrf;
+  const url = `https://plexco.app/api/chat/channels/${channel}/read?tenant=${tenant}`;
+  const body = typeof payload === "string" ? payload : JSON.stringify(payload);
+  const res = await postRead(new Request(url, { method: "POST", headers, body }), {
+    params: Promise.resolve({ id: channel }),
+  });
+  expect(res.headers.get("cache-control")).toBe("no-store");
+  const env = (await res.json()) as Envelope;
+  return { status: res.status, body: env, code: env.error?.code };
+}
+
+describe("POST /api/chat/channels/:id/read (read cursor)", () => {
+  it("T1 no session -> 401; C1 missing or wrong x-csrf-token -> 403 CSRF_INVALID, no cursor", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const through = { throughMessageId: (await send(c, b, "hello")).id };
+    const anon = await markRead(null, c.t, c.c, through);
+    expect(anon).toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+    for (const csrf of [null, "wrong"]) {
+      const r = await markRead(a, c.t, c.c, through, csrf);
+      expect(r).toMatchObject({ status: 403, code: "CSRF_INVALID" });
+    }
+    expect(await cursor(c, a)).toBeNull();
+  });
+
+  it("T24 forward then backward -> 200 {}, never moves back; off-channel or unknown -> 404", async () => {
+    const [c, other] = [await club(), await club()];
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    await seed(c, b, [ts(1), ts(2)]);
+    await seed(other, await actor(other.t), [ts(3)]);
+    const [m2, m1] = await order(c);
+    const [foreign] = await order(other);
+    expect((await channels(a, c.t)).body.data.channels[0].unreadCount).toBe(2);
+    for (const throughMessageId of [m2!, m1!]) {
+      const r = await markRead(a, c.t, c.c, { throughMessageId });
+      expect([r.status, r.body.data, r.body.error]).toEqual([200, {}, null]);
+      expect(await cursor(c, a)).toBe(m2);
+    }
+    expect((await channels(a, c.t)).body.data.channels[0].unreadCount).toBe(0);
+    for (const throughMessageId of [foreign!, randomUUID()]) {
+      const r = await markRead(a, c.t, c.c, { throughMessageId });
+      expect(r).toMatchObject({ status: 404, code: "NOT_FOUND" });
+    }
+    expect(await cursor(c, a)).toBe(m2);
+  });
+
+  it("T2 cross-tenant, guest, unknown, other-tenant and DM channel -> the one 403 body", async () => {
+    const [c, other] = [await club(), await club()];
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const [guest, stranger] = [await actor(c.t, "guest"), await actor(other.t)];
+    const through = { throughMessageId: (await send(c, b, "hello")).id };
+    await ctx.owner.query("BEGIN");
+    const dm = await ctx.owner.query<{ id: string }>(
+      `INSERT INTO chat_channels (kind, dm_key) VALUES ('dm', $1) RETURNING id`,
+      [[a.personId, b.personId].sort().join(":")],
+    );
+    const dmId = dm.rows[0]!.id;
+    await ctx.owner.query(
+      `INSERT INTO chat_members (channel_id, person_id) VALUES ($1, $2), ($1, $3)`,
+      [dmId, a.personId, b.personId],
+    );
+    await ctx.owner.query("COMMIT");
+    const cases = [
+      await markRead(stranger, c.t, c.c, through),
+      await markRead(guest, c.t, c.c, through),
+      await markRead(a, c.t, randomUUID(), through),
+      await markRead(a, c.t, other.c, through),
+      await markRead(a, c.t, dmId, through),
+    ];
+    const one = (r: (typeof cases)[number]) =>
+      JSON.stringify([r.status, r.body.data, r.body.error]);
+    expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
+    expect(await cursor(c, a)).toBeNull();
+  });
+
+  it("T22 non-uuid tenant, channel or throughMessageId, bad JSON or a non-object -> 400", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const bad = "not-a-uuid";
+    const ok = { throughMessageId: randomUUID() };
+    const cases = [
+      await markRead(a, bad, c.c, ok),
+      await markRead(a, c.t, bad, ok),
+      await markRead(a, c.t, c.c, { throughMessageId: bad }),
+      await markRead(a, c.t, c.c, { throughMessageId: 5 }),
+      await markRead(a, c.t, c.c, {}),
+      await markRead(a, c.t, c.c, "{"),
+      await markRead(a, c.t, c.c, "[]"),
+      await markRead(a, c.t, c.c, "null"),
+    ];
+    for (const r of cases) {
+      expect(r).toMatchObject({ status: 400, code: "INVALID_BODY" });
+      expect(JSON.stringify(r.body)).not.toContain(bad);
+    }
+  });
+
+  it("T23 suspended member -> TENANT_SUSPENDED, non-member the one body; D-5 shared 429", async () => {
+    const off = await club(false);
+    const [m, stranger] = [await actor(off.t), await actor((await club()).t)];
+    const through = { throughMessageId: randomUUID() };
+    const suspended = await markRead(m, off.t, off.c, through);
+    expect(suspended).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
+    const outsider = await markRead(stranger, off.t, off.c, through);
+    expect(outsider).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    const c = await club();
+    const a = await actor(c.t);
+    for (let i = 0; i < 60; i++) {
+      expect(await rateLimitCheck(runtime!.pool, `chat-read:${a.personId}`, 60, 60)).toBe(true);
+    }
+    const limited = await markRead(a, c.t, c.c, through);
+    expect(limited).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
+    expect(await channels(a, c.t)).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
   });
 });
