@@ -1,4 +1,4 @@
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type pg from "pg";
 import type { Db, Tx } from "./client.js";
 import {
@@ -6,9 +6,12 @@ import {
   onboardingRuns,
   onboardingSteps,
   processedCommands,
+  sessions,
   zaloBots,
 } from "../schema.js";
+import { OPEN_CHARGES_CAP } from "./me-player-reads.js";
 import { pgErrorChainText, pgErrorHasCode } from "./pg-error.js";
+import { isUuid } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -221,6 +224,41 @@ export async function resolveZaloLinkGate(
   return r?.linked === true && typeof r.account_ref === "string"
     ? { linked: true, accountRef: r.account_ref }
     : { linked: false, accountRef: null };
+}
+
+/**
+ * /pay context (4.6, P-17): this club's slug (tenant_profile_read, 0052) and the timezone and area of
+ * the given sessions, in ONE withTenant(tenantId) transaction. The sessions statement runs only for a
+ * non-empty sessionIds and filters on tenant_id on top of RLS, so another tenant's id is never
+ * returned. Ids are checked (UUIDs, at most OPEN_CHARGES_CAP) before any DB call; the error text
+ * carries no id. Reads no money, venue, name or bank column.
+ */
+export async function readZaloPayContext(
+  db: Db,
+  p: { tenantId: string; sessionIds: string[] },
+): Promise<{
+  slug: string | null;
+  sessions: Map<string, { timezone: string; area: string | null }>;
+}> {
+  if (p.sessionIds.length > OPEN_CHARGES_CAP || !p.sessionIds.every(isUuid))
+    throw new Error(`readZaloPayContext: sessionIds must be at most ${OPEN_CHARGES_CAP} UUIDs`);
+  return withTenant(db, p.tenantId, async (tx) => {
+    const profile = await tx.execute(
+      sql`SELECT slug FROM tenant_profile_read(${p.tenantId}::uuid)`,
+    );
+    const slug = (profile.rows[0] as { slug: string } | undefined)?.slug ?? null;
+    const rows =
+      p.sessionIds.length === 0
+        ? []
+        : await tx
+            .select({ id: sessions.id, timezone: sessions.timezone, area: sessions.area })
+            .from(sessions)
+            .where(and(eq(sessions.tenantId, p.tenantId), inArray(sessions.id, p.sessionIds)));
+    return {
+      slug,
+      sessions: new Map(rows.map((r) => [r.id, { timezone: r.timezone, area: r.area }])),
+    };
+  });
 }
 
 /** Ciphertext of the bot token for the web process about to call Zalo (decrypt + audit are the caller's job). */

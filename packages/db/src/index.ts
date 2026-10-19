@@ -46,6 +46,7 @@ export {
   markBotVerifiedActive,
   probeZaloConnectReplay,
   readZaloBotTokenEnc,
+  readZaloPayContext,
   resolveZaloBotByToken,
   resolveZaloIdentity,
   resolveZaloLinkGate,

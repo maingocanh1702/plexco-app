@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Db } from "./client.js";
+import { fixtures } from "./roster-money-fixtures.js";
 import { withTenant } from "./tenant.js";
 import {
   appendSecretDecryptAudit,
@@ -9,6 +11,7 @@ import {
   finishZaloConnect,
   markBotVerifiedActive,
   getZaloOnboardingState,
+  readZaloPayContext,
   resolveZaloBotByToken,
   resolveZaloIdentity,
   resolveZaloLinkGate,
@@ -816,5 +819,65 @@ describe("resolveZaloLinkGate (T-22, R1: the merged wrapper, role app)", () => {
     await expect(
       resolveZaloLinkGate(ctx.readonlyPool, await channelIdentity(p)),
     ).rejects.toMatchObject({ code: "42501" });
+  });
+});
+
+describe("readZaloPayContext (/pay DB legs of T-13, T-15, T-17, role app)", () => {
+  const fx = fixtures(() => ctx);
+  const HCM = "Asia/Ho_Chi_Minh"; // the timezone seedSession writes; its area is 'Quan 1'
+  const slugOf = async (tenantId: string): Promise<string> =>
+    (
+      (await ctx.owner.query(`SELECT slug FROM tenants WHERE id = $1`, [tenantId])).rows[0] as {
+        slug: string;
+      }
+    ).slug;
+
+  it("T-13: the bot tenant's slug and only its sessions; a tenantB id in sessionIds is absent", async () => {
+    const a1 = await fx.seedSession(ctx.tenantA);
+    const a2 = await fx.seedSession(ctx.tenantA);
+    await ctx.owner.query(`UPDATE sessions SET area = NULL WHERE id = $1`, [a2]);
+    const b1 = await fx.seedSession(ctx.tenantB);
+    expect(
+      await readZaloPayContext(ctx.appDb.db, { tenantId: ctx.tenantA, sessionIds: [a1, a2, b1] }),
+    ).toEqual({
+      slug: await slugOf(ctx.tenantA),
+      sessions: new Map([
+        [a1, { timezone: HCM, area: "Quan 1" }],
+        [a2, { timezone: HCM, area: null }],
+      ]),
+    });
+  });
+
+  it("T-17: a matched item whose session lives in another tenant is never found (web: R-17)", async () => {
+    const b1 = await fx.seedSession(ctx.tenantB);
+    expect(
+      await readZaloPayContext(ctx.appDb.db, { tenantId: ctx.tenantA, sessionIds: [b1] }),
+    ).toEqual({ slug: await slugOf(ctx.tenantA), sessions: new Map() });
+  });
+
+  it("T-15: sessionIds [] -> the slug only; an unknown tenant -> slug null and no sessions", async () => {
+    expect(
+      await readZaloPayContext(ctx.appDb.db, { tenantId: ctx.tenantA, sessionIds: [] }),
+    ).toEqual({ slug: await slugOf(ctx.tenantA), sessions: new Map() });
+    const a1 = await fx.seedSession(ctx.tenantA);
+    expect(
+      await readZaloPayContext(ctx.appDb.db, { tenantId: randomUUID(), sessionIds: [a1] }),
+    ).toEqual({ slug: null, sessions: new Map() });
+  });
+
+  it("T-15: a non-UUID id or more than 200 ids throws a fixed message before any DB call", async () => {
+    const noDb = {} as Db; // any DB access would throw a TypeError, not the fixed message
+    const ids200 = Array.from({ length: 200 }, () => randomUUID());
+    for (const sessionIds of [["x' OR 1=1 --"], [randomUUID(), ""], [...ids200, randomUUID()]]) {
+      await expect(readZaloPayContext(noDb, { tenantId: ctx.tenantA, sessionIds })).rejects.toThrow(
+        /^readZaloPayContext: sessionIds must be at most 200 UUIDs$/,
+      );
+    }
+    // Exactly OPEN_CHARGES_CAP ids is allowed: it reaches the DB and finds none of them.
+    const got = await readZaloPayContext(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      sessionIds: ids200,
+    });
+    expect(got.sessions.size).toBe(0);
   });
 });
