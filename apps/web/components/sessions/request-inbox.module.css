@@ -1,0 +1,59 @@
+/* S-10 host join-requests tab. Tokens only. */
+
+.inbox {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-card);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* a decide error (the third child) takes the whole row */
+.row > :nth-child(3) {
+  flex-basis: 100%;
+}
+
+.who {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.when,
+.notice p {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.notice {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+}
+
+.result {
+  margin: 0;
+  font-weight: var(--font-semibold);
+}

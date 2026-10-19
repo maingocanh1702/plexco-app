@@ -17,6 +17,7 @@ import { Toast } from "../ui/toast";
 import { ApiErrorNotice } from "./api-error-notice";
 import { SessionActionErrorExtra } from "./session-action-error-extra";
 import { DetailsTab } from "./details-tab";
+import { RequestInbox } from "./request-inbox";
 import { RosterTab } from "./roster-tab";
 import { SessionActionBar } from "./session-action-bar";
 import { SessionStatusBadge } from "./session-status-badge";
@@ -222,6 +223,11 @@ export function SessionDetailView({
               id: "details",
               label: t("Chi tiết", "Details"),
               panel: <DetailsTab session={session} />,
+            },
+            {
+              id: "requests",
+              label: t("Yêu cầu tham gia", "Join requests"),
+              panel: <RequestInbox session={session} ctx={ctx} onChanged={refresh} />,
             },
           ]}
         />
