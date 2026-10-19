@@ -16,7 +16,7 @@ import {
 
 import { err } from "./api-envelope";
 import { readBoundedBody } from "./read-bounded-body";
-import { actorThrottled, readTenantParam } from "./session-command-route";
+import { readTenantParam } from "./session-command-route";
 import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
 import { resolveTenantLang } from "./tenant-lang";
 
@@ -28,6 +28,10 @@ export const CHAT_SUBSCRIBE_LIMIT = {
   limit: 30,
   windowSeconds: 60,
 } as const;
+
+/** RO-L15-4 (pending owner sign-off): chat's own pre-authorization ceiling, not session-actor. */
+const chatActorThrottled = (accountId: string): Promise<boolean> =>
+  rateLimited(`chat-actor:${accountId}`, 120, 60);
 
 /** Above L14's 4000-character cap even when every character is a 12-byte JSON escape pair. */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -192,7 +196,7 @@ export async function chatGate<K extends string = never>(
     if (limit === null || (rawCursor !== null && cursor === null)) return invalidBody();
     page = { limit, cursor };
   }
-  if (await actorThrottled(session.accountId)) return chatRateLimited();
+  if (await chatActorThrottled(session.accountId)) return chatRateLimited();
   const personId = session.personId;
   const member = await withTenant(appDb().db, tenantId, (tx) =>
     hasLiveMembership(tx, tenantId, personId),

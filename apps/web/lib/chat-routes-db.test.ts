@@ -27,6 +27,7 @@ import { GET as history, POST as postMessage } from "../app/api/chat/channels/[i
 import { POST as postRead } from "../app/api/chat/channels/[id]/read/route";
 import { GET as listChannels } from "../app/api/chat/channels/route";
 import { decodeChatCursor, encodeChatCursor } from "./chat-route";
+import { actorThrottled } from "./session-command-route";
 import { appDb, hashToken, resetDbRoleViolationForTests } from "./session-cookies";
 
 const cookieJar = vi.hoisted(() => ({ token: undefined as string | undefined }));
@@ -218,6 +219,23 @@ describe("GET /api/chat/channels/:id/messages (history)", () => {
       expect(await rateLimitCheck(runtime!.pool, `chat-read:${a.personId}`, 60, 60)).toBe(true);
     }
     expect(await get(a, c.t, c.c)).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
+  });
+
+  it("RO-L15-4 chat-actor (120/60 s) and session-actor are separate budgets, each way", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    for (let i = 0; i < 120; i++) {
+      const bucket = `chat-actor:${a.accountId}`;
+      expect(await rateLimitCheck(runtime!.pool, bucket, 120, 60)).toBe(true);
+    }
+    expect(await get(a, c.t, c.c)).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
+    expect(await actorThrottled(a.accountId)).toBe(false);
+    for (let i = 0; i < 60; i++) {
+      const bucket = `session-actor:${b.accountId}`;
+      expect(await rateLimitCheck(runtime!.pool, bucket, 60, 60)).toBe(true);
+    }
+    expect(await actorThrottled(b.accountId)).toBe(true);
+    expect(await get(b, c.t, c.c)).toMatchObject({ status: 200 });
   });
 
   it("T19 hidden and author-deleted rows are four-key tombstones; live rows carry mine + ISO", async () => {
@@ -493,7 +511,7 @@ describe("POST /api/chat/channels/:id/messages (send)", () => {
     expect(await order(c)).toEqual([]);
   });
 
-  it("T8 the 21st send in 10 s and an exhausted actorThrottled -> 429 CHAT_RATE_LIMITED", async () => {
+  it("T8 the 21st send in 10 s and an exhausted chat-actor budget -> 429 CHAT_RATE_LIMITED", async () => {
     const c = await club();
     const [a, b] = [await actor(c.t), await actor(c.t)];
     for (let i = 0; i < 20; i++) await send(c, a, "burst");
@@ -501,10 +519,9 @@ describe("POST /api/chat/channels/:id/messages (send)", () => {
       status: 429,
       code: "CHAT_RATE_LIMITED",
     });
-    for (let i = 0; i < 60; i++) {
-      expect(await rateLimitCheck(runtime!.pool, `session-actor:${b.accountId}`, 60, 60)).toBe(
-        true,
-      );
+    for (let i = 0; i < 120; i++) {
+      const bucket = `chat-actor:${b.accountId}`;
+      expect(await rateLimitCheck(runtime!.pool, bucket, 120, 60)).toBe(true);
     }
     expect(await post(b, c.t, c.c, msg())).toMatchObject({
       status: 429,
@@ -754,7 +771,7 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
     expect(await row(m.id)).toEqual({ body: "orig", edit_count: 0, author_deleted_at: null });
   });
 
-  it("413 over 4000 characters or 64 KiB; 429 from chat_edit_1m (shared) and actorThrottled", async () => {
+  it("413 over 4000 characters or 64 KiB; 429 from chat_edit_1m (shared) and chat-actor", async () => {
     const c = await club();
     const [a, b] = [await actor(c.t), await actor(c.t)];
     const m = await send(c, a, "orig");
@@ -771,9 +788,9 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
       expect(r).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
     }
     const theirs = await send(c, b, "b text");
-    for (let i = 0; i < 60; i++) {
-      const bucket = `session-actor:${b.accountId}`;
-      expect(await rateLimitCheck(runtime!.pool, bucket, 60, 60)).toBe(true);
+    for (let i = 0; i < 120; i++) {
+      const bucket = `chat-actor:${b.accountId}`;
+      expect(await rateLimitCheck(runtime!.pool, bucket, 120, 60)).toBe(true);
     }
     const r = await mutate("DELETE", b, c, theirs.id);
     expect(r).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
