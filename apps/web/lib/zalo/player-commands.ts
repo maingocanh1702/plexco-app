@@ -108,12 +108,36 @@ async function joinList(deps: PlayerCommandDeps): Promise<string> {
   return [reply("R22head"), ...rows].concat(list.sessions[9] ? reply("R22more") : []).join("\n");
 }
 
+// /leave: own seats as a numbered leave_list (4.5, RC-3); the list itself never mutates (P-14).
+async function leaveList(deps: PlayerCommandDeps): Promise<string> {
+  const seats = await deps.listLeavable();
+  if (seats.length === 0) return reply("R14");
+  const shown = seats.slice(0, 9);
+  await deps.saveContext(
+    "leave_list",
+    shown.map((s) => s.sessionId),
+  );
+  const wait = (s: LeavableSeat) =>
+    s.status === "waitlisted" ? reply("leaveWait", { p: s.waitlistPosition ?? "" }) : "";
+  const rows = shown.map((s, i) => reply("R22row", { n: i + 1, ref: ref(s) }) + wait(s));
+  return [reply("leaveHead"), ...rows].concat(seats[9] ? reply("R22more") : []).join("\n");
+}
+
 async function numberReply(token: string, deps: PlayerCommandDeps): Promise<string> {
   const ctx = await deps.latestContext();
-  if (!ctx?.live || ctx.contextType !== "join_list") return reply("R9");
+  if (!ctx?.live || (ctx.contextType !== "join_list" && ctx.contextType !== "leave_list"))
+    return reply("R9");
   if (!/^[1-9]\d*$/.test(token) || +token > ctx.itemCount)
     return reply("R20", { N: ctx.itemCount });
   if (await deps.throttled(ctx.contextType)) return reply("R11");
+  if (ctx.contextType === "leave_list") {
+    const seats = await deps.listLeavable();
+    const claimed = await deps.claimContext({ id: ctx.id, version: ctx.version });
+    const seat = seats.find((s) => s.sessionId === claimed?.itemIds[+token - 1]);
+    if (!seat) return reply("R9");
+    await deps.leave(seat.sessionId);
+    return reply("R12", { ref: ref(seat) });
+  }
   const list = await deps.listJoinable();
   if (!list.member) return reply("R8");
   const claimed = await deps.claimContext({ id: ctx.id, version: ctx.version });
@@ -128,6 +152,7 @@ export async function runPlayerCommand(cmd: ParsedZaloCommand, deps: PlayerComma
   if (deps.gate.linked !== true) return reply("R19");
   try {
     if (cmd.kind === "join") return await joinList(deps);
+    if (cmd.kind === "leave") return await leaveList(deps);
     if (cmd.kind === "number") return await numberReply(cmd.args[0] ?? "", deps);
     return reply("R18");
   } catch (error) {

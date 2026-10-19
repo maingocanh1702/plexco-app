@@ -330,3 +330,131 @@ describe("runPlayerCommand: /join and the number reply on a join_list context (4
     spy.mockRestore();
   });
 });
+
+const LEAVE: ParsedZaloCommand = { kind: "leave", name: "leave", args: ["2"] }; // args ignored (P-14)
+const IDS = [sid(1), sid(2), sid(3)];
+const LEAVE_CTX = { id: "ctx-2", version: 5, contextType: "leave_list", itemCount: 3, live: true };
+const REF = (l: "vi" | "en") => `${formatSessionDate(AT, "Asia/Ho_Chi_Minh", l)} · 19:00 · Sân A`;
+const seat = (i: number, p: number | null = null) => ({
+  ...row(i, null),
+  status: p === null ? "active" : "waitlisted",
+  waitlistPosition: p,
+});
+const left = (replayed = false) =>
+  vi.fn(async () => ({ playerId: "pl-1", status: "left", replayed }));
+const leaveDeps = (over: Record<string, unknown> = {}) =>
+  makeDeps({
+    listLeavable: vi.fn(async () => [seat(1), seat(2, 4), seat(3)]),
+    latestContext: vi.fn(async () => LEAVE_CTX),
+    claimContext: vi.fn(async () => ({ contextType: "leave_list", itemIds: IDS })),
+    leave: left(),
+    ...over,
+  });
+
+describe("runPlayerCommand: /leave and the number reply on a leave_list context (4.5, 4.7, P-31)", () => {
+  it("/leave: R-19 when unlinked (no list read), R-14 with nothing to leave (no context row; T-12)", async () => {
+    const off = leaveDeps({ gate: { linked: false, accountRef: null } });
+    const d = leaveDeps({ listLeavable: vi.fn(async () => []) });
+    const texts = [await run(LEAVE, off), await run(LEAVE, d), await run(LEAVE, d, "vi")];
+    expect(texts).toEqual([
+      EN("R19"),
+      "You have no sessions to leave.",
+      "Bạn không có buổi nào để rời.",
+    ]);
+    texts.forEach(expectSafe);
+    for (const f of [off.listLeavable, d.saveContext]) expect(f).not.toHaveBeenCalled();
+  });
+
+  it("/leave lists 9 of 10 own seats, a waitlist suffix and the more line, stored as leave_list (RC-3)", async () => {
+    const seats = Array.from({ length: 10 }, (_, i) => seat(i + 1, i === 1 ? 4 : null));
+    const d = leaveDeps({ listLeavable: vi.fn(async () => seats) });
+    const en = (await run(LEAVE, d)).split("\n");
+    const vn = (await run(LEAVE, d, "vi")).split("\n");
+    expect([en.length, en[0], en[1], en[2], en[9], en[10]]).toEqual([
+      11,
+      "Choose the session to leave (reply with its number):",
+      `1. ${REF("en")}`,
+      `2. ${REF("en")} (waitlist, position 4)`,
+      `9. ${REF("en")}`,
+      "More sessions are on the Plexco web app.",
+    ]);
+    expect([vn[0], vn[2], vn[10]]).toEqual([
+      "Chọn buổi muốn rời (trả lời bằng số):",
+      `2. ${REF("vi")} (danh sách chờ, vị trí 4)`,
+      "Còn buổi khác, xem trên web Plexco.",
+    ]);
+    expect(d.saveContext).toHaveBeenCalledWith(
+      "leave_list",
+      seats.slice(0, 9).map((s) => s.sessionId),
+    );
+    for (const f of [d.listJoinable, d.claimContext, d.leave]) expect(f).not.toHaveBeenCalled();
+    expectSafe([...en, ...vn].join("\n"));
+  });
+
+  it("a number re-reads the live seats before the claim, then leaves that seat once: R-12 (P-31, T-12)", async () => {
+    const cases = [
+      ["en", false, `You have left ${REF("en")}.`],
+      ["vi", true, `Bạn đã rời buổi ${REF("vi")}.`],
+    ] as const;
+    for (const [lang, replayed, want] of cases) {
+      const d = leaveDeps({ leave: left(replayed) });
+      const text = await run(num("2"), d, lang);
+      expect(text).toBe(want);
+      expectSafe(text);
+      expect(d.throttled).toHaveBeenCalledWith("leave_list");
+      expect(d.claimContext).toHaveBeenCalledWith({ id: "ctx-2", version: 5 });
+      const [read = 0, claim = 0] = [d.listLeavable, d.claimContext].map(
+        (f) => vi.mocked(f).mock.invocationCallOrder[0],
+      );
+      expect([read > 0, read < claim]).toEqual([true, true]);
+      expect(vi.mocked(d.leave).mock.calls).toEqual([[sid(2)]]);
+      for (const f of [d.listJoinable, d.join]) expect(f).not.toHaveBeenCalled();
+    }
+  });
+
+  it("leave_list: R-9 stale, lost claim or seat gone from the live list; R-20; R-11; never a leave call (P-31, T-7)", async () => {
+    const cases: [Record<string, unknown>, string, string, number][] = [
+      [{ latestContext: vi.fn(async () => ({ ...LEAVE_CTX, live: false })) }, "1", EN("R9"), 0],
+      [{ claimContext: vi.fn(async () => null) }, "2", EN("R9"), 1],
+      [{ listLeavable: vi.fn(async () => [seat(1), seat(3)]) }, "2", EN("R9"), 1],
+      [{}, "4", "Invalid number — choose 1 to 3.", 0],
+      [{ throttled: vi.fn(async () => true) }, "2", EN("R11"), 0],
+    ];
+    for (const [over, token, want, claims] of cases) {
+      const d = leaveDeps(over);
+      const text = await run(num(token), d);
+      expect([token, text]).toEqual([token, want]);
+      expectSafe(text);
+      expect(d.claimContext).toHaveBeenCalledTimes(claims);
+      for (const f of [d.leave, d.join]) expect(f).not.toHaveBeenCalled();
+    }
+  });
+
+  it("LEAVE_REQUIRES_HOST is R-13 (D3), PLAYER_NOT_FOUND R-9, other throws R-18 logged as {command, reason} only", async () => {
+    const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+    const fails = (e: unknown) => vi.fn(async () => Promise.reject(e));
+    const host = leaveDeps({ leave: fails(new RosterMoneyError("LEAVE_REQUIRES_HOST", "x")) });
+    const texts = [await run(num("2"), host), await run(num("2"), host, "vi")];
+    expect(texts).toEqual([
+      "You cannot leave this session yourself; ask the host.",
+      "Bạn không thể tự rời buổi này, hãy nhờ chủ kèo.",
+    ]);
+    texts.push(
+      await run(
+        num("2"),
+        leaveDeps({ leave: fails(new RosterMoneyError("PLAYER_NOT_FOUND", "x")) }),
+      ),
+    );
+    expect(texts[2]).toBe(EN("R9"));
+    expect(spy).not.toHaveBeenCalled();
+    texts.push(
+      await run(LEAVE, leaveDeps({ listLeavable: fails(new Error("boom: message text")) })),
+    );
+    expect(texts[3]).toBe(EN("R18"));
+    expect(spy.mock.calls).toEqual([
+      ["zalo_player_command_failed", { command: "leave", reason: "PROCESSING_ERROR" }],
+    ]);
+    texts.forEach(expectSafe);
+    spy.mockRestore();
+  });
+});
