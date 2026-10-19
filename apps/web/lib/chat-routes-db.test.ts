@@ -153,6 +153,30 @@ const asActor = <T>(c: Club, a: Actor, fn: (tx: ChatTx) => Promise<T>) =>
 const send = (c: Club, a: Actor, body: string) =>
   asActor(c, a, (tx) => sendChatMessage(tx, { channelId: c.c, clientMsgId: randomUUID(), body }));
 
+/** S1: a second club channel of c's tenant (T18's pattern) holding `own`, a live message `a` sent
+ *  as a member before leaving its chat_members; `b` stays in. `a` is still an active tenant member,
+ *  so only L14's chat_members check can deny them (a guest also fails its status half). */
+async function outsideChannel(c: Club, a: Actor, b: Actor): Promise<{ c2: Club; own: string }> {
+  const ch = await ctx.owner.query<{ id: string }>(
+    `INSERT INTO chat_channels (tenant_id, kind, title, is_default, sort_order, creation_origin,
+       post_policy, assistant_enabled)
+     VALUES ($1, 'club', 'second', false, 1, 'system_bootstrap', 'all_members', false) RETURNING id`,
+    [c.t],
+  );
+  const c2: Club = { t: c.t, c: ch.rows[0]!.id };
+  await ctx.owner.query(
+    `INSERT INTO chat_members (channel_id, tenant_id, person_id, membership_id)
+     VALUES ($1, $2, $3, $4), ($1, $2, $5, $6)`,
+    [c2.c, c.t, a.personId, a.membershipId, b.personId, b.membershipId],
+  );
+  const own = (await send(c2, a, "outside text")).id;
+  await ctx.owner.query(`DELETE FROM chat_members WHERE channel_id = $1 AND person_id = $2`, [
+    c2.c,
+    a.personId,
+  ]);
+  return { c2, own };
+}
+
 /** GET history; every chat response, 2xx or 4xx, must be no-store (N1). */
 async function get(a: Actor | null, tenant: string, channel: string, query = "") {
   cookieJar.token = a?.token;
@@ -196,12 +220,14 @@ describe("GET /api/chat/channels/:id/messages (history)", () => {
       [dmId, a.personId, b.personId],
     );
     await ctx.owner.query("COMMIT");
+    const { c2 } = await outsideChannel(c, a, b);
     const cases = [
       await get(stranger, c.t, c.c),
       await get(guest, c.t, c.c),
       await get(a, c.t, randomUUID()),
       await get(a, c.t, other.c),
       await get(a, c.t, dmId),
+      await get(a, c.t, c2.c),
     ];
     const one = (r: (typeof cases)[number]) =>
       JSON.stringify([r.status, r.body.data, r.body.error]);
@@ -472,18 +498,21 @@ describe("POST /api/chat/channels/:id/messages (send)", () => {
       [dmId, a.personId, b.personId],
     );
     await ctx.owner.query("COMMIT");
+    const { c2, own } = await outsideChannel(c, a, b);
     const cases = [
       await post(stranger, c.t, c.c, msg()),
       await post(guest, c.t, c.c, msg()),
       await post(a, c.t, randomUUID(), msg()),
       await post(a, c.t, other.c, msg()),
       await post(a, c.t, dmId, msg()),
+      await post(a, c.t, c2.c, msg()),
     ];
     const one = (r: (typeof cases)[number]) =>
       JSON.stringify([r.status, r.body.data, r.body.error]);
     expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
     for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
     for (const ch of [c, other, { t: c.t, c: dmId }]) expect(await order(ch)).toEqual([]);
+    expect(await order(c2)).toEqual([own]);
     expect(await post(m, off.t, off.c, msg())).toMatchObject({
       status: 403,
       code: "TENANT_SUSPENDED",
@@ -650,6 +679,27 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
     expect(await row(old!)).toMatchObject({ body: "seed body", edit_count: 0 });
   });
 
+  it("T11 note 32 order: a non-member of an admins_only channel -> the one 403 body first", async () => {
+    const [c, other] = [await club(), await club()];
+    const [a, b, stranger] = [await actor(c.t), await actor(c.t), await actor(other.t)];
+    const { c2, own } = await outsideChannel(c, a, b);
+    await ctx.owner.query(`UPDATE chat_channels SET post_policy = 'admins_only' WHERE id = $1`, [
+      c2.c,
+    ]);
+    const [r, ref] = [
+      await mutate("PATCH", a, c2, own, edit("x", 0)),
+      await mutate("PATCH", stranger, c2, own, edit("x", 0)),
+    ];
+    const one = (x: typeof r) => JSON.stringify([x.status, x.body.data, x.body.error]);
+    expect(r).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    expect(one(r)).toBe(one(ref));
+    expect(await row(own)).toEqual({
+      body: "outside text",
+      edit_count: 0,
+      author_deleted_at: null,
+    });
+  });
+
   it("T12 the author deletes twice -> 200 changed true then false; history keeps a tombstone", async () => {
     const c = await club();
     const a = await actor(c.t);
@@ -716,6 +766,7 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
     await ctx.owner.query("COMMIT");
     const mine = await send(c, a, "mine");
     const theirs = await send(other, o, "theirs");
+    const { c2, own } = await outsideChannel(c, a, b);
     const cases: Awaited<ReturnType<typeof mutate>>[] = [];
     for (const method of ["PATCH", "DELETE"] as const) {
       const p = edit("x", 0);
@@ -725,6 +776,7 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
         await mutate(method, a, c, randomUUID(), p),
         await mutate(method, a, c, theirs.id, p),
         await mutate(method, a, { t: c.t, c: other.c }, theirs.id, p),
+        await mutate(method, a, c2, own, p),
         await mutate(method, a, { t: c.t, c: dmId }, randomUUID(), p),
       );
       const r = await mutate(method, m, off, randomUUID(), p);
@@ -737,6 +789,11 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
     expect(await row(mine.id)).toEqual({ body: "mine", edit_count: 0, author_deleted_at: null });
     expect(await row(theirs.id)).toEqual({
       body: "theirs",
+      edit_count: 0,
+      author_deleted_at: null,
+    });
+    expect(await row(own)).toEqual({
+      body: "outside text",
       edit_count: 0,
       author_deleted_at: null,
     });
@@ -1196,18 +1253,25 @@ describe("POST /api/chat/channels/:id/read (read cursor)", () => {
       [dmId, a.personId, b.personId],
     );
     await ctx.owner.query("COMMIT");
+    const { c2, own } = await outsideChannel(c, a, b);
     const cases = [
       await markRead(stranger, c.t, c.c, through),
       await markRead(guest, c.t, c.c, through),
       await markRead(a, c.t, randomUUID(), through),
       await markRead(a, c.t, other.c, through),
       await markRead(a, c.t, dmId, through),
+      await markRead(a, c.t, c2.c, { throughMessageId: own }),
     ];
     const one = (r: (typeof cases)[number]) =>
       JSON.stringify([r.status, r.body.data, r.body.error]);
     expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
     for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
     expect(await cursor(c, a)).toBeNull();
+    const left = await ctx.owner.query(
+      `SELECT 1 FROM chat_members WHERE channel_id = $1 AND person_id = $2`,
+      [c2.c, a.personId],
+    );
+    expect(left.rowCount).toBe(0); // the refused read never re-enrolls the outsider
   });
 
   it("T22 non-uuid tenant, channel or throughMessageId, bad JSON or a non-object -> 400", async () => {
