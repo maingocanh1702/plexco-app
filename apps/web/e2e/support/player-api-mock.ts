@@ -364,16 +364,26 @@ export const SCREENS: Record<string, ScreenDef> = {
 
 /**
  * Puts `screen` into `state` and returns the root to assert data-state on, the value it must carry
- * and `release()` for a held read. Throws for an n/a cell.
+ * and `release()` for a held read. `replies` overrides the cell's standing replies (B-15 puts one
+ * representative error code on the screen's route). Throws for an n/a cell.
  */
-export async function putScreenInState(page: Page, screen: string, state: ScreenState) {
+export async function putScreenInState(
+  page: Page,
+  screen: string,
+  state: ScreenState,
+  replies: Partial<Record<RouteKey, Reply>> = {},
+) {
   const def = SCREENS[screen];
   const cell = def?.cells[state];
   if (!def || !cell) throw new Error(`${screen} has no ${state} state (n/a in R 4.6)`);
-  const api = await installPlayerApi(page, cell.replies, {
-    signedIn: def.signedIn,
-    sessions: def.sessions,
-  });
+  const api = await installPlayerApi(
+    page,
+    { ...cell.replies, ...replies },
+    {
+      signedIn: def.signedIn,
+      sessions: def.sessions,
+    },
+  );
   const release = cell.hold ? api.holdNext(cell.hold) : () => {};
   await page.goto(def.path);
   const root = page.locator(def.root).first();
