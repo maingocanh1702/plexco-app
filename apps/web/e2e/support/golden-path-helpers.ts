@@ -2,6 +2,7 @@ import { expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { COMPILE_TIMEOUT_MS } from "./golden-path-timeouts";
 
 /**
  * Test-only helpers for e2e/golden-path.spec.ts (local, opt-in; see golden-path.config.ts). Every
@@ -123,4 +124,39 @@ export async function confirmTransition(page: Page, action: "close" | "cancel") 
   await expect(dialog).toContainText(action === "close" ? "Đóng buổi này?" : "Huỷ buổi này?");
   await dialog.getByRole("button", { name: bar, exact: true }).click();
   return dialog;
+}
+
+/** What `GET /api/auth/session` reports for the page's own cookie: its person, its CSRF secret, its clubs. */
+export interface PersonaSession {
+  personId: string;
+  csrfToken: string;
+  tenants: { tenantId: string; name: string | null }[];
+}
+
+/** The page's current session, or null when it is signed out (a cold dev-server compile can be slow). */
+async function readSession(page: Page): Promise<PersonaSession | null> {
+  const res = await page.request.get("/api/auth/session", { timeout: COMPILE_TIMEOUT_MS });
+  if (!res.ok()) return null;
+  const data = (await res.json())?.data;
+  if (!data?.personId) return null;
+  return { personId: data.personId, csrfToken: data.csrfToken, tenants: data.tenants ?? [] };
+}
+
+/**
+ * Signs the page in as a dev-login persona (the button name, e.g. /Người chơi/) and returns that
+ * persona's own session. Switching persona rotates the session (e2e/dev-login-browser.spec.ts), so a
+ * click that left the previous person signed in fails here instead of running a journey as the wrong one.
+ */
+export async function signInAsPersona(page: Page, persona: RegExp): Promise<PersonaSession> {
+  const before = await readSession(page);
+  await page.goto("/dev-login");
+  await expect(page.getByRole("note")).toContainText("CHỈ DÀNH CHO DEV");
+  await page.getByRole("button", { name: persona }).click();
+  // The cookie rotates when the persona button's POST chain ends: wait until another person answers.
+  await expect
+    .poll(async () => (await readSession(page))?.personId ?? before?.personId ?? null)
+    .not.toBe(before?.personId ?? null);
+  const session = await readSession(page);
+  if (!session) throw new Error(`no session after the persona button ${persona}`);
+  return session;
 }
