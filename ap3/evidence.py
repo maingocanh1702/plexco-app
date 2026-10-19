@@ -79,6 +79,21 @@ def main(argv):
         "agent_resolved_flags": rec.get("agent_resolved_flags"),
         "preflight_cost_usd": rec.get("preflight_cost_usd"),
         "resolver_cost_usd": rec.get("resolver_cost_usd"),
+        # Reviewer fallback (owner decisions 2026-10-15/-18): True when, in at least one review round, a
+        # verdict came from a read-only Claude session (model/effort named here) because Codex could not
+        # run -- or from a reviewer the dispatcher could not confirm as Codex (fail closed, reason
+        # "unknown"). False/0 means no round's VERDICT came from the fallback; it does NOT mean the
+        # fallback never ran: on a REVIEW_UNAVAILABLE row it may have been tried and failed, which shows
+        # as a non-null fallback_review_cost_usd when that session reported its spend (the round's
+        # reviewer-<mode>.r<N>.txt says `none ... fallback=failed`). fallback_review_cost_usd sums every
+        # fallback session, failed ones included; null when none reported a cost (never a fabricated 0).
+        # That spend is NOT in total_cost_usd (the writer's own metering), like the W6 sessions.
+        "reviewer_fallback": rec.get("reviewer_fallback", False),
+        "reviewer_fallback_reason": rec.get("reviewer_fallback_reason"),
+        "reviewer_fallback_model": rec.get("reviewer_fallback_model"),
+        "reviewer_fallback_effort": rec.get("reviewer_fallback_effort"),
+        "fallback_review_rounds": rec.get("fallback_review_rounds", 0),
+        "fallback_review_cost_usd": rec.get("fallback_review_cost_usd"),
     }
     print(json.dumps(row))
     return 0

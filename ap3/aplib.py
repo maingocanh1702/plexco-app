@@ -17,6 +17,8 @@ Subcommands (all read cwd = the repo being operated on):
   findings <transcript.txt>    print the reviewer's real verdict block; exit 1 if none exists
   budget-remaining <budget_usd> <spent_usd> [floor]   print the rounded remaining budget;
                                              exit 1 if <= floor (default 0.5), 2 if floor is malformed
+  writer-guards <settings.json>  'OK' if the writer contract REALLY registers both ap3 guards, else
+                                 one problem per line and exit 1 (install.sh + dispatch.sh at START)
 
 The git/network-dependent lint checks (run record, origin branch) live in lint-task.sh;
 this file only does what it can decide from files in the working tree.
@@ -1297,6 +1299,70 @@ def budget_remaining(budget_usd, spent_usd):
     return round(float(budget_usd) - float(spent_usd), 4)
 
 
+# ---------------------------------------------------------------- writer guards (2026-10-18, F6)
+# The writer runs `claude --settings <contract> --setting-sources ''`, so the contract is its ONLY hook
+# source. 9d70716 checked just that each guard's path appeared in SOME hook command, and a dry run then
+# accepted contracts whose guards never fire: the scope-guard under matcher "NoSuchTool" or "Bash",
+# `"disableAllHooks": true`, a command such as `true ap3/hooks/scope-guard.sh`. ONE structural check,
+# shared by install.sh (before it writes writer-settings.json) and dispatch.sh (on the pinned run-state
+# copy, before a writer starts). Exact command strings on purpose: the guards are kit files at fixed
+# paths, and any wrapper around them is a way for the guard not to run.
+WRITER_GUARD_TOOLS = ("Edit", "Write", "MultiEdit")
+SCOPE_GUARD_CMD = "bash ap3/hooks/scope-guard.sh"
+FINISH_GUARD_CMD = "bash ap3/hooks/finish-guard.sh"
+
+
+_MATCHER_NAME_LIST = re.compile(r"[A-Za-z0-9_|]+")
+
+
+def _matcher_covers(matcher, tool):
+    """A PreToolUse matcher the validator can vouch for (review round 2, 2026-10-18): absent, "" or "*"
+    matches every tool; otherwise ONLY a plain `|`-separated list of tool names ([A-Za-z0-9_|]+) is
+    accepted, and it covers `tool` when the tool's exact name is one of its entries ("Edi", "edit" and
+    "Multi" do not count). Any other regex syntax -- groups, anchors, `.*`, flags, spaces -- covers
+    nothing: Claude Code evaluates such a matcher as a JavaScript regex, and Python's `re` is not that
+    engine, so its verdict here would be a guess. A non-string matcher covers nothing."""
+    if matcher is None or matcher in ("", "*"):
+        return True
+    if not isinstance(matcher, str) or not _MATCHER_NAME_LIST.fullmatch(matcher):
+        return False
+    return tool in matcher.split("|")
+
+
+def _runs_command(group, command):
+    hooks = group.get("hooks") if isinstance(group, dict) else None
+    return isinstance(hooks, list) and any(
+        isinstance(h, dict) and h.get("type") == "command" and h.get("command") == command
+        for h in hooks)
+
+
+def writer_guard_problems(settings):
+    """-> a list of problems; empty when the contract really registers both ap3 writer guards:
+    disableAllHooks absent or false; for EACH of Edit, Write and MultiEdit a PreToolUse group whose
+    matcher covers it (_matcher_covers: absent, "", "*" or a plain name list naming it) runs
+    `bash ap3/hooks/scope-guard.sh` (type command); a Stop group runs `bash ap3/hooks/finish-guard.sh`
+    (type command)."""
+    if not isinstance(settings, dict):
+        return ["the contract is not a JSON object"]
+    problems = []
+    if "disableAllHooks" in settings and settings["disableAllHooks"] is not False:
+        problems.append("disableAllHooks must be absent or false (got %s)" % json.dumps(settings["disableAllHooks"]))
+    hooks = settings.get("hooks")
+    hooks = hooks if isinstance(hooks, dict) else {}
+    pre = hooks.get("PreToolUse")
+    pre = pre if isinstance(pre, list) else []
+    for tool in WRITER_GUARD_TOOLS:
+        if not any(isinstance(g, dict) and _matcher_covers(g.get("matcher"), tool) and _runs_command(g, SCOPE_GUARD_CMD)
+                   for g in pre):
+            problems.append("no PreToolUse group whose matcher covers %s (absent, \"\", \"*\" or a plain name list such as "
+                            "Edit|Write|MultiEdit) runs %r (type command)" % (tool, SCOPE_GUARD_CMD))
+    stop = hooks.get("Stop")
+    stop = stop if isinstance(stop, list) else []
+    if not any(_runs_command(g, FINISH_GUARD_CMD) for g in stop):
+        problems.append("no Stop group runs %r (type command)" % (FINISH_GUARD_CMD,))
+    return problems
+
+
 # ---------------------------------------------------------------- CLI
 def main(argv):
     if len(argv) < 2:
@@ -1350,6 +1416,21 @@ def main(argv):
                 return 2
         print(remaining)
         return 0 if remaining > floor else 1
+    if cmd == "writer-guards":
+        # F6 (2026-10-18): exit 0 + 'OK' only when the writer contract really registers both guards
+        try:
+            with open(argv[2], encoding="utf-8") as fh:
+                settings = json.load(fh)
+        except (OSError, ValueError) as e:
+            print("unreadable writer contract %s: %s" % (argv[2], e))
+            return 1
+        problems = writer_guard_problems(settings)
+        for p in problems:
+            print(p)
+        if problems:
+            return 1
+        print("OK")
+        return 0
     if cmd == "resolve-policy":
         # W6: print the class's resolved policy JSON (defaults applied) from a routines.json path
         with open(argv[2], encoding="utf-8") as fh:

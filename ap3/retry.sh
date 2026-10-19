@@ -28,6 +28,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR/.." && pwd)"; cd "$REPO"
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# exact verdict-marker lines indented two spaces in what is staged into the worktree -- the same filter
+# as dispatch.sh's neutralize_markers (review round 2; see stage_pinned_task below)
+neutralize_markers() { sed 's/^AP3_REVIEW_VERDICT:/  AP3_REVIEW_VERDICT:/'; }
 
 REVIEW_ONLY=0
 ANSWER=0
@@ -142,12 +145,16 @@ stage_pinned_task() { # <label for error text> -- copies the pinned task.md into
   else
     baseline="$WT/ap3/queue/$SLUG.md"
   fi
+  # Review round 2 (2026-10-18): the staged copy is the pinned task with exact verdict-marker lines
+  # indented two spaces -- dispatch.sh's refresh_staged_task applies the same filter (codex reads this
+  # file while reviewing and echoes it into its transcript). Compare like with like: a staged copy that
+  # differs from the raw pinned task ONLY by that filter is not an owner amendment.
   STAGE_PINNED_TASK_CHANGED=1
-  [ -f "$baseline" ] && cmp -s "$rec_task" "$baseline" && STAGE_PINNED_TASK_CHANGED=0
+  [ -f "$baseline" ] && cmp -s <(neutralize_markers < "$rec_task") <(neutralize_markers < "$baseline") && STAGE_PINNED_TASK_CHANGED=0
   # both steps guarded by the SAME if -- a bare `rm -f` that fails (e.g. an immutable/locked
   # destination) would otherwise trip `set -e` and crash the whole script instead of the clean,
   # explanatory exit 1 every other refusal in this script gives.
-  if ! rm -f "$WT/.ap3-run/TASK.md" || ! cp "$rec_task" "$WT/.ap3-run/TASK.md"; then
+  if ! rm -f "$WT/.ap3-run/TASK.md" || ! neutralize_markers < "$rec_task" > "$WT/.ap3-run/TASK.md"; then
     echo "retry: refusing $label $SLUG -- could not place $rec_task at $WT/.ap3-run/TASK.md" >&2
     exit 1
   fi

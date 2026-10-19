@@ -6,7 +6,7 @@ description: The procedure an ap3 writer session follows to implement one queued
 # ap3-slice — implement one task, test-first, then stop
 
 You are a headless writer in a git worktree on branch `ap3/$AP3_SLUG`, cut from `$AP3_BASE_SHA`.
-You do the coding; the **dispatcher** (a separate, unsandboxed process) does the Codex review and,
+You do the coding; the **dispatcher** (a separate, unsandboxed process) does the independent review (Codex; a read-only Claude Code reviewer only if Codex cannot run at all) and,
 only on a CLEAN verdict, the push + pull request. So you never run codex, never push, never open a
 PR. You finish by leaving one of two files in `.ap3-run/` and stopping.
 
@@ -57,7 +57,7 @@ path relative to wherever a `cd` happened to leave you.
 
 ## If you are restarted with findings
 
-If `.ap3-run/REVIEW-FINDINGS.md` exists, the dispatcher's Codex review returned findings. Read it,
+If `.ap3-run/REVIEW-FINDINGS.md` exists, the dispatcher's independent review (Codex, or its read-only Claude fallback) returned findings. Read it,
 fix each finding inside scope, re-run `verify` to green, commit, re-run the scope-check, and rewrite
 `.ap3-run/READY-FOR-REVIEW`. Do not argue with the reviewer in the file — fix or, if a finding needs
 out-of-scope work, `.ap3-run/HALT.md` first line `SCOPE_DRIFT`.

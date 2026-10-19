@@ -35,7 +35,13 @@ set +e
 OUT="$(bash "$DIR/agent-readonly.sh" "$CWD" "$PROMPT" "$BUDGET" "$MODEL" "$COST")"
 RC=$?
 set -e
-if [ "$RC" -ne 0 ]; then echo "AP3_RESOLUTION: UNAVAILABLE"; exit 3; fi
+# review round 2 (2026-10-18): a session that FAILED may still have spent money. agent-readonly.sh writes
+# that cost before it refuses the result (F9), so report it here too and the dispatcher adds it to the
+# record's resolver_cost_usd; null when no cost was reported (unknown, never 0).
+if [ "$RC" -ne 0 ]; then
+  echo "AP3_RESOLUTION_COST: $(if [ -s "$COST" ]; then cat "$COST"; else echo null; fi)"
+  echo "AP3_RESOLUTION: UNAVAILABLE"; exit 3
+fi
 printf '%s\n' "$OUT"
 echo "AP3_RESOLUTION_COST: $(cat "$COST" 2>/dev/null || echo null)"
 LAST="$(printf '%s\n' "$OUT" | grep -vE '^[[:space:]]*$' | tail -1 | sed 's/[[:space:]]*$//' || true)"
