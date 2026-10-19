@@ -89,6 +89,10 @@ describe("ids and wire timestamps", () => {
   it.each(["2026-10-19 11:53:07+05:30:15", "not a date"])("fails closed on %s", (text) => {
     expect(() => toWireTimestamp(text)).toThrow(RangeError);
   });
+
+  it.each([null, 0])("fails closed on %j, never the 1970 epoch (A N-2)", (bad) => {
+    expect(() => toWireTimestamp(bad as unknown as string)).toThrow(RangeError);
+  });
 });
 
 describe("mapChatError (readiness 4.4)", () => {

@@ -108,9 +108,11 @@ export function decodeChatCursor(raw: string): ChatCursor | null {
 
 /**
  * Every timestamp a chat route returns (readiness 4.3, amended): L14's timestamptz text as
- * ISO-8601 UTC. An unparseable value throws RangeError: fail closed, never raw Postgres text.
+ * ISO-8601 UTC. A null, a non-string or an unparseable value throws RangeError: fail closed,
+ * never the 1970 epoch and never raw Postgres text.
  */
 export function toWireTimestamp(text: string): string {
+  if (typeof text !== "string") throw new RangeError("chat timestamp");
   return new Date(text).toISOString();
 }
 
