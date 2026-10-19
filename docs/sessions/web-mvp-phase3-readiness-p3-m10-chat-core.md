@@ -285,6 +285,11 @@ Nobody gets UPDATE, DELETE or TRUNCATE on the three new tables. `dm_key` and bot
 chat_definer's INSERT list. readonly: no change anywhere (S-10). tenant_id on chat_members / chat_messages comes from the
 BEFORE triggers (`0031:175-185`), so it is not in any INSERT list.
 
+- identity_definer (RO-L14-6): none -> SELECT (edited_by_person_id) ON chat_message_revisions, SELECT (actor_person_id) ON
+  chat_moderation_audit, SELECT (actor_person_id) ON chat_command_receipts. Column grants only: no table-level privilege, no
+  other column, no other role. 0054 contract: every FK onto persons must be readable by identity_definer or the identity
+  link returns requires_review for everyone; a future table with a person FK needs the same column grant.
+
 ### 4.5 NOTIFY contract (L15 consumes it; the PR body states it verbatim)
 
 - Channel `chat_realtime` (literal; distinct from `web_realtime` in apps/web/lib/realtime-listener.ts, which L14 does not
