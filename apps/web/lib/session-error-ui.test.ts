@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
 import {
+  describePlayerError,
   describeReverseError,
   describeSessionError,
   errorField,
@@ -175,6 +176,118 @@ describe("roster / payment errors", () => {
     const v = describeSessionError(err("GENDER_FORBIDDEN", "This action is not allowed.", 403), en);
     expect(v).toMatchObject({ known: false, action: "retry" });
     expect(v.message).toBe("Something unexpected went wrong. Try again later.");
+  });
+});
+
+// [code, vi, en, action] for every live readiness 4.5.1 row (E-1 to E-14; E-8 and E-9 are withdrawn).
+const L12_CODES = [
+  ["NOT_FOUND", "Kèo này không còn hoặc không tồn tại.", "This game is no longer listed.", "none"],
+  [
+    "INVALID_FILTER",
+    "Bộ lọc không hợp lệ. Hãy đặt lại bộ lọc.",
+    "That filter is not valid. Reset the filters.",
+    "none",
+  ],
+  [
+    "DISCOVERY_RATE_LIMITED",
+    "Bạn tìm quá nhanh. Đợi một lát rồi thử lại.",
+    "Too many searches. Wait a moment and try again.",
+    "retry",
+  ],
+  [
+    "SESSION_NOT_JOINABLE",
+    "Buổi này hiện không nhận người tham gia.",
+    "This session is not taking players right now.",
+    "reload",
+  ],
+  ["ALREADY_JOINED", "Bạn đã có tên trong buổi này.", "You are already in this session.", "reload"],
+  [
+    "REJOIN_REQUIRES_REVIEW",
+    "Cần xem lại các khoản thanh toán trước đó rồi mới tham gia lại được.",
+    "Earlier payments need review before rejoining.",
+    "none",
+  ],
+  [
+    "CHARGE_DERIVATION_UNAVAILABLE",
+    "Chưa thể thực hiện lúc này. Vui lòng thử lại sau ít phút.",
+    "This can't be done right now. Please try again in a few minutes.",
+    "retry",
+  ],
+  [
+    "REQUEST_DECIDED",
+    "Yêu cầu này đã được xử lý.",
+    "This request has already been decided.",
+    "reload",
+  ],
+  ["REQUEST_EXPIRED", "Yêu cầu này đã hết hạn.", "This request has expired.", "reload"],
+  [
+    "JOIN_REQUEST_NOT_FOUND",
+    "Không tìm thấy yêu cầu này.",
+    "This request was not found.",
+    "reload",
+  ],
+  ["TENANT_SUSPENDED", "CLB này đang tạm ngưng.", "This club is suspended.", "none"],
+  [
+    "COMMAND_ID_CONFLICT",
+    "Thao tác bị trùng. Tải lại trang rồi thử lại.",
+    "Duplicate action. Reload the page and try again.",
+    "reload",
+  ],
+] as const;
+
+describe("describePlayerError (L12 player screens)", () => {
+  it("describePlayerError maps the L12 codes", () => {
+    for (const [code, viText, enText, action] of L12_CODES) {
+      const e = err(code, "Server text in the club's language.", 409);
+      expect(describePlayerError(e, en), code).toEqual({
+        code,
+        message: enText,
+        action,
+        requestId: "req-1",
+        known: true,
+      });
+      expect(describePlayerError(e, (v) => v).message, code).toBe(viText);
+    }
+  });
+
+  it("delegates every other code, network and bad-response failures and unknowns to describeSessionError", () => {
+    const codes = ["AUTH_REQUIRED", "FORBIDDEN", "CSRF_INVALID", "RATE_LIMITED", "INVALID_BODY"];
+    codes.push("SESSION_NOT_FOUND", "GENDER_FORBIDDEN", "LEAVE_REQUIRES_HOST", "PLAYER_NOT_FOUND");
+    codes.push("SOMETHING_NEW", "constructor");
+    const delegated: unknown[] = codes.map((code) => err(code, "x", 400));
+    delegated.push(new ApiClientError(CLIENT_NETWORK_ERROR, "Network request failed", 0));
+    delegated.push(new ApiClientError(CLIENT_BAD_RESPONSE, "Unexpected response", 502));
+    delegated.push(new Error("boom"));
+    for (const e of delegated) {
+      expect(describePlayerError(e, en)).toEqual(describeSessionError(e, en));
+    }
+  });
+
+  it("keeps the exact fail-closed texts for unknown, bad-response and network failures", () => {
+    const generic = "Something unexpected went wrong. Try again later.";
+    const unknownCode = err("SOMETHING_NEW", "x", 400);
+    const badResponse = new ApiClientError(CLIENT_BAD_RESPONSE, "Unexpected response", 502);
+    for (const e of [unknownCode, badResponse]) {
+      expect(describePlayerError(e, en)).toMatchObject({
+        message: generic,
+        action: "retry",
+        known: false,
+      });
+    }
+    const offline = new ApiClientError(CLIENT_NETWORK_ERROR, "Network request failed", 0);
+    expect(describePlayerError(offline, en)).toMatchObject({
+      message: "No connection. Check your network and try again.",
+      action: "retry",
+    });
+  });
+
+  it("charge derivation copy is neutral", () => {
+    const e = err("CHARGE_DERIVATION_UNAVAILABLE", "The price could not be worked out.", 503);
+    for (const t of [(v: string) => v, en]) {
+      const view = describePlayerError(e, t);
+      expect(view.message.normalize("NFC").toLowerCase()).not.toMatch(/giới tính|gender|giá|price/);
+      expect(view.action).toBe("retry");
+    }
   });
 });
 

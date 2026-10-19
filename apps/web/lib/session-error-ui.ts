@@ -221,3 +221,79 @@ export function describeReverseError(error: unknown, t: TFn): ErrorView {
     ),
   };
 }
+
+/**
+ * Player-screen copy (L12, readiness 4.5.1 B-10) for the codes of the discovery, join and
+ * approval-inbox routes: the viewer's own language via t(), never the server `message`, and no
+ * price, gender or amount in any text. A code not listed here goes to describeSessionError.
+ */
+const PLAYER_ERRORS: readonly (readonly [
+  code: string,
+  vi: string,
+  en: string,
+  action: ErrorAction,
+])[] = [
+  ["NOT_FOUND", "Kèo này không còn hoặc không tồn tại.", "This game is no longer listed.", "none"],
+  [
+    "INVALID_FILTER",
+    "Bộ lọc không hợp lệ. Hãy đặt lại bộ lọc.",
+    "That filter is not valid. Reset the filters.",
+    "none",
+  ],
+  [
+    "DISCOVERY_RATE_LIMITED",
+    "Bạn tìm quá nhanh. Đợi một lát rồi thử lại.",
+    "Too many searches. Wait a moment and try again.",
+    "retry",
+  ],
+  [
+    "SESSION_NOT_JOINABLE",
+    "Buổi này hiện không nhận người tham gia.",
+    "This session is not taking players right now.",
+    "reload",
+  ],
+  ["ALREADY_JOINED", "Bạn đã có tên trong buổi này.", "You are already in this session.", "reload"],
+  [
+    "REJOIN_REQUIRES_REVIEW",
+    "Cần xem lại các khoản thanh toán trước đó rồi mới tham gia lại được.",
+    "Earlier payments need review before rejoining.",
+    "none",
+  ],
+  [
+    "CHARGE_DERIVATION_UNAVAILABLE",
+    "Chưa thể thực hiện lúc này. Vui lòng thử lại sau ít phút.",
+    "This can't be done right now. Please try again in a few minutes.",
+    "retry",
+  ],
+  [
+    "REQUEST_DECIDED",
+    "Yêu cầu này đã được xử lý.",
+    "This request has already been decided.",
+    "reload",
+  ],
+  ["REQUEST_EXPIRED", "Yêu cầu này đã hết hạn.", "This request has expired.", "reload"],
+  [
+    "JOIN_REQUEST_NOT_FOUND",
+    "Không tìm thấy yêu cầu này.",
+    "This request was not found.",
+    "reload",
+  ],
+  ["TENANT_SUSPENDED", "CLB này đang tạm ngưng.", "This club is suspended.", "none"],
+  [
+    "COMMAND_ID_CONFLICT",
+    "Thao tác bị trùng. Tải lại trang rồi thử lại.",
+    "Duplicate action. Reload the page and try again.",
+    "reload",
+  ],
+];
+
+/**
+ * Player-screen variant of describeSessionError: the L12 codes above get the player copy, everything
+ * else (auth, forbidden, network, bad response, unknown codes) keeps describeSessionError's exact
+ * fail-closed result. A list lookup, not an object one: a code named "constructor" must delegate.
+ */
+export function describePlayerError(error: unknown, t: TFn): ErrorView {
+  const view = describeSessionError(error, t);
+  const row = PLAYER_ERRORS.find(([code]) => code === view.code);
+  return row ? { ...view, message: t(row[1], row[2]), action: row[3], known: true } : view;
+}

@@ -140,6 +140,12 @@ Mỗi bước kèm điều phải thấy trên màn hình (giao diện mặc đ�
 | 12 | Mở "Chi tiết thanh toán" của A → **Hoàn tác** khoản `60.000đ` → nhập lý do → **Hoàn tác** | Toast "Đã hoàn tác 60.000đ của <A>"; A lại "Còn 60.000đ / 100.000đ" (nợ mở lại) |
 | 13 | Thu lại `60.000` cho A | A "Đã thanh toán" |
 | 14 | Bấm **Đóng buổi** → xác nhận **Đóng buổi** | Toast "Đã đóng buổi."; nhãn "Đã đóng"; "Buổi này chỉ để xem."; tải lại trang vẫn "Đã đóng" |
+| 15 | Chạy hành trình người chơi tự động: lệnh ở §10 thêm `-g "player golden path"` | Test đăng một buổi mở ("Tự do tham gia") ở Dev Club, rồi cho người chơi seed vào buổi qua route tham gia của thành viên. Kết quả `1 passed`; nếu người chơi seed chưa là thành viên Dev Club, test tự bỏ qua (`1 skipped`) và in dòng "PLAYER GOLDEN PATH NOT RUN" |
+| 16 | `/dev-login` → bấm nút **Người chơi** | Đăng nhập bằng persona người chơi. Persona này không quản trị CLB nào nên vào `/onboarding/new-club` |
+| 17 | Mở `/me/sessions`, rồi `/me/charges` | `/me/sessions` có buổi vừa tạo, kèm tên sân và nhãn "Đã có chỗ". `/me/charges` có `100.000đ` ở "Dev Club" và không có nút trả tiền, mã QR hay thông tin ngân hàng |
+| 18 | Mở `/discover` trong cửa sổ ẩn danh (không có phiên đăng nhập) | Trang hiển thị bình thường khi chưa đăng nhập. Chạy cục bộ thì danh sách trống, vì dòng projector công khai vẫn tắt (OPEN-B4) |
+
+Lệnh chạy tự động ở §10 chạy cả hai test (hành trình host và hành trình người chơi); thêm `-g "player golden path"` để chỉ chạy hành trình người chơi.
 
 ## 10. Chạy tự động (Playwright, chỉ local)
 

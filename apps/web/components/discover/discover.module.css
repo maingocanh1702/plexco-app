@@ -1,0 +1,99 @@
+.page {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+  max-width: var(--container-lg);
+  margin: 0 auto;
+  padding: var(--space-4);
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target);
+}
+
+.list {
+  display: grid;
+  gap: var(--space-3);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+@media (min-width: 1024px) {
+  .list {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.card {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  justify-items: start;
+}
+
+.summary {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+}
+
+.meta {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.skeletonCard {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: var(--border-width) solid var(--border-hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.offline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+}
+
+.more {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+}

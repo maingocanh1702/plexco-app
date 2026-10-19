@@ -242,6 +242,9 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/session-snapshot.ts": "c",
   "lib/session-time.ts": "c",
   "lib/sessions-api.ts": "c",
+  // (c) — browser-side typed fetch wrappers; user-facing text comes from the caller's t.
+  "lib/discover-api.ts": "c",
+  "lib/me-player-api.ts": "c",
   "lib/lang-storage.ts": "c",
   // (c) — browser-side settings screens (M4). Typed fetch wrappers + pure form models; user-facing
   // text comes from the `t` the caller passes from useT() (settings-error-ui, display-name rules).

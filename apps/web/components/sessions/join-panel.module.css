@@ -1,0 +1,16 @@
+.panel {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+}
+
+.result {
+  margin: 0;
+  font-weight: var(--font-semibold);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}

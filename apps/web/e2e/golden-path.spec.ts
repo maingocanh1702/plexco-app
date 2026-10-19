@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { formatVnd } from "../lib/money";
 import {
   addPlayer,
   confirmTransition,
@@ -8,6 +10,7 @@ import {
   payCash,
   rosterRow,
   screenshotter,
+  signInAsPersona,
 } from "./support/golden-path-helpers";
 import {
   NOT_PROVEN_ANNOTATION,
@@ -242,4 +245,132 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
 
   // The "NOT proven" line is repeated after the reporter summary by golden-path-not-proven-reporter.ts
   // (it keys off the annotation above); a console.log here would still print BEFORE "1 passed".
+});
+
+/**
+ * Player golden path (L12, M9; readiness RC-4): the owner publishes an OPEN session in the seeded Dev
+ * Club, the seeded player is seated through the merged member join route, and the player's own pages
+ * show it: /me/sessions with its venue and /me/charges with the charge through formatVnd. Same opt-in,
+ * same config and same local-only rule as the host test above. There is no leave step.
+ *
+ * The seat is a test-only call made by this test with the player's own cookie, CSRF token and one
+ * commandId: no UI control, never the host roster add (a display name, never matched to a member,
+ * DD-85), no projector row, no dispatch. The join route allows 10 joins per person per hour.
+ * Re-runnable without cleanup: the venue carries a per-run suffix, and the charge is counted before
+ * and after the join because earlier runs leave their own open 100.000đ charges on the seeded player.
+ *
+ * /discover is NOT run here and nothing below asserts anything about it: public_sessions has no app
+ * write path and its projector row stays disabled locally (RC-0c). The mocked e2e (player.spec.ts)
+ * covers discover -> join; runbook section 9 row 18 covers the empty page by hand.
+ */
+const PLAYER_LEG_NOT_RUN =
+  "PLAYER GOLDEN PATH NOT RUN: the seeded player is not a Dev Club member (readiness O-5)";
+const PAY_WORDS = /pay|thanh toán|trả ngay|chuyển khoản|qr|ngân hàng|bank/i;
+
+test("player golden path: published session -> my sessions -> my charges", async ({ page }) => {
+  const run = Date.now().toString(36);
+  const venue = `San Nguoi Choi ${run}`;
+  const price = formatVnd(100000);
+  const shot = screenshotter(page);
+  await paceSessionApi(page); // the owner's session API calls spend the per-account ceiling
+  // Opens a /me page and returns its <main> once it left loading; an error or offline state fails here.
+  const settled = async (path: string) => {
+    await page.goto(path);
+    const main = page.locator("main[data-state]");
+    await expect(main).toHaveAttribute("data-state", /^(ready|empty|error|offline)$/);
+    expect(await main.getAttribute("data-state"), `${path} settled`).toMatch(/^(ready|empty)$/);
+    return main;
+  };
+  // The open 100.000đ charges listed under "Dev Club" on /me/charges (earlier runs leave their own).
+  const devCharges = async () => {
+    const main = await settled("/me/charges");
+    const items = main
+      .locator("section")
+      .filter({ has: page.getByRole("heading", { name: "Dev Club", exact: true }) })
+      .getByRole("listitem")
+      .filter({ hasText: price });
+    return { main, items };
+  };
+
+  const published = await test.step("the owner publishes an open session in Dev Club", async () => {
+    const owner = await signInAsPersona(page, /Chủ CLB/);
+    const tenantId = owner.tenants.find((t) => t.name === "Dev Club")?.tenantId ?? "";
+    expect(tenantId, "the seeded Dev Club's tenant id").toBeTruthy();
+    await page.goto(`/c/${tenantId}/sessions/new`);
+    await expect(page.getByRole("heading", { name: "Tạo buổi chơi mới" })).toBeVisible();
+    const sport = page.getByLabel("Môn thể thao");
+    // the first real sport after the "— Chọn môn —" placeholder
+    await expect(sport.locator("option")).not.toHaveCount(1);
+    await sport.selectOption({ index: 1 });
+    await page.getByLabel("Bắt đầu").fill(localInput(2, 18));
+    await page.getByLabel("Kết thúc").fill(localInput(2, 20));
+    await page.getByLabel("Tên sân / địa điểm").fill(venue);
+    await page.getByLabel("Địa chỉ", { exact: true }).fill(`34 Duong Smoke ${run}, Quan 3`);
+    await page.getByLabel(/^Khu vực/).fill(`Khu Smoke ${run}`);
+    await page.getByLabel("Giá mỗi người (VND)").fill("100000");
+    await page.getByLabel(/^Cách tham gia/).selectOption("open");
+    await page.getByRole("button", { name: "Tạo bản nháp" }).click();
+    await page.waitForURL(/\/sessions\/[0-9a-f-]{36}$/);
+    const sessionId = /\/sessions\/([0-9a-f-]{36})$/.exec(page.url())?.[1] ?? "";
+    expect(sessionId, "the session id in the host URL").toBeTruthy();
+    await page.getByRole("button", { name: "Đăng kèo", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("Đăng kèo này?");
+    await dialog.getByRole("button", { name: "Đăng kèo", exact: true }).click();
+    await expectToast(page, "Đã đăng kèo.");
+    await expect(page.getByText("Đang mở", { exact: true })).toBeVisible();
+    await shot("player-leg-session-open");
+    return { tenantId, sessionId };
+  });
+
+  const player =
+    await test.step("sign in as the player; pre-check: a Dev Club member", async () => {
+      const { csrfToken } = await signInAsPersona(page, /Người chơi/);
+      const clubs = await settled("/me/clubs");
+      const devClub = clubs
+        .getByRole("listitem")
+        .filter({ hasText: "Dev Club" })
+        .filter({ hasText: "Thành viên" });
+      return { csrfToken, isMember: (await devClub.count()) > 0 };
+    });
+  // Binary pre-check (readiness O-5): the seed is not edited here, the leg is reported NOT RUN instead.
+  if (!player.isMember) console.log(PLAYER_LEG_NOT_RUN);
+  test.skip(!player.isMember, PLAYER_LEG_NOT_RUN);
+
+  const chargesBefore = await (await devCharges()).items.count();
+
+  await test.step("seat the player through the member join route (test-only call)", async () => {
+    const join = await page.request.post(
+      `/api/sessions/${published.sessionId}/join?tenant=${published.tenantId}`,
+      {
+        headers: { "x-csrf-token": player.csrfToken },
+        data: { commandId: randomUUID() },
+        timeout: COMPILE_TIMEOUT_MS,
+      },
+    );
+    const text = await join.text();
+    expect(join.status(), text).toBe(200);
+    expect(JSON.parse(text).data.join.outcome).toBe("active");
+  });
+
+  await test.step("my sessions: an active seat in the session, with its venue", async () => {
+    const main = await settled("/me/sessions");
+    expect(await main.getAttribute("data-state"), "the player has a session").toBe("ready");
+    const row = main.getByRole("listitem").filter({ hasText: venue });
+    await expect(row).toBeVisible();
+    await expect(row).toContainText("Đã có chỗ");
+    await expect(row).toContainText("Dev Club");
+    await shot("player-my-sessions");
+  });
+
+  await test.step("my charges: one more open 100.000đ charge in Dev Club, no pay UI", async () => {
+    const { main, items } = await devCharges();
+    expect(await items.count(), `charges listing ${price} in Dev Club`).toBe(chargesBefore + 1);
+    // No pay-now, QR or bank detail on a page that did render money.
+    await expect(main.getByRole("button", { name: PAY_WORDS })).toHaveCount(0);
+    await expect(main.getByRole("link", { name: PAY_WORDS })).toHaveCount(0);
+    await expect(main.locator("img, canvas")).toHaveCount(0);
+    await expect(main).not.toContainText(/qr|ngân hàng|bank|chuyển khoản/i);
+    await shot("player-my-charges");
+  });
 });
