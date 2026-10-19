@@ -255,8 +255,13 @@ Pipelines (first failing check wins; chat-service runs the V-23 gate before ever
   canonical_fingerprint text NOT NULL, result_json jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY
   (tenant_id, actor_person_id, command_id)`; L14 writes only `message.hide` and `message.restore` (the other values stay as the
   spec has them, RO-L14-3); a CHECK DETAIL here prints only uuids, a hash and the ids/action/state json (V-26).
-- All three: ENABLE + FORCE RLS with no policy; BEFORE UPDATE OR DELETE trigger raising `restrict_violation` (`0060:62-63`
-  precedent); `REVOKE ALL ... FROM PUBLIC, app, app_worker, readonly`; chat_definer INSERT, SELECT only.
+- All three: ENABLE + FORCE RLS; the two tables that carry tenant_id (chat_moderation_audit, chat_command_receipts) get one
+  `tenant_isolation` policy in the `0060:50-55` shape and chat_message_revisions (no tenant_id) gets none (orchestrator
+  ruling RO-S11-1, writer W1 STEP-1 S-2: rls-invariants.test.ts D-11 at :4791-4799 and :4808-4823 rejects a FORCE-RLS
+  tenant_id table with no policy and admits no allowlist entry while FORCE stays; chat_definer is BYPASSRLS and no runtime
+  role holds a grant, so the policy changes no reachability and adds tenant scoping if a grant ever appears); BEFORE UPDATE
+  OR DELETE trigger raising `restrict_violation` (`0060:62-63` precedent); `REVOKE ALL ... FROM PUBLIC, app, app_worker,
+  readonly`; chat_definer INSERT, SELECT only.
 
 ### 4.4 Grants before -> after
 
@@ -350,7 +355,7 @@ stored result.
 | DT-24 | LISTEN as app: exactly one id-only payload per committed change, none for rollback or no-op (send 1, dup 0, edit 1, stale 0, delete 1, re-delete 0, hide 1, re-hide 0, restore 1, re-restore 0, receipt replay 0, receipt mismatch 0, failing send 0) | DT-24 NOTIFY contract |
 | DT-25 | at most 3 concurrent sends: ORDER BY (created_at, id) is a total order with no gap or duplicate | DT-25 concurrent sends keep order |
 | DT-26 | sentinel body and note never in console spies or payloads; static scan: every pg_notify is ('chat_realtime', <id>::text), no RAISE interpolates text, no log call in chat-service.ts carries a body or a note, no rate bucket key carries text | DT-26 no chat text in logs or NOTIFY |
-| DT-27 | catalog: chat_definer exists, owns the 10 functions, prosecdef, search_path pinned, read functions STABLE; EXECUTE held by exactly chat_definer and app on the 7 public functions and by no one but the owner on the 3 internal ones (A-12/A-13 pattern, F-18); grants exactly 4.4, incl. the 14-column app allowlist and no app privilege on the three new tables; audit reason-note CHECK present, no CHECK on chat_message_revisions; receipts columns, CHECK and PK as tech 462-474; trigger `AFTER INSERT OR UPDATE OF status ... WHEN (NEW.status = 'active')` on memberships; codes in `packages/core/src/api-contract.test.ts` | DT-27 catalog and grants |
+| DT-27 | catalog: chat_definer exists, owns the 10 functions, prosecdef, search_path pinned, read functions STABLE; EXECUTE held by exactly chat_definer and app on the 7 public functions and by no one but the owner on the 3 internal ones (A-12/A-13 pattern, F-18); grants exactly 4.4, incl. the 14-column app allowlist and no app privilege on the three new tables; audit reason-note CHECK present, no CHECK on chat_message_revisions; FORCE RLS on the three new tables with exactly one `tenant_isolation` policy on chat_moderation_audit and on chat_command_receipts and none on chat_message_revisions (RO-S11-1); receipts columns, CHECK and PK as tech 462-474; trigger `AFTER INSERT OR UPDATE OF status ... WHEN (NEW.status = 'active')` on memberships; codes in `packages/core/src/api-contract.test.ts` | DT-27 catalog and grants |
 | DT-28 | same command id + same fingerprint (also after the actor's later commands) -> the stored result; 0 mutation, 0 second audit row, 0 second receipt, 0 NOTIFY, no rate token | DT-28 moderation receipt exact replay |
 | DT-29 | same command id with a different action, message, reason code or note -> CHAT_IDEMPOTENCY_MISMATCH 409; trio, audit and receipts unchanged, 0 NOTIFY | DT-29 moderation receipt mismatch mutates nothing |
 | DT-30 | hide X (c1), restore X (c2), replay c1 -> c1's stored result, X stays visible, 0 audit, 0 NOTIFY; same with a same-state command (c3 hide while hidden, then restore, then replay c3: X stays visible) | DT-30 stale moderation replay does not re-apply |
