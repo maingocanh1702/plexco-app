@@ -288,3 +288,88 @@ describe("openRealtimeStream", () => {
     expect(listener.stats().subscribers).toBe(MAX_STREAMS_PER_ACCOUNT - 1);
   });
 });
+
+// Chat topic (lane L15): its own LISTEN channel, the ids-only frame encoder, its own per-account
+// cap and a lazy singleton. Chat exports load inside the cases, leaving the import block untouched.
+describe("chat realtime topic", () => {
+  const CHANNEL = "22222222-2222-4222-8222-222222222222";
+  const decode = (chunk: Uint8Array | undefined) => new TextDecoder().decode(chunk);
+
+  it("C1: a chat instance LISTENs on chat_realtime and plans only that channel's ids", async () => {
+    const chat = setup({ channel: "chat_realtime" });
+    chat.listener.add(chat.subscriber());
+    await chat.listener.ready();
+    expect(chat.clients[0]!.queries).toEqual(["LISTEN chat_realtime"]);
+    chat.clients[0]!.notify(REALTIME_CHANNEL, ID);
+    await flush();
+    expect(chat.deps.plan).not.toHaveBeenCalled();
+    chat.clients[0]!.notify("chat_realtime", ID);
+    await flush();
+    expect(vi.mocked(chat.deps.plan).mock.calls.map((call) => call[0])).toEqual([ID]);
+
+    const l5 = setup();
+    l5.listener.add(l5.subscriber());
+    await l5.listener.ready();
+    expect(l5.clients[0]!.queries).toEqual([`LISTEN ${REALTIME_CHANNEL}`]);
+    l5.clients[0]!.notify("chat_realtime", ID);
+    await flush();
+    expect(l5.deps.plan).not.toHaveBeenCalled();
+  });
+
+  it("C2: the chat stream writes encodeChatFrame's ids-only frame, no sessionId or version", async () => {
+    const { encodeChatFrame } = await import("./realtime-auth");
+    type ChatFrame = Parameters<typeof encodeChatFrame>[0];
+    const frame: ChatFrame = { type: "chat.message", channelId: CHANNEL, messageId: ID };
+    const clients: ReturnType<typeof fakeClient>[] = [];
+    const listener = createRealtimeListener<ChatFrame>({
+      connect: vi.fn(async () => {
+        const c = fakeClient();
+        clients.push(c);
+        return c as ListenClient;
+      }),
+      channel: "chat_realtime",
+      plan: vi.fn(async (_id, groups) =>
+        [...groups.values()].flatMap((set) => [...set].map((s) => [s, frame] as const)),
+      ),
+      now: () => 1_000_000,
+      random: () => 0.999,
+      log: vi.fn(),
+    });
+    const stream = openRealtimeStream(listener, audience, {
+      recheck: async () => true,
+      encode: encodeChatFrame,
+    })!;
+    await flush();
+    clients[0]!.notify("chat_realtime", ID);
+    await flush();
+    const reader = stream.getReader();
+    expect(decode((await reader.read()).value)).toBe(": hb\n\n");
+    const chunk = decode((await reader.read()).value);
+    expect(chunk).toBe(encodeChatFrame(frame));
+    expect(chunk).not.toContain("sessionId");
+    expect(chunk).not.toContain("version");
+    await reader.cancel();
+    expect(listener.stats().subscribers).toBe(0);
+  });
+
+  it("C3: the chat per-account cap is counted apart from L5's", () => {
+    const l5 = setup();
+    const chat = setup({ channel: "chat_realtime" });
+    const fill = ({ listener, subscriber }: ReturnType<typeof setup>) =>
+      Array.from({ length: MAX_STREAMS_PER_ACCOUNT }, () => listener.add(subscriber("a1")));
+    const accepted = Array.from({ length: MAX_STREAMS_PER_ACCOUNT }, () => true);
+    expect(fill(l5)).toEqual(accepted);
+    expect(fill(chat)).toEqual(accepted);
+    expect(chat.listener.add(chat.subscriber("a1"))).toBe(false);
+  });
+
+  it("C4: chatRealtimeListener() is one lazy singleton apart from L5's, idle before any add", async () => {
+    const { CHAT_REALTIME_CHANNEL, chatRealtimeListener, realtimeListener } =
+      await import("./realtime-listener");
+    const chat = chatRealtimeListener();
+    expect(chatRealtimeListener()).toBe(chat);
+    expect(chat).not.toBe(realtimeListener());
+    expect(chat.stats()).toEqual({ subscribers: 0, accounts: 0, listening: false, pending: 0 });
+    expect(CHAT_REALTIME_CHANNEL).toBe("chat_realtime");
+  });
+});
