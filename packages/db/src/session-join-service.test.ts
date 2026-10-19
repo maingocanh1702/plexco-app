@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { encryptPersonGender, type Gender } from "./gender-crypto.js";
@@ -270,6 +271,27 @@ describe("joinSession", () => {
                      WHERE command_id IN (${seqId}, ${parId})) commands`,
       ),
     ).toEqual({ players: 2, charges: 2, events: 2, commands: 2 });
+  });
+
+  it("T-3/P-6 (L13): a Zalo redelivery joins again under the same derived command id (zalo: + keyed hex) -> one players row, one charge, one event, one processed command; the second call is replayed", async () => {
+    const { tenantId, sessionId } = await world();
+    const m = await seedMember(tenantId);
+    const commandId = "zalo:" + randomBytes(32).toString("hex");
+    const first = await join(tenantId, m.personId, sessionId, { commandId });
+    expect(first).toMatchObject({ outcome: "active", replayed: false });
+    expect(await join(tenantId, m.personId, sessionId, { commandId })).toEqual({
+      ...first,
+      replayed: true,
+    });
+    expect(
+      await appRow(
+        tenantId,
+        sql`SELECT (SELECT count(*)::int FROM players WHERE session_id = ${sessionId}) players,
+                   (SELECT count(*)::int FROM charges WHERE session_id = ${sessionId}) charges,
+                   (SELECT count(*)::int FROM outbox_events WHERE aggregate_id = ${sessionId}) events,
+                   (SELECT count(*)::int FROM processed_commands WHERE command_id = ${commandId}) commands`,
+      ),
+    ).toEqual({ players: 1, charges: 1, events: 1, commands: 1 });
   });
 
   it("A-3: the join re-derives under the session lock: a seat taken after a read showed slotsOpen 1 -> waitlisted; a session closed after the read -> SESSION_NOT_JOINABLE", async () => {
