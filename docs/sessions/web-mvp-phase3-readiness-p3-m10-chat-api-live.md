@@ -80,7 +80,9 @@ Bodies (only these fields are read; never an author field, tech:1144): send `{cl
 - unreadCount: messages after the caller's own cursor (NULL = from the start) whose author IS DISTINCT FROM the caller (system rows count), tombstones
   included, capped at 100 (100 = 100 or more); the reader joins only `cm.person_id = actor` (members see each other's cursor rows: 0031:334-336).
 - ChatMessageDto, live (ChatMessage :163-174 minus authorPersonId, plus mine): {id, channelId, authorType, mine, body, replyToMessageId, editedAt, editCount,
-  tombstone: null, createdAt}; createdAt is L14's text verbatim (chat-service.ts:176-178), the same string the cursor carries (D-2).
+  tombstone: null, createdAt}. Amended 2026-10-19 (conductor answer 3): every timestamp a chat route returns (createdAt, editedAt in
+  history, POST, PATCH) is ISO-8601 UTC from one chat-route.ts mapper (Date.toISOString(); unparseable -> fail closed); the D-2 cursor
+  keeps L14's RAW text (chat-service.ts:176-178, microseconds), never the ISO value; L16 never parses Postgres text.
 - ChatMessageDto, tombstone: exactly {id, channelId, createdAt, tombstone: 'author_deleted' | 'moderation_hidden'}; no body, authorType, author, mine,
   replyToMessageId, editedAt or editCount (RO-L15-3 f; chat_list_messages returns edit columns on tombstones, 0063:566, :577, so the route drops them).
 - ChatStreamFrame: exactly {type: "chat.message", channelId, messageId}, one constant type (RO-L15-3 e); the client refetches through the authorized GET.
@@ -236,8 +238,9 @@ Files in section 9. "The one body" = 4.4's CHAT_FORBIDDEN 403 body, byte-equal e
 ## 11. OPEN (non-blocking; owner named per item)
 
 - O-1 Owner, pending sign-off (L17 consolidates): D-1..D-23 and 4a's further pins, each default applied (4.2 read body, 200 shapes; 4.3 system rows; 4.4 404).
-- O-2 Owner L16: wire createdAt and editedAt are L14's timestamptz text (2 (3) format), not ISO-8601; L16 parses it; route normalization only if L16 needs it.
+- O-2 Resolved 2026-10-19 (conductor answer 3, amendment in 4.3): wire createdAt and editedAt are ISO-8601 UTC; the cursor keeps L14's raw text.
 - O-3 PR body, "contract L16 consumes": one read-back per distinct (tenant, person) subscriber of the web process per NOTIFY (it carries no tenant), 4.6.
+  Conductor answer 1 (2026-10-19): this measured wording replaces RO-L15-3 d's and goes in the PR body as a documented ceiling.
 - O-4 Owner, via the conductor: no author label on the wire (RO-L15-3 g); L16 shows "You" or "Member"; labels need a migration lane (expected 0065).
 - O-5 Docs-only commit: no code symbol changes, so GitNexus detect_changes is not applicable (fallback: `git show --stat HEAD` = this file only).
 
