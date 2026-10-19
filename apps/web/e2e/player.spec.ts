@@ -3,6 +3,7 @@ import { formatVnd } from "../lib/money";
 import {
   LISTING_ID,
   NETWORK,
+  NEW_LISTING_ID,
   PRICE,
   READY,
   SCREENS,
@@ -14,6 +15,7 @@ import {
   mySession,
   ok,
   putScreenInState,
+  raw,
   type Reply,
   type RouteKey,
 } from "./support/player-api-mock";
@@ -171,7 +173,7 @@ test("no pay-now, QR or bank detail anywhere", async ({ page }) => {
 const RETRY = { name: "Thử lại", exact: true } as const;
 const RATE = "Bạn thao tác quá nhanh. Đợi một lát rồi thử lại.";
 /** Player data the mock serves: on no error or offline screen (nothing is cached, P-16). */
-const PLAYER_DATA = /Cầu lông tối thứ 5|Nguyễn Văn An|CLB Cầu Lông Test/;
+const PLAYER_DATA = /Cầu lông tối thứ 5|Nguyễn Văn An|CLB Cầu Lông Test|CLB Khách Test/;
 /** The reads of R 4.5.2: the screen and the route it reads. The join button posts instead. */
 const READS: Record<string, RouteKey> = {
   "discover list": "discover",
@@ -313,6 +315,23 @@ for (const [screen, route] of Object.entries(ROUTE)) {
   });
 }
 
+// The four /me reads answer a body-less 500 when they throw (apps/web/app/api/me/*/route.ts): no
+// envelope, so CLIENT_BAD_RESPONSE: the generic text with no reference, and a Retry (R 4.5.2).
+for (const screen of ["me clubs", "me sessions", "me charges", "me requests"]) {
+  test(`${screen} empty-body 500 fails closed`, async ({ page }) => {
+    const route = routeOf(screen);
+    const { api, root } = await putScreenInState(page, screen, "error", only(route, raw(500)));
+    await expect(root).toHaveAttribute("data-state", "error");
+    await expect(root.getByText("Đã có lỗi không mong muốn. Thử lại sau.")).toBeVisible();
+    await expect(root.getByText("Mã tham chiếu")).toHaveCount(0); // no envelope, so no request id to quote
+    await expect(root.getByText(PLAYER_DATA)).toHaveCount(0);
+    api.reply(route, readyReply(screen, route));
+    await root.getByRole("button", RETRY).click();
+    await expect(root).toHaveAttribute("data-state", "ready");
+    expect(api.callsTo(route)).toHaveLength(2);
+  });
+}
+
 for (const [screen, route] of Object.entries(READS)) {
   test(`${screen} offline`, async ({ page }) => {
     // The API is aborted (route.abort("internetdisconnected")): the offline state, a Retry, no cached data.
@@ -392,13 +411,13 @@ test("stale load more shows no error under a new list", async ({ page }) => {
   await expect.poll(() => api.callsTo("discover").length).toBe(2);
   expect(api.callsTo("discover")[1]?.query.get("cursor")).toBe("c1");
   // A new filter replaces the list while the old page is still in flight.
-  const fresh = listing({ publicListingId: "pl-new", title: "Kèo lọc mới" });
+  const fresh = listing({ publicListingId: NEW_LISTING_ID, title: "Kèo lọc mới" });
   api.reply("discover", ok({ items: [fresh], nextCursor: "c2" }));
   await page.getByLabel("Khu vực").fill("Quận 1");
   await main.getByRole("button", { name: "Lọc", exact: true }).click();
   await expect(main.getByText("Kèo lọc mới")).toBeVisible();
   // The old page now fails: that error belongs to a list that is gone.
-  api.failNext("discover", fail("INTERNAL_ERROR", 500));
+  api.failNext("discover", fail("E2E_UNKNOWN_CODE", 500));
   const stale = page.waitForResponse(
     (r) => r.url().includes("/api/discover") && r.status() === 500,
   );

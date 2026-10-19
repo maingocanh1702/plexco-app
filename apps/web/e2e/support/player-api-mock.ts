@@ -33,9 +33,14 @@ const ROUTES = {
 export type RouteKey = keyof typeof ROUTES;
 const KEYS = Object.keys(ROUTES) as RouteKey[];
 
-/** What a route answers: a 200 envelope (ready, or empty with an empty list), an error, or a dropped connection. */
-export type Reply = { data: unknown } | { error: MockError } | "network";
+/**
+ * What a route answers: a 200 envelope (ready, or empty with an empty list), an error envelope, a
+ * reply with no envelope and an empty body (what the /api/me reads send when they throw: the client
+ * sees CLIENT_BAD_RESPONSE), or a dropped connection.
+ */
+export type Reply = { data: unknown } | { error: MockError } | { raw: number } | "network";
 export const ok = (data: unknown): Reply => ({ data });
+export const raw = (status: number): Reply => ({ raw: status });
 export const fail = (code: string, statusCode: number): Reply => ({
   error: { code, message: code, statusCode },
 });
@@ -45,7 +50,9 @@ const DAY = 86_400_000;
 const iso = (days: number, hours = 0) =>
   new Date(Date.now() + days * DAY + hours * 3_600_000).toISOString();
 
-export const LISTING_ID = "pl-e2e-1";
+/** Real public listing ids are uuids (isPublicListingId): the fixtures keep that shape. */
+export const LISTING_ID = "5b0e8f3a-6c1d-4e27-9a4b-2f7d1c8e3a10";
+export const NEW_LISTING_ID = "9d2c7a41-0b8e-4f63-a5d9-1e6b3c4f7a28";
 export const PRICE = 60_000;
 export const VENUE = "Sân Phú Mỹ Hưng";
 /** Overrides may carry one injected key that no whitelist holds (a venue, a gender, a bank string). */
@@ -168,13 +175,14 @@ export async function installPlayerApi(
       const method = request.method();
       const key = KEYS.find((k) => ROUTES[k][0] === method && ROUTES[k][1].test(pathname));
       if (!key) return route.fallback();
-      const raw = request.postData();
-      const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+      const postData = request.postData();
+      const body = postData ? (JSON.parse(postData) as Record<string, unknown>) : null;
       api.calls.push({ key, method, path: pathname, query: searchParams, body });
 
       await holds.get(key)?.shift();
       const reply = once.get(key)?.shift() ?? standing.get(key) ?? fail("E2E_NOT_STUBBED", 500);
       if (reply === "network") return route.abort("internetdisconnected");
+      if ("raw" in reply) return route.fulfill({ status: reply.raw, body: "" });
       const failed = "error" in reply;
       return route.fulfill({
         status: failed ? reply.error.statusCode : 200,
@@ -253,30 +261,62 @@ function routed(
     loading: { expect: "loading", hold: route, act },
     ready: cell("ready", replies.ready),
     ...(replies.empty && { empty: cell("empty", replies.empty) }),
-    error: cell("error", replies.error ?? fail("INTERNAL_ERROR", 500)),
+    error: cell("error", replies.error ?? fail("E2E_UNKNOWN_CODE", 500)),
     offline: cell("offline", NETWORK),
   };
 }
 
-const CLUB = { clubRef: "club-e2e", clubLabel: "CLB Cầu Lông Test" };
+/** The real ME-1 DTO always carries membershipStatus: one member club and one guest club. */
+const CLUB = { clubRef: "club-e2e", clubLabel: "CLB Cầu Lông Test", membershipStatus: "active" };
+const GUEST_CLUB = {
+  clubRef: "club-e2e-2",
+  clubLabel: "CLB Khách Test",
+  membershipStatus: "guest",
+};
 const HOST_SESSION = makeSession({ id: "s-host-1" });
+/** The SQL keeps both null unless the seat is active (R 4.6 S-6). */
+const NO_VENUE = { venueName: null, venueAddress: null };
 const seats = [
   mySession(),
-  mySession({ sessionId: "sess-e2e-2", myStatus: "waitlisted", waitlistPosition: 2 }),
-  mySession({ sessionId: "sess-e2e-3", myStatus: "pending" }),
+  mySession({ sessionId: "sess-e2e-2", myStatus: "waitlisted", waitlistPosition: 2, ...NO_VENUE }),
+  mySession({ sessionId: "sess-e2e-3", myStatus: "pending", ...NO_VENUE }),
 ];
+/** All ten keys of the real MyJoinRequest DTO (ME-4). */
 const request = {
   requestId: "jr-e2e-1",
   sessionId: "sess-e2e-3",
   clubRef: CLUB.clubRef,
   clubLabel: CLUB.clubLabel,
   startsAt: iso(3),
+  area: "Quận 7",
+  status: "pending",
   createdAt: iso(0, -2),
+  decidedAt: null,
+  expiresAt: iso(1),
 };
+/** One unbroken 36-character name: the 375 px cells of the inbox prove the .who wrap. */
+const LONG_NAME = "Abcdefghijklmnopqrstuvwxyz0123456789";
 const pending = [
   { requestId: "jr-e2e-1", displayName: "Nguyễn Văn An", createdAt: iso(0, -3) },
   { requestId: "jr-e2e-2", displayName: null, createdAt: iso(0, -1) },
+  { requestId: "jr-e2e-3", displayName: LONG_NAME, createdAt: iso(0, -2) },
 ];
+/** S-3 after the press: each join outcome is its own cell, so each render gets the axe and 375 px checks. */
+const joined = (outcome: string, waitlistPosition: number | null, text: string): ScreenDef => ({
+  path: `/discover/${LISTING_ID}`,
+  root: "main [data-state]",
+  signedIn: true,
+  cells: {
+    ready: {
+      expect: "ready",
+      replies: { join: ok({ join: { outcome, waitlistPosition }, replayed: false }) },
+      act: async (page, root) => {
+        await pressJoin(page);
+        await expect(root.getByRole("status")).toContainText(text); // the outcome is up before the checks run
+      },
+    },
+  },
+});
 
 export const SCREENS: Record<string, ScreenDef> = {
   "discover list": {
@@ -298,10 +338,13 @@ export const SCREENS: Record<string, ScreenDef> = {
     cells: {
       loading: { expect: "loading", hold: "join", act: pressJoin },
       ready: { expect: "ready" },
-      error: { expect: "error", replies: { join: fail("INTERNAL_ERROR", 500) }, act: pressJoin },
+      error: { expect: "error", replies: { join: fail("E2E_UNKNOWN_CODE", 500) }, act: pressJoin },
       offline: { expect: "offline", act: goOffline },
     },
   },
+  "join outcome active": joined("active", null, "Bạn đã có chỗ trong buổi này."),
+  "join outcome waitlisted": joined("waitlisted", 2, "Bạn đang trong danh sách chờ #2"),
+  "join outcome requested": joined("requested", null, "Đã gửi yêu cầu. Chờ chủ buổi duyệt."),
   "me hub": {
     path: "/me",
     root: "main",
@@ -313,8 +356,9 @@ export const SCREENS: Record<string, ScreenDef> = {
     root: "main",
     signedIn: true,
     cells: routed("meClubs", {
-      ready: ok({ clubs: [CLUB], truncated: false }),
+      ready: ok({ clubs: [CLUB, GUEST_CLUB], truncated: false }),
       empty: ok({ clubs: [], truncated: false }),
+      error: raw(500), // what a throwing /api/me read sends: no envelope (CLIENT_BAD_RESPONSE)
     }),
   },
   "me sessions": {
@@ -324,6 +368,7 @@ export const SCREENS: Record<string, ScreenDef> = {
     cells: routed("meSessions", {
       ready: ok({ sessions: seats, truncated: false }),
       empty: ok({ sessions: [], truncated: false }),
+      error: raw(500),
     }),
   },
   "me charges": {
@@ -333,12 +378,25 @@ export const SCREENS: Record<string, ScreenDef> = {
     cells: routed("meCharges", {
       ready: ok(myCharges()),
       empty: ok({ summary: { kind: "known_zero", currency: "VND", asOf: iso(0) }, clubs: [] }),
-      // The fail-closed amount: an unknown total is never shown as 0.
-      error: ok({
-        summary: { kind: "unknown", reasonCode: "READ_FAILED", retryable: true },
-        clubs: [],
-      }),
+      error: raw(500),
     }),
+  },
+  // The 200 data state that fails closed (R 4.6 S-7): an unknown total is never shown as 0.
+  "me charges unknown total": {
+    path: "/me/charges",
+    root: "main",
+    signedIn: true,
+    cells: {
+      error: {
+        expect: "error",
+        replies: {
+          meCharges: ok({
+            summary: { kind: "unknown", reasonCode: "READ_FAILED", retryable: true },
+            clubs: [],
+          }),
+        },
+      },
+    },
   },
   "me requests": {
     path: "/me/requests",
@@ -347,6 +405,7 @@ export const SCREENS: Record<string, ScreenDef> = {
     cells: routed("meRequests", {
       ready: ok({ requests: [request], truncated: false }),
       empty: ok({ requests: [], truncated: false }),
+      error: raw(500),
     }),
   },
   "host requests tab": {
