@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   API_ERROR_CODES,
@@ -324,57 +324,34 @@ describe("in-app chat codes (M10, L14 readiness 4.6; feature_inapp_chat_tech.md 
   });
 });
 
-// Compile-time half: `satisfies` fails `tsc` on any extra key and each `@ts-expect-error` fails it
-// when the excluded key becomes legal; the runtime half pins the exact key set (readiness 4.3).
+// Compile-time locks, enforced by `tsc` (packages/core typecheck includes src/*.test.ts; expectTypeOf
+// is a no-op under vitest): each `expectTypeOf<keyof X>` pins a DTO's exact key set, so an added key,
+// even an optional one, fails it; each `@ts-expect-error` fails when its excluded key becomes legal
+// (readiness 4.3).
 describe("chat wire DTOs (M10)", () => {
   const messageId = "5d1f7c2a-0000-4000-8000-000000000001";
   const channelId = "5d1f7c2a-0000-4000-8000-000000000002";
   const createdAt = "2026-10-19 11:53:07.123456+00";
 
   it("types a chat channel as allowlisted columns + unreadCount only (RO-L15-2)", () => {
-    const channel = {
-      id: channelId,
-      title: "Chung",
-      sortOrder: 0,
-      isDefault: true,
-      postPolicy: "admins_only",
-      unreadCount: 100,
-    } satisfies ChatChannelDto;
-    expect(Object.keys(channel).sort()).toEqual([
-      "id",
-      "isDefault",
-      "postPolicy",
-      "sortOrder",
-      "title",
-      "unreadCount",
-    ]);
+    expectTypeOf<keyof ChatChannelDto>().toEqualTypeOf<
+      "id" | "title" | "sortOrder" | "isDefault" | "postPolicy" | "unreadCount"
+    >();
   });
 
   it("types a live message with mine + authorType and no person identifier (RO-L15-3 g)", () => {
-    const live = {
-      id: messageId,
-      channelId,
-      authorType: "person",
-      mine: true,
-      body: "hello",
-      replyToMessageId: null,
-      editedAt: null,
-      editCount: 0,
-      tombstone: null,
-      createdAt,
-    } satisfies ChatLiveMessageDto;
-    expect(Object.keys(live).sort()).toEqual([
-      "authorType",
-      "body",
-      "channelId",
-      "createdAt",
-      "editCount",
-      "editedAt",
-      "id",
-      "mine",
-      "replyToMessageId",
-      "tombstone",
-    ]);
+    expectTypeOf<keyof ChatLiveMessageDto>().toEqualTypeOf<
+      | "id"
+      | "channelId"
+      | "authorType"
+      | "mine"
+      | "body"
+      | "replyToMessageId"
+      | "editedAt"
+      | "editCount"
+      | "tombstone"
+      | "createdAt"
+    >();
     const leaky = {
       id: messageId,
       channelId,
@@ -393,13 +370,9 @@ describe("chat wire DTOs (M10)", () => {
   });
 
   it("types a tombstone as exactly four keys: no body, author or revision (RO-L15-3 f, D-16)", () => {
-    const tombstones = [
-      { id: messageId, channelId, createdAt, tombstone: "author_deleted" },
-      { id: messageId, channelId, createdAt, tombstone: "moderation_hidden" },
-    ] satisfies ChatTombstoneDto[];
-    for (const entry of tombstones) {
-      expect(Object.keys(entry).sort()).toEqual(["channelId", "createdAt", "id", "tombstone"]);
-    }
+    expectTypeOf<keyof ChatTombstoneDto>().toEqualTypeOf<
+      "id" | "channelId" | "createdAt" | "tombstone"
+    >();
     const withBody = {
       id: messageId,
       channelId,
@@ -412,7 +385,6 @@ describe("chat wire DTOs (M10)", () => {
   });
 
   it("types the one chat stream frame as a refetch hint with ids only (D-12)", () => {
-    const frame = { type: "chat.message", channelId, messageId } satisfies ChatStreamFrame;
-    expect(Object.keys(frame).sort()).toEqual(["channelId", "messageId", "type"]);
+    expectTypeOf<keyof ChatStreamFrame>().toEqualTypeOf<"type" | "channelId" | "messageId">();
   });
 });
