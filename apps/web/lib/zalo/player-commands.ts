@@ -162,15 +162,13 @@ async function payReply(deps: PlayerCommandDeps): Promise<string> {
   if (!st || st.kind === "known_zero") return reply("R16");
   if (st.kind !== "known_amount" || st.items.length === 0) return reply("R17");
   const { sessions } = await deps.payContext(st.items.map((i) => i.sessionRef));
-  const l = getLang();
   const rows: string[] = [];
   for (const i of st.items) {
     const s = sessions.get(i.sessionRef);
     if (!s) return reply("R17");
     if (rows.length === 10) continue;
-    const when = `${formatSessionDate(i.startsAt, s.timezone, l)} ${formatSessionTime(i.startsAt, s.timezone, l)}`;
     const line = reply("R15item", {
-      ref: s.area ? `${when} · ${s.area}` : when,
+      ref: ref({ ...s, startsAt: i.startsAt }),
       amount: formatVnd(i.remaining),
     });
     rows.push(line + (i.status === "partial" ? reply("R15partial") : ""));

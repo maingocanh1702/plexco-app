@@ -507,7 +507,7 @@ const payDeps = (over: Record<string, unknown> = {}) =>
     payContext: payCtx(),
     ...over,
   });
-const PREF = (l: "vi" | "en") => `${formatSessionDate(AT, "Asia/Ho_Chi_Minh", l)} 19:00 · Sân A`;
+const PREF = REF; // P-20: /pay renders {ref} with the same ref() as /join and /leave
 // T-17: no bank data; no other club's amount, date, slug or label; never the all-clubs summary total.
 const expectOwnOnly = (text: string) => {
   expectNoBankData(text);
