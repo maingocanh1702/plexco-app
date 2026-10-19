@@ -103,7 +103,7 @@ GRANT INSERT (channel_id, author_type, author_person_id, membership_id, body, re
   moderation_actor_person_id, moderation_reason_code) ON chat_messages TO chat_definer;
 GRANT EXECUTE ON FUNCTION tenant_capability_authorize(uuid, text, uuid) TO chat_definer;
 
--- SECTION 2: functions (W2 provisioning core, W3a send/mark_read, W3b edit/delete, W3c moderate, W4 read)
+-- SECTION 2: functions (W2 provisioning core, W3a send, W3b edit/delete/mark_read, W3c moderate, W4 read)
 
 -- V-14/V-15 provisioning core (internal, no EXECUTE for app): ensure the tenant's default club channel, then one
 -- chat_members row per non-archived club channel. A replay writes nothing; a re-join re-points membership_id only,
@@ -168,6 +168,95 @@ END;
 $$;
 REVOKE ALL ON FUNCTION chat_backfill_default_channels() FROM PUBLIC, app, app_worker, readonly;
 
+-- 4.2 send (W3a). First failing check wins: channel lock + kind -> actor, tenant, active member -> client_msg_id
+-- shape -> duplicate -> post_policy -> body -> reply target -> two rate buckets -> INSERT -> NOTIFY (new row only).
+CREATE FUNCTION send_chat_message(p_channel uuid, p_client_msg_id text, p_body text,
+  p_reply_to_message_id uuid DEFAULT NULL)
+RETURNS TABLE (id uuid, created_at timestamptz, duplicate boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_ch record;
+  v_dup record;
+  v_tenant uuid;
+  v_person uuid;
+  v_membership uuid;
+  v_id uuid;
+  v_at timestamptz;
+BEGIN
+  -- V-6: lock and read in one statement, first; V-4: the kind before any other check, generic code
+  SELECT ch.kind, ch.tenant_id, ch.post_policy INTO v_ch
+    FROM public.chat_channels ch WHERE ch.id = p_channel FOR NO KEY UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  IF v_ch.kind <> 'club' THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_SAFETY_BLOCKED'; END IF;
+  -- V-7: actor and tenant come only from the GUCs; unset or malformed fails closed
+  IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_tenant := current_setting('app.tenant_id', true)::uuid;
+  END IF;
+  IF current_setting('app.person_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_person := current_setting('app.person_id', true)::uuid;
+  END IF;
+  SELECT m.id INTO v_membership
+    FROM public.chat_members cm
+    JOIN public.memberships m ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+   WHERE cm.channel_id = p_channel AND cm.person_id = v_person AND m.status = 'active' AND v_ch.tenant_id = v_tenant;
+  IF v_membership IS NULL THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  -- V-2
+  IF p_client_msg_id IS NULL OR char_length(p_client_msg_id) NOT BETWEEN 1 AND 64 THEN
+    RAISE EXCEPTION USING MESSAGE = 'INVALID_BODY';
+  END IF;
+  -- V-3: the same author gets the original (no row, token or NOTIFY); anyone else a generic mismatch
+  SELECT msg.id, msg.created_at, msg.author_type, msg.author_person_id INTO v_dup
+    FROM public.chat_messages msg WHERE msg.channel_id = p_channel AND msg.client_msg_id = p_client_msg_id;
+  IF FOUND THEN
+    IF v_dup.author_type = 'person' AND v_dup.author_person_id = v_person THEN
+      RETURN QUERY SELECT v_dup.id, v_dup.created_at, true;
+      RETURN;
+    END IF;
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_IDEMPOTENCY_MISMATCH';
+  END IF;
+  -- admins_only needs the capability (anything but allowed = true denies); an unknown policy is forbidden
+  IF v_ch.post_policy = 'admins_only' THEN
+    IF (SELECT a.allowed FROM public.tenant_capability_authorize(v_tenant, 'chat.channel.post_restricted', v_person) a)
+       IS NOT TRUE THEN
+      RAISE EXCEPTION USING MESSAGE = 'CHAT_CAPABILITY_REQUIRED';
+    END IF;
+  ELSIF v_ch.post_policy IS DISTINCT FROM 'all_members' THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN';
+  END IF;
+  -- V-1: before any INSERT
+  IF p_body IS NULL OR p_body !~ '[^[:space:]]' THEN RAISE EXCEPTION USING MESSAGE = 'INVALID_BODY'; END IF;
+  IF char_length(p_body) > 4000 THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_MESSAGE_TOO_LARGE'; END IF;
+  -- the reply target must be a visible, not author-deleted message of this channel
+  IF p_reply_to_message_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM public.chat_messages r
+        WHERE r.id = p_reply_to_message_id AND r.channel_id = p_channel
+          AND r.moderation_state = 'visible' AND r.author_deleted_at IS NULL) THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_REPLY_INVALID';
+  END IF;
+  -- V-8: uuid-only bucket keys, after every other check; a rejected send rolls its token back with it
+  IF NOT public.rate_limit_check('chat_send_10s:' || v_person::text || ':' || p_channel::text, 20, interval '10 seconds')
+  THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_RATE_LIMITED';
+  END IF;
+  IF NOT public.rate_limit_check('chat_send_1m:' || v_person::text || ':' || p_channel::text, 300, interval '1 minute')
+  THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_RATE_LIMITED';
+  END IF;
+  INSERT INTO public.chat_messages AS msg
+    (channel_id, author_type, author_person_id, membership_id, body, reply_to_message_id, client_msg_id, created_at)
+  VALUES (p_channel, 'person', v_person, v_membership, p_body, p_reply_to_message_id, p_client_msg_id, clock_timestamp())
+  RETURNING msg.id, msg.created_at INTO v_id, v_at;
+  -- 4.5: the id only, delivered on commit
+  PERFORM pg_catalog.pg_notify('chat_realtime', v_id::text);
+  RETURN QUERY SELECT v_id, v_at, false;
+END;
+$$;
+REVOKE ALL ON FUNCTION send_chat_message(uuid, text, text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION send_chat_message(uuid, text, text, uuid) TO app;
+
 -- SECTION 3: trigger on memberships (W2)
 -- Created while chat_memberships_provision_trg is still migration-owned (4.2 ownership order).
 CREATE TRIGGER trg_memberships_chat_provision
@@ -180,6 +269,7 @@ GRANT USAGE, CREATE ON SCHEMA public TO chat_definer;
 ALTER FUNCTION chat_provision_member(uuid, uuid, uuid) OWNER TO chat_definer;
 ALTER FUNCTION chat_memberships_provision_trg() OWNER TO chat_definer;
 ALTER FUNCTION chat_backfill_default_channels() OWNER TO chat_definer;
+ALTER FUNCTION send_chat_message(uuid, text, text, uuid) OWNER TO chat_definer;
 -- W3a..W4: add the ALTER FUNCTION ... OWNER TO chat_definer lines of the command and read functions here.
 REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
