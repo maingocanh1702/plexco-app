@@ -5,6 +5,7 @@
  * chat-routes-db.test.ts and realtime-listener-db.test.ts; it imports nothing from a test file.
  */
 import { randomUUID } from "node:crypto";
+import { inspect } from "node:util";
 import { createWebSession, revokeWebSession, sendChatMessage, withChatActor } from "@plexco/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -12,9 +13,17 @@ import {
   setupRlsTestContext,
   type RlsTestContext,
 } from "../../../packages/db/src/test-harness.js";
-import { GET as history } from "../app/api/chat/channels/[id]/messages/route";
+import { POST as moderate } from "../app/api/chat/channels/[id]/messages/[messageId]/moderation/route";
+import {
+  DELETE as deleteMessage,
+  PATCH as patchMessage,
+} from "../app/api/chat/channels/[id]/messages/[messageId]/route";
+import { GET as history, POST as postMessage } from "../app/api/chat/channels/[id]/messages/route";
+import { POST as postRead } from "../app/api/chat/channels/[id]/read/route";
+import { GET as listChannels } from "../app/api/chat/channels/route";
 import { GET as subscribe } from "../app/api/chat/subscribe/route";
 import { CHAT_SUBSCRIBE_LIMIT, chatForbidden } from "./chat-route";
+import { log } from "./log";
 import {
   chatRealtimeListener,
   HEARTBEAT_MS,
@@ -383,4 +392,233 @@ describe("GET /api/chat/subscribe (live stream)", () => {
       pending: 0,
     });
   }, 30_000);
+});
+
+// G1/G2 sweep (readiness section 7): one sentinel body through every chat handler, success and
+// error path; G1 = the text only in a history 200 body, G2 = no person uuid on any wire.
+type Member = Actor & { csrf: string };
+type Spy = { mock: { calls: unknown[][] }; mockRestore: () => void };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** actor() with its CSRF secret kept: the five mutations send x-csrf-token. */
+async function member(t: string): Promise<Member> {
+  const p = await seedPersonAccount(ctx.owner, randomUUID());
+  const { rows } = await ctx.owner.query<{ id: string }>(
+    `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id`,
+    [t, p.personId],
+  );
+  const token = randomUUID();
+  const csrf = randomUUID();
+  await createWebSession(runtime!.pool, {
+    accountId: p.accountId,
+    tokenHash: hashToken(token),
+    csrfSecret: csrf,
+    ttlSeconds: 3600,
+  });
+  return { ...p, membershipId: rows[0]!.id, token, csrf };
+}
+
+describe("G1/G2 sweep", () => {
+  it("G1 message text only in a history 200 body; G2 no person uuid or authorPersonId anywhere", async () => {
+    const S = `sweep${randomUUID().replace(/-/g, "")}`;
+    const c = await club();
+    const author = await member(c.t);
+    const reader = await member(c.t);
+    const mod = await member(c.t);
+    await ctx.owner.query(
+      `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+       VALUES ($1, 'web', $2, 'owner', true)`,
+      [c.t, mod.personId],
+    );
+    const req = (
+      a: Member | null,
+      path: string,
+      method = "GET",
+      payload?: unknown,
+      csrf = a?.csrf,
+    ) => {
+      cookieJar.token = a?.token;
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (csrf) headers["x-csrf-token"] = csrf;
+      const url = `https://plexco.app/api/chat/${path}${path.includes("?") ? "&" : "?"}tenant=${c.t}`;
+      const body = payload === undefined ? undefined : JSON.stringify(payload);
+      return new Request(url, { method, headers, body });
+    };
+    const ch = (id = c.c) => ({ params: Promise.resolve({ id }) });
+    const at = (messageId: string) => ({ params: Promise.resolve({ id: c.c, messageId }) });
+    const hide = (extra: Record<string, unknown> = {}) => ({
+      action: "hide",
+      reasonCode: "spam",
+      commandId: randomUUID(),
+      ...extra,
+    });
+    const msgs = `channels/${c.c}/messages`;
+    const listen = await ctx.workerPool.connect();
+    const payloads: string[] = [];
+    const spies: Spy[] = [];
+    try {
+      listen.on("notification", (n) => payloads.push(n.payload ?? ""));
+      await listen.query("LISTEN chat_realtime");
+      for (const m of ["log", "info", "warn", "error"] as const) spies.push(vi.spyOn(console, m));
+      const sinks = log as unknown as Record<string, () => unknown>;
+      for (const k of Object.keys(sinks)) {
+        if (typeof sinks[k] === "function") spies.push(vi.spyOn(sinks, k));
+      }
+      const r = await stream(reader, c.t); // the SSE 200, headers asserted in stream() (N1)
+      const m1 = await send(c.t, c.c, author, S);
+      const m2 = await send(c.t, c.c, author, S);
+      const m3 = await send(c.t, c.c, author, S);
+      const sendS = (extra: Record<string, unknown> = {}) => ({
+        clientMsgId: randomUUID(),
+        body: S,
+        ...extra,
+      });
+      const table: [string, number, () => Promise<Response> | Response][] = [
+        ["send 200", 200, () => postMessage(req(author, msgs, "POST", sendS()), ch())],
+        [
+          "send 413 oversized",
+          413,
+          () => postMessage(req(author, msgs, "POST", sendS({ body: S + "x".repeat(4001) })), ch()),
+        ],
+        [
+          "send 409 reply target",
+          409,
+          () =>
+            postMessage(req(author, msgs, "POST", sendS({ replyToMessageId: randomUUID() })), ch()),
+        ],
+        [
+          "send 400 channel id",
+          400,
+          () =>
+            postMessage(
+              req(author, "channels/not-a-uuid/messages", "POST", sendS()),
+              ch("not-a-uuid"),
+            ),
+        ],
+        [
+          "send 403 csrf",
+          403,
+          () => postMessage(req(author, msgs, "POST", sendS(), "wrong"), ch()),
+        ],
+        ["history 200", 200, () => history(req(reader, msgs), ch())],
+        ["history 400 cursor", 400, () => history(req(reader, `${msgs}?cursor=${S}`), ch())],
+        [
+          "edit 200",
+          200,
+          () =>
+            patchMessage(
+              req(author, `${msgs}/${m1}`, "PATCH", { body: `${S}edited`, expectedEditCount: 0 }),
+              at(m1),
+            ),
+        ],
+        [
+          // a non-author PATCH ends in L14's edit outcome, 409 (measured), unlike DELETE's 403
+          "edit 409 not author",
+          409,
+          () =>
+            patchMessage(
+              req(reader, `${msgs}/${m1}`, "PATCH", { body: S, expectedEditCount: 1 }),
+              at(m1),
+            ),
+        ],
+        [
+          "edit 403 csrf",
+          403,
+          () =>
+            patchMessage(
+              req(author, `${msgs}/${m1}`, "PATCH", { body: S, expectedEditCount: 1 }, "wrong"),
+              at(m1),
+            ),
+        ],
+        [
+          "delete 403 not author",
+          403,
+          () => deleteMessage(req(reader, `${msgs}/${m1}`, "DELETE"), at(m1)),
+        ],
+        ["delete 200", 200, () => deleteMessage(req(author, `${msgs}/${m1}`, "DELETE"), at(m1))],
+        [
+          "hide 403 no capability",
+          403,
+          () => moderate(req(reader, `${msgs}/${m2}/moderation`, "POST", hide()), at(m2)),
+        ],
+        [
+          "hide 422 reason",
+          422,
+          () =>
+            moderate(req(mod, `${msgs}/${m2}/moderation`, "POST", hide({ reasonCode: S })), at(m2)),
+        ],
+        [
+          "hide 200",
+          200,
+          () => moderate(req(mod, `${msgs}/${m2}/moderation`, "POST", hide()), at(m2)),
+        ],
+        [
+          "read 200",
+          200,
+          () =>
+            postRead(req(reader, `channels/${c.c}/read`, "POST", { throughMessageId: m3 }), ch()),
+        ],
+        [
+          "read 400 message id",
+          400,
+          () =>
+            postRead(req(reader, `channels/${c.c}/read`, "POST", { throughMessageId: S }), ch()),
+        ],
+        ["channels 200", 200, () => listChannels(req(reader, "channels"))],
+        ["channels 401", 401, () => listChannels(req(null, "channels"))],
+        ["subscribe 401", 401, () => get(null, c.t)],
+      ];
+      const seen: { where: string; status: number; cache: string | null; text: string }[] = [];
+      for (const [where, , run] of table) {
+        const res = await run();
+        const sse = res.headers.get("content-type")?.startsWith("text/event-stream");
+        const text = sse ? (await res.body?.cancel(), "<stream>") : await res.text(); // never hang
+        seen.push({ where, status: res.status, cache: res.headers.get("cache-control"), text });
+      }
+      // Drain every frame the reader got; a timed-out read stays pending, so no chunk is lost.
+      const frames: string[] = [];
+      let pending: ReturnType<Reader["read"]> | undefined;
+      for (;;) {
+        pending ??= r.read();
+        const idle = new Promise<null>((ok) => setTimeout(() => ok(null), 1_000));
+        const got = await Promise.race([pending, idle]);
+        if (got === null || got.done) break;
+        pending = undefined;
+        frames.push(new TextDecoder().decode(got.value));
+      }
+      const opts = { depth: 8, maxStringLength: null, maxArrayLength: null, breakLength: Infinity };
+      const logged = spies.flatMap((s) => s.mock.calls.map((args) => inspect(args, opts)));
+      const texts: [string, string][] = [
+        ...seen.map((s): [string, string] => [s.where, s.text]),
+        ...frames.map((f, i): [string, string] => [`frame ${i}`, f]),
+      ];
+      expect(Object.fromEntries(seen.map((s) => [s.where, s.status]))).toEqual(
+        Object.fromEntries(table.map(([where, status]) => [where, status])),
+      );
+      expect(seen.filter((s) => !s.cache?.includes("no-store")).map((s) => s.where)).toEqual([]);
+      // G1, with positive controls so the sweep cannot pass vacuously.
+      expect(seen.find((s) => s.where === "history 200")?.text).toContain(S);
+      expect(frames.some((f) => f.includes(m1))).toBe(true);
+      expect(payloads.length).toBeGreaterThanOrEqual(3);
+      expect(
+        texts.filter(([w, t]) => w !== "history 200" && t.includes(S)).map(([w]) => w),
+      ).toEqual([]);
+      // D2 S-4: every NOTIFY payload is exactly one of the message ids this sweep created.
+      const sendText = seen.find((s) => s.where === "send 200")?.text ?? "{}";
+      const sent = (JSON.parse(sendText) as { data?: { id?: string } }).data?.id;
+      expect(sent, sendText).toMatch(UUID);
+      const created = [m1, m2, m3, sent];
+      expect(payloads.filter((p) => !created.includes(p))).toEqual([]);
+      expect(logged.filter((l) => l.includes(S))).toEqual([]);
+      // G2 (RO-L15-3 g): no seeded person uuid and no authorPersonId in any body, error or frame.
+      const ids = [author, reader, mod].map((a) => a.personId.toLowerCase());
+      const named = texts.filter(
+        ([, t]) => t.includes("authorPersonId") || ids.some((id) => t.toLowerCase().includes(id)),
+      );
+      expect(named.map(([w]) => w)).toEqual([]);
+    } finally {
+      for (const s of spies) s.mockRestore();
+      listen.release(true);
+    }
+  }, 60_000);
 });
