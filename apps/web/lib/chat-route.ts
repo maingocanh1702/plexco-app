@@ -58,7 +58,7 @@ export function chatRateLimited(): Response {
   return err("CHAT_RATE_LIMITED", t(...RATE_LIMITED_PAIR), 429);
 }
 
-function invalidBody(): Response {
+export function invalidBody(): Response {
   return err("INVALID_BODY", t(...INVALID_PAIR), 400);
 }
 

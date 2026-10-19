@@ -1,12 +1,14 @@
 import type { ChatMessageDto } from "@plexco/core";
-import { listChatMessages, type ChatMessage } from "@plexco/db";
+import { listChatMessages, sendChatMessage, type ChatMessage } from "@plexco/db";
 
 import { ok } from "../../../../../../lib/api-envelope";
 import {
   chatGate,
   encodeChatCursor,
+  invalidBody,
   runChat,
   toWireTimestamp,
+  uuidOrNull,
 } from "../../../../../../lib/chat-route";
 
 const AUTHOR_TYPES = ["person", "assistant", "system"] as const;
@@ -36,5 +38,22 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
     const last = rows[limit - 1]; // D-22: only a full page has a next one; its oldest row (K1 order)
     const messages = rows.map((row) => toDto(row, g.personId));
     return ok({ messages, nextCursor: last ? encodeChatCursor(last) : null });
+  });
+}
+
+/** D-8, D-10: exactly {id, createdAt, duplicate}, never the body; PR note 10: uuid ids only. */
+export async function POST(request: Request, { params }: Params): Promise<Response> {
+  const g = await chatGate(request, { ids: { id: (await params).id }, json: true });
+  if (g instanceof Response) return g;
+  const { body, clientMsgId: rawId, replyToMessageId: reply = null } = g.body!;
+  const clientMsgId = uuidOrNull(rawId);
+  const replyToMessageId = reply === null ? null : uuidOrNull(reply);
+  if (!clientMsgId || typeof body !== "string" || (reply !== null && !replyToMessageId)) {
+    return invalidBody();
+  }
+  return runChat(g, async (tx) => {
+    const input = { channelId: g.ids.id, clientMsgId, body, replyToMessageId };
+    const { id, createdAt, duplicate } = await sendChatMessage(tx, input);
+    return ok({ id, createdAt: toWireTimestamp(createdAt), duplicate });
   });
 }

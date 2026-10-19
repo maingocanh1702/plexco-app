@@ -18,7 +18,7 @@ import {
   setupRlsTestContext,
   type RlsTestContext,
 } from "../../../packages/db/src/test-harness.js";
-import { GET as history } from "../app/api/chat/channels/[id]/messages/route";
+import { GET as history, POST as postMessage } from "../app/api/chat/channels/[id]/messages/route";
 import { decodeChatCursor, encodeChatCursor } from "./chat-route";
 import { appDb, hashToken, resetDbRoleViolationForTests } from "./session-cookies";
 
@@ -330,5 +330,193 @@ describe("GET /api/chat/channels/:id/messages (history)", () => {
       (m: { id: string }) => m.id,
     );
     expect(ids).toEqual(before);
+  });
+});
+
+/** POST a message; csrf defaults to the actor's token, null sends none. Every response is no-store. */
+async function post(
+  a: Actor | null,
+  tenant: string,
+  channel: string,
+  payload: unknown,
+  csrf: string | null | undefined = a?.csrf,
+) {
+  cookieJar.token = a?.token;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (csrf) headers["x-csrf-token"] = csrf;
+  const url = `https://plexco.app/api/chat/channels/${channel}/messages?tenant=${tenant}`;
+  const body = typeof payload === "string" ? payload : JSON.stringify(payload);
+  const req = new Request(url, { method: "POST", headers, body });
+  const res = await postMessage(req, { params: Promise.resolve({ id: channel }) });
+  expect(res.headers.get("cache-control")).toBe("no-store");
+  const env = (await res.json()) as Envelope;
+  return { status: res.status, body: env, code: env.error?.code };
+}
+const msg = (body = "hi") => ({ clientMsgId: randomUUID(), body });
+
+describe("POST /api/chat/channels/:id/messages (send)", () => {
+  it("T1 no session -> 401; C1 missing or wrong x-csrf-token -> 403 CSRF_INVALID, no row", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    expect(await post(null, c.t, c.c, msg())).toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+    for (const csrf of [null, "wrong"]) {
+      const r = await post(a, c.t, c.c, msg(), csrf);
+      expect(r).toMatchObject({ status: 403, code: "CSRF_INVALID" });
+    }
+    expect(await order(c)).toEqual([]);
+  });
+
+  it("T3 a member's message, leading '/' included -> 200 exactly {id, createdAt ISO, duplicate}", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const first = await post(a, c.t, c.c, msg("/start secret-text"));
+    expect(first.status).toBe(200);
+    expect(Object.keys(first.body.data).sort()).toEqual(["createdAt", "duplicate", "id"]);
+    expect(first.body.data.duplicate).toBe(false);
+    expect(first.body.data.createdAt).toBe(new Date(first.body.data.createdAt).toISOString());
+    expect(JSON.stringify(first.body)).not.toContain("secret-text");
+    const { rows } = await ctx.owner.query<{ body: string }>(
+      `SELECT body FROM chat_messages WHERE id = $1`,
+      [first.body.data.id],
+    );
+    expect(rows[0]!.body).toBe("/start secret-text"); // D-11: stored as text, no slash command
+  });
+
+  it("T4 the same author repeats a clientMsgId -> 200 the original, duplicate: true, one row", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const payload = msg();
+    const first = await post(a, c.t, c.c, payload);
+    const again = await post(a, c.t, c.c, { ...payload, body: "changed" });
+    expect(again.status).toBe(200);
+    expect(again.body.data).toEqual({ ...first.body.data, duplicate: true });
+    expect(await order(c)).toEqual([first.body.data.id]);
+  });
+
+  it("T5 member B reuses member A's clientMsgId -> 409 CHAT_IDEMPOTENCY_MISMATCH, no data", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const payload = msg("from a");
+    const first = await post(a, c.t, c.c, payload);
+    const r = await post(b, c.t, c.c, { ...payload, body: "from b" });
+    expect(r).toMatchObject({ status: 409, code: "CHAT_IDEMPOTENCY_MISMATCH" });
+    expect(r.body.data ?? null).toBeNull();
+    expect(JSON.stringify(r.body)).not.toContain(first.body.data.id);
+    expect(await order(c)).toEqual([first.body.data.id]);
+  });
+
+  it("T22 non-uuid tenant, channel, clientMsgId or reply id, a bad body or JSON -> 400", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const cases: [string, string, unknown][] = [
+      ["not-a-uuid", c.c, msg()],
+      [c.t, "not-a-uuid", msg()],
+      [c.t, c.c, { ...msg(), clientMsgId: "not-a-uuid" }],
+      [c.t, c.c, { body: "hi" }],
+      [c.t, c.c, { ...msg(), replyToMessageId: "not-a-uuid" }],
+      [c.t, c.c, { ...msg(), body: 42 }],
+      [c.t, c.c, msg("   ")],
+      [c.t, c.c, "{not-a-uuid"],
+      [c.t, c.c, "[]"],
+    ];
+    for (const [tenant, channel, payload] of cases) {
+      const r = await post(a, tenant, channel, payload);
+      expect(r).toMatchObject({ status: 400, code: "INVALID_BODY" });
+      expect(JSON.stringify(r.body)).not.toContain("not-a-uuid");
+    }
+    expect(await order(c)).toEqual([]);
+  });
+
+  it("T2 foreign tenant, guest, unknown, other-tenant and DM channel -> the one 403 body", async () => {
+    const [c, other, off] = [await club(), await club(), await club(false)];
+    const [a, b, guest, stranger, m] = [
+      await actor(c.t),
+      await actor(c.t),
+      await actor(c.t, "guest"),
+      await actor(other.t),
+      await actor(off.t),
+    ];
+    await ctx.owner.query("BEGIN");
+    const dm = await ctx.owner.query<{ id: string }>(
+      `INSERT INTO chat_channels (kind, dm_key) VALUES ('dm', $1) RETURNING id`,
+      [[a.personId, b.personId].sort().join(":")],
+    );
+    const dmId = dm.rows[0]!.id;
+    await ctx.owner.query(
+      `INSERT INTO chat_members (channel_id, person_id) VALUES ($1, $2), ($1, $3)`,
+      [dmId, a.personId, b.personId],
+    );
+    await ctx.owner.query("COMMIT");
+    const cases = [
+      await post(stranger, c.t, c.c, msg()),
+      await post(guest, c.t, c.c, msg()),
+      await post(a, c.t, randomUUID(), msg()),
+      await post(a, c.t, other.c, msg()),
+      await post(a, c.t, dmId, msg()),
+    ];
+    const one = (r: (typeof cases)[number]) =>
+      JSON.stringify([r.status, r.body.data, r.body.error]);
+    expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
+    for (const ch of [c, other, { t: c.t, c: dmId }]) expect(await order(ch)).toEqual([]);
+    expect(await post(m, off.t, off.c, msg())).toMatchObject({
+      status: 403,
+      code: "TENANT_SUSPENDED",
+    });
+  });
+
+  it("T6 a body over L14's 4000 characters or a request over the 64 KiB cap -> 413, no row", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    for (const body of ["x".repeat(4001), "x".repeat(64 * 1024)]) {
+      const r = await post(a, c.t, c.c, msg(body));
+      expect(r).toMatchObject({ status: 413, code: "CHAT_MESSAGE_TOO_LARGE" });
+    }
+    expect(await order(c)).toEqual([]);
+  });
+
+  it("T7 admins_only channel, member without the capability -> 403 CHAT_CAPABILITY_REQUIRED", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    await ctx.owner.query(`UPDATE chat_channels SET post_policy = 'admins_only' WHERE id = $1`, [
+      c.c,
+    ]);
+    const r = await post(a, c.t, c.c, msg());
+    expect(r).toMatchObject({ status: 403, code: "CHAT_CAPABILITY_REQUIRED" });
+    expect(await order(c)).toEqual([]);
+  });
+
+  it("T8 the 21st send in 10 s and an exhausted actorThrottled -> 429 CHAT_RATE_LIMITED", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    for (let i = 0; i < 20; i++) await send(c, a, "burst");
+    expect(await post(a, c.t, c.c, msg())).toMatchObject({
+      status: 429,
+      code: "CHAT_RATE_LIMITED",
+    });
+    for (let i = 0; i < 60; i++) {
+      expect(await rateLimitCheck(runtime!.pool, `session-actor:${b.accountId}`, 60, 60)).toBe(
+        true,
+      );
+    }
+    expect(await post(b, c.t, c.c, msg())).toMatchObject({
+      status: 429,
+      code: "CHAT_RATE_LIMITED",
+    });
+    expect(await order(c)).toHaveLength(20);
+  });
+
+  it("T9 a reply to an unknown or another channel's message -> 409 CHAT_REPLY_INVALID", async () => {
+    const [c, other] = [await club(), await club()];
+    const [a, o] = [await actor(c.t), await actor(other.t)];
+    const parent = await send(c, a, "parent");
+    const elsewhere = await send(other, o, "elsewhere");
+    for (const replyToMessageId of [randomUUID(), elsewhere.id]) {
+      const r = await post(a, c.t, c.c, { ...msg(), replyToMessageId });
+      expect(r).toMatchObject({ status: 409, code: "CHAT_REPLY_INVALID" });
+    }
+    expect(await order(c)).toEqual([parent.id]);
+    const r = await post(a, c.t, c.c, { ...msg(), replyToMessageId: parent.id.toUpperCase() });
+    expect(r.status).toBe(200);
   });
 });
