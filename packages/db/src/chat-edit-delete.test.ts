@@ -5,9 +5,9 @@ import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 // 0063 edit_chat_message, delete_chat_message and mark_read (readiness 4.1 V-1, V-4, V-6..V-10, V-19, V-21, V-24;
 // 4.2 edit, delete and mark_read pipelines; 4.5 NOTIFY contract): the edit, delete and mark-read legs of DT-1, DT-5,
-// DT-8..DT-12, DT-17, DT-19, DT-20 and DT-24 on the real DB. Members come from the W2 trigger and messages from
-// send_chat_message; every call runs as the app role with app.tenant_id / app.person_id set through set_config
-// inside the test transaction.
+// DT-8..DT-12, DT-17, DT-19, DT-20, DT-24 and DT-40 (RO-L14-7) on the real DB. Members come from the W2 trigger and
+// messages from send_chat_message; every call runs as the app role with app.tenant_id / app.person_id set through
+// set_config inside the test transaction.
 const TEST_DB_NAME = "plexco_chat_edit_delete";
 const SENTINEL = "sentinel-e7d2-chat-edit";
 const EDIT = "SELECT id, edit_count, edited_at, changed FROM edit_chat_message($1, $2, $3, $4)";
@@ -518,4 +518,107 @@ describe("0063 chat edit, delete and mark read", () => {
     });
     await rejects(late, "CHAT_EDIT_WINDOW_CLOSED");
   });
+
+  // DT-40 (RO-L14-7): send's post_policy cases (chat-send DT-2) plus an unavailable capability and an unknown policy,
+  // driven through send AND edit. m is posted while the owner holds the capability; each case then sets its state
+  // around `act` and restores any temporary global state (registry row, CHECK) in its own finally.
+  type Club = Awaited<ReturnType<typeof club>>;
+  type Around = (k: Club, act: () => Promise<void>) => Promise<void>;
+  const demote = (k: Club) =>
+    rows(
+      `UPDATE tenant_admins SET active = false WHERE tenant_id = $1 AND platform_user_lookup_hash = $2`,
+      [k.t, k.a],
+    );
+  const unavailable: Around = async (_k, act) => {
+    const [gone] = await rows<{ r: unknown }>(
+      `DELETE FROM tenant_capability_actions a WHERE a.action_key = 'chat.channel.post_restricted'
+        RETURNING to_jsonb(a) AS r`,
+    );
+    expect(gone).toBeDefined();
+    try {
+      await act();
+    } finally {
+      if (gone)
+        await rows(
+          `INSERT INTO tenant_capability_actions
+             SELECT * FROM jsonb_populate_record(NULL::tenant_capability_actions, $1::jsonb)`,
+          [gone.r],
+        );
+    }
+  };
+  const unknownPolicy: Around = async (k, act) => {
+    const checks = await rows<{ name: string; def: string }>(
+      `SELECT conname AS name, pg_get_constraintdef(oid) AS def FROM pg_constraint
+        WHERE conrelid = 'chat_channels'::regclass AND contype = 'c'
+          AND pg_get_constraintdef(oid) LIKE '%admins_only%'`,
+    );
+    expect(checks.length).toBeGreaterThan(0);
+    const lifted: typeof checks = [];
+    try {
+      for (const ck of checks) {
+        await rows(`ALTER TABLE chat_channels DROP CONSTRAINT "${ck.name}"`);
+        lifted.push(ck);
+      }
+      await rows(`UPDATE chat_channels SET post_policy = 'x' WHERE id = $1`, [k.c]);
+      await act();
+    } finally {
+      await rows(`UPDATE chat_channels SET post_policy = 'admins_only' WHERE id = $1`, [k.c]);
+      for (const ck of lifted) {
+        await rows(`ALTER TABLE chat_channels ADD CONSTRAINT "${ck.name}" ${ck.def}`);
+      }
+    }
+  };
+  it.each<[string, string | null, Around]>([
+    ["capability held", null, (_k, act) => act()],
+    [
+      "admin demoted",
+      "CHAT_CAPABILITY_REQUIRED",
+      async (k, act) => {
+        await demote(k);
+        await act();
+      },
+    ],
+    ["capability unavailable", "CHAT_CAPABILITY_REQUIRED", unavailable],
+    ["unknown policy", "CHAT_FORBIDDEN", unknownPolicy],
+    [
+      "all_members, admin demoted",
+      null,
+      async (k, act) => {
+        await demote(k);
+        await rows(`UPDATE chat_channels SET post_policy = 'all_members' WHERE id = $1`, [k.c]);
+        await act();
+      },
+    ],
+  ])(
+    "DT-40 RO-L14-7 send and edit share send's post_policy check: %s",
+    async (_name, code, around) => {
+      const k = await club();
+      await rows(
+        `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+       VALUES ($1, 'web', $2, 'owner', true)`,
+        [k.t, k.a],
+      );
+      await rows(`UPDATE chat_channels SET post_policy = 'admins_only' WHERE id = $1`, [k.c]);
+      const g = as(k.t, k.a);
+      const m = await post(g, k.c, "dt40 capable");
+      const count = async () =>
+        (await rows(`SELECT 1 FROM chat_messages WHERE channel_id = $1`, [k.c])).length;
+      const before = await count();
+      await around(k, async () => {
+        if (code) {
+          await rejects(post(g, k.c, "dt40 send"), code);
+          await rejects(edit(g, k.c, m, body("dt40 edit"), 0), code);
+          expect(await snap(m)).toMatchObject({ edit_count: 0, revisions: 0 });
+          expect(await count()).toBe(before);
+        } else {
+          await post(g, k.c, "dt40 send");
+          expect(await edit(g, k.c, m, body("dt40 edit"), 0)).toMatchObject({
+            id: m,
+            edit_count: 1,
+            changed: true,
+          });
+        }
+      });
+    },
+  );
 });

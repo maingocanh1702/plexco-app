@@ -262,8 +262,8 @@ REVOKE ALL ON FUNCTION send_chat_message(uuid, text, text, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION send_chat_message(uuid, text, text, uuid) TO app;
 
 -- 4.2 edit, delete and mark_read (W3b) open with send's prelude: channel lock + kind -> actor, tenant, active member.
--- edit: the message FOR UPDATE in this channel -> V-9 window -> expected count -> body -> identical (no-op) -> rate
--- -> revision INSERT -> UPDATE -> NOTIFY.
+-- edit: post_policy (send's check, RO-L14-7) -> the message FOR UPDATE in this channel -> V-9 window -> expected count
+-- -> body -> identical (no-op) -> rate -> revision INSERT -> UPDATE -> NOTIFY.
 CREATE FUNCTION edit_chat_message(p_channel uuid, p_message uuid, p_body text, p_expected_edit_count integer)
 RETURNS TABLE (id uuid, edit_count smallint, edited_at timestamptz, changed boolean)
 LANGUAGE plpgsql
@@ -278,7 +278,8 @@ DECLARE
   v_count smallint;
   v_at timestamptz;
 BEGIN
-  SELECT ch.kind, ch.tenant_id INTO v_ch FROM public.chat_channels ch WHERE ch.id = p_channel FOR NO KEY UPDATE;
+  SELECT ch.kind, ch.tenant_id, ch.post_policy INTO v_ch
+    FROM public.chat_channels ch WHERE ch.id = p_channel FOR NO KEY UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
   IF v_ch.kind <> 'club' THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_SAFETY_BLOCKED'; END IF;
   IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
@@ -291,6 +292,16 @@ BEGIN
     JOIN public.memberships m ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
    WHERE cm.channel_id = p_channel AND cm.person_id = v_person AND m.status = 'active' AND v_ch.tenant_id = v_tenant;
   IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  -- RO-L14-7: send's post_policy check, verbatim. admins_only needs the capability (anything but allowed = true
+  -- denies); an unknown policy is forbidden
+  IF v_ch.post_policy = 'admins_only' THEN
+    IF (SELECT a.allowed FROM public.tenant_capability_authorize(v_tenant, 'chat.channel.post_restricted', v_person) a)
+       IS NOT TRUE THEN
+      RAISE EXCEPTION USING MESSAGE = 'CHAT_CAPABILITY_REQUIRED';
+    END IF;
+  ELSIF v_ch.post_policy IS DISTINCT FROM 'all_members' THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN';
+  END IF;
   SELECT msg.author_type, msg.author_person_id, msg.body, msg.edit_count, msg.edited_at, msg.created_at,
          msg.author_deleted_at, msg.moderation_state INTO v_msg
     FROM public.chat_messages msg WHERE msg.id = p_message AND msg.channel_id = p_channel FOR UPDATE;
@@ -635,7 +646,8 @@ ALTER FUNCTION chat_get_message(uuid) OWNER TO chat_definer;
 REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
 -- SECTION 5: backfill (W2)
--- V-17: run as chat_definer (BYPASSRLS): a NOBYPASSRLS migration role would read zero memberships rows under FORCE RLS.
+-- V-17: EXECUTE on chat_backfill_default_channels() is owner-only after its REVOKE ALL and the OWNER TO chat_definer
+-- move above, so the migration role must SET ROLE chat_definer to call it.
 SET ROLE chat_definer;
 SELECT public.chat_backfill_default_channels();
 RESET ROLE;
