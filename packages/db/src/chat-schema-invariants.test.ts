@@ -188,7 +188,6 @@ let personA2: string; // member of channelClubA2 (tenant A second, non-default c
 let membershipA2: string;
 let personA3: string; // has a tenant A membership, but never added to any chat_members row
 let personB1: string; // member of channelClubB (tenant B's channel)
-let membershipB1: string;
 let personDm1: string;
 let personDm2: string;
 let personDm3: string; // not part of the DM
@@ -210,17 +209,26 @@ beforeAll(async () => {
   personA3 = await seedPerson("Chat Schema A3 (no chat membership)");
   await seedMembership(ctx.tenantA, personA3);
   personB1 = await seedPerson("Chat Schema B1");
-  membershipB1 = await seedMembership(ctx.tenantB, personB1);
+  await seedMembership(ctx.tenantB, personB1);
   personDm1 = await seedPerson("Chat Schema DM1");
   personDm2 = await seedPerson("Chat Schema DM2");
   personDm3 = await seedPerson("Chat Schema DM3 (not in the dm)");
 
-  channelClubA = await seedClubChannel(ctx.tenantA, {
-    isDefault: true,
-    sortOrder: 0,
-    title: "General A",
-  });
-  await addClubMember(channelClubA, personA1, membershipA1);
+  // V-25: the 0063 memberships trigger already provisioned each tenant's default channel with one row per active
+  // member above; reuse it and keep the seed's topology (General A holds A1 only, General B holds B1).
+  const defaultChannel = async (tenantId: string): Promise<string> =>
+    (
+      (
+        await ctx.owner.query(`SELECT id FROM chat_channels WHERE tenant_id = $1 AND is_default`, [
+          tenantId,
+        ])
+      ).rows[0] as { id: string }
+    ).id;
+  channelClubA = await defaultChannel(ctx.tenantA);
+  await ctx.owner.query(`DELETE FROM chat_members WHERE channel_id = $1 AND person_id <> $2`, [
+    channelClubA,
+    personA1,
+  ]);
   channelClubA2 = await seedClubChannel(ctx.tenantA, {
     isDefault: false,
     sortOrder: 1,
@@ -233,12 +241,7 @@ beforeAll(async () => {
     title: "Empty A",
   });
   await addClubMember(channelEmptyA, personA1, membershipA1);
-  channelClubB = await seedClubChannel(ctx.tenantB, {
-    isDefault: true,
-    sortOrder: 0,
-    title: "General B",
-  });
-  await addClubMember(channelClubB, personB1, membershipB1);
+  channelClubB = await defaultChannel(ctx.tenantB);
 
   ({ channelId: channelDm } = await seedDmChannel(personDm1, personDm2));
 

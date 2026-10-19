@@ -105,8 +105,86 @@ GRANT EXECUTE ON FUNCTION tenant_capability_authorize(uuid, text, uuid) TO chat_
 
 -- SECTION 2: functions (W2 provisioning core, W3a send/mark_read, W3b edit/delete, W3c moderate, W4 read)
 
+-- V-14/V-15 provisioning core (internal, no EXECUTE for app): ensure the tenant's default club channel, then one
+-- chat_members row per non-archived club channel. A replay writes nothing; a re-join re-points membership_id only,
+-- so the row's read cursor is kept. Reached only through the memberships trigger and the backfill.
+CREATE FUNCTION chat_provision_member(p_tenant uuid, p_person uuid, p_membership uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  INSERT INTO public.chat_channels
+    (tenant_id, kind, title, is_default, sort_order, creation_origin, post_policy, assistant_enabled)
+  VALUES (p_tenant, 'club', 'Kênh chung', true, 0, 'system_bootstrap', 'all_members', false)
+  ON CONFLICT (tenant_id) WHERE kind = 'club' AND is_default IS TRUE AND archived_at IS NULL DO NOTHING;
+  -- a separate statement re-reads, so a default committed by a concurrent activation is visible
+  INSERT INTO public.chat_members (channel_id, person_id, membership_id)
+  SELECT c.id, p_person, p_membership
+    FROM public.chat_channels c
+   WHERE c.tenant_id = p_tenant AND c.kind = 'club' AND c.archived_at IS NULL
+  ON CONFLICT (channel_id, person_id) DO UPDATE SET membership_id = EXCLUDED.membership_id
+    WHERE chat_members.membership_id IS DISTINCT FROM EXCLUDED.membership_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION chat_provision_member(uuid, uuid, uuid) FROM PUBLIC, app, app_worker, readonly;
+
+-- V-16: ids from NEW only; no advisory lock (D12's lock order untouched), no NOTIFY, no outbox; it writes only
+-- chat_channels and chat_members, so the UPDATE arm cannot recurse.
+CREATE FUNCTION chat_memberships_provision_trg()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+  PERFORM public.chat_provision_member(NEW.tenant_id, NEW.person_id, NEW.id);
+  RETURN NULL;
+END;
+$$;
+REVOKE ALL ON FUNCTION chat_memberships_provision_trg() FROM PUBLIC, app, app_worker, readonly;
+
+-- V-17 backfill: the same core over every active membership. Defined here so SECTION 4 can own it before SECTION 5
+-- runs it. Returns the number of active memberships it ran the core for.
+CREATE FUNCTION chat_backfill_default_channels()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  r record;
+  n integer := 0;
+BEGIN
+  FOR r IN
+    SELECT m.tenant_id, m.person_id, m.id FROM public.memberships m WHERE m.status = 'active' ORDER BY m.tenant_id, m.id
+  LOOP
+    PERFORM public.chat_provision_member(r.tenant_id, r.person_id, r.id);
+    n := n + 1;
+  END LOOP;
+  RETURN n;
+END;
+$$;
+REVOKE ALL ON FUNCTION chat_backfill_default_channels() FROM PUBLIC, app, app_worker, readonly;
+
 -- SECTION 3: trigger on memberships (W2)
+-- Created while chat_memberships_provision_trg is still migration-owned (4.2 ownership order).
+CREATE TRIGGER trg_memberships_chat_provision
+  AFTER INSERT OR UPDATE OF status ON public.memberships
+  FOR EACH ROW WHEN (NEW.status = 'active')
+  EXECUTE FUNCTION public.chat_memberships_provision_trg();
 
 -- SECTION 4: ownership block (GRANT USAGE, CREATE ON SCHEMA public TO chat_definer; ALTER FUNCTION ... OWNER TO chat_definer; REVOKE CREATE)
+GRANT USAGE, CREATE ON SCHEMA public TO chat_definer;
+ALTER FUNCTION chat_provision_member(uuid, uuid, uuid) OWNER TO chat_definer;
+ALTER FUNCTION chat_memberships_provision_trg() OWNER TO chat_definer;
+ALTER FUNCTION chat_backfill_default_channels() OWNER TO chat_definer;
+-- W3a..W4: add the ALTER FUNCTION ... OWNER TO chat_definer lines of the command and read functions here.
+REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
 -- SECTION 5: backfill (W2)
+-- V-17: run as chat_definer (BYPASSRLS): a NOBYPASSRLS migration role would read zero memberships rows under FORCE RLS.
+SET ROLE chat_definer;
+SELECT public.chat_backfill_default_channels();
+RESET ROLE;
