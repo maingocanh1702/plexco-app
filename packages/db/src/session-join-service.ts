@@ -142,7 +142,8 @@ export async function lockSession(tx: Tx, tenantId: string, sessionId: string) {
 
 /** The person's live (active|guest) membership of the tenant, FOR SHARE: RLS plus an explicit
  *  tenant filter. At most one exists (UNIQUE (tenant_id, person_id) WHERE status is live).
- *  In-module callers include the Zalo list read listOwnJoinableSessions (L13 RC-3).
+ *  In-module callers include the Zalo list reads listOwnJoinableSessions and
+ *  listOwnLeavableSeats (L13 RC-3).
  *  Exported for join-request-service.ts only (not from index.ts). */
 export async function liveMembership(tx: Tx, tenantId: string, personId: string) {
   const [row] = await tx
@@ -229,6 +230,66 @@ export async function listOwnJoinableSessions(
         slotsOpen: slotsOpen(r.slotsMax, Number(r.occupied)),
       })),
     };
+  });
+}
+
+/** One /leave list row (L13 readiness 4.5, P-13): the server-only session id plus the safe fields
+ *  the reply maps. Never an amount, a venue or another player (P-15). */
+export interface LeavableSeat {
+  sessionId: string;
+  /** ISO 8601 UTC, as JoinableSession.startsAt. */
+  startsAt: string;
+  timezone: string;
+  area: string | null;
+  status: "active" | "waitlisted";
+  /** Set only while waitlisted (players_waitlist_shape_chk). */
+  waitlistPosition: number | null;
+}
+
+/**
+ * The Zalo /leave numbered list (L13 RC-3, 4.5, P-13): the caller's own active|waitlisted seats of
+ * the ONE liveMembership leaveSession confirms with, in open sessions with starts_at > now()
+ * (exactly the set leaveSession does not refuse for status or start); ordered (starts_at, session
+ * id), LIMIT 10 (the caller shows 9). No live membership, or a non-UUID person -> [] (R-14). No
+ * money pre-check (P-15). One withTenant read, explicit tenant filter on every table on top of RLS.
+ */
+export async function listOwnLeavableSeats(
+  db: Db,
+  params: { tenantId: string; personId: string },
+): Promise<LeavableSeat[]> {
+  const { tenantId, personId } = params;
+  if (!isUuid(personId)) return [];
+  return withTenant(db, tenantId, async (tx) => {
+    const membership = await liveMembership(tx, tenantId, personId);
+    if (membership === undefined) return [];
+    const rows = await tx
+      .select({
+        sessionId: sessions.id,
+        startsAt: sessions.startsAt,
+        timezone: sessions.timezone,
+        area: sessions.area,
+        status: players.status,
+        waitlistPosition: players.waitlistPosition,
+      })
+      .from(players)
+      .innerJoin(sessions, eq(sessions.id, players.sessionId))
+      .where(
+        and(
+          eq(players.tenantId, tenantId),
+          eq(players.membershipId, membership.id),
+          inArray(players.status, ["active", "waitlisted"]),
+          eq(sessions.tenantId, tenantId),
+          eq(sessions.status, "open"),
+          sql`${sessions.startsAt} > now()`,
+        ),
+      )
+      .orderBy(asc(sessions.startsAt), asc(sessions.id))
+      .limit(10);
+    return rows.map((r) => ({
+      ...r,
+      startsAt: r.startsAt.toISOString(),
+      status: r.status as LeavableSeat["status"],
+    }));
   });
 }
 

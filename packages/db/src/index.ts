@@ -105,6 +105,9 @@ export {
   listOwnJoinableSessions,
   type JoinableSession,
   type JoinableSessionsResult,
+  // L13 (M9): the Zalo /leave numbered list (RC-3, P-13).
+  listOwnLeavableSeats,
+  type LeavableSeat,
 } from "./session-join-service.js";
 // L8 (M9): join requests on approval sessions (openJoinRequest stays internal to joinSession).
 export {

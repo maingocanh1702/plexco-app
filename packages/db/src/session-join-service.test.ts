@@ -11,6 +11,7 @@ import {
   joinSession,
   leaveSession,
   listOwnJoinableSessions,
+  listOwnLeavableSeats,
 } from "./session-join-service.js";
 import { getSessionOccupancy, slotsOpen } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
@@ -1111,6 +1112,87 @@ describe("listOwnJoinableSessions (L13 /join list, RC-3, P-10)", () => {
     }
     const result = await joinable(tenantId, member.personId);
     expect(result.member && result.sessions.map((s) => s.sessionId)).toEqual(
+      ids.sort().slice(0, 10),
+    );
+  });
+});
+
+const leavable = (tenantId: string, personId: string) =>
+  listOwnLeavableSeats(ctx.appDb.db, { tenantId, personId });
+
+describe("listOwnLeavableSeats (L13 /leave list, RC-3, P-13)", () => {
+  it("T-9/P-13: only the caller's own active and waitlisted seats in open future sessions of this club, by starts_at, six keys only (no amount, no venue); left, started, another person's and another club's seats are not listed; no seat, a left member, a non-member and a non-UUID person get []; zero writes", async () => {
+    const tenantId = await fx.seedTenant();
+    const a = await seedMember(tenantId);
+    const b = await seedMember(tenantId);
+    const [d1, d2] = [daysAhead(1), daysAhead(2)];
+    const s1 = await fx.seedSession(tenantId);
+    await setStart(s1, d2);
+    await join(tenantId, b.personId, s1);
+    await join(tenantId, a.personId, s1);
+    const s2 = await fx.seedSession(tenantId, { slotsMax: 1 });
+    await setStart(s2, d1);
+    await join(tenantId, (await seedMember(tenantId)).personId, s2);
+    const waiting = await join(tenantId, a.personId, s2);
+    expect(waiting.outcome).toBe("waitlisted");
+    const s3 = await fx.seedSession(tenantId);
+    await join(tenantId, a.personId, s3);
+    await leave(tenantId, a.personId, s3);
+    const s4 = await fx.seedSession(tenantId);
+    await join(tenantId, a.personId, s4);
+    await makeStarted(s4);
+    const tenantB = await fx.seedTenant();
+    await fx.row(
+      `INSERT INTO memberships (tenant_id, person_id, display_name, status)
+       VALUES ($1, $2, 'A in B', 'active') RETURNING id`,
+      [tenantB, a.personId],
+    );
+    const sB = await fx.seedSession(tenantB);
+    await setStart(sB, d1);
+    await join(tenantB, a.personId, sB);
+    const idle = await seedMember(tenantId);
+    const left = await seedMember(tenantId, "left");
+    const outsider = await fx.seedPerson(`Outsider ${nextCommandId()}`);
+    const seat = (
+      sessionId: string,
+      at: Date,
+      status: string,
+      waitlistPosition: number | null,
+    ) => ({
+      sessionId,
+      startsAt: at.toISOString(),
+      timezone: "Asia/Ho_Chi_Minh",
+      area: "Quan 1",
+      status,
+      waitlistPosition,
+    });
+    const before = await state(tenantId);
+
+    expect(await leavable(tenantId, a.personId)).toEqual([
+      seat(s2, d1, "waitlisted", waiting.waitlistPosition),
+      seat(s1, d2, "active", null),
+    ]);
+    expect(waiting.waitlistPosition).toEqual(expect.any(Number));
+    expect(await leavable(tenantId, b.personId)).toEqual([seat(s1, d2, "active", null)]);
+    expect(await leavable(tenantB, a.personId)).toEqual([seat(sB, d1, "active", null)]);
+    for (const personId of [idle.personId, left.personId, outsider, "not-a-uuid"]) {
+      expect(await leavable(tenantId, personId)).toEqual([]);
+    }
+    expect(await state(tenantId)).toEqual(before);
+  });
+
+  it("P-13/RC-3: at most 10 rows (the caller shows 9; a 10th adds the 'more' line); equal starts_at order by session id", async () => {
+    const tenantId = await fx.seedTenant();
+    const member = await seedMember(tenantId);
+    const at = daysAhead(1);
+    const ids: string[] = [];
+    for (let i = 0; i < 11; i++) {
+      const id = await fx.seedSession(tenantId);
+      await setStart(id, at);
+      await join(tenantId, member.personId, id);
+      ids.push(id);
+    }
+    expect((await leavable(tenantId, member.personId)).map((s) => s.sessionId)).toEqual(
       ids.sort().slice(0, 10),
     );
   });
