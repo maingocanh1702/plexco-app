@@ -304,6 +304,7 @@ describe("runPlayerCommand: /join and the number reply on a join_list context (4
       expect(text).toBe(EN(id));
       expectSafe(text);
       expect(d.join).not.toHaveBeenCalled();
+      if (id === "R8") expect(d.claimContext).not.toHaveBeenCalled();
     }
   });
 
