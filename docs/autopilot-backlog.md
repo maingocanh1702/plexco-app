@@ -3838,6 +3838,10 @@ notes: |
   dung DD-107 (§6.1 + bổ sung §9) chuyển sang file consumer-owned `docs/standards/plexco-level3-autonomy.md`,
   nên vế "cố ý KHÔNG được nhận" không còn đúng. Vế port nội dung lên canonical vẫn mở
   (maingocanh1702/claude-template#13) — trigger đóng ở trên chưa thoả.
+  **Cập nhật 2026-10-19 (KIT 43 sync, branch `chore/kit-sync-43`):** trigger đóng của Claim 3 **đã thoả**
+  — claude-template PR #13 merge tại `a6097b36c153d07194e1464924c8e74acc53df63` (§6.1 dạng generic) và
+  Plexco sync lên KIT_VERSION 43; `level3-workflow.md` nhận bản pack sạch, phần riêng của Plexco nằm ở
+  `docs/standards/plexco-level3-autonomy.md`. Claim 3 đóng khi commit sync này merge vào `main`.
 
   **Vì sao `idea` (không phải `blocked`):** hướng sửa nằm ở canonical kit; repo này read-only với nó,
   và mục này chưa có `scope`/`manifest`/probe launchable. Cần owner mở lane bên canonical.
@@ -4396,6 +4400,11 @@ notes: |
   four edits that must land together (port §6.1 · teach the validator the mode · resolve the P1
   contradiction · DD-100 D4). Adding a fifth because it shares a file is exactly how a lane acquires
   one surface too many, which is what ended three lanes in the kit-pack-membership series.
+  **Update 2026-10-19 (KIT 43):** canonical 43 (`a6097b36c153d07194e1464924c8e74acc53df63`) made
+  `autonomous_to_ready` a task-contract-only mode instead of teaching the validator: the manifest
+  `autonomy_mode` accept-list stays `supervised|proactive_routine`, and
+  `scripts/autopilot-review-readiness.mjs` is unchanged by the sync. L11-v2's "teach the validator the
+  mode" edit will not happen in that form.
 
   Workaround meanwhile, and it is cheap: keep `<`/`>` out of verification commands. Being forced to
   do so once produced a BETTER design — the regenerate-and-compare moved from a shell pipeline

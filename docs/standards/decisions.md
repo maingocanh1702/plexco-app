@@ -147,7 +147,7 @@
 | DD-110 | **Bốn action-class literal hẹp cho session command family** — `update_open_session` · `close_session` · `cancel_session` · `announce_session` + hàng Suspended Action Matrix; **close/cancel ✅ khi suspended, announce/update ❌** (chặn thương mại MỚI, không đóng băng nghĩa vụ ĐANG CHẠY); **D3:** literal vào `ActionClass` cùng commit mang command của nó (chống code-dark); **D4:** test âm bắt buộc — `updateSession` trên `draft` không gọi `authorizeTenantAction` | ✅ Chốt (owner 2026-08-15) | P2/P4 (session management) | thân DD-110 · DD-105 · `../features/BE/feature_billing_lifecycle_tech.md` §3 |
 | DD-109 | **Nới `fix_rounds_max` 5 → 8 cho RIÊNG `session-draft-lifecycle-commands--v3`** → `PublishSession` HALT `MAX_ROUNDS` hai lần (v1, v2; 11+ vòng). Bằng chứng nói **không phải thrash**: `regions.log` v2 = 5 vòng / **5 vùng khác nhau**, `REGION_THRASH` không bắn. Nguyên nhân thật: reviewer đọc `git diff <base>...HEAD` = **toàn bộ 1.690 dòng mỗi vòng**, miss-rate đo được **≈2/3** ⇒ mỗi vòng là một lần **lấy mẫu**, finding mới là chữ ký **under-sampling** chứ không phải slice sai. Hệ quả: thu hẹp *việc* của successor KHÔNG thu hẹp *bề mặt review*. Chọn 8 vì `(2/3)^M`: M5≈13% → M8≈3,9% (ước lượng có căn cứ, không phải phép đo). **Điều kiện cứng:** v3 PHẢI tới được vòng security (chưa attempt nào chạm tới, dù slice gọi `authorizeTenantAction`); v3 HALT nữa = bằng chứng quyết định cho slice-too-big ⇒ **re-slice thật, cấm lần bốn**; `REGION_THRASH` giữ nguyên. Ngoại lệ MỘT lane, khuôn DD-101; §8 không đổi cho lane khác. | ✅ Chốt (owner 2026-08-14) | — | `../autopilot-templates/level3-workflow.md` §8 · DD-101 · `../decisions/analysis/codex-reviewer-determinism-2026-08-13/` |
 | DD-108 | **Trust-gate file: mirror canonical + version phải ĐO được** → (1) mirror E1 sang canonical đủ **ba vế** (copy · `pack_pairs()` · bump `KIT_VERSION`); (2) fix gốc rễ: `KIT_VERSION` gõ tay không đổi khi nội dung đổi ⇒ **test phải đỏ khi hai bản phân kỳ** (assert byte-identical mọi `TRUSTED_GATE_FILES`, hoặc dẫn xuất version từ content hash); (3) **chặn `autopilot-update.sh`** tới khi (2) land. Căn cứ: footgun lần **thứ hai** cùng chỗ, và đo được **cả hai kit cùng `KIT_VERSION: 31`** — hai file khác nội dung, cùng số hiệu. | ✅ Chốt (owner-delegated 2026-08-14) | — | `../autopilot-backlog.md` → `reviewer-isolation-backport-canonical-kit` (tiền lệ) · E1 `a3c62ad` |
-| DD-107 | **Autonomy mode `autonomous_to_ready` + context/authority protocol** → lane chạy thẳng tới READY **không dừng hỏi owner giữa chừng**. Context = **toàn bộ doc corpus thuộc phạm vi** nhưng ~2 triệu token nên **không nạp được** ⇒ luật là **bảo đảm độ phủ, không phải đã nạp**: luôn nạp lõi nhỏ (HANDOFF live-truth + bảng tổng hợp `decisions.md` + gate + packet), phần còn lại **search rồi GHI LẠI query** (kể cả query rỗng — grep rỗng là bằng chứng về query, không phải về repo). Kèm **thang authority 7 bậc** để tự giải mâu thuẫn: runtime truth > migrations/`schema.ts` > `decisions.md` > spec Reviewed > Draft/plan > ROADMAP/BRD/PRD/TDD theo câu hỏi > index/summary. Owner review **một lượt tại READY** qua Decision Ledger, thay vì bị ngắt từng quyết định. Ba tầng thẩm quyền: **A derivable** (agent quyết, log 1 dòng — dừng ở tầng này là defect) · **B judgment/reversible/in-scope** (agent quyết, log đủ alternatives+lý do, owner review batch) · **C reserved** (vẫn AWAIT — 8 mục: money contract · PII/HARD RULES · sửa contract của spec Reviewed · migration đổi semantics hoặc chung tail · enablement · merge/deploy · vượt negative scope · finding bị phản bác). Budget thành **tín hiệu, không phải cổng**. HALT successor pre-authorized khi finding được chấp nhận + gọi tên được nguyên nhân *thiết kế*. **Không đổi:** worktree isolation, scope-gate, 2 vòng review sạch, loop breaker, **human merge**. | ✅ Chốt (owner 2026-08-14) | — | `../standards/plexco-level3-autonomy.md` §6.1 · DD-100 |
+| DD-107 | **Autonomy mode `autonomous_to_ready` + context/authority protocol** → lane chạy thẳng tới READY **không dừng hỏi owner giữa chừng**. Context = **toàn bộ doc corpus thuộc phạm vi** nhưng ~2 triệu token nên **không nạp được** ⇒ luật là **bảo đảm độ phủ, không phải đã nạp**: luôn nạp lõi nhỏ (HANDOFF live-truth + bảng tổng hợp `decisions.md` + gate + packet), phần còn lại **search rồi GHI LẠI query** (kể cả query rỗng — grep rỗng là bằng chứng về query, không phải về repo). Kèm **thang authority 7 bậc** để tự giải mâu thuẫn: runtime truth > migrations/`schema.ts` > `decisions.md` > spec Reviewed > Draft/plan > ROADMAP/BRD/PRD/TDD theo câu hỏi > index/summary. Owner review **một lượt tại READY** qua Decision Ledger, thay vì bị ngắt từng quyết định. Ba tầng thẩm quyền: **A derivable** (agent quyết, log 1 dòng — dừng ở tầng này là defect) · **B judgment/reversible/in-scope** (agent quyết, log đủ alternatives+lý do, owner review batch) · **C reserved** (vẫn AWAIT — 8 mục: money contract · PII/HARD RULES · sửa contract của spec Reviewed · migration đổi semantics hoặc chung tail · enablement · merge/deploy · vượt negative scope · finding bị phản bác). Budget thành **tín hiệu, không phải cổng**. HALT successor pre-authorized khi finding được chấp nhận + gọi tên được nguyên nhân *thiết kế*. **Không đổi:** worktree isolation, scope-gate, 2 vòng review sạch, loop breaker, **human merge**. | ✅ Chốt (owner 2026-08-14) · ✅ **amendment 2026-10-19 — KIT 43 canonical §6.1** (owner ký bằng văn bản 2026-10-19) | — | `../standards/plexco-level3-autonomy.md` §6.1 · DD-100 |
 | DD-106 | **Ba hợp đồng do spec pass 12/08 (`692f9f2`) viết thẳng vào spec đã Reviewed mà không có decision** → Q1 **Pay-for-Buddy** (bảng `buddy_payment_requests` + `payment_allocations.source='buddy'` — ĐƯỜNG TIỀN); Q2 **structured embed** (`chat_messages.embed_type/embed_ref_id/embed_snapshot` — schema thêm sau khi `0031` đã land); Q3 **unified `SessionCard`** (contract hiển thị dùng chung bot/web/home). Ba câu độc lập, chốt riêng được. | ✅ **Đã phân xử từng câu** (owner-delegated 2026-08-14): **Q1 ⬜ DEFER + bác enum `'buddy'`** (`created_by` đã có sẵn ⇒ `('cash'\|'manual', created_by)` biểu diễn được, chưa chứng minh cần giá trị enum mới trên đường tiền) · **Q2 ⬜ DEFER ràng buộc vào fence** (không thêm projection thứ hai trước khi `public_projection_fences` land) · **Q3 ✅ chấp nhận hướng**, pin canonical ở marketplace spec, chưa phải contract | P3/P4 | `../features/FE/feature_payment_reconcile.md` §5/§7 · `../features/BE/feature_payment_reconcile_tech.md` §2/§3 · `../features/BE/feature_inapp_chat_tech.md` §302-311 · `../features/FE/feature_channel_booking_funnel.md` §150 |
 | DD-105 | **Suspension gate cho `CreateSession` — miễn theo TÍNH VÔ HÌNH của draft (KHÔNG phải miễn theo "mutation nhỏ")** → ma trận Suspended Action (`feature_billing_lifecycle_tech.md:273`) có hàng `Admin mutation \| suspended ❌`, nhưng action-class literal cho session hôm nay chỉ có `publish_new_sessions` (DD-104 thêm `delete_draft_session`) — **KHÔNG có literal cho create**. Owner chốt phương án (b): `createSession` **KHÔNG** gọi `authorizeTenantAction` (create-draft ungated). Miễn trừ **bounded** tới đúng command có hiệu ứng **(a) vô hình tới khi publish VÀ (b) không đụng tiền**; publish/announce/close/cancel/update-on-`open` (player-visible) hoặc chạm `charges` vẫn dưới ma trận và nhận narrow per-op action class khi build (tiền lệ DD-104 D2a). Fail-closed vẫn nguyên vẹn tại ranh giới thật (`publish_new_sessions` ❌ khi suspended). | ✅ Chốt (owner 2026-08-13) | P2/P4 (session management) | `../features/BE/feature_billing_lifecycle_tech.md` §3 · `../features/BE/feature_session_management_tech.md` §4 · DD-104 D2a · `../autopilot/contracts/autopilot-session-service-create-command-core.md` §7 B4 |
 | DD-104 | **`DeleteSession` hard delete — cơ chế cascade mà spec dựa vào KHÔNG tồn tại** → `feature_session_management_tech.md` v2.20 (WIP, chưa commit) thêm command `DeleteSession` + `DELETE /api/sessions/:id`, algorithm bước 5 khai *"FK cascade xóa `players`, `session_surface_refs`, `session_occurrences` tự động"*. **Đo 2026-08-11: 9 FK trỏ tới `sessions`, ZERO khai `ON DELETE CASCADE`** ⇒ mặc định `NO ACTION` ⇒ `DELETE FROM sessions` ném FK violation ngay khi có child row, mà draft có người tham gia thì đã có `players` row. Ba quyết định: **D1** có chấp nhận hard delete và trả giá bằng sửa 9 FK (gồm `charges` → cascade xuống sổ tiền, chạm HARD RULE *claim-có-tiền cần khoá mạnh*), hay chỉ xoá khi không còn child row, hay bỏ hard delete; **D2** nếu hard delete thì charge `pending`/`failed` của mọi người và charge `paid` **của host** sẽ bị xoá — guard hiện chỉ chặn `paid` của player ngoài host; **D3** ai được xoá (spec tự mâu thuẫn ba chỗ). **Amendment 2026-08-13: owner chốt D0–D4 theo decision table** — D1a mọi FK `NO ACTION` chặn (final fence, không cascade — câu hỏi kế toán tự giải), D2a action class `delete_draft_session`, D3c tra `pg_constraint`, D4a ordering chung delete+publish, D0 không ưu tiên dependency | ✅ Decision-level chốt 13/08 (slice deferred — chờ `tenant-capability-authority-core` packet) | P2/P4 (session management) | `../features/BE/feature_session_management_tech.md` §4 *Delete transition* · `../features/FE/feature_session_management.md` · `packages/db/migrations/0003_payments_ledger.sql:46` · DD-103 |
@@ -3361,6 +3361,99 @@ một agent tự chốt hợp đồng tiền để đi nhanh hơn là đang tố
 - Điều kiện vào mode: risk `P1`/`P2` · packet strict `CODE_READY` · scope + negative scope liệt kê tới mức
   file · verification command gate chạy được · reviewer gọi được. `P0` không bao giờ đủ điều kiện.
 
+### Amendment 2026-10-19 — KIT 43 canonical §6.1 · ✅ owner ký bằng văn bản 2026-10-19
+
+> **Trạng thái: ✅ — owner ký bằng văn bản 2026-10-19** (qua phiên Claude; dòng "Ký" ở cuối mục này). Chữ
+> ký là văn bản, không phải merge: theo quy ước của owner (`../autopilot-templates/web-mvp-phase3-2026-10-16-RUN.md`:
+> "không có gì được ký chỉ bằng một lần merge"), việc merge PR đưa `chore/kit-sync-43` vào `main` — bởi merge
+> clerk hay bất kỳ agent nào — không thay được dòng ký. Văn bản DD-107 gốc phía trên **giữ nguyên làm lịch
+> sử**; ở từng điểm dưới đây, dạng cũ trong văn bản gốc (vd "Đúng 8 mục", "vi phạm gate", "Thêm
+> `autonomy_mode: autonomous_to_ready`") đã được amendment đã ký này thay thế. Mục này chỉ ghi những chỗ đổi.
+
+Từ KIT_VERSION 43 (canonical `a6097b36c153d07194e1464924c8e74acc53df63`, claude-template PR #13), luật
+generic của mode này nằm ở `../autopilot-templates/level3-workflow.md` §6.1 (thuộc pack); phần riêng của
+Plexco nằm ở local supplement `plexco-level3-autonomy.md`, được `CLAUDE.md` và `AGENTS.md` nêu tên. Các
+thay đổi so với văn bản gốc, theo canonical §6.1 (và §9):
+
+1. **Ghi nhận mode:** chỉ trong task contract (`AUTONOMY_MODE: autonomous_to_ready`); manifest giữ
+   `autonomy_mode: "supervised"` (văn bản gốc: "Thêm `autonomy_mode: autonomous_to_ready`"). Không gate
+   hay script nào đọc mode.
+2. **Tier C có 9 mục**, thêm mục 9: hai doc cùng khai canonical cho một câu hỏi và không doc nào nêu
+   decision ID. "Đúng 8 mục" ở trên là lịch sử, thay bởi amendment đã ký này.
+3. **Phân loại xuống thấp** là vi phạm contract (agent-enforced; không gate nào kiểm tier hay ledger),
+   không phải "vi phạm gate".
+4. **Giới hạn AWAIT vào Tier C** chỉ áp cho AWAIT mà agent nêu **vì một quyết định**; AWAIT reviewer của
+   gate, `AWAIT_CONTEXT` và AWAIT thiếu authority bên ngoài không đổi.
+5. **READY thiếu Decision Ledger** là vi phạm contract (agent-enforced); scope gate ghi `READY.txt` chỉ
+   dựa trên gate pass.
+6. **Budget là tín hiệu** chỉ với ước lượng kích thước của slice; `wall_time_minutes` và `fix_rounds_max`
+   vẫn là giới hạn cứng của gate ở mọi mode.
+7. **Sau `HALT MAX_ROUNDS`/`REGION_THRASH`:** successor pre-authorized đăng ký từ tip default branch đã
+   verify; không pre-authorized (finding bị phản bác, hoặc không gọi tên được nguyên nhân thiết kế) thì
+   HALT là trạng thái cuối và owner quyết successor.
+8. **Reviewer không gọi được:** bỏ bước retry có backoff. Trong gate run, gate tự gọi tên:
+   `REQUIRED_TOOL_UNAVAILABLE` (wrapper thiếu/không chạy được) · `AWAIT CODEX_QUOTA` (usage limit hoặc
+   review bị ngắt) · `HALT REVIEW_UNAVAILABLE` (không có verdict hợp lệ); ngoài gate run,
+   `HALT TOOL_UNAVAILABLE`.
+9. **Điều kiện vào mode thêm một vế:** project đã bật mode, tức `CLAUDE.md` nêu tên supplement.
+
+**Luật Plexco giữ chặt hơn canonical:**
+
+- **Hai vòng review sạch ở cả P1 và P2** (văn bản gốc: "Không đổi: … hai vòng review sạch"), chặt hơn sàn
+  của gate (≥2 ở P1, ≥1 ở P2). Ở P2 khai `code_review.clean_rounds: 2` trong manifest để gate thực thi.
+  **Ngoại lệ: slice chương trình Web MVP dưới O2 theo DD-122 D4, không áp hai vòng** (áp quy trình review
+  của D4: tối đa 3 vòng/PR, READY = PR mở + gate xanh + review sạch).
+- **Hạ bậc (demotion)** chỉ nhận DD/OD ✅ owner-final trong file này, nêu tên cả artifact lẫn thay đổi;
+  proposal 🟡/⬜, default chưa ký, bảng trong RUN doc và entry Decision Ledger không bao giờ hạ bậc một
+  mục Tier C.
+- **Ai bầu mode:** owner, theo từng task (task request hoặc RUN doc) hoặc qua uỷ quyền thường trực owner
+  đã ký; primary agent không tự chọn. Uỷ quyền thường trực duy nhất trên hồ sơ là DD-122 D3 dòng O2, chỉ
+  cho slice P1/P2 của chương trình Web MVP, và các slice đó review theo DD-122 D4.
+  `../sessions/web-mvp-program-status.md` ghi O2 là đã ký qua merge M0 `1681f5f`; owner xác nhận bằng văn
+  bản 2026-10-19 rằng O2 còn hiệu lực sau DD-131 (dòng xác nhận bên dưới).
+
+**Chữ ký (owner, bằng văn bản; merge bởi merge clerk hay bất kỳ agent nào không thay được dòng này):**
+
+- **Ký (owner, 2026-10-19, trong phiên Claude Code https://claude.ai/code/session_01VkpgrnMiPJn2hoeEn1DUDr; dòng này do agent ghi lại hành
+  động của owner):** owner chọn "Ký" ở câu hỏi nguyên văn bên dưới, rồi nhắn "B chạy luôn đi" ("bạn chạy
+  luôn đi", tức cho agent ghi chữ ký). Phạm vi: duyệt chín thay đổi KIT 43 ở mục 1–9 trên (mode chỉ
+  ghi ở task contract · Tier C 9 mục · phân loại xuống thấp là vi phạm contract · giới hạn AWAIT chỉ cho AWAIT
+  vì quyết định · READY thiếu ledger là vi phạm contract · budget-tín-hiệu chỉ cho ước lượng · successor từ
+  tip default branch, HALT là trạng thái cuối khi không pre-authorized · mã reviewer-unavailable · điều kiện
+  vào mode "CLAUDE.md nêu supplement") và ba luật Plexco chặt hơn ở trên (hai vòng review sạch ở P1 và P2,
+  ngoại lệ slice Web MVP dưới O2 theo DD-122 D4 · demotion chỉ nhận DD/OD ✅ owner-final nêu tên artifact
+  và thay đổi · owner bầu mode, primary agent không tự chọn).
+- **Xác nhận O2 (owner, 2026-10-19, cùng phiên Claude Code; dòng này do agent ghi lại):** owner chọn
+  "Còn hiệu lực" ở câu hỏi: "DD-122 D3 O2 (uỷ quyền thường trực autonomous_to_ready cho slice P1/P2 của
+  chương trình Web MVP) còn hiệu lực sau DD-131 không? DD-131 vừa ghi 'Mục G thay thế mọi dòng default
+  applied của D3' vừa ghi 'Không đổi DD-122 D3'." Tức: O2 còn hiệu lực sau DD-131. *(Bối cảnh:
+  DD-131 ghi cả "Mục G **thay thế** mọi dòng 'default applied' của DD-122 D3" lẫn "Không đổi DD-122
+  D1/D3/D4"; supplement `plexco-level3-autonomy.md` §3 dựa vào O2.)*
+
+Câu hỏi ký owner đã trả lời (nguyên văn, kèm phần xem trước của lựa chọn "Ký"):
+
+> PR KIT 43 của Plexco thêm một "Amendment 2026-10-19" vào DD-107 trong decisions.md. Amendment ghi
+> nhận các thay đổi Plexco tiếp nhận từ canonical §6.1 và 3 quy tắc chặt hơn của Plexco. Theo quy ước
+> hiện tại của repo, merge không có giá trị ký, nên cần bạn ký bằng văn bản. Bạn có ký không?
+>
+> Tiếp nhận từ canonical KIT 43:
+> - Tier C có 9 mục (thêm: xung đột authority giữa 2 doc mà không doc nào nêu mã quyết định)
+> - Mode chỉ ghi trong task contract; manifest vẫn để supervised
+> - HALT MAX_ROUNDS / REGION_THRASH là trạng thái cuối, không chuyển sang AWAIT
+> - Reviewer không khả dụng: dùng mã của gate, bỏ bước backoff
+> - Hạn chế AWAIT chỉ áp cho AWAIT agent tự mở để hỏi quyết định
+> - "Vi phạm gate" đổi thành "vi phạm contract" (do agent tự tuân thủ)
+> - Chỉ wall_time_minutes và fix_rounds_max là giới hạn cứng
+>
+> Quy tắc chặt hơn của Plexco:
+> - 2 vòng review sạch ở cả P1 và P2 (clean_rounds: 2); ngoại lệ: slice Web MVP theo DD-122 D4
+> - Chỉ DD/OD đã được owner chốt mới hạ được một mục Tier C
+> - Owner chọn mode cho từng task; agent không tự chọn
+
+Ba mục trong danh sách 1–9 không có dòng riêng trong phần xem trước: READY thiếu ledger là vi phạm
+contract; successor đăng ký từ tip default branch đã xác minh; điều kiện vào mode "CLAUDE.md nêu
+supplement". Cả ba chỉ đổi chữ hoặc chặt hơn, không nới quyền agent.
+
 ---
 
 ## DD-109 — Nới trần fix-round cho `session-draft-lifecycle-commands--v3`: trần 5 có giả định ngầm về kích thước diff · ✅ Chốt (owner 2026-08-14)
@@ -3665,6 +3758,7 @@ theo kịp.
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 19/10/2026 | v2.59 | **DD-107: thêm ✅ "Amendment 2026-10-19 — KIT 43 canonical §6.1" — owner ký bằng văn bản 2026-10-19 (qua phiên Claude) và xác nhận DD-122 D3 O2 còn hiệu lực sau DD-131. Chữ ký là văn bản; merge PR đưa `chore/kit-sync-43` vào `main` (bởi merge clerk hay agent) không thay được nó. Các dạng cũ tương ứng trong văn bản DD-107 gốc (vd "Đúng 8 mục") là lịch sử.** Canonical KIT_VERSION 43 (`a6097b3`) mang §6.1 `autonomous_to_ready` dạng generic; phần Plexco chuyển sang local supplement `plexco-level3-autonomy.md`. Amendment ghi 9 thay đổi theo canonical (mode chỉ ghi ở task contract · Tier C 9 mục · phân loại xuống thấp là vi phạm contract · giới hạn AWAIT chỉ cho AWAIT vì quyết định · READY thiếu ledger là vi phạm contract · budget-tín-hiệu chỉ cho ước lượng · successor từ tip default branch, HALT là trạng thái cuối khi không pre-authorized · mã reviewer-unavailable · điều kiện vào mode "CLAUDE.md nêu supplement") và ba luật Plexco chặt hơn (hai vòng review sạch ở P1 và P2, ngoại lệ slice Web MVP dưới O2 theo DD-122 D4 · demotion chỉ nhận DD/OD ✅ · owner bầu mode). Văn bản DD-107 gốc giữ nguyên; hàng tổng hợp thêm marker. |
 | 16/10/2026 | v2.58 | **Owner ký D1-D5 → DD-133…DD-137 chuyển 🟡 → ✅ (Quyết định owner 2026-10-16, từ tin nhắn "Phase 3 plan approved").** Trích nguyên văn override D2 (c) (một DM Zalo cho player được nâng từ waitlist) và phần bổ sung D5 (sửa OSV 1 Critical shell-quote + 5 High ở PR riêng cạnh L1) nằm ở bullet "Ký (owner, 2026-10-16)" của DD-134 và DD-137. Thêm hai con trỏ amend: DD-32 (Browse và Capacity/fairness: public chỉ `slots_open`, một helper `getSessionOccupancy()`) và DD-46 (alias được duyệt là `club_display_name` public; không còn `host_display_name`). Không thêm số DD mới; không viết lại text spec nào; các dòng lịch sử có ngày giữ nguyên. |
 | 16/10/2026 | v2.57 | **Thêm DD-133…DD-137 → 🟡 Đề xuất (chờ owner ký) cho kế hoạch Web MVP Phase 3 (M6, M9, M10), không DD nào ✅.** D1 DD-133 public read model epic DD-114 D3 (occupancy authority; hàm SQL `session_occupancy(uuid)`; một migration L10 thay `public_session_share_v` với cột DD-41 và registry slug DD-83/DD-75; alias được moderate L10a; amend BL-DSC-1 và DD-32:464/:467); D2 DD-134 chính sách giao outbox M6 (a)-(f; (d) amend OD-2, (f) amend hoãn announce 2026-08-26); D3 DD-135 M9 join + tiền không ngân hàng; D4 DD-136 phạm vi chat MVP; D5 DD-137 cổng thoát đợt A + phong bì Phase 3. Văn bản DD cũ, các dòng changelog cũ và mọi spec Reviewed giữ nguyên; đồng bộ spec là việc của lane L0 sau khi owner ký. Không authorize merge/deploy/flag production. |
 | 15/10/2026 | v2.56 | **Ghi chú trạng thái triển khai, không đổi quyết định nào.** (1) DD-131: thêm danh sách trạng thái triển khai — OD-1 → PR #55 (`8d4b4b6`), OD-3 → PR #49 (`561086a`), OD-2 → PR #47 (`2339c8a`) kèm điểm owner còn mở (xử lý đồng bộ rồi ack; đề xuất chấp nhận cho MVP), và đề xuất cổng thoát đợt A (Playwright `e2e-web` local xanh trên tip stack) thay cổng "E2E staging" mà DD-132 đã gỡ — cả hai là đề xuất, owner chưa quyết. (2) DD-117: thêm ghi chú ở thân D3 và ô trạng thái bảng tổng hợp rằng vế close đã được thay bởi DD-131 OD-1 (PR #55). Văn bản DD cũ và các dòng changelog cũ giữ nguyên. Không authorize merge/deploy/flag production. |

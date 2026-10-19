@@ -19,7 +19,7 @@ APPLICABLE_SKILLS:
 SCOPE:
 NEGATIVE_SCOPE:
 RISK: P0|P1|P2|P3
-AUTONOMY_MODE: supervised|proactive_routine
+AUTONOMY_MODE: supervised|proactive_routine|autonomous_to_ready
 MODEL_POLICY:
 SANDBOX_AND_PERMISSIONS:
 HUMAN_DECISIONS_REQUIRED:
@@ -40,6 +40,9 @@ AUTOPILOT_CODEX_BIN:
 
 Missing a material field is `AWAIT_CONTEXT` or `HALT CONTRACT_INVALID`; never infer authority that
 would change scope or risk.
+
+`AUTONOMY_MODE: autonomous_to_ready` lives in this contract only; the runtime manifest at
+`MANIFEST_PATH` keeps `autonomy_mode: "supervised"` (`level3-workflow.md` §6.1).
 
 ## Role behavior
 

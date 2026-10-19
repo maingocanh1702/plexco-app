@@ -149,6 +149,9 @@ AUTO_MERGE: off
 Mọi task/session/feature **mở mới** chạy theo `docs/autopilot-templates/level3-workflow.md`
 (canonical contract, mirror từ `Claude template`). Session đang chạy giữ nguyên contract cũ —
 forward-only, không migrate giữa chừng. Entry point vận hành: `docs/autopilot-ONBOARDING.md`.
+Local supplement của §6.1 `autonomous_to_ready`: `docs/standards/plexco-level3-autonomy.md` (manifest vẫn `supervised`).
+Owner bầu mode này theo từng task (task request hoặc RUN doc), hoặc qua một uỷ quyền thường trực đã được owner ký;
+primary agent không bao giờ tự chọn mode này.
 
 1. Trước khi code, primary agent resolve **task contract** (`level3-workflow.md` §3): outcome, base,
    context sources, skills, scope/negative scope, risk P0–P3, autonomy mode, model policy, sandbox,

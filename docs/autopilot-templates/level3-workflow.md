@@ -29,7 +29,8 @@ Level 3 is an operating model:
 - The primary agent monitors progress, resolves ordinary implementation choices and reports
   exceptions instead of asking the human to steer every step.
 - Repeated, proven routines may be triggered proactively. New, ambiguous or high-risk work remains
-  supervised.
+  supervised; under `autonomous_to_ready` (§6.1) it is still supervised at the gate, and the mode
+  changes only who makes in-flight decisions.
 - The human owns policy, priority, budget, material product decisions, exceptions, outcome review
   and merge/deploy authority.
 
@@ -44,7 +45,7 @@ At the beginning of every new task, record:
 ```text
 LEVEL3_WORKFLOW: required
 TASK_START_STATE: new_after_template_effective
-AUTONOMY_MODE: supervised|proactive_routine
+AUTONOMY_MODE: supervised|proactive_routine|autonomous_to_ready
 ```
 
 An already-running session keeps its existing contract until it reaches a terminal state. It must
@@ -69,7 +70,7 @@ APPLICABLE_SKILLS:
 SCOPE:
 NEGATIVE_SCOPE:
 RISK: P0|P1|P2|P3
-AUTONOMY_MODE: supervised|proactive_routine
+AUTONOMY_MODE: supervised|proactive_routine|autonomous_to_ready
 MODEL_POLICY:
 SANDBOX_AND_PERMISSIONS:
 HUMAN_DECISIONS_REQUIRED:
@@ -172,6 +173,10 @@ what to do next.
 | `P2` | Bounded product/code/tooling/docs change | Supervised by default; proactive only after the routine earns trust |
 | `P3` | Read-only/report-only or unclassified | No tracked/product mutation; report plus ignored terminal telemetry |
 
+`autonomous_to_ready` (§6.1) does not change this table. A P1 or P2 slice running under it is still
+`supervised` at the gate; the mode changes only who makes in-flight decisions, never what the gate
+checks.
+
 `proactive_routine` is allowed only when all are true:
 
 - the task class is narrow and repeatable;
@@ -181,12 +186,232 @@ what to do next.
 - current context and dependencies are fresh.
 
 Any failed assumption, scope expansion, security uncertainty, missing context or repeated review
-thrash drops the task back to supervised handling or HALT. Auto-merge is never implied by Level 3.
+thrash drops the task back to supervised handling (missing material context is then the §3
+`AWAIT_CONTEXT`) or HALT. Auto-merge is never implied by Level 3.
 
 The registry of classes that have earned `proactive_routine` is `autopilot/.autopilot/routines.json`
 (shape: `autopilot/parallel/routines.TEMPLATE.json`), owner-authored from evidence-ledger rows;
 `ap-dispatch.sh` starts only a class that is `enabled` there, and demotion on any exception is a
 `status: disabled` edit in that file.
+
+### 6.1 `autonomous_to_ready` — run to READY without mid-flight owner decisions
+
+**Problem this solves.** Under `supervised`, the agent stops for every decision it treats as the owner's,
+and in practice many of those stops have answers derivable from the repo. Each stop costs an owner
+round-trip and usually produces a number, not an insight; most authoring blockers turn out to be
+resolvable by *reading the repo*, and only a few are genuine owner decisions. A project records its
+measured cases in its local supplement.
+
+**The move is not "remove the owner". It is "batch the owner".** Owner involvement shifts from *interrupt*
+to *one review at READY*, reading a Decision Ledger. The agent decides in-flight and defends every decision
+in writing.
+
+**Local supplement.** A project that enables this mode keeps the concrete parts of this section in a
+consumer-owned local supplement outside the kit pack: the file its `CLAUDE.md` names. The path is the
+project's choice; `docs/standards/autonomous-to-ready.local.md` is only the convention. The supplement
+holds the always-load list, the maps of its doc corpus, the file behind each authority rung, the readiness
+verdict that gates entry, its project-specific Tier C instances and its measured evidence. The pack never
+overwrites that file. This section states the rules; the supplement binds them to files.
+
+**Recording and enforcement.** The mode is recorded only in the task contract, as
+`AUTONOMY_MODE: autonomous_to_ready`. The runtime manifest keeps `autonomy_mode: "supervised"`, the value
+the gate accepts at both P1 and P2 (`autonomous_to_ready` there halts `register` with `CONTRACT_INVALID`),
+and so does the authored contract it is resolved from (§11). No kit gate or script reads or enforces the
+mode. Its tiers, its Decision Ledger and its AWAIT restriction are rules the agent follows and the owner
+checks at READY.
+
+#### Context: the whole doc corpus is in scope — but it cannot be *loaded*
+
+The intent is right and non-negotiable: **no decision may be made while ignorant of a doc that governs it.**
+The costly failure is a decision written against a doc that already existed and was simply not read.
+
+But "load every doc" is not a plan a machine can execute. In a mature repo the full corpus is an order of
+magnitude past any context window, and even the core authority docs can overflow one on their own. The
+supplement records the project's measured corpus size.
+
+So the rule is **guaranteed coverage, not guaranteed loading** — three obligations, all executable:
+
+1. **Always load (small, non-negotiable):** the project's always-load core, listed in the supplement:
+   typically the current-state section of the repository handoff/README, the decision log's **summary
+   table** (not the full bodies), the project's own readiness procedure, and the slice's own task
+   contract and manifest. This is the constitution; it must fit.
+2. **Search the rest, and log the search.** Before any Tier A/B decision, run a corpus-wide search for the
+   concepts the decision touches — entity names, column names, endpoint shapes, the feature noun — across
+   the docs **and** the source tree. Then read the hits that matter. The supplement names the corpus maps.
+3. **Negative evidence counts, and must be recorded as such.** "Searched the decision log for X, found a
+   decision against X" is the sentence that prevents a contradicting decision. "Found nothing" is
+   a valid and valuable ledger entry — but only if the query is written down so a reader can judge whether
+   it was the right query. An unlogged search did not happen.
+
+> **A grep that returns nothing is evidence about the query, not proof about the repo.** A query written for
+> the wrong delimiter, or a check for a rule that was never written down, returns empty and reads as "no
+> data". Before trusting a null result, verify the query finds a known-present control case.
+
+#### Authority precedence — resolve conflicts without asking
+
+Docs in a real repo **do** contradict each other: specs, playbooks, templates and index files at
+once. A slice running under this mode therefore needs a written order. Earlier wins:
+
+| # | Authority | Why it outranks the next |
+|---|---|---|
+| 1 | **Runtime truth** — database catalog, applied migrations, canonical runner output, live code | Measurement, not intention. A schema file declares; the catalog proves. |
+| 2 | **Migrations + schema source** | The authoritative statement of schema and data model. |
+| 3 | **The decision log** | Where a spec and a decision disagree, the decision wins and the spec must be corrected. |
+| 4 | **Reviewed spec** | Contract baseline — but only the reviewed parts. A section the project marks as unsettled inside a reviewed spec is **not** contract. |
+| 5 | **Draft spec / plan / proposal** | Direction, not contract. Never a basis for implementing. |
+| 6 | **Delivery and product docs** — roadmap, requirements, design and implementation contracts | Each owns its own question and nothing else. |
+| 7 | **Index/summary docs** — inventories, status tables, quick-reference tables | Convenience mirrors. They go stale first. |
+
+The supplement maps each rung to the project's files.
+
+Four tie-breaks:
+
+- **A slice's authored contract on its own branch outranks the copy on the default branch.** A slice
+  legitimately amends its own contract inside its commit; reading the default branch and declaring a
+  scope violation is the error.
+- **Within one file, a newer current-state block outranks an older one** — and an older block's
+  *instructions* go stale too, not just its numbers. Sweep for stale directives, not only stale counts.
+- **Where two docs both claim canonical, the one that names a decision ID wins**; if neither does, the
+  conflict is Tier C item 9: AWAIT rather than picking.
+- **Doc status ≠ implementation status.** "Reviewed" never implies runtime; only status that comes from
+  runner output does.
+
+#### Decision authority ladder
+
+The agent classifies each decision before making it. Misclassifying downward is a contract violation
+(agent-enforced; no kit gate checks tiers or the ledger), not a style error.
+
+| Tier | Definition | Agent behaviour |
+|---|---|---|
+| **A — derivable** | The repo, migrations, specs, decision log or an existing precedent already contain the answer. Naming, module placement, test shape, error-code reuse, insert-contract shape read off a migration header, acceptance rows traced from a spec. | **Decide. Log one line.** Never stop. Stopping on a Tier-A item is itself a defect — record it in the ledger as one. |
+| **B — judgment, reversible, in-scope** | Not written down, but the consequence stays inside the slice's declared scope and can be changed later by editing this slice's own files. Helper extraction, lock-key choice, validator placement, adding an invariant token, re-slicing after a budget-estimate overrun, opening a successor after an accepted HALT. | **Decide. Log with alternatives, reasoning, reversibility and the evidence read.** Flag at READY for batch review. |
+| **C — reserved** | Enumerated below. Irreversible, cross-slice, or contract-level. | **AWAIT.** One recommended option, trade-offs, binary resume condition. |
+
+**Tier C is exactly this list — nothing else, and nothing removed from it.** A project's supplement may
+name concrete instances of an item; it never adds or removes items:
+
+1. Any new or changed **money contract**: a table, column, enum value, endpoint or allocation rule on the payment path.
+2. Any change to a **PII/identity** contract, or anything touching the project's hard rules in `CLAUDE.md`.
+3. Editing the **contract content of a spec already marked Reviewed** (fixing a broken link or a stale number is Tier A; adding an entity/column/endpoint is Tier C).
+4. A **migration** that changes schema semantics, or any migration on a tail shared with another in-flight slice.
+5. **Enablement**: flipping a feature flag or env that turns behaviour on in production (the supplement lists the project's flags).
+6. **Merge, deploy**, or any external side effect outside the worktree.
+7. Work that requires **expanding beyond the declared negative scope** — re-slice or AWAIT, never widen silently.
+8. A **contested** review finding: the agent believes the reviewer is wrong. Accepted findings are Tier B.
+9. A **doc-authority conflict**: two docs both claim to be canonical for the same question, and neither names a decision ID.
+
+> Tier C is not bureaucracy left over from a stricter era. Contract-level choices made without a decision
+> record are the expensive ones to unwind, and nobody has to be reckless for one to slip through; items 1–3
+> price that lesson. The supplement records the project's own incident behind items 1–3.
+
+**One demotion rule, and it matters for slice selection.** A change that a decision record **explicitly
+authorizes by name** is **Tier A, not Tier C** — the owner already decided; executing a written decision is
+not making a new one. The test is narrow — the decision must name the artifact
+and the change, not merely approve the direction. A decision that says "we should improve X" authorizes nothing.
+
+**Corollary for choosing work: rank candidate slices by Tier C density, not by size.** A large slice whose
+decisions are all written down runs to READY untouched; a small slice with three undecided contract
+questions stops three times. Before proposing a slice, count its Tier C items — that number, not the line
+count, predicts whether `autonomous_to_ready` will actually reach READY.
+
+#### The decision criterion
+
+Every Tier A/B decision is justified by **maximum long-term benefit to the project**, not by what closes the
+current round fastest. Operationally, that means one test and five tie-breaks.
+
+**The test:** *would this choice still be right if the project had ten times this surface area in six
+months?* If the honest answer is "it would need redoing", it is the wrong choice even when it passes today's
+gate.
+
+**Tie-breaks, in order — earlier wins:**
+
+1. **Fail-closed over convenient.** A wrong deny is recoverable; a wrong allow on the money or tenant path may not be.
+2. **One source of truth over a second definition.** Two definitions of the same predicate drift, and the drift is silent.
+3. **Fewer concepts over more.** A new table/role/abstraction must earn itself against reusing an existing one.
+4. **Consistent with existing precedent over locally optimal.** If similar services already live in one module, the new one does too — even if another location reads slightly nicer.
+5. **Reversible over clever.** Prefer the choice that a later slice can change without a migration or a contract amendment.
+
+When two options tie on all five, pick the one that leaves **more evidence for the next reader** — a named
+constraint, a test, a comment that says *why* — and say so in the ledger.
+
+#### A budget estimate is a signal, not a gate
+
+In this section, *budget* means the slice's own size or effort estimate: the estimate fields the project
+defines for a slice, such as an expected line count. Under `autonomous_to_ready` an overrun of that
+estimate **never** stops the slice for a number.
+
+Two manifest `budgets` fields are not estimates, and they stay hard gate limits in every mode:
+`wall_time_minutes` (a gate run that exhausts it halts `GATE_TIMEOUT`) and `fix_rounds_max` (capped at
+5; a fix-round count above it halts `MAX_ROUNDS`). The gate reads no other `budgets` field: `token_budget`,
+`cost_budget` and any estimate a project keeps under `budgets` are not enforced. Nothing in this mode
+relaxes the two hard limits.
+
+- Declare a realistic estimate up front, measured on a comparable merged slice — not aspirational.
+- On overrun, the agent does one of: **(a)** re-slice within the declared scope; **(b)** continue and log an
+  overrun entry naming the *design* reason. Both are Tier B.
+- The overrun entry must answer: what did the estimate miss, and is that a property of this slice or of the
+  contract? A second overrun on the same cause is a **design signal** — stop patching and re-slice.
+- An overrun that can only be resolved by touching negative scope is Tier C item 7.
+
+#### After `HALT MAX_ROUNDS` or `REGION_THRASH`
+
+Pre-authorized when **both** hold: the findings are accepted (not contested), and the agent can name a
+*design* cause rather than a list of symptoms. Then the agent opens the successor itself — fresh
+registration from the verified default-branch tip, HALTed branch read-only, redesign stated in the
+successor contract.
+
+Otherwise no successor is pre-authorized. The HALT stays the terminal state, its report (§9) states the
+condition for a successor, and the owner decides it. Contested findings land here because they are Tier C
+item 8; so does a HALT with no nameable design cause. "Try again harder" is not a design cause.
+
+#### Reviewer unavailable
+
+An unavailable reviewer is an external dependency, not a decision, so this mode changes nothing about it:
+never self-certify and never downgrade the gate. Inside a gate run, the gate names the case itself. A
+missing or non-executable pinned wrapper halts `REQUIRED_TOOL_UNAVAILABLE`. A usage limit or an
+interrupted review is `AWAIT CODEX_QUOTA`, which, like the gate's other reviewer AWAITs (§8, known gap 2),
+resumes the same lifecycle once the condition is resolved and the owner removes its signal; the agent
+never deletes an `AWAIT-FOUNDER-*` file (`autopilot-prompt-GENERIC.md`, Non-negotiable boundaries). A
+reviewer run that fails without a valid verdict halts `REVIEW_UNAVAILABLE`. Outside a gate run, an agent
+that finds a required reviewer or verifier unavailable emits §8's `HALT TOOL_UNAVAILABLE`.
+
+#### Decision Ledger — the artifact that makes this safe
+
+One per slice: `.autopilot/state/<FEATURE_ID>/DECISIONS.md`, appended as decisions are made, **not**
+reconstructed at the end.
+
+```text
+## D<n> · <tier A|B> · <one-line decision>
+Context:      <what forced a choice>
+Searched:     <exact queries run over the docs and the source tree, and their results —
+               including the ones that returned nothing>
+Alternatives: <what else was considered, and why not>
+Reasoning:    <which tie-break applied, and the 10x test>
+Evidence:     <exact files/lines/commits read; cite the precedence rung relied on>
+Reversible:   <yes/no — if no, justify why this is not Tier C>
+```
+
+`Searched:` is not decoration. It is the only field a reviewer can use to judge whether the agent decided
+from the corpus or from its own priors — and priors are exactly the failure the ledger exists to expose.
+
+At READY the agent reports: outcome, evidence, **and the ledger**. The owner reviews all decisions in one
+pass. A Tier-B decision the owner rejects becomes a follow-up slice, not a re-litigation of the slice.
+
+An empty ledger on a non-trivial slice is a red flag, not a clean run — it means decisions were made without
+being recorded.
+
+#### Entry conditions
+
+`autonomous_to_ready` requires all of: the project has enabled the mode (its `CLAUDE.md` names the
+supplement); risk `P1` or `P2`; the slice has passed the project's own readiness verdict for starting
+implementation, named in the project's local supplement; scope and negative scope enumerated at file
+level; verification commands runnable by the gate; the pinned reviewer reachable; the always-load core
+actually loaded. `P0` never qualifies. `P3` has no writer and does not need the mode.
+
+Everything else in this document still applies unchanged: worktree isolation, scope-gate registration
+with the manifest at `autonomy_mode: "supervised"`, the clean-round floor the gate enforces (≥2 at P1, ≥1
+at P2), loop breakers, and **human merge**. `autonomous_to_ready` removes mid-flight interrupts. It does not
+remove the gate, and it never implies auto-merge.
 
 ## 7. Worktree and delegation rules
 
@@ -365,7 +590,11 @@ Use only when scope, verification and reviews are complete. Report:
 - changed files/slices;
 - tests/build/review/security evidence;
 - remaining risks;
-- exact merge/deploy action requiring the human.
+- exact merge/deploy action requiring the human;
+- under `AUTONOMY_MODE: autonomous_to_ready`: the **Decision Ledger**
+  (`.autopilot/state/<FEATURE_ID>/DECISIONS.md`), which is the owner's single batch review point. In
+  that mode, reporting READY without the ledger is a contract violation (agent-enforced; no kit gate
+  checks tiers or the ledger, and the scope gate writes `READY.txt` on a gate pass alone).
 
 A P1/P2 writing slice reaches READY only through its scope/readiness gate and worktree
 `READY.txt`. A P0 prepare-only or P3 report-only task has no writer and makes no tracked, product or
@@ -377,6 +606,14 @@ external mutation; its only repo write is ignored local telemetry under the repo
 Use only for a concrete missing human decision, external authority or context that materially
 changes the result. Preserve work safely, stop writers and provide one recommended option with
 trade-offs and a binary resume condition.
+
+> Under `AUTONOMY_MODE: autonomous_to_ready`, an AWAIT the agent raises **for a decision** is restricted
+> to the **Tier C** list in §6.1. One raised for a Tier-A or Tier-B item is a contract violation
+> (agent-enforced; no kit gate checks tiers or the ledger): resolve it and record the misclassification in
+> the Decision Ledger. A budget-estimate overrun is never a valid AWAIT reason in this mode (§6.1). Every
+> other AWAIT is unchanged: the gate's own reviewer AWAITs (`CODEX_QUOTA`, `CODEX_AUTH_REQUIRED`,
+> `CODEX_CONNECTOR_PERSISTENT`), `AWAIT_CONTEXT` for missing material context (§3), and an AWAIT for
+> missing external authority.
 
 Write `AWAIT-FOUNDER-<reason>.txt` in the current worktree state directory, or the repo-root task
 state directory when no worktree exists.

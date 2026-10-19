@@ -583,6 +583,8 @@ Merge mà **không phải sửa gì** ⇒ +1 cho change_class trong `.autopilot/
 
 ### 7.3 `autonomous_to_ready` — chạy tới READY không ngắt owner giữa chừng
 
+> **2026-10-19:** phần trình bày lại §6.1 trong mục này là lịch sử; luật hiện hành là canonical `docs/autopilot-templates/level3-workflow.md` §6.1 (KIT 43) cùng local supplement `docs/standards/plexco-level3-autonomy.md`.
+
 Bài toán nó giải, đo trên `session-service-create-command-core` v1 (2026-08-13): **bốn lần hỏi owner
 chỉ vì budget** (300→360→440→470 compact), mà lane vẫn kết ở `HALT MAX_ROUNDS` — budget chưa bao giờ
 là ràng buộc thật, thiết kế validation mới là. Ba trong bốn blocker authoring được giải bằng **đọc
@@ -888,7 +890,7 @@ bán kính đó.
 | `.claude/commands/review-doc-plan.md` | Launcher `/review-doc-plan` |
 | `docs/autopilot-ONBOARDING.md` | **Entry point vận hành duy nhất** của Ray B |
 | `docs/autopilot-templates/level3-workflow.md` | **Contract canonical của Ray B** |
-| `docs/standards/plexco-level3-autonomy.md` | Phần mở rộng Plexco của Ray B (DD-107): §6.1 `autonomous_to_ready` + §9 terminal-state additions — consumer-owned, kit sync không ghi đè |
+| `docs/standards/plexco-level3-autonomy.md` | Local supplement của §6.1 `autonomous_to_ready` (DD-107): gắn luật generic của canonical vào file + bằng chứng của Plexco — consumer-owned, kit sync không ghi đè, `CLAUDE.md`/`AGENTS.md` trỏ tới |
 | `docs/autopilot-templates/level3-handoff.md` | Thứ tự authority + checklist mở task mới |
 | `docs/autopilot-templates/autopilot-invariants.md` | Invariant ALWAYS-APPLY (@import vào `~/.claude/CLAUDE.md`) |
 | `docs/autopilot-templates/autopilot-prompt-GENERIC.md` | Worker contract — dùng làm send-file khi soạn prompt task |
