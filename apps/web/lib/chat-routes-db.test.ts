@@ -18,6 +18,7 @@ import {
   setupRlsTestContext,
   type RlsTestContext,
 } from "../../../packages/db/src/test-harness.js";
+import { POST as moderate } from "../app/api/chat/channels/[id]/messages/[messageId]/moderation/route";
 import {
   DELETE as deleteMessage,
   PATCH as patchMessage,
@@ -527,7 +528,7 @@ describe("POST /api/chat/channels/:id/messages (send)", () => {
 
 /** PATCH or DELETE one message; csrf defaults to the actor's token, null sends none (N1 asserted). */
 async function mutate(
-  method: "PATCH" | "DELETE",
+  method: "PATCH" | "DELETE" | "POST",
   a: Actor | null,
   c: Club,
   messageId: string,
@@ -537,10 +538,11 @@ async function mutate(
   cookieJar.token = a?.token;
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (csrf) headers["x-csrf-token"] = csrf;
-  const url = `https://plexco.app/api/chat/channels/${c.c}/messages/${messageId}?tenant=${c.t}`;
+  const path = `${c.c}/messages/${messageId}${method === "POST" ? "/moderation" : ""}`;
+  const url = `https://plexco.app/api/chat/channels/${path}?tenant=${c.t}`;
   const body =
     typeof payload === "string" || payload === undefined ? payload : JSON.stringify(payload);
-  const handler = method === "PATCH" ? patchMessage : deleteMessage;
+  const handler = { PATCH: patchMessage, DELETE: deleteMessage, POST: moderate }[method];
   const res = await handler(new Request(url, { method, headers, body }), {
     params: Promise.resolve({ id: c.c, messageId }),
   });
@@ -775,5 +777,219 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
     expect(r).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
     expect(await row(m.id)).toEqual({ body: "orig", edit_count: 0, author_deleted_at: null });
     expect(await row(theirs.id)).toMatchObject({ author_deleted_at: null });
+  });
+});
+
+/** A tenant owner: tenant_capability_authorize grants it chat.message.moderate (T19's fixture). */
+async function moderator(t: string): Promise<Actor> {
+  const mod = await actor(t);
+  await ctx.owner.query(
+    `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+     VALUES ($1, 'web', $2, 'owner', true)`,
+    [t, mod.personId],
+  );
+  return mod;
+}
+
+/** Moderation state and audit-row count of one message, read as owner. */
+async function modRow(id: string) {
+  const { rows } = await ctx.owner.query(
+    `SELECT m.moderation_state AS state,
+            (SELECT count(*)::int FROM chat_moderation_audit a WHERE a.message_id = m.id) AS audits
+       FROM chat_messages m WHERE m.id = $1`,
+    [id],
+  );
+  return rows[0] as { state: string; audits: number };
+}
+const hide = (extra: Record<string, unknown> = {}) => ({
+  action: "hide",
+  reasonCode: "spam",
+  commandId: randomUUID(),
+  ...extra,
+});
+
+describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, restore)", () => {
+  it("T1 no session -> 401; C1 missing or wrong x-csrf-token -> 403 CSRF_INVALID, no change", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const m = await send(c, a, "flagged text");
+    const before = await modRow(m.id);
+    const anon = await mutate("POST", null, c, m.id, hide());
+    expect(anon).toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+    for (const csrf of [null, "wrong"]) {
+      const r = await mutate("POST", mod, c, m.id, hide(), csrf);
+      expect(r).toMatchObject({ status: 403, code: "CSRF_INVALID" });
+    }
+    expect(await modRow(m.id)).toEqual(before);
+  });
+
+  it("T16 hide then restore -> 200 exactly {messageId, moderationState, changed}; no body or actor", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const m = await send(c, a, "flagged text");
+    const hid = await mutate("POST", mod, c, m.id, hide());
+    expect(hid.status).toBe(200);
+    expect(hid.body.data).toEqual({ messageId: m.id, moderationState: "hidden", changed: true });
+    const back = await mutate("POST", mod, c, m.id, hide({ action: "restore" }));
+    expect(back.body.data).toEqual({ messageId: m.id, moderationState: "visible", changed: true });
+    const noop = await mutate("POST", mod, c, m.id, hide({ action: "restore" }));
+    expect(noop.body.data).toEqual({ messageId: m.id, moderationState: "visible", changed: false });
+    for (const r of [hid, back, noop]) {
+      expect(JSON.stringify(r.body)).not.toContain("flagged text");
+      expect(JSON.stringify(r.body)).not.toContain(mod.personId);
+    }
+    expect(await modRow(m.id)).toEqual({ state: "visible", audits: 2 });
+  });
+
+  it("T17 a replayed commandId -> 200 the stored result, one audit; a new fingerprint -> 409", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const m = await send(c, a, "flagged text");
+    const cmd = hide();
+    const first = await mutate("POST", mod, c, m.id, cmd);
+    const replay = await mutate("POST", mod, c, m.id, cmd);
+    expect(replay.status).toBe(200);
+    expect(replay.body.data).toEqual(first.body.data);
+    for (const p of [
+      { ...cmd, reasonCode: "harassment" },
+      { ...cmd, action: "restore" },
+    ]) {
+      const r = await mutate("POST", mod, c, m.id, p);
+      expect(r).toMatchObject({ status: 409, code: "CHAT_IDEMPOTENCY_MISMATCH" });
+      expect(r.body.data ?? null).toBeNull();
+    }
+    expect(await modRow(m.id)).toEqual({ state: "hidden", audits: 1 });
+  });
+
+  it("T14 a member without chat.message.moderate -> 403 CHAT_MODERATION_FORBIDDEN; no change", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const m = await send(c, a, "flagged text");
+    const before = await modRow(m.id);
+    for (const who of [a, b]) {
+      const r = await mutate("POST", who, c, m.id, hide());
+      expect(r).toMatchObject({ status: 403, code: "CHAT_MODERATION_FORBIDDEN" });
+      expect(JSON.stringify(r.body)).not.toContain("flagged text");
+    }
+    expect(await modRow(m.id)).toEqual(before);
+  });
+
+  it("T15 an unknown reasonCode, other without a note, spam with a note -> 422; no change", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const m = await send(c, a, "flagged text");
+    const before = await modRow(m.id);
+    const bad = [
+      { reasonCode: "rude" },
+      { reasonCode: "other" },
+      { reasonNote: "why" },
+      { reasonCode: "other", reasonNote: "x".repeat(501) },
+    ];
+    for (const p of bad) {
+      const r = await mutate("POST", mod, c, m.id, hide(p));
+      expect(r).toMatchObject({ status: 422, code: "CHAT_REASON_INVALID" });
+    }
+    expect(await modRow(m.id)).toEqual(before);
+    const good = await mutate(
+      "POST",
+      mod,
+      c,
+      m.id,
+      hide({ reasonCode: "other", reasonNote: "why" }),
+    );
+    expect(good.body.data).toMatchObject({ moderationState: "hidden", changed: true });
+  });
+
+  it("T22 non-uuid ids, an action outside hide | restore, bad reason types or JSON -> 400; 413", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const m = await send(c, a, "flagged text");
+    const before = await modRow(m.id);
+    const fields = [
+      { commandId: "x" },
+      { commandId: undefined },
+      { action: "delete" },
+      { action: "HIDE" },
+      { reasonCode: 1 },
+      { reasonNote: 7 },
+    ];
+    const bad: [Club, string, unknown][] = [
+      [{ t: "x", c: c.c }, m.id, hide()],
+      [{ t: c.t, c: "x" }, m.id, hide()],
+      [c, "x", hide()],
+      [c, m.id, "{"],
+      [c, m.id, "[]"],
+      ...fields.map((f): [Club, string, unknown] => [c, m.id, hide(f)]),
+    ];
+    for (const [where, id, p] of bad) {
+      const r = await mutate("POST", mod, where, id, p);
+      expect(r).toMatchObject({ status: 400, code: "INVALID_BODY" });
+    }
+    const big = await mutate("POST", mod, c, m.id, hide({ reasonNote: "x".repeat(64 * 1024) }));
+    expect(big).toMatchObject({ status: 413, code: "CHAT_MESSAGE_TOO_LARGE" });
+    expect(await modRow(m.id)).toEqual(before);
+  });
+
+  it("T2 a foreign tenant -> the one CHAT_FORBIDDEN body; unknown or foreign targets -> one 403", async () => {
+    const [c, other] = [await club(), await club()];
+    const [a, mod, stranger, o] = [
+      await actor(c.t),
+      await moderator(c.t),
+      await moderator(other.t),
+      await actor(other.t),
+    ];
+    const mine = await send(c, a, "flagged text");
+    const theirs = await send(other, o, "their text");
+    const foreign = await mutate("POST", stranger, c, mine.id, hide());
+    expect(foreign).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    const denied = [
+      await mutate("POST", mod, c, randomUUID(), hide()),
+      await mutate("POST", mod, c, theirs.id, hide()),
+      await mutate("POST", mod, { t: c.t, c: other.c }, theirs.id, hide()),
+    ];
+    const one = (r: (typeof denied)[number]) => JSON.stringify([r.status, r.body.error]);
+    expect(denied[0]).toMatchObject({ status: 403, code: "CHAT_MODERATION_FORBIDDEN" });
+    for (const r of denied) expect(one(r)).toBe(one(denied[0]!));
+    expect((await modRow(mine.id)).audits + (await modRow(theirs.id)).audits).toBe(0);
+  });
+
+  it("T18 one commandId on two channels at once: one 200, the loser 409 or a fail-closed 500", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const ch = await ctx.owner.query<{ id: string }>(
+      `INSERT INTO chat_channels (tenant_id, kind, title, is_default, sort_order, creation_origin,
+         post_policy, assistant_enabled)
+       VALUES ($1, 'club', 'second', false, 1, 'system_bootstrap', 'all_members', false) RETURNING id`,
+      [c.t],
+    );
+    const c2: Club = { t: c.t, c: ch.rows[0]!.id };
+    await ctx.owner.query(
+      `INSERT INTO chat_members (channel_id, tenant_id, person_id, membership_id)
+       VALUES ($1, $2, $3, $4), ($1, $2, $5, $6)`,
+      [c2.c, c.t, a.personId, a.membershipId, mod.personId, mod.membershipId],
+    );
+    await seed(c2, a, [ts(1)]);
+    const m2 = (await order(c2))[0]!;
+    const m1 = (await send(c, a, "flagged text")).id;
+    const spies = [vi.spyOn(console, "error"), vi.spyOn(console, "warn"), vi.spyOn(console, "log")];
+    const cmd = hide();
+    const runs = await Promise.allSettled([
+      mutate("POST", mod, c, m1, cmd),
+      mutate("POST", mod, c2, m2, cmd),
+    ]);
+    const won = runs.findIndex((r) => r.status === "fulfilled" && r.value.status === 200);
+    expect(won).toBeGreaterThanOrEqual(0);
+    const lost = runs[1 - won]!;
+    if (lost.status === "rejected") expect(String(lost.reason)).toBe("Error: CHAT_DB_ERROR:23505");
+    else expect(lost.value).toMatchObject({ status: 409, code: "CHAT_IDEMPOTENCY_MISMATCH" });
+    const [lc, lm, wm] = won === 0 ? [c2, m2, m1] : [c, m1, m2];
+    const retry = await mutate("POST", mod, lc, lm, cmd);
+    expect(retry).toMatchObject({ status: 409, code: "CHAT_IDEMPOTENCY_MISMATCH" });
+    expect((await modRow(lm)).audits).toBe(0);
+    expect(await modRow(wm)).toEqual({ state: "hidden", audits: 1 });
+    const logged = JSON.stringify(spies.flatMap((s) => s.mock.calls));
+    for (const s of spies) s.mockRestore();
+    expect(logged).not.toContain("flagged text");
+    expect(logged).not.toContain("seed body");
   });
 });
