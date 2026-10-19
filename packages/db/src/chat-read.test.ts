@@ -316,7 +316,7 @@ describe("0063 chat read functions (V-12, V-22)", () => {
     expect(await idsOf(LIST, [k.c, null, null, "before", 0])).toEqual(newest.slice(0, 1)); // clamp to 1
     expect(await idsOf(LIST, [k.c, null, null, "after", 1000])).toEqual(ids); // clamp to 100
     const [mid] = (await read(as(k, k.b), PAGE, [k.c, null, null, "after", 4])).slice(-1);
-    expect(await idsOf(PAGE, [k.c, mid!.ts, mid!.id, "before", 50])).toEqual(ids.slice(0, 3));
+    expect(await idsOf(PAGE, [k.c, mid!.ts, mid!.id, "before", 50])).toEqual(newest.slice(4)); // DESC
     expect(await idsOf(PAGE, [k.c, mid!.ts, mid!.id, "after", 50])).toEqual(ids.slice(4));
     for (const bad of [
       [k.c, mid!.ts, null, "before", 50],

@@ -507,6 +507,108 @@ $$;
 REVOKE ALL ON FUNCTION moderate_chat_message(uuid, uuid, uuid, text, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION moderate_chat_message(uuid, uuid, uuid, text, text, text) TO app;
 
+-- read (V-4, V-7, V-12, V-22; 4.2): kind -> GUCs -> active member of the channel's tenant -> page or row; no lock
+-- (STABLE). body is NULL and tombstone set ('author_deleted' wins over 'moderation_hidden') on a tombstoned row; no
+-- actor, reason, revision, receipt or moderation column. list raises; get answers every denial with zero rows (it
+-- serves the database-wide NOTIFY stream). Keyset (created_at, id), cursor row excluded: 'before' (default) pages DESC
+-- from the newest, 'after' ASC from the oldest; both cursor halves or neither; limit NULL -> 50, clamped to 1..100.
+CREATE FUNCTION chat_list_messages(p_channel uuid, p_cursor_created_at timestamptz DEFAULT NULL,
+  p_cursor_id uuid DEFAULT NULL, p_direction text DEFAULT 'before', p_limit integer DEFAULT 50)
+RETURNS TABLE (id uuid, channel_id uuid, author_type text, author_person_id uuid, body text,
+  reply_to_message_id uuid, edited_at timestamptz, edit_count smallint, tombstone text, created_at timestamptz)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_ch record;
+  v_tenant uuid;
+  v_person uuid;
+  v_dir text := coalesce(p_direction, 'before');
+  v_limit integer := least(greatest(coalesce(p_limit, 50), 1), 100);
+BEGIN
+  SELECT ch.kind, ch.tenant_id INTO v_ch FROM public.chat_channels ch WHERE ch.id = p_channel;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  IF v_ch.kind <> 'club' THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_SAFETY_BLOCKED'; END IF;
+  IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_tenant := current_setting('app.tenant_id', true)::uuid;
+  END IF;
+  IF current_setting('app.person_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_person := current_setting('app.person_id', true)::uuid;
+  END IF;
+  PERFORM 1 FROM public.chat_members cm
+    JOIN public.memberships m ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+   WHERE cm.channel_id = p_channel AND cm.person_id = v_person AND m.status = 'active' AND v_ch.tenant_id = v_tenant;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  IF v_dir NOT IN ('before', 'after') OR (p_cursor_created_at IS NULL) <> (p_cursor_id IS NULL) THEN
+    RAISE EXCEPTION USING MESSAGE = 'INVALID_BODY';
+  END IF;
+  -- two queries, not a CASE-ordered one, so each page stays an index range scan of LIMIT rows
+  IF v_dir = 'before' THEN
+    RETURN QUERY SELECT msg.id, msg.channel_id, msg.author_type, msg.author_person_id,
+        CASE WHEN msg.author_deleted_at IS NULL AND msg.moderation_state = 'visible' THEN msg.body END,
+        msg.reply_to_message_id, msg.edited_at, msg.edit_count,
+        CASE WHEN msg.author_deleted_at IS NOT NULL THEN 'author_deleted'
+             WHEN msg.moderation_state <> 'visible' THEN 'moderation_hidden' END,
+        msg.created_at
+      FROM public.chat_messages msg
+     WHERE msg.channel_id = p_channel
+       AND (p_cursor_id IS NULL OR (msg.created_at, msg.id) < (p_cursor_created_at, p_cursor_id))
+     ORDER BY msg.created_at DESC, msg.id DESC LIMIT v_limit;
+  ELSE
+    RETURN QUERY SELECT msg.id, msg.channel_id, msg.author_type, msg.author_person_id,
+        CASE WHEN msg.author_deleted_at IS NULL AND msg.moderation_state = 'visible' THEN msg.body END,
+        msg.reply_to_message_id, msg.edited_at, msg.edit_count,
+        CASE WHEN msg.author_deleted_at IS NOT NULL THEN 'author_deleted'
+             WHEN msg.moderation_state <> 'visible' THEN 'moderation_hidden' END,
+        msg.created_at
+      FROM public.chat_messages msg
+     WHERE msg.channel_id = p_channel
+       AND (p_cursor_id IS NULL OR (msg.created_at, msg.id) > (p_cursor_created_at, p_cursor_id))
+     ORDER BY msg.created_at, msg.id LIMIT v_limit;
+  END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION chat_list_messages(uuid, timestamptz, uuid, text, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION chat_list_messages(uuid, timestamptz, uuid, text, integer) TO app;
+
+CREATE FUNCTION chat_get_message(p_message uuid)
+RETURNS TABLE (id uuid, channel_id uuid, author_type text, author_person_id uuid, body text,
+  reply_to_message_id uuid, edited_at timestamptz, edit_count smallint, tombstone text, created_at timestamptz)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_tenant uuid;
+  v_person uuid;
+BEGIN
+  IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_tenant := current_setting('app.tenant_id', true)::uuid;
+  END IF;
+  IF current_setting('app.person_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_person := current_setting('app.person_id', true)::uuid;
+  END IF;
+  RETURN QUERY SELECT msg.id, msg.channel_id, msg.author_type, msg.author_person_id,
+      CASE WHEN msg.author_deleted_at IS NULL AND msg.moderation_state = 'visible' THEN msg.body END,
+      msg.reply_to_message_id, msg.edited_at, msg.edit_count,
+      CASE WHEN msg.author_deleted_at IS NOT NULL THEN 'author_deleted'
+           WHEN msg.moderation_state <> 'visible' THEN 'moderation_hidden' END,
+      msg.created_at
+    FROM public.chat_messages msg
+    JOIN public.chat_channels ch ON ch.id = msg.channel_id AND ch.kind = 'club' AND ch.tenant_id = v_tenant
+   WHERE msg.id = p_message
+     AND EXISTS (SELECT 1 FROM public.chat_members cm
+                   JOIN public.memberships m
+                     ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+                  WHERE cm.channel_id = msg.channel_id AND cm.person_id = v_person AND m.status = 'active');
+END;
+$$;
+REVOKE ALL ON FUNCTION chat_get_message(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION chat_get_message(uuid) TO app;
+
 -- SECTION 3: trigger on memberships (W2)
 -- Created while chat_memberships_provision_trg is still migration-owned (4.2 ownership order).
 CREATE TRIGGER trg_memberships_chat_provision
@@ -524,7 +626,8 @@ ALTER FUNCTION edit_chat_message(uuid, uuid, text, integer) OWNER TO chat_define
 ALTER FUNCTION delete_chat_message(uuid, uuid) OWNER TO chat_definer;
 ALTER FUNCTION mark_read(uuid, uuid) OWNER TO chat_definer;
 ALTER FUNCTION moderate_chat_message(uuid, uuid, uuid, text, text, text) OWNER TO chat_definer;
--- W4: add the ALTER FUNCTION ... OWNER TO chat_definer lines of the read functions here.
+ALTER FUNCTION chat_list_messages(uuid, timestamptz, uuid, text, integer) OWNER TO chat_definer;
+ALTER FUNCTION chat_get_message(uuid) OWNER TO chat_definer;
 REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
 -- SECTION 5: backfill (W2)
