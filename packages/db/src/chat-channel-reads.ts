@@ -11,8 +11,9 @@ export type ChatChannelRow = {
   unreadCount: number;
 };
 
-/** The bound actor's (app.person_id) club, non-archived channels under RLS; unread = rows after the actor's own
- *  (created_at, id) cursor (NULL = all), not the actor's, tombstones included, capped at 100. Zero rows: D-23. */
+/** The bound actor's (app.person_id) club, non-archived channels under RLS (chat_current_is_member, 0031:280-292:
+ *  only a chat_members row whose membership is active); unread = rows after the actor's own (created_at, id) cursor
+ *  (NULL = all), not the actor's, tombstones included, capped at 100. Zero rows: D-23. */
 export async function listChatChannels(tx: ChatTx): Promise<ChatChannelRow[]> {
   const { rows } = await tx.execute(sql`
     SELECT c.id, c.title, c.sort_order AS "sortOrder", c.is_default AS "isDefault", c.post_policy AS "postPolicy",

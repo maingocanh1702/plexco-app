@@ -201,4 +201,27 @@ describe("listChatChannels (RO-L15-2 addition 2, readiness 7 R1-R4)", () => {
     expect((await counts(f.t, f.a))[f.c2]).toBe(3); // the two tombstones and the newest row
     expect((await counts(f.t, f.b))[f.c2]).toBe(0);
   });
+
+  // SEC-2 NIT-2: a leave leaves chat_members untouched and a guest re-entry is a NEW row (0058:68-80) that the
+  // activation-only trigger (0063:629-632) never re-points, so x's rows still name the 'left' membership; RLS
+  // (chat_current_is_member, 0031:280-292: an active membership only) hides them, so the reader's zero rows deny
+  it("R5 a former member who left and came back as a guest is denied with the one CHAT_FORBIDDEN", async () => {
+    const x = await person(); // posts nothing, so R2-R4 counts are untouched
+    const m1 = await join(f.t, x);
+    await q(`UPDATE memberships SET status = 'left' WHERE id = $1`, [m1]);
+    await join(f.t, x, "guest");
+    expect(
+      await q(`SELECT membership_id FROM chat_members WHERE channel_id = $1 AND person_id = $2`, [
+        f.c,
+        x,
+      ]),
+    ).toEqual([{ membership_id: m1 }]);
+    expect(await withTenant(ctx.appDb.db, f.t, (tx) => hasLiveMembership(tx, f.t, x))).toBe(true);
+    expect(
+      await list(f.t, x).then(
+        () => "OK",
+        (e: ChatCommandError) => [e.name, e.code, e.status, e.message],
+      ),
+    ).toEqual(["ChatCommandError", "CHAT_FORBIDDEN", 403, "CHAT_FORBIDDEN"]);
+  });
 });
