@@ -188,7 +188,6 @@ let personA2: string; // member of channelClubA2 (tenant A second, non-default c
 let membershipA2: string;
 let personA3: string; // has a tenant A membership, but never added to any chat_members row
 let personB1: string; // member of channelClubB (tenant B's channel)
-let membershipB1: string;
 let personDm1: string;
 let personDm2: string;
 let personDm3: string; // not part of the DM
@@ -210,17 +209,26 @@ beforeAll(async () => {
   personA3 = await seedPerson("Chat Schema A3 (no chat membership)");
   await seedMembership(ctx.tenantA, personA3);
   personB1 = await seedPerson("Chat Schema B1");
-  membershipB1 = await seedMembership(ctx.tenantB, personB1);
+  await seedMembership(ctx.tenantB, personB1);
   personDm1 = await seedPerson("Chat Schema DM1");
   personDm2 = await seedPerson("Chat Schema DM2");
   personDm3 = await seedPerson("Chat Schema DM3 (not in the dm)");
 
-  channelClubA = await seedClubChannel(ctx.tenantA, {
-    isDefault: true,
-    sortOrder: 0,
-    title: "General A",
-  });
-  await addClubMember(channelClubA, personA1, membershipA1);
+  // V-25: the 0063 memberships trigger already provisioned each tenant's default channel with one row per active
+  // member above; reuse it and keep the seed's topology (General A holds A1 only, General B holds B1).
+  const defaultChannel = async (tenantId: string): Promise<string> =>
+    (
+      (
+        await ctx.owner.query(`SELECT id FROM chat_channels WHERE tenant_id = $1 AND is_default`, [
+          tenantId,
+        ])
+      ).rows[0] as { id: string }
+    ).id;
+  channelClubA = await defaultChannel(ctx.tenantA);
+  await ctx.owner.query(`DELETE FROM chat_members WHERE channel_id = $1 AND person_id <> $2`, [
+    channelClubA,
+    personA1,
+  ]);
   channelClubA2 = await seedClubChannel(ctx.tenantA, {
     isDefault: false,
     sortOrder: 1,
@@ -233,12 +241,7 @@ beforeAll(async () => {
     title: "Empty A",
   });
   await addClubMember(channelEmptyA, personA1, membershipA1);
-  channelClubB = await seedClubChannel(ctx.tenantB, {
-    isDefault: true,
-    sortOrder: 0,
-    title: "General B",
-  });
-  await addClubMember(channelClubB, personB1, membershipB1);
+  channelClubB = await defaultChannel(ctx.tenantB);
 
   ({ channelId: channelDm } = await seedDmChannel(personDm1, personDm2));
 
@@ -256,7 +259,10 @@ describe("happy path", () => {
     expect(channels.map((c) => c.id)).toEqual([channelClubA]);
 
     const messages = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantA, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.channelId, channelClubA)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.channelId, channelClubA)),
     );
     expect(messages.map((m) => m.id)).toEqual([messageClubA1]);
   });
@@ -268,7 +274,10 @@ describe("happy path", () => {
     expect(channels.map((c) => c.id)).toEqual([channelDm]);
 
     const messages = await withChatPerson(ctx.appDb.db, personDm2, null, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.channelId, channelDm)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.channelId, channelDm)),
     );
     expect(messages.map((m) => m.id)).toEqual([messageDm1]);
   });
@@ -277,7 +286,10 @@ describe("happy path", () => {
 describe("boundary rows", () => {
   it("empty channel with no messages returns an empty result, no error", async () => {
     const messages = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantA, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.channelId, channelEmptyA)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.channelId, channelEmptyA)),
     );
     expect(messages).toEqual([]);
   });
@@ -396,7 +408,10 @@ describe("authorization — club channels", () => {
     );
     expect(members).toEqual([]);
     const messages = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantB, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.id, messageClubA1)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.id, messageClubA1)),
     );
     expect(messages).toEqual([]);
   });
@@ -413,7 +428,7 @@ describe("authorization — dm channels", () => {
     );
     expect(members).toEqual([]);
     const messages = await withChatPerson(ctx.appDb.db, personDm3, null, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.id, messageDm1)),
+      tx.select({ id: chatMessages.id }).from(chatMessages).where(eq(chatMessages.id, messageDm1)),
     );
     expect(messages).toEqual([]);
   });
@@ -1002,7 +1017,14 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
         privilege_type: "SELECT",
         is_grantable: "NO",
       },
-      { grantee: "app", table_name: "chat_messages", privilege_type: "SELECT", is_grantable: "NO" },
+      // 0063 (V-13): app's table-level read on chat_messages is replaced by a 14-column grant
+      // (information_schema.column_privileges); chat_definer gains the table-level SELECT (4.4).
+      {
+        grantee: "chat_definer",
+        table_name: "chat_messages",
+        privilege_type: "SELECT",
+        is_grantable: "NO",
+      },
     ]);
   });
 
@@ -1028,11 +1050,11 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
     ).toBe(true);
   });
 
-  it("chat_definer has no grant of any kind on chat_messages — neither helper reads it", async () => {
+  it("chat_definer's table-level grant on chat_messages is SELECT only (0063, 4.4: INSERT and UPDATE are column-scoped)", async () => {
     const { rows } = await ctx.owner.query(
-      `SELECT count(*)::int AS n FROM information_schema.table_privileges
+      `SELECT privilege_type FROM information_schema.table_privileges
        WHERE table_name = 'chat_messages' AND grantee = 'chat_definer'`,
     );
-    expect((rows[0] as { n: number }).n).toBe(0);
+    expect(rows).toEqual([{ privilege_type: "SELECT" }]);
   });
 });

@@ -293,3 +293,28 @@ describe("gender pricing (M9, DD-39)", () => {
     expect([...GENDER_VALUES]).toEqual(["male", "female", "other", "undisclosed"]);
   });
 });
+
+describe("in-app chat codes (M10, L14 readiness 4.6; feature_inapp_chat_tech.md section 3)", () => {
+  it("registers the twelve CHAT_* codes verbatim and the three reused chat-service codes", () => {
+    const added = [
+      "CHAT_CAPABILITY_REQUIRED",
+      "CHAT_DUP_MESSAGE",
+      "CHAT_EDIT_CONFLICT",
+      "CHAT_EDIT_WINDOW_CLOSED",
+      "CHAT_FORBIDDEN",
+      "CHAT_IDEMPOTENCY_MISMATCH",
+      "CHAT_MESSAGE_TOO_LARGE",
+      "CHAT_MODERATION_FORBIDDEN",
+      "CHAT_RATE_LIMITED",
+      "CHAT_REASON_INVALID",
+      "CHAT_REPLY_INVALID",
+      "CHAT_SAFETY_BLOCKED",
+    ];
+    for (const code of [...added, "INVALID_BODY", "NOT_FOUND", "TENANT_SUSPENDED"]) {
+      expect(API_ERROR_CODES, code).toContain(code);
+      expect(isApiErrorCode(code), code).toBe(true);
+    }
+    // 4.6 "No other code": the CHAT_* subset is exactly these twelve, no stray or misspelled extra
+    expect(API_ERROR_CODES.filter((c) => c.startsWith("CHAT_")).sort()).toEqual(added);
+  });
+});
