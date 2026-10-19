@@ -418,8 +418,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       expect(resolveZaloLinkGate).toHaveBeenCalledTimes(1);
       for (const fn of PLAYER_DB) expect(fn).not.toHaveBeenCalled();
     });
-    const AT = "2026-10-24T11:00:00.000Z";
-    const TZ = "Asia/Ho_Chi_Minh";
+    const [AT, TZ] = ["2026-10-24T11:00:00.000Z", "Asia/Ho_Chi_Minh"];
     const S2 = "55555555-5555-4555-8555-555555555555";
     const REF = `${formatSessionDate(AT, TZ, "en")} · ${formatSessionTime(AT, TZ, "en")} · Q1`;
     const SEAT = { sessionId: S1, startsAt: AT, timezone: TZ, area: "Q1", slotsOpen: 0 };
@@ -445,16 +444,14 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       { text: "/leave", chat: { id: "other" } },
     ])("T-1/T-2: $text outside a DM is acked and nothing runs", async ({ text, chat }) => {
       expect((await dm(text, 9101, chat)).status).toBe(200);
-      for (const fn of [storeInboundEvent, resolveZaloIdentity, resolveZaloLinkGate, sendMessage])
-        expect(fn).not.toHaveBeenCalled();
-      for (const fn of PLAYER_DB) expect(fn).not.toHaveBeenCalled();
+      const none = [storeInboundEvent, resolveZaloIdentity, resolveZaloLinkGate, sendMessage];
+      for (const fn of [...none, ...PLAYER_DB]) expect(fn).not.toHaveBeenCalled();
     });
     const denied = Object.assign(new Error("permission denied"), { code: "42501" });
     it.each<{ text: string; half?: boolean; fail?: Error; sqlstate?: string }>([
       ...["/leave", "/pay", "1"].map((text) => ({ text })),
       ...["/join", "/leave", "/pay", "1", "/me"].map((text) => ({ text, half: true })),
-      { text: "/join", half: true, fail: denied, sqlstate: "42501" },
-      { text: "/me", half: true, fail: denied, sqlstate: "42501" },
+      ...["/join", "/me"].map((text) => ({ text, half: true, fail: denied, sqlstate: "42501" })),
       { text: "/pay", fail: new Error("statement timeout"), sqlstate: "none" },
     ])("T-4/T-5/T-22: $text half=$half sqlstate=$sqlstate -> link prompt only", async (row) => {
       if (row.half) vi.mocked(resolveZaloIdentity).mockResolvedValue({ ...WHO, hasAccount: true });
@@ -536,13 +533,11 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       const [hit, other] = row.leave ? [leaveSession, joinSession] : [joinSession, leaveSession];
       const id = vi.mocked(storeInboundEvent).mock.calls[0]![1].externalEventId;
       const input = { tenantId: TENANT, personId: "p1", sessionId: S1, commandId: "zalo:" + id };
-      expect(hit).toHaveBeenCalledTimes(row.calls ?? 0);
+      expect([hit, other].map((f) => vi.mocked(f).mock.calls.length)).toEqual([row.calls ?? 0, 0]);
       if (row.calls) expect(hit).toHaveBeenCalledWith(expect.anything(), input);
-      expect(other).not.toHaveBeenCalled();
-      if (!row.limited) return;
-      expect(claimZaloReplyContext).not.toHaveBeenCalled();
+      if (row.limited) expect(claimZaloReplyContext).not.toHaveBeenCalled();
       const keys = vi.mocked(rateLimited).mock.calls.map((c) => c[0]);
-      expect(keys).toEqual([`zalo-webhook:${BOT}`, row.limited]);
+      if (row.limited) expect(keys).toEqual([`zalo-webhook:${BOT}`, row.limited]);
     });
     type Charges = Awaited<ReturnType<typeof readMyCharges>>;
     type Status = Charges["clubs"][number]["status"];
@@ -589,6 +584,18 @@ describe("POST /api/webhooks/zalo/[token]", () => {
         row.acc ? [] : [[expect.anything(), ACC]],
       );
       for (const c of vi.mocked(readZaloPayContext).mock.calls) expect(c[1].tenantId).toBe(TENANT);
+    });
+    it.each([
+      { text: "/pay; DROP TABLE x", bad: "DROP" },
+      { text: "x".repeat(600), bad: "x".repeat(20) },
+      { text: "/leave\u202E1", bad: "\u202E" },
+    ])("T-20: injection %# is routed by its first token, never echoed", async ({ text, bad }) => {
+      linked();
+      await dm(text, 9800);
+      expect(sent()).toEqual([expect.stringMatching(/^I did not understand that command\.\n/)]);
+      expect(sent()[0]).not.toContain(bad);
+      expect(storeInboundEvent).toHaveBeenCalledTimes(1);
+      for (const fn of PLAYER_DB) expect(fn).not.toHaveBeenCalled();
     });
     it("T-22: the gate gets the appDb pool, once, before any player read", async () => {
       const handle = { pool: {}, db: {} };
