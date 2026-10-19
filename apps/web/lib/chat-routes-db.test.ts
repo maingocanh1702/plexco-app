@@ -18,6 +18,10 @@ import {
   setupRlsTestContext,
   type RlsTestContext,
 } from "../../../packages/db/src/test-harness.js";
+import {
+  DELETE as deleteMessage,
+  PATCH as patchMessage,
+} from "../app/api/chat/channels/[id]/messages/[messageId]/route";
 import { GET as history, POST as postMessage } from "../app/api/chat/channels/[id]/messages/route";
 import { decodeChatCursor, encodeChatCursor } from "./chat-route";
 import { appDb, hashToken, resetDbRoleViolationForTests } from "./session-cookies";
@@ -518,5 +522,258 @@ describe("POST /api/chat/channels/:id/messages (send)", () => {
     expect(await order(c)).toEqual([parent.id]);
     const r = await post(a, c.t, c.c, { ...msg(), replyToMessageId: parent.id.toUpperCase() });
     expect(r.status).toBe(200);
+  });
+});
+
+/** PATCH or DELETE one message; csrf defaults to the actor's token, null sends none (N1 asserted). */
+async function mutate(
+  method: "PATCH" | "DELETE",
+  a: Actor | null,
+  c: Club,
+  messageId: string,
+  payload?: unknown,
+  csrf: string | null | undefined = a?.csrf,
+) {
+  cookieJar.token = a?.token;
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (csrf) headers["x-csrf-token"] = csrf;
+  const url = `https://plexco.app/api/chat/channels/${c.c}/messages/${messageId}?tenant=${c.t}`;
+  const body =
+    typeof payload === "string" || payload === undefined ? payload : JSON.stringify(payload);
+  const handler = method === "PATCH" ? patchMessage : deleteMessage;
+  const res = await handler(new Request(url, { method, headers, body }), {
+    params: Promise.resolve({ id: c.c, messageId }),
+  });
+  expect(res.headers.get("cache-control")).toBe("no-store");
+  const env = (await res.json()) as Envelope;
+  return { status: res.status, body: env, code: env.error?.code };
+}
+
+/** The stored row, read as owner: a refused mutation changes none of these columns. */
+async function row(id: string) {
+  const { rows } = await ctx.owner.query(
+    `SELECT body, edit_count, author_deleted_at FROM chat_messages WHERE id = $1`,
+    [id],
+  );
+  return rows[0] as { body: string; edit_count: number; author_deleted_at: Date | null };
+}
+const edit = (body: string, expectedEditCount: number) => ({ body, expectedEditCount });
+const OLD = "2026-01-01 00:00:00+00"; // far past L14's 15-minute edit window
+
+describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, delete)", () => {
+  it("T1 no session -> 401; C1 missing or wrong x-csrf-token -> 403 CSRF_INVALID, no change", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const m = await send(c, a, "original");
+    for (const method of ["PATCH", "DELETE"] as const) {
+      const r = await mutate(method, null, c, m.id, edit("changed", 0));
+      expect(r).toMatchObject({ status: 401, code: "AUTH_REQUIRED" });
+      for (const csrf of [null, "wrong"]) {
+        const bad = await mutate(method, a, c, m.id, edit("changed", 0), csrf);
+        expect(bad).toMatchObject({ status: 403, code: "CSRF_INVALID" });
+      }
+    }
+    expect(await row(m.id)).toEqual({ body: "original", edit_count: 0, author_deleted_at: null });
+  });
+
+  it("T3 the author's PATCH -> 200 exactly {id, editCount, editedAt ISO, changed}; no body", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const m = await send(c, a, "first text");
+    const r = await mutate("PATCH", a, c, m.id, edit("second secret-text", 0));
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.body.data).sort()).toEqual(["changed", "editCount", "editedAt", "id"]);
+    expect(r.body.data).toMatchObject({ id: m.id, editCount: 1, changed: true });
+    expect(r.body.data.editedAt).toBe(new Date(r.body.data.editedAt).toISOString());
+    expect(JSON.stringify(r.body)).not.toMatch(/secret-text|first text/);
+    const same = await mutate("PATCH", a, c, m.id, edit("second secret-text", 1));
+    expect(same).toMatchObject({ status: 200, body: { data: { ...r.body.data, changed: false } } });
+    // an identical body on a never-edited message: editedAt null, not a 500 from the ISO mapper
+    const fresh = await send(c, a, "untouched");
+    const noop = await mutate("PATCH", a, c, fresh.id, edit("untouched", 0));
+    expect(noop.body.data).toEqual({ id: fresh.id, editCount: 0, editedAt: null, changed: false });
+    expect(await row(m.id)).toMatchObject({ body: "second secret-text", edit_count: 1 });
+  });
+
+  it("T10 past 15 min or 5 edits, or a non-author -> 409 WINDOW_CLOSED; stale count -> 409 CONFLICT", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    await seed(c, a, [OLD]);
+    const [old] = await order(c);
+    const late = await mutate("PATCH", a, c, old!, edit("late", 0));
+    expect(late).toMatchObject({ status: 409, code: "CHAT_EDIT_WINDOW_CLOSED" });
+    const m = await send(c, a, "v0");
+    const stale = await mutate("PATCH", a, c, m.id, edit("stale", 1));
+    expect(stale).toMatchObject({ status: 409, code: "CHAT_EDIT_CONFLICT" });
+    const other = await mutate("PATCH", b, c, m.id, edit("not mine", 0)); // L14 V-9: author only
+    expect(other).toMatchObject({ status: 409, code: "CHAT_EDIT_WINDOW_CLOSED" });
+    for (let n = 0; n < 5; n++) {
+      expect((await mutate("PATCH", a, c, m.id, edit(`v${n + 1}`, n))).status).toBe(200);
+    }
+    const sixth = await mutate("PATCH", a, c, m.id, edit("v6", 5));
+    expect(sixth).toMatchObject({ status: 409, code: "CHAT_EDIT_WINDOW_CLOSED" });
+    expect(await row(m.id)).toMatchObject({ body: "v5", edit_count: 5 });
+    expect(await row(old!)).toMatchObject({ body: "seed body", edit_count: 0 });
+  });
+
+  it("T11 note 32 order: admins_only without the capability beats the closed window (403)", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    await seed(c, a, [OLD]);
+    const [old] = await order(c);
+    await ctx.owner.query(`UPDATE chat_channels SET post_policy = 'admins_only' WHERE id = $1`, [
+      c.c,
+    ]);
+    const r = await mutate("PATCH", a, c, old!, edit("x", 0));
+    expect(r).toMatchObject({ status: 403, code: "CHAT_CAPABILITY_REQUIRED" });
+    expect(await row(old!)).toMatchObject({ body: "seed body", edit_count: 0 });
+  });
+
+  it("T12 the author deletes twice -> 200 changed true then false; history keeps a tombstone", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const m = await send(c, a, "to delete");
+    const first = await mutate("DELETE", a, c, m.id);
+    expect(first.status).toBe(200);
+    expect(Object.keys(first.body.data).sort()).toEqual(["authorDeletedAt", "changed", "id"]);
+    expect(first.body.data).toMatchObject({ id: m.id, changed: true });
+    const at = first.body.data.authorDeletedAt;
+    expect(at).toBe(new Date(at).toISOString());
+    const again = await mutate("DELETE", a, c, m.id);
+    expect(again.body.data).toEqual({ ...first.body.data, changed: false });
+    const [tomb] = (await get(a, c.t, c.c)).body.data.messages;
+    expect(tomb).toEqual({
+      id: m.id,
+      channelId: c.c,
+      createdAt: tomb.createdAt,
+      tombstone: "author_deleted",
+    });
+    expect(JSON.stringify([first.body, again.body])).not.toContain("to delete");
+    const revive = await mutate("PATCH", a, c, m.id, edit("back", 0));
+    expect(revive).toMatchObject({ status: 409, code: "CHAT_EDIT_WINDOW_CLOSED" });
+  });
+
+  it("T13 another member or a moderator deletes -> the one 403 body; no change", async () => {
+    const c = await club();
+    const [a, b, mod] = [await actor(c.t), await actor(c.t), await actor(c.t)];
+    await ctx.owner.query(
+      `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+       VALUES ($1, 'web', $2, 'owner', true)`,
+      [c.t, mod.personId],
+    );
+    const m = await send(c, a, "kept");
+    const [byMember, byMod] = [
+      await mutate("DELETE", b, c, m.id),
+      await mutate("DELETE", mod, c, m.id),
+    ];
+    expect(byMember).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    expect(JSON.stringify(byMod.body.error)).toBe(JSON.stringify(byMember.body.error));
+    expect(byMod.status).toBe(403);
+    expect(await row(m.id)).toEqual({ body: "kept", edit_count: 0, author_deleted_at: null });
+  });
+
+  it("T2 foreign tenant, guest, unknown or foreign message, other-tenant and DM channel -> one 403", async () => {
+    const [c, other, off] = [await club(), await club(), await club(false)];
+    const [a, b, guest, stranger, o, m] = [
+      await actor(c.t),
+      await actor(c.t),
+      await actor(c.t, "guest"),
+      await actor(other.t),
+      await actor(other.t),
+      await actor(off.t),
+    ];
+    await ctx.owner.query("BEGIN");
+    const dm = await ctx.owner.query<{ id: string }>(
+      `INSERT INTO chat_channels (kind, dm_key) VALUES ('dm', $1) RETURNING id`,
+      [[a.personId, b.personId].sort().join(":")],
+    );
+    const dmId = dm.rows[0]!.id;
+    await ctx.owner.query(
+      `INSERT INTO chat_members (channel_id, person_id) VALUES ($1, $2), ($1, $3)`,
+      [dmId, a.personId, b.personId],
+    );
+    await ctx.owner.query("COMMIT");
+    const mine = await send(c, a, "mine");
+    const theirs = await send(other, o, "theirs");
+    const cases: Awaited<ReturnType<typeof mutate>>[] = [];
+    for (const method of ["PATCH", "DELETE"] as const) {
+      const p = edit("x", 0);
+      cases.push(
+        await mutate(method, stranger, c, mine.id, p),
+        await mutate(method, guest, c, mine.id, p),
+        await mutate(method, a, c, randomUUID(), p),
+        await mutate(method, a, c, theirs.id, p),
+        await mutate(method, a, { t: c.t, c: other.c }, theirs.id, p),
+        await mutate(method, a, { t: c.t, c: dmId }, randomUUID(), p),
+      );
+      const r = await mutate(method, m, off, randomUUID(), p);
+      expect(r).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
+    }
+    const one = (r: (typeof cases)[number]) =>
+      JSON.stringify([r.status, r.body.data, r.body.error]);
+    expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
+    expect(await row(mine.id)).toEqual({ body: "mine", edit_count: 0, author_deleted_at: null });
+    expect(await row(theirs.id)).toEqual({
+      body: "theirs",
+      edit_count: 0,
+      author_deleted_at: null,
+    });
+  });
+
+  it("T22 non-uuid tenant, channel or message id, a bad edit body or JSON -> 400, never 500", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    const m = await send(c, a, "orig");
+    const bad = "not-a-uuid";
+    const cases: ["PATCH" | "DELETE", Club, string, unknown][] = [];
+    for (const method of ["PATCH", "DELETE"] as const) {
+      const p = method === "PATCH" ? edit("x", 0) : undefined;
+      cases.push([method, { t: bad, c: c.c }, m.id, p], [method, { t: c.t, c: bad }, m.id, p]);
+      cases.push([method, c, bad, p]);
+    }
+    for (const p of [
+      { body: 42, expectedEditCount: 0 },
+      { body: "x" },
+      ...[-1, 1.5, "0", null, 2 ** 31].map((n) => ({ body: "x", expectedEditCount: n })),
+      edit("   ", 0),
+      `{${bad}`,
+      "[]",
+    ]) {
+      cases.push(["PATCH", c, m.id, p]);
+    }
+    for (const [method, where, id, payload] of cases) {
+      const r = await mutate(method, a, where, id, payload);
+      expect(r).toMatchObject({ status: 400, code: "INVALID_BODY" });
+      expect(JSON.stringify(r.body)).not.toContain(bad);
+    }
+    expect(await row(m.id)).toEqual({ body: "orig", edit_count: 0, author_deleted_at: null });
+  });
+
+  it("413 over 4000 characters or 64 KiB; 429 from chat_edit_1m (shared) and actorThrottled", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const m = await send(c, a, "orig");
+    for (const body of ["x".repeat(4001), "x".repeat(64 * 1024)]) {
+      const r = await mutate("PATCH", a, c, m.id, edit(body, 0));
+      expect(r).toMatchObject({ status: 413, code: "CHAT_MESSAGE_TOO_LARGE" });
+    }
+    for (let i = 0; i < 30; i++) {
+      const bucket = `chat_edit_1m:${a.personId}:${c.c}`;
+      expect(await rateLimitCheck(runtime!.pool, bucket, 30, 60)).toBe(true);
+    }
+    for (const method of ["PATCH", "DELETE"] as const) {
+      const r = await mutate(method, a, c, m.id, edit("new", 0));
+      expect(r).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
+    }
+    const theirs = await send(c, b, "b text");
+    for (let i = 0; i < 60; i++) {
+      const bucket = `session-actor:${b.accountId}`;
+      expect(await rateLimitCheck(runtime!.pool, bucket, 60, 60)).toBe(true);
+    }
+    const r = await mutate("DELETE", b, c, theirs.id);
+    expect(r).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
+    expect(await row(m.id)).toEqual({ body: "orig", edit_count: 0, author_deleted_at: null });
+    expect(await row(theirs.id)).toMatchObject({ author_deleted_at: null });
   });
 });
