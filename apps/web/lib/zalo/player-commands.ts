@@ -12,6 +12,7 @@ import type {
   RosterMoneyErrorCode,
 } from "@plexco/db";
 import { log } from "../log";
+import { formatVnd } from "../money";
 import { formatSessionDate, formatSessionTime } from "../session-time";
 import type { ParsedZaloCommand } from "./commands";
 
@@ -147,6 +148,38 @@ async function numberReply(token: string, deps: PlayerCommandDeps): Promise<stri
   return reply(OUTCOME[r.outcome], { ref: ref(row), n: r.waitlistPosition ?? "" });
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// /pay: own charges in THIS club only (4.6, P-17..P-20); any unknown is R-17, never 0 (P-19).
+async function payReply(deps: PlayerCommandDeps): Promise<string> {
+  const account = deps.gate.accountRef;
+  if (!account || !UUID.test(account)) return reply("R17");
+  const charges = await deps.readCharges(account);
+  if (charges.summary.kind === "unknown") return reply("R17");
+  const { slug } = await deps.payContext([]);
+  if (!slug) return reply("R17");
+  const st = charges.clubs.find((c) => c.clubRef === slug)?.status;
+  if (!st || st.kind === "known_zero") return reply("R16");
+  if (st.kind !== "known_amount" || st.items.length === 0) return reply("R17");
+  const { sessions } = await deps.payContext(st.items.map((i) => i.sessionRef));
+  const l = getLang();
+  const rows: string[] = [];
+  for (const i of st.items) {
+    const s = sessions.get(i.sessionRef);
+    if (!s) return reply("R17");
+    if (rows.length === 10) continue;
+    const when = `${formatSessionDate(i.startsAt, s.timezone, l)} ${formatSessionTime(i.startsAt, s.timezone, l)}`;
+    const line = reply("R15item", {
+      ref: s.area ? `${when} · ${s.area}` : when,
+      amount: formatVnd(i.remaining),
+    });
+    rows.push(line + (i.status === "partial" ? reply("R15partial") : ""));
+  }
+  if (st.items.length > 10) rows.push(reply("R15more", { k: st.items.length - 10 }));
+  const total = reply("R15total", { amount: formatVnd(st.totalOutstanding) });
+  return [reply("R15head"), ...rows, total, reply("R15pay")].join("\n");
+}
+
 /** join/leave/pay/number: the gate first (R-19), then one fail-closed catch (P-22, P-23). */
 export async function runPlayerCommand(cmd: ParsedZaloCommand, deps: PlayerCommandDeps) {
   if (deps.gate.linked !== true) return reply("R19");
@@ -154,6 +187,7 @@ export async function runPlayerCommand(cmd: ParsedZaloCommand, deps: PlayerComma
     if (cmd.kind === "join") return await joinList(deps);
     if (cmd.kind === "leave") return await leaveList(deps);
     if (cmd.kind === "number") return await numberReply(cmd.args[0] ?? "", deps);
+    if (cmd.kind === "pay") return await payReply(deps);
     return reply("R18");
   } catch (error) {
     const id = error instanceof RosterMoneyError ? replyIdForCode(error.code) : "R18";

@@ -458,3 +458,167 @@ describe("runPlayerCommand: /leave and the number reply on a leave_list context 
     spy.mockRestore();
   });
 });
+
+const PAY: ParsedZaloCommand = { kind: "pay", name: "pay", args: ["2"] }; // args ignored (4.6)
+const ACC = "11111111-1111-4111-8111-111111111111";
+const LATER = "2026-11-05T12:00:00.000Z"; // the other club's charge: its date never renders
+const TZ = { timezone: "Asia/Ho_Chi_Minh", area: "Sân A" };
+const charge = (i: number, remaining: number, status = "open", startsAt = AT) => ({
+  sessionRef: sid(i),
+  startsAt,
+  amountDue: 150000,
+  amountAllocated: 150000 - remaining,
+  remaining,
+  status,
+});
+const owes = (items: ReturnType<typeof charge>[]) => ({
+  kind: "known_amount",
+  currency: "VND",
+  totalOutstanding: items.reduce((a, c) => a + c.remaining, 0),
+  asOf: AT,
+  chargeCount: items.length,
+  items,
+});
+const UNK = { kind: "unknown", reasonCode: "LEDGER_INCONSISTENT", retryable: false };
+const club = (clubRef: string, status: unknown) => ({
+  clubRef,
+  clubLabel: `Label ${clubRef}`,
+  status,
+});
+const OTHER = club("club-b", owes([charge(20, 777000, "open", LATER)]));
+const SUM = {
+  kind: "known_amount",
+  currency: "VND",
+  totalOutstanding: 9999000,
+  asOf: AT,
+  clubCount: 2,
+};
+const charges = (clubs: unknown[], summary: unknown = SUM) =>
+  vi.fn(async () => ({ clubs, summary }));
+const payCtx = (slug: string | null = "club-a", missing = "") =>
+  vi.fn(async (ids: string[]) => ({
+    slug,
+    sessions: new Map(ids.filter((id) => id !== missing).map((id) => [id, TZ] as const)),
+  }));
+const payDeps = (over: Record<string, unknown> = {}) =>
+  makeDeps({
+    gate: { linked: true, accountRef: ACC },
+    readCharges: charges([OTHER]),
+    payContext: payCtx(),
+    ...over,
+  });
+const PREF = (l: "vi" | "en") => `${formatSessionDate(AT, "Asia/Ho_Chi_Minh", l)} 19:00 · Sân A`;
+// T-17: no bank data; no other club's amount, date, slug or label; never the all-clubs summary total.
+const expectOwnOnly = (text: string) => {
+  expectNoBankData(text);
+  expect(text).not.toMatch(/777|9\.999|club-|Label/);
+  for (const l of ["vi", "en"] as const)
+    expect(text).not.toContain(formatSessionDate(LATER, "Asia/Ho_Chi_Minh", l));
+};
+
+describe("runPlayerCommand: /pay, this club only (4.6, 4.7 R-15..R-18, P-17..P-20)", () => {
+  it("R-15: the bot club's items, partial marker, +k more and its own total (P-30, T-13, T-17, T-18)", async () => {
+    const items = [
+      charge(1, 50000, "partial"),
+      ...[2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => charge(i, 150000)),
+    ];
+    const mine = () => charges([OTHER, club("club-a", owes(items))]);
+    const en = payDeps({ readCharges: mine() });
+    const texts = [await run(PAY, en), await run(PAY, payDeps({ readCharges: mine() }), "vi")];
+    expect(texts).toEqual([
+      [
+        "What you owe this club:",
+        `- ${PREF("en")}: 50.000đ (partly paid)`,
+        ...Array<string>(9).fill(`- ${PREF("en")}: 150.000đ`),
+        "+1 more",
+        "Total: 1.550.000đ",
+        "Please pay the host directly.",
+      ].join("\n"),
+      [
+        "Khoản cần trả của bạn tại CLB này:",
+        `- ${PREF("vi")}: 50.000đ (đã trả một phần)`,
+        ...Array<string>(9).fill(`- ${PREF("vi")}: 150.000đ`),
+        "+1 khoản khác",
+        "Tổng: 1.550.000đ",
+        "Vui lòng trả trực tiếp cho chủ kèo.",
+      ].join("\n"),
+    ]);
+    expect(en.readCharges).toHaveBeenCalledTimes(1);
+    expect(en.readCharges).toHaveBeenCalledWith(ACC);
+    expect(vi.mocked(en.payContext).mock.calls).toEqual([[[]], [items.map((c) => c.sessionRef)]]);
+    texts.forEach(expectOwnOnly);
+  });
+
+  it("R-16 for this club known_zero or absent (T-14); R-17 for any unknown, no slug or session, a non-UUID account (P-19, T-15)", async () => {
+    const mine = club("club-a", owes([charge(1, 50000)]));
+    const zero = payDeps({
+      readCharges: charges([
+        club("club-a", { kind: "known_zero", currency: "VND", asOf: AT }),
+        OTHER,
+      ]),
+    });
+    const absent = payDeps();
+    const texts = [await run(PAY, zero), await run(PAY, absent)];
+    for (const d of [zero, absent]) expect(vi.mocked(d.payContext).mock.calls).toEqual([[[]]]);
+    expect(texts).toEqual([EN("R16"), EN("R16")]);
+    const r17 = [
+      payDeps({
+        readCharges: charges([], { kind: "unknown", reasonCode: "READ_FAILED", retryable: true }),
+      }),
+      payDeps({ readCharges: charges([club("club-a", UNK), OTHER], UNK) }),
+      payDeps({ readCharges: charges([mine, club("club-b", UNK)], UNK) }),
+      payDeps({ readCharges: charges([mine]), payContext: payCtx(null) }),
+      payDeps({ readCharges: charges([mine]), payContext: payCtx("club-a", sid(1)) }),
+      payDeps({ gate: { linked: true, accountRef: "acc-1" } }),
+      payDeps({ gate: { linked: true, accountRef: null } }),
+    ];
+    for (const d of r17) texts.push(await run(PAY, d));
+    expect(texts.slice(2)).toEqual(Array<string>(7).fill(EN("R17")));
+    expect(r17[4]?.payContext).toHaveBeenCalledTimes(2);
+    r17.slice(5).forEach((d) => expect(d.readCharges).not.toHaveBeenCalled());
+    const off = payDeps({ gate: { linked: false, accountRef: ACC } });
+    texts.push(
+      await run(PAY, zero, "vi"),
+      await run(PAY, r17[0] as PlayerCommandDeps, "vi"),
+      await run(PAY, off),
+    );
+    expect(texts.slice(9)).toEqual([
+      "Bạn không có khoản nào cần trả.",
+      "Hiện chưa xem được số tiền cần trả. Vui lòng thử lại sau hoặc hỏi chủ kèo.",
+      EN("R19"),
+    ]);
+    expect([EN("R16"), EN("R17")]).toEqual([
+      "You have nothing to pay.",
+      "Your amount due is unavailable right now. Please try again later or ask the host.",
+    ]);
+    expect(off.readCharges).not.toHaveBeenCalled();
+    texts.forEach(expectSafe);
+  });
+
+  it("a throw from readCharges or either payContext call is R-18, logged as {command, reason} only (RC-5)", async () => {
+    const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+    const boom = () => Promise.reject(new Error("boom: message text"));
+    const second = vi
+      .fn()
+      .mockResolvedValueOnce({ slug: "club-a", sessions: new Map() })
+      .mockImplementationOnce(boom);
+    const texts = [
+      await run(PAY, payDeps({ readCharges: vi.fn(boom) })),
+      await run(PAY, payDeps({ payContext: vi.fn(boom) })),
+      await run(
+        PAY,
+        payDeps({
+          readCharges: charges([club("club-a", owes([charge(1, 50000)]))]),
+          payContext: second,
+        }),
+      ),
+    ];
+    expect(texts).toEqual(Array<string>(3).fill(EN("R18")));
+    expect(second).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls).toEqual(
+      Array(3).fill(["zalo_player_command_failed", { command: "pay", reason: "PROCESSING_ERROR" }]),
+    );
+    texts.forEach(expectSafe);
+    spy.mockRestore();
+  });
+});
