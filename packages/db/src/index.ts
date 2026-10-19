@@ -101,6 +101,10 @@ export {
   type JoinSessionResult,
   type LeaveSessionParams,
   type LeaveSessionResult,
+  // L13 (M9): the Zalo /join numbered list (RC-3).
+  listOwnJoinableSessions,
+  type JoinableSession,
+  type JoinableSessionsResult,
 } from "./session-join-service.js";
 // L8 (M9): join requests on approval sessions (openJoinRequest stays internal to joinSession).
 export {

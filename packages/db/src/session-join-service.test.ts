@@ -6,7 +6,12 @@ import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession } from "./roster-service.js";
 import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
-import { hasLiveMembership, joinSession, leaveSession } from "./session-join-service.js";
+import {
+  hasLiveMembership,
+  joinSession,
+  leaveSession,
+  listOwnJoinableSessions,
+} from "./session-join-service.js";
 import { getSessionOccupancy, slotsOpen } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
@@ -1036,4 +1041,77 @@ describe("joinSession and promotion derive the charge (DD-39 self_join, promotio
       ]);
     },
   );
+});
+
+/** Moves a session's start (ends 2 h later) through the owner: the list cases pin the order. */
+const setStart = (sessionId: string, at: Date) =>
+  ctx.owner.query(`UPDATE sessions SET starts_at = $2, ends_at = $3 WHERE id = $1`, [
+    sessionId,
+    at,
+    new Date(at.getTime() + 2 * 3600 * 1000),
+  ]);
+const daysAhead = (n: number) => new Date(Date.now() + n * 24 * 3600 * 1000);
+const joinable = (tenantId: string, personId: string) =>
+  listOwnJoinableSessions(ctx.appDb.db, { tenantId, personId });
+
+describe("listOwnJoinableSessions (L13 /join list, RC-3, P-10)", () => {
+  it("T-6/P-10: open future sessions of this club, public for a guest and all for an active member, by starts_at, five keys only (no venue, no amount); a non-member, a left member, a non-UUID person and another club get { member: false }; zero writes", async () => {
+    const tenantId = await fx.seedTenant();
+    const active = await seedMember(tenantId);
+    const guest = await seedMember(tenantId, "guest");
+    const left = await seedMember(tenantId, "left");
+    const outsider = await fx.seedPerson(`Outsider ${nextCommandId()}`);
+    const [d1, d2, d3] = [daysAhead(1), daysAhead(2), daysAhead(3)];
+    const pub = await fx.seedSession(tenantId);
+    await makePublic(pub);
+    await setStart(pub, d1);
+    const full = await fx.seedSession(tenantId, { slotsMax: 1 });
+    await setStart(full, d2);
+    await join(tenantId, (await seedMember(tenantId)).personId, full);
+    const unlimited = await fx.seedSession(tenantId, { slotsMax: null });
+    await setStart(unlimited, d3);
+    await makeStarted(await fx.seedSession(tenantId));
+    await makeClosed(await fx.seedSession(tenantId));
+    await fx.seedSession(tenantId, { status: "draft" });
+    const tenantB = await fx.seedTenant();
+    await fx.seedSession(tenantB);
+    const item = (sessionId: string, at: Date, open: number | null) => ({
+      sessionId,
+      startsAt: at.toISOString(),
+      timezone: "Asia/Ho_Chi_Minh",
+      area: "Quan 1",
+      slotsOpen: open,
+    });
+    const before = await state(tenantId);
+
+    expect(await joinable(tenantId, active.personId)).toEqual({
+      member: true,
+      sessions: [item(pub, d1, 8), item(full, d2, 0), item(unlimited, d3, null)],
+    });
+    expect(await joinable(tenantId, guest.personId)).toEqual({
+      member: true,
+      sessions: [item(pub, d1, 8)],
+    });
+    for (const personId of [left.personId, outsider, "not-a-uuid"]) {
+      expect(await joinable(tenantId, personId)).toEqual({ member: false });
+    }
+    expect(await joinable(tenantB, active.personId)).toEqual({ member: false });
+    expect(await state(tenantId)).toEqual(before);
+  });
+
+  it("P-10/RC-3: at most 10 rows (the caller shows 9; a 10th adds the 'more' line); equal starts_at order by id", async () => {
+    const tenantId = await fx.seedTenant();
+    const member = await seedMember(tenantId);
+    const at = daysAhead(1);
+    const ids: string[] = [];
+    for (let i = 0; i < 11; i++) {
+      const id = await fx.seedSession(tenantId);
+      await setStart(id, at);
+      ids.push(id);
+    }
+    const result = await joinable(tenantId, member.personId);
+    expect(result.member && result.sessions.map((s) => s.sessionId)).toEqual(
+      ids.sort().slice(0, 10),
+    );
+  });
 });

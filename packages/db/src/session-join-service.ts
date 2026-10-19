@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import { charges, memberships, players, sessions } from "../schema.js";
 import { authorizeTenantAction } from "./authorization.js";
 import { deriveChargeAmount } from "./charge-derivation.js";
@@ -15,7 +15,7 @@ import {
   type RosterMoneyErrorCode,
 } from "./roster-money-shared.js";
 import { seatPlayer, upsertCharge } from "./roster-service.js";
-import { getSessionOccupancy } from "./session-occupancy.js";
+import { getSessionOccupancy, occupiedCountSql, slotsOpen } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -142,6 +142,7 @@ export async function lockSession(tx: Tx, tenantId: string, sessionId: string) {
 
 /** The person's live (active|guest) membership of the tenant, FOR SHARE: RLS plus an explicit
  *  tenant filter. At most one exists (UNIQUE (tenant_id, person_id) WHERE status is live).
+ *  In-module callers include the Zalo list read listOwnJoinableSessions (L13 RC-3).
  *  Exported for join-request-service.ts only (not from index.ts). */
 export async function liveMembership(tx: Tx, tenantId: string, personId: string) {
   const [row] = await tx
@@ -166,6 +167,69 @@ export async function hasLiveMembership(
   personId: string,
 ): Promise<boolean> {
   return isUuid(personId) && (await liveMembership(tx, tenantId, personId)) !== undefined;
+}
+
+/** One /join list row (L13 readiness 4.4, R-22): the server-only id plus the safe fields the reply
+ *  maps. Never a venue, a roster, another person's data or an amount (P-11). */
+export interface JoinableSession {
+  sessionId: string;
+  /** ISO 8601 UTC, the input of formatSessionDate / formatSessionTime (P-20). */
+  startsAt: string;
+  timezone: string;
+  area: string | null;
+  /** null = unlimited (slotsOpen, the one capacity formula). */
+  slotsOpen: number | null;
+}
+export type JoinableSessionsResult =
+  { member: false } | { member: true; sessions: JoinableSession[] };
+
+/**
+ * The Zalo /join numbered list (L13 RC-3, 4.4, P-10): the club's open sessions with
+ * starts_at > now() (the exact negation of joinSession's `started`) that are public, or any
+ * visibility for an ACTIVE member; ordered (starts_at, id), LIMIT 10 (the caller shows 9 and a
+ * 10th adds the "more" line). No live membership, or a non-UUID person -> { member: false }.
+ * One withTenant read with an explicit tenant filter on top of RLS; it writes nothing.
+ */
+export async function listOwnJoinableSessions(
+  db: Db,
+  params: { tenantId: string; personId: string },
+): Promise<JoinableSessionsResult> {
+  const { tenantId, personId } = params;
+  if (!isUuid(personId)) return { member: false };
+  return withTenant(db, tenantId, async (tx) => {
+    const membership = await liveMembership(tx, tenantId, personId);
+    if (membership === undefined) return { member: false };
+    const rows = await tx
+      .select({
+        sessionId: sessions.id,
+        startsAt: sessions.startsAt,
+        timezone: sessions.timezone,
+        area: sessions.area,
+        slotsMax: sessions.slotsMax,
+        occupied: occupiedCountSql(sessions.id, tenantId),
+      })
+      .from(sessions)
+      .where(
+        and(
+          eq(sessions.tenantId, tenantId),
+          eq(sessions.status, "open"),
+          sql`${sessions.startsAt} > now()`,
+          membership.status === "active" ? undefined : eq(sessions.visibility, "public"),
+        ),
+      )
+      .orderBy(asc(sessions.startsAt), asc(sessions.id))
+      .limit(10);
+    return {
+      member: true,
+      sessions: rows.map((r) => ({
+        sessionId: r.sessionId,
+        startsAt: r.startsAt.toISOString(),
+        timezone: r.timezone,
+        area: r.area,
+        slotsOpen: slotsOpen(r.slotsMax, Number(r.occupied)),
+      })),
+    };
+  });
 }
 
 /**
