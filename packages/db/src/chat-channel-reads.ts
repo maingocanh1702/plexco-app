@@ -19,8 +19,10 @@ export async function listChatChannels(tx: ChatTx): Promise<ChatChannelRow[]> {
       (SELECT count(*)::int FROM (
          SELECT 1 FROM chat_messages m
           WHERE m.channel_id = c.id AND m.author_person_id IS DISTINCT FROM cm.person_id
-            AND (cm.last_read_created_at IS NULL
-              OR (m.created_at, m.id) > (cm.last_read_created_at, cm.last_read_message_id))
+            -- ONE row comparison, so it is an index range on (channel_id, created_at, id) (0031:146); a NULL cursor
+            -- is (-infinity, nil uuid) = from the start, and 0031:118 keeps both cursor halves NULL together.
+            AND (m.created_at, m.id) > (COALESCE(cm.last_read_created_at, '-infinity'::timestamptz),
+              COALESCE(cm.last_read_message_id, '00000000-0000-0000-0000-000000000000'::uuid))
           LIMIT 100) capped) AS "unreadCount"
       FROM chat_channels c
       JOIN chat_members cm
