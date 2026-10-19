@@ -5,7 +5,7 @@
  * chat-routes-db.test.ts and realtime-listener-db.test.ts; it imports nothing from a test file.
  */
 import { randomUUID } from "node:crypto";
-import { createWebSession, sendChatMessage, withChatActor } from "@plexco/db";
+import { createWebSession, revokeWebSession, sendChatMessage, withChatActor } from "@plexco/db";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   seedPersonAccount,
@@ -15,7 +15,13 @@ import {
 import { GET as history } from "../app/api/chat/channels/[id]/messages/route";
 import { GET as subscribe } from "../app/api/chat/subscribe/route";
 import { CHAT_SUBSCRIBE_LIMIT, chatForbidden } from "./chat-route";
-import { chatRealtimeListener } from "./realtime-listener";
+import {
+  chatRealtimeListener,
+  HEARTBEAT_MS,
+  MAX_STREAMS_PER_ACCOUNT,
+  openRealtimeStream,
+  realtimeListener,
+} from "./realtime-listener";
 import { appDb, hashToken, rateLimited, resetDbRoleViolationForTests } from "./session-cookies";
 
 const cookieJar = vi.hoisted(() => ({ token: undefined as string | undefined }));
@@ -261,4 +267,120 @@ describe("GET /api/chat/subscribe (live stream)", () => {
     const outcome = { toA: "frame", toB, cross: [cross.status, cross.code] };
     console.log("S2 outcome", JSON.stringify(outcome));
   });
+
+  // S3-S6 (readiness section 7): revocation, per-event drops, heartbeat and the stream cap.
+  const notify = (payload: string) =>
+    ctx.workerPool.query("SELECT pg_notify('chat_realtime', $1)", [payload]);
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 600));
+  /** The message id of the next frame, else what next() gave instead ("timeout" | "done"). */
+  const pushedId = async (reader: Reader) => {
+    const frame = String(await next(reader));
+    if (!frame.startsWith("data: ")) return frame;
+    return (JSON.parse(frame.slice(6)) as { messageId?: unknown }).messageId;
+  };
+
+  it("S3 revoke mid-stream: no frame after B's membership ends; the next recheck closes the stream", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    vi.useFakeTimers({ toFake: ["setInterval"] }); // only the heartbeat; pg and next() stay real
+    try {
+      const readerB = await stream(b, c.t);
+      const before = await send(c.t, c.c, a, `s3 before ${randomUUID()}`);
+      expect(await pushedId(readerB)).toBe(before); // control: B reads while a member
+      await ctx.owner.query(
+        `UPDATE memberships SET status = 'left' WHERE tenant_id = $1 AND person_id = $2`,
+        [c.t, b.personId],
+      );
+      await send(c.t, c.c, a, `s3 after ${randomUUID()}`);
+      expect(await next(readerB, 600)).toBe("timeout"); // the per-event read fails: dropped
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      expect(await next(readerB)).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 30_000);
+
+  it("S4 per-event drop: a forged uuid, a non-uuid payload, a non-member channel's message and a read error give B no frame; the stream stays open", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const hidden = await secondChannel(c.t, [a]); // B is not a chat member of it
+    const readerB = await stream(b, c.t);
+    /** Nothing reached B since the last stimulus: its next frame is the next real send. */
+    const nextIsLegit = async () => {
+      await settle();
+      const id = await send(c.t, c.c, a, `s4 legit ${randomUUID()}`);
+      expect(await pushedId(readerB)).toBe(id);
+      return id;
+    };
+    const tenantStatus = (status: "active" | "suspended") =>
+      ctx.owner.query(`UPDATE tenants SET status = $2 WHERE id = $1`, [c.t, status]);
+
+    await notify(randomUUID()); // forged: no such message
+    await nextIsLegit();
+    await notify("not-a-uuid"); // dropped before any read
+    await nextIsLegit();
+    await send(c.t, hidden, a, `s4 hidden ${randomUUID()}`); // B cannot read it
+    const readable = await nextIsLegit();
+    await tenantStatus("suspended"); // B's per-event read now throws TENANT_SUSPENDED
+    await notify(readable);
+    await settle();
+    await tenantStatus("active");
+    await notify(readable); // readable again: delivered, so the drop was the read error
+    expect(await pushedId(readerB)).toBe(readable);
+    await nextIsLegit();
+    expect(await next(readerB, 600)).toBe("timeout");
+  }, 30_000);
+
+  it("S5 heartbeat: exactly one ': hb' per HEARTBEAT_MS (<= 30 s); after B's web session is revoked the next recheck closes the stream", async () => {
+    expect(HEARTBEAT_MS).toBeLessThanOrEqual(30_000);
+    const c = await club();
+    const b = await actor(c.t);
+    vi.useFakeTimers({ toFake: ["setInterval"] }); // only the heartbeat; pg and next() stay real
+    try {
+      const readerB = await stream(b, c.t);
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      expect(await next(readerB)).toBe(": hb\n\n");
+      expect(await next(readerB, 600)).toBe("timeout"); // exactly one per interval
+      expect(await revokeWebSession(runtime!.pool, hashToken(b.token))).toBe(true);
+      vi.advanceTimersByTime(HEARTBEAT_MS);
+      expect(await next(readerB)).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 30_000);
+
+  it("S6 stream cap: one account holds 5 L5 and 5 chat streams; the 6th chat GET -> 429 CHAT_RATE_LIMITED and L5's listener is unchanged", async () => {
+    const c = await club();
+    const a = await actor(c.t);
+    // The per-account subscribe bucket admits a 6th GET, so the stream cap is what refuses it.
+    expect(CHAT_SUBSCRIBE_LIMIT.limit).toBeGreaterThan(MAX_STREAMS_PER_ACCOUNT);
+    const audience = {
+      tenantId: c.t,
+      accountId: a.accountId,
+      personId: a.personId,
+      tokenHash: hashToken(a.token),
+    };
+    const allow = { recheck: async () => true };
+    for (let i = 0; i < MAX_STREAMS_PER_ACCOUNT; i += 1) {
+      const reader = openRealtimeStream(realtimeListener(), audience, allow)!.getReader();
+      readers.push(reader);
+      expect(await next(reader)).toBe(": hb\n\n");
+    }
+    const l5 = realtimeListener().stats();
+    expect(l5).toMatchObject({ subscribers: MAX_STREAMS_PER_ACCOUNT, accounts: 1 });
+    for (let i = 0; i < MAX_STREAMS_PER_ACCOUNT; i += 1) await stream(a, c.t);
+    expect(chatRealtimeListener().stats()).toMatchObject({
+      subscribers: MAX_STREAMS_PER_ACCOUNT,
+      accounts: 1,
+    });
+    expect(await refused(a, c.t)).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
+    expect(realtimeListener().stats()).toEqual(l5);
+    await Promise.all(readers.splice(0).map((r) => r.cancel()));
+    expect(realtimeListener().stats()).toEqual({
+      subscribers: 0,
+      accounts: 0,
+      listening: false,
+      pending: 0,
+    });
+  }, 30_000);
 });
