@@ -219,7 +219,9 @@ Pipelines (first failing check wins; chat-service runs the V-23 gate before ever
 - send: lock + kind -> actor, tenant, active member -> client_msg_id shape -> duplicate lookup -> post_policy (`admins_only`
   needs `chat.channel.post_restricted`; unknown policy -> CHAT_FORBIDDEN) -> body -> reply target -> 2 rate buckets -> INSERT
   (membership_id from the actor's active membership, `created_at := clock_timestamp()`) -> NOTIFY.
-- edit: lock + kind -> member -> message `FOR UPDATE` in this channel (missing -> CHAT_FORBIDDEN) -> V-9 window rules ->
+- edit: lock + kind -> member -> post_policy (send's exact check, RO-L14-7: `admins_only` needs
+  `chat.channel.post_restricted`, IS NOT TRUE -> CHAT_CAPABILITY_REQUIRED; unknown policy -> CHAT_FORBIDDEN) ->
+  message `FOR UPDATE` in this channel (missing -> CHAT_FORBIDDEN) -> V-9 window rules ->
   expected count -> body -> identical (no-op) -> rate -> revision INSERT (`revision_no = edit_count + 1`, `previous_body` =
   old body) -> UPDATE body, edit_count, edited_at -> NOTIFY.
 - delete: lock + kind -> member -> message `FOR UPDATE` (missing -> CHAT_FORBIDDEN) -> author + person -> already deleted
@@ -377,6 +379,7 @@ stored result.
 | DT-37 | a NOT NULL violation provoked on the send path (e.g. a temporary NOT NULL column whose default is dropped, so DETAIL "Failing row contains (...)" holds the sentinel) -> same assertion as DT-36 | DT-37 NOT NULL violation on send leaks no body |
 | DT-38 | 31st newly accepted moderation command (hide or restore, effective or same-state) in 1 min per actor and tenant -> CHAT_RATE_LIMITED 429; exact replays never count | DT-38 moderation rate limit |
 | DT-39 | tenant suspended (set by ctx.owner) -> every chat-service write and read -> TENANT_SUSPENDED, no definer call, 0 writes, 0 NOTIFY; an active tenant passes | DT-39 suspended tenant chat is frozen |
+| DT-40 | edit in an `admins_only` channel without `chat.channel.post_restricted` (not held, admin demoted, or the capability unavailable: anything but allowed = true) -> CHAT_CAPABILITY_REQUIRED 403; unknown post_policy -> CHAT_FORBIDDEN 403; `all_members` -> no extra check; send and edit share one check (send's, copied verbatim into edit, RO-L14-7); a rejected edit leaves the message and its revisions untouched | DT-40 RO-L14-7 send and edit share send's post_policy check (chat-edit-delete.test.ts) |
 
 ## 6. ACTIVATION PATH TABLE (every test COMMITS: the deferred `trg_chat_dm_two_*` triggers fire at commit as the outer role, F-5)
 
