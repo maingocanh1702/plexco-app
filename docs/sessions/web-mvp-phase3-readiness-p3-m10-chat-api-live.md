@@ -52,7 +52,9 @@
 1. `currentSession` (session-cookies.ts:179) -> AUTH_REQUIRED 401; there is no public or anonymous chat route.
 2. Mutations (POST message, PATCH, DELETE, POST read, POST moderation): `csrfOk`, x-csrf-token (session-cookies.ts:328) -> CSRF_INVALID 403 (D-18).
 3. `?tenant=` (readTenantParam, session-command-route.ts:105-108), path ids (UUID_RE :82), limit (D-1), cursor (D-2) -> INVALID_BODY 400 (note 30).
-4. `actorThrottled(accountId)` (:111-113, rationale :251-262) -> CHAT_RATE_LIMITED 429.
+4. `chatActorThrottled(accountId)` in chat-route.ts: key `chat-actor:<accountId>`, 120 per 60 s, a budget separate from
+   `session-actor` (:111-113, spent by six other features); ruling RO-L15-4, default applied, pending owner sign-off
+   -> CHAT_RATE_LIMITED 429.
 5. withTenant + hasLiveMembership (db index.ts:15, :92; pattern :173-189) -> else the one CHAT_FORBIDDEN body, BEFORE withChatActor (D-19).
 6. Per-person bucket on GET channels, GET history and POST read (D-5) -> CHAT_RATE_LIMITED 429.
 7. Mutations: readBoundedBody (pattern :316-329), byte cap at or above L14's body cap; oversize -> 413 CHAT_MESSAGE_TOO_LARGE, bad JSON -> INVALID_BODY 400
@@ -104,14 +106,15 @@ Bodies (only these fields are read; never an author field, tech:1144): send `{cl
 ### 4.5 Rate limits (every chat 429 is CHAT_RATE_LIMITED)
 - L14 enforces (0063): send 20/10 s + 300/min per (person, channel) :244, :248; edit and delete share chat_edit_1m, 30/min per (person, channel) :327,
   :382; moderation 30/min per (actor, tenant) :500; no per-target bucket (D-6). L5's realtime-subscribe bucket and cap are untouched.
-- The route adds (rateLimited, session-cookies.ts:420): actorThrottled on every handler; the D-5 buckets; the chat stream cap 5 per account (D-4).
+- The route adds (rateLimited, session-cookies.ts:420): chatActorThrottled on every handler (RO-L15-4); the D-5 buckets; the chat stream cap 5 per account (D-4).
 ### 4.6 Live path: subscribe, listener, per-event re-authorization
 - Emission is L14's (pinned): pg_notify('chat_realtime', id::text) inside the definers after the write, same tx (send 0063:257, edit :337, delete :388,
   moderation if changed :518); never mark_read or a no-op replay; one payload per id per committed tx (PR #83 body). L15 only LISTENs.
-- Listener: 2 (1)'s optional deps + a `chatRealtimeListener()` singleton on "chat_realtime" (own per-account map, connect helper shared with L5's :204-215).
+- Listener: 2 (1)'s optional deps + a `chatRealtimeListener()` singleton on "chat_realtime" (own per-account map, its own copy of L5's connect helper :204-215; L5's is unchanged).
 - Per event (realtime-auth.ts chat plan; ponytail ceiling: one read per subscriber): per tenant group, per distinct person, withChatActor + getChatMessage
   (chat-service.ts:201-209); a row -> {type, channelId: row.channelId, messageId: row.id}; null or error -> dropped, nothing sent; no polling fallback.
-- Admission (GET, no CSRF): session, `?tenant=`, actorThrottled + the 30/min bucket, hasLiveMembership, at least one readable club channel, the cap;
+- Admission (GET, no CSRF), in the code's order: session, `?tenant=`, chatActorThrottled, hasLiveMembership, the 30/min bucket
+  (only a live member spends it), at least one readable club channel (D-23), the cap;
   SSE headers exactly as L5's route (no-store included). Every 25 s the recheck re-runs admission minus buckets and cap; false or error -> close (D-3).
 - Costs for the PR body: one read-back per distinct (tenant, person) with an open chat stream per NOTIFY (the payload carries no tenant), and one more
   app-pool LISTEN connection per web process while a chat stream is open (stop() :187 releases it).
@@ -167,7 +170,7 @@ Files in section 9. "The one body" = 4.4's CHAT_FORBIDDEN 403 body, byte-equal e
 | cross-author client_msg_id | T5 member B reuses member A's clientMsgId | 409 CHAT_IDEMPOTENCY_MISMATCH, generic, no data; no row |
 | too large | T6 body over L14's cap; request over the route byte cap | 413 CHAT_MESSAGE_TOO_LARGE; no row |
 | admins_only POST | T7 member without chat.channel.post_restricted | 403 CHAT_CAPABILITY_REQUIRED |
-| rate limit | T8 21st send in 10 s; a D-5 bucket; actorThrottled | 429 CHAT_RATE_LIMITED |
+| rate limit | T8 21st send in 10 s; a D-5 bucket; chatActorThrottled (independent of session-actor both ways) | 429 CHAT_RATE_LIMITED |
 | bad reply target | T9 replyToMessageId unknown or in another channel | 409 CHAT_REPLY_INVALID |
 | PATCH window, conflict | T10 edit past the window (15 min or 5 edits); stale expectedEditCount | 409 CHAT_EDIT_WINDOW_CLOSED; 409 CHAT_EDIT_CONFLICT, no change |
 | PATCH order (note 32) | T11 admins_only, no capability, window closed; then a non-member | 403 CHAT_CAPABILITY_REQUIRED (not WINDOW_CLOSED); non-member: the one body |
