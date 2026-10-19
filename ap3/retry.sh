@@ -274,7 +274,7 @@ if [ "$REVIEW_ONLY" = 1 ]; then
   # dispatch.sh (it unconditionally runs main() at the bottom, so it cannot be sourced for its
   # functions without also dispatching a tick).
   terminal="$(python3 "$DIR/rec.py" get "$REC" terminal unknown)"
-  case " REVIEW_UNAVAILABLE PUSH_FAILED PR_FAILED REMOTE_TIP_MISMATCH EVIDENCE_FAILED FS_ISOLATION_UNSAFE NO_WRITER_SETTINGS DB_ISOLATION_LOST TELEMETRY_FAILED TASK_REFRESH_FAILED " in
+  case " REVIEW_UNAVAILABLE PUSH_FAILED PR_FAILED REMOTE_TIP_MISMATCH EVIDENCE_FAILED FS_ISOLATION_UNSAFE NO_WRITER_SETTINGS DB_ISOLATION_LOST TELEMETRY_FAILED TASK_REFRESH_FAILED ENV_WITHHOLD_FAILED " in
     *" $terminal "*) : ;;
     *) echo "retry: refusing --review-only $SLUG -- terminal '$terminal' is not an outage terminal (use a full 'retry.sh $SLUG' instead)" >&2; exit 1 ;;
   esac

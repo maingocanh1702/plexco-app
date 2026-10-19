@@ -16,7 +16,7 @@
       ]
     },
     "filesystem": {
-      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.ap-watch.env", "~/.codex", "**/.env", "**/.env.*", "**/.envrc"]
+      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.ap-watch.env", "~/.codex", "**/.env", "**/.env.*", "**/.envrc", "**/ap3/env"]
     }
   },
   "permissions": {
