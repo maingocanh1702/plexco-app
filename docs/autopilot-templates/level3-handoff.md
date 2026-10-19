@@ -30,7 +30,9 @@ Project rules may be stricter, never weaker.
 1. Confirm the task is new, not a continuation of a currently running session.
 2. Load the project handoff, live default-branch state and relevant code/docs/decisions.
 3. Resolve the compact task contract from `level3-workflow.md`.
-4. Derive risk and select `supervised|proactive_routine`.
+4. Derive risk and select `supervised|proactive_routine|autonomous_to_ready` (the last only when the
+   owner elected it, per task or by a signed standing delegation — `CLAUDE.md`;
+   `docs/standards/plexco-level3-autonomy.md` §3; its manifest still says `supervised`).
 5. Split only where slices are independently executable and verifiable.
 6. Reserve one branch/worktree per writing slice.
 7. **Generate the runtime manifest before registering.** The gate reads

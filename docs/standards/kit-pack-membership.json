@@ -5,20 +5,20 @@
   "provenance": {
     "authority_file": "autopilot/parallel/autopilot-update.sh, function pack_pairs()",
     "canonical_repo": "~/Projects/Claude template (origin/main)",
-    "canonical_commit_read_at": "9e1e79043804767097f859ca201d42245cd9c50c",
-    "also_verified_identical_at": "782d714534d50f391850a02331c935a60d1e1cad",
-    "measured_on": "2026-09-27",
-    "reverify_command": "git -C \"$HOME/Projects/Claude template\" show 9e1e79043804767097f859ca201d42245cd9c50c:autopilot/parallel/autopilot-update.sh",
-    "note": "Read from the merged immutable commit exported via git archive; its tree matches the independently reviewed HEAD recorded above. The dirty local feat/ap3 checkout was not a copy source. Source Git modes and destination pack modes are verified separately."
+    "canonical_commit_read_at": "a6097b36c153d07194e1464924c8e74acc53df63",
+    "also_verified_identical_at": "505dec67ae28c18368690516ce1d8b7de8ccf83e",
+    "measured_on": "2026-10-19",
+    "reverify_command": "git -C \"$HOME/Projects/Claude template\" show a6097b36c153d07194e1464924c8e74acc53df63:autopilot/parallel/autopilot-update.sh",
+    "note": "Read at merged canonical origin/main (PR #13); its tree is identical to the PR head recorded above. pack_pairs() is byte-identical to the previous pin 9e1e79043804767097f859ca201d42245cd9c50c. The sync copied from the local checkout on feat/ap3 at 8e6913355a08e1eec457942611485c520901a279, which contains this commit and had no tracked modifications; all 15 pack sources there are byte-identical to this commit. Source Git modes and destination pack modes are verified separately."
   },
   "overwrite_mechanisms": {
     "kit-sync": {
       "status": "active",
-      "invoked_by": "a human/agent running autopilot-update.sh (observed 2026-09-27 in an isolated worktree)",
+      "invoked_by": "a human/agent running autopilot-update.sh (observed 2026-10-19 in an isolated worktree, KIT_VERSION 42 -> 43; earlier 2026-09-27, -> 42)",
       "latency": "next successful autopilot-update.sh run",
       "scope": "all 15 pack_pairs targets",
       "wiring_evidence": "autopilot-update.sh copy_pack(): one cp loop over pack_pairs, after the canonical unit/e2e publish gate",
-      "measured_on": "2026-09-27"
+      "measured_on": "2026-10-19"
     },
     "session-hook": {
       "status": "dormant",
@@ -86,7 +86,7 @@
     {
       "path": "scripts/autopilot-scope-gate",
       "overwrite_path": "kit-sync",
-      "note": "The dormant session-hook would copy only this file if wired. Historical equality at KIT_VERSION 33 followed manual sync 8e737fe (2026-08-27). It now matches the explicit KIT_VERSION 42 sync from canonical 9e1e79043804767097f859ca201d42245cd9c50c. Read equality as the result of those manual syncs, NOT as evidence that no drift pressure exists; session-hook wiring remains the separately dated external snapshot above."
+      "note": "The dormant session-hook would copy only this file if wired. Historical equality at KIT_VERSION 33 followed manual sync 8e737fe (2026-08-27), and at KIT_VERSION 42 the explicit sync from canonical 9e1e79043804767097f859ca201d42245cd9c50c (2026-09-27). It now matches the explicit KIT_VERSION 43 sync from canonical a6097b36c153d07194e1464924c8e74acc53df63 (2026-10-19). Read equality as the result of those manual syncs, NOT as evidence that no drift pressure exists; session-hook wiring remains the separately dated external snapshot above."
     },
     {
       "path": "scripts/check-kit-pack-membership.mjs",
@@ -146,7 +146,7 @@
     {
       "path": "docs/autopilot-templates/level3-workflow.md",
       "overwrite_path": "kit-sync",
-      "note": "Canonical mirror matches the pinned source. Plexco DD-107 policy is preserved in consumer-owned docs/standards/plexco-level3-autonomy.md; synchronization does not implement a new validator mode."
+      "note": "Canonical mirror matches the pinned source. Since KIT_VERSION 43 canonical ships a generic §6.1 autonomous_to_ready (task-contract-only; the manifest stays supervised). Plexco's §6.1 local supplement is consumer-owned docs/standards/plexco-level3-autonomy.md, outside the pack and named in CLAUDE.md and AGENTS.md; synchronization does not implement a new validator mode."
     },
     {
       "path": "scripts/generate-pwa-icons.mjs",

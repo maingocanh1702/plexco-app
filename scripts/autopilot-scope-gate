@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# KIT_VERSION: 42
+# KIT_VERSION: 43
+# v43 (2026-10-19) — pack content change; master counter bump only in THIS file.
+#   BEHAVIOUR: none; no gate or script reads AUTONOMY_MODE autonomous_to_ready, its tiers or its
+#   Decision Ledger, and the runtime manifest's autonomy_mode stays supervised|proactive_routine.
+#   CONTENT: level3-workflow.md §6.1 (docs/autopilot-templates/level3-workflow.md in consumers)
+#   adds that task-contract-only mode, ported in generic form from Plexco; project specifics stay
+#   in a consumer-owned local supplement (by convention docs/standards/autonomous-to-ready.local.md),
+#   outside the pack. §2's record block and autopilot-prompt-GENERIC.md's contract list the value.
 # v42 (2026-09-27) — landing proof verification; no executable change in THIS file.
 #   BEHAVIOUR: collector re-derives origin ancestry and exact one-parent squash binary proof
 #   instead of accepting the landing mode; existing ancestor content checks remain.

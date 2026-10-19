@@ -63,17 +63,17 @@ awk '/^# KIT_VERSION:/{print $3; exit}' scripts/autopilot-scope-gate
 | Field | Value |
 |---|---|
 | Canonical repository | ~/Projects/Claude template (origin/main) |
-| **Canonical commit read at** | `9e1e79043804767097f859ca201d42245cd9c50c` |
-| Also verified identical at | `782d714534d50f391850a02331c935a60d1e1cad` |
+| **Canonical commit read at** | `a6097b36c153d07194e1464924c8e74acc53df63` |
+| Also verified identical at | `505dec67ae28c18368690516ce1d8b7de8ccf83e` |
 | Authority file | autopilot/parallel/autopilot-update.sh, function pack_pairs() |
-| Measured on | 2026-09-27 |
+| Measured on | 2026-10-19 |
 
-Read from the merged immutable commit exported via git archive; its tree matches the independently reviewed HEAD recorded above. The dirty local feat/ap3 checkout was not a copy source. Source Git modes and destination pack modes are verified separately.
+Read at merged canonical origin/main (PR #13); its tree is identical to the PR head recorded above. pack_pairs() is byte-identical to the previous pin 9e1e79043804767097f859ca201d42245cd9c50c. The sync copied from the local checkout on feat/ap3 at 8e6913355a08e1eec457942611485c520901a279, which contains this commit and had no tracked modifications; all 15 pack sources there are byte-identical to this commit. Source Git modes and destination pack modes are verified separately.
 
 Re-verify with:
 
 ```bash
-git -C "$HOME/Projects/Claude template" show 9e1e79043804767097f859ca201d42245cd9c50c:autopilot/parallel/autopilot-update.sh
+git -C "$HOME/Projects/Claude template" show a6097b36c153d07194e1464924c8e74acc53df63:autopilot/parallel/autopilot-update.sh
 ```
 
 ### `pack_pairs()`, verbatim and unreordered
@@ -105,7 +105,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 
 | Mechanism | Status | Invoked by | Latency | Measured |
 |---|---|---|---|---|
-| `kit-sync` | **active** | a human/agent running autopilot-update.sh (observed 2026-09-27 in an isolated worktree) | next successful autopilot-update.sh run | 2026-09-27 |
+| `kit-sync` | **active** | a human/agent running autopilot-update.sh (observed 2026-10-19 in an isolated worktree, KIT_VERSION 42 -> 43; earlier 2026-09-27, -> 42) | next successful autopilot-update.sh run | 2026-10-19 |
 | `session-hook` | **dormant** | NOTHING — the file exists but is registered nowhere | n/a while dormant | 2026-09-03 |
 
 **`kit-sync`** — autopilot-update.sh copy_pack(): one cp loop over pack_pairs, after the canonical unit/e2e publish gate
@@ -156,7 +156,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/autopilot-onboard.sh`** — No canonical copy.
 - **`scripts/autopilot-review-readiness.mjs`** — THE HEADER COUNTER-EXAMPLE. No KIT_VERSION header, and it IS a pack member. Also the most-patched kit file in this repo's history. Trusting the header would mark it safe to edit and a sync would erase the edit.
 - **`scripts/autopilot-root-lock`** — No canonical copy.
-- **`scripts/autopilot-scope-gate`** — The dormant session-hook would copy only this file if wired. Historical equality at KIT_VERSION 33 followed manual sync 8e737fe (2026-08-27). It now matches the explicit KIT_VERSION 42 sync from canonical 9e1e79043804767097f859ca201d42245cd9c50c. Read equality as the result of those manual syncs, NOT as evidence that no drift pressure exists; session-hook wiring remains the separately dated external snapshot above.
+- **`scripts/autopilot-scope-gate`** — The dormant session-hook would copy only this file if wired. Historical equality at KIT_VERSION 33 followed manual sync 8e737fe (2026-08-27), and at KIT_VERSION 42 the explicit sync from canonical 9e1e79043804767097f859ca201d42245cd9c50c (2026-09-27). It now matches the explicit KIT_VERSION 43 sync from canonical a6097b36c153d07194e1464924c8e74acc53df63 (2026-10-19). Read equality as the result of those manual syncs, NOT as evidence that no drift pressure exists; session-hook wiring remains the separately dated external snapshot above.
 - **`scripts/check-kit-pack-membership.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-kit-pack-membership.test.mjs`** — No canonical copy (added by this lane).
 - **`scripts/check-review-readiness.mjs`** — No canonical copy.
@@ -187,7 +187,7 @@ file happens to sit in.
 | `docs/autopilot-templates/level3-workflow.md` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 | `.github/workflows/autopilot-backlog-audit.yml` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
-- **`docs/autopilot-templates/level3-workflow.md`** — Canonical mirror matches the pinned source. Plexco DD-107 policy is preserved in consumer-owned docs/standards/plexco-level3-autonomy.md; synchronization does not implement a new validator mode.
+- **`docs/autopilot-templates/level3-workflow.md`** — Canonical mirror matches the pinned source. Since KIT_VERSION 43 canonical ships a generic §6.1 autonomous_to_ready (task-contract-only; the manifest stays supervised). Plexco's §6.1 local supplement is consumer-owned docs/standards/plexco-level3-autonomy.md, outside the pack and named in CLAUDE.md and AGENTS.md; synchronization does not implement a new validator mode.
 
 ---
 

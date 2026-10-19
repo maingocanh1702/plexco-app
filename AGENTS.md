@@ -111,6 +111,9 @@ Every task/session/feature opened **after** this kit was installed runs on
 `docs/autopilot-templates/level3-workflow.md` (canonical contract, mirrored from `Claude template`).
 An already-running session keeps its existing contract — forward-only, never migrated in place.
 Operational entry point: `docs/autopilot-ONBOARDING.md`.
+Local supplement for §6.1 `autonomous_to_ready`: `docs/standards/plexco-level3-autonomy.md` (the manifest stays `supervised`).
+The owner elects the mode per task (task request or RUN doc), or through an owner-signed standing
+delegation; the primary agent never selects it on its own.
 
 1. Before implementing, the primary agent resolves the **task contract** (`level3-workflow.md` §3):
    outcome, repository and base, context sources, applicable skills, scope and negative scope, risk

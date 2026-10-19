@@ -31,7 +31,7 @@ NEGATIVE_SCOPE:
   - <tempting adjacent subsystem that must not change>
 
 RISK: <P0|P1|P2|P3>
-AUTONOMY_MODE: <supervised|proactive_routine>
+AUTONOMY_MODE: <supervised|proactive_routine|autonomous_to_ready>
 
 MODEL_POLICY:
   planner: <model/role>
