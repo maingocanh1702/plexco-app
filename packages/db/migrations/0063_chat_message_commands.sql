@@ -257,6 +257,165 @@ $$;
 REVOKE ALL ON FUNCTION send_chat_message(uuid, text, text, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION send_chat_message(uuid, text, text, uuid) TO app;
 
+-- 4.2 edit, delete and mark_read (W3b) open with send's prelude: channel lock + kind -> actor, tenant, active member.
+-- edit: the message FOR UPDATE in this channel -> V-9 window -> expected count -> body -> identical (no-op) -> rate
+-- -> revision INSERT -> UPDATE -> NOTIFY.
+CREATE FUNCTION edit_chat_message(p_channel uuid, p_message uuid, p_body text, p_expected_edit_count integer)
+RETURNS TABLE (id uuid, edit_count smallint, edited_at timestamptz, changed boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_ch record;
+  v_msg record;
+  v_tenant uuid;
+  v_person uuid;
+  v_count smallint;
+  v_at timestamptz;
+BEGIN
+  SELECT ch.kind, ch.tenant_id INTO v_ch FROM public.chat_channels ch WHERE ch.id = p_channel FOR NO KEY UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  IF v_ch.kind <> 'club' THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_SAFETY_BLOCKED'; END IF;
+  IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_tenant := current_setting('app.tenant_id', true)::uuid;
+  END IF;
+  IF current_setting('app.person_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_person := current_setting('app.person_id', true)::uuid;
+  END IF;
+  PERFORM 1 FROM public.chat_members cm
+    JOIN public.memberships m ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+   WHERE cm.channel_id = p_channel AND cm.person_id = v_person AND m.status = 'active' AND v_ch.tenant_id = v_tenant;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  SELECT msg.author_type, msg.author_person_id, msg.body, msg.edit_count, msg.edited_at, msg.created_at,
+         msg.author_deleted_at, msg.moderation_state INTO v_msg
+    FROM public.chat_messages msg WHERE msg.id = p_message AND msg.channel_id = p_channel FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  -- V-9, V-24: IS NOT TRUE, so a NULL author (system or assistant message) closes the window as well
+  IF (v_msg.author_type = 'person' AND v_msg.author_person_id = v_person AND v_msg.author_deleted_at IS NULL
+      AND v_msg.moderation_state = 'visible' AND statement_timestamp() < v_msg.created_at + interval '15 minutes'
+      AND v_msg.edit_count < 5) IS NOT TRUE THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_EDIT_WINDOW_CLOSED';
+  END IF;
+  IF v_msg.edit_count IS DISTINCT FROM p_expected_edit_count THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_EDIT_CONFLICT';
+  END IF;
+  -- V-1: before any write
+  IF p_body IS NULL OR p_body !~ '[^[:space:]]' THEN RAISE EXCEPTION USING MESSAGE = 'INVALID_BODY'; END IF;
+  IF char_length(p_body) > 4000 THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_MESSAGE_TOO_LARGE'; END IF;
+  -- an identical body is a no-op: the stored row comes back, no revision, token or NOTIFY
+  IF v_msg.body = p_body THEN
+    RETURN QUERY SELECT p_message, v_msg.edit_count, v_msg.edited_at, false;
+    RETURN;
+  END IF;
+  -- V-8: one bucket shared by edit and delete, checked last
+  IF NOT public.rate_limit_check('chat_edit_1m:' || v_person::text || ':' || p_channel::text, 30, interval '1 minute')
+  THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_RATE_LIMITED';
+  END IF;
+  INSERT INTO public.chat_message_revisions (message_id, revision_no, previous_body, edited_by_person_id)
+  VALUES (p_message, v_msg.edit_count + 1, v_msg.body, v_person);
+  UPDATE public.chat_messages AS msg
+     SET body = p_body, edit_count = msg.edit_count + 1, edited_at = statement_timestamp()
+   WHERE msg.id = p_message
+  RETURNING msg.edit_count, msg.edited_at INTO v_count, v_at;
+  PERFORM pg_catalog.pg_notify('chat_realtime', p_message::text);
+  RETURN QUERY SELECT p_message, v_count, v_at, true;
+END;
+$$;
+REVOKE ALL ON FUNCTION edit_chat_message(uuid, uuid, text, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION edit_chat_message(uuid, uuid, text, integer) TO app;
+
+-- delete (V-10): the message FOR UPDATE in this channel -> own person message -> already deleted (no-op) -> rate ->
+-- stamp author_deleted_at -> NOTIFY. Allowed on a hidden message; no restore, no hard delete.
+CREATE FUNCTION delete_chat_message(p_channel uuid, p_message uuid)
+RETURNS TABLE (id uuid, author_deleted_at timestamptz, changed boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_ch record;
+  v_msg record;
+  v_tenant uuid;
+  v_person uuid;
+  v_at timestamptz;
+BEGIN
+  SELECT ch.kind, ch.tenant_id INTO v_ch FROM public.chat_channels ch WHERE ch.id = p_channel FOR NO KEY UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  IF v_ch.kind <> 'club' THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_SAFETY_BLOCKED'; END IF;
+  IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_tenant := current_setting('app.tenant_id', true)::uuid;
+  END IF;
+  IF current_setting('app.person_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_person := current_setting('app.person_id', true)::uuid;
+  END IF;
+  PERFORM 1 FROM public.chat_members cm
+    JOIN public.memberships m ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+   WHERE cm.channel_id = p_channel AND cm.person_id = v_person AND m.status = 'active' AND v_ch.tenant_id = v_tenant;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  SELECT msg.author_type, msg.author_person_id, msg.author_deleted_at INTO v_msg
+    FROM public.chat_messages msg WHERE msg.id = p_message AND msg.channel_id = p_channel FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  IF (v_msg.author_type = 'person' AND v_msg.author_person_id = v_person) IS NOT TRUE THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN';
+  END IF;
+  IF v_msg.author_deleted_at IS NOT NULL THEN
+    RETURN QUERY SELECT p_message, v_msg.author_deleted_at, false;
+    RETURN;
+  END IF;
+  IF NOT public.rate_limit_check('chat_edit_1m:' || v_person::text || ':' || p_channel::text, 30, interval '1 minute')
+  THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_RATE_LIMITED';
+  END IF;
+  UPDATE public.chat_messages AS msg SET author_deleted_at = statement_timestamp() WHERE msg.id = p_message
+  RETURNING msg.author_deleted_at INTO v_at;
+  PERFORM pg_catalog.pg_notify('chat_realtime', p_message::text);
+  RETURN QUERY SELECT p_message, v_at, true;
+END;
+$$;
+REVOKE ALL ON FUNCTION delete_chat_message(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION delete_chat_message(uuid, uuid) TO app;
+
+-- mark_read (V-21): membership before the through-message, which must be in this channel (else NOT_FOUND; a
+-- tombstoned one is allowed) -> the caller's own cursor, forward only by (created_at, id). No rate, no NOTIFY.
+CREATE FUNCTION mark_read(p_channel uuid, p_through_message uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_ch record;
+  v_tenant uuid;
+  v_person uuid;
+  v_at timestamptz;
+BEGIN
+  SELECT ch.kind, ch.tenant_id INTO v_ch FROM public.chat_channels ch WHERE ch.id = p_channel FOR NO KEY UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  IF v_ch.kind <> 'club' THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_SAFETY_BLOCKED'; END IF;
+  IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_tenant := current_setting('app.tenant_id', true)::uuid;
+  END IF;
+  IF current_setting('app.person_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_person := current_setting('app.person_id', true)::uuid;
+  END IF;
+  PERFORM 1 FROM public.chat_members cm
+    JOIN public.memberships m ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+   WHERE cm.channel_id = p_channel AND cm.person_id = v_person AND m.status = 'active' AND v_ch.tenant_id = v_tenant;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF;
+  SELECT msg.created_at INTO v_at
+    FROM public.chat_messages msg WHERE msg.id = p_through_message AND msg.channel_id = p_channel;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'NOT_FOUND'; END IF;
+  UPDATE public.chat_members AS cm SET last_read_created_at = v_at, last_read_message_id = p_through_message
+   WHERE cm.channel_id = p_channel AND cm.person_id = v_person
+     AND (cm.last_read_created_at IS NULL
+          OR (cm.last_read_created_at, cm.last_read_message_id) < (v_at, p_through_message));
+END;
+$$;
+REVOKE ALL ON FUNCTION mark_read(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION mark_read(uuid, uuid) TO app;
+
 -- SECTION 3: trigger on memberships (W2)
 -- Created while chat_memberships_provision_trg is still migration-owned (4.2 ownership order).
 CREATE TRIGGER trg_memberships_chat_provision
@@ -270,7 +429,10 @@ ALTER FUNCTION chat_provision_member(uuid, uuid, uuid) OWNER TO chat_definer;
 ALTER FUNCTION chat_memberships_provision_trg() OWNER TO chat_definer;
 ALTER FUNCTION chat_backfill_default_channels() OWNER TO chat_definer;
 ALTER FUNCTION send_chat_message(uuid, text, text, uuid) OWNER TO chat_definer;
--- W3a..W4: add the ALTER FUNCTION ... OWNER TO chat_definer lines of the command and read functions here.
+ALTER FUNCTION edit_chat_message(uuid, uuid, text, integer) OWNER TO chat_definer;
+ALTER FUNCTION delete_chat_message(uuid, uuid) OWNER TO chat_definer;
+ALTER FUNCTION mark_read(uuid, uuid) OWNER TO chat_definer;
+-- W3c..W4: add the ALTER FUNCTION ... OWNER TO chat_definer lines of the command and read functions here.
 REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
 -- SECTION 5: backfill (W2)

@@ -155,8 +155,7 @@ const post = async (g: Gucs, ch: string, tag: string | number = "m"): Promise<st
   (await one<{ id: string }>(g, SEND, [ch, randomUUID(), body(tag)])).id;
 const edit = (g: Gucs, ch: string, m: string, b: string | null, n: number, end?: string) =>
   one<Edited>(g, EDIT, [ch, m, b, n], end);
-const del = (g: Gucs, ch: string, m: string, end?: string) =>
-  one<Deleted>(g, DELETE, [ch, m], end);
+const del = (g: Gucs, ch: string, m: string, end?: string) => one<Deleted>(g, DELETE, [ch, m], end);
 const markRead = (g: Gucs, ch: string, through: string) => one(g, MARK, [ch, through]);
 
 /** V-19: the error is exactly the code (P0001), no DETAIL or HINT, and never carries a body. */
@@ -242,7 +241,9 @@ describe("0063 chat edit, delete and mark read", () => {
     for (const [b, code] of cases) await rejects(edit(g, c, m, b, 0), code);
     expect(await snap(m)).toMatchObject({ edit_count: 0, revisions: 0 });
     expect((await edit(g, c, m, SHUTTLE.repeat(4000), 0)).changed).toBe(true);
-    const [r] = await rows(`SELECT char_length(body)::int AS n FROM chat_messages WHERE id = $1`, [m]);
+    const [r] = await rows(`SELECT char_length(body)::int AS n FROM chat_messages WHERE id = $1`, [
+      m,
+    ]);
     expect(r).toEqual({ n: 4000 });
   });
 
@@ -340,7 +341,10 @@ describe("0063 chat edit, delete and mark read", () => {
       expect(await sqlstate(asApp(g, (cl) => cl.query(sql, [m])))).toBe("42501");
     }
     // the row and its body stay; nothing restores it
-    expect(await snap(m)).toMatchObject({ body: body(0), author_deleted_at: first.author_deleted_at });
+    expect(await snap(m)).toMatchObject({
+      body: body(0),
+      author_deleted_at: first.author_deleted_at,
+    });
     expect((await del(g, c, h)).changed).toBe(true); // V-10: allowed on a hidden message
   });
 
