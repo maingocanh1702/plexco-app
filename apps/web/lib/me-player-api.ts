@@ -188,7 +188,10 @@ function parseAmountState(row: Rec | null): KnownZero | KnownAmount | AmountUnav
   if (!row || row.currency !== "VND" || asOf === null) return unavailable();
   if (row.kind === "known_zero") return { kind: "known_zero", currency: "VND", asOf };
   const totalOutstanding = num(row.totalOutstanding);
-  if (row.kind !== "known_amount" || totalOutstanding === null) return unavailable();
+  // A known_amount club always owes more than 0 (me-player-reads.ts): 0 or below is not provably known.
+  if (row.kind !== "known_amount" || totalOutstanding === null || totalOutstanding <= 0) {
+    return unavailable();
+  }
   return { kind: "known_amount", currency: "VND", totalOutstanding, asOf };
 }
 

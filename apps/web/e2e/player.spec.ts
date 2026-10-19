@@ -173,7 +173,7 @@ test("no pay-now, QR or bank detail anywhere", async ({ page }) => {
 const RETRY = { name: "Thử lại", exact: true } as const;
 const RATE = "Bạn thao tác quá nhanh. Đợi một lát rồi thử lại.";
 /** Player data the mock serves: on no error or offline screen (nothing is cached, P-16). */
-const PLAYER_DATA = /Cầu lông tối thứ 5|Nguyễn Văn An|CLB Cầu Lông Test|CLB Khách Test/;
+const PLAYER_DATA = /Nguyễn Văn An|CLB Cầu Lông Test|CLB Khách Test/;
 /** The reads of R 4.5.2: the screen and the route it reads. The join button posts instead. */
 const READS: Record<string, RouteKey> = {
   "discover list": "discover",
@@ -315,9 +315,17 @@ for (const [screen, route] of Object.entries(ROUTE)) {
   });
 }
 
-// The four /me reads answer a body-less 500 when they throw (apps/web/app/api/me/*/route.ts): no
-// envelope, so CLIENT_BAD_RESPONSE: the generic text with no reference, and a Retry (R 4.5.2).
-for (const screen of ["me clubs", "me sessions", "me charges", "me requests"]) {
+// The four /me reads and the two discovery reads answer a body-less 500 when they throw
+// (apps/web/app/api/me/*/route.ts, discoveryServerError): no envelope, so CLIENT_BAD_RESPONSE: the
+// generic text with no reference, and a Retry (R 4.5.2).
+for (const screen of [
+  "discover list",
+  "discover detail",
+  "me clubs",
+  "me sessions",
+  "me charges",
+  "me requests",
+]) {
   test(`${screen} empty-body 500 fails closed`, async ({ page }) => {
     const route = routeOf(screen);
     const { api, root } = await putScreenInState(page, screen, "error", only(route, raw(500)));
@@ -331,6 +339,28 @@ for (const screen of ["me clubs", "me sessions", "me charges", "me requests"]) {
     expect(api.callsTo(route)).toHaveLength(2);
   });
 }
+
+// The public join route rethrows an unmapped error, so a body-less 500 reaches the client: the
+// generic text with no reference (S-3), and the Retry that follows replays the SAME command id.
+test("join button empty-body 500 fails closed and Retry replays the same command id", async ({
+  page,
+}) => {
+  const { api, root } = await putScreenInState(
+    page,
+    "join button",
+    "error",
+    only("join", raw(500)),
+  );
+  await expect(root).toHaveAttribute("data-state", "error");
+  await expect(root.getByText("Đã có lỗi không mong muốn. Thử lại sau.")).toBeVisible();
+  await expect(root.getByText("Mã tham chiếu")).toHaveCount(0); // no envelope, so no request id to quote
+  api.reply("join", readyReply("join button", "join"));
+  await root.getByRole("button", RETRY).click();
+  await expect(root.getByText("Bạn đã có chỗ trong buổi này.")).toBeVisible();
+  const posts = api.callsTo("join");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.body?.commandId).toBe(posts[0]?.body?.commandId);
+});
 
 for (const [screen, route] of Object.entries(READS)) {
   test(`${screen} offline`, async ({ page }) => {
@@ -448,6 +478,14 @@ const gets = (page: Page, path: RegExp) => {
   });
   return () => seen;
 };
+/** This page's POSTs of a path from now on, counted by the browser: an offline request may never reach page.route. */
+const postsSeen = (page: Page, path: RegExp) => {
+  let seen = 0;
+  page.on("request", (r) => {
+    if (r.method() === "POST" && path.test(new URL(r.url()).pathname)) seen += 1;
+  });
+  return () => seen;
+};
 const hostRows = (page: Page) => ({
   named: page.getByRole("listitem").filter({ hasText: NAMED }),
   unnamed: page.getByRole("listitem").filter({ hasText: UNNAMED }),
@@ -495,6 +533,7 @@ test("host decision offline sends no POST, back online one press sends exactly o
   api.failNext("approve", NETWORK); // the first press is lost: the row offers Retry
   const { named, unnamed } = hostRows(page);
   await expect(named).toBeVisible();
+  const approvePosts = postsSeen(page, /^\/api\/join-requests\/[^/]+\/approve$/);
   await named.getByRole("button", APPROVE).click();
   const retry = named.getByRole("alert").getByRole("button", RETRY);
   await expect(retry).toBeVisible();
@@ -504,6 +543,7 @@ test("host decision offline sends no POST, back online one press sends exactly o
   await unnamed.getByRole("button", APPROVE).click({ force: true }); // a forced press of a disabled button
   await settle(page);
   expect(api.callsTo("approve")).toHaveLength(1);
+  expect(approvePosts()).toBe(1); // the browser's own count: a lost offline guard goes red even if page.route never saw it
   // Online again, the same Retry sends exactly one more POST, with the same command id.
   await page.context().setOffline(false);
   await expect(named.getByRole("button", APPROVE)).toBeEnabled();

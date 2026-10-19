@@ -58,12 +58,12 @@ export const VENUE = "Sân Phú Mỹ Hưng";
 /** Overrides may carry one injected key that no whitelist holds (a venue, a gender, a bank string). */
 type Wire<T> = Partial<T> & Record<string, unknown>;
 
+/** No title by default: the projector writes it NULL, so the real API never sends one (one row overrides it). */
 export const listing = (over: Wire<DiscoveryListing> = {}) => ({
   publicListingId: LISTING_ID,
   sportKey: "badminton",
   startsAt: iso(2),
   endsAt: iso(2, 2),
-  title: "Cầu lông tối thứ 5",
   area: "Quận 7",
   clubDisplayName: "CLB Cầu Lông Test",
   priceAmount: PRICE,
@@ -294,8 +294,8 @@ const request = {
   decidedAt: null,
   expiresAt: iso(1),
 };
-/** One unbroken 36-character name: the 375 px cells of the inbox prove the .who wrap. */
-const LONG_NAME = "Abcdefghijklmnopqrstuvwxyz0123456789";
+/** One unbroken 72-character name, far wider than any 375 px row: the inbox cells prove the .who wrap. */
+const LONG_NAME = "Abcdefghijklmnopqrstuvwxyz0123456789".repeat(2);
 const pending = [
   { requestId: "jr-e2e-1", displayName: "Nguyễn Văn An", createdAt: iso(0, -3) },
   { requestId: "jr-e2e-2", displayName: null, createdAt: iso(0, -1) },
@@ -323,13 +323,16 @@ export const SCREENS: Record<string, ScreenDef> = {
     path: "/discover",
     root: "main",
     signedIn: false,
-    cells: routed("discover", { empty: ok({ items: [], nextCursor: null }) }),
+    cells: routed("discover", {
+      empty: ok({ items: [], nextCursor: null }),
+      error: raw(500), // discoveryServerError sends no envelope (CLIENT_BAD_RESPONSE)
+    }),
   },
   "discover detail": {
     path: `/discover/${LISTING_ID}`,
     root: "main",
     signedIn: false,
-    cells: routed("discoverDetail", { empty: fail("NOT_FOUND", 404) }),
+    cells: routed("discoverDetail", { empty: fail("NOT_FOUND", 404), error: raw(500) }),
   },
   "join button": {
     path: `/discover/${LISTING_ID}`,
@@ -338,7 +341,8 @@ export const SCREENS: Record<string, ScreenDef> = {
     cells: {
       loading: { expect: "loading", hold: "join", act: pressJoin },
       ready: { expect: "ready" },
-      error: { expect: "error", replies: { join: fail("E2E_UNKNOWN_CODE", 500) }, act: pressJoin },
+      // The public join route rethrows an unmapped error: a body-less 500 (CLIENT_BAD_RESPONSE).
+      error: { expect: "error", replies: { join: raw(500) }, act: pressJoin },
       offline: { expect: "offline", act: goOffline },
     },
   },

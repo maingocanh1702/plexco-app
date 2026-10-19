@@ -218,6 +218,23 @@ describe("my charges", () => {
     expect(summary).toStrictEqual(UNAVAILABLE);
   });
 
+  it("a known amount of 0 or below is unavailable, never a rendered amount (B-3, P-7)", async () => {
+    // The server contract: a known_amount club always owes more than 0 (me-player-reads.ts).
+    const club = (clubRef: string, status: unknown) => ({ clubRef, clubLabel: clubRef, status });
+    mockFetch({
+      clubs: [
+        club("zero", { ...CLUB_AMOUNT, totalOutstanding: 0 }),
+        club("negative", { ...CLUB_AMOUNT, totalOutstanding: -60000 }),
+        club("smallest", { ...CLUB_AMOUNT, totalOutstanding: 1 }),
+      ],
+      summary: { ...KNOWN_AMOUNT, totalOutstanding: -60000, clubCount: 1 },
+    });
+    const { clubs, summary } = await getMyCharges();
+    expect(clubs.slice(0, 2).map((c) => c.status)).toStrictEqual(Array(2).fill(UNAVAILABLE));
+    expect(clubs[2]?.status).toMatchObject({ kind: "known_amount", totalOutstanding: 1 });
+    expect(summary).toStrictEqual(UNAVAILABLE);
+  });
+
   it("passes a declared zero and a declared unavailable state through", async () => {
     mockFetch({
       clubs: [
