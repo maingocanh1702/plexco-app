@@ -256,7 +256,10 @@ describe("happy path", () => {
     expect(channels.map((c) => c.id)).toEqual([channelClubA]);
 
     const messages = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantA, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.channelId, channelClubA)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.channelId, channelClubA)),
     );
     expect(messages.map((m) => m.id)).toEqual([messageClubA1]);
   });
@@ -268,7 +271,10 @@ describe("happy path", () => {
     expect(channels.map((c) => c.id)).toEqual([channelDm]);
 
     const messages = await withChatPerson(ctx.appDb.db, personDm2, null, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.channelId, channelDm)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.channelId, channelDm)),
     );
     expect(messages.map((m) => m.id)).toEqual([messageDm1]);
   });
@@ -277,7 +283,10 @@ describe("happy path", () => {
 describe("boundary rows", () => {
   it("empty channel with no messages returns an empty result, no error", async () => {
     const messages = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantA, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.channelId, channelEmptyA)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.channelId, channelEmptyA)),
     );
     expect(messages).toEqual([]);
   });
@@ -396,7 +405,10 @@ describe("authorization — club channels", () => {
     );
     expect(members).toEqual([]);
     const messages = await withChatPerson(ctx.appDb.db, personA1, ctx.tenantB, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.id, messageClubA1)),
+      tx
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.id, messageClubA1)),
     );
     expect(messages).toEqual([]);
   });
@@ -413,7 +425,7 @@ describe("authorization — dm channels", () => {
     );
     expect(members).toEqual([]);
     const messages = await withChatPerson(ctx.appDb.db, personDm3, null, (tx) =>
-      tx.select().from(chatMessages).where(eq(chatMessages.id, messageDm1)),
+      tx.select({ id: chatMessages.id }).from(chatMessages).where(eq(chatMessages.id, messageDm1)),
     );
     expect(messages).toEqual([]);
   });
@@ -1002,7 +1014,14 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
         privilege_type: "SELECT",
         is_grantable: "NO",
       },
-      { grantee: "app", table_name: "chat_messages", privilege_type: "SELECT", is_grantable: "NO" },
+      // 0063 (V-13): app's table-level read on chat_messages is replaced by a 14-column grant
+      // (information_schema.column_privileges); chat_definer gains the table-level SELECT (4.4).
+      {
+        grantee: "chat_definer",
+        table_name: "chat_messages",
+        privilege_type: "SELECT",
+        is_grantable: "NO",
+      },
     ]);
   });
 
@@ -1028,11 +1047,11 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
     ).toBe(true);
   });
 
-  it("chat_definer has no grant of any kind on chat_messages — neither helper reads it", async () => {
+  it("chat_definer's table-level grant on chat_messages is SELECT only (0063, 4.4: INSERT and UPDATE are column-scoped)", async () => {
     const { rows } = await ctx.owner.query(
-      `SELECT count(*)::int AS n FROM information_schema.table_privileges
+      `SELECT privilege_type FROM information_schema.table_privileges
        WHERE table_name = 'chat_messages' AND grantee = 'chat_definer'`,
     );
-    expect((rows[0] as { n: number }).n).toBe(0);
+    expect(rows).toEqual([{ privilege_type: "SELECT" }]);
   });
 });
