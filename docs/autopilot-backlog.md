@@ -3833,6 +3833,11 @@ notes: |
   — đừng ghi một con số dòng lệch cố định, nó đã sai một lần rồi.
   **Trigger đóng:** đóng khi nội dung local được port vào canonical và bản pack được nhận sạch — đây
   chính là phần 3 của việc cần làm khi mở lane này.
+  **Cập nhật 2026-10-18 (lane `backend-handoff-kit-sync-r4`):** `docs/autopilot-templates/level3-workflow.md`
+  nay được sync byte-identical với canonical KIT 42 (`9e1e79043804767097f859ca201d42245cd9c50c`); nội
+  dung DD-107 (§6.1 + bổ sung §9) chuyển sang file consumer-owned `docs/standards/plexco-level3-autonomy.md`,
+  nên vế "cố ý KHÔNG được nhận" không còn đúng. Vế port nội dung lên canonical vẫn mở
+  (maingocanh1702/claude-template#13) — trigger đóng ở trên chưa thoả.
 
   **Vì sao `idea` (không phải `blocked`):** hướng sửa nằm ở canonical kit; repo này read-only với nó,
   và mục này chưa có `scope`/`manifest`/probe launchable. Cần owner mở lane bên canonical.

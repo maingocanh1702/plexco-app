@@ -14,7 +14,7 @@
   "overwrite_mechanisms": {
     "kit-sync": {
       "status": "active",
-      "invoked_by": "autopilot-update.sh in an isolated consumer worktree",
+      "invoked_by": "a human/agent running autopilot-update.sh (observed 2026-09-27 in an isolated worktree)",
       "latency": "next successful autopilot-update.sh run",
       "scope": "all 15 pack_pairs targets",
       "wiring_evidence": "autopilot-update.sh copy_pack(): one cp loop over pack_pairs, after the canonical unit/e2e publish gate",
@@ -44,7 +44,7 @@
     {
       "path": "scripts/ap-merge.sh",
       "overwrite_path": "none",
-      "note": "Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69."
+      "note": "Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:81."
     },
     {
       "path": "scripts/autopilot-backlog-reconcile",

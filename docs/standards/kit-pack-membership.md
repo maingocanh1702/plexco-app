@@ -105,7 +105,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 
 | Mechanism | Status | Invoked by | Latency | Measured |
 |---|---|---|---|---|
-| `kit-sync` | **active** | autopilot-update.sh in an isolated consumer worktree | next successful autopilot-update.sh run | 2026-09-27 |
+| `kit-sync` | **active** | a human/agent running autopilot-update.sh (observed 2026-09-27 in an isolated worktree) | next successful autopilot-update.sh run | 2026-09-27 |
 | `session-hook` | **dormant** | NOTHING — the file exists but is registered nowhere | n/a while dormant | 2026-09-03 |
 
 **`kit-sync`** — autopilot-update.sh copy_pack(): one cp loop over pack_pairs, after the canonical unit/e2e publish gate
@@ -150,7 +150,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/public-alias-moderate.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/ap-evidence.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
-- **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:69.
+- **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:81.
 - **`scripts/autopilot-ephemeral-review-worktree.test.mjs`** — No canonical copy.
 - **`scripts/autopilot-onboard-fixtures.sh`** — No canonical copy.
 - **`scripts/autopilot-onboard.sh`** — No canonical copy.

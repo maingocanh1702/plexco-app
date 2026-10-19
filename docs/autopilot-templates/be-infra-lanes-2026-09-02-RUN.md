@@ -15,7 +15,7 @@ trước khi lane viết được dòng nào.** Đo tại `scripts/autopilot-rev
 ```
 
 1. **`autonomous_to_ready` chưa bao giờ được validator chấp nhận.** DD-107 chốt mode này (owner
-   14/08), `plexco-level3-autonomy.md` §6.1 mô tả nó dài 205 dòng, và **không dòng code nào implement nó**.
+   14/08), `plexco-level3-autonomy.md` §6.1 mô tả nó dài 197 dòng, và **không dòng code nào implement nó**.
    Đây không phải lệch canonical — đây là **khoảng cách decision→code nằm ngay trong consumer**, đúng
    lớp lỗi mà DD-106 tồn tại để bắt. ⇒ Trường `autonomy_mode` trong manifest phải ghi **`supervised`**.
    Ý định của DD-107 (quyết Tier A/B tại chỗ, giữ ledger, owner review một lượt ở READY) **vẫn áp dụng**
@@ -977,8 +977,10 @@ NEGATIVE SCOPE
 
 ## L11-v2 · infra/kit · Dạy kit cái mode mà owner đã chốt — **thay thế L11 cũ**
 
-> Update 2026-09-26: DD-107 policy now lives in `docs/standards/plexco-level3-autonomy.md`; its former location in the mirrored workflow is historical. Any future canonical port in this lane must read that repository-owned source. This kit sync does not implement a new runtime mode or close the decision-to-code gap.
-
+> Update 2026-09-26: DD-107 policy now lives in `docs/standards/plexco-level3-autonomy.md`; its former
+> location in the mirrored workflow is historical. Any future canonical port in this lane must read that
+> repository-owned source. This kit sync does not implement a new runtime mode or close the
+> decision-to-code gap.
 
 > 🔴 **L11 CŨ ĐÃ CHẾT — ĐỪNG CHẠY.** Lane L12 đo được: **nợ `DYNAMIC_SEGMENT` đã trả rồi** — canonical
 > `188e756` port nó **một ngày sau** `0af75a2`, consumer và canonical **byte-identical**. Tiền đề của L11

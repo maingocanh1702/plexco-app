@@ -888,6 +888,7 @@ bán kính đó.
 | `.claude/commands/review-doc-plan.md` | Launcher `/review-doc-plan` |
 | `docs/autopilot-ONBOARDING.md` | **Entry point vận hành duy nhất** của Ray B |
 | `docs/autopilot-templates/level3-workflow.md` | **Contract canonical của Ray B** |
+| `docs/standards/plexco-level3-autonomy.md` | Phần mở rộng Plexco của Ray B (DD-107): §6.1 `autonomous_to_ready` + §9 terminal-state additions — consumer-owned, kit sync không ghi đè |
 | `docs/autopilot-templates/level3-handoff.md` | Thứ tự authority + checklist mở task mới |
 | `docs/autopilot-templates/autopilot-invariants.md` | Invariant ALWAYS-APPLY (@import vào `~/.claude/CLAUDE.md`) |
 | `docs/autopilot-templates/autopilot-prompt-GENERIC.md` | Worker contract — dùng làm send-file khi soạn prompt task |

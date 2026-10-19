@@ -11,7 +11,8 @@ The canonical mirror can now be synchronized without removing Plexco policy.
 DD-107 defines an elected behavioral mode and its entry conditions; moving this text does not enable
 standing delegation or auto-merge. The runtime validator still accepts only `supervised` and
 `proactive_routine`. Use the established `supervised` runtime value while applying authorized DD-107
-behavior, as documented in `session-routes-close-cancel.json`; this move adds no new validator mode.
+behavior, as documented in `docs/autopilot-manifests/session-routes-close-cancel.json`; this move adds
+no new validator mode.
 Canonical review/base mechanics, isolation and breakers continue to apply.
 
 ## 3. Task-contract extension

@@ -328,8 +328,9 @@ REMAINING_BLOCKERS:
       tenantId, <class>) under lock, but authorizeTenantAction recognises only {publish_new_sessions,
       admin_mutation, integration_changes} and fail-closes on any other value. DD-105 names the
       DIRECTION ("mỗi cái một class hẹp khi build"); DD-104 D2a names only delete_draft_session. Minting
-      a new money-gate class value is a Tier-C billing-contract decision (level3 §6.1 item 1) the author
-      may not make (DD-105: "tác giả phải quay lại đây + DD-104 D2a để lấy class hẹp").
+      a new money-gate class value is a Tier-C billing-contract decision
+      (plexco-level3-autonomy.md §6.1 item 1) the author may not make (DD-105: "tác giả phải quay lại
+      đây + DD-104 D2a để lấy class hẹp").
     owner: repo owner (billing/authorization contract) — via a decision-record entry (DD-104 D2a shape)
     resolution: owner adds, to docs/features/BE/feature_billing_lifecycle_tech.md Suspended Action Matrix
       AND authorizeTenantAction's ActionClass/RECOGNIZED_ACTION_CLASSES, the exact narrow per-op class
@@ -338,7 +339,8 @@ REMAINING_BLOCKERS:
     tier: C
   - blocker: CancelSession is spec'd as ONE command accepting both draft (invisible/money-free) and open
       (player-visible/money) sources; it cannot ship as a draft-only self-contained subset without
-      re-drawing the command boundary (level3 §6.1 item 7 — re-slice, never widen/narrow silently).
+      re-drawing the command boundary (plexco-level3-autonomy.md §6.1 item 7 — re-slice, never
+      widen/narrow silently).
     owner: repo owner
     resolution: owner either (a) supplies the per-op class (closes B1, enabling the full CancelSession),
       or (b) authorizes a NEW re-scoped slice `session-cancel-draft-discard` covering ONLY source=draft
