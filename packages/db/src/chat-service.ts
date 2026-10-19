@@ -90,8 +90,11 @@ export async function withChatActor<T>(
   }
 }
 
+/** V-19 fail closed: a command that returns no row is CHAT_DB_ERROR:UNKNOWN, never `undefined` typed as T. */
 async function one<T>(tx: ChatTx, query: SQL): Promise<T> {
-  return (await tx.execute(query)).rows[0] as T;
+  const row = (await tx.execute(query)).rows[0];
+  if (row === undefined) throw new Error("CHAT_DB_ERROR:UNKNOWN");
+  return row as T;
 }
 
 export function sendChatMessage(

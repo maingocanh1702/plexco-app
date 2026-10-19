@@ -403,14 +403,22 @@ describe("chat-service wrappers through withChatActor (0063, readiness 4.8)", ()
     expect(payloads.slice(p0)).toEqual([ok]);
   }, 30_000);
 
-  it("DT-26 static: every 0063 pg_notify is pg_catalog.pg_notify('chat_realtime', <id>::text); no RAISE or rate key carries text; chat-service.ts logs no text", () => {
+  it("one() fails closed: a chat command that returns no row throws CHAT_DB_ERROR:UNKNOWN, not undefined", async () => {
+    const empty = { execute: () => Promise.resolve({ rows: [] }) } as unknown as ChatTx;
+    await expect(
+      sendChatMessage(empty, { channelId: randomUUID(), clientMsgId: randomUUID(), body: "x" }),
+    ).rejects.toThrow(/^CHAT_DB_ERROR:UNKNOWN$/);
+  });
+
+  it("DT-26 static: every 0063 pg_notify is pg_catalog.pg_notify('chat_realtime', <v_id|p_message>::text); no RAISE or rate key carries text; chat-service.ts logs no text", () => {
     const sql = readFileSync(
       new URL("../migrations/0063_chat_message_commands.sql", import.meta.url),
       "utf8",
     ).replace(/--.*$/gm, "");
-    const notify = /pg_catalog\.pg_notify\('chat_realtime', [a-z_]+::text\)/g;
+    const notify = /pg_catalog\.pg_notify\('chat_realtime', (v_id|p_message)::text\)/g;
     expect((sql.match(notify) ?? []).length).toBeGreaterThanOrEqual(4);
     expect((sql.match(/pg_notify/g) ?? []).length).toBe((sql.match(notify) ?? []).length);
+    expect(sql).not.toMatch(/pg_notify\([^)]*(body|note)/i);
     for (const raise of sql.match(/\bRAISE\b[^;]*;/g) ?? [])
       expect(raise).not.toMatch(/p_body|p_reason_note|\.body\b/);
     for (const [, key] of sql.matchAll(/rate_limit_check\(([^,]*),/g))
@@ -422,10 +430,18 @@ describe("chat-service wrappers through withChatActor (0063, readiness 4.8)", ()
   });
 
   it("DT-26 runtime: no sentinel body or note in any console spy, thrown error or NOTIFY payload; payloads are message ids", async () => {
+    // self-contained (round 1, area D): its own commit and rejections, then the scan of all the file produced
     await flush();
-    expect(payloads.length).toBeGreaterThan(5);
+    const [p0, t0] = [payloads.length, thrown.length];
+    const c = await club();
+    const ok = (await send(c, c.a, `${SENT}-dt26`)).id;
+    await fail(send(c, c.a, `${SENT}-dt26`.padEnd(4001, "x"))); // CHAT_MESSAGE_TOO_LARGE
+    await fail(send(c, c.a, `${SENT}-dt26-reply`, randomUUID())); // CHAT_REPLY_INVALID
+    await fail(hide(c, c.a, ok, "not-a-reason")); // carries NOTE
+    await flush();
+    expect(payloads.slice(p0)).toEqual([ok]);
+    expect(thrown.length - t0).toBe(3);
     for (const p of payloads) expect(p).toMatch(UUID);
-    expect(thrown.length).toBeGreaterThan(10);
     const seen = `${thrown.map(dump).join("\n")}\n${inspect(
       spies.map((s) => s.mock.calls),
       { depth: 10 },
