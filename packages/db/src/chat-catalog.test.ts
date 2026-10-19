@@ -294,3 +294,104 @@ describe("DT-31: app reads chat_messages through the 14-column allowlist only", 
     expect(Object.keys(rows[0] as object).sort()).toEqual([...APP_COLUMNS].sort());
   });
 });
+
+// Migration 0063 sections 2-4: the function-catalog half of DT-27 (4.2, 4.4, V-16, V-22), after the A-12 / A-13
+// attribute and grant tests of me-player-reads.test.ts.
+const PUBLIC_FNS = [
+  "chat_get_message",
+  "chat_list_messages",
+  "delete_chat_message",
+  "edit_chat_message",
+  "mark_read",
+  "moderate_chat_message",
+  "send_chat_message",
+];
+const INTERNAL_FNS = [
+  "chat_backfill_default_channels",
+  "chat_memberships_provision_trg",
+  "chat_provision_member",
+];
+const READ_FNS = ["chat_get_message", "chat_list_messages"];
+const READ_RESULT =
+  "TABLE(id uuid, channel_id uuid, author_type text, author_person_id uuid, body text, reply_to_message_id uuid, " +
+  "edited_at timestamp with time zone, edit_count smallint, tombstone text, created_at timestamp with time zone)";
+
+describe("0063 function catalog (DT-27 function half)", () => {
+  const catalog = async () =>
+    (
+      await ctx.owner.query(
+        `SELECT p.proname, p.prosecdef, p.provolatile, p.proconfig, pg_get_userbyid(p.proowner) AS owner,
+                pg_get_function_identity_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result,
+                p.proacl IS NOT NULL AS explicit_acl,
+                has_function_privilege('app', p.oid, 'EXECUTE') AS app,
+                has_function_privilege('app_worker', p.oid, 'EXECUTE') AS worker,
+                has_function_privilege('readonly', p.oid, 'EXECUTE') AS ro,
+                ARRAY(SELECT (CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END)::text
+                        FROM aclexplode(p.proacl) a WHERE a.privilege_type = 'EXECUTE') AS grantees
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public' AND p.proname = ANY($1::text[])`,
+        [[...PUBLIC_FNS, ...INTERNAL_FNS]],
+      )
+    ).rows;
+
+  it("chat_definer owns the 10 functions, one each: SECURITY DEFINER, pinned search_path, the reads STABLE with the 4.2 signature; the memberships trigger fires AFTER INSERT OR UPDATE OF status WHEN active", async () => {
+    const role = await ctx.owner.query(`SELECT 1 FROM pg_roles WHERE rolname = 'chat_definer'`);
+    expect(role.rowCount).toBe(1);
+    // trigger and per-row attributes first, so a red run (read functions absent) still checks the other 8
+    const trg = await ctx.owner.query(
+      `SELECT pg_get_triggerdef(oid) AS def, tgenabled FROM pg_trigger
+        WHERE tgname = 'trg_memberships_chat_provision' AND tgrelid = 'public.memberships'::regclass`,
+    );
+    expect(trg.rows).toHaveLength(1);
+    expect(trg.rows[0].tgenabled).toBe("O");
+    expect(trg.rows[0].def).toMatch(
+      / AFTER INSERT OR UPDATE OF status ON (public\.)?memberships FOR EACH ROW WHEN \(\(new\.status = 'active'::\w+\)\) EXECUTE FUNCTION (public\.)?chat_memberships_provision_trg\(\)$/,
+    );
+    const rows = await catalog();
+    for (const r of rows) {
+      expect(r, r.proname).toMatchObject({
+        prosecdef: true,
+        provolatile: READ_FNS.includes(r.proname) ? "s" : "v",
+        owner: "chat_definer",
+        proconfig: ["search_path=pg_catalog, public, pg_temp"],
+      });
+    }
+    expect(rows.map((r) => r.proname).sort()).toEqual([...PUBLIC_FNS, ...INTERNAL_FNS].sort());
+    const reads = rows.filter((r) => READ_FNS.includes(r.proname));
+    expect(Object.fromEntries(reads.map((r) => [r.proname, [r.args, r.result]]))).toEqual({
+      chat_get_message: ["p_message uuid", READ_RESULT],
+      chat_list_messages: [
+        "p_channel uuid, p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_direction text, p_limit integer",
+        READ_RESULT,
+      ],
+    });
+  });
+
+  it("EXECUTE is held by exactly chat_definer and app on the 7 public functions and by the owner alone on the 3 internal ones (PUBLIC revoked)", async () => {
+    const got = Object.fromEntries(
+      (await catalog()).map((r) => [
+        r.proname,
+        {
+          grantees: [...r.grantees].sort(),
+          explicit_acl: r.explicit_acl,
+          app: r.app,
+          worker: r.worker,
+          ro: r.ro,
+        },
+      ]),
+    );
+    const acl = (app: boolean) => ({
+      grantees: app ? ["app", "chat_definer"] : ["chat_definer"],
+      explicit_acl: true,
+      app,
+      worker: false,
+      ro: false,
+    });
+    expect(got).toEqual(
+      Object.fromEntries([
+        ...PUBLIC_FNS.map((fn) => [fn, acl(true)]),
+        ...INTERNAL_FNS.map((fn) => [fn, acl(false)]),
+      ]),
+    );
+  });
+});
