@@ -374,7 +374,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
   });
 
   describe("M9 player commands: the link gate decides first (readiness 4.1, 4.7)", () => {
-    it("T-1: a linked sender's /join gets the numbered list of its joinable sessions", async () => {
+    it("T-6 (list leg): a linked sender's /join gets the numbered list of its sessions", async () => {
       vi.mocked(resolveZaloLinkGate).mockResolvedValue({ linked: true, accountRef: ACC });
       vi.mocked(listOwnJoinableSessions).mockResolvedValue({
         member: true,
@@ -404,7 +404,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       });
     });
 
-    it("an unlinked sender's /join gets only the link prompt (R-19) and no player-command call", async () => {
+    it("T-4 (/join leg): an unlinked sender gets only the link prompt (R-19), no player call", async () => {
       await call({ body: update("/join", 9301) });
       expect(vi.mocked(sendMessage).mock.calls.map((c) => c[2])).toEqual([
         "Link your Plexco account before using this command. Type /link to get a link code.",
