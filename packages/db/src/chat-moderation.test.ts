@@ -251,14 +251,6 @@ async function fence(): Promise<number> {
 const mark = async (): Promise<number> => (await fence()) + 1;
 /** Payloads committed between mark() and now. */
 const since = async (from: number): Promise<string[]> => heard.slice(from, await fence());
-// ponytail: dodges a clock-aligned minute edge so 31 commands share one window; harmless for a sliding bucket.
-async function awayFromMinuteEdge(): Promise<void> {
-  const s = (
-    (await rows(`SELECT extract(second FROM clock_timestamp())::float8 AS s`))[0] as { s: number }
-  ).s;
-  if (s > 50) await new Promise((r) => setTimeout(r, (61 - s) * 1000));
-}
-
 describe("moderate_chat_message (0063)", () => {
   it("DT-13 moderation forbidden is generic", async () => {
     const [f, f2] = [await club(), await club()];
@@ -535,7 +527,6 @@ describe("moderate_chat_message (0063)", () => {
   });
 
   it("DT-38 the 31st newly accepted moderation command in a minute is CHAT_RATE_LIMITED; replays never count", async () => {
-    await awayFromMinuteEdge();
     const f = await club();
     const m = await send(f, f.a, "rate");
     const gm = as(f.t, f.mod);

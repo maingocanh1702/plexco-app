@@ -314,5 +314,7 @@ describe("in-app chat codes (M10, L14 readiness 4.6; feature_inapp_chat_tech.md 
       expect(API_ERROR_CODES, code).toContain(code);
       expect(isApiErrorCode(code), code).toBe(true);
     }
+    // 4.6 "No other code": the CHAT_* subset is exactly these twelve, no stray or misspelled extra
+    expect(API_ERROR_CODES.filter((c) => c.startsWith("CHAT_")).sort()).toEqual(added);
   });
 });

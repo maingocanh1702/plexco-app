@@ -314,7 +314,6 @@ describe("0063 chat read functions (V-12, V-22)", () => {
     expect(await idsOf("SELECT * FROM chat_list_messages($1)", [k.c])).toEqual(newest); // before, 50
     expect(await idsOf(LIST, [k.c, null, null, null, null])).toEqual(newest); // NULL = the defaults
     expect(await idsOf(LIST, [k.c, null, null, "before", 0])).toEqual(newest.slice(0, 1)); // clamp to 1
-    expect(await idsOf(LIST, [k.c, null, null, "after", 1000])).toEqual(ids); // clamp to 100
     const [mid] = (await read(as(k, k.b), PAGE, [k.c, null, null, "after", 4])).slice(-1);
     expect(await idsOf(PAGE, [k.c, mid!.ts, mid!.id, "before", 50])).toEqual(newest.slice(4)); // DESC
     expect(await idsOf(PAGE, [k.c, mid!.ts, mid!.id, "after", 50])).toEqual(ids.slice(4));
@@ -325,5 +324,14 @@ describe("0063 chat read functions (V-12, V-22)", () => {
     ]) {
       expect(await code(as(k, k.b), PAGE, bad)).toBe("INVALID_BODY");
     }
+    // clamp to 100: 101 more rows by one owner INSERT (as seedDm does), so the send rate limit is not involved
+    await q(
+      `INSERT INTO chat_messages (channel_id, author_person_id, membership_id, body, client_msg_id)
+       SELECT $1, $2, (SELECT id FROM memberships WHERE tenant_id = $3 AND person_id = $2 AND status = 'active'),
+              'x', gen_random_uuid()
+         FROM generate_series(1, 101)`,
+      [k.c, k.a, k.t],
+    );
+    expect(await idsOf(LIST, [k.c, null, null, "after", 1000])).toHaveLength(100);
   });
 });
