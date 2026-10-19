@@ -6,6 +6,11 @@ import {
   isApiErrorCode,
   type ApiEnvelope,
   type ApiError,
+  type ChatChannelDto,
+  type ChatLiveMessageDto,
+  type ChatMessageDto,
+  type ChatStreamFrame,
+  type ChatTombstoneDto,
   type JoinSessionResultDto,
   type PendingJoinRequestDto,
 } from "./api-contract.js";
@@ -316,5 +321,98 @@ describe("in-app chat codes (M10, L14 readiness 4.6; feature_inapp_chat_tech.md 
     }
     // 4.6 "No other code": the CHAT_* subset is exactly these twelve, no stray or misspelled extra
     expect(API_ERROR_CODES.filter((c) => c.startsWith("CHAT_")).sort()).toEqual(added);
+  });
+});
+
+// Compile-time half: `satisfies` fails `tsc` on any extra key and each `@ts-expect-error` fails it
+// when the excluded key becomes legal; the runtime half pins the exact key set (readiness 4.3).
+describe("chat wire DTOs (M10)", () => {
+  const messageId = "5d1f7c2a-0000-4000-8000-000000000001";
+  const channelId = "5d1f7c2a-0000-4000-8000-000000000002";
+  const createdAt = "2026-10-19 11:53:07.123456+00";
+
+  it("types a chat channel as allowlisted columns + unreadCount only (RO-L15-2)", () => {
+    const channel = {
+      id: channelId,
+      title: "Chung",
+      sortOrder: 0,
+      isDefault: true,
+      postPolicy: "admins_only",
+      unreadCount: 100,
+    } satisfies ChatChannelDto;
+    expect(Object.keys(channel).sort()).toEqual([
+      "id",
+      "isDefault",
+      "postPolicy",
+      "sortOrder",
+      "title",
+      "unreadCount",
+    ]);
+  });
+
+  it("types a live message with mine + authorType and no person identifier (RO-L15-3 g)", () => {
+    const live = {
+      id: messageId,
+      channelId,
+      authorType: "person",
+      mine: true,
+      body: "hello",
+      replyToMessageId: null,
+      editedAt: null,
+      editCount: 0,
+      tombstone: null,
+      createdAt,
+    } satisfies ChatLiveMessageDto;
+    expect(Object.keys(live).sort()).toEqual([
+      "authorType",
+      "body",
+      "channelId",
+      "createdAt",
+      "editCount",
+      "editedAt",
+      "id",
+      "mine",
+      "replyToMessageId",
+      "tombstone",
+    ]);
+    const leaky = {
+      id: messageId,
+      channelId,
+      authorType: "person",
+      mine: false,
+      body: "hello",
+      replyToMessageId: null,
+      editedAt: null,
+      editCount: 0,
+      tombstone: null,
+      createdAt,
+      // @ts-expect-error no person identifier reaches the wire, not even on the live form
+      authorPersonId: "5d1f7c2a-0000-4000-8000-000000000003",
+    } satisfies ChatMessageDto;
+    expect(leaky.tombstone).toBeNull();
+  });
+
+  it("types a tombstone as exactly four keys: no body, author or revision (RO-L15-3 f, D-16)", () => {
+    const tombstones = [
+      { id: messageId, channelId, createdAt, tombstone: "author_deleted" },
+      { id: messageId, channelId, createdAt, tombstone: "moderation_hidden" },
+    ] satisfies ChatTombstoneDto[];
+    for (const entry of tombstones) {
+      expect(Object.keys(entry).sort()).toEqual(["channelId", "createdAt", "id", "tombstone"]);
+    }
+    const withBody = {
+      id: messageId,
+      channelId,
+      createdAt,
+      tombstone: "moderation_hidden",
+      // @ts-expect-error the discriminant narrows the union: a tombstone has no body, not even null
+      body: null,
+    } satisfies ChatMessageDto;
+    expect(withBody.tombstone).toBe("moderation_hidden");
+  });
+
+  it("types the one chat stream frame as a refetch hint with ids only (D-12)", () => {
+    const frame = { type: "chat.message", channelId, messageId } satisfies ChatStreamFrame;
+    expect(Object.keys(frame).sort()).toEqual(["channelId", "messageId", "type"]);
   });
 });

@@ -208,6 +208,53 @@ export interface JoinSessionResultDto {
   requestId: string | null;
 }
 
+/** One club chat channel as a member reads it (GET /api/chat/channels?tenant=, D-14). Allowlisted
+ *  columns + unreadCount ONLY: never createdBy*, assistantEnabled or a read-cursor column (RO-L15-2).
+ *  unreadCount is 0..100, where 100 means 100 or more. */
+export interface ChatChannelDto {
+  id: string;
+  title: string;
+  sortOrder: number;
+  isDefault: boolean;
+  postPolicy: "all_members" | "admins_only";
+  unreadCount: number;
+}
+
+/** A readable chat message (history GET). No author person id or any other person identifier on
+ *  the wire (RO-L15-3 g): `mine` + `authorType` only. createdAt is L14's text verbatim, the same
+ *  string the history cursor carries (D-2). */
+export interface ChatLiveMessageDto {
+  id: string;
+  channelId: string;
+  authorType: "person" | "assistant" | "system";
+  mine: boolean;
+  body: string;
+  replyToMessageId: string | null;
+  editedAt: string | null;
+  editCount: number;
+  tombstone: null;
+  createdAt: string;
+}
+
+/** A hidden or author-deleted message: exactly these four keys, never a body, author, revision or
+ *  moderation detail (RO-L15-3 f, D-16). `tombstone` is the discriminant against the live form. */
+export interface ChatTombstoneDto {
+  id: string;
+  channelId: string;
+  createdAt: string;
+  tombstone: "author_deleted" | "moderation_hidden";
+}
+
+export type ChatMessageDto = ChatLiveMessageDto | ChatTombstoneDto;
+
+/** The one chat stream frame (GET /api/chat/subscribe, D-12): a refetch hint, never content; the
+ *  client reads the message through the authorized history GET. */
+export interface ChatStreamFrame {
+  type: "chat.message";
+  channelId: string;
+  messageId: string;
+}
+
 /**
  * Optional structured payload of an error. Present ONLY on a code that defines one — today exactly
  * CLOSE_BLOCKED_OPEN_DEBT (POST /api/sessions/:id/close). Every other error omits the key entirely,
