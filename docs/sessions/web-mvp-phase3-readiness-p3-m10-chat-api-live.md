@@ -113,8 +113,8 @@ Bodies (only these fields are read; never an author field, tech:1144): send `{cl
 - Listener: 2 (1)'s optional deps + a `chatRealtimeListener()` singleton on "chat_realtime" (own per-account map, its own copy of L5's connect helper :204-215; L5's is unchanged).
 - Per event (realtime-auth.ts chat plan; ponytail ceiling: one read per subscriber): per tenant group, per distinct person, withChatActor + getChatMessage
   (chat-service.ts:201-209); a row -> {type, channelId: row.channelId, messageId: row.id}; null or error -> dropped, nothing sent; no polling fallback.
-- Admission (GET, no CSRF), in the code's order: session, `?tenant=`, chatActorThrottled, hasLiveMembership, the 30/min bucket
-  (only a live member spends it), at least one readable club channel (D-23), the cap;
+- Admission (GET, no CSRF), in the code's order: session, `?tenant=`, chatActorThrottled, hasLiveMembership, the realtime principal
+  (same person, else AUTH_REQUIRED 401), the 30/min bucket (only a live member spends it), at least one readable club channel (D-23), the cap;
   SSE headers exactly as L5's route (no-store included). Every 25 s the recheck re-runs admission minus buckets and cap; false or error -> close (D-3).
 - Costs for the PR body: one read-back per distinct (tenant, person) with an open chat stream per NOTIFY (the payload carries no tenant), and one more
   app-pool LISTEN connection per web process while a chat stream is open (stop() :187 releases it).
