@@ -416,6 +416,97 @@ $$;
 REVOKE ALL ON FUNCTION mark_read(uuid, uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION mark_read(uuid, uuid) TO app;
 
+-- moderate (V-11, V-26; 4.2): lock + kind -> GUCs -> member + capability -> input -> fingerprint -> receipt (replay or
+-- mismatch) -> person message FOR UPDATE in this channel -> same state? -> rate -> trio + audit (effective only) ->
+-- receipt -> NOTIFY (effective only). The note lives only in the audit row; the receipt holds a hash, ids and state.
+CREATE FUNCTION moderate_chat_message(p_channel uuid, p_message uuid, p_command_id uuid, p_action text,
+  p_reason_code text, p_reason_note text DEFAULT NULL)
+RETURNS TABLE (message_id uuid, moderation_state text, changed boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_kind text;
+  v_ch_tenant uuid;
+  v_tenant uuid;
+  v_person uuid;
+  v_ok boolean;
+  v_fp text;
+  v_old_fp text;
+  v_res jsonb;
+  v_cur text;
+  v_hide boolean := p_action = 'hide';
+  v_state text := CASE WHEN p_action = 'hide' THEN 'hidden' ELSE 'visible' END;
+  v_changed boolean;
+BEGIN
+  SELECT ch.kind, ch.tenant_id INTO v_kind, v_ch_tenant FROM public.chat_channels ch WHERE ch.id = p_channel
+    FOR NO KEY UPDATE;
+  -- V-4: kind first (a missing channel is generic too), before the actor context is even read
+  IF v_kind IS DISTINCT FROM 'club' THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_MODERATION_FORBIDDEN'; END IF;
+  IF current_setting('app.tenant_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_tenant := current_setting('app.tenant_id', true)::uuid;
+  END IF;
+  IF current_setting('app.person_id', true) ~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$' THEN
+    v_person := current_setting('app.person_id', true)::uuid;
+  END IF;
+  IF v_tenant IS NULL OR v_person IS NULL THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_FORBIDDEN'; END IF; -- V-7
+  -- V-11: active member of this channel's tenant AND the capability (allowed IS NOT TRUE = deny), before any input
+  PERFORM 1 FROM public.chat_members cm
+    JOIN public.memberships m ON (m.id, m.person_id, m.tenant_id) = (cm.membership_id, cm.person_id, cm.tenant_id)
+   WHERE cm.channel_id = p_channel AND cm.person_id = v_person AND m.status = 'active' AND v_ch_tenant = v_tenant;
+  IF FOUND THEN
+    SELECT a.allowed INTO v_ok FROM public.tenant_capability_authorize(v_tenant, 'chat.message.moderate', v_person) a;
+  END IF;
+  IF v_ok IS NOT TRUE THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_MODERATION_FORBIDDEN'; END IF;
+  IF p_command_id IS NULL OR (p_action IN ('hide', 'restore')) IS NOT TRUE THEN
+    RAISE EXCEPTION USING MESSAGE = 'INVALID_BODY';
+  END IF;
+  -- closed reason set and the note rule (octet_length), before any write; the 4.3 audit CHECKs are only the backstop
+  IF ((p_reason_code IN ('spam', 'harassment', 'unsafe', 'off_topic') AND p_reason_note IS NULL)
+      OR (p_reason_code = 'other' AND octet_length(p_reason_note) BETWEEN 1 AND 500)) IS NOT TRUE THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_REASON_INVALID';
+  END IF;
+  -- V-26: the receipt answers before any target lookup, mutation or rate token
+  v_fp := encode(sha256(convert_to(jsonb_build_array(p_action, p_message::text, p_reason_code, p_reason_note)::text,
+    'UTF8')), 'hex');
+  SELECT r.canonical_fingerprint, r.result_json INTO v_old_fp, v_res FROM public.chat_command_receipts r
+   WHERE r.tenant_id = v_tenant AND r.actor_person_id = v_person AND r.command_id = p_command_id;
+  IF FOUND THEN
+    IF v_old_fp <> v_fp THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_IDEMPOTENCY_MISMATCH'; END IF;
+    RETURN QUERY SELECT (v_res ->> 'message_id')::uuid, v_res ->> 'moderation_state', (v_res ->> 'changed')::boolean;
+    RETURN;
+  END IF;
+  SELECT msg.moderation_state INTO v_cur FROM public.chat_messages msg
+   WHERE msg.id = p_message AND msg.channel_id = p_channel AND msg.author_type = 'person' FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION USING MESSAGE = 'CHAT_MODERATION_FORBIDDEN'; END IF;
+  v_changed := v_cur IS DISTINCT FROM v_state;
+  -- V-8: one bucket per actor and tenant for hide and restore; every newly accepted command id takes a token
+  IF NOT public.rate_limit_check('chat_mod_1m:' || v_person::text || ':' || v_tenant::text, 30, interval '1 minute')
+  THEN
+    RAISE EXCEPTION USING MESSAGE = 'CHAT_RATE_LIMITED';
+  END IF;
+  IF v_changed THEN -- restore NULLs the trio; author_deleted_at is never touched
+    UPDATE public.chat_messages AS msg
+       SET moderation_state = v_state, moderation_updated_at = CASE WHEN v_hide THEN statement_timestamp() END,
+           moderation_actor_person_id = CASE WHEN v_hide THEN v_person END,
+           moderation_reason_code = CASE WHEN v_hide THEN p_reason_code END
+     WHERE msg.id = p_message;
+    INSERT INTO public.chat_moderation_audit (tenant_id, channel_id, message_id, actor_person_id, action, reason_code,
+      reason_note)
+    VALUES (v_tenant, p_channel, p_message, v_person, p_action, p_reason_code, p_reason_note);
+  END IF;
+  INSERT INTO public.chat_command_receipts (tenant_id, actor_person_id, command_id, action, canonical_fingerprint,
+    result_json)
+  VALUES (v_tenant, v_person, p_command_id, 'message.' || p_action, v_fp, jsonb_build_object('message_id', p_message,
+    'action', p_action, 'moderation_state', v_state, 'changed', v_changed));
+  IF v_changed THEN PERFORM pg_catalog.pg_notify('chat_realtime', p_message::text); END IF;
+  RETURN QUERY SELECT p_message, v_state, v_changed;
+END;
+$$;
+REVOKE ALL ON FUNCTION moderate_chat_message(uuid, uuid, uuid, text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION moderate_chat_message(uuid, uuid, uuid, text, text, text) TO app;
+
 -- SECTION 3: trigger on memberships (W2)
 -- Created while chat_memberships_provision_trg is still migration-owned (4.2 ownership order).
 CREATE TRIGGER trg_memberships_chat_provision
@@ -432,7 +523,8 @@ ALTER FUNCTION send_chat_message(uuid, text, text, uuid) OWNER TO chat_definer;
 ALTER FUNCTION edit_chat_message(uuid, uuid, text, integer) OWNER TO chat_definer;
 ALTER FUNCTION delete_chat_message(uuid, uuid) OWNER TO chat_definer;
 ALTER FUNCTION mark_read(uuid, uuid) OWNER TO chat_definer;
--- W3c..W4: add the ALTER FUNCTION ... OWNER TO chat_definer lines of the command and read functions here.
+ALTER FUNCTION moderate_chat_message(uuid, uuid, uuid, text, text, text) OWNER TO chat_definer;
+-- W4: add the ALTER FUNCTION ... OWNER TO chat_definer lines of the read functions here.
 REVOKE CREATE ON SCHEMA public FROM chat_definer;
 
 -- SECTION 5: backfill (W2)
