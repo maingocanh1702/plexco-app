@@ -26,7 +26,8 @@
         "~/.codex",
         "**/.env",
         "**/.env.*",
-        "**/.envrc"
+        "**/.envrc",
+        "**/ap3/env"
       ],
       "allowWrite": [
         "~/Library/pnpm",
@@ -60,6 +61,7 @@
       "Bash(pnpm db:bootstrap*)",
       "Bash(psql *)",
       "Read(./.env*)",
+      "Read(//**/ap3/env)",
       "Read(~/.ssh/**)",
       "Read(~/.aws/**)",
       "WebFetch",

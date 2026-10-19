@@ -18,7 +18,7 @@
       ]
     },
     "filesystem": {
-      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.ap-watch.env", "~/.codex", "**/.env", "**/.env.*", "**/.envrc"],
+      "denyRead": ["~/.ssh", "~/.aws", "~/.gnupg", "~/.ap-watch.env", "~/.codex", "**/.env", "**/.env.*", "**/.envrc", "**/ap3/env"],
       "allowWrite": ["~/Library/pnpm", "~/.cache"]
     }
   },
@@ -34,7 +34,7 @@
       "Bash(git push*)", "Bash(git reset --hard*)", "Bash(rm -rf *)",
       "Bash(gh *)", "Bash(codex *)", "Bash(scripts/codex-review-pin.sh *)",
       "Bash(pnpm db:bootstrap*)", "Bash(psql *)",
-      "Read(./.env*)", "Read(~/.ssh/**)", "Read(~/.aws/**)",
+      "Read(./.env*)", "Read(//**/ap3/env)", "Read(~/.ssh/**)", "Read(~/.aws/**)",
       "WebFetch", "WebSearch"
     ]
   },
