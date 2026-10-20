@@ -291,7 +291,8 @@ describe("openRealtimeStream", () => {
 });
 
 // Chat topic (lane L15): its own LISTEN channel, the ids-only frame encoder, its own per-account
-// cap and a lazy singleton. Chat exports load inside the cases, leaving the import block untouched.
+// cap and a lazy singleton. Chat runtime exports load inside the cases (dynamic import); the
+// import block adds only two types (ChatFrame, RealtimeListener).
 describe("chat realtime topic", () => {
   const CHANNEL = "22222222-2222-4222-8222-222222222222";
   const decode = (chunk: Uint8Array | undefined) => new TextDecoder().decode(chunk);
@@ -319,10 +320,10 @@ describe("chat realtime topic", () => {
 
   it("C2: the chat stream writes encodeChatFrame's ids-only frame, no sessionId or version", async () => {
     const { encodeChatFrame } = await import("./realtime-auth");
-    type ChatFrame = Parameters<typeof encodeChatFrame>[0];
-    const frame: ChatFrame = { type: "chat.message", channelId: CHANNEL, messageId: ID };
+    type EncoderFrame = Parameters<typeof encodeChatFrame>[0];
+    const frame: EncoderFrame = { type: "chat.message", channelId: CHANNEL, messageId: ID };
     const clients: ReturnType<typeof fakeClient>[] = [];
-    const listener = createRealtimeListener<ChatFrame>({
+    const listener = createRealtimeListener<EncoderFrame>({
       connect: vi.fn(async () => {
         const c = fakeClient();
         clients.push(c);
