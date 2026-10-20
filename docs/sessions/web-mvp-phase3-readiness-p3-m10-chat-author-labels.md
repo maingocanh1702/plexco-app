@@ -121,6 +121,34 @@
   packages/db/src/index.ts:156 named export list gains the type; route.ts toDto takes ChatMessageListRow and `live` gains
   `authorLabel`; api-contract.ts ChatLiveMessageDto gains `authorLabel: string | null` (doc line). ChatTombstoneDto unchanged.
 
+### 4.4 Threat model (the L15a lane block THREAT MODEL; the 0065 header states the same)
+
+Defended, each by the mechanism named (tests are the section 7 rows):
+
+1. A member of club A learning a name from club B, or the name of a person who is not a current member of the channel's
+   club: the label join is pinned to the channel's own tenant (`am.tenant_id = v_ch.tenant_id`) and to
+   `am.status = 'active'`; chat_definer is BYPASSRLS, so this predicate is the only club fence (T3, T6).
+2. An enumeration or an oracle: the function takes no person id (signature unchanged), so labels exist only for the
+   authors of messages in the caller's already-authorized channel; a non-member still gets CHAT_FORBIDDEN from list
+   (T7, T9, T10).
+3. A former member's name continuing to be disclosed: only an ACTIVE membership labels (left, merged and guest give
+   NULL), and the label is the CURRENT club name, not a send-time snapshot (T3, T8; every named case sets the name after
+   the send).
+4. A label carrying more PII than the club display name: the only source is `memberships.display_name` (the one new
+   column grant), btrim'd and cut to 120 characters; no id is added to the result (T1, T7, T11); persons is never read
+   (checked by the round-1 security review).
+5. A name leaking through a tombstoned (deleted or hidden) message: the label follows the body, NULL whenever the body is
+   NULL; a restored row is labelled again (T5).
+
+Not defended:
+
+- A compromised app tier: it already reads the message bodies.
+- The club display name stays PII: this lane does not make it less PII than it is (the lane block: members of the same
+  club already see each other's names in the roster and in Zalo).
+
+Residual, carried forward (not a claim of this lane): bidirectional and control characters stored in a display_name can
+reach the label (the writers bound length only; L-3, O-2); L16 renders authorLabel isolated (bdi or dir="auto").
+
 ## 5. Decisions (a)-(h)
 - (a) Join by the channel's tenant + author_person_id, status 'active', through memberships_active_person_unique. Why: a
   re-join creates a new membership row, so chat_messages.membership_id can point at a 'left' row (against "current name");
