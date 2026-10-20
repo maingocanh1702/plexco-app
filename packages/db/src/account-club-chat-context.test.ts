@@ -1,5 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import type pg from "pg";
+import { readMyClubChatContext } from "./me-player-reads.js";
 import { seedPersonAccount, setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 /**
@@ -270,5 +272,53 @@ describe("0066 catalog and shape (D11-D13)", () => {
     );
     expect(rows[0]!.result).toBe("TABLE(tenant_id uuid, timezone text)");
     expect(rows[0]!.src).not.toMatch(/tenant_admins|display_name|phone|pay_code|_enc/i);
+  });
+});
+
+// Readiness section 4, the typed wrapper (CW-1, CW-2 real DB; CW-3, CW-4 pg-shaped stubs).
+describe("readMyClubChatContext wrapper (CW-1..CW-4)", () => {
+  it("CW-1: an active member gets exactly {tenantId, timezone} of the asked club", async () => {
+    const t = await club("CW One", "Asia/Tokyo");
+    const a = await person("Cara One");
+    await member(t.id, a.personId);
+    expect(await readMyClubChatContext(ctx.appPool, a.accountId, t.slug)).toStrictEqual({
+      tenantId: t.id,
+      timezone: "Asia/Tokyo",
+    });
+  });
+
+  it("CW-2: a deny is null, for a guest membership and an unknown slug alike", async () => {
+    const t = await club("CW Two");
+    const a = await person("Cara Two");
+    await member(t.id, a.personId, "guest");
+    expect(await readMyClubChatContext(ctx.appPool, a.accountId, t.slug)).toBeNull();
+    expect(await readMyClubChatContext(ctx.appPool, a.accountId, `cc-${randomUUID()}`)).toBeNull();
+  });
+
+  it("CW-3: more than one row fails closed, naming neither the account nor the slug", async () => {
+    const accountId = randomUUID();
+    const clubRef = `cc-${randomUUID()}`;
+    const rows = [
+      { tenant_id: randomUUID(), timezone: "Asia/Bangkok" },
+      { tenant_id: randomUUID(), timezone: "Asia/Tokyo" },
+    ];
+    const pool = { query: async () => ({ rows }) } as unknown as pg.Pool;
+    const error = await readMyClubChatContext(pool, accountId, clubRef).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).not.toContain(accountId);
+    expect((error as Error).message).not.toContain(clubRef);
+  });
+
+  it("CW-4: one query with exactly the pinned SQL and [accountId, clubRef]", async () => {
+    const query = vi.fn(async () => ({ rows: [] }));
+    const accountId = randomUUID();
+    const clubRef = `cc-${randomUUID()}`;
+    await readMyClubChatContext({ query } as unknown as pg.Pool, accountId, clubRef);
+    expect(query.mock.calls).toEqual([
+      [
+        "SELECT c.tenant_id, c.timezone FROM public.account_club_chat_context($1, $2) c",
+        [accountId, clubRef],
+      ],
+    ]);
   });
 });

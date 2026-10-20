@@ -3,7 +3,7 @@ import { chargeRemaining, chargeStatusFor } from "./payment-manual.js";
 
 /**
  * The signed-in player's own cross-club reads (Phase 3 lane L9, M9): my clubs, my sessions, my open
- * charges and my join requests. Everything goes through the 0059 SECURITY DEFINER functions keyed by
+ * charges and my join requests. Everything goes through the 0059/0066 definers keyed by
  * the ACCOUNT id taken from the verified session (me-settings.ts precedent): no function takes a
  * person, tenant or membership id, and the definers filter every row by the caller's own person,
  * tenant by tenant. Own money only: another person's charge never leaves the database.
@@ -118,6 +118,25 @@ export async function listMyClubs(
   const sql = `${CLUBS_SQL} ORDER BY club_label COLLATE "C", club_ref COLLATE "C"`;
   const { items, truncated } = await capped<MyClub>(pool, sql, accountId, CLUBS_CAP);
   return { clubs: items, truncated };
+}
+
+const CHAT_CONTEXT_SQL = `SELECT c.tenant_id, c.timezone FROM public.account_club_chat_context($1, $2) c`;
+
+/**
+ * The tenant id and time zone of the club whose slug is clubRef, only while the caller holds an
+ * ACTIVE membership there (lane L16c, 0066); every deny is null, one shape for all of them. A
+ * convenience for the member chat page, never a grant: the chat API's live-membership gate stays the
+ * authorization. Logs nothing, so the slug never meets the account in a log line or an error.
+ */
+export async function readMyClubChatContext(
+  pool: pg.Pool,
+  accountId: string,
+  clubRef: string,
+): Promise<{ tenantId: string; timezone: string } | null> {
+  const { rows } = await pool.query(CHAT_CONTEXT_SQL, [accountId, clubRef]);
+  // The unique slug and memberships_active_person_unique allow one row (0066); more fails closed.
+  if (rows.length > 1) throw new Error("account_club_chat_context returned more than one row");
+  return rows[0] ? toDto<{ tenantId: string; timezone: string }>(rows[0]) : null;
 }
 
 /** Own seats and pending requests on open sessions not yet ended (M-3), by (starts_at, session_id). */
