@@ -10,7 +10,15 @@ import { Composer } from "./composer";
 import { MessageList } from "./message-list";
 
 // The chat channel screen: header, the history state of spec 5.2.1, the message log. The composer goes below the log.
-export function ChannelView({ tenantId, channelId }: { tenantId: string; channelId: string }) {
+export function ChannelView({
+  tenantId,
+  channelId,
+  basePath = `/c/${tenantId}/chat`,
+}: {
+  tenantId: string;
+  channelId: string;
+  basePath?: string;
+}) {
   const t = useT();
   const titleId = useId();
   const chat = useChatChannel(tenantId, channelId);
@@ -26,7 +34,7 @@ export function ChannelView({ tenantId, channelId }: { tenantId: string; channel
   return (
     <div data-state={state}>
       <div className={styles.header}>
-        <Button href={`/c/${tenantId}/chat`} variant="secondary">
+        <Button href={basePath} variant="secondary">
           {t("Quay lại", "Go back")}
         </Button>
         {channel ? (

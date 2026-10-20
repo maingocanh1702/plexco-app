@@ -27,7 +27,13 @@ function UnreadBadge({ count }: { count: number }) {
 }
 
 // The chat channel list screen: the five hook states of spec 5.1, server order, no moderation control.
-export function ChannelList({ tenantId }: { tenantId: string }) {
+export function ChannelList({
+  tenantId,
+  basePath = `/c/${tenantId}/chat`,
+}: {
+  tenantId: string;
+  basePath?: string;
+}) {
   const t = useT();
   const { state, channels, error, refresh } = useChatChannels(tenantId);
   const empty = t(
@@ -57,7 +63,7 @@ export function ChannelList({ tenantId }: { tenantId: string }) {
         <ul className={styles.list}>
           {channels.map((channel) => (
             <li key={channel.id}>
-              <Link className={styles.row} href={`/c/${tenantId}/chat/${channel.id}`}>
+              <Link className={styles.row} href={`${basePath}/${channel.id}`}>
                 <span className={styles.title} dir="auto">
                   {channelTitle(channel, t)}
                 </span>
