@@ -398,14 +398,46 @@ export async function removeAttempt({
   return { update: (s) => ({ ...s, messages: s.messages.map(gone) }), error: null, refetch: false };
 }
 
+const replaceLoaded = (s: ChannelState, page: ChatHistoryPage): ChannelState => {
+  const byId = new Map(page.messages.map((m) => [m.id, m]));
+  return { ...s, messages: s.messages.map((m) => byId.get(m.id) ?? m) };
+};
+// ponytail: 20 GETs incl. the newest page; a restore buried deeper shows after a reload (no client-built cursor, no new route)
+const RESTORE_GETS = 20;
+
+/**
+ * DM-4: the newest page, then each older page by the cursor exactly as sent; an older page only
+ * REPLACES loaded rows. Stops at the id, once it is no longer a tombstone, a null cursor, a failed
+ * answer (silent: the tombstone stays) or RESTORE_GETS.
+ */
+async function restoreWalk(
+  args: ChannelCall & { messageId: string; read: () => ChannelState },
+): Promise<ChannelUpdate> {
+  const newest = await listHistory(args.ctx.tenantId, args.channelId);
+  if (!newest.ok) return SAME;
+  const first: ChannelUpdate = (s) => historyView(newest, args.t, "history-refetch", s);
+  const older: ChatHistoryPage[] = [];
+  let seen = first(args.read());
+  let page = newest.data;
+  for (let n = 1; n < RESTORE_GETS; n += 1) {
+    if (page.nextCursor === null || page.messages.some((m) => m.id === args.messageId)) break;
+    if (!seen.messages.some((m) => m.id === args.messageId && m.tombstone !== null)) break;
+    const next = await listHistory(args.ctx.tenantId, args.channelId, page.nextCursor);
+    if (!next.ok) break;
+    older.push(next.data);
+    seen = replaceLoaded(seen, next.data);
+    page = next.data;
+  }
+  return (s) => older.reduce(replaceLoaded, first(s));
+}
+
 /**
  * One hide or restore command. The commandId arrives in `input` (minted once per user action by the
  * caller, reused on every retry) and is never created here. Both answers render from `moderationState`,
  * never from `changed` (a replay returns the stored `changed`). Hide: the loaded live row becomes the
  * 4-key tombstone at once, so the hidden body leaves client memory; no refetch, the live frame confirms
- * it. Restore: the newest page is refetched once by the hook's existing refetch (`refetch: true`), and
- * nothing is rendered that a server page did not return. `read` hands over the channel state as the
- * hook holds it; it is the input of the older-page walk (DM-4 steps 2-3) and unused until that lands.
+ * it. Restore: `restoreWalk` is the only refetch, so `refetch` stays false; `read` hands it the
+ * channel state as the hook holds it.
  */
 export async function moderateAttempt({
   ctx,
@@ -413,6 +445,7 @@ export async function moderateAttempt({
   messageId,
   input,
   t,
+  read,
 }: ChannelCall & {
   messageId: string;
   input: ChatModerateInput;
@@ -420,9 +453,10 @@ export async function moderateAttempt({
 }): Promise<Settled> {
   const result = await moderateMessage(ctx, channelId, messageId, input);
   if (!result.ok) return { update: SAME, error: failure("moderate", result, t), refetch: false };
-  // seam for the older-page walk (DM-4 steps 2-3): it replaces this single newest-page refetch
-  if (result.data.moderationState === "visible")
-    return { update: SAME, error: null, refetch: true };
+  if (result.data.moderationState === "visible") {
+    const update = await restoreWalk({ ctx, channelId, t, messageId, read });
+    return { update, error: null, refetch: false };
+  }
   // only a loaded live row: an author_deleted tombstone keeps its kind (0063:526), an unloaded id is a no-op
   const hidden = (m: ChatMessageDto): ChatMessageDto =>
     m.id === messageId && m.tombstone === null

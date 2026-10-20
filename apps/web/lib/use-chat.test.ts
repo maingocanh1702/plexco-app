@@ -452,6 +452,16 @@ const moderated = (id: string, moderationState: "hidden" | "visible", changed = 
 });
 const moderate = (state: ChannelState, input: ChatModerateInput, id = M2) =>
   moderateAttempt({ ...call, messageId: id, input, read: () => state });
+const mid = (n: number) => `1a2b3c4d-0000-4000-8000-${String(n).padStart(12, "0")}`;
+// the REAL cursor shape (chat-route.ts encodeChatCursor: v1. + base64url of "<timestamptz text>|<uuid>")
+const cursorOf = (id: string) =>
+  `v1.${Buffer.from(`2026-10-20 03:00:00.123456+00|${id}`, "utf8").toString("base64url")}`;
+// the real 200 of GET /messages (ChatHistoryPage): {messages, nextCursor}
+const pageOf = (messages: ChatMessageDto[], nextCursor: string | null) => ({
+  ok: true as const,
+  data: { messages, nextCursor },
+});
+const MORE = pageOf([live(M1)], cursorOf(M1)); // a newest page with an older page behind it
 
 describe("moderateAttempt: hide and restore one message", () => {
   beforeEach(() => vi.resetAllMocks());
@@ -492,18 +502,72 @@ describe("moderateAttempt: hide and restore one message", () => {
   });
 
   it.each([true, false])(
-    "restore with changed:%s asks for the one newest-page refetch and invents no row",
+    "D2: restore with changed:%s resolves on the newest page: one GET, the server's row, no further page",
     async (changed) => {
       vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible", changed));
+      vi.mocked(listHistory).mockResolvedValue(pageOf([live(M1), live(M2)], cursorOf(mid(9))));
       const before = rows(live(M1), gone(M2, "moderation_hidden"));
       const done = await moderate(before, RESTORE);
-      expect(done).toMatchObject({ error: null, refetch: true });
-      // nothing renders that a server page did not return: the refetch (the hook's settle) brings the row back
-      expect(done.update(before)).toBe(before);
+      expect(done).toMatchObject({ error: null, refetch: false }); // the walk is the only refetch
+      expect(done.update(before).messages).toEqual([live(M1), live(M2)]);
       expect(moderateMessage).toHaveBeenCalledWith(call.ctx, CH, M2, RESTORE);
-      expect(listHistory).not.toHaveBeenCalled();
+      expect(vi.mocked(listHistory).mock.calls).toEqual([[T, CH]]); // the non-null cursor stays unused
     },
   );
+
+  it("D2: a restore on an older page walks with the received cursor and only replaces loaded rows", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    vi.mocked(listHistory)
+      .mockResolvedValueOnce(MORE)
+      .mockResolvedValueOnce(pageOf([live(M2), live(M3), live(mid(4))], cursorOf(M3)));
+    const loaded = rows(live(M1), gone(M2, "moderation_hidden"), live(M3));
+    const before = { ...loaded, nextCursor: cursorOf(M3) };
+    const done = await moderate(before, RESTORE);
+    expect(listHistory).toHaveBeenNthCalledWith(1, T, CH);
+    expect(listHistory).toHaveBeenNthCalledWith(2, T, CH, cursorOf(M1)); // as received, byte for byte
+    expect(done.update(before).messages).toEqual([live(M1), live(M2), live(M3)]); // M4 not inserted
+    expect(done.update(before).nextCursor).toBe(cursorOf(M3));
+    expect(done).toMatchObject({ error: null, refetch: false });
+  });
+
+  it.each([
+    ["an older page answering CLIENT_NETWORK_ERROR", [MORE, fail("CLIENT_NETWORK_ERROR", 0)]],
+    ["an older page answering CHAT_RATE_LIMITED", [MORE, fail("CHAT_RATE_LIMITED", 429)]],
+    ["a null cursor on the newest page", [pageOf([live(M1)], null)]],
+    ["the newest page answering AUTH_REQUIRED", [fail("AUTH_REQUIRED", 401)]],
+  ])("D2 stop: %s ends the walk silently and the tombstone stays", async (_stop, answers) => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    for (const answer of answers) vi.mocked(listHistory).mockResolvedValueOnce(answer);
+    const before = rows(live(M1), gone(M2, "moderation_hidden"));
+    const done = await moderate(before, RESTORE);
+    expect(done).toMatchObject({ error: null, refetch: false });
+    expect(done.update(before).messages[1]).toEqual(gone(M2, "moderation_hidden"));
+    expect(listHistory).toHaveBeenCalledTimes(answers.length);
+  });
+
+  it("D2 stop: a newest page that no longer joins the loaded rows drops the id, so no older page is asked for", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    vi.mocked(listHistory).mockResolvedValueOnce(pageOf([live(mid(7))], cursorOf(mid(7))));
+    const before = rows(live(M1), gone(M2, "moderation_hidden"));
+    const done = await moderate(before, RESTORE);
+    expect(done.update(before).messages).toEqual([live(mid(7))]); // historyView's own rule, as refetchNewest
+    expect(listHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("D2 ceiling: the walk makes at most 20 GETs, the newest page included, and the tombstone stays", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    let served = 0;
+    vi.mocked(listHistory).mockImplementation(async () => {
+      served += 1;
+      return pageOf([live(M1)], cursorOf(mid(100 + served)));
+    });
+    const before = rows(live(M1), gone(M2, "moderation_hidden"));
+    const done = await moderate(before, RESTORE);
+    const calls = vi.mocked(listHistory).mock.calls;
+    expect(calls).toHaveLength(20);
+    expect(calls[19]?.[2]).toBe(cursorOf(mid(119))); // 19 hops, each with the cursor the page before sent
+    expect(done.update(before).messages[1]).toEqual(gone(M2, "moderation_hidden"));
+  });
 
   it.each([
     ["CHAT_MODERATION_FORBIDDEN", 403, "You cannot moderate this message.", false],
