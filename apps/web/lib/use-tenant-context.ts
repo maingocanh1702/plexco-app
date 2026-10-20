@@ -12,10 +12,10 @@ export interface TenantContext extends SessionApiContext {
   lang: ReturnType<typeof useLang>;
 }
 
-/** A club zone a page supplies when the session lists no such tenant (a plain member's session lists none). */
+/** A club zone a page supplies when the session has no zone for that tenant (a plain member's session lists none). */
 export const TenantZoneContext = createContext<string | undefined>(undefined);
 
-/** The club workspace's tenant, CSRF secret and zone; only valid inside the shell (session ready). */
+/** The club workspace's tenant, CSRF secret and zone; only valid inside a ready SessionProvider: the shell or MeFrame. */
 export function useTenantContext(tenantId: string): TenantContext {
   const { session } = useSessionContext();
   const lang = useLang();

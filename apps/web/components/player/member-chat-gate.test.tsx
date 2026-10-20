@@ -205,7 +205,7 @@ describe("MemberChatGate", () => {
     expect(vi_ + en).not.toMatch(/Không tìm thấy|Not found/);
   });
 
-  it("CG-3 a 500 with an empty body is an error with Retry, and a second load refetches", async () => {
+  it("CG-3 startChatContextLoad: a 500 with an empty body is an error with Retry in the view, and a second call refetches", async () => {
     reply(answers[500]);
     const state = await settle();
     expect(state).toEqual(failed);
@@ -224,7 +224,8 @@ describe("MemberChatGate", () => {
   it.each([
     ["401", answers[401], signIn],
     ["429", answers[429], failed],
-    ["a proxy 403 page", () => new Response("Forbidden", { status: 403 }), denied],
+    ["a proxy 400 page", () => new Response("Bad Request", { status: 400 }), failed],
+    ["a proxy 403 page", () => new Response("Forbidden", { status: 403 }), failed],
     ["a proxy 502 page", () => new Response("Bad Gateway", { status: 502 }), failed],
   ])("CG-3b %s maps to its state", async (_name, make, expected) => {
     reply(make);
@@ -301,7 +302,7 @@ describe("MemberChatGate", () => {
     expect(new Headers(init?.headers).has("x-csrf-token")).toBe(false);
   });
 
-  it("CG-11 stop (an unmount) aborts the read and no state update follows", async () => {
+  it("CG-11 startChatContextLoad's stop aborts the read and no state update follows", async () => {
     hang();
     const seen = vi.fn();
     const stop = startChatContextLoad(SLUG, seen);

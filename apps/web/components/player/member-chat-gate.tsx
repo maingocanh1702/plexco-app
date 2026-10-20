@@ -13,8 +13,9 @@ import { Button } from "../ui/button";
 /**
  * A member's way into a club's chat: ONE read of the chat-context route per mount, then the L16
  * components. The route is a convenience, never a grant: the chat API's live-membership gate stays
- * the only authorization. The tenant id and zone live only in component state (no storage, URL, log
- * or cache), and the server's message is never shown: the client renders its own copy.
+ * the only authorization. The tenant id and zone live only in component state (no storage, page URL
+ * or history, log or cache; the chat API's own request URLs carry ?tenant= as on the admin path),
+ * and the server's message is never shown: the client renders its own copy.
  */
 export type GateState =
   | { status: "loading" }
@@ -39,12 +40,12 @@ function contextOf(data: unknown): GateState {
   return { status: "ready", tenantId, timezone };
 }
 
-// 404 is the route's one deny and any other 4xx denies too, except the session (401) and the rate
-// limit (429), which are not a verdict on the membership. Everything else is a failed load.
+// 404 is the route's one deny; every other failure is a failed load with Retry (a 401 also
+// offers sign-in).
 function failureOf(e: unknown): GateState {
   const status = e instanceof ApiClientError ? e.statusCode : 0;
   if (status === 401) return SIGN_IN;
-  return status >= 400 && status < 500 && status !== 429 ? DENIED : ERROR;
+  return status === 404 ? DENIED : ERROR;
 }
 
 /**
@@ -100,7 +101,7 @@ export function MemberChatGateView({
         <h1 className={channels.heading}>{t("Trò chuyện", "Chat")}</h1>
         {state.status === "loading" ? <p role="status">{t("Đang tải…", "Loading…")}</p> : null}
         {state.status === "denied" ? (
-          <div className={channels.notice}>
+          <div className={channels.notice} role="status">
             {t("Bạn không mở được trò chuyện của CLB này.", "You cannot open this club's chat.")}
           </div>
         ) : null}

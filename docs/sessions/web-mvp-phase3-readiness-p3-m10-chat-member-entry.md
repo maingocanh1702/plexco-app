@@ -150,7 +150,7 @@ header.
   EXISTING code, `packages/core/src/api-contract.ts:151`; the /me precedent `web/app/api/me/profile/route.ts:28` returns
   `err("NOT_FOUND", ..., 404)`), its Cache-Control set route-locally to PRIVATE (err() sets `no-store` only,
   `web/lib/api-envelope.ts:11`, `:14-16`; api-envelope.ts stays unchanged).
-- 500: any throw -> `new Response(null, { status: 500, headers: { "cache-control": PRIVATE } })` as `:23`; the log line carries the
+- 500: any throw after the gate -> `new Response(null, { status: 500, headers: { "cache-control": PRIVATE } })` as `:23`; the log line carries the
   route template and the error name only (no slug, account or tenant id).
 - 401 and 429 come from the shared gate with its `no-store` (RO-L16c-4; the gate is unchanged); 403 CSRF_INVALID is unreachable on
   a GET with `csrf: false`.
@@ -229,10 +229,11 @@ States (fail closed; the client renders its own pair and never the server messag
 | 200 with exactly a uuid-shaped string `tenantId` and a non-empty string `timezone` | ready | the L16 components |
 | 200 with any other shape | error + retry | as the error row |
 | 404 | denied | t("Bạn không mở được trò chuyện của CLB này.", "You cannot open this club's chat.") (new) |
-| 401, 403, 429, 5xx, a network error, the 15 s abort | error + retry | t("Không tải được trò chuyện.", "Could not load the chat.") (new) + button t("Thử lại", "Retry") (existing) |
+| 401, 403, 429, 5xx, a network error, the 15 s abort | error + retry | t("Không tải được trò chuyện.", "Could not load the chat.") (new) + button t("Thử lại", "Retry") (existing); a 401 also shows the existing t("Đăng nhập lại", "Sign in again") link to / |
 
 Tests (W6, describe "MemberChatGate" in the W5 file; every mocked response is the real envelope of `web/lib/api-envelope.ts`): CG-1
-loading; CG-2 a 404 -> denied, in vi and in en; CG-3 a 500 -> error, Retry refetches; CG-4 a network error -> error; CG-5 the 15 s
+loading; CG-2 a 404 -> denied, in vi and in en; CG-3 a 500 -> error, Retry refetches; CG-3b the status map (401 -> sign-in error; 400, 403, 429, 502 -> error; only a 404 -> denied);
+CG-3c the sign-in error view links /; CG-4 a network error -> error; CG-5 the 15 s
 abort (fake timers) -> error; CG-6 a 200 with an extra key, a missing key or a non-uuid tenantId -> error; CG-7 ready renders
 ChannelList with the route's tenantId and the member hrefs; CG-8 channelId set -> ChannelView with the back link to the member list;
 CG-9 the provider reaches useTenantContext (the zone used is the route's); CG-10 the fetch path encodes clubRef; CG-11 an unmount
