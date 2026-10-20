@@ -6,17 +6,16 @@ import { useChatChannel, useChatChannels, type ChatListError } from "../../lib/u
 import { Button } from "../ui/button";
 import { channelTitle } from "./channel-list";
 import styles from "./channel-view.module.css";
+import { Composer } from "./composer";
 import { MessageList } from "./message-list";
 
 // The chat channel screen: header, the history state of spec 5.2.1, the message log. The composer goes below the log.
 export function ChannelView({ tenantId, channelId }: { tenantId: string; channelId: string }) {
   const t = useT();
   const titleId = useId();
-  const { state, messages, error, hasOlder, reload, loadOlder } = useChatChannel(
-    tenantId,
-    channelId,
-  );
-  // Title (and later the post policy) come from the channel list by id; nothing is kept in a URL, storage or module cache.
+  const { state, messages, pending, error, hasOlder, reload, loadOlder, send, retry, discard } =
+    useChatChannel(tenantId, channelId);
+  // Title and post policy come from the channel list by id; nothing is kept in a URL, storage or module cache.
   const channel = useChatChannels(tenantId).channels.find((c) => c.id === channelId);
   const [olderError, setOlderError] = useState<ChatListError | null>(null);
   const empty = t("Chưa có tin nhắn nào.", "No messages yet.");
@@ -57,6 +56,7 @@ export function ChannelView({ tenantId, channelId }: { tenantId: string; channel
         olderError={olderError}
         labelledBy={channel ? titleId : undefined}
       />
+      <Composer postPolicy={channel?.postPolicy} outbox={{ pending, send, retry, discard }} />
     </div>
   );
 }
