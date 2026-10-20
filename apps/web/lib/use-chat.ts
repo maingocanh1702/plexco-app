@@ -44,8 +44,14 @@ export interface ChatHint {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** Exactly {type: "chat.message", channelId, messageId} with lowercase uuid ids, else null. */
-function parseChatHint(data: unknown): ChatHint | null {
+/** Takes the hub's raw SSE data string: exactly {type: "chat.message", channelId, messageId} with lowercase uuid ids, else null. */
+function parseChatHint(raw: unknown): ChatHint | null {
+  let data: unknown;
+  try {
+    data = typeof raw === "string" ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
   if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
   if (Object.keys(data).length !== 3) return null;
   const { type, channelId, messageId } = data as Record<string, unknown>;

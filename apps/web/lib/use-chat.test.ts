@@ -1,7 +1,7 @@
 import type { ChatChannelDto, ChatLiveMessageDto } from "@plexco/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { editMessage, listChannels, listHistory, markRead, sendMessage } from "./chat-api";
-import { LIVE_PAUSE_MS } from "./use-realtime";
+import { LIVE_PAUSE_MS, createRealtimeHub, type EventSourceLike } from "./use-realtime";
 import {
   CHAT_STREAM,
   READ_GAP_MS,
@@ -56,20 +56,38 @@ describe("CHAT_STREAM: a frame is only a refetch hint", () => {
   });
 
   it("parses exactly {type, channelId, messageId} with lowercase uuid ids", () => {
-    expect(CHAT_STREAM.parse(frame)).toEqual(frame);
+    expect(CHAT_STREAM.parse(JSON.stringify(frame))).toEqual(frame);
   });
 
   it.each([
-    ["an extra key", { ...frame, body: "hi" }],
-    ["another type", { ...frame, type: "chat.edit" }],
-    ["a numeric channel id", { ...frame, channelId: 7 }],
-    ["a null message id", { ...frame, messageId: null }],
-    ["an uppercase id", { ...frame, channelId: CH.toUpperCase() }],
-    ["a missing key", { type: "chat.message", channelId: CH }],
-    ["an array", [frame]],
-    ["null", null],
+    ["an extra key", JSON.stringify({ ...frame, body: "hi" })],
+    ["another type", JSON.stringify({ ...frame, type: "chat.edit" })],
+    ["a numeric channel id", JSON.stringify({ ...frame, channelId: 7 })],
+    ["a null message id", JSON.stringify({ ...frame, messageId: null })],
+    ["an uppercase id", JSON.stringify({ ...frame, channelId: CH.toUpperCase() })],
+    ["a missing key", JSON.stringify({ type: "chat.message", channelId: CH })],
+    ["an array", JSON.stringify([frame])],
+    ["null", JSON.stringify(null)],
+    ["the object itself, not the raw string", frame],
+    ["malformed JSON", "{"],
   ])("drops a frame with %s", (_name, data) => {
     expect(CHAT_STREAM.parse(data)).toBeNull();
+  });
+
+  it("through the hub: the raw data string reaches the listener as a resync, then the event", () => {
+    const src: EventSourceLike = { onopen: null, onmessage: null, onerror: null, close: vi.fn() };
+    const hub = createRealtimeHub({
+      create: () => src,
+      now: () => 0,
+      setTimeout: () => 0,
+      clearTimeout: vi.fn(),
+      random: () => 0,
+    });
+    const seen: unknown[] = [];
+    hub.subscribe("t1", (signal) => seen.push(signal), CHAT_STREAM);
+    src.onopen?.();
+    src.onmessage?.({ data: JSON.stringify(frame) });
+    expect(seen).toEqual([{ kind: "resync" }, { kind: "event", message: frame }]);
   });
 });
 
