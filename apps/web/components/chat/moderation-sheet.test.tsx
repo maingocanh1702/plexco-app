@@ -31,6 +31,11 @@ describe("validateModeration (D10, DM-9)", () => {
     const got = ["", " ", "stale"].map((note) => validateModeration(r, note));
     expect(got).toEqual(Array(3).fill({ ok: true, reasonCode: r, reasonNote: null }));
   });
+
+  // the sheet starts unpicked: a not-ok check is what stops confirm() before submitModeration/send
+  it.each(["", "a note"])("no reason picked (note %j): unpicked, whatever the note", (note) =>
+    expect(validateModeration(null, note)).toEqual({ ok: false, problem: "unpicked" }),
+  );
 });
 
 // the failure row use-chat's failure() builds for a 429: describeChatError's row plus the code
@@ -69,7 +74,7 @@ describe("ModerationSheet markup (DM-7, DM-9)", () => {
     ["hide", "Hide this message?", "Hide"],
     ["restore", "Restore this message?", "Restore"],
   ] as const)(
-    "%s: its title and confirm, five reasons (first checked), no note, no alert",
+    "%s: its title and confirm, five reasons (none checked), no note, no alert",
     (action, title, ok) => {
       const out = sheet(action);
       expect([out.includes(`>${title}</h2>`), out.includes(`>${ok}</button>`)]).toEqual([
@@ -83,9 +88,7 @@ describe("ModerationSheet markup (DM-7, DM-9)", () => {
         "Off topic",
         "Other",
       ]);
-      expect(out.match(/<input[^>]*checked=""[^>]*>/g)).toEqual([
-        expect.stringContaining('value="spam"'),
-      ]);
+      expect(out.match(/<input[^>]*checked=""[^>]*>/g)).toBeNull(); // no reason is pre-picked
       expect(out).toContain("<legend>Reason (required)</legend>");
       expect(out).not.toMatch(/Note \(required\)|role="alert"/); // the note is for Other only
     },

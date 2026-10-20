@@ -47,7 +47,8 @@ export function MessageList({
   };
   const row = useRef<HTMLDivElement>(null); // header of the moderated row, to find its <li>
   const gone = messages.some((m) => m.id === moderated?.id && m.tombstone);
-  // DM-7: a hide unmounts its opener and a restore soon will; land on the row's next control, never <body>
+  // DM-7: a hide unmounts its opener (a restore does once its walk finds the row); land on the row's next
+  // control, never <body>. Re-runs when another admin flips this row later; focus moves only from <body>
   useEffect(() => {
     const li = row.current?.closest("li");
     if (moderated && document.activeElement === document.body)

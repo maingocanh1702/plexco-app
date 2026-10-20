@@ -559,7 +559,9 @@ describe("moderateAttempt: hide and restore one message", () => {
     let served = 0;
     vi.mocked(listHistory).mockImplementation(async () => {
       served += 1;
-      return pageOf([live(M1)], cursorOf(mid(100 + served)));
+      // a real page never repeats a row: the newest page keeps M1 (it must join the loaded rows), each older page has its own
+      const row = served === 1 ? M1 : mid(100 + served);
+      return pageOf([live(row)], cursorOf(row));
     });
     const before = rows(live(M1), gone(M2, "moderation_hidden"));
     const done = await moderate(before, RESTORE);

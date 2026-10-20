@@ -16,7 +16,7 @@ export type ModerationReason = (typeof MODERATION_REASONS)[number];
 
 export type ModerationCheck =
   | { ok: true; reasonCode: ModerationReason; reasonNote: string | null }
-  | { ok: false; problem: "blank" | "too_long" };
+  | { ok: false; problem: "unpicked" | "blank" | "too_long" };
 
 /**
  * DM-9: `other` needs a trimmed, non-blank note of at most 500 UTF-8 BYTES (the server measures
@@ -24,7 +24,8 @@ export type ModerationCheck =
  * sends `reasonNote: null`, never "", and drops whatever the note field still holds. The server stays
  * the judge: a 422 CHAT_REASON_INVALID still renders its own row.
  */
-export function validateModeration(reason: ModerationReason, note: string): ModerationCheck {
+export function validateModeration(reason: ModerationReason | null, note: string): ModerationCheck {
+  if (reason === null) return { ok: false, problem: "unpicked" }; // nothing picked yet: send nothing
   if (reason !== "other") return { ok: true, reasonCode: reason, reasonNote: null };
   const trimmed = note.trim();
   if (trimmed === "") return { ok: false, problem: "blank" };
@@ -71,12 +72,12 @@ export function ModerationSheet({
   const t = useT();
   const id = useId(); // the radio group name: every eligible row mounts its own sheet
   const keeper = useCommandId();
-  const [reason, setReason] = useState<ModerationReason>(MODERATION_REASONS[0]);
+  const [reason, setReason] = useState<ModerationReason | null>(null);
   const [note, setNote] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   // a changed reason or note is a new user action (new command key, no stale notice); a reopen starts clean
-  const restart = (next: ModerationReason = MODERATION_REASONS[0], text = "") => {
+  const restart = (next: ModerationReason | null = null, text = "") => {
     setReason(next);
     setNote(text);
     setNotice("");
@@ -90,6 +91,7 @@ export function ModerationSheet({
     unsafe: t("Nội dung không an toàn", "Unsafe content"),
     off_topic: t("Lạc đề", "Off topic"),
     other: t("Lý do khác", "Other"),
+    unpicked: t("Chọn một lý do.", "Choose a reason."),
     blank: t("Nhập ghi chú cho lý do khác.", "Enter a note for Other."),
     too_long: t("Ghi chú quá dài.", "This note is too long."),
   };
@@ -100,8 +102,8 @@ export function ModerationSheet({
     setBusy(true);
     setNotice("");
     const { reasonCode, reasonNote } = check;
-    const row = await submitModeration(keeper, onModerate, { action, reasonCode, reasonNote });
-    setBusy(false);
+    const sent = submitModeration(keeper, onModerate, { action, reasonCode, reasonNote });
+    const row = await sent.finally(() => setBusy(false)); // a rejected send never leaves the sheet busy
     if (row) setNotice(row.message);
     else onDone();
   }
@@ -142,6 +144,7 @@ export function ModerationSheet({
               label={t("Ghi chú (bắt buộc)", "Note (required)")}
               value={note}
               required
+              autoComplete="off"
               readOnly={busy}
               onChange={(e) => restart(reason, e.target.value)}
             />

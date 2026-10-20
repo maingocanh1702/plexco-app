@@ -435,7 +435,7 @@ async function restoreWalk(
  * One hide or restore command. The commandId arrives in `input` (minted once per user action by the
  * caller, reused on every retry) and is never created here. Both answers render from `moderationState`,
  * never from `changed` (a replay returns the stored `changed`). Hide: the loaded live row becomes the
- * 4-key tombstone at once, so the hidden body leaves client memory; no refetch, the live frame confirms
+ * 4-key tombstone at once, so the hidden body leaves client memory; no refetch, a changed hide's frame confirms
  * it. Restore: `restoreWalk` is the only refetch, so `refetch` stays false; `read` hands it the
  * channel state as the hook holds it.
  */
