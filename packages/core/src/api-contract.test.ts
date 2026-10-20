@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   API_ERROR_CODES,
@@ -6,6 +6,11 @@ import {
   isApiErrorCode,
   type ApiEnvelope,
   type ApiError,
+  type ChatChannelDto,
+  type ChatLiveMessageDto,
+  type ChatMessageDto,
+  type ChatStreamFrame,
+  type ChatTombstoneDto,
   type JoinSessionResultDto,
   type PendingJoinRequestDto,
 } from "./api-contract.js";
@@ -316,5 +321,70 @@ describe("in-app chat codes (M10, L14 readiness 4.6; feature_inapp_chat_tech.md 
     }
     // 4.6 "No other code": the CHAT_* subset is exactly these twelve, no stray or misspelled extra
     expect(API_ERROR_CODES.filter((c) => c.startsWith("CHAT_")).sort()).toEqual(added);
+  });
+});
+
+// Compile-time locks, enforced by `tsc` (packages/core typecheck includes src/*.test.ts; expectTypeOf
+// is a no-op under vitest): each `expectTypeOf<keyof X>` pins a DTO's exact key set, so an added key,
+// even an optional one, fails it; each `@ts-expect-error` fails when its excluded key becomes legal
+// (readiness 4.3).
+describe("chat wire DTOs (M10)", () => {
+  const messageId = "5d1f7c2a-0000-4000-8000-000000000001";
+  const channelId = "5d1f7c2a-0000-4000-8000-000000000002";
+  const createdAt = "2026-10-19T11:53:07.123Z";
+
+  it("types a chat channel as allowlisted columns + unreadCount only (RO-L15-2)", () => {
+    expectTypeOf<keyof ChatChannelDto>().toEqualTypeOf<
+      "id" | "title" | "sortOrder" | "isDefault" | "postPolicy" | "unreadCount"
+    >();
+  });
+
+  it("types a live message with mine + authorType and no person identifier (RO-L15-3 g)", () => {
+    expectTypeOf<keyof ChatLiveMessageDto>().toEqualTypeOf<
+      | "id"
+      | "channelId"
+      | "authorType"
+      | "mine"
+      | "body"
+      | "replyToMessageId"
+      | "editedAt"
+      | "editCount"
+      | "tombstone"
+      | "createdAt"
+    >();
+    const leaky = {
+      id: messageId,
+      channelId,
+      authorType: "person",
+      mine: false,
+      body: "hello",
+      replyToMessageId: null,
+      editedAt: null,
+      editCount: 0,
+      tombstone: null,
+      createdAt,
+      // @ts-expect-error no person identifier reaches the wire, not even on the live form
+      authorPersonId: "5d1f7c2a-0000-4000-8000-000000000003",
+    } satisfies ChatMessageDto;
+    expect(leaky.tombstone).toBeNull();
+  });
+
+  it("types a tombstone as exactly four keys: no body, author or revision (RO-L15-3 f, D-16)", () => {
+    expectTypeOf<keyof ChatTombstoneDto>().toEqualTypeOf<
+      "id" | "channelId" | "createdAt" | "tombstone"
+    >();
+    const withBody = {
+      id: messageId,
+      channelId,
+      createdAt,
+      tombstone: "moderation_hidden",
+      // @ts-expect-error the discriminant narrows the union: a tombstone has no body, not even null
+      body: null,
+    } satisfies ChatMessageDto;
+    expect(withBody.tombstone).toBe("moderation_hidden");
+  });
+
+  it("types the one chat stream frame as a refetch hint with ids only (D-12)", () => {
+    expectTypeOf<keyof ChatStreamFrame>().toEqualTypeOf<"type" | "channelId" | "messageId">();
   });
 });

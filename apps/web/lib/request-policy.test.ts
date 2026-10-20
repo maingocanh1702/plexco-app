@@ -81,6 +81,28 @@ describe("pathAllowedForRole (audit W-10)", () => {
     }
   });
 
+  it("P1, D-20: every chat route is web-served and discovery-denied with request-policy.ts unchanged", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const base = `/api/chat/channels/${id}`;
+    const routes = [
+      ["GET", "/api/chat/channels"],
+      ["GET", `${base}/messages`],
+      ["POST", `${base}/messages`],
+      ["PATCH", `${base}/messages/${id}`],
+      ["DELETE", `${base}/messages/${id}`],
+      ["POST", `${base}/messages/${id}/moderation`],
+      ["POST", `${base}/read`],
+      ["GET", "/api/chat/subscribe"],
+    ] as const;
+    for (const [m, p] of routes) {
+      expect(pathAllowedForRole(p, "discovery"), p).toBe(false);
+      for (const method of [m, "GET", "HEAD"]) {
+        expect(requestAllowedForRole(method, p, "discovery"), `${method} ${p}`).toBe(false);
+      }
+      expect(requestAllowedForRole(m, p, "web"), `${m} ${p}`).toBe(true);
+    }
+  });
+
   it("N-2: the middleware gives a discovery POST /api/discover the gate's bodiless no-store 404 and lets the GET through", async () => {
     const url = "http://localhost/api/discover";
     vi.stubEnv("PROCESS_ROLE", "discovery");

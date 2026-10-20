@@ -154,6 +154,7 @@ export {
   type ChatMessage,
   type ChatTx,
 } from "./chat-service.js";
+export { listChatChannels, type ChatChannelRow } from "./chat-channel-reads.js";
 export {
   createSession,
   publishSession,

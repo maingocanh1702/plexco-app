@@ -1,4 +1,13 @@
-import { readSessionRealtimeEvent, resolveWebSession, withTenant } from "@plexco/db";
+import type { ChatStreamFrame } from "@plexco/core";
+import {
+  getChatMessage,
+  hasLiveMembership,
+  listChatChannels,
+  readSessionRealtimeEvent,
+  resolveWebSession,
+  withChatActor,
+  withTenant,
+} from "@plexco/db";
 import { cookies } from "next/headers";
 import { mayManageSessions } from "./session-command-route";
 import { appDb, hashToken, SESSION_COOKIE } from "./session-cookies";
@@ -90,6 +99,67 @@ export async function recheckSubscriber(audience: RealtimeAudience): Promise<boo
     if (session?.accountId !== audience.accountId || session.personId !== audience.personId)
       return false;
     return await mayManageSessions(audience.tenantId, audience.personId);
+  } catch {
+    return false;
+  }
+}
+
+/** The chat topic's ONLY wire shape (D-12): ids only; content comes through the authorized GET. */
+export type ChatFrame = ChatStreamFrame;
+
+/** As encodeFrame (R-5): one `data:` line of exactly these three keys; no row field rides along. */
+export function encodeChatFrame(frame: ChatFrame): string {
+  const { type, channelId, messageId } = frame;
+  return `data: ${JSON.stringify({ type, channelId, messageId })}\n\n`;
+}
+
+/**
+ * Who receives chat message `messageId`: per event, each subscribed person re-reads the untrusted
+ * id through chat_get_message under their own tenant, person and RLS. Null or an error: nothing sent.
+ */
+export async function planChatDelivery<S extends RealtimeAudience>(
+  messageId: string,
+  groups: ReadonlyMap<string, ReadonlySet<S>>,
+): Promise<Array<[S, ChatFrame]>> {
+  const snapshot = [...groups].map(([tenantId, subs]) => [tenantId, [...subs]] as const);
+  // ponytail: one read per distinct subscribed (tenant, person) per NOTIFY, until the owner's group;
+  // upgrade path: a tenant in the NOTIFY payload (an L14 contract change) reads one group only.
+  for (const [tenantId, subs] of snapshot) {
+    const reads = new Map<string, ReturnType<typeof getChatMessage>>();
+    const planned: Array<[S, ChatFrame]> = [];
+    for (const sub of subs) {
+      let read = reads.get(sub.personId);
+      if (!read) {
+        read = withChatActor(appDb().db, { tenantId, personId: sub.personId }, (tx) =>
+          getChatMessage(tx, { messageId }),
+        ).catch(() => null);
+        reads.set(sub.personId, read);
+      }
+      const row = await read;
+      if (row)
+        planned.push([sub, { type: "chat.message", channelId: row.channelId, messageId: row.id }]);
+    }
+    // chat_get_message filters ch.tenant_id = app.tenant_id (0063:616): no other tenant gets a row.
+    if (planned.length > 0) return planned;
+  }
+  return [];
+}
+
+/**
+ * Chat heartbeat re-check (D-3: admission minus the buckets and the cap): the same live session,
+ * account and person, a live membership (D-19), then a readable club channel now. Errors deny.
+ */
+export async function recheckChatSubscriber(a: RealtimeAudience): Promise<boolean> {
+  try {
+    const { tenantId, personId } = a;
+    const session = await resolveWebSession(appDb().pool, a.tokenHash);
+    if (session?.accountId !== a.accountId || session.personId !== personId) return false;
+    const member = await withTenant(appDb().db, tenantId, (tx) =>
+      hasLiveMembership(tx, tenantId, personId),
+    );
+    if (!member) return false;
+    await withChatActor(appDb().db, { tenantId, personId }, listChatChannels);
+    return true;
   } catch {
     return false;
   }

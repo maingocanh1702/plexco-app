@@ -1,7 +1,9 @@
 import { log } from "./log";
 import {
   encodeFrame,
+  planChatDelivery,
   planEventDelivery,
+  type ChatFrame,
   type RealtimeAudience,
   type RealtimeFrame,
 } from "./realtime-auth";
@@ -30,8 +32,8 @@ export function backoffDelayMs(attempt: number, random: () => number): number {
   return Math.floor(random() * ceiling);
 }
 
-export interface RealtimeSubscriber extends RealtimeAudience {
-  send(frame: RealtimeFrame): void;
+export interface RealtimeSubscriber<F = RealtimeFrame> extends RealtimeAudience {
+  send(frame: F): void;
   close(): void;
 }
 
@@ -43,28 +45,32 @@ export interface ListenClient {
   release(): void;
 }
 
-export interface ListenerDeps {
+export interface ListenerDeps<F = RealtimeFrame> {
   connect(): Promise<ListenClient>;
+  /** NOTIFY channel; default REALTIME_CHANNEL (L5). A code constant, never input. */
+  channel?: typeof REALTIME_CHANNEL | typeof CHAT_REALTIME_CHANNEL;
   plan(
     eventId: string,
-    groups: ReadonlyMap<string, ReadonlySet<RealtimeSubscriber>>,
-  ): Promise<ReadonlyArray<readonly [RealtimeSubscriber, RealtimeFrame]>>;
+    groups: ReadonlyMap<string, ReadonlySet<RealtimeSubscriber<F>>>,
+  ): Promise<ReadonlyArray<readonly [RealtimeSubscriber<F>, F]>>;
   now(): number;
   random(): number;
   log(event: string, fields?: Record<string, unknown>): void;
 }
 
-export interface RealtimeListener {
+export interface RealtimeListener<F = RealtimeFrame> {
   /** Registers a subscriber; false when its account already has the maximum open streams. */
-  add(sub: RealtimeSubscriber): boolean;
-  remove(sub: RealtimeSubscriber): void;
+  add(sub: RealtimeSubscriber<F>): boolean;
+  remove(sub: RealtimeSubscriber<F>): void;
   /** Resolves once LISTEN is active; rejects on a connect failure or while backing off. */
   ready(): Promise<void>;
   stats(): { subscribers: number; accounts: number; listening: boolean; pending: number };
 }
 
-export function createRealtimeListener(deps: ListenerDeps): RealtimeListener {
-  const byTenant = new Map<string, Set<RealtimeSubscriber>>();
+export function createRealtimeListener<F = RealtimeFrame>(
+  deps: ListenerDeps<F>,
+): RealtimeListener<F> {
+  const byTenant = new Map<string, Set<RealtimeSubscriber<F>>>();
   const perAccount = new Map<string, number>();
   const pending: string[] = [];
   let client: ListenClient | null = null;
@@ -74,8 +80,9 @@ export function createRealtimeListener(deps: ListenerDeps): RealtimeListener {
   // Bumped whenever the queue is discarded, so a drain stuck on an old event cannot resume it.
   let epoch = 0;
   let draining = false;
+  const listenChannel = deps.channel ?? REALTIME_CHANNEL;
 
-  const registered = (sub: RealtimeSubscriber) => byTenant.get(sub.tenantId)?.has(sub) === true;
+  const registered = (sub: RealtimeSubscriber<F>) => byTenant.get(sub.tenantId)?.has(sub) === true;
   const closeAll = () => {
     for (const set of [...byTenant.values()]) for (const sub of [...set]) sub.close();
   };
@@ -101,7 +108,7 @@ export function createRealtimeListener(deps: ListenerDeps): RealtimeListener {
     const mine = epoch;
     while (mine === epoch && pending.length > 0) {
       const eventId = pending.shift()!;
-      let planned: ReadonlyArray<readonly [RealtimeSubscriber, RealtimeFrame]>;
+      let planned: ReadonlyArray<readonly [RealtimeSubscriber<F>, F]>;
       try {
         planned = byTenant.size === 0 ? [] : await deps.plan(eventId, byTenant);
       } catch {
@@ -116,7 +123,7 @@ export function createRealtimeListener(deps: ListenerDeps): RealtimeListener {
 
   function attach(c: ListenClient): void {
     c.onNotification((channel, payload) => {
-      if (client !== c || channel !== REALTIME_CHANNEL) return;
+      if (client !== c || channel !== listenChannel) return;
       // Untrusted: any role may NOTIFY here. Never echo the payload (R-9).
       if (typeof payload !== "string" || !EVENT_ID_RE.test(payload)) {
         deps.log("realtime.notify.invalid_payload");
@@ -149,7 +156,7 @@ export function createRealtimeListener(deps: ListenerDeps): RealtimeListener {
       try {
         c = await deps.connect();
         attach(c);
-        await c.query(`LISTEN ${REALTIME_CHANNEL}`);
+        await c.query(`LISTEN ${listenChannel}`);
       } catch (error) {
         c?.release();
         backOff();
@@ -173,7 +180,7 @@ export function createRealtimeListener(deps: ListenerDeps): RealtimeListener {
       const count = perAccount.get(sub.accountId) ?? 0;
       if (count >= MAX_STREAMS_PER_ACCOUNT) return false;
       perAccount.set(sub.accountId, count + 1);
-      const set = byTenant.get(sub.tenantId) ?? new Set<RealtimeSubscriber>();
+      const set = byTenant.get(sub.tenantId) ?? new Set<RealtimeSubscriber<F>>();
       byTenant.set(sub.tenantId, set.add(sub));
       return true;
     },
@@ -221,6 +228,37 @@ export function realtimeListener(): RealtimeListener {
   return processListener;
 }
 
+/** NOTIFY channel of the chat topic: L14 emits a bare message id; L15 only LISTENs. */
+export const CHAT_REALTIME_CHANNEL = "chat_realtime";
+let chatListener: RealtimeListener<ChatFrame> | null = null;
+
+/**
+ * The process-wide chat listener: own LISTEN client, queue, backoff and MAX_STREAMS_PER_ACCOUNT
+ * cap, all apart from L5's. connect repeats L5's lines so that realtimeListener() stays as is.
+ */
+export function chatRealtimeListener(): RealtimeListener<ChatFrame> {
+  chatListener ??= createRealtimeListener<ChatFrame>({
+    async connect() {
+      const c = await appDb().pool.connect();
+      return {
+        query: (sql) => c.query(sql),
+        onNotification: (fn) => c.on("notification", (msg) => fn(msg.channel, msg.payload)),
+        onLost: (fn) => {
+          c.on("error", fn);
+          c.on("end", fn);
+        },
+        release: () => c.release(true),
+      };
+    },
+    channel: CHAT_REALTIME_CHANNEL,
+    plan: planChatDelivery,
+    now: Date.now,
+    random: Math.random,
+    log: (event, fields) => log.warn(event, { ...fields, topic: "chat" }),
+  });
+  return chatListener;
+}
+
 const encoder = new TextEncoder();
 
 /**
@@ -228,10 +266,15 @@ const encoder = new TextEncoder();
  * lifetime (R-11) and a 16-chunk queue whose overflow closes the stream (slow consumer, R-12).
  * Abort, cancel, revocation and errors run one idempotent cleanup. Null at the stream cap (R-7).
  */
-export function openRealtimeStream(
-  listener: RealtimeListener,
+export function openRealtimeStream<F = RealtimeFrame>(
+  listener: RealtimeListener<F>,
   audience: RealtimeAudience,
-  options: { recheck(audience: RealtimeAudience): Promise<boolean>; signal?: AbortSignal },
+  options: {
+    recheck(audience: RealtimeAudience): Promise<boolean>;
+    signal?: AbortSignal;
+  } & ([F] extends [RealtimeFrame]
+    ? { encode?: (frame: F) => string }
+    : { encode: (frame: F) => string }),
 ): ReadableStream<Uint8Array> | null {
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
   let closed = false;
@@ -256,9 +299,12 @@ export function openRealtimeStream(
     controller.enqueue(encoder.encode(text));
     if ((controller.desiredSize ?? 0) <= 0) finish();
   };
-  const subscriber: RealtimeSubscriber = {
+  // L5 frames by default; any other F (the chat topic's ChatFrame) must pass its own encoder: the
+  // options type requires one whenever F is not RealtimeFrame (B1 N1), so this cast holds.
+  const encode = (options.encode ?? encodeFrame) as (frame: F) => string;
+  const subscriber: RealtimeSubscriber<F> = {
     ...audience,
-    send: (frame) => write(encodeFrame(frame)),
+    send: (frame) => write(encode(frame)),
     close: finish,
   };
   const stream = new ReadableStream<Uint8Array>(
