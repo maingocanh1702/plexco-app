@@ -540,8 +540,10 @@ describe("POST /api/chat/channels/:id/messages (send)", () => {
   it("T6 a body over L14's 4000 characters or a request over the 64 KiB cap -> 413, no row", async () => {
     const c = await club();
     const a = await actor(c.t);
-    for (const body of ["x".repeat(4001), "x".repeat(64 * 1024)]) {
-      const r = await post(a, c.t, c.c, msg(body));
+    // The pad keeps the body under 4000 characters, so only the route's byte cap answers;
+    // unlisted fields are ignored, so without the cap this request is a 200.
+    for (const payload of [msg("x".repeat(4001)), { ...msg(), pad: "x".repeat(70_000) }]) {
+      const r = await post(a, c.t, c.c, payload);
       expect(r).toMatchObject({ status: 413, code: "CHAT_MESSAGE_TOO_LARGE" });
     }
     expect(await order(c)).toEqual([]);
@@ -852,8 +854,8 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
     const c = await club();
     const [a, b] = [await actor(c.t), await actor(c.t)];
     const m = await send(c, a, "orig");
-    for (const body of ["x".repeat(4001), "x".repeat(64 * 1024)]) {
-      const r = await mutate("PATCH", a, c, m.id, edit(body, 0));
+    for (const p of [edit("x".repeat(4001), 0), { ...edit("hi", 0), pad: "x".repeat(70_000) }]) {
+      const r = await mutate("PATCH", a, c, m.id, p);
       expect(r).toMatchObject({ status: 413, code: "CHAT_MESSAGE_TOO_LARGE" });
     }
     for (let i = 0; i < 30; i++) {
