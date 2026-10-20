@@ -154,12 +154,19 @@ async function send(t: string, channelId: string, a: Actor, body: string): Promi
 }
 
 // D2 S-3: a 10 s budget for every positive wait; a pass costs nothing (the race resolves on the read).
+// D2 S-1: one pending read per reader; a timed-out read is reused by the next call, never orphaned.
+const inFlight = new WeakMap<Reader, ReturnType<Reader["read"]>>();
 const next = async (reader: Reader, ms = 10_000) => {
-  const timeout = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), ms));
-  const read = reader
-    .read()
-    .then(({ done, value }) => (done ? "done" : new TextDecoder().decode(value)));
-  return Promise.race([read, timeout]);
+  const read = inFlight.get(reader) ?? reader.read();
+  inFlight.set(reader, read);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), ms);
+  });
+  const got = await Promise.race([read, timeout]).finally(() => clearTimeout(timer));
+  if (got === "timeout") return got;
+  inFlight.delete(reader);
+  return got.done ? "done" : new TextDecoder().decode(got.value);
 };
 
 const get = (a: Actor | null, tenant: string) => {
@@ -294,14 +301,18 @@ describe("GET /api/chat/subscribe (live stream)", () => {
     const [a, b] = [await actor(c.t), await actor(c.t)];
     vi.useFakeTimers({ toFake: ["setInterval"] }); // only the heartbeat; pg and next() stay real
     try {
-      const readerB = await stream(b, c.t);
+      // A (the sender, still a member) is the witness: the same event plans A's and B's frames.
+      const [readerB, readerA] = [await stream(b, c.t), await stream(a, c.t)];
       const before = await send(c.t, c.c, a, `s3 before ${randomUUID()}`);
       expect(await pushedId(readerB)).toBe(before); // control: B reads while a member
+      expect(await pushedId(readerA)).toBe(before);
       await ctx.owner.query(
         `UPDATE memberships SET status = 'left' WHERE tenant_id = $1 AND person_id = $2`,
         [c.t, b.personId],
       );
-      await send(c.t, c.c, a, `s3 after ${randomUUID()}`);
+      const after = await send(c.t, c.c, a, `s3 after ${randomUUID()}`);
+      expect(await pushedId(readerA)).toBe(after); // the event was planned and sent
+      // a planned B frame would already be queued (one synchronous send loop, realtime-listener.ts:119)
       expect(await next(readerB, 600)).toBe("timeout"); // the per-event read fails: dropped
       vi.advanceTimersByTime(HEARTBEAT_MS);
       expect(await next(readerB)).toBe("done");
