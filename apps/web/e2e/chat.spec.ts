@@ -217,7 +217,7 @@ test.describe("chat web UI (mocked API)", () => {
     expect(chat.callsTo("moderate")).toHaveLength(2); // the second press sent nothing
   });
 
-  test("plain member: the club workspace shows No access (no member chat entry yet)", async ({
+  test("plain member: the club workspace shows No access (members reach chat through /me)", async ({
     page,
   }) => {
     const urls: string[] = [];
