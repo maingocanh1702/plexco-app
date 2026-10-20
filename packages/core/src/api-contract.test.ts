@@ -7,10 +7,12 @@ import {
   type ApiEnvelope,
   type ApiError,
   type ChatChannelDto,
+  type ChatChannelListDto,
   type ChatLiveMessageDto,
   type ChatMessageDto,
   type ChatStreamFrame,
   type ChatTombstoneDto,
+  type ChatViewerDto,
   type JoinSessionResultDto,
   type PendingJoinRequestDto,
 } from "./api-contract.js";
@@ -337,6 +339,13 @@ describe("chat wire DTOs (M10)", () => {
     expectTypeOf<keyof ChatChannelDto>().toEqualTypeOf<
       "id" | "title" | "sortOrder" | "isDefault" | "postPolicy" | "unreadCount"
     >();
+  });
+
+  it("types the channel list as channels + the viewer's two boolean flags only (L15b, DD-56)", () => {
+    expectTypeOf<keyof ChatChannelListDto>().toEqualTypeOf<"channels" | "viewer">();
+    expectTypeOf<keyof ChatViewerDto>().toEqualTypeOf<"canModerate" | "canPostRestricted">();
+    expectTypeOf<ChatViewerDto["canModerate"]>().toEqualTypeOf<boolean>();
+    expectTypeOf<ChatViewerDto["canPostRestricted"]>().toEqualTypeOf<boolean>();
   });
 
   it("types a live message with mine + authorType and no person identifier (RO-L15-3 g)", () => {
