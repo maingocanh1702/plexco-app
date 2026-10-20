@@ -18,10 +18,15 @@ describe("parseZaloCommand", () => {
     ["me", "me"],
     ["/link", "link"],
     ["/me@PlexcoBot", "me"],
-    ["/join", "coming_soon"],
-    ["/pay", "coming_soon"],
-    ["/leave", "coming_soon"],
-    ["2", "coming_soon"],
+    ["/join", "join"],
+    ["JOIN@PlexcoBot later", "join"],
+    ["/pay", "pay"],
+    ["/leave", "leave"],
+    [" 2 ", "number"],
+    ["007", "number"],
+    ["1000", "unknown"],
+    ["1 abc", "unknown"],
+    [String.fromCharCode(0x0662), "unknown"],
     ["/link ABCD-EFGH", "link_code"],
     ["hello there", "unknown"],
     ["", "unknown"],
@@ -32,6 +37,11 @@ describe("parseZaloCommand", () => {
 
   it("is bounded: a huge message never produces a huge arg list", () => {
     expect(parseZaloCommand("/x " + "a ".repeat(100_000)).args.length).toBeLessThan(300);
+  });
+
+  it("P-5: carries the number token; P-4: player-command arguments are dropped", () => {
+    expect(parseZaloCommand(" 12 ")).toEqual({ kind: "number", name: "number", args: ["12"] });
+    expect(parseZaloCommand("/join tomorrow 7pm").args).toEqual([]);
   });
 });
 
@@ -96,12 +106,14 @@ describe("buildZaloReply", () => {
     expect(r).toContain("Settings");
   });
 
-  it("M9 commands and numbers reply coming-soon; unknown shows help", async () => {
-    expect(
-      await runWithLang("en", () => buildZaloReply(parseZaloCommand("/join"), deps())),
-    ).toContain("coming soon");
-    expect(
-      await runWithLang("en", () => buildZaloReply(parseZaloCommand("xyz"), deps())),
-    ).toContain("Available commands");
+  it("P-24: unknown shows the help text with /join, /leave and /pay", async () => {
+    const help = (lang: "vi" | "en") =>
+      runWithLang(lang, () => buildZaloReply(parseZaloCommand("xyz"), deps()));
+    expect(await help("vi")).toBe(
+      "Mình chưa hiểu lệnh này.\nLệnh có sẵn:\n/me - xem thông tin của bạn\n/link - liên kết tài khoản Plexco\n/join - tham gia buổi chơi\n/leave - rời buổi chơi\n/pay - xem số tiền cần trả",
+    );
+    expect(await help("en")).toBe(
+      "I did not understand that command.\nAvailable commands:\n/me - see your info\n/link - link your Plexco account\n/join - join a session\n/leave - leave a session\n/pay - see what you owe",
+    );
   });
 });

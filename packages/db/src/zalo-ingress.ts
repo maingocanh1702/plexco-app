@@ -1,13 +1,17 @@
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import type pg from "pg";
 import type { Db, Tx } from "./client.js";
 import {
   channelInboundEvents,
   onboardingRuns,
   onboardingSteps,
   processedCommands,
+  sessions,
   zaloBots,
 } from "../schema.js";
+import { OPEN_CHARGES_CAP } from "./me-player-reads.js";
 import { pgErrorChainText, pgErrorHasCode } from "./pg-error.js";
+import { isUuid } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -195,6 +199,150 @@ export async function resolveZaloIdentity(
     displayName: r.display_name,
     hasAccount: r.has_account,
   };
+}
+
+/**
+ * RC-1 (R1) link gate: ONE autocommit call of the merged read gate public.channel_identity_link_gate
+ * (0064), on the pool and never inside withTenant or a transaction, so the 0034 core's FOR SHARE
+ * locks end with the statement. Linked only for (true, <account uuid>); any other row or no row is
+ * not linked. A rejection (42501 included) or the P-27 timeout propagates: the one call site maps it
+ * to not linked. Never cached. A read gate for a message handler, NOT the DD-50 pay-later resolver:
+ * no money action rests on it.
+ */
+export async function resolveZaloLinkGate(
+  pool: pg.Pool,
+  channelIdentityId: string,
+): Promise<{ linked: boolean; accountRef: string | null }> {
+  // @types/pg declares query_timeout on ClientConfig only; pg reads it per query (lib/client.js).
+  const query: pg.QueryConfig & { query_timeout: number } = {
+    text: "SELECT linked, account_ref FROM public.channel_identity_link_gate($1::uuid)",
+    values: [channelIdentityId],
+    query_timeout: 2000, // P-27
+  };
+  const { rows } = await pool.query<{ linked: boolean | null; account_ref: string | null }>(query);
+  const r = rows[0];
+  return r?.linked === true && typeof r.account_ref === "string"
+    ? { linked: true, accountRef: r.account_ref }
+    : { linked: false, accountRef: null };
+}
+
+/**
+ * /pay context (4.6, P-17): this club's slug (tenant_profile_read, 0052) and the timezone and area of
+ * the given sessions, in ONE withTenant(tenantId) transaction. The sessions statement runs only for a
+ * non-empty sessionIds and filters on tenant_id on top of RLS, so another tenant's id is never
+ * returned. Ids are checked (UUIDs, at most OPEN_CHARGES_CAP) before any DB call; the error text
+ * carries no id. Reads no money, venue, name or bank column.
+ */
+export async function readZaloPayContext(
+  db: Db,
+  p: { tenantId: string; sessionIds: string[] },
+): Promise<{
+  slug: string | null;
+  sessions: Map<string, { timezone: string; area: string | null }>;
+}> {
+  if (p.sessionIds.length > OPEN_CHARGES_CAP || !p.sessionIds.every(isUuid))
+    throw new Error(`readZaloPayContext: sessionIds must be at most ${OPEN_CHARGES_CAP} UUIDs`);
+  return withTenant(db, p.tenantId, async (tx) => {
+    const profile = await tx.execute(
+      sql`SELECT slug FROM tenant_profile_read(${p.tenantId}::uuid)`,
+    );
+    const slug = (profile.rows[0] as { slug: string } | undefined)?.slug ?? null;
+    const rows =
+      p.sessionIds.length === 0
+        ? []
+        : await tx
+            .select({ id: sessions.id, timezone: sessions.timezone, area: sessions.area })
+            .from(sessions)
+            .where(and(eq(sessions.tenantId, p.tenantId), inArray(sessions.id, p.sessionIds)));
+    return {
+      slug,
+      sessions: new Map(rows.map((r) => [r.id, { timezone: r.timezone, area: r.area }])),
+    };
+  });
+}
+
+/**
+ * Reply-context store (4.3, P-7..P-9) on zalo_reply_contexts (0004; RLS and app grants 0009). Each
+ * call is its own withTenant(tenantId) with explicit tenant_id, bot_id and person_id filters (HR1),
+ * made only after the link gate said linked. item_ids (session uuids, display order) stay server-side.
+ * ponytail: no index beyond the PK and no retention (P-12, as DD-126 (5)); add an index on
+ * (tenant_id, bot_id, person_id) plus a sweep in a later migration lane if volume grows.
+ */
+type ZaloReplyContextKey = { tenantId: string; botId: string; personId: string };
+
+/** create (P-7, P-8): version = max + 1 per (tenant, bot, person) across both types; TTL 10 minutes. */
+export async function createZaloReplyContext(
+  db: Db,
+  p: ZaloReplyContextKey & { contextType: "join_list" | "leave_list"; itemIds: string[] },
+): Promise<{ id: string; version: number }> {
+  return withTenant(db, p.tenantId, async (tx) => {
+    const { rows } = await tx.execute(sql`
+      INSERT INTO zalo_reply_contexts
+             (person_id, tenant_id, bot_id, context_type, item_ids, version, expires_at)
+      SELECT ${p.personId}::uuid, ${p.tenantId}::uuid, ${p.botId}::uuid, ${p.contextType}::text,
+             ${JSON.stringify(p.itemIds)}::jsonb, coalesce(max(version), 0) + 1,
+             now() + interval '10 minutes'
+        FROM zalo_reply_contexts
+       WHERE tenant_id = ${p.tenantId} AND bot_id = ${p.botId} AND person_id = ${p.personId}
+      RETURNING id, version`);
+    return rows[0] as { id: string; version: number };
+  });
+}
+
+/** The latest row by (version, created_at, id); live = unconsumed and unexpired (4.3 latest rule). */
+export async function readLatestZaloReplyContext(
+  db: Db,
+  p: ZaloReplyContextKey,
+): Promise<{
+  id: string;
+  version: number;
+  contextType: string;
+  itemCount: number;
+  live: boolean;
+} | null> {
+  return withTenant(db, p.tenantId, async (tx) => {
+    const { rows } = await tx.execute(sql`
+      SELECT id, version, context_type, jsonb_array_length(item_ids) AS item_count,
+             consumed_at IS NULL AND expires_at > now() AS live
+        FROM zalo_reply_contexts
+       WHERE tenant_id = ${p.tenantId} AND bot_id = ${p.botId} AND person_id = ${p.personId}
+       ORDER BY version DESC, created_at DESC, id DESC
+       LIMIT 1`);
+    const r = rows[0] as
+      | { id: string; version: number; context_type: string; item_count: number; live: boolean }
+      | undefined;
+    return r
+      ? {
+          id: r.id,
+          version: r.version,
+          contextType: r.context_type,
+          itemCount: r.item_count,
+          live: r.live,
+        }
+      : null;
+  });
+}
+
+/**
+ * Single-use claim (P-9): the conditional UPDATE in its own withTenant, before joinSession or
+ * leaveSession. It re-checks consumed_at against the committed row, so concurrent claims consume at
+ * most once. null = lost race, consumed, expired or version-mismatched (the stale reply, zero
+ * mutation). The caller acts on item_ids[n-1] only if its re-read own list still has it, else R9.
+ */
+export async function claimZaloReplyContext(
+  db: Db,
+  p: ZaloReplyContextKey & { id: string; version: number },
+): Promise<{ contextType: string; itemIds: unknown[] } | null> {
+  return withTenant(db, p.tenantId, async (tx) => {
+    const { rows } = await tx.execute(sql`
+      UPDATE zalo_reply_contexts SET consumed_at = now()
+       WHERE tenant_id = ${p.tenantId} AND bot_id = ${p.botId} AND person_id = ${p.personId}
+         AND id = ${p.id} AND version = ${p.version}
+         AND consumed_at IS NULL AND expires_at > now()
+      RETURNING context_type, item_ids`);
+    const r = rows[0] as { context_type: string; item_ids: unknown[] } | undefined;
+    return r ? { contextType: r.context_type, itemIds: r.item_ids } : null;
+  });
 }
 
 /** Ciphertext of the bot token for the web process about to call Zalo (decrypt + audit are the caller's job). */

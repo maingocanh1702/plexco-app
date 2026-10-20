@@ -113,7 +113,7 @@ describe("DM gate (DD-126 / OD-2: only a 1:1 chat is served)", () => {
     } as const;
     // An empty handle: any DB/identity/Zalo step would throw instead of returning "ignored".
     const run = (chat: Record<string, unknown>) =>
-      processZaloEvent({ handle: {} as DbHandle, bot, event: ev(chat) });
+      processZaloEvent({ handle: {} as DbHandle, bot, event: ev(chat), externalEventId: "e" });
     await expect(run({ id: "g-1" })).resolves.toBe("ignored");
     await expect(run({ id: "u-7", chat_type: "GROUP" })).resolves.toBe("ignored");
   });

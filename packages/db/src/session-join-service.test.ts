@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { encryptPersonGender, type Gender } from "./gender-crypto.js";
@@ -6,7 +7,13 @@ import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession } from "./roster-service.js";
 import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
-import { hasLiveMembership, joinSession, leaveSession } from "./session-join-service.js";
+import {
+  hasLiveMembership,
+  joinSession,
+  leaveSession,
+  listOwnJoinableSessions,
+  listOwnLeavableSeats,
+} from "./session-join-service.js";
 import { getSessionOccupancy, slotsOpen } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
@@ -264,6 +271,27 @@ describe("joinSession", () => {
                      WHERE command_id IN (${seqId}, ${parId})) commands`,
       ),
     ).toEqual({ players: 2, charges: 2, events: 2, commands: 2 });
+  });
+
+  it("T-3/P-6 (L13): a Zalo redelivery joins again under the same derived command id (zalo: + keyed hex) -> one players row, one charge, one event, one processed command; the second call is replayed", async () => {
+    const { tenantId, sessionId } = await world();
+    const m = await seedMember(tenantId);
+    const commandId = "zalo:" + randomBytes(32).toString("hex");
+    const first = await join(tenantId, m.personId, sessionId, { commandId });
+    expect(first).toMatchObject({ outcome: "active", replayed: false });
+    expect(await join(tenantId, m.personId, sessionId, { commandId })).toEqual({
+      ...first,
+      replayed: true,
+    });
+    expect(
+      await appRow(
+        tenantId,
+        sql`SELECT (SELECT count(*)::int FROM players WHERE session_id = ${sessionId}) players,
+                   (SELECT count(*)::int FROM charges WHERE session_id = ${sessionId}) charges,
+                   (SELECT count(*)::int FROM outbox_events WHERE aggregate_id = ${sessionId}) events,
+                   (SELECT count(*)::int FROM processed_commands WHERE command_id = ${commandId}) commands`,
+      ),
+    ).toEqual({ players: 1, charges: 1, events: 1, commands: 1 });
   });
 
   it("A-3: the join re-derives under the session lock: a seat taken after a read showed slotsOpen 1 -> waitlisted; a session closed after the read -> SESSION_NOT_JOINABLE", async () => {
@@ -1036,4 +1064,158 @@ describe("joinSession and promotion derive the charge (DD-39 self_join, promotio
       ]);
     },
   );
+});
+
+/** Moves a session's start (ends 2 h later) through the owner: the list cases pin the order. */
+const setStart = (sessionId: string, at: Date) =>
+  ctx.owner.query(`UPDATE sessions SET starts_at = $2, ends_at = $3 WHERE id = $1`, [
+    sessionId,
+    at,
+    new Date(at.getTime() + 2 * 3600 * 1000),
+  ]);
+const daysAhead = (n: number) => new Date(Date.now() + n * 24 * 3600 * 1000);
+const joinable = (tenantId: string, personId: string) =>
+  listOwnJoinableSessions(ctx.appDb.db, { tenantId, personId });
+
+describe("listOwnJoinableSessions (L13 /join list, RC-3, P-10)", () => {
+  it("T-6/P-10: open future sessions of this club, public for a guest and all for an active member, by starts_at, five keys only (no venue, no amount); a non-member, a left member, a non-UUID person and another club get { member: false }; zero writes", async () => {
+    const tenantId = await fx.seedTenant();
+    const active = await seedMember(tenantId);
+    const guest = await seedMember(tenantId, "guest");
+    const left = await seedMember(tenantId, "left");
+    const outsider = await fx.seedPerson(`Outsider ${nextCommandId()}`);
+    const [d1, d2, d3] = [daysAhead(1), daysAhead(2), daysAhead(3)];
+    const pub = await fx.seedSession(tenantId);
+    await makePublic(pub);
+    await setStart(pub, d1);
+    const full = await fx.seedSession(tenantId, { slotsMax: 1 });
+    await setStart(full, d2);
+    await join(tenantId, (await seedMember(tenantId)).personId, full);
+    const unlimited = await fx.seedSession(tenantId, { slotsMax: null });
+    await setStart(unlimited, d3);
+    await makeStarted(await fx.seedSession(tenantId));
+    await makeClosed(await fx.seedSession(tenantId));
+    await fx.seedSession(tenantId, { status: "draft" });
+    const tenantB = await fx.seedTenant();
+    await fx.seedSession(tenantB);
+    const item = (sessionId: string, at: Date, open: number | null) => ({
+      sessionId,
+      startsAt: at.toISOString(),
+      timezone: "Asia/Ho_Chi_Minh",
+      area: "Quan 1",
+      slotsOpen: open,
+    });
+    const before = await state(tenantId);
+
+    expect(await joinable(tenantId, active.personId)).toEqual({
+      member: true,
+      sessions: [item(pub, d1, 8), item(full, d2, 0), item(unlimited, d3, null)],
+    });
+    expect(await joinable(tenantId, guest.personId)).toEqual({
+      member: true,
+      sessions: [item(pub, d1, 8)],
+    });
+    for (const personId of [left.personId, outsider, "not-a-uuid"]) {
+      expect(await joinable(tenantId, personId)).toEqual({ member: false });
+    }
+    expect(await joinable(tenantB, active.personId)).toEqual({ member: false });
+    expect(await state(tenantId)).toEqual(before);
+  });
+
+  it("P-10/RC-3: at most 10 rows (the caller shows 9; a 10th adds the 'more' line); equal starts_at order by id", async () => {
+    const tenantId = await fx.seedTenant();
+    const member = await seedMember(tenantId);
+    const at = daysAhead(1);
+    const ids: string[] = [];
+    for (let i = 0; i < 11; i++) {
+      const id = await fx.seedSession(tenantId);
+      await setStart(id, at);
+      ids.push(id);
+    }
+    const result = await joinable(tenantId, member.personId);
+    expect(result.member && result.sessions.map((s) => s.sessionId)).toEqual(
+      ids.sort().slice(0, 10),
+    );
+  });
+});
+
+const leavable = (tenantId: string, personId: string) =>
+  listOwnLeavableSeats(ctx.appDb.db, { tenantId, personId });
+
+describe("listOwnLeavableSeats (L13 /leave list, RC-3, P-13)", () => {
+  it("T-9/P-13: only the caller's own active and waitlisted seats in open future sessions of this club, by starts_at, six keys only (no amount, no venue); left, started, another person's and another club's seats are not listed; no seat, a left member, a non-member and a non-UUID person get []; zero writes", async () => {
+    const tenantId = await fx.seedTenant();
+    const a = await seedMember(tenantId);
+    const b = await seedMember(tenantId);
+    const [d1, d2] = [daysAhead(1), daysAhead(2)];
+    const s1 = await fx.seedSession(tenantId);
+    await setStart(s1, d2);
+    await join(tenantId, b.personId, s1);
+    await join(tenantId, a.personId, s1);
+    const s2 = await fx.seedSession(tenantId, { slotsMax: 1 });
+    await setStart(s2, d1);
+    await join(tenantId, (await seedMember(tenantId)).personId, s2);
+    const waiting = await join(tenantId, a.personId, s2);
+    expect(waiting.outcome).toBe("waitlisted");
+    const s3 = await fx.seedSession(tenantId);
+    await join(tenantId, a.personId, s3);
+    await leave(tenantId, a.personId, s3);
+    const s4 = await fx.seedSession(tenantId);
+    await join(tenantId, a.personId, s4);
+    await makeStarted(s4);
+    const tenantB = await fx.seedTenant();
+    await fx.row(
+      `INSERT INTO memberships (tenant_id, person_id, display_name, status)
+       VALUES ($1, $2, 'A in B', 'active') RETURNING id`,
+      [tenantB, a.personId],
+    );
+    const sB = await fx.seedSession(tenantB);
+    await setStart(sB, d1);
+    await join(tenantB, a.personId, sB);
+    const idle = await seedMember(tenantId);
+    const left = await seedMember(tenantId, "left");
+    const outsider = await fx.seedPerson(`Outsider ${nextCommandId()}`);
+    const seat = (
+      sessionId: string,
+      at: Date,
+      status: string,
+      waitlistPosition: number | null,
+    ) => ({
+      sessionId,
+      startsAt: at.toISOString(),
+      timezone: "Asia/Ho_Chi_Minh",
+      area: "Quan 1",
+      status,
+      waitlistPosition,
+    });
+    const before = await state(tenantId);
+
+    expect(await leavable(tenantId, a.personId)).toEqual([
+      seat(s2, d1, "waitlisted", waiting.waitlistPosition),
+      seat(s1, d2, "active", null),
+    ]);
+    expect(waiting.waitlistPosition).toEqual(expect.any(Number));
+    expect(await leavable(tenantId, b.personId)).toEqual([seat(s1, d2, "active", null)]);
+    expect(await leavable(tenantB, a.personId)).toEqual([seat(sB, d1, "active", null)]);
+    for (const personId of [idle.personId, left.personId, outsider, "not-a-uuid"]) {
+      expect(await leavable(tenantId, personId)).toEqual([]);
+    }
+    expect(await state(tenantId)).toEqual(before);
+  });
+
+  it("P-13/RC-3: at most 10 rows (the caller shows 9; a 10th adds the 'more' line); equal starts_at order by session id", async () => {
+    const tenantId = await fx.seedTenant();
+    const member = await seedMember(tenantId);
+    const at = daysAhead(1);
+    const ids: string[] = [];
+    for (let i = 0; i < 11; i++) {
+      const id = await fx.seedSession(tenantId);
+      await setStart(id, at);
+      await join(tenantId, member.personId, id);
+      ids.push(id);
+    }
+    expect((await leavable(tenantId, member.personId)).map((s) => s.sessionId)).toEqual(
+      ids.sort().slice(0, 10),
+    );
+  });
 });

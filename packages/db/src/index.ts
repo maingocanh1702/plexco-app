@@ -40,14 +40,19 @@ export {
   ZaloConnectError,
   appendSecretDecryptAudit,
   beginZaloConnect,
+  claimZaloReplyContext,
+  createZaloReplyContext,
   finishInboundEvent,
   finishZaloConnect,
   getZaloOnboardingState,
   markBotVerifiedActive,
   probeZaloConnectReplay,
+  readLatestZaloReplyContext,
   readZaloBotTokenEnc,
+  readZaloPayContext,
   resolveZaloBotByToken,
   resolveZaloIdentity,
+  resolveZaloLinkGate,
   storeInboundEvent,
   type BeginZaloConnectResult,
   type ZaloBotRef,
@@ -96,6 +101,13 @@ export {
   type JoinSessionResult,
   type LeaveSessionParams,
   type LeaveSessionResult,
+  // L13 (M9): the Zalo /join numbered list (RC-3).
+  listOwnJoinableSessions,
+  type JoinableSession,
+  type JoinableSessionsResult,
+  // L13 (M9): the Zalo /leave numbered list (RC-3, P-13).
+  listOwnLeavableSeats,
+  type LeavableSeat,
 } from "./session-join-service.js";
 // L8 (M9): join requests on approval sessions (openJoinRequest stays internal to joinSession).
 export {
