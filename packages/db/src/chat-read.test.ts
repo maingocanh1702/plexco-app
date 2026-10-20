@@ -355,9 +355,11 @@ describe("0065 chat_list_messages author_label (L15a decision table)", () => {
     );
     expect(res.rowCount).toBe(1);
   };
-  /** p's read of the channel's whole history (oldest first) and its id -> author_label map. */
+  /** p's read of the channel's whole history in both directions (they must agree) and its id -> author_label map. */
   const page = async (c: Club, p: string) => {
     const rows = (await read(as(c, p), LIST, [c.c, null, null, "after", 100])) as Labelled[];
+    const desc = (await read(as(c, p), LIST, [c.c, null, null, "before", 100])) as Labelled[];
+    expect(desc).toEqual([...rows].reverse()); // the 'before' branch (the default, newest first) must label every row the same way
     return { rows, label: Object.fromEntries(rows.map((r) => [r.id, r.author_label])) };
   };
 
