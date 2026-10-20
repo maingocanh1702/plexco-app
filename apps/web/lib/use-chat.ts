@@ -176,7 +176,10 @@ export function refreshChannels(tenantId: string): void {
  * control and the quiet refetch (no loading flash while a list is showing). Live runs only while
  * the list is shown without an error row, so a refused round stops the stream.
  */
-export function useChatChannels(tenantId: string): ChannelsView & { refresh(): Promise<void> } {
+export function useChatChannels(
+  tenantId: string,
+  { live: follow = true }: { live?: boolean } = {},
+): ChannelsView & { refresh(): Promise<void> } {
   const t = useT();
   const [view, setView] = useState<ChannelsView>(LOADING);
   const [stale] = useState(createStaleChannels);
@@ -205,7 +208,7 @@ export function useChatChannels(tenantId: string): ChannelsView & { refresh(): P
     };
   }, [tenantId, refresh]);
 
-  const live = (view.state === "ready" || view.state === "empty") && view.error === null;
+  const live = follow && (view.state === "ready" || view.state === "empty") && view.error === null;
   useRealtime(
     tenantId,
     live,
@@ -416,17 +419,17 @@ export async function readThrough(
   visible: boolean,
   rs: ReadState,
   now: () => number,
-): Promise<boolean> {
-  if (!visible || id === rs.lastId || rs.busy) return false;
+): Promise<"read" | "failed" | "skip"> {
+  if (!visible || id === rs.lastId || rs.busy) return "skip";
   rs.busy = true;
   const result = await markRead(ctx, channelId, id);
   rs.busy = false;
   const paused = !result.ok && liveRoundEffect(result) === "pause";
   rs.nextAt = now() + (paused ? LIVE_PAUSE_MS : READ_GAP_MS);
-  if (!result.ok) return false;
+  if (!result.ok) return liveRoundEffect(result) === "off" ? "skip" : "failed";
   rs.lastId = id;
   refreshChannels(ctx.tenantId);
-  return true;
+  return "read";
 }
 
 /** The channel view: keyset history, optimistic send, edit, delete, read cursor and live refetch. */
@@ -436,7 +439,7 @@ export function useChatChannel(tenantId: string, channelId: string) {
   const [view, setView] = useState<ChannelState>(CHANNEL_LOADING);
   const [stale] = useState(createStaleChannels);
   const [visible, setVisible] = useState(false);
-  const [readTick, setReadTick] = useState(0); // bumped after a 200 read so a newer newest id follows
+  const [readTick, setReadTick] = useState(0); // bumped after a 200 or failed read: re-arms at nextAt
   const epoch = useRef(0); // bumped on unmount and channel change: a late answer is dropped
   const sending = useRef(new Set<string>()); // clientMsgIds in flight: no double send on a retry
   const read = useRef<ReadState>({ lastId: null, nextAt: 0, busy: false });
@@ -475,6 +478,11 @@ export function useChatChannel(tenantId: string, channelId: string) {
     if (cursor === null) return null;
     const apply = bound();
     const result = await listHistory(tenantId, channelId, cursor);
+    if (!result.ok && liveRoundEffect(result) === "off") {
+      // 5.2.1: a final refusal takes the screen's own row (error, live off), as the first load does
+      apply((s) => historyView(result, latest.current.t, "history", s));
+      return null;
+    }
     if (!result.ok) return failure("history", result, latest.current.t);
     apply((s) => appendOlder(s, result.data));
     return null;
@@ -559,7 +567,7 @@ export function useChatChannel(tenantId: string, channelId: string) {
     const wait = Math.max(0, read.current.nextAt - Date.now());
     const timer = setTimeout(() => {
       const done = readThrough(ctx(), channelId, newestId, visible, read.current, Date.now);
-      void done.then((moved) => moved && setReadTick((n) => n + 1));
+      void done.then((outcome) => outcome !== "skip" && setReadTick((n) => n + 1));
     }, wait);
     return () => clearTimeout(timer);
   }, [newestId, visible, view.messages, readTick, ctx, channelId]);

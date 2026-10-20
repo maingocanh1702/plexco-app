@@ -13,9 +13,10 @@ import { tenantQuery, type SessionApiContext } from "./sessions-api";
  *
  * A call never throws. It answers {ok: true, data} or {ok: false, code, status}. `code` is the
  * envelope's error code verbatim (the server's text is dropped: a screen renders its own t(vi, en)
- * per code). Anything that is not a well-formed answer fails closed: a network failure or the 15 s
- * timeout is CLIENT_NETWORK_ERROR (status 0); an unparseable body, a non-envelope answer, a missing
+ * per code). Anything that is not a well-formed answer fails closed: a network failure is
+ * CLIENT_NETWORK_ERROR (status 0); an unparseable body, a non-envelope answer, a missing
  * or non-string code, or a DTO with an unexpected key or type is CLIENT_BAD_RESPONSE.
+ * The 15 s timeout is CLIENT_BAD_RESPONSE too, with status 0: a stalled server is not offline.
  *
  * The DTO guards are exact: a row with any key or type beyond the merged contract rejects the whole
  * answer, and a tombstone is exactly its four keys. A rejected answer carries no row content.
@@ -135,18 +136,16 @@ async function request<T>(
   init: ApiFetchInit = {},
   narrow: (body: unknown) => unknown = (body) => body,
 ): Promise<ChatResult<T>> {
+  const signal = AbortSignal.timeout(TIMEOUT_MS);
   try {
-    const raw = await apiFetch<unknown>(path, {
-      ...init,
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
+    const raw = await apiFetch<unknown>(path, { ...init, signal });
     const data = narrow(raw);
     // status 200: the server answered 2xx, but with a body of the wrong shape
     return matches(data, spec)
       ? { ok: true, data }
       : { ok: false, code: CLIENT_BAD_RESPONSE, status: 200 };
   } catch (error) {
-    if (!(error instanceof ApiClientError))
+    if (signal.aborted || !(error instanceof ApiClientError))
       return { ok: false, code: CLIENT_BAD_RESPONSE, status: 0 };
     const { code, statusCode } = error;
     return {

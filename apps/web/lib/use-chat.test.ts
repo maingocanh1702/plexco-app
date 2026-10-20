@@ -139,7 +139,7 @@ describe("channel list live round", () => {
   it.each(["AUTH_REQUIRED", "CHAT_FORBIDDEN", "TENANT_SUSPENDED"])(
     "%s turns live off: the round shows that code's row",
     async (code) => {
-      vi.mocked(listChannels).mockResolvedValue(fail(code, 403));
+      vi.mocked(listChannels).mockResolvedValue(fail(code, code === "AUTH_REQUIRED" ? 401 : 403));
       const { stale, applied, run } = setup();
       stale.accept(event());
       expect(await run()).toBe(false);
@@ -257,23 +257,26 @@ describe("channel view: send, edit, read cursor and live rounds", () => {
     [true, {}, 1],
   ])("markRead on a visible=%s tab with %j sends %i call(s)", async (visible, over, calls) => {
     vi.mocked(markRead).mockResolvedValue({ ok: true, data: {} });
-    await readThrough(call.ctx, CH, M1, visible, rs(over), () => 0);
+    const outcome = await readThrough(call.ctx, CH, M1, visible, rs(over), () => 0);
+    expect(outcome).toBe(calls === 0 ? "skip" : "read");
     expect(markRead).toHaveBeenCalledTimes(calls);
   });
 
   it.each([
-    [{ ok: true as const, data: {} }, M1, 1, READ_GAP_MS],
-    [fail("CHAT_RATE_LIMITED", 429), null, 0, LIVE_PAUSE_MS],
-    [fail("NOT_FOUND", 404), null, 0, READ_GAP_MS],
+    [{ ok: true as const, data: {} }, M1, 1, READ_GAP_MS, "read"],
+    [fail("CHAT_RATE_LIMITED", 429), null, 0, LIVE_PAUSE_MS, "failed"],
+    [fail("NOT_FOUND", 404), null, 0, READ_GAP_MS, "failed"],
+    [fail("CHAT_FORBIDDEN", 403), null, 0, READ_GAP_MS, "skip"],
   ])(
     "markRead outcome %j: cursor %s, %i list refresh(es), wait %i",
-    async (result, lastId, refreshes, wait) => {
+    async (result, lastId, refreshes, wait, outcome) => {
       vi.mocked(markRead).mockResolvedValue(result);
       const refresh = vi.fn();
       const off = onChannelsRefresh(T, refresh);
       const state = rs();
-      await readThrough(call.ctx, CH, M1, true, state, () => 1000);
+      const got = await readThrough(call.ctx, CH, M1, true, state, () => 1000);
       off();
+      expect(got).toBe(outcome);
       expect(state).toEqual({ lastId, nextAt: 1000 + wait, busy: false });
       expect(refresh).toHaveBeenCalledTimes(refreshes);
     },

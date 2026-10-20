@@ -18,7 +18,8 @@ export function ChannelView({ tenantId, channelId }: { tenantId: string; channel
     chat;
   const [replyTo, setReplyTo] = useState<string | null>(null); // a row's Reply, until sent or cancelled
   // Title and post policy come from the channel list by id; nothing is kept in a URL, storage or module cache.
-  const channel = useChatChannels(tenantId).channels.find((c) => c.id === channelId);
+  const { channels } = useChatChannels(tenantId, { live: false });
+  const channel = channels.find((c) => c.id === channelId);
   const [olderError, setOlderError] = useState<ChatListError | null>(null);
   const empty = t("Chưa có tin nhắn nào.", "No messages yet.");
   const notice = error?.message || (state === "empty" ? empty : "");

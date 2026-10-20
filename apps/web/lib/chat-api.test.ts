@@ -298,7 +298,7 @@ describe("chat api fails closed", () => {
     }
   });
 
-  it.each(CALLS)("$name: gives up after 15 s as CLIENT_NETWORK_ERROR", async ({ run }) => {
+  it.each(CALLS)("$name: a 15 s timeout is CLIENT_BAD_RESPONSE, status 0", async ({ run }) => {
     const clock = new AbortController();
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(clock.signal);
     const fn = stub(
@@ -309,7 +309,7 @@ describe("chat api fails closed", () => {
           );
         }),
     );
-    const settled = expect(run()).resolves.toStrictEqual(failed(CLIENT_NETWORK_ERROR, 0));
+    const settled = expect(run()).resolves.toStrictEqual(bad(0));
     expect(timeout).toHaveBeenCalledWith(15_000);
     expect(sent(fn).signal).toBe(clock.signal);
     clock.abort();
