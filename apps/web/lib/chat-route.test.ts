@@ -7,6 +7,7 @@ import {
   chatForbidden,
   decodeChatCursor,
   encodeChatCursor,
+  invalidBody,
   mapChatError,
   parseChatLimit,
   toWireTimestamp,
@@ -141,5 +142,18 @@ describe("mapChatError (readiness 4.4)", () => {
     expect(mapChatError(new ChatCommandError("CHAT_DUP_MESSAGE"))).toBeNull();
     expect(mapChatError(new Error("CHAT_DB_ERROR:23505"))).toBeNull();
     expect(mapChatError("CHAT_FORBIDDEN")).toBeNull();
+  });
+});
+
+describe("invalidBody (A N-3)", () => {
+  it("answers in the language passed, else in the ambient one", async () => {
+    const passed = runWithLang("en", () => invalidBody("vi"));
+    expect((await shape(passed)).error).toMatchObject({ message: "Dữ liệu không hợp lệ." });
+    const ambient = runWithLang("en", () => invalidBody());
+    expect(await shape(ambient)).toMatchObject({
+      status: 400,
+      cache: "no-store",
+      error: { code: "INVALID_BODY", message: "Invalid payload." },
+    });
   });
 });

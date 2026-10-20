@@ -62,8 +62,10 @@ export function chatRateLimited(): Response {
   return err("CHAT_RATE_LIMITED", t(...RATE_LIMITED_PAIR), 429);
 }
 
-export function invalidBody(): Response {
-  return err("INVALID_BODY", t(...INVALID_PAIR), 400);
+/** In the ambient language; a route-level check after chatGate passes g.lang (DD-118, A N-3). */
+export function invalidBody(lang?: Lang): Response {
+  const res = () => err("INVALID_BODY", t(...INVALID_PAIR), 400);
+  return lang === undefined ? res() : runWithLang(lang, res);
 }
 
 /** A lowercase uuid or null: path ids and every body id (note 30: a 400, never a DB 500). */

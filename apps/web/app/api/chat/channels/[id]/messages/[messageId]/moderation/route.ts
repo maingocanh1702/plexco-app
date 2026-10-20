@@ -18,7 +18,7 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
     typeof reasonCode !== "string" ||
     (reasonNote !== null && typeof reasonNote !== "string")
   ) {
-    return invalidBody();
+    return invalidBody(g.lang);
   }
   const input = { ...g.ids, commandId, action, reasonCode, reasonNote } as const;
   return runChat(g, async (tx) => {

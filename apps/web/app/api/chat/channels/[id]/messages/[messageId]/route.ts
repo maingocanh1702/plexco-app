@@ -17,7 +17,7 @@ export async function PATCH(request: Request, { params }: Params): Promise<Respo
   if (g instanceof Response) return g;
   const { body, expectedEditCount: n } = g.body!;
   const count = typeof n === "number" && Number.isInteger(n) && n >= 0 && n < 2 ** 31 ? n : null;
-  if (typeof body !== "string" || count === null) return invalidBody();
+  if (typeof body !== "string" || count === null) return invalidBody(g.lang);
   return runChat(g, async (tx) => {
     const r = await editChatMessage(tx, { ...g.ids, body, expectedEditCount: count });
     // 0063: an identical body on a never-edited message is a no-op whose edited_at is NULL

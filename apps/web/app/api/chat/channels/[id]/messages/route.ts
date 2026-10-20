@@ -49,7 +49,7 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
   const clientMsgId = uuidOrNull(rawId);
   const replyToMessageId = reply === null ? null : uuidOrNull(reply);
   if (!clientMsgId || typeof body !== "string" || (reply !== null && !replyToMessageId)) {
-    return invalidBody();
+    return invalidBody(g.lang);
   }
   return runChat(g, async (tx) => {
     const input = { channelId: g.ids.id, clientMsgId, body, replyToMessageId };

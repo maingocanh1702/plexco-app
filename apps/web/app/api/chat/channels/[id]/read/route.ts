@@ -10,7 +10,7 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
   const g = await chatGate(request, { ids: { id: (await params).id }, json: true, read: true });
   if (g instanceof Response) return g;
   const throughMessageId = uuidOrNull(g.body!.throughMessageId);
-  if (!throughMessageId) return invalidBody();
+  if (!throughMessageId) return invalidBody(g.lang);
   return runChat(g, async (tx) => {
     await markChatRead(tx, { channelId: g.ids.id, throughMessageId });
     return ok({});
