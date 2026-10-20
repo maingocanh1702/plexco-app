@@ -121,7 +121,7 @@
   packages/db/src/index.ts:156 named export list gains the type; route.ts toDto takes ChatMessageListRow and `live` gains
   `authorLabel`; api-contract.ts ChatLiveMessageDto gains `authorLabel: string | null` (doc line). ChatTombstoneDto unchanged.
 
-### 4.4 Threat model (the L15a lane block THREAT MODEL; the 0065 header states the same)
+### 4.4 Threat model (the L15a lane block THREAT MODEL; the 0065 header carries it too)
 
 Defended, each by the mechanism named (tests are the section 7 rows):
 
@@ -136,7 +136,7 @@ Defended, each by the mechanism named (tests are the section 7 rows):
    the send).
 4. A label carrying more PII than the club display name: the only source is `memberships.display_name` (the one new
    column grant), btrim'd and cut to 120 characters; no id is added to the result (T1, T7, T11); persons is never read
-   (checked by the round-1 security review).
+   (sections 4.1 and 9).
 5. A name leaking through a tombstoned (deleted or hidden) message: the label follows the body, NULL whenever the body is
    NULL; a restored row is labelled again (T5).
 
@@ -147,7 +147,8 @@ Not defended:
   club already see each other's names in the roster and in Zalo).
 
 Residual, carried forward (not a claim of this lane): bidirectional and control characters stored in a display_name can
-reach the label (the writers bound length only; L-3, O-2); L16 renders authorLabel isolated (bdi or dir="auto").
+reach the label (neither the writers nor the function strip them; L-3, O-2); it is L16's choice to render the label
+isolated (bdi or dir="auto").
 
 ## 5. Decisions (a)-(h)
 - (a) Join by the channel's tenant + author_person_id, status 'active', through memberships_active_person_unique. Why: a
