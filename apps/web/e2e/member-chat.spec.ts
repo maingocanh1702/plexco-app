@@ -25,8 +25,9 @@ async function stubContext(page: Page, failures: number[]) {
     const slug = new URL(route.request().url()).pathname.split("/")[4] ?? "";
     slugs.push(slug);
     const status = failures.shift() ?? (slug === SLUG ? 200 : 404);
-    const body = status === 500 ? "" : status === 200 ? GRANT : DENY; // the real 500 has no body
     const headers = { "cache-control": "private, no-store" };
+    if (status === 500) return route.fulfill({ status, headers }); // the real 500: no body, no content-type
+    const body = status === 200 ? GRANT : DENY;
     return route.fulfill({ status, body, headers, contentType: "application/json" });
   });
   return slugs;
@@ -79,13 +80,17 @@ test("ME-4 live: a stream frame refetches the history, renders nothing", async (
   await expect(rows(page)).toHaveCount(2);
   const history = () => chat.callsTo("history").length;
   await expect.poll(history).toBe(2); // the load and the stream-open refetch are done
+  const streamed = chat.stream.urls.map((url) => new URL(url).searchParams.get("tenant"));
+  expect(new Set(streamed)).toEqual(new Set([TENANT_ID])); // the SSE subscribe is not in chat.calls
   const fresh = mock.message({ id: mock.MESSAGE_ID.live, body: "Mình ra sân rồi nhé" });
-  chat.reply("history", ok({ messages: [fresh, mock.message()], nextCursor: null }));
+  const own = mock.message({ id: mock.MESSAGE_ID.mine, mine: true }); // the load's second row
+  chat.reply("history", ok({ messages: [fresh, mock.message(), own], nextCursor: null }));
   // the frame names an id the refetched page does not hold: a row can only come from the page
   const messageId = mock.MESSAGE_ID.sent;
   await chat.stream.push({ type: "chat.message", channelId: mock.CHANNEL_ID, messageId });
   await expect.poll(history).toBe(3);
   await expect(page.getByText(fresh.body)).toBeVisible();
+  await expect(rows(page)).toHaveCount(3); // the three fetched rows, none from the frame itself
 });
 
 for (const slug of ["club-e2e-2", "no-such-club"]) {
@@ -110,11 +115,12 @@ test("ME-5 error: ONE 500 shows Retry; Retry reads again and the list loads", as
 });
 
 test("ME-6 privacy: no tenant id, label or chat text leaks anywhere", async ({ page }) => {
-  const logged: string[] = []; // console text only: the chat API URLs carry ?tenant= by design
+  const logged: string[] = []; // console text and request URLs, searched like the caches
   const urls: string[] = [];
   page.on("console", (entry) => logged.push(entry.text()));
   page.on("framenavigated", (frame) => urls.push(frame.url()));
-  const { chat } = await open(page, ROOT);
+  const { chat, requests } = await open(page, "/me/clubs"); // the club label is on this page
+  await club(page, CLUB_LABEL).getByRole("link", { name: "Chat", exact: true }).click();
   await page.getByRole("link", { name: mock.TITLE.general }).click();
   await expect(page).toHaveURL(VIEW);
   const worker = () =>
@@ -138,6 +144,12 @@ test("ME-6 privacy: no tenant id, label or chat text leaks anywhere", async ({ p
     return { names, entries, where: `${location.href}\n${JSON.stringify(history.state)}` };
   });
   expect(await page.evaluate(async () => (await indexedDB.databases()).length)).toBe(0);
+  expect(entries.map(([url]) => new URL(url).pathname)).toContain("/offline"); // control: not vacuous
+  // the chat API's own request URLs carry ?tenant=<uuid> by design (as on /c/**): cut there only
+  for (const url of requests) {
+    const bare = new URL(url).pathname.startsWith("/api/chat/") ? url.replace(TENANT_ID, "") : url;
+    logged.push(bare, ...new URL(bare).searchParams.values()); // the query values, decoded
+  }
   expect(urls.filter((url) => url.includes("?"))).toEqual([]); // the slug and channel id only
   const named = [...names, ...entries.map(([url]) => url)];
   expect(named.filter((name) => /\/api\/(chat|me)\//.test(name))).toEqual([]);

@@ -443,7 +443,7 @@ test("chat golden path: two members chat live, the unread badge advances and cle
 });
 
 const MEMBER_CHAT_NOT_RUN =
-  "MEMBER CHAT GOLDEN PATH NOT RUN: the seeded player is not a Dev Club member (readiness O-5)";
+  "MEMBER CHAT GOLDEN PATH NOT RUN: the seeded player is not a Dev Club member (L12 readiness O-5)";
 
 test("member chat golden path: member and admin chat live", async ({ page, browser }) => {
   const run = Date.now().toString(36);
@@ -456,14 +456,13 @@ test("member chat golden path: member and admin chat live", async ({ page, brows
     const member = await memberContext.newPage();
     await signInAsPersona(member, /Người chơi/);
     await member.goto("/me/clubs");
-    await expect(member.locator("main[data-state]")).toHaveAttribute(
-      "data-state",
-      /^(ready|empty|error|offline)$/,
-    );
+    const main = member.locator("main[data-state]");
+    await expect(main).toHaveAttribute("data-state", /^(ready|empty|error|offline)$/);
+    expect(await main.getAttribute("data-state"), "/me/clubs settled").toMatch(/^(ready|empty)$/);
     const club = member.getByRole("listitem").filter({ hasText: "Dev Club" });
     const devClub = club.filter({ hasText: "Thành viên" });
     const isMember = (await devClub.count()) > 0;
-    // Binary pre-check as the player leg (readiness O-5): the seed is not edited, the leg is NOT RUN.
+    // Binary pre-check as the player leg (L12 readiness O-5): no seed edit, the leg is NOT RUN.
     if (!isMember) console.log(MEMBER_CHAT_NOT_RUN);
     test.skip(!isMember, MEMBER_CHAT_NOT_RUN);
 
@@ -474,7 +473,12 @@ test("member chat golden path: member and admin chat live", async ({ page, brows
     await expect(channel(member)).toHaveAttribute("href", /^\/me\/clubs\/dev-club\/chat\/[^/]+$/);
     await channel(member).click();
     await page.goto(`/c/${tenantId}/chat`);
+    let reads = 0; // the admin view's history GETs: the load and the stream-open refetch (as ME-4)
+    page.on("response", (res) => {
+      if (res.request().method() === "GET" && res.url().includes("/messages?")) reads += 1;
+    });
     await channel(page).click();
+    await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThanOrEqual(2); // admin view live
     const log = (p: typeof page) => p.getByRole("log").getByRole("listitem");
     const send = async (p: typeof page, text: string) => {
       await p.getByRole("textbox", { name: "Tin nhắn", exact: true }).fill(text);
