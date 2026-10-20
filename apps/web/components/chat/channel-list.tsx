@@ -10,7 +10,7 @@ import styles from "./channel-list.module.css";
 // The default channel title seeded by migration 0063; only this exact text is localised (DF-8).
 const SEED_TITLE = "Kênh chung";
 
-function channelTitle({ isDefault, title }: ChatChannelDto, t: TFn): string {
+export function channelTitle({ isDefault, title }: ChatChannelDto, t: TFn): string {
   return isDefault && title === SEED_TITLE ? t("Kênh chung", "General") : title;
 }
 

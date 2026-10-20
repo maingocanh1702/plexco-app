@@ -17,6 +17,7 @@ export interface MessageListProps {
   hasOlder: boolean;
   onLoadOlder: () => void;
   olderError: ChatListError | null;
+  labelledBy?: string; // id of the heading that names the log
 }
 
 /** Chronological chat log: older-page control, DF-1 labels, tombstones, reply quotes; no actions. */
@@ -26,6 +27,7 @@ export function MessageList({
   hasOlder,
   onLoadOlder,
   olderError,
+  labelledBy,
 }: MessageListProps) {
   const t = useT();
   const lang = useLang();
@@ -81,7 +83,7 @@ export function MessageList({
           ) : null}
         </div>
       ) : null}
-      <div role="log">
+      <div role="log" aria-labelledby={labelledBy}>
         <ol className={styles.list}>
           {[...messages].reverse().map((m) => {
             if (m.tombstone) {

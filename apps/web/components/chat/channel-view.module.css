@@ -1,0 +1,26 @@
+/* Chat channel view. Tokens only. */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+}
+.title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-xl);
+  overflow-wrap: anywhere;
+}
+.notice {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  margin: 0 0 var(--space-4);
+}
+.notice[role="alert"] {
+  padding: var(--space-4);
+  color: var(--error-text);
+  background: var(--error-subtle);
+  border-radius: var(--radius-md);
+}
