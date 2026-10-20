@@ -231,4 +231,22 @@ describe("0059 under a NOBYPASSRLS migration owner (A-14)", () => {
       c.release();
     }
   });
+
+  it("CC-14 (D14): 0066 account_club_chat_context under this owner: A's active membership is still one row, B's missing one still none", async () => {
+    const tz = await su.query<{ timezone: string }>(`SELECT timezone FROM tenants WHERE id = $1`, [
+      seed.t1,
+    ]);
+    const call = async (accountId: string, slug: string) =>
+      (
+        await app.query(`SELECT * FROM account_club_chat_context($1::uuid, $2::text)`, [
+          accountId,
+          slug,
+        ])
+      ).rows;
+    expect(await call(seed.a.accountId, "l9-nb-one")).toEqual([
+      { tenant_id: seed.t1, timezone: tz.rows[0]!.timezone },
+    ]);
+    // B holds no membership in club two
+    expect(await call(seed.b.accountId, "l9-nb-two")).toEqual([]);
+  });
 });
