@@ -1,6 +1,20 @@
-import type { ChatChannelDto, ChatLiveMessageDto } from "@plexco/core";
+import type {
+  ChatChannelDto,
+  ChatLiveMessageDto,
+  ChatMessageDto,
+  ChatTombstoneDto,
+  ChatViewerDto,
+} from "@plexco/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { editMessage, listChannels, listHistory, markRead, sendMessage } from "./chat-api";
+import {
+  editMessage,
+  listChannels,
+  listHistory,
+  markRead,
+  moderateMessage,
+  sendMessage,
+  type ChatModerateInput,
+} from "./chat-api";
 import { LIVE_PAUSE_MS, createRealtimeHub, type EventSourceLike } from "./use-realtime";
 import {
   CHAT_STREAM,
@@ -11,6 +25,7 @@ import {
   createStaleChannels,
   editAttempt,
   historyView,
+  moderateAttempt,
   onChannelsRefresh,
   readThrough,
   refreshChannels,
@@ -28,6 +43,7 @@ vi.mock("./chat-api", () => ({
   sendMessage: vi.fn(),
   editMessage: vi.fn(),
   markRead: vi.fn(),
+  moderateMessage: vi.fn(),
 }));
 
 const t = (_vi: string, en: string): string => en;
@@ -45,7 +61,12 @@ const channel: ChatChannelDto = {
   postPolicy: "admins_only",
   unreadCount: 3,
 };
-const ok = (channels: ChatChannelDto[]) => ({ ok: true as const, data: { channels } });
+// listChannels (chat-api.ts) always resolves {channels, viewer}: both flags false unless the answer proved otherwise
+const NO_VIEWER: ChatViewerDto = { canModerate: false, canPostRestricted: false };
+const ok = (channels: ChatChannelDto[], viewer: ChatViewerDto = NO_VIEWER) => ({
+  ok: true as const,
+  data: { channels, viewer },
+});
 const fail = (code: string, status: number) => ({ ok: false as const, code, status });
 const event = (channelId = CH) => ({ kind: "event" as const, message: { ...frame, channelId } });
 
@@ -123,6 +144,19 @@ describe("channel list live round", () => {
     expect(listChannels).toHaveBeenCalledTimes(1);
   });
 
+  it("a round carries the fresh viewer: a capability revoked server-side is gone from the next list", async () => {
+    const granted: ChatViewerDto = { canModerate: true, canPostRestricted: true };
+    vi.mocked(listChannels)
+      .mockResolvedValueOnce(ok([channel], granted))
+      .mockResolvedValueOnce(ok([channel]));
+    const { stale, applied, run } = setup();
+    for (let round = 0; round < 2; round += 1) {
+      stale.accept(event());
+      await run();
+    }
+    expect(applied.map((view) => view.viewer)).toEqual([granted, NO_VIEWER]);
+  });
+
   it("a rate-limited round pauses silently (true, nothing shown); the catch-up refetches", async () => {
     vi.mocked(listChannels)
       .mockResolvedValueOnce(fail("CHAT_RATE_LIMITED", 429))
@@ -146,6 +180,7 @@ describe("channel list live round", () => {
       expect(applied).toHaveLength(1);
       expect(applied[0]?.error?.code).toBe(code);
       expect(applied[0]?.channels).toEqual([]);
+      expect(applied[0]?.viewer).toEqual(NO_VIEWER);
     },
   );
 
@@ -164,9 +199,40 @@ describe("channelsView: the list states", () => {
       state: "ready",
       channels: [channel],
       error: null,
+      viewer: NO_VIEWER,
     });
-    expect(channelsView(ok([]), t, "list")).toEqual({ state: "empty", channels: [], error: null });
+    expect(channelsView(ok([]), t, "list")).toEqual({
+      state: "empty",
+      channels: [],
+      error: null,
+      viewer: NO_VIEWER,
+    });
   });
+
+  it("carries the viewer of an ok answer as parsed, for a first load and a refetch", () => {
+    const viewer: ChatViewerDto = { canModerate: true, canPostRestricted: false };
+    expect(channelsView(ok([channel], viewer), t, "list").viewer).toEqual(viewer);
+    expect(channelsView(ok([], viewer), t, "list-refetch").viewer).toEqual(viewer);
+  });
+
+  it.each([
+    ["CHAT_FORBIDDEN", 403],
+    ["AUTH_REQUIRED", 401],
+    ["CHAT_RATE_LIMITED", 429],
+    ["CLIENT_NETWORK_ERROR", 0],
+    ["SOMETHING_NEW", 400],
+  ])(
+    "%s (%i): a non-ok answer gives both flags false, offline too, over a viewer who could",
+    (code, status) => {
+      const prev: ChannelsView = {
+        state: "ready",
+        channels: [channel],
+        error: null,
+        viewer: { canModerate: true, canPostRestricted: true },
+      };
+      expect(channelsView(fail(code, status), t, "list", prev).viewer).toEqual(NO_VIEWER);
+    },
+  );
 
   it.each([
     ["CHAT_FORBIDDEN", 403, "empty", false],
@@ -339,6 +405,212 @@ describe("channel view: send, edit, read cursor and live rounds", () => {
       view({ messages: [msg(M1)] }),
     );
     expect(kept).toMatchObject({ state: "offline", messages: [{ id: M1 }] });
+  });
+});
+
+// Moderation fixtures: the FULL real DTOs (api-contract.ts ChatLiveMessageDto and ChatTombstoneDto), synthetic text only
+const M2 = "1a2b3c4d-0000-4000-8000-000000000002";
+const M3 = "1a2b3c4d-0000-4000-8000-000000000003";
+const SYNTHETIC_AT = "2026-10-20T03:00:00.000Z";
+const live = (id: string, over: Partial<ChatLiveMessageDto> = {}): ChatLiveMessageDto => ({
+  id,
+  channelId: CH,
+  authorType: "person",
+  mine: false,
+  authorLabel: "Synthetic Author",
+  body: "synthetic body",
+  replyToMessageId: null,
+  editedAt: null,
+  editCount: 0,
+  tombstone: null,
+  createdAt: SYNTHETIC_AT,
+  ...over,
+});
+const gone = (id: string, kind: ChatTombstoneDto["tombstone"]): ChatTombstoneDto => ({
+  id,
+  channelId: CH,
+  createdAt: SYNTHETIC_AT,
+  tombstone: kind,
+});
+const rows = (...messages: ChatMessageDto[]): ChannelState => view({ messages });
+const HIDE: ChatModerateInput = {
+  action: "hide",
+  reasonCode: "spam",
+  reasonNote: null,
+  commandId: "c0ffee00-0000-4000-8000-0000000000a1",
+};
+const RESTORE: ChatModerateInput = {
+  action: "restore",
+  reasonCode: "other",
+  reasonNote: "synthetic note",
+  commandId: "c0ffee00-0000-4000-8000-0000000000a2",
+};
+// the real 200 of the moderation route (ChatModerateResult): {messageId, moderationState, changed}
+const moderated = (id: string, moderationState: "hidden" | "visible", changed = true) => ({
+  ok: true as const,
+  data: { messageId: id, moderationState, changed },
+});
+const moderate = (state: ChannelState, input: ChatModerateInput, id = M2) =>
+  moderateAttempt({ ...call, messageId: id, input, read: () => state });
+const mid = (n: number) => `1a2b3c4d-0000-4000-8000-${String(n).padStart(12, "0")}`;
+// the REAL cursor shape (chat-route.ts encodeChatCursor: v1. + base64url of "<timestamptz text>|<uuid>")
+const cursorOf = (id: string) =>
+  `v1.${Buffer.from(`2026-10-20 03:00:00.123456+00|${id}`, "utf8").toString("base64url")}`;
+// the real 200 of GET /messages (ChatHistoryPage): {messages, nextCursor}
+const pageOf = (messages: ChatMessageDto[], nextCursor: string | null) => ({
+  ok: true as const,
+  data: { messages, nextCursor },
+});
+const MORE = pageOf([live(M1)], cursorOf(M1)); // a newest page with an older page behind it
+
+describe("moderateAttempt: hide and restore one message", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it.each([
+    ["D1", true],
+    ["D11", false],
+  ])(
+    "%s: hide with changed:%s renders the exact 4-key moderation_hidden tombstone",
+    async (_row, changed) => {
+      vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "hidden", changed));
+      const target = live(M2, { body: "hidden-body-xyz", authorLabel: "Hidden Author xyz" });
+      const before = rows(live(M1), target, live(M3));
+      const done = await moderate(before, HIDE);
+      expect(done).toMatchObject({ error: null, refetch: false });
+      const after = done.update(before).messages;
+      expect(after[1]).toEqual(gone(M2, "moderation_hidden"));
+      expect(Object.keys(after[1] ?? {}).sort()).toEqual([
+        "channelId",
+        "createdAt",
+        "id",
+        "tombstone",
+      ]);
+      expect(JSON.stringify(after[1])).not.toMatch(/hidden-body-xyz|Hidden Author xyz/);
+      expect([after[0], after[2]]).toEqual([before.messages[0], before.messages[2]]);
+      expect(moderateMessage).toHaveBeenCalledTimes(1);
+      expect(moderateMessage).toHaveBeenCalledWith(call.ctx, CH, M2, HIDE);
+      expect(listHistory).not.toHaveBeenCalled();
+    },
+  );
+
+  it("hide rewrites only a loaded live row: an author_deleted tombstone stays, an unloaded id changes nothing", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "hidden"));
+    const deleted = rows(live(M1), gone(M2, "author_deleted"));
+    expect((await moderate(deleted, HIDE)).update(deleted).messages).toEqual(deleted.messages);
+    const unloaded = rows(live(M1), live(M3));
+    expect((await moderate(unloaded, HIDE)).update(unloaded).messages).toEqual(unloaded.messages);
+  });
+
+  it.each([true, false])(
+    "D2: restore with changed:%s resolves on the newest page: one GET, the server's row, no further page",
+    async (changed) => {
+      vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible", changed));
+      vi.mocked(listHistory).mockResolvedValue(pageOf([live(M1), live(M2)], cursorOf(mid(9))));
+      const before = rows(live(M1), gone(M2, "moderation_hidden"));
+      const done = await moderate(before, RESTORE);
+      expect(done).toMatchObject({ error: null, refetch: false }); // the walk is the only refetch
+      expect(done.update(before).messages).toEqual([live(M1), live(M2)]);
+      expect(moderateMessage).toHaveBeenCalledWith(call.ctx, CH, M2, RESTORE);
+      expect(vi.mocked(listHistory).mock.calls).toEqual([[T, CH]]); // the non-null cursor stays unused
+    },
+  );
+
+  it("D2: a restore on an older page walks with the received cursor and only replaces loaded rows", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    vi.mocked(listHistory)
+      .mockResolvedValueOnce(MORE)
+      .mockResolvedValueOnce(pageOf([live(M2), live(M3), live(mid(4))], cursorOf(M3)));
+    const loaded = rows(live(M1), gone(M2, "moderation_hidden"), live(M3));
+    const before = { ...loaded, nextCursor: cursorOf(M3) };
+    const done = await moderate(before, RESTORE);
+    expect(listHistory).toHaveBeenNthCalledWith(1, T, CH);
+    expect(listHistory).toHaveBeenNthCalledWith(2, T, CH, cursorOf(M1)); // as received, byte for byte
+    expect(done.update(before).messages).toEqual([live(M1), live(M2), live(M3)]); // M4 not inserted
+    expect(done.update(before).nextCursor).toBe(cursorOf(M3));
+    expect(done).toMatchObject({ error: null, refetch: false });
+  });
+
+  it.each([
+    ["an older page answering CLIENT_NETWORK_ERROR", [MORE, fail("CLIENT_NETWORK_ERROR", 0)]],
+    ["an older page answering CHAT_RATE_LIMITED", [MORE, fail("CHAT_RATE_LIMITED", 429)]],
+    ["a null cursor on the newest page", [pageOf([live(M1)], null)]],
+    ["the newest page answering AUTH_REQUIRED", [fail("AUTH_REQUIRED", 401)]],
+  ])("D2 stop: %s ends the walk silently and the tombstone stays", async (_stop, answers) => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    for (const answer of answers) vi.mocked(listHistory).mockResolvedValueOnce(answer);
+    const before = rows(live(M1), gone(M2, "moderation_hidden"));
+    const done = await moderate(before, RESTORE);
+    expect(done).toMatchObject({ error: null, refetch: false });
+    expect(done.update(before).messages[1]).toEqual(gone(M2, "moderation_hidden"));
+    expect(listHistory).toHaveBeenCalledTimes(answers.length);
+  });
+
+  it("D2 stop: a newest page that no longer joins the loaded rows drops the id, so no older page is asked for", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    vi.mocked(listHistory).mockResolvedValueOnce(pageOf([live(mid(7))], cursorOf(mid(7))));
+    const before = rows(live(M1), gone(M2, "moderation_hidden"));
+    const done = await moderate(before, RESTORE);
+    expect(done.update(before).messages).toEqual([live(mid(7))]); // historyView's own rule, as refetchNewest
+    expect(listHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("D2 ceiling: the walk makes at most 20 GETs, the newest page included, and the tombstone stays", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible"));
+    let served = 0;
+    vi.mocked(listHistory).mockImplementation(async () => {
+      served += 1;
+      // a real page never repeats a row: the newest page keeps M1 (it must join the loaded rows), each older page has its own
+      const row = served === 1 ? M1 : mid(100 + served);
+      return pageOf([live(row)], cursorOf(row));
+    });
+    const before = rows(live(M1), gone(M2, "moderation_hidden"));
+    const done = await moderate(before, RESTORE);
+    const calls = vi.mocked(listHistory).mock.calls;
+    expect(calls).toHaveLength(20);
+    expect(calls[19]?.[2]).toBe(cursorOf(mid(119))); // 19 hops, each with the cursor the page before sent
+    expect(done.update(before).messages[1]).toEqual(gone(M2, "moderation_hidden"));
+  });
+
+  it.each([
+    ["CHAT_MODERATION_FORBIDDEN", 403, "You cannot moderate this message.", false],
+    ["CHAT_REASON_INVALID", 422, "The reason or note is not valid.", false],
+    ["CHAT_IDEMPOTENCY_MISMATCH", 409, "Something went wrong. Please try again.", false],
+    ["CHAT_RATE_LIMITED", 429, "You are going too fast. Please try again in a moment.", true],
+    ["CLIENT_NETWORK_ERROR", 0, "You are offline.", true],
+    ["CHAT_DB_ERROR:UNKNOWN", 500, "Something went wrong. Please try again.", true],
+    ["CLIENT_BAD_RESPONSE", 200, "Something went wrong. Please try again.", true],
+  ])(
+    "%s (%i) on hide and on restore: its row, no change, no refetch, never success",
+    async (code, status, message, retry) => {
+      vi.mocked(moderateMessage).mockResolvedValue(fail(code, status));
+      const before = rows(live(M2), gone(M3, "moderation_hidden"));
+      const hide = await moderate(before, HIDE, M2);
+      const restore = await moderate(before, RESTORE, M3);
+      for (const done of [hide, restore]) {
+        expect(done.error).toMatchObject({ code, message, retry });
+        expect(done.refetch).toBe(false);
+        expect(done.update(before)).toBe(before);
+      }
+      expect(vi.mocked(moderateMessage).mock.calls).toEqual([
+        [call.ctx, CH, M2, HIDE],
+        [call.ctx, CH, M3, RESTORE],
+      ]);
+      expect(listHistory).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a retry reaches moderateMessage with the same commandId and the identical input", async () => {
+    vi.mocked(moderateMessage)
+      .mockResolvedValueOnce(fail("CLIENT_NETWORK_ERROR", 0))
+      .mockResolvedValueOnce(moderated(M2, "hidden"));
+    const before = rows(live(M2));
+    const first = await moderate(before, HIDE);
+    expect(first.error).toMatchObject({ code: "CLIENT_NETWORK_ERROR", retry: true });
+    const second = await moderate(before, HIDE);
+    expect(second.error).toBeNull();
+    expect(second.update(before).messages).toEqual([gone(M2, "moderation_hidden")]);
+    // the commandId is only ever the caller's: two attempts, one key, one identical body
+    expect(vi.mocked(moderateMessage).mock.calls.map((c) => c[3])).toEqual([HIDE, HIDE]);
   });
 });
 

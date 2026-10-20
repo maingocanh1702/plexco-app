@@ -6,7 +6,7 @@ import { LangProvider } from "../../lib/i18n-client";
 import type { ChatListError } from "../../lib/use-chat";
 import { useTenantContext } from "../../lib/use-tenant-context";
 import { afterEdit, type RowActions } from "./message-actions";
-import { MessageList } from "./message-list";
+import { MessageList, type Moderated } from "./message-list";
 
 vi.mock("../../lib/use-tenant-context", () => ({ useTenantContext: vi.fn() }));
 
@@ -147,7 +147,7 @@ describe("MessageList row actions", () => {
       [["Reply"], ["Edit", "Delete", "Reply"], []],
     ],
     [
-      "host-shaped: no hide or restore, a moderation tombstone stays inert (RO-L16-1)",
+      "no onModerate (D6): no Hide or Restore on any row, a moderation tombstone stays inert",
       [gone("4", "moderation_hidden"), mine, live("1")],
       [["Reply"], ["Edit", "Delete", "Reply"], []],
     ],
@@ -155,6 +155,47 @@ describe("MessageList row actions", () => {
     const html = render({ messages, actions });
     expect(controls(html)).toEqual(expected);
     expect(html).not.toMatch(/hide|restore/i);
+  });
+
+  // D1-D5 with the server's yes (onModerate) and D6 without it: entries follow the flag and the row kind
+  const moderator: RowActions = { ...actions, onModerate: async () => null };
+  const bot = { authorType: "assistant", authorLabel: null } as const;
+  it.each<[string, Live | Gone, string[], string[]]>([
+    ["D1 peer person live row", live("1"), ["Reply", "Hide"], ["Reply"]],
+    ["D2 moderation_hidden tombstone", gone("1", "moderation_hidden"), ["Restore"], []],
+    ["D3 author_deleted tombstone", gone("1"), [], []],
+    ["D4 assistant live row", live("1", bot), ["Reply"], ["Reply"]],
+    ["D4 system live row", live("1", { ...bot, authorType: "system" }), ["Reply"], ["Reply"]],
+    ["D5 own live row", mine, ["Edit", "Delete", "Reply"], ["Edit", "Delete", "Reply"]],
+  ])("controls render only when the server says so: %s", (_name, row, yes, no) => {
+    expect(controls(render({ messages: [row], actions: moderator }))).toEqual([yes]);
+    expect(controls(render({ messages: [row], actions }))).toEqual([no]);
+  });
+
+  it("mounts a closed sheet only where a moderation entry renders", () => {
+    const messages = [gone("4"), gone("3", "moderation_hidden"), live("1"), mine];
+    const html = render({ messages, actions: moderator });
+    const titles = html.match(dialog)?.map((d) => text(d).split("?")[0]);
+    expect(titles).toEqual(["Delete this message", "Hide this message", "Restore this message"]);
+    expect(html).not.toMatch(/<dialog\b[^>]*\bopen\b/);
+  });
+
+  it("keeps one persistent status region: empty until told, then the N15 or N16 line", () => {
+    const region = (moderated?: Moderated) =>
+      render({ messages: [live("1")], moderated }).match(/<div role="status">(.*?)<\/div>/)?.[1];
+    expect(region()).toBe(""); // there, and silent
+    expect(text(region({ id: "1", action: "hide" }) ?? "")).toBe("Message hidden.");
+    expect(text(region({ id: "1", action: "restore" }) ?? "")).toBe("Message restored.");
+  });
+
+  it("marks only Reply on a live row as the focus target after a moderation (DM-7)", () => {
+    const html = render({
+      messages: [gone("3", "moderation_hidden"), live("1"), mine],
+      actions: moderator,
+    });
+    expect(
+      html.match(/<button\b[^>]*\bdata-reply="true"[^>]*>(.*?)<\/button>/g)?.map(text),
+    ).toEqual(["Reply", "Reply"]);
   });
 
   it("puts one closed delete dialog on the own live row only", () => {

@@ -1,6 +1,11 @@
 "use client";
 
-import type { ChatChannelDto, ChatLiveMessageDto, ChatMessageDto } from "@plexco/core";
+import type {
+  ChatChannelDto,
+  ChatLiveMessageDto,
+  ChatMessageDto,
+  ChatViewerDto,
+} from "@plexco/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteMessage,
@@ -8,9 +13,11 @@ import {
   listChannels,
   listHistory,
   markRead,
+  moderateMessage,
   sendMessage,
   type ChatChannelList,
   type ChatHistoryPage,
+  type ChatModerateInput,
   type ChatResult,
 } from "./chat-api";
 import {
@@ -101,10 +108,20 @@ export interface ChannelsView {
   state: ChatListState;
   channels: ChatChannelDto[];
   error: ChatListError | null;
+  /**
+   * The viewer's two display flags; the server re-authorizes every action. channelsView always sets it,
+   * so a consumer reads `viewer?.canModerate === true` and an absent one shows no control.
+   */
+  viewer?: ChatViewerDto;
 }
-const LOADING: ChannelsView = { state: "loading", channels: [], error: null };
+/** Fail closed: both false while loading and on every non-ok answer, so no moderation control renders. */
+const NO_VIEWER: ChatViewerDto = { canModerate: false, canPostRestricted: false };
+const LOADING: ChannelsView = { state: "loading", channels: [], error: null, viewer: NO_VIEWER };
 
-/** One list answer as screen state. A failure clears the list, except offline, which keeps the last one (5.1). */
+/**
+ * One list answer as screen state. A failure clears the list, except offline, which keeps the last one (5.1).
+ * The viewer is never copied from prev: an ok answer carries its own, any other answer (offline too) is NO_VIEWER.
+ */
 export function channelsView(
   result: ChatResult<ChatChannelList>,
   t: TFn,
@@ -112,12 +129,17 @@ export function channelsView(
   prev: ChannelsView = LOADING,
 ): ChannelsView {
   if (result.ok) {
-    const { channels } = result.data;
-    return { state: channels.length > 0 ? "ready" : "empty", channels, error: null };
+    const { channels, viewer } = result.data;
+    return { state: channels.length > 0 ? "ready" : "empty", channels, error: null, viewer };
   }
   const row = describeChatError(action, result, t);
   const channels = row.state === "offline" ? prev.channels : [];
-  return { state: row.state ?? "error", channels, error: { ...row, code: result.code } };
+  return {
+    state: row.state ?? "error",
+    channels,
+    error: { ...row, code: result.code },
+    viewer: NO_VIEWER,
+  };
 }
 
 export interface ChannelsRoundDeps {
@@ -376,6 +398,77 @@ export async function removeAttempt({
   return { update: (s) => ({ ...s, messages: s.messages.map(gone) }), error: null, refetch: false };
 }
 
+const replaceLoaded = (s: ChannelState, page: ChatHistoryPage): ChannelState => {
+  const byId = new Map(page.messages.map((m) => [m.id, m]));
+  return { ...s, messages: s.messages.map((m) => byId.get(m.id) ?? m) };
+};
+// ponytail: 20 GETs incl. the newest page; a restore buried deeper shows after a reload (no client-built cursor, no new route)
+const RESTORE_GETS = 20;
+
+/**
+ * DM-4: the newest page, then each older page by the cursor exactly as sent; an older page only
+ * REPLACES loaded rows. Stops at the id, once it is no longer a tombstone, a null cursor, a failed
+ * answer (silent: the tombstone stays) or RESTORE_GETS.
+ */
+async function restoreWalk(
+  args: ChannelCall & { messageId: string; read: () => ChannelState },
+): Promise<ChannelUpdate> {
+  const newest = await listHistory(args.ctx.tenantId, args.channelId);
+  if (!newest.ok) return SAME;
+  const first: ChannelUpdate = (s) => historyView(newest, args.t, "history-refetch", s);
+  const older: ChatHistoryPage[] = [];
+  let seen = first(args.read());
+  let page = newest.data;
+  for (let n = 1; n < RESTORE_GETS; n += 1) {
+    if (page.nextCursor === null || page.messages.some((m) => m.id === args.messageId)) break;
+    if (!seen.messages.some((m) => m.id === args.messageId && m.tombstone !== null)) break;
+    const next = await listHistory(args.ctx.tenantId, args.channelId, page.nextCursor);
+    if (!next.ok) break;
+    older.push(next.data);
+    seen = replaceLoaded(seen, next.data);
+    page = next.data;
+  }
+  return (s) => older.reduce(replaceLoaded, first(s));
+}
+
+/**
+ * One hide or restore command. The commandId arrives in `input` (minted once per user action by the
+ * caller, reused on every retry) and is never created here. Both answers render from `moderationState`,
+ * never from `changed` (a replay returns the stored `changed`). Hide: the loaded live row becomes the
+ * 4-key tombstone at once, so the hidden body leaves client memory; no refetch, a changed hide's frame confirms
+ * it. Restore: `restoreWalk` is the only refetch, so `refetch` stays false; `read` hands it the
+ * channel state as the hook holds it.
+ */
+export async function moderateAttempt({
+  ctx,
+  channelId,
+  messageId,
+  input,
+  t,
+  read,
+}: ChannelCall & {
+  messageId: string;
+  input: ChatModerateInput;
+  read: () => ChannelState;
+}): Promise<Settled> {
+  const result = await moderateMessage(ctx, channelId, messageId, input);
+  if (!result.ok) return { update: SAME, error: failure("moderate", result, t), refetch: false };
+  if (result.data.moderationState === "visible") {
+    const update = await restoreWalk({ ctx, channelId, t, messageId, read });
+    return { update, error: null, refetch: false };
+  }
+  // only a loaded live row: an author_deleted tombstone keeps its kind (0063:526), an unloaded id is a no-op
+  const hidden = (m: ChatMessageDto): ChatMessageDto =>
+    m.id === messageId && m.tombstone === null
+      ? { id: m.id, channelId: m.channelId, createdAt: m.createdAt, tombstone: "moderation_hidden" }
+      : m;
+  return {
+    update: (s) => ({ ...s, messages: s.messages.map(hidden) }),
+    error: null,
+    refetch: false,
+  };
+}
+
 export interface ChannelRoundDeps {
   tenantId: string;
   channelId: string;
@@ -554,6 +647,22 @@ export function useChatChannel(tenantId: string, channelId: string) {
     },
     [ctx, channelId, bound, settle],
   );
+  // the commandId is the caller's (one per user action, reused on a retry): it is never minted here
+  const moderate = useCallback(
+    async (messageId: string, input: ChatModerateInput): Promise<ChatListError | null> => {
+      const apply = bound();
+      const done = await moderateAttempt({
+        ctx: ctx(),
+        channelId,
+        messageId,
+        input,
+        t: latest.current.t,
+        read: () => latest.current.view,
+      });
+      return settle(apply, done);
+    },
+    [ctx, channelId, bound, settle],
+  );
 
   useEffect(() => {
     const sync = () => setVisible(document.visibilityState === "visible");
@@ -596,5 +705,6 @@ export function useChatChannel(tenantId: string, channelId: string) {
     discard,
     edit,
     remove,
+    moderate,
   };
 }

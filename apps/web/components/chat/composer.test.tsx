@@ -14,11 +14,12 @@ const row = (failed: ChatListError | null = null): PendingMessage => ({
   body: "hello",
   failed,
 });
-const render = (pending: PendingMessage[] = [], policy: Policy = "all_members") => {
+const render = (pending: PendingMessage[] = [], policy: Policy = "all_members", can?: boolean) => {
   const no = () => {};
+  const outbox = { pending, send: no, retry: no, discard: no };
   return renderToStaticMarkup(
     <LangProvider lang="en">
-      <Composer postPolicy={policy} outbox={{ pending, send: no, retry: no, discard: no }} />
+      <Composer postPolicy={policy} canPostRestricted={can} outbox={outbox} />
     </LangProvider>,
   );
 };
@@ -27,6 +28,7 @@ const li = (html: string) => text(html.match(/<li\b[^>]*>(.*?)<\/li>/)?.[1] ?? "
 const buttons = (html: string) =>
   [...html.matchAll(/<button\b[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1] ?? ""));
 const sendOff = (html: string) => /<button\b[^>]*\bdisabled=""[^>]*>Send</.test(html);
+const fieldOff = (html: string) => /<textarea\b[^>]*\bdisabled=""/.test(html);
 
 describe("Composer", () => {
   it.each([
@@ -55,6 +57,24 @@ describe("Composer", () => {
     expect(html).toMatch(/<textarea\b(?![^>]*placeholder)/);
     expect(html.includes("Only admins can post in this channel")).toBe(hint);
     expect([buttons(html), sendOff(html)]).toEqual([["Send"], true]);
+  });
+
+  // D7: an INVALID_BODY row refills the draft, so the lock (not an empty field) decides the field and Send.
+  it.each<[Policy, boolean, boolean]>([
+    ["admins_only", false, true],
+    ["admins_only", true, false],
+    ["all_members", false, false],
+  ])("%s with canPostRestricted %s: field and Send disabled = %j", (policy, can, locked) => {
+    const html = render([row(err("INVALID_BODY", false))], policy, can);
+    expect(/<textarea[^>]*>hello<\/textarea>/.test(html)).toBe(true);
+    expect([fieldOff(html), sendOff(html)]).toEqual([locked, locked]);
+    expect(html.includes("Only admins can post in this channel")).toBe(policy === "admins_only");
+  });
+
+  it("a stale true: 403 CHAT_CAPABILITY_REQUIRED keeps the fail-closed row, no Retry", () => {
+    const html = render([row(err("CHAT_CAPABILITY_REQUIRED", false))], "admins_only", true);
+    expect(li(html)).toBe("hello Not sent. copy CHAT_CAPABILITY_REQUIRED Discard");
+    expect(buttons(html)).toEqual(["Discard", "Send"]);
   });
 
   it("shows a pending entry as Sending... with no control of its own", () => {

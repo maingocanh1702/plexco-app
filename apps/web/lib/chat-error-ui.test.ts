@@ -24,6 +24,8 @@ const CAP = "You cannot post in this channel.";
 const REPLY = "The message you replied to is no longer available.";
 const CSRF = "This page is out of date. Please reload it.";
 const CHANGED = "This message changed; the latest version is shown.";
+const NO_MOD = "You cannot moderate this message.";
+const REASON = "The reason or note is not valid.";
 
 type Ui = ChatErrorState | "keep" | null; // read screens: data-state; edit: "keep" = editor stays open
 type Case = [Action, string, string, boolean, Ui]; // action, "<HTTP> <code>", English copy ("" = silent), retry, ui
@@ -63,6 +65,23 @@ const ROWS: Case[] = [
   ["read", "404 NOT_FOUND", "", false, null],
   ["read", "400 INVALID_BODY", "", false, null],
   ["read", "0 CLIENT_NETWORK_ERROR", "", false, null],
+  // L16b readiness section 6, action "moderate", in the table's order. A changed reason or note is a
+  // new command, so INVALID and the 409 mismatch offer no Retry; an unknown outcome keeps one.
+  ["moderate", "403 CHAT_MODERATION_FORBIDDEN", NO_MOD, false, null],
+  ["moderate", "422 CHAT_REASON_INVALID", REASON, false, null],
+  ["moderate", "409 CHAT_IDEMPOTENCY_MISMATCH", GEN, false, null],
+  ["moderate", "429 CHAT_RATE_LIMITED", RATE, true, null],
+  ["moderate", "403 CSRF_INVALID", CSRF, false, null],
+  ["moderate", "401 AUTH_REQUIRED", AUTH, false, null],
+  ["moderate", "403 CHAT_FORBIDDEN", NO_ACCESS, false, null],
+  ["moderate", "403 TENANT_SUSPENDED", SUSP, false, null],
+  ["moderate", "0 CLIENT_NETWORK_ERROR", OFF, true, null],
+  // the fallback row's named members (a code that is a row elsewhere is unknown here): fail closed
+  ["moderate", "400 INVALID_BODY", GEN, true, null],
+  ["moderate", "413 CHAT_MESSAGE_TOO_LARGE", GEN, true, null],
+  ["moderate", "404 NOT_FOUND", GEN, true, null],
+  ["moderate", "0 CLIENT_BAD_RESPONSE", GEN, true, null], // chat-api's 15 s timeout
+  ["moderate", "500 CHAT_MODERATION_FORBIDDEN", GEN, true, null], // a 5xx never reads as a denial
 ];
 // Unknown, empty, bad-response, prototype-named and 5xx answers (a known code under a 5xx included).
 const UNKNOWN = [
@@ -78,6 +97,7 @@ const FALLBACK: [Action, string, boolean, Ui][] = [
   ["edit", GEN, false, "keep"],
   ["delete", GEN, false, null],
   ["read", "", false, null],
+  ["moderate", GEN, true, null], // the row stays as it is; the retry replays under the same commandId
 ];
 
 const failure = (key: string) => {
@@ -129,6 +149,15 @@ describe("chat error mapping", () => {
   it("the admins_only hint is one real t(vi, en) pair", () => {
     expect(chatAdminsOnlyHint(en)).toBe("Only admins can post in this channel");
     expect(chatAdminsOnlyHint((v) => v)).toBe("Kênh này chỉ quản trị viên được đăng tin");
+  });
+
+  it("moderate: the two new copy pairs (N13, N14) are exact t(vi, en) pairs", () => {
+    const vi = (code: string, status: number) =>
+      describeChatError("moderate", { code, status }, (v) => v).message;
+    expect(vi("CHAT_MODERATION_FORBIDDEN", 403)).toBe(
+      "Bạn không có quyền kiểm duyệt tin nhắn này.",
+    );
+    expect(vi("CHAT_REASON_INVALID", 422)).toBe("Lý do hoặc ghi chú không hợp lệ.");
   });
 
   it("the source logs nothing and touches no storage or cache", () => {

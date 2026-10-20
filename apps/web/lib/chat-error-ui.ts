@@ -9,6 +9,8 @@ import type { TFn } from "./i18n-client";
  * CLIENT_BAD_RESPONSE and any 5xx fall to the generic fail-closed row of the action. All copy is a
  * literal t(vi, en) pair (HARD RULE 5); nothing is interpolated, so no message text, author label,
  * channel title or client id can reach a string built here, and nothing here logs or stores anything.
+ * The `moderate` table (hide or restore one message) is L16b's: the same rules, its own readiness
+ * section 6.
  */
 export type ChatErrorAction =
   | "list" // 5.1: initial load and manual retry
@@ -18,7 +20,8 @@ export type ChatErrorAction =
   | "send" // 5.2.2
   | "edit" // 5.2.3
   | "delete" // 5.2.4
-  | "read"; // 5.2.5: every failure is silent
+  | "read" // 5.2.5: every failure is silent
+  | "moderate"; // L16b section 6: hide or restore a message
 
 export type ChatErrorState = "empty" | "error" | "offline";
 
@@ -96,6 +99,10 @@ const CONFLICT: Copy = (t) =>
   );
 const OWN_ONLY: Copy = (t) =>
   t("Bạn chỉ có thể xoá tin nhắn của mình.", "You can only delete your own messages.");
+const MODERATE_FORBIDDEN: Copy = (t) =>
+  t("Bạn không có quyền kiểm duyệt tin nhắn này.", "You cannot moderate this message.");
+const REASON_INVALID: Copy = (t) =>
+  t("Lý do hoặc ghi chú không hợp lệ.", "The reason or note is not valid.");
 
 const SILENT: Row = { copy: null };
 const SCREEN_FALLBACK: Row = { copy: GENERIC, state: "error", retry: true };
@@ -170,6 +177,24 @@ const TABLES: Record<ChatErrorAction, Table> = {
   },
   // 5.2.5: the badge never advances without a 200, so no failure is shown
   read: { rows: new Map(), fallback: SILENT },
+  // L16b section 6. Every retry of one action reuses its commandId (the caller owns the key), so a
+  // Retry is offered wherever the outcome is unknown, and a changed reason or note is a new command.
+  moderate: {
+    rows: new Map<string, Row>([
+      ["CHAT_MODERATION_FORBIDDEN", { copy: MODERATE_FORBIDDEN }],
+      ["CHAT_REASON_INVALID", { copy: REASON_INVALID }],
+      // the same commandId met a different input: a Retry would repeat it, so none is offered
+      ["CHAT_IDEMPOTENCY_MISMATCH", { copy: GENERIC }],
+      ["CHAT_RATE_LIMITED", { copy: RATE, retry: true }],
+      ["CSRF_INVALID", { copy: CSRF }],
+      ["AUTH_REQUIRED", { copy: AUTH }],
+      ["CHAT_FORBIDDEN", { copy: NO_ACCESS }],
+      ["TENANT_SUSPENDED", { copy: SUSPENDED }],
+      [CLIENT_NETWORK_ERROR, { copy: OFFLINE, retry: true }],
+    ]),
+    // fail closed: the row stays as it is, and an uncertain outcome replays under the same key
+    fallback: { copy: GENERIC, retry: true },
+  },
 };
 
 export function describeChatError(

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import * as mock from "./support/chat-api-mock";
-import { NETWORK, fail, ok } from "./support/player-api-mock";
+import { NETWORK, fail, ok, raw } from "./support/player-api-mock";
 import { TENANT_ID } from "./support/session-api-mock";
 
 /** L16 chat UI in a real browser; every /api/chat call is mocked (support/chat-api-mock.ts). */
@@ -11,9 +11,15 @@ const SENT = "Em ra sân lúc 18h";
 const EDITED = "Mình tới sớm nhé, 15 phút";
 const CURSOR = "v1.b2xkZXI"; // the real format is "v1." + base64url (lib/chat-route.ts)
 const MODERATION = /hide|restore|moderat|ẩn tin|khôi phục|kiểm duyệt/i;
+const UUID = expect.stringMatching(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/);
+const NOTE = "Ghi chú Dz9"; // a synthetic moderation note
+const PEER = mock.message().body; // the default history's peer text
+const MODERATE = `/api/chat/channels/${mock.CHANNEL_ID}/messages/${mock.MESSAGE_ID.peer}/moderation`;
 const viewer = { canModerate: true, canPostRestricted: true };
 const page1 = (...messages: object[]) => ok({ messages, nextCursor: null });
 const unread = (n: number) => ok({ channels: [mock.channel({ unreadCount: n })], viewer });
+const lists = (v: typeof viewer, ...channels: object[]) => ok({ channels, viewer: v }); // the real channels 200
+const noFlags = lists({ canModerate: false, canPostRestricted: false }, mock.channel());
 type Replies = Parameters<typeof mock.installChatApi>[1];
 type Role = "owner" | "co_admin" | "member";
 
@@ -28,6 +34,11 @@ const field = (page: Page) => page.getByRole("textbox", { name: "Message", exact
 const press = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 const rows = (page: Page) => page.getByRole("log").getByRole("listitem");
 const mine = (page: Page) => rows(page).filter({ hasText: MINE });
+const peerRow = (page: Page) => rows(page).filter({ hasText: PEER });
+const dialog = (page: Page) => page.getByRole("dialog");
+// the entry labels equal the confirm labels: the confirm is looked up inside the dialog only
+const confirmIn = (page: Page, name: string) =>
+  dialog(page).getByRole("button", { name, exact: true });
 
 test.describe("chat web UI (mocked API)", () => {
   test("send: pending while the POST is held, then confirmed", async ({ page }) => {
@@ -70,7 +81,8 @@ test.describe("chat web UI (mocked API)", () => {
 
   test("tombstones render only the removed text", async ({ page }) => {
     const hidden = mock.tombstone({ id: mock.MESSAGE_ID.live, tombstone: "moderation_hidden" });
-    await open(page, VIEW, { history: page1(hidden, mock.message(), mock.tombstone()) });
+    const history = page1(hidden, mock.message(), mock.tombstone());
+    await open(page, VIEW, { channels: noFlags, history }); // a viewer who cannot moderate: no Restore entry
     const gone = rows(page).filter({ hasText: "Message removed." });
     await expect(gone).toHaveText(["Message removed.", "Message removed."]);
     await expect(rows(page)).toHaveCount(3);
@@ -107,21 +119,105 @@ test.describe("chat web UI (mocked API)", () => {
   }
 
   for (const role of ["owner", "co_admin"] as const) {
-    test(`${role}: only Edit, Delete (own) and Reply; no moderation`, async ({ page }) => {
+    test(`${role}: controls render only when the server says so`, async ({ page }) => {
       const urls: string[] = [];
       page.on("request", (request) => urls.push(request.url()));
       await open(page, VIEW, {}, role);
       await expect(rows(page)).toHaveCount(2);
+      await expect(press(page, "Hide")).toHaveCount(1); // the flags come with the channels answer
+      await expect(mine(page).getByRole("button", { name: "Hide", exact: true })).toHaveCount(0);
       const names = await page.getByRole("log").getByRole("button").allInnerTexts();
-      expect(names.sort()).toEqual(["Delete", "Edit", "Reply", "Reply"]);
-      await expect(page.getByRole("button", { name: MODERATION })).toHaveCount(0);
+      expect(names.sort()).toEqual(["Delete", "Edit", "Hide", "Reply", "Reply"]);
       await expect(page.getByRole("menuitem", { name: MODERATION })).toHaveCount(0);
       await expect(page.getByRole("link", { name: MODERATION })).toHaveCount(0);
       expect(urls.filter((url) => url.includes("/moderation"))).toEqual([]);
     });
   }
 
-  test("plain member: the club workspace shows No access (no member chat entry yet)", async ({
+  test("viewer flags off: no moderation control and no moderation request", async ({ page }) => {
+    const chat = await open(page, VIEW, { channels: noFlags }, "co_admin");
+    await expect(page.getByRole("heading", { name: mock.TITLE.general })).toBeVisible();
+    await expect(rows(page)).toHaveCount(2);
+    const names = await page.getByRole("log").getByRole("button").allInnerTexts();
+    expect(names.sort()).toEqual(["Delete", "Edit", "Reply", "Reply"]);
+    await expect(page.getByRole("button", { name: MODERATION })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: MODERATION })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: MODERATION })).toHaveCount(0);
+    expect(chat.callsTo("moderate")).toHaveLength(0);
+  });
+
+  test("hide with spam, restore with other: two commands, focus follows", async ({ page }) => {
+    const logs: string[] = [];
+    page.on("console", (message) => logs.push(message.text()));
+    const peer = mock.message(); // one createdAt: the load and the restore walk both serve it
+    const own = { id: mock.MESSAGE_ID.mine, mine: true, authorLabel: mock.LABEL.me, body: MINE };
+    const chat = await open(page, VIEW, { history: page1(peer, mock.message(own)) });
+    await expect.poll(() => chat.callsTo("history").length).toBe(2); // load + stream-open refetch
+    await press(page, "Hide").click();
+    await confirmIn(page, "Hide").click(); // no reason picked: the sheet answers, nothing is sent
+    await expect(dialog(page).getByRole("alert")).toHaveText("Choose a reason.");
+    expect(chat.callsTo("moderate")).toHaveLength(0);
+    await dialog(page).getByRole("radio", { name: "Spam", exact: true }).check();
+    await confirmIn(page, "Hide").click();
+    await expect(press(page, "Restore")).toBeFocused();
+    await expect(peerRow(page)).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "Message hidden." })).toHaveCount(1);
+    await press(page, "Restore").click();
+    await dialog(page).getByRole("radio", { name: "Other", exact: true }).check();
+    await dialog(page).getByRole("textbox", { name: "Note (required)" }).fill(NOTE);
+    const typed = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage])); // sheet open
+    chat.reply("moderate", ok({ messageId: peer.id, moderationState: "visible", changed: true }));
+    await confirmIn(page, "Restore").click();
+    await expect(peerRow(page)).toHaveCount(1);
+    await expect(page.getByRole("status").filter({ hasText: "Message restored." })).toHaveCount(1);
+    await expect(peerRow(page).getByRole("button", { name: "Reply", exact: true })).toBeFocused();
+    // the synthetic note is in no console message and in no storage key or value
+    const kept = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]));
+    expect(kept).toContain("plx-lang"); // control: the read does see stored keys
+    expect([...logs, typed, kept].filter((text) => text.includes(NOTE))).toEqual([]);
+    const sent = chat.callsTo("moderate");
+    expect(sent.map((call) => call.path)).toEqual([MODERATE, MODERATE]); // one hide, one restore
+    const [h, r] = sent.map((call) => call.body);
+    expect([h, r]).toEqual([
+      { action: "hide", reasonCode: "spam", reasonNote: null, commandId: UUID },
+      { action: "restore", reasonCode: "other", reasonNote: NOTE, commandId: UUID },
+    ]);
+    expect(r?.commandId).not.toBe(h?.commandId); // a new action, a new commandId
+  });
+
+  test("failed hide keeps the sheet open; the retry reuses the commandId", async ({ page }) => {
+    const chat = await open(page, VIEW);
+    await expect.poll(() => chat.callsTo("history").length).toBe(2); // load + stream-open refetch
+    chat.failNext("moderate", raw(500)); // runChat rethrows: the route sends an empty-body 500
+    await press(page, "Hide").click();
+    await dialog(page).getByRole("radio", { name: "Spam", exact: true }).check();
+    await confirmIn(page, "Hide").click();
+    await expect(dialog(page).getByRole("alert")).toHaveCount(1);
+    await expect(peerRow(page)).toHaveCount(1); // a failure is never read as a hide
+    await confirmIn(page, "Hide").click();
+    await expect(press(page, "Restore")).toHaveCount(1); // the default 200: the tombstone
+    const [h1, h2] = chat.callsTo("moderate").map((call) => call.body);
+    expect(chat.callsTo("moderate")).toHaveLength(2);
+    expect(h1).toEqual({ action: "hide", reasonCode: "spam", reasonNote: null, commandId: UUID });
+    expect(h2).toEqual(h1); // the same commandId, the same body
+  });
+
+  test("a no-retry row sends nothing on a second confirm (D12)", async ({ page }) => {
+    const chat = await open(page, VIEW);
+    await expect.poll(() => chat.callsTo("history").length).toBe(2); // load + stream-open refetch
+    chat.failNext("moderate", fail("CHAT_MODERATION_FORBIDDEN", 403)); // the real mapped error body
+    await press(page, "Hide").click();
+    await dialog(page).getByRole("radio", { name: "Spam", exact: true }).check();
+    await confirmIn(page, "Hide").click();
+    await expect(dialog(page).getByRole("alert")).toHaveText("You cannot moderate this message.");
+    await confirmIn(page, "Hide").click(); // the row says no retry: nothing is sent
+    await dialog(page).getByRole("radio", { name: "Harassment", exact: true }).check(); // new action
+    await confirmIn(page, "Hide").click();
+    await expect(press(page, "Restore")).toHaveCount(1); // the default 200: the tombstone
+    expect(chat.callsTo("moderate")).toHaveLength(2); // the second press sent nothing
+  });
+
+  test("plain member: the club workspace shows No access (members reach chat through /me)", async ({
     page,
   }) => {
     const urls: string[] = [];
@@ -140,6 +236,21 @@ test.describe("chat web UI (mocked API)", () => {
     await expect(press(page, "Send")).toBeEnabled();
     const entry = page.getByRole("link", { name: "Chat", exact: true }).first();
     await expect(entry).toHaveAttribute("href", LIST);
+  });
+
+  test("admins_only: the composer follows canPostRestricted, not canModerate", async ({ page }) => {
+    const admins = mock.channel({
+      id: mock.ADMINS_CHANNEL_ID,
+      title: mock.TITLE.admins,
+      isDefault: false,
+      postPolicy: "admins_only",
+    });
+    const channels = lists({ ...viewer, canPostRestricted: false }, admins); // canModerate stays true
+    const history = page1(mock.message({ channelId: mock.ADMINS_CHANNEL_ID }));
+    await open(page, `${LIST}/${mock.ADMINS_CHANNEL_ID}`, { channels, history }, "co_admin");
+    await expect(page.getByText("Only admins can post in this channel")).toBeVisible();
+    await expect(field(page)).toBeDisabled();
+    await expect(press(page, "Send")).toBeDisabled();
   });
 
   test("live: a stream frame refetches; the frame renders nothing", async ({ page }) => {

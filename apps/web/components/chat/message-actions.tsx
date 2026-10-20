@@ -3,6 +3,7 @@
 import type { ChatLiveMessageDto } from "@plexco/core";
 import { useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
+import type { ChatModerateInput } from "../../lib/chat-api";
 import { useT } from "../../lib/i18n-client";
 import type { ChatListError } from "../../lib/use-chat";
 import { Button } from "../ui/button";
@@ -12,12 +13,15 @@ import fieldStyles from "../ui/field.module.css";
 import { InlineError } from "../ui/inline-error";
 import { canSend } from "./composer";
 import styles from "./message-list.module.css";
+import { ModerationSheet } from "./moderation-sheet";
 
 /** Row commands the view wires to the hook; edit and remove resolve null or the 5.2.3 / 5.2.4 row. */
 export interface RowActions {
   onReply(id: string): void;
   onEdit(id: string, body: string): Promise<ChatListError | null>;
   onRemove(id: string): Promise<ChatListError | null>;
+  // present only when the server said canModerate; absent = no moderation control anywhere (fail closed)
+  onModerate?: (id: string, input: ChatModerateInput) => Promise<ChatListError | null>;
 }
 
 /** What a failed edit leaves (5.2.3): the row copy, whether the editor closes, whether Edit stays hidden. */
@@ -27,12 +31,40 @@ export const afterEdit = (row: ChatListError) => ({
   shut: row.code === "CHAT_EDIT_WINDOW_CLOSED",
 });
 
-/** Controls of one live row: Reply for all, Edit and Delete only on own rows (DF-2); the server decides the rest. */
+/** Hide on a live row or Restore on a moderation_hidden tombstone: the button and its own sheet. */
+export function ModerateEntry({
+  id,
+  action,
+  onModerate,
+}: {
+  id: string;
+  action: ChatModerateInput["action"];
+  onModerate: NonNullable<RowActions["onModerate"]>;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button variant="ghost" onClick={() => setOpen(true)}>
+        {action === "hide" ? t("Ẩn tin", "Hide") : t("Khôi phục", "Restore")}
+      </Button>
+      <ModerationSheet
+        action={action}
+        open={open}
+        onModerate={(input) => onModerate(id, input)}
+        onDone={() => setOpen(false)}
+        onCancel={() => setOpen(false)}
+      />
+    </>
+  );
+}
+
+/** Controls of one live row: Reply for all, Edit and Delete only on own rows (DF-2), Hide on another person's row when onModerate exists; the server decides the rest. */
 export function MessageActions({
   m,
   actions,
 }: {
-  m: Pick<ChatLiveMessageDto, "id" | "body" | "mine">;
+  m: Pick<ChatLiveMessageDto, "id" | "body" | "mine" | "authorType">;
   actions: RowActions;
 }) {
   const t = useT();
@@ -89,9 +121,12 @@ export function MessageActions({
             {t("Xoá", "Delete")}
           </Button>
         ) : null}
-        <Button variant="ghost" onClick={() => actions.onReply(m.id)}>
+        <Button variant="ghost" data-reply onClick={() => actions.onReply(m.id)}>
           {t("Trả lời", "Reply")}
         </Button>
+        {actions.onModerate && !m.mine && m.authorType === "person" ? (
+          <ModerateEntry id={m.id} action="hide" onModerate={actions.onModerate} />
+        ) : null}
       </div>
       {draft !== null ? (
         <form className={styles.editor} onSubmit={save}>

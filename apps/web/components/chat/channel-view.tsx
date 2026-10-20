@@ -7,7 +7,7 @@ import { Button } from "../ui/button";
 import { channelTitle } from "./channel-list";
 import styles from "./channel-view.module.css";
 import { Composer } from "./composer";
-import { MessageList } from "./message-list";
+import { MessageList, type Moderated } from "./message-list";
 
 // The chat channel screen: header, the history state of spec 5.2.1, the message log. The composer goes below the log.
 export function ChannelView({
@@ -26,9 +26,16 @@ export function ChannelView({
     chat;
   const [replyTo, setReplyTo] = useState<string | null>(null); // a row's Reply, until sent or cancelled
   // Title and post policy come from the channel list by id; nothing is kept in a URL, storage or module cache.
-  const { channels } = useChatChannels(tenantId, { live: false });
+  const { channels, viewer } = useChatChannels(tenantId, { live: false });
   const channel = channels.find((c) => c.id === channelId);
   const [olderError, setOlderError] = useState<ChatListError | null>(null);
+  const [moderated, setModerated] = useState<Moderated | null>(null);
+  // the null result that closes the sheet also feeds the status line and the focus move (DM-7, DM-11)
+  const moderate: typeof chat.moderate = async (id, input) => {
+    const row = await chat.moderate(id, input);
+    if (!row) setModerated({ id, action: input.action });
+    return row;
+  };
   const empty = t("Chưa có tin nhắn nào.", "No messages yet.");
   const notice = error?.message || (state === "empty" ? empty : "");
   return (
@@ -66,10 +73,18 @@ export function ChannelView({
         onLoadOlder={() => void loadOlder().then(setOlderError)}
         olderError={olderError}
         labelledBy={channel ? titleId : undefined}
-        actions={{ onReply: setReplyTo, onEdit: chat.edit, onRemove: chat.remove }}
+        actions={{
+          onReply: setReplyTo,
+          onEdit: chat.edit,
+          onRemove: chat.remove,
+          // the server's yes only: without it no moderation control renders (fail closed)
+          onModerate: viewer?.canModerate === true ? moderate : undefined,
+        }}
+        moderated={moderated}
       />
       <Composer
         postPolicy={channel?.postPolicy}
+        canPostRestricted={viewer?.canPostRestricted === true}
         outbox={{ pending, send, retry, discard }}
         reply={replyTo ? { id: replyTo, clear: () => setReplyTo(null) } : undefined}
       />

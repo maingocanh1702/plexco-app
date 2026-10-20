@@ -9,6 +9,7 @@ import {
   listChannels,
   listHistory,
   markRead,
+  moderateMessage,
   sendMessage,
 } from "./chat-api";
 
@@ -17,6 +18,7 @@ const CHANNEL = "22222222-2222-4222-8222-222222222222";
 const MESSAGE = "33333333-3333-4333-8333-333333333333";
 const CLIENT_MSG = "44444444-4444-4444-8444-444444444444";
 const REPLY = "55555555-5555-4555-8555-555555555555";
+const COMMAND = "88888888-8888-4888-8888-888888888888";
 const CTX = { tenantId: TENANT, csrfToken: "csrf-secret" };
 const CURSOR = "v1.MjAyNi0xMC0yMCAxMDowMDowMC4xMjM0NTYrMDB8YWJj";
 
@@ -50,6 +52,11 @@ const TOMBSTONE_ROW: ChatTombstoneDto = {
 const SEND_OK = { id: MESSAGE, createdAt: "2026-10-20T10:00:00.000Z", duplicate: false };
 const EDIT_OK = { id: MESSAGE, editCount: 1, editedAt: "2026-10-20T10:01:00.000Z", changed: true };
 const DELETE_OK = { id: MESSAGE, authorDeletedAt: "2026-10-20T10:02:00.000Z", changed: true };
+// The viewer a club admin gets from GET /api/chat/channels (L15b), and the all-false fail-closed one.
+const VIEWER = { canModerate: true, canPostRestricted: false };
+const NO_FLAGS = { canModerate: false, canPostRestricted: false };
+// The moderation route answers exactly these three keys (never a body or another moderator).
+const MODERATE_OK = { messageId: MESSAGE, moderationState: "hidden", changed: true };
 // createdAt is deliberately not monotonic: the server's page order is kept, never re-sorted.
 const PAGE = {
   messages: [
@@ -108,21 +115,43 @@ const CHANNEL_PATH = `/api/chat/channels/${CHANNEL}`;
 // Expected request bodies; send/edit pass copies, so the client cannot mutate the expectation.
 const SEND_BODY = { clientMsgId: CLIENT_MSG, body: "hello" };
 const EDIT_BODY = { body: "edited", expectedEditCount: 0 };
+// A hide for a reason that takes no note: the note goes out as an explicit JSON null, never "".
+const HIDE_BODY = {
+  action: "hide",
+  reasonCode: "spam",
+  reasonNote: null,
+  commandId: COMMAND,
+} as const;
 const readChannels = () => listChannels(TENANT);
 const readHistory = () => listHistory(TENANT, CHANNEL);
 const send = () => sendMessage(CTX, CHANNEL, { ...SEND_BODY });
 const edit = () => editMessage(CTX, CHANNEL, MESSAGE, { ...EDIT_BODY });
 const remove = () => deleteMessage(CTX, CHANNEL, MESSAGE);
 const read = () => markRead(CTX, CHANNEL, MESSAGE);
+const moderate = () => moderateMessage(CTX, CHANNEL, MESSAGE, { ...HIDE_BODY });
 
 // [name, method, path, call, answer data, expected request body]
 const CALL_ROWS: [string, string, string, () => Promise<unknown>, unknown, unknown?][] = [
-  ["listChannels", "GET", "/api/chat/channels", readChannels, { channels: [CHANNEL_ROW] }],
+  [
+    "listChannels",
+    "GET",
+    "/api/chat/channels",
+    readChannels,
+    { channels: [CHANNEL_ROW], viewer: VIEWER },
+  ],
   ["listHistory", "GET", `${CHANNEL_PATH}/messages`, readHistory, PAGE],
   ["sendMessage", "POST", `${CHANNEL_PATH}/messages`, send, SEND_OK, SEND_BODY],
   ["editMessage", "PATCH", `${CHANNEL_PATH}/messages/${MESSAGE}`, edit, EDIT_OK, EDIT_BODY],
   ["deleteMessage", "DELETE", `${CHANNEL_PATH}/messages/${MESSAGE}`, remove, DELETE_OK],
   ["markRead", "POST", `${CHANNEL_PATH}/read`, read, {}, { throughMessageId: MESSAGE }],
+  [
+    "moderateMessage",
+    "POST",
+    `${CHANNEL_PATH}/messages/${MESSAGE}/moderation`,
+    moderate,
+    MODERATE_OK,
+    HIDE_BODY,
+  ],
 ];
 const CALLS = CALL_ROWS.map(([name, method, path, run, data, body]) => ({
   name,
@@ -237,6 +266,126 @@ describe("chat api history paging", () => {
     });
     await expect(listChannels(TENANT)).resolves.toMatchObject({ ok: true });
   });
+});
+
+describe("chat api viewer flags (L15b)", () => {
+  const withViewer = (viewer: unknown) => ({ channels: [CHANNEL_ROW], viewer });
+  const listed = (viewer: unknown) => ({ ok: true, data: { channels: [CHANNEL_ROW], viewer } });
+
+  it.each([
+    VIEWER,
+    NO_FLAGS,
+    { canModerate: false, canPostRestricted: true },
+    { canModerate: true, canPostRestricted: true },
+  ])("a valid viewer %j is returned beside the channels", async (viewer) => {
+    answer(withViewer(viewer));
+    await expect(listChannels(TENANT)).resolves.toStrictEqual(listed(viewer));
+  });
+
+  // Whatever is wrong with `viewer`, the list still answers and no flag is granted: no partial trust
+  // (a valid `true` beside a malformed flag is dropped too) and never an error that hides the channels.
+  const CLOSED: [string, unknown][] = [
+    ["a missing viewer", { channels: [CHANNEL_ROW] }],
+    ["a null viewer", withViewer(null)],
+    ["a string viewer", withViewer("yes")],
+    ["a boolean viewer", withViewer(true)],
+    ["an array viewer", withViewer([true, true])],
+    ["an empty viewer", withViewer({})],
+    ["a viewer missing canPostRestricted", withViewer({ canModerate: true })],
+    ["a viewer missing canModerate", withViewer({ canPostRestricted: true })],
+    ["a string canModerate", withViewer({ canModerate: "true", canPostRestricted: true })],
+    ["a numeric canModerate", withViewer({ canModerate: 1, canPostRestricted: true })],
+    ["a null canPostRestricted", withViewer({ canModerate: true, canPostRestricted: null })],
+    [
+      "an extra key inside viewer",
+      withViewer({ canModerate: true, canPostRestricted: true, role: "owner" }),
+    ],
+  ];
+  it.each(CLOSED)("%s: both flags false, the channel list still answers", async (_name, data) => {
+    answer(data);
+    await expect(listChannels(TENANT)).resolves.toStrictEqual(listed(NO_FLAGS));
+  });
+
+  it("drops every other data key: the answer carries exactly channels and viewer", async () => {
+    answer({ ...withViewer(VIEWER), total: 1, role: "owner" });
+    await expect(listChannels(TENANT)).resolves.toStrictEqual(listed(VIEWER));
+  });
+
+  it("a valid viewer never loosens the channel guard: a bad row still rejects the list", async () => {
+    answer({ channels: [chan({ createdBy: "x" })], viewer: VIEWER });
+    await expect(listChannels(TENANT)).resolves.toStrictEqual(bad(200));
+  });
+});
+
+describe("chat api moderation call", () => {
+  it("sends exactly the four keys untouched: a note verbatim, a null note as null", async () => {
+    const fn = answer(MODERATE_OK);
+    const reasonNote = "  synthetic moderation note  "; // padded on purpose: the sheet trims, this layer does not
+    await moderateMessage(CTX, CHANNEL, MESSAGE, {
+      action: "restore",
+      reasonCode: "other",
+      reasonNote,
+      commandId: COMMAND,
+    });
+    await moderate();
+    expect(sent(fn, 0).body).toStrictEqual({
+      action: "restore",
+      reasonCode: "other",
+      reasonNote,
+      commandId: COMMAND,
+    });
+    expect(sent(fn, 1).body).toStrictEqual(HIDE_BODY);
+    expect(sent(fn, 0).headers.get("content-type")).toBe("application/json");
+  });
+
+  it("only the four keys go on the wire, whatever else the caller's object carries", async () => {
+    const fn = answer(MODERATE_OK);
+    const wide = { ...HIDE_BODY, messageText: "synthetic body", authorLabel: "An" };
+    await moderateMessage(CTX, CHANNEL, MESSAGE, wide);
+    expect(sent(fn).body).toStrictEqual(HIDE_BODY);
+  });
+
+  it("a retry resends the identical commandId and body; a no-op answer is a success", async () => {
+    const fn = answer({ ...MODERATE_OK, changed: false });
+    const first = await moderate();
+    const retry = await moderate();
+    expect(sent(fn, 1).body).toStrictEqual(sent(fn, 0).body);
+    expect(first).toStrictEqual({ ok: true, data: { ...MODERATE_OK, changed: false } });
+    expect(retry).toStrictEqual(first);
+  });
+
+  it("accepts the restore answer (visible)", async () => {
+    answer({ ...MODERATE_OK, moderationState: "visible" });
+    await expect(moderate()).resolves.toStrictEqual({
+      ok: true,
+      data: { ...MODERATE_OK, moderationState: "visible" },
+    });
+  });
+
+  it("keeps the note and the commandId out of the URL: ?tenant= and encoded ids only", async () => {
+    const fn = answer(MODERATE_OK);
+    const reasonNote = "synthetic-note-token";
+    const input = { action: "hide", reasonCode: "other", reasonNote, commandId: COMMAND } as const;
+    await moderateMessage(CTX, "a/b", "c?d", input);
+    const { url } = sent(fn);
+    expect(url.pathname).toBe("/api/chat/channels/a%2Fb/messages/c%3Fd/moderation");
+    expect([...url.searchParams.entries()]).toStrictEqual([["tenant", TENANT]]);
+    expect(url.href).not.toContain(reasonNote);
+    expect(url.href).not.toContain(COMMAND);
+  });
+
+  it.each([
+    [403, "CHAT_MODERATION_FORBIDDEN"],
+    [409, "CHAT_IDEMPOTENCY_MISMATCH"],
+    [422, "CHAT_REASON_INVALID"],
+    [429, "CHAT_RATE_LIMITED"],
+  ])(
+    "%i %s is surfaced verbatim with its status, never read as a success",
+    async (status, code) => {
+      stub(() => new Response(errorBody(code, status), { status }));
+      await expect(moderate()).resolves.toStrictEqual(failed(code, status));
+    },
+  );
 });
 
 const ERROR_CODES: [number, string][] = [
@@ -356,6 +505,22 @@ const REJECTED: [string, () => Promise<unknown>, unknown][] = [
   ["a delete result with a null authorDeletedAt", remove, { ...DELETE_OK, authorDeletedAt: null }],
   ["a read result with a key", read, { ok: true }],
   ["a read result that is an array", read, []],
+  ["a moderation result with an extra key", moderate, { ...MODERATE_OK, body: "previous text" }],
+  ["a moderation result naming a moderator", moderate, { ...MODERATE_OK, moderatorId: "p" }],
+  [
+    "a moderation result with an unknown moderationState",
+    moderate,
+    { ...MODERATE_OK, moderationState: "removed" },
+  ],
+  [
+    "a moderation result with a null moderationState",
+    moderate,
+    { ...MODERATE_OK, moderationState: null },
+  ],
+  ["a moderation result with a string changed", moderate, { ...MODERATE_OK, changed: "true" }],
+  ["a moderation result without changed", moderate, without(MODERATE_OK, "changed")],
+  ["a moderation result with an empty messageId", moderate, { ...MODERATE_OK, messageId: "" }],
+  ["a moderation result that is an array", moderate, []],
 ];
 
 describe("chat api exact-key guards", () => {
@@ -364,33 +529,25 @@ describe("chat api exact-key guards", () => {
     // toStrictEqual: only {ok, code, status} comes back, never a rejected row's content
     await expect(run()).resolves.toStrictEqual(bad(200));
   });
-
-  it("the channels answer ignores extra data keys and never passes them on", async () => {
-    answer({ channels: [CHANNEL_ROW], viewer: { canModerate: true, canPostRestricted: false } });
-    await expect(listChannels(TENANT)).resolves.toStrictEqual({
-      ok: true,
-      data: { channels: [CHANNEL_ROW] },
-    });
-  });
 });
 
 describe("chat api scope", () => {
-  it("exports exactly the six chat calls: no hide/restore call, no stream path", () => {
+  it("exports exactly the seven chat calls: no stream path", () => {
     expect(Object.keys(chatApi).sort()).toStrictEqual([
       "deleteMessage",
       "editMessage",
       "listChannels",
       "listHistory",
       "markRead",
+      "moderateMessage",
       "sendMessage",
     ]);
   });
 
-  it("the source has no console call, no browser storage, no stream and no hide/restore route", () => {
+  it("the source has no console call, no browser storage and no stream", () => {
     const source = readFileSync(new URL("./chat-api.ts", import.meta.url), "utf8");
-    // "moderation_hidden" is a legitimate tombstone value, so only the route path is banned here
     expect(source).not.toMatch(
-      /console\.|localStorage|sessionStorage|indexedDB|EventSource|CHAT_STREAM|\/moderation/i,
+      /console\.|localStorage|sessionStorage|indexedDB|EventSource|CHAT_STREAM/i,
     );
   });
 });

@@ -437,6 +437,29 @@ test("chat golden path: two members chat live, the unread badge advances and cle
     // Back in the list the successful cursor calls have cleared the badge.
     await coAdmin.getByRole("link", { name: "Quay lại" }).click();
     await expect.poll(unread, { timeout: 15_000 }).toBe(0);
+
+    // DM-12: the co-admin hides the owner's second message (Spam), then restores it (Other plus a note);
+    // the owner's open page follows both live, with no reload. The sheet's confirm button carries the
+    // entry's label, so it is looked up inside the dialog only.
+    await coAdminLink.click();
+    const dialog = coAdmin.getByRole("dialog");
+    const inSheet = (label: string) => dialog.getByRole("button", { name: label, exact: true });
+    const ownerNewest = page.getByRole("log").getByRole("listitem").last();
+    const restore = messages.last().getByRole("button", { name: "Khôi phục", exact: true });
+    await messages
+      .filter({ hasText: textTwo })
+      .getByRole("button", { name: "Ẩn tin", exact: true })
+      .click();
+    await dialog.getByRole("radio", { name: "Spam", exact: true }).check();
+    await inSheet("Ẩn tin").click();
+    await expect(restore).toBeVisible(); // the tombstone row carries the restore entry
+    await expect(ownerNewest).toContainText("Tin nhắn đã bị gỡ.", { timeout: 15_000 });
+    await restore.click();
+    await dialog.getByRole("radio", { name: "Lý do khác", exact: true }).check();
+    await dialog.getByRole("textbox", { name: "Ghi chú (bắt buộc)" }).fill(`golden note ${run}`);
+    await inSheet("Khôi phục").click();
+    await expect(messages.filter({ hasText: textTwo })).toBeVisible();
+    await expect(ownerNewest).toContainText(textTwo, { timeout: 15_000 });
   } finally {
     await coAdminContext.close();
   }

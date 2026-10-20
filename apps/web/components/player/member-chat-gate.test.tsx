@@ -63,6 +63,7 @@ const chatChannel: ReturnType<typeof useChatChannel> = {
   discard: vi.fn(),
   edit: vi.fn(),
   remove: vi.fn(),
+  moderate: vi.fn(),
 };
 
 const html = (node: ReactNode, lang: "vi" | "en" = "en") =>
