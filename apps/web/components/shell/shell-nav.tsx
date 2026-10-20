@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useT } from "../../lib/i18n-client";
-import { CalendarIcon, HomeIcon, SettingsIcon } from "./nav-icons";
+import { CalendarIcon, ChatIcon, HomeIcon, SettingsIcon } from "./nav-icons";
 import styles from "./shell-nav.module.css";
 
 /** Bottom nav (<768), icon rail (768-1023), sidebar (>=1024): one list, three presentations. */
@@ -14,6 +14,7 @@ export function ShellNav({ tenantId }: { tenantId: string }) {
   const items = [
     { href: base, label: t("Trang chủ", "Home"), icon: <HomeIcon />, exact: true },
     { href: `${base}/sessions`, label: t("Buổi chơi", "Sessions"), icon: <CalendarIcon /> },
+    { href: `${base}/chat`, label: t("Trò chuyện", "Chat"), icon: <ChatIcon /> },
     { href: `${base}/settings`, label: t("Cài đặt", "Settings"), icon: <SettingsIcon /> },
   ];
   return (

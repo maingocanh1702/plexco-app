@@ -234,6 +234,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/use-tenant-context.ts": "c",
   // (c) — browser-side session screens (M2b). Pure formatters/builders; any user-facing text is
   // produced with the `t` the caller passes from useT() (tenant language), never a server response.
+  "lib/chat-error-ui.ts": "c",
   "lib/money.ts": "c",
   "lib/session-actions.ts": "c",
   "lib/session-error-ui.ts": "c",
@@ -243,6 +244,8 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/session-time.ts": "c",
   "lib/sessions-api.ts": "c",
   // (c) — browser-side typed fetch wrappers; user-facing text comes from the caller's t.
+  "lib/chat-api.ts": "c",
+  "lib/use-chat.ts": "c",
   "lib/discover-api.ts": "c",
   "lib/me-player-api.ts": "c",
   "lib/lang-storage.ts": "c",

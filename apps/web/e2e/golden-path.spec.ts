@@ -374,3 +374,70 @@ test("player golden path: published session -> my sessions -> my charges", async
     await shot("player-my-charges");
   });
 });
+
+test("chat golden path: two members chat live, the unread badge advances and clears", async ({
+  page,
+  browser,
+}) => {
+  const run = Date.now().toString(36);
+  const textOne = `golden chat ${run} one`;
+  const textTwo = `golden chat ${run} two`;
+  const owner = await signInAsPersona(page, /Chủ CLB/);
+  const tenantId = owner.tenants.find((t) => t.name === "Dev Club")?.tenantId ?? "";
+  expect(tenantId, "the seeded Dev Club's tenant id").toBeTruthy();
+  await page.goto(`/c/${tenantId}/chat`);
+  const ownerLink = page.getByRole("link", { name: /^Kênh chung/ });
+  await expect(ownerLink).toHaveAttribute("href", /^\/c\/[^/]+\/chat\/[^/]+$/);
+  expect(await ownerLink.getAttribute("href")).toContain(`/c/${tenantId}/chat/`);
+  const channelId = (await ownerLink.getAttribute("href"))?.split("/").pop();
+
+  // /c/[tenantId] is the admin workspace: the two chatters are the owner and the co_admin.
+  const coAdminContext = await browser.newContext({ baseURL: BASE });
+  try {
+    const coAdmin = await coAdminContext.newPage();
+    await signInAsPersona(coAdmin, /Đồng quản trị/);
+    await coAdmin.goto(`/c/${tenantId}/chat`);
+    const coAdminLink = coAdmin.getByRole("link", { name: /^Kênh chung/ });
+    await expect(coAdminLink).toBeVisible(); // the list left loading
+    // Unread count from the badge text ("3 tin chưa đọc", "100+ tin chưa đọc"); no badge means 0.
+    const unread = async () =>
+      Number(/([0-9]+)[+]? *tin chưa đọc/.exec((await coAdminLink.textContent()) ?? "")?.[1] ?? 0);
+    const before = await unread();
+    expect(before, "under 100 unread").toBeLessThan(100); // a "100+" badge parses as 100
+    // The co-admin's read-cursor POST; register it BEFORE the action that fires it.
+    const readCursor = () =>
+      coAdmin.waitForResponse(
+        (r) =>
+          r.request().method() === "POST" &&
+          r.url().includes(`/api/chat/channels/${channelId}/read`),
+      );
+    const send = async (text: string) => {
+      await page.getByRole("textbox", { name: "Tin nhắn", exact: true }).fill(text);
+      await page.getByRole("button", { name: "Gửi", exact: true }).click();
+    };
+
+    await ownerLink.click();
+    await send(textOne);
+    // No reload: the SSE event refetches the co-admin's list and the badge advances by one.
+    await expect.poll(unread, { timeout: 15_000 }).toBe(before + 1);
+
+    // Opening the channel shows the message and moves the read cursor (200).
+    const firstRead = readCursor();
+    await coAdminLink.click();
+    expect((await firstRead).status(), "read cursor after opening the channel").toBe(200);
+    const messages = coAdmin.getByRole("log").getByRole("listitem");
+    await expect(messages.filter({ hasText: textOne })).toBeVisible();
+
+    // A live message shows up without a reload and advances the cursor again.
+    const secondRead = readCursor();
+    await send(textTwo);
+    await expect(messages.filter({ hasText: textTwo })).toBeVisible({ timeout: 15_000 });
+    expect((await secondRead).status(), "read cursor after a live message").toBe(200);
+
+    // Back in the list the successful cursor calls have cleared the badge.
+    await coAdmin.getByRole("link", { name: "Quay lại" }).click();
+    await expect.poll(unread, { timeout: 15_000 }).toBe(0);
+  } finally {
+    await coAdminContext.close();
+  }
+});

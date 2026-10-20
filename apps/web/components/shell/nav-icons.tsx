@@ -37,3 +37,11 @@ export function SettingsIcon() {
     </svg>
   );
 }
+
+export function ChatIcon() {
+  return (
+    <svg {...common}>
+      <path d="M21 12a8 8 0 0 1-8 8H4v-8a8 8 0 0 1 8-8h1a8 8 0 0 1 8 8z" />
+    </svg>
+  );
+}
