@@ -3,6 +3,7 @@ import type {
   ChatLiveMessageDto,
   ChatMessageDto,
   ChatTombstoneDto,
+  ChatViewerDto,
 } from "@plexco/core";
 import { ApiClientError, CLIENT_BAD_RESPONSE, apiFetch, type ApiFetchInit } from "./api-client";
 import { tenantQuery, type SessionApiContext } from "./sessions-api";
@@ -20,10 +21,11 @@ import { tenantQuery, type SessionApiContext } from "./sessions-api";
  *
  * The DTO guards are exact: a row with any key or type beyond the merged contract rejects the whole
  * answer, and a tombstone is exactly its four keys. A rejected answer carries no row content.
- * One exception: /channels may also carry `viewer` (L15b), read by a later lane and not by L16:
- * every key beside `channels` is dropped unread, and each channel row stays exact.
- * Nothing here logs, stores or caches. Deliberately absent: the stream path (use-chat owns it) and
- * the hide/restore route (RO-L16-1).
+ * One exception: /channels also carries `viewer` (L15b), the viewer's own two display flags. It is
+ * read apart from the exact channels check and fails closed: anything but an object of exactly the
+ * two booleans reads as both false, and never fails the list. Every other key beside `channels`
+ * is dropped unread, and each channel row stays exact.
+ * Nothing here logs, stores or caches. Deliberately absent: the stream path (use-chat owns it).
  */
 
 const TIMEOUT_MS = 15_000; // P-15: the same give-up time as the player reads
@@ -32,6 +34,8 @@ export type ChatResult<T> = { ok: true; data: T } | { ok: false; code: string; s
 
 export interface ChatChannelList {
   channels: ChatChannelDto[];
+  /** Always present after the parse: both false unless the answer carried a well-formed viewer. */
+  viewer: ChatViewerDto;
 }
 /** Newest first, in the server's order; pass nextCursor back to listHistory as received. */
 export interface ChatHistoryPage {
@@ -55,6 +59,21 @@ export interface ChatDeleteResult {
   changed: boolean;
 }
 export type ChatReadResult = Record<string, never>;
+export interface ChatModerateInput {
+  action: "hide" | "restore";
+  /** One of the server's closed reasons; the server judges it (422 CHAT_REASON_INVALID). */
+  reasonCode: string;
+  /** The note of the "other" reason (1..500 UTF-8 bytes), null for every other reason, never "". */
+  reasonNote: string | null;
+  /** A uuid minted once per user action and reused on every retry of it. */
+  commandId: string;
+}
+/** Render from `moderationState`: `changed` is false when the message was already in that state. */
+export interface ChatModerateResult {
+  messageId: string;
+  moderationState: "hidden" | "visible";
+  changed: boolean;
+}
 
 type Check = (value: unknown) => boolean;
 /** One check per key of T: the guard needs exactly these keys, so a new DTO key fails the compile. */
@@ -118,7 +137,12 @@ const TOMBSTONE: Spec<ChatTombstoneDto> = {
 };
 const isMessage: Check = (v) => matches(v, LIVE) || matches(v, TOMBSTONE);
 
-const CHANNELS: Spec<ChatChannelList> = { channels: listOf((v) => matches(v, CHANNEL)) };
+const VIEWER: Spec<ChatViewerDto> = { canModerate: isBool, canPostRestricted: isBool };
+
+// `viewer` is deliberately not in this spec: a missing or malformed one must not fail the list.
+const CHANNELS: Spec<Pick<ChatChannelList, "channels">> = {
+  channels: listOf((v) => matches(v, CHANNEL)),
+};
 const PAGE: Spec<ChatHistoryPage> = { messages: listOf(isMessage), nextCursor: orNull(isId) };
 const SENT: Spec<ChatSendResult> = { id: isId, createdAt: isText, duplicate: isBool };
 const EDITED: Spec<ChatEditResult> = {
@@ -129,6 +153,22 @@ const EDITED: Spec<ChatEditResult> = {
 };
 const DELETED: Spec<ChatDeleteResult> = { id: isId, authorDeletedAt: isText, changed: isBool };
 const READ: Spec<ChatReadResult> = {};
+const MODERATED: Spec<ChatModerateResult> = {
+  messageId: isId,
+  moderationState: oneOf("hidden", "visible"),
+  changed: isBool,
+};
+
+/**
+ * The viewer's two display flags, fail closed: only an object of exactly the two booleans counts.
+ * A missing, mistyped or widened `viewer` is both false (no control renders), never an error.
+ */
+function readViewer(body: unknown): ChatViewerDto {
+  const viewer = (body as { viewer?: unknown } | null)?.viewer;
+  return matches(viewer, VIEWER)
+    ? { canModerate: viewer.canModerate, canPostRestricted: viewer.canPostRestricted }
+    : { canModerate: false, canPostRestricted: false };
+}
 
 async function request<T>(
   spec: Spec<T>,
@@ -175,10 +215,18 @@ const channelPath = (channelId: string) => `/api/chat/channels/${encodeURICompon
 const messagePath = (channelId: string, messageId: string) =>
   `${channelPath(channelId)}/messages/${encodeURIComponent(messageId)}`;
 
-export function listChannels(tenantId: string): Promise<ChatResult<ChatChannelList>> {
-  return request(CHANNELS, `/api/chat/channels?${tenantQuery(tenantId)}`, {}, (body) => ({
-    channels: (body as { channels?: unknown } | null)?.channels,
-  }));
+export async function listChannels(tenantId: string): Promise<ChatResult<ChatChannelList>> {
+  let viewer = readViewer(null); // both false until the answer proves otherwise
+  const result = await request(
+    CHANNELS,
+    `/api/chat/channels?${tenantQuery(tenantId)}`,
+    {},
+    (body) => {
+      viewer = readViewer(body);
+      return { channels: (body as { channels?: unknown } | null)?.channels };
+    },
+  );
+  return result.ok ? { ok: true, data: { channels: result.data.channels, viewer } } : result;
 }
 
 /** `cursor` is a previous page's nextCursor, sent as received. No limit is ever sent. */
@@ -232,4 +280,20 @@ export function markRead(
   throughMessageId: string,
 ): Promise<ChatResult<ChatReadResult>> {
   return mutate(READ, ctx, "POST", `${channelPath(channelId)}/read`, { throughMessageId });
+}
+
+/** Hide or restore one message. A retry passes the same commandId and the identical input. */
+export function moderateMessage(
+  ctx: SessionApiContext,
+  channelId: string,
+  messageId: string,
+  input: ChatModerateInput,
+): Promise<ChatResult<ChatModerateResult>> {
+  const { action, reasonCode, reasonNote, commandId } = input;
+  return mutate(MODERATED, ctx, "POST", `${messagePath(channelId, messageId)}/moderation`, {
+    action,
+    reasonCode,
+    reasonNote,
+    commandId,
+  });
 }
