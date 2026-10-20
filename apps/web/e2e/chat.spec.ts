@@ -9,6 +9,7 @@ const VIEW = `${LIST}/${mock.CHANNEL_ID}`;
 const MINE = "Mình tới sớm nhé"; // the body of the mock's own history row
 const SENT = "Em ra sân lúc 18h";
 const EDITED = "Mình tới sớm nhé, 15 phút";
+const CURSOR = "v1.b2xkZXI"; // the real format is "v1." + base64url (lib/chat-route.ts)
 const MODERATION = /hide|restore|moderat|ẩn tin|khôi phục|kiểm duyệt/i;
 const viewer = { canModerate: true, canPostRestricted: true };
 const page1 = (...messages: object[]) => ok({ messages, nextCursor: null });
@@ -72,6 +73,16 @@ test.describe("chat web UI (mocked API)", () => {
     const gone = rows(page).filter({ hasText: "Message removed." });
     await expect(gone).toHaveText(["Message removed.", "Message removed."]);
     await expect(rows(page)).toHaveCount(3);
+  });
+
+  test("older page AUTH_REQUIRED: the screen takes its own error row", async ({ page }) => {
+    const history = ok({ messages: [mock.message()], nextCursor: CURSOR });
+    const chat = await open(page, VIEW, { history });
+    chat.replyOlder(fail("AUTH_REQUIRED", 401)); // only a request carrying the cursor gets it
+    await press(page, "Show older messages").click();
+    await expect(page.locator("[data-state]")).toHaveAttribute("data-state", "error");
+    await expect(page.getByRole("link", { name: "Sign in again" })).toBeVisible();
+    expect(chat.callsTo("history").at(-1)?.query.get("cursor")).toBe(CURSOR);
   });
 
   for (const status of [500, 200]) {

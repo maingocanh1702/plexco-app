@@ -402,6 +402,7 @@ test("chat golden path: two members chat live, the unread badge advances and cle
     const unread = async () =>
       Number(/([0-9]+)[+]? *tin chưa đọc/.exec((await coAdminLink.textContent()) ?? "")?.[1] ?? 0);
     const before = await unread();
+    expect(before, "under 100 unread").toBeLessThan(100); // a "100+" badge parses as 100
     // The co-admin's read-cursor POST; register it BEFORE the action that fires it.
     const readCursor = () =>
       coAdmin.waitForResponse(
@@ -426,9 +427,7 @@ test("chat golden path: two members chat live, the unread badge advances and cle
     const messages = coAdmin.getByRole("log").getByRole("listitem");
     await expect(messages.filter({ hasText: textOne })).toBeVisible();
 
-    // A live message shows up without a reload and advances the cursor again; the view reads at
-    // most once per 5 s (lib/use-chat.ts), so let that window pass first.
-    await coAdmin.waitForTimeout(5_500);
+    // A live message shows up without a reload and advances the cursor again.
     const secondRead = readCursor();
     await send(textTwo);
     await expect(messages.filter({ hasText: textTwo })).toBeVisible({ timeout: 15_000 });

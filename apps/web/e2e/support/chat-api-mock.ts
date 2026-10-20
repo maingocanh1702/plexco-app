@@ -174,6 +174,7 @@ export async function installChatApi(
     ...replies,
   };
   const once: Partial<Record<ChatRouteKey, Reply[]>> = {};
+  let cursorReply: Reply | undefined; // answers every history request that carries a cursor
   const holds: Partial<Record<ChatRouteKey, Promise<void>[]>> = {};
   const calls: (RecordedCall & { key: ChatRouteKey })[] = [];
   const stream = await installChatStream(page);
@@ -190,12 +191,17 @@ export async function installChatApi(
     calls.push({ key, method, path: pathname, query: searchParams, body });
 
     await holds[key]?.shift();
-    return answer(route, once[key]?.shift() ?? standing[key] ?? fail("E2E_NOT_STUBBED", 500));
+    const older = key === "history" && searchParams.has("cursor") ? cursorReply : undefined;
+    return answer(
+      route,
+      older ?? once[key]?.shift() ?? standing[key] ?? fail("E2E_NOT_STUBBED", 500),
+    );
   });
   return {
     calls,
     callsTo: (key: ChatRouteKey) => calls.filter((c) => c.key === key),
     reply: (key: ChatRouteKey, reply: Reply) => (standing[key] = reply),
+    replyOlder: (reply: Reply) => (cursorReply = reply),
     failNext: (key: ChatRouteKey, reply: Reply) => (once[key] ??= []).push(reply),
     holdNext(key: ChatRouteKey) {
       let release: () => void = () => {};
