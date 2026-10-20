@@ -2067,7 +2067,9 @@ notes: **Mirror repo kẹt ở v0.6.0, canonical (`~/Projects/Claude template/au
 
 ## task: dev-app-worker-password-not-restored
 title: Mọi DB suite ghi đè password cluster-global của app_worker và không suite nào khôi phục
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `leaseTestRolePasswords` tại `packages/db/src/test-harness.ts:206` (snapshot rồi khôi phục mật khẩu và cờ LOGIN của các role); row không có `merged_probe`, hand flip không thêm
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 3 (mật khẩu không bao giờ được khôi phục) và root cause 7 (database theo pid bị rò: teardown của `setupRlsTestContext` nay DROP DATABASE), cùng mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Sau một lần chạy test trọn vẹn không cần chạy lại bước mật khẩu của runbook; sau một lần chạy bị ngắt, cluster giữ mật khẩu test tới lần chạy trọn vẹn kế tiếp (PR #62 OPEN, D-2 crash path), nên lệnh runbook vẫn là fallback.
 risk: P2
 change_class: dev-ergonomics
 depends_on: []
@@ -5959,7 +5961,9 @@ notes: |
 
 ## task: app-worker-test-password-clash-flake
 title: Flake CI `password authentication failed for user app_worker`: hai mật khẩu test khác nhau cho cùng role cluster-global
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `leaseTestRolePasswords` tại `packages/db/src/test-harness.ts:206` (một `ROLE_PW` duy nhất, mọi writer import nó); merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 1 (hai mật khẩu cho một role cluster-global) và mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Mọi writer nay import `ROLE_PW` nên không lần ghi nào đổi mật khẩu mà suite khác đang dùng. Chưa đóng bởi row này, theo chính body PR #62 (OPEN): jobd-then-chad hold-and-wait, "I3 only partly met", một backlog candidate riêng.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -5979,7 +5983,9 @@ notes: |
 
 ## task: db-test-unhandled-57p01-and-load-timeouts
 title: Test DB: `appPool` thiếu listener `error` (57P01 khi teardown) và các timeout/unhandled rejection khi máy tải nặng
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `connectAsApp` tại `packages/db/src/tenant-capability-authority.test.ts:460` (pool có guard 57P01, do teardown đóng; khai báo ở `packages/db/src/test-harness.ts:810`); merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 5 (57P01 ở tenant-capability-authority), 6 (unhandled rejection ở roster-service) và 4 (convoy jobd/chad gây timeout JCL-4, JCL-12, BR-5, JSO-2, JSO-5; sửa tại nguyên nhân, không timeout nào bị nới), cùng mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Chưa đóng bởi row này, theo chính body PR #62 (OPEN): jobd-then-chad hold-and-wait ở ba chỗ ("I3 only partly met", rủi ro tải còn lại, backlog candidate riêng).
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -5998,7 +6004,9 @@ notes: |
 
 ## task: e2e-web-pwa-offline-online-flake
 title: Flake `e2e-web`: test offline → online của `pwa.spec.ts` (cục bộ fail 3/8, qua khi chạy lại)
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `Debugger.pause` tại `apps/web/e2e/pwa.spec.ts:77` (spec giữ script của trang trong lúc `setOffline(false)` nhả cả hai target); merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 8 (Playwright nhả emulation offline cho page trước, service worker sau) và mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Chỉ sửa spec: code production, assertion và timeout không đổi. Cạnh production còn lại nằm ở mục OPEN của PR #62 (trang offline chỉ quay lại khi có sự kiện "online"), không thuộc row này.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6126,7 +6134,9 @@ notes: |
 
 ## task: list-sessions-occupied-count-single-source
 title: `listSessions` tính lại `occupiedCount` bằng SQL thay vì dùng chung một công thức với `sessionOccupancy`
-status: idea
+status: merged
+merged: 2026-10-16 · PR #65, merge 8c382917ff9d66bec45d26234520bb5a2c51e0cd · `occupiedCountSql` tại `packages/db/src/session-occupancy.ts:48`; merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #65 (DONE WHEN: "backlog row `list-sessions-occupied-count-single-source` closable") và file readiness của lane p3-m9-occupancy-helper ("closable by this lane"). F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Một công thức đếm chỗ trong `session-occupancy.ts` thay hai bản chép tay (`sessionOccupancy` ở `session-service.ts` và đoạn danh sách ở `session-read.ts`). Stage 2 của occupancy authority thuộc lane L10 theo body PR #65, không thuộc row này.
 risk: P2
 change_class: code
 depends_on: []
@@ -6274,7 +6284,9 @@ notes: |
 
 ## task: session-text-fields-control-char-validation
 title: `area` / `venue_name` / `venue_address` của session nhận ký tự điều khiển C0 và bidi (ví dụ U+202E, xuống dòng) rồi hiện cho player
-status: idea
+status: merged
+merged: 2026-10-16 · PR #61, merge b0bf565ed72d8c4be3f47d3fe7a4e0e382605928 · `hasHiddenChar` tại `packages/db/src/text-safety.ts:38`; merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #61 và file readiness của lane p3-session-text-control-chars cùng ghi "Backlog row `session-text-fields-control-char-validation` is discharged by this PR; flip it at closeout". F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. `area`, `venue_name`, `venue_address` nay bị `createSession` và `updateSession` từ chối ký tự ẩn bằng đúng predicate của display name, và form web chặn cùng tập ký tự.
 risk: P2
 change_class: code
 depends_on: []
