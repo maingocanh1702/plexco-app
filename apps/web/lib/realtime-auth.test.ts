@@ -265,24 +265,29 @@ describe("planChatDelivery (L15 chat topic, D-12)", () => {
 
   it("a null row and a rejected read each plan nothing, throw nothing and log nothing", async () => {
     const logs = (["log", "info", "warn", "error"] as const).map((m) => vi.spyOn(console, m));
-    vi.mocked(getChatMessage).mockResolvedValue(null);
-    await expect(planChatDelivery(MESSAGE, groups(audience(TENANT_A)))).resolves.toStrictEqual([]);
-    vi.mocked(withChatActor).mockRejectedValue(new Error("CHAT_DB_ERROR:UNKNOWN"));
-    await expect(
-      planChatDelivery(MESSAGE, groups(audience(TENANT_A), audience(TENANT_B))),
-    ).resolves.toStrictEqual([]);
-    // An error denies only its own subscriber: p2's read in the same tenant still delivers.
-    readableBy(`${TENANT_A}:p2`);
-    vi.mocked(withChatActor).mockImplementation(async (_db, actor, fn) => {
-      if (actor.personId === "p1") throw new Error("CHAT_DB_ERROR:UNKNOWN");
-      return fn(actor as never);
-    });
-    const other = audience(TENANT_A, "p2", "a2");
-    expect(await planChatDelivery(MESSAGE, groups(audience(TENANT_A), other))).toStrictEqual([
-      [other, FRAME],
-    ]);
-    for (const spy of logs) expect(spy).not.toHaveBeenCalled();
-    for (const spy of logs) spy.mockRestore();
+    try {
+      vi.mocked(getChatMessage).mockResolvedValue(null);
+      await expect(planChatDelivery(MESSAGE, groups(audience(TENANT_A)))).resolves.toStrictEqual(
+        [],
+      );
+      vi.mocked(withChatActor).mockRejectedValue(new Error("CHAT_DB_ERROR:UNKNOWN"));
+      await expect(
+        planChatDelivery(MESSAGE, groups(audience(TENANT_A), audience(TENANT_B))),
+      ).resolves.toStrictEqual([]);
+      // An error denies only its own subscriber: p2's read in the same tenant still delivers.
+      readableBy(`${TENANT_A}:p2`);
+      vi.mocked(withChatActor).mockImplementation(async (_db, actor, fn) => {
+        if (actor.personId === "p1") throw new Error("CHAT_DB_ERROR:UNKNOWN");
+        return fn(actor as never);
+      });
+      const other = audience(TENANT_A, "p2", "a2");
+      expect(await planChatDelivery(MESSAGE, groups(audience(TENANT_A), other))).toStrictEqual([
+        [other, FRAME],
+      ]);
+      for (const spy of logs) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of logs) spy.mockRestore(); // restored even when an assertion above fails
+    }
   });
 
   it("two streams of one person cost one read", async () => {
