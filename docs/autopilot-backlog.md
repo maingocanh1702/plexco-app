@@ -3456,7 +3456,9 @@ notes: |
 
 ## task: session-publish-public-projector
 title: public_sessions projector (first real outbox consumer) — NOT_CODE_READY; PublishSession half re-sliced out
-status: blocked
+status: superseded
+superseded_by: PR #72 (lane L10 p3-m9-public-projector, merge 4ece239852c2ca31513d61c81e418f4bfa556ebf, 2026-10-17): projector `public_sessions_project_session` tại `packages/db/migrations/0061_public_sessions_projector_writer.sql:164`, gọi từ `apps/bot/src/projectors/public-sessions.ts:52`; merged_probe giữ `null` (hand flip chỉ đổi status và thêm superseded_by, note_superseded)
+note_superseded: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). NOT `merged` - row này chưa từng vào lane riêng (contract và manifest của nó đã được đánh dấu superseded bởi DD-133 + lane L10 từ 2026-10-16, chỉ còn là lịch sử); deliverable (projector `public_sessions`) đi qua lane L10. Was: blocked. F1: body PR #72, tiêu đề "L10 p3-m9-public-projector", đoạn mở đầu "The public_sessions projector and its ONE migration" và mục "What changed" ("projectors/public-sessions.ts replaces L3's placeholder"); readiness `docs/sessions/web-mvp-phase3-readiness-p3-m9-public-projector.md:100` và `:426`; UPDATE 2026-10-16 của chính row này ("lane L10 flips this row when it merges"). F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại hai file:line ở dòng `superseded_by`, vắng ở `<merge>^1`. Không đo lại ở lượt đóng này: hai điều kiện cũ của row (fence 0033 đã land theo UPDATE 2026-08-25; occupancy và alias) và privilege audit của 0061, mà body PR #72 pin bằng test PSP-8 và PSP-8b. Không đổi bởi flip này: enablement (`OUTBOX_DISPATCH_SCHEDULE_ENABLED`) vẫn là bước owner P0.
 risk: P1
 change_class: code+migration
 depends_on: []
