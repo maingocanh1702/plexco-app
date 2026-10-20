@@ -288,7 +288,6 @@ describe("GET /api/chat/subscribe (live stream)", () => {
   // S3-S6 (readiness section 7): revocation, per-event drops, heartbeat and the stream cap.
   const notify = (payload: string) =>
     ctx.workerPool.query("SELECT pg_notify('chat_realtime', $1)", [payload]);
-  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 600));
   /** The message id of the next frame, else what next() gave instead ("timeout" | "done"). */
   const pushedId = async (reader: Reader) => {
     const frame = String(await next(reader));
@@ -325,31 +324,38 @@ describe("GET /api/chat/subscribe (live stream)", () => {
     const c = await club();
     const [a, b] = [await actor(c.t), await actor(c.t)];
     const hidden = await secondChannel(c.t, [a]); // B is not a chat member of it
-    const readerB = await stream(b, c.t);
-    /** Nothing reached B since the last stimulus: its next frame is the next real send. */
-    const nextIsLegit = async () => {
-      await settle();
-      const id = await send(c.t, c.c, a, `s4 legit ${randomUUID()}`);
-      expect(await pushedId(readerB)).toBe(id);
-      return id;
-    };
-    const tenantStatus = (status: "active" | "suspended") =>
-      ctx.owner.query(`UPDATE tenants SET status = $2 WHERE id = $1`, [c.t, status]);
+    const c2 = await club(); // the witness's club: c's suspension does not block its sends
+    const w = await actor(c2.t);
+    vi.useFakeTimers({ toFake: ["setInterval"] }); // only the heartbeat; pg and next() stay real
+    try {
+      const [readerB, readerW] = [await stream(b, c.t), await stream(w, c2.t)];
+      /** Nothing reached B from the last stimulus: the FIFO drain plans it before this send. */
+      const nextIsLegit = async () => {
+        const id = await send(c.t, c.c, a, `s4 legit ${randomUUID()}`);
+        expect(await pushedId(readerB)).toBe(id);
+        return id;
+      };
+      const tenantStatus = (status: "active" | "suspended") =>
+        ctx.owner.query(`UPDATE tenants SET status = $2 WHERE id = $1`, [c.t, status]);
 
-    await notify(randomUUID()); // forged: no such message
-    await nextIsLegit();
-    await notify("not-a-uuid"); // dropped before any read
-    await nextIsLegit();
-    await send(c.t, hidden, a, `s4 hidden ${randomUUID()}`); // B cannot read it
-    const readable = await nextIsLegit();
-    await tenantStatus("suspended"); // B's per-event read now throws TENANT_SUSPENDED
-    await notify(readable);
-    await settle();
-    await tenantStatus("active");
-    await notify(readable); // readable again: delivered, so the drop was the read error
-    expect(await pushedId(readerB)).toBe(readable);
-    await nextIsLegit();
-    expect(await next(readerB, 600)).toBe("timeout");
+      await notify(randomUUID()); // forged: no such message
+      await nextIsLegit();
+      await notify("not-a-uuid"); // dropped before any read
+      await nextIsLegit();
+      await send(c.t, hidden, a, `s4 hidden ${randomUUID()}`); // B cannot read it
+      const readable = await nextIsLegit();
+      await tenantStatus("suspended"); // B's per-event read now throws TENANT_SUSPENDED
+      await notify(readable);
+      const bar = await send(c2.t, c2.c, w, `s4 barrier ${randomUUID()}`); // FIFO drain: planned after `readable`
+      expect(await pushedId(readerW)).toBe(bar);
+      await tenantStatus("active");
+      await notify(readable); // readable again: delivered, so the drop was the read error
+      expect(await pushedId(readerB)).toBe(readable);
+      await nextIsLegit();
+      expect(await next(readerB, 600)).toBe("timeout");
+    } finally {
+      vi.useRealTimers();
+    }
   }, 30_000);
 
   it("S5 heartbeat: exactly one ': hb' per HEARTBEAT_MS (<= 30 s); after B's web session is revoked the next recheck closes the stream", async () => {
