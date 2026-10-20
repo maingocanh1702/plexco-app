@@ -93,63 +93,45 @@ function sent(fn: { mock: { calls: unknown[][] } }, index = 0) {
   };
 }
 
-const CALLS: {
-  name: string;
-  run: () => Promise<unknown>;
-  method: string;
-  path: string;
-  body: unknown;
-  data: unknown;
-}[] = [
-  {
-    name: "listChannels",
-    run: () => listChannels(TENANT),
-    method: "GET",
-    path: "/api/chat/channels",
-    body: undefined,
-    data: { channels: [CHANNEL_ROW] },
-  },
-  {
-    name: "listHistory",
-    run: () => listHistory(TENANT, CHANNEL),
-    method: "GET",
-    path: `/api/chat/channels/${CHANNEL}/messages`,
-    body: undefined,
-    data: PAGE,
-  },
-  {
-    name: "sendMessage",
-    run: () => sendMessage(CTX, CHANNEL, { clientMsgId: CLIENT_MSG, body: "hello" }),
-    method: "POST",
-    path: `/api/chat/channels/${CHANNEL}/messages`,
-    body: { clientMsgId: CLIENT_MSG, body: "hello" },
-    data: SEND_OK,
-  },
-  {
-    name: "editMessage",
-    run: () => editMessage(CTX, CHANNEL, MESSAGE, { body: "edited", expectedEditCount: 0 }),
-    method: "PATCH",
-    path: `/api/chat/channels/${CHANNEL}/messages/${MESSAGE}`,
-    body: { body: "edited", expectedEditCount: 0 },
-    data: EDIT_OK,
-  },
-  {
-    name: "deleteMessage",
-    run: () => deleteMessage(CTX, CHANNEL, MESSAGE),
-    method: "DELETE",
-    path: `/api/chat/channels/${CHANNEL}/messages/${MESSAGE}`,
-    body: undefined,
-    data: DELETE_OK,
-  },
-  {
-    name: "markRead",
-    run: () => markRead(CTX, CHANNEL, MESSAGE),
-    method: "POST",
-    path: `/api/chat/channels/${CHANNEL}/read`,
-    body: { throughMessageId: MESSAGE },
-    data: {},
-  },
+// A failed call returns exactly {ok, code, status}, so no server text or row content leaks.
+const failed = (code: string, status: number) => ({ ok: false, code, status });
+const bad = (status: number) => failed(CLIENT_BAD_RESPONSE, status);
+const res = (body: string | null, status: number) => () => new Response(body, { status });
+const live = (patch: object) => ({ ...LIVE_ROW, ...patch });
+const chan = (patch: object) => ({ ...CHANNEL_ROW, ...patch });
+const without = (row: object, key: string) =>
+  Object.fromEntries(Object.entries(row).filter(([k]) => k !== key));
+const channels = (row: unknown) => ({ channels: [row] });
+const history = (row: unknown) => ({ messages: [LIVE_ROW, row], nextCursor: null });
+
+const CHANNEL_PATH = `/api/chat/channels/${CHANNEL}`;
+// Expected request bodies; send/edit pass copies, so the client cannot mutate the expectation.
+const SEND_BODY = { clientMsgId: CLIENT_MSG, body: "hello" };
+const EDIT_BODY = { body: "edited", expectedEditCount: 0 };
+const readChannels = () => listChannels(TENANT);
+const readHistory = () => listHistory(TENANT, CHANNEL);
+const send = () => sendMessage(CTX, CHANNEL, { ...SEND_BODY });
+const edit = () => editMessage(CTX, CHANNEL, MESSAGE, { ...EDIT_BODY });
+const remove = () => deleteMessage(CTX, CHANNEL, MESSAGE);
+const read = () => markRead(CTX, CHANNEL, MESSAGE);
+
+// [name, method, path, call, answer data, expected request body]
+const CALL_ROWS: [string, string, string, () => Promise<unknown>, unknown, unknown?][] = [
+  ["listChannels", "GET", "/api/chat/channels", readChannels, { channels: [CHANNEL_ROW] }],
+  ["listHistory", "GET", `${CHANNEL_PATH}/messages`, readHistory, PAGE],
+  ["sendMessage", "POST", `${CHANNEL_PATH}/messages`, send, SEND_OK, SEND_BODY],
+  ["editMessage", "PATCH", `${CHANNEL_PATH}/messages/${MESSAGE}`, edit, EDIT_OK, EDIT_BODY],
+  ["deleteMessage", "DELETE", `${CHANNEL_PATH}/messages/${MESSAGE}`, remove, DELETE_OK],
+  ["markRead", "POST", `${CHANNEL_PATH}/read`, read, {}, { throughMessageId: MESSAGE }],
 ];
+const CALLS = CALL_ROWS.map(([name, method, path, run, data, body]) => ({
+  name,
+  method,
+  path,
+  run,
+  data,
+  body,
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -244,22 +226,14 @@ describe("chat api history paging", () => {
     expect(result.data.messages.map((m) => m.id)).toStrictEqual(PAGE.messages.map((m) => m.id));
     answer({
       messages: [
-        { ...LIVE_ROW, authorType: "system", authorLabel: null, replyToMessageId: REPLY },
-        {
-          ...LIVE_ROW,
-          authorType: "assistant",
-          editedAt: PAGE.messages[0]!.createdAt,
-          editCount: 2,
-        },
+        live({ authorType: "system", authorLabel: null, replyToMessageId: REPLY }),
+        live({ authorType: "assistant", editedAt: PAGE.messages[0]!.createdAt, editCount: 2 }),
       ],
       nextCursor: null,
     });
     await expect(listHistory(TENANT, CHANNEL)).resolves.toMatchObject({ ok: true });
     answer({
-      channels: [
-        { ...CHANNEL_ROW, postPolicy: "admins_only", unreadCount: 0 },
-        { ...CHANNEL_ROW, unreadCount: 100 },
-      ],
+      channels: [chan({ postPolicy: "admins_only", unreadCount: 0 }), chan({ unreadCount: 100 })],
     });
     await expect(listChannels(TENANT)).resolves.toMatchObject({ ok: true });
   });
@@ -286,69 +260,33 @@ describe("chat api envelope errors", () => {
     stub(() => new Response(errorBody(code, status), { status }));
     const input = { clientMsgId: CLIENT_MSG, body: "x" };
     // toStrictEqual: exactly {ok, code, status}, so the server's message text never leaks through
-    await expect(sendMessage(CTX, CHANNEL, input)).resolves.toStrictEqual({
-      ok: false,
-      code,
-      status,
-    });
+    await expect(sendMessage(CTX, CHANNEL, input)).resolves.toStrictEqual(failed(code, status));
   });
 
   it.each(CALLS)("$name: an error envelope is a result, never a throw", async ({ run }) => {
     stub(() => new Response(errorBody("CHAT_RATE_LIMITED", 429), { status: 429 }));
-    await expect(run()).resolves.toStrictEqual({
-      ok: false,
-      code: "CHAT_RATE_LIMITED",
-      status: 429,
-    });
+    await expect(run()).resolves.toStrictEqual(failed("CHAT_RATE_LIMITED", 429));
   });
 });
 
-const FAIL_CLOSED: [string, () => Response, { code: string; status: number }][] = [
-  [
-    "a 500 with an HTML body",
-    () => new Response("<html>bad gateway</html>", { status: 500 }),
-    { code: CLIENT_BAD_RESPONSE, status: 500 },
-  ],
-  [
-    "a 500 with an empty body",
-    () => new Response(null, { status: 500 }),
-    { code: CLIENT_BAD_RESPONSE, status: 500 },
-  ],
-  [
-    "a 200 with a non-JSON body",
-    () => new Response("not json", { status: 200 }),
-    { code: CLIENT_BAD_RESPONSE, status: 200 },
-  ],
-  [
-    "a 200 envelope without data",
-    () => new Response(envelope(null), { status: 200 }),
-    { code: CLIENT_BAD_RESPONSE, status: 200 },
-  ],
+const FAIL_CLOSED: [string, () => Response, ReturnType<typeof failed>][] = [
+  ["a 500 with an HTML body", res("<html>bad gateway</html>", 500), bad(500)],
+  ["a 500 with an empty body", res(null, 500), bad(500)],
+  ["a 200 with a non-JSON body", res("not json", 200), bad(200)],
+  ["a 200 envelope without data", res(envelope(null), 200), bad(200)],
   [
     "an error envelope without a code",
-    () =>
-      new Response(
-        JSON.stringify({ data: null, error: { message: "x", statusCode: 400 }, meta: {} }),
-        { status: 400 },
-      ),
-    { code: CLIENT_BAD_RESPONSE, status: 400 },
+    res(JSON.stringify({ data: null, error: { message: "x", statusCode: 400 }, meta: {} }), 400),
+    bad(400),
   ],
-  [
-    "an error envelope with a non-string code",
-    () => new Response(errorBody(42, 400), { status: 400 }),
-    { code: CLIENT_BAD_RESPONSE, status: 400 },
-  ],
-  [
-    "an error envelope with an empty code",
-    () => new Response(errorBody("", 429), { status: 429 }),
-    { code: CLIENT_BAD_RESPONSE, status: 429 },
-  ],
+  ["an error envelope with a non-string code", res(errorBody(42, 400), 400), bad(400)],
+  ["an error envelope with an empty code", res(errorBody("", 429), 429), bad(429)],
   [
     "a network failure",
     () => {
       throw new TypeError("Failed to fetch");
     },
-    { code: CLIENT_NETWORK_ERROR, status: 0 },
+    failed(CLIENT_NETWORK_ERROR, 0),
   ],
 ];
 
@@ -356,7 +294,7 @@ describe("chat api fails closed", () => {
   it.each(FAIL_CLOSED)("%s on every call", async (_name, respond, expected) => {
     for (const call of CALLS) {
       stub(respond);
-      await expect(call.run()).resolves.toStrictEqual({ ok: false, ...expected });
+      await expect(call.run()).resolves.toStrictEqual(expected);
     }
   });
 
@@ -371,11 +309,7 @@ describe("chat api fails closed", () => {
           );
         }),
     );
-    const settled = expect(run()).resolves.toStrictEqual({
-      ok: false,
-      code: CLIENT_NETWORK_ERROR,
-      status: 0,
-    });
+    const settled = expect(run()).resolves.toStrictEqual(failed(CLIENT_NETWORK_ERROR, 0));
     expect(timeout).toHaveBeenCalledWith(15_000);
     expect(sent(fn).signal).toBe(clock.signal);
     clock.abort();
@@ -383,42 +317,14 @@ describe("chat api fails closed", () => {
   });
 });
 
-const live = (patch: object) => ({ ...LIVE_ROW, ...patch });
-const without = (row: object, key: string) =>
-  Object.fromEntries(Object.entries(row).filter(([k]) => k !== key));
-const channels = (row: unknown) => ({ channels: [row] });
-const history = (row: unknown) => ({ messages: [LIVE_ROW, row], nextCursor: null });
-const readChannels = () => listChannels(TENANT);
-const readHistory = () => listHistory(TENANT, CHANNEL);
-const send = () => sendMessage(CTX, CHANNEL, { clientMsgId: CLIENT_MSG, body: "x" });
-const edit = () => editMessage(CTX, CHANNEL, MESSAGE, { body: "x", expectedEditCount: 0 });
-const remove = () => deleteMessage(CTX, CHANNEL, MESSAGE);
-const read = () => markRead(CTX, CHANNEL, MESSAGE);
-
 const REJECTED: [string, () => Promise<unknown>, unknown][] = [
-  ["a channel with an extra key", readChannels, channels({ ...CHANNEL_ROW, createdBy: "x" })],
+  ["a channel with an extra key", readChannels, channels(chan({ createdBy: "x" }))],
   ["a channel missing unreadCount", readChannels, channels(without(CHANNEL_ROW, "unreadCount"))],
-  [
-    "a channel with an unknown postPolicy",
-    readChannels,
-    channels({ ...CHANNEL_ROW, postPolicy: "x" }),
-  ],
-  [
-    "a channel with a negative unreadCount",
-    readChannels,
-    channels({ ...CHANNEL_ROW, unreadCount: -1 }),
-  ],
-  [
-    "a channel with a string unreadCount",
-    readChannels,
-    channels({ ...CHANNEL_ROW, unreadCount: "3" }),
-  ],
-  ["a channel with a numeric isDefault", readChannels, channels({ ...CHANNEL_ROW, isDefault: 1 })],
-  [
-    "a channel with a fractional sortOrder",
-    readChannels,
-    channels({ ...CHANNEL_ROW, sortOrder: 1.5 }),
-  ],
+  ["a channel with an unknown postPolicy", readChannels, channels(chan({ postPolicy: "x" }))],
+  ["a channel with a negative unreadCount", readChannels, channels(chan({ unreadCount: -1 }))],
+  ["a channel with a string unreadCount", readChannels, channels(chan({ unreadCount: "3" }))],
+  ["a channel with a numeric isDefault", readChannels, channels(chan({ isDefault: 1 }))],
+  ["a channel with a fractional sortOrder", readChannels, channels(chan({ sortOrder: 1.5 }))],
   ["a channel list that is not an array", readChannels, { channels: CHANNEL_ROW }],
   ["a live message with a person identifier", readHistory, history(live({ authorPersonId: "p" }))],
   ["a live message with a string mine", readHistory, history(live({ mine: "yes" }))],
@@ -456,11 +362,7 @@ describe("chat api exact-key guards", () => {
   it.each(REJECTED)("rejects %s as CLIENT_BAD_RESPONSE", async (_name, run, data) => {
     answer(data);
     // toStrictEqual: only {ok, code, status} comes back, never a rejected row's content
-    await expect(run()).resolves.toStrictEqual({
-      ok: false,
-      code: CLIENT_BAD_RESPONSE,
-      status: 200,
-    });
+    await expect(run()).resolves.toStrictEqual(bad(200));
   });
 
   it("the channels answer ignores extra data keys and never passes them on", async () => {
