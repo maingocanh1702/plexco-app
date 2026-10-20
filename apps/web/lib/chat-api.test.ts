@@ -419,7 +419,6 @@ const REJECTED: [string, () => Promise<unknown>, unknown][] = [
     readChannels,
     channels({ ...CHANNEL_ROW, sortOrder: 1.5 }),
   ],
-  ["a channel list with an extra key", readChannels, { channels: [CHANNEL_ROW], total: 1 }],
   ["a channel list that is not an array", readChannels, { channels: CHANNEL_ROW }],
   ["a live message with a person identifier", readHistory, history(live({ authorPersonId: "p" }))],
   ["a live message with a string mine", readHistory, history(live({ mine: "yes" }))],
@@ -461,6 +460,14 @@ describe("chat api exact-key guards", () => {
       ok: false,
       code: CLIENT_BAD_RESPONSE,
       status: 200,
+    });
+  });
+
+  it("the channels answer ignores extra data keys and never passes them on", async () => {
+    answer({ channels: [CHANNEL_ROW], viewer: { canModerate: true, canPostRestricted: false } });
+    await expect(listChannels(TENANT)).resolves.toStrictEqual({
+      ok: true,
+      data: { channels: [CHANNEL_ROW] },
     });
   });
 });

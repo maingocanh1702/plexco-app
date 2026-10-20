@@ -19,6 +19,8 @@ import { tenantQuery, type SessionApiContext } from "./sessions-api";
  *
  * The DTO guards are exact: a row with any key or type beyond the merged contract rejects the whole
  * answer, and a tombstone is exactly its four keys. A rejected answer carries no row content.
+ * One exception: /channels may also carry `viewer` (L15b), read by a later lane and not by L16:
+ * every key beside `channels` is dropped unread, and each channel row stays exact.
  * Nothing here logs, stores or caches. Deliberately absent: the stream path (use-chat owns it) and
  * the hide/restore route (RO-L16-1).
  */
@@ -131,12 +133,14 @@ async function request<T>(
   spec: Spec<T>,
   path: string,
   init: ApiFetchInit = {},
+  narrow: (body: unknown) => unknown = (body) => body,
 ): Promise<ChatResult<T>> {
   try {
-    const data = await apiFetch<unknown>(path, {
+    const raw = await apiFetch<unknown>(path, {
       ...init,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+    const data = narrow(raw);
     // status 200: the server answered 2xx, but with a body of the wrong shape
     return matches(data, spec)
       ? { ok: true, data }
@@ -173,7 +177,9 @@ const messagePath = (channelId: string, messageId: string) =>
   `${channelPath(channelId)}/messages/${encodeURIComponent(messageId)}`;
 
 export function listChannels(tenantId: string): Promise<ChatResult<ChatChannelList>> {
-  return request(CHANNELS, `/api/chat/channels?${tenantQuery(tenantId)}`);
+  return request(CHANNELS, `/api/chat/channels?${tenantQuery(tenantId)}`, {}, (body) => ({
+    channels: (body as { channels?: unknown } | null)?.channels,
+  }));
 }
 
 /** `cursor` is a previous page's nextCursor, sent as received. No limit is ever sent. */
