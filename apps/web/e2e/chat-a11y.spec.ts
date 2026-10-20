@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import * as mock from "./support/chat-api-mock";
 import { NETWORK, fail, ok } from "./support/player-api-mock";
 import { TENANT_ID } from "./support/session-api-mock";
@@ -18,6 +18,20 @@ const VIEWPORTS = [
   [1280, 800],
 ] as const;
 
+async function expectFitsAndAxeClean(page: Page, width: number) {
+  if (width <= 375) {
+    const fits = await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    );
+    expect(fits, "no horizontal overflow at 375").toBe(true);
+  }
+  const { violations } = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+    .analyze();
+  const blocking = violations.filter((v) => v.impact === "serious" || v.impact === "critical");
+  expect(blocking.map((v) => ({ id: v.id, impact: v.impact, nodes: v.nodes.length }))).toEqual([]);
+}
+
 for (const scheme of ["light", "dark"] as const) {
   for (const [width, height] of VIEWPORTS) {
     test.describe(`chat axe ${scheme} ${width}x${height}`, () => {
@@ -33,28 +47,22 @@ for (const scheme of ["light", "dark"] as const) {
             try {
               await page.goto(url);
               await expect(page.locator("[data-state]")).toHaveAttribute("data-state", state);
-              if (width <= 375) {
-                const fits = await page.evaluate(
-                  () =>
-                    document.documentElement.scrollWidth <= document.documentElement.clientWidth,
-                );
-                expect(fits, "no horizontal overflow at 375").toBe(true);
-              }
-              const results = await new AxeBuilder({ page })
-                .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-                .analyze();
-              const blocking = results.violations.filter(
-                (v) => v.impact === "serious" || v.impact === "critical",
-              );
-              expect(
-                blocking.map((v) => ({ id: v.id, impact: v.impact, nodes: v.nodes.length })),
-              ).toEqual([]);
+              await expectFitsAndAxeClean(page, width);
             } finally {
               release?.();
             }
           });
         }
       }
+      test("channel view sheet open", async ({ page }) => {
+        await page.addInitScript(() => window.localStorage.setItem("plx-lang", "en"));
+        await mock.installChatApi(page, {}, { locale: "en" });
+        await page.goto(VIEW);
+        await expect(page.locator("[data-state]")).toHaveAttribute("data-state", "ready");
+        await page.getByRole("button", { name: "Hide", exact: true }).click();
+        await expect(page.getByRole("dialog")).toBeVisible();
+        await expectFitsAndAxeClean(page, width);
+      });
     });
   }
 }
