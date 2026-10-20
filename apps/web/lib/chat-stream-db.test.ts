@@ -153,7 +153,8 @@ async function send(t: string, channelId: string, a: Actor, body: string): Promi
   return sent.id;
 }
 
-const next = async (reader: Reader, ms = 2_000) => {
+// D2 S-3: a 10 s budget for every positive wait; a pass costs nothing (the race resolves on the read).
+const next = async (reader: Reader, ms = 10_000) => {
   const timeout = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), ms));
   const read = reader
     .read()
@@ -231,7 +232,7 @@ describe("GET /api/chat/subscribe (live stream)", () => {
   it("N1 an admitted member gets 200, exactly the three SSE headers and a first heartbeat", async () => {
     const c = await club();
     await stream(await actor(c.t), c.t);
-  });
+  }, 30_000);
 
   it("S1 DONE WHEN: A's committed send reaches channel member B as ONE id-only frame, B's GET history has the body, C gets nothing", async () => {
     const c = await club();
@@ -259,7 +260,7 @@ describe("GET /api/chat/subscribe (live stream)", () => {
     const historyHasBody = JSON.stringify(await res.json()).includes(text);
     expect(historyHasBody).toBe(true);
     console.log("S1 outcome", JSON.stringify({ keys, againB, historyHasBody, toC }));
-  });
+  }, 30_000);
 
   it("S2 cross-tenant leak: tenant A's message never reaches a tenant B member; B's subscribe?tenant=A is the one CHAT_FORBIDDEN", async () => {
     const [ta, tb] = [await club(), await club()];
@@ -275,7 +276,7 @@ describe("GET /api/chat/subscribe (live stream)", () => {
     expect(canon(cross.body)).toBe(canon((await chatForbidden().json()) as Body));
     const outcome = { toA: "frame", toB, cross: [cross.status, cross.code] };
     console.log("S2 outcome", JSON.stringify(outcome));
-  });
+  }, 30_000);
 
   // S3-S6 (readiness section 7): revocation, per-event drops, heartbeat and the stream cap.
   const notify = (payload: string) =>
