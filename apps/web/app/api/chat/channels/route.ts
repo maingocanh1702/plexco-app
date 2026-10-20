@@ -11,7 +11,8 @@ import { chatGate, runChat } from "../../../../lib/chat-route";
  * answers from authorize() (DD-56's one authorization source); a display hint that authorizes
  * nothing. Threat model, defends against:
  * 1. a non-member or another club's admin learning anything: the flags exist only on this 200
- *    path, after the live-membership pre-gate; every denial stays the one unchanged CHAT_FORBIDDEN;
+ *    path, after the live-membership pre-gate; every denial body stays unchanged (CHAT_FORBIDDEN
+ *    and TENANT_SUSPENDED);
  * 2. an oracle on other people: no person parameter exists, the actor is the session person;
  * 3. role disclosure: only `allowed` leaves the callback, never the decision's role or reason;
  * 4. trusting a stale hint: a per-request snapshot, never cached; the L14 definers re-authorize
