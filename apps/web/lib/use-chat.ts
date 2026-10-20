@@ -1,6 +1,11 @@
 "use client";
 
-import type { ChatChannelDto, ChatLiveMessageDto, ChatMessageDto } from "@plexco/core";
+import type {
+  ChatChannelDto,
+  ChatLiveMessageDto,
+  ChatMessageDto,
+  ChatViewerDto,
+} from "@plexco/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteMessage,
@@ -101,10 +106,20 @@ export interface ChannelsView {
   state: ChatListState;
   channels: ChatChannelDto[];
   error: ChatListError | null;
+  /**
+   * The viewer's two display flags; the server re-authorizes every action. channelsView always sets it,
+   * so a consumer reads `viewer?.canModerate === true` and an absent one shows no control.
+   */
+  viewer?: ChatViewerDto;
 }
-const LOADING: ChannelsView = { state: "loading", channels: [], error: null };
+/** Fail closed: both false while loading and on every non-ok answer, so no moderation control renders. */
+const NO_VIEWER: ChatViewerDto = { canModerate: false, canPostRestricted: false };
+const LOADING: ChannelsView = { state: "loading", channels: [], error: null, viewer: NO_VIEWER };
 
-/** One list answer as screen state. A failure clears the list, except offline, which keeps the last one (5.1). */
+/**
+ * One list answer as screen state. A failure clears the list, except offline, which keeps the last one (5.1).
+ * The viewer is never copied from prev: an ok answer carries its own, any other answer (offline too) is NO_VIEWER.
+ */
 export function channelsView(
   result: ChatResult<ChatChannelList>,
   t: TFn,
@@ -112,12 +127,17 @@ export function channelsView(
   prev: ChannelsView = LOADING,
 ): ChannelsView {
   if (result.ok) {
-    const { channels } = result.data;
-    return { state: channels.length > 0 ? "ready" : "empty", channels, error: null };
+    const { channels, viewer } = result.data;
+    return { state: channels.length > 0 ? "ready" : "empty", channels, error: null, viewer };
   }
   const row = describeChatError(action, result, t);
   const channels = row.state === "offline" ? prev.channels : [];
-  return { state: row.state ?? "error", channels, error: { ...row, code: result.code } };
+  return {
+    state: row.state ?? "error",
+    channels,
+    error: { ...row, code: result.code },
+    viewer: NO_VIEWER,
+  };
 }
 
 export interface ChannelsRoundDeps {

@@ -128,6 +128,19 @@ describe("channel list live round", () => {
     expect(listChannels).toHaveBeenCalledTimes(1);
   });
 
+  it("a round carries the fresh viewer: a capability revoked server-side is gone from the next list", async () => {
+    const granted: ChatViewerDto = { canModerate: true, canPostRestricted: true };
+    vi.mocked(listChannels)
+      .mockResolvedValueOnce(ok([channel], granted))
+      .mockResolvedValueOnce(ok([channel]));
+    const { stale, applied, run } = setup();
+    for (let round = 0; round < 2; round += 1) {
+      stale.accept(event());
+      await run();
+    }
+    expect(applied.map((view) => view.viewer)).toEqual([granted, NO_VIEWER]);
+  });
+
   it("a rate-limited round pauses silently (true, nothing shown); the catch-up refetches", async () => {
     vi.mocked(listChannels)
       .mockResolvedValueOnce(fail("CHAT_RATE_LIMITED", 429))
@@ -151,6 +164,7 @@ describe("channel list live round", () => {
       expect(applied).toHaveLength(1);
       expect(applied[0]?.error?.code).toBe(code);
       expect(applied[0]?.channels).toEqual([]);
+      expect(applied[0]?.viewer).toEqual(NO_VIEWER);
     },
   );
 
@@ -169,9 +183,40 @@ describe("channelsView: the list states", () => {
       state: "ready",
       channels: [channel],
       error: null,
+      viewer: NO_VIEWER,
     });
-    expect(channelsView(ok([]), t, "list")).toEqual({ state: "empty", channels: [], error: null });
+    expect(channelsView(ok([]), t, "list")).toEqual({
+      state: "empty",
+      channels: [],
+      error: null,
+      viewer: NO_VIEWER,
+    });
   });
+
+  it("carries the viewer of an ok answer as parsed, for a first load and a refetch", () => {
+    const viewer: ChatViewerDto = { canModerate: true, canPostRestricted: false };
+    expect(channelsView(ok([channel], viewer), t, "list").viewer).toEqual(viewer);
+    expect(channelsView(ok([], viewer), t, "list-refetch").viewer).toEqual(viewer);
+  });
+
+  it.each([
+    ["CHAT_FORBIDDEN", 403],
+    ["AUTH_REQUIRED", 401],
+    ["CHAT_RATE_LIMITED", 429],
+    ["CLIENT_NETWORK_ERROR", 0],
+    ["SOMETHING_NEW", 400],
+  ])(
+    "%s (%i): a non-ok answer gives both flags false, offline too, over a viewer who could",
+    (code, status) => {
+      const prev: ChannelsView = {
+        state: "ready",
+        channels: [channel],
+        error: null,
+        viewer: { canModerate: true, canPostRestricted: true },
+      };
+      expect(channelsView(fail(code, status), t, "list", prev).viewer).toEqual(NO_VIEWER);
+    },
+  );
 
   it.each([
     ["CHAT_FORBIDDEN", 403, "empty", false],
