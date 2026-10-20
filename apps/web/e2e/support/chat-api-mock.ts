@@ -11,9 +11,10 @@ const ROUTES = {
   send: ["POST", /^\/api\/chat\/channels\/[^/]+\/messages$/],
   edit: ["PATCH", /^\/api\/chat\/channels\/[^/]+\/messages\/[^/]+$/],
   remove: ["DELETE", /^\/api\/chat\/channels\/[^/]+\/messages\/[^/]+$/],
+  moderate: ["POST", /^\/api\/chat\/channels\/[^/]+\/messages\/[^/]+\/moderation$/],
   read: ["POST", /^\/api\/chat\/channels\/[^/]+\/read$/],
 } as const satisfies Record<string, readonly [string, RegExp]>;
-/** The stubbable routes; moderation and any other /api/chat path answer 500 E2E_NOT_STUBBED. */
+/** The stubbable routes; any other /api/chat path answers 500 E2E_NOT_STUBBED. */
 export type ChatRouteKey = keyof typeof ROUTES;
 const KEYS = Object.keys(ROUTES) as ChatRouteKey[];
 
@@ -83,6 +84,7 @@ const ready = (privileged: boolean): Record<ChatRouteKey, Reply> => ({
   send: ok({ id: MESSAGE_ID.sent, createdAt: ago(0), duplicate: false }),
   edit: ok({ id: MESSAGE_ID.mine, editCount: 1, editedAt: ago(0), changed: true }),
   remove: ok({ id: MESSAGE_ID.mine, authorDeletedAt: ago(0), changed: true }),
+  moderate: ok({ messageId: MESSAGE_ID.peer, moderationState: "hidden", changed: true }), // state after a hide; "visible" for a restore
   read: ok({}),
 });
 

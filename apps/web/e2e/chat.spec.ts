@@ -14,6 +14,8 @@ const MODERATION = /hide|restore|moderat|ẩn tin|khôi phục|kiểm duyệt/i;
 const viewer = { canModerate: true, canPostRestricted: true };
 const page1 = (...messages: object[]) => ok({ messages, nextCursor: null });
 const unread = (n: number) => ok({ channels: [mock.channel({ unreadCount: n })], viewer });
+const lists = (v: typeof viewer, ...channels: object[]) => ok({ channels, viewer: v }); // the real channels 200
+const noFlags = lists({ canModerate: false, canPostRestricted: false }, mock.channel());
 type Replies = Parameters<typeof mock.installChatApi>[1];
 type Role = "owner" | "co_admin" | "member";
 
@@ -70,7 +72,8 @@ test.describe("chat web UI (mocked API)", () => {
 
   test("tombstones render only the removed text", async ({ page }) => {
     const hidden = mock.tombstone({ id: mock.MESSAGE_ID.live, tombstone: "moderation_hidden" });
-    await open(page, VIEW, { history: page1(hidden, mock.message(), mock.tombstone()) });
+    const history = page1(hidden, mock.message(), mock.tombstone());
+    await open(page, VIEW, { channels: noFlags, history }); // a viewer who cannot moderate: no Restore entry
     const gone = rows(page).filter({ hasText: "Message removed." });
     await expect(gone).toHaveText(["Message removed.", "Message removed."]);
     await expect(rows(page)).toHaveCount(3);
@@ -107,19 +110,32 @@ test.describe("chat web UI (mocked API)", () => {
   }
 
   for (const role of ["owner", "co_admin"] as const) {
-    test(`${role}: only Edit, Delete (own) and Reply; no moderation`, async ({ page }) => {
+    test(`${role}: controls render only when the server says so`, async ({ page }) => {
       const urls: string[] = [];
       page.on("request", (request) => urls.push(request.url()));
       await open(page, VIEW, {}, role);
       await expect(rows(page)).toHaveCount(2);
+      await expect(press(page, "Hide")).toHaveCount(1); // the flags come with the channels answer
+      await expect(mine(page).getByRole("button", { name: "Hide", exact: true })).toHaveCount(0);
       const names = await page.getByRole("log").getByRole("button").allInnerTexts();
-      expect(names.sort()).toEqual(["Delete", "Edit", "Reply", "Reply"]);
-      await expect(page.getByRole("button", { name: MODERATION })).toHaveCount(0);
+      expect(names.sort()).toEqual(["Delete", "Edit", "Hide", "Reply", "Reply"]);
       await expect(page.getByRole("menuitem", { name: MODERATION })).toHaveCount(0);
       await expect(page.getByRole("link", { name: MODERATION })).toHaveCount(0);
       expect(urls.filter((url) => url.includes("/moderation"))).toEqual([]);
     });
   }
+
+  test("viewer flags off: no moderation control and no moderation request", async ({ page }) => {
+    const chat = await open(page, VIEW, { channels: noFlags }, "co_admin");
+    await expect(page.getByRole("heading", { name: mock.TITLE.general })).toBeVisible();
+    await expect(rows(page)).toHaveCount(2);
+    const names = await page.getByRole("log").getByRole("button").allInnerTexts();
+    expect(names.sort()).toEqual(["Delete", "Edit", "Reply", "Reply"]);
+    await expect(page.getByRole("button", { name: MODERATION })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: MODERATION })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: MODERATION })).toHaveCount(0);
+    expect(chat.callsTo("moderate")).toHaveLength(0);
+  });
 
   test("plain member: the club workspace shows No access (no member chat entry yet)", async ({
     page,
@@ -140,6 +156,21 @@ test.describe("chat web UI (mocked API)", () => {
     await expect(press(page, "Send")).toBeEnabled();
     const entry = page.getByRole("link", { name: "Chat", exact: true }).first();
     await expect(entry).toHaveAttribute("href", LIST);
+  });
+
+  test("admins_only: the composer follows canPostRestricted, not canModerate", async ({ page }) => {
+    const admins = mock.channel({
+      id: mock.ADMINS_CHANNEL_ID,
+      title: mock.TITLE.admins,
+      isDefault: false,
+      postPolicy: "admins_only",
+    });
+    const channels = lists({ ...viewer, canPostRestricted: false }, admins); // canModerate stays true
+    const history = page1(mock.message({ channelId: mock.ADMINS_CHANNEL_ID }));
+    await open(page, `${LIST}/${mock.ADMINS_CHANNEL_ID}`, { channels, history }, "co_admin");
+    await expect(page.getByText("Only admins can post in this channel")).toBeVisible();
+    await expect(field(page)).toBeDisabled();
+    await expect(press(page, "Send")).toBeDisabled();
   });
 
   test("live: a stream frame refetches; the frame renders nothing", async ({ page }) => {
