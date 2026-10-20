@@ -4,6 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  authorize,
   createWebSession,
   deleteChatMessage,
   editChatMessage,
@@ -37,6 +38,12 @@ vi.mock("next/headers", () => ({
     get: () => (cookieJar.token ? { value: cookieJar.token } : undefined),
   }),
 }));
+// D8 seam: authorize stays the real primitive (the web vitest config sets no mockReset, clearMocks
+// or restoreMocks); only R1d (stubs) and R7 (a rejection) arm it, each resetting it in finally.
+vi.mock("@plexco/db", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@plexco/db")>();
+  return { ...m, authorize: vi.fn(m.authorize) };
+});
 
 let ctx: RlsTestContext;
 let runtime: ReturnType<typeof appDb> | undefined;
@@ -935,13 +942,18 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
   });
 });
 
-/** A tenant owner: tenant_capability_authorize grants it chat.message.moderate (T19's fixture). */
-async function moderator(t: string): Promise<Actor> {
+/** A member with a tenant_admins row, by default an active owner, which tenant_capability_authorize
+ *  grants chat.message.moderate (T19's fixture); the L15b viewer rows vary the row's kind and state. */
+async function moderator(
+  t: string,
+  role: "owner" | "admin" | "co_admin" = "owner",
+  active = true,
+): Promise<Actor> {
   const mod = await actor(t);
   await ctx.owner.query(
     `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
-     VALUES ($1, 'web', $2, 'owner', true)`,
-    [t, mod.personId],
+     VALUES ($1, 'web', $2, $3, $4)`,
+    [t, mod.personId, role, active],
   );
   return mod;
 }
@@ -1193,6 +1205,10 @@ async function channels(a: Actor | null, tenant: string) {
   return { status: res.status, body, code: body.error?.code };
 }
 
+/** A denial's bytes for a byte-equal compare: status, data and error (meta carries the request id). */
+const one = (r: { status: number; body: Envelope }) =>
+  JSON.stringify([r.status, r.body.data, r.body.error]);
+
 /** The actor's read cursor in the channel, read as owner (null = never marked). */
 async function cursor(c: Club, a: Actor): Promise<string | null> {
   const { rows } = await ctx.owner.query<{ id: string | null }>(
@@ -1248,7 +1264,7 @@ describe("GET /api/chat/channels (list)", () => {
     }
   });
 
-  it("T25 a member of two clubs -> 200 exactly ChatChannelDto for ?tenant= only; own rows not unread", async () => {
+  it("T25 a member of two clubs -> 200 exactly ChatChannelDto for ?tenant= only; own rows not unread; R2 plain member: viewer flags false", async () => {
     const [c, other] = [await club(), await club()];
     const [a, b] = [await actor(c.t), await actor(c.t)];
     await ctx.owner.query(
@@ -1261,7 +1277,10 @@ describe("GET /api/chat/channels (list)", () => {
     expect(r.status).toBe(200);
     const general = { id: c.c, title: "general", sortOrder: 0, isDefault: true };
     expect(r.body).toEqual({
-      data: { channels: [{ ...general, postPolicy: "all_members", unreadCount: 3 }] },
+      data: {
+        channels: [{ ...general, postPolicy: "all_members", unreadCount: 3 }],
+        viewer: { canModerate: false, canPostRestricted: false },
+      },
       error: null,
       meta: expect.anything(),
     });
@@ -1280,17 +1299,199 @@ describe("GET /api/chat/channels (list)", () => {
       await channels(member, bare.t),
       await get(stranger, c.t, c.c),
     ];
-    const one = (r: (typeof cases)[number]) =>
-      JSON.stringify([r.status, r.body.data, r.body.error]);
     expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
     for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
   });
 
-  it("T23 a suspended club: its member -> TENANT_SUSPENDED, a non-member -> the one body", async () => {
+  it("T23 a suspended club: its member -> TENANT_SUSPENDED, a non-member -> the one body; R5c an owner-member: the history GET's TENANT_SUSPENDED body, no viewer key", async () => {
     const off = await club(false);
     const [m, stranger] = [await actor(off.t), await actor((await club()).t)];
     expect(await channels(m, off.t)).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
     expect(await channels(stranger, off.t)).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    const boss = await moderator(off.t);
+    const hist = await get(boss, off.t, off.c);
+    expect(hist).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
+    for (const r of [await channels(m, off.t), await channels(boss, off.t)]) {
+      expect(one(r)).toBe(one(hist));
+      expect(JSON.stringify(r.body)).not.toContain('"viewer"');
+    }
+  });
+});
+
+describe("GET /api/chat/channels viewer flags (L15b decision table: authorize()'s answer, booleans only)", () => {
+  const ALL = { canModerate: true, canPostRestricted: true };
+  const NONE = { canModerate: false, canPostRestricted: false };
+
+  for (const [row, kind] of [
+    ["R1a", "owner"],
+    ["R1b", "admin"],
+    ["R1c", "co_admin"],
+  ] as const) {
+    it(`${row} ${kind}: viewer flags true`, async () => {
+      const c = await club();
+      const r = await channels(await moderator(c.t, kind), c.t);
+      expect(r.status).toBe(200);
+      expect(r.body.data.viewer).toStrictEqual(ALL); // the primitive's preset answer, not re-derived
+    });
+  }
+
+  it("R1d independent flags: each flag is authorize()'s answer for its own action (the D8 seam)", async () => {
+    // Both keys are preset (0047:85-86), so no real fixture allows exactly one of them; the D8
+    // stub answers per action instead and writes no shared database state.
+    const keys = ["chat.message.moderate", "chat.channel.post_restricted"] as const;
+    const c = await club();
+    const viewer = await actor(c.t); // a plain member: the real answer is false for both
+    const mock = vi.mocked(authorize);
+    const byAction = (a: { action: string }, b: { action: string }) =>
+      a.action.localeCompare(b.action);
+    try {
+      for (const [only, expected] of [
+        [keys[0], { canModerate: true, canPostRestricted: false }],
+        [keys[1], { canModerate: false, canPostRestricted: true }],
+      ] as const) {
+        const calls: Parameters<typeof authorize>[1][] = [];
+        // answers every call of this GET itself: nothing delegates to the real authorize
+        mock.mockImplementation(async (_tx, p) => {
+          calls.push(p);
+          return p.action === only
+            ? { allowed: true, role: "admin" }
+            : { allowed: false, reason: "not_a_member" };
+        });
+        const r = await channels(viewer, c.t);
+        expect(r.status).toBe(200);
+        expect(r.body.data.viewer).toStrictEqual(expected);
+        // exactly two calls, one per action, for the proved ?tenant= and the session person
+        expect([...calls].sort(byAction)).toStrictEqual(
+          keys
+            .map((action) => ({ tenantId: c.t, action, actorPersonId: viewer.personId }))
+            .sort(byAction),
+        );
+      }
+    } finally {
+      mock.mockReset(); // vitest 4: back to the real authorize, the once queue cleared
+    }
+  });
+
+  it("R3 inactive admin: viewer flags false", async () => {
+    const c = await club();
+    const r = await channels(await moderator(c.t, "admin", false), c.t);
+    expect(r.status).toBe(200);
+    expect(r.body.data.viewer).toStrictEqual(NONE);
+  });
+
+  it("R4 an admin of another club only, a plain member here: viewer flags false", async () => {
+    const [c, other] = [await club(), await club()];
+    const mod = await moderator(other.t);
+    await ctx.owner.query(
+      `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active')`,
+      [c.t, mod.personId],
+    );
+    const r = await channels(mod, c.t);
+    expect(r.status).toBe(200);
+    expect(r.body.data.viewer).toStrictEqual(NONE);
+    // positive control: the same person's row is live in the club that granted it
+    expect((await channels(mod, other.t)).body.data.viewer).toStrictEqual(ALL);
+  });
+
+  it("R5b an owner row here without a membership, and another club's owner: the one CHAT_FORBIDDEN body, no viewer key", async () => {
+    const [c, other] = [await club(), await club()];
+    const ghost = await actor(other.t); // signed in, a member of other only
+    await ctx.owner.query(
+      `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+       VALUES ($1, 'web', $2, 'owner', true)`,
+      [c.t, ghost.personId],
+    );
+    const cases = [
+      await channels(await actor(other.t), c.t), // T2's cross-tenant stranger: the reference body
+      await channels(ghost, c.t),
+      await channels(await moderator(other.t), c.t),
+    ];
+    expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    for (const r of cases) {
+      expect(one(r)).toBe(one(cases[0]!));
+      expect(JSON.stringify(r.body)).not.toContain('"viewer"');
+    }
+  });
+
+  it("R6 a demoted admin, no cache: true, then false after active = false, then false once the row is gone (R3r)", async () => {
+    const c = await club();
+    const mod = await moderator(c.t, "admin");
+    const flags = async () => {
+      const r = await channels(mod, c.t);
+      expect(r.status).toBe(200);
+      return r.body.data.viewer;
+    };
+    expect(await flags()).toStrictEqual(ALL);
+    await ctx.owner.query(
+      `UPDATE tenant_admins SET active = false
+        WHERE tenant_id = $1 AND platform = 'web' AND platform_user_lookup_hash = $2`,
+      [c.t, mod.personId],
+    );
+    expect(await flags()).toStrictEqual(NONE);
+    await ctx.owner.query(
+      `DELETE FROM tenant_admins
+        WHERE tenant_id = $1 AND platform = 'web' AND platform_user_lookup_hash = $2`,
+      [c.t, mod.personId],
+    );
+    expect(await flags()).toStrictEqual(NONE); // R3r: a removed admin is the plain-member path
+  });
+
+  it("R7 authorize infrastructure error: 500 fail-closed, never a quiet false", async () => {
+    const c = await club();
+    const mod = await moderator(c.t);
+    const mock = vi.mocked(authorize);
+    const real = mock.getMockImplementation()!;
+    // pg-shaped: a SQLSTATE plus a detail the sanitizer must drop
+    const fault = Object.assign(new Error("canceling statement due to statement timeout"), {
+      severity: "ERROR",
+      code: "57014",
+      detail: "R7 leak marker",
+    });
+    const spies = (["error", "warn", "log", "info", "debug"] as const).map((k) =>
+      vi.spyOn(console, k),
+    );
+    try {
+      // at 0 the moderate call rejects; at 1 the post_restricted call (the first one runs for real)
+      for (const at of [0, 1]) {
+        if (at === 1) mock.mockImplementationOnce(real);
+        mock.mockRejectedValueOnce(fault);
+        // a rejected GET has no Response, so no body; a resolved one yields null and fails below
+        const reason = await channels(mod, c.t).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(String(reason)).toBe("Error: CHAT_DB_ERROR:57014");
+        const r = await channels(mod, c.t);
+        expect(r.status).toBe(200);
+        expect(r.body.data.viewer).toStrictEqual(ALL); // the real flags, no Once left queued
+      }
+      expect(spies.flatMap((s) => s.mock.calls)).toEqual([]);
+    } finally {
+      for (const s of spies) s.mockRestore();
+      mock.mockReset(); // vitest 4: back to the real authorize, the once queue cleared
+    }
+  });
+
+  it("R8 wire shape (owner viewer): channels and viewer only, two booleans, no role, reason, grant or stray id", async () => {
+    const c = await club();
+    const mod = await moderator(c.t);
+    const r = await channels(mod, c.t);
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.body.data).sort()).toEqual(["channels", "viewer"]);
+    expect(r.body.data.viewer).toStrictEqual(ALL);
+    expect(r.body.data.channels).toMatchObject([{ id: c.c }]);
+    const text = JSON.stringify(r.body);
+    expect(text).not.toMatch(/"[^"]*(?:role|reason|grant)[^"]*":/i);
+    for (const literal of ['"owner"', '"admin"', '"co_admin"']) {
+      expect(text).not.toContain(literal);
+    }
+    for (const id of [mod.personId, mod.membershipId, mod.accountId, c.t]) {
+      expect(text).not.toContain(id);
+    }
+    // every uuid on the wire is the channel id or the envelope's req_<uuid> request id
+    const uuids =
+      text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [];
+    expect(uuids.filter((u) => u !== c.c && !text.includes(`"req_${u}"`))).toEqual([]);
   });
 });
 
