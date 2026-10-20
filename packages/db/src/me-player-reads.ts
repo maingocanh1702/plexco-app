@@ -3,7 +3,8 @@ import { chargeRemaining, chargeStatusFor } from "./payment-manual.js";
 
 /**
  * The signed-in player's own cross-club reads (Phase 3 lane L9, M9): my clubs, my sessions, my open
- * charges and my join requests. Everything goes through the 0059/0066 definers keyed by
+ * charges and my join requests, and (L16c, 0066) one club's chat context. Everything goes through
+ * the 0059/0066 definers keyed by
  * the ACCOUNT id taken from the verified session (me-settings.ts precedent): no function takes a
  * person, tenant or membership id, and the definers filter every row by the caller's own person,
  * tenant by tenant. Own money only: another person's charge never leaves the database.

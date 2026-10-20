@@ -70,6 +70,7 @@ describe("0066 decision table (D1-D10)", () => {
     const t = await club("CC Two");
     const a = await person("Gina Guest");
     await member(t.id, a.personId, "guest");
+    await member(t.id, (await person("Other Active")).personId);
     expect(await chatContext(a.accountId, t.slug)).toEqual([]);
   });
 
@@ -77,6 +78,7 @@ describe("0066 decision table (D1-D10)", () => {
     const t = await club("CC Three");
     const a = await person("Leo Left");
     await member(t.id, a.personId, "left");
+    await member(t.id, (await person("Other Active")).personId);
     expect(await chatContext(a.accountId, t.slug)).toEqual([]);
   });
 
@@ -84,6 +86,7 @@ describe("0066 decision table (D1-D10)", () => {
     const t = await club("CC Four");
     const a = await person("Meg Merged");
     await member(t.id, a.personId, "merged");
+    await member(t.id, (await person("Other Active")).personId);
     expect(await chatContext(a.accountId, t.slug)).toEqual([]);
   });
 
@@ -92,6 +95,7 @@ describe("0066 decision table (D1-D10)", () => {
     const elsewhere = await club("CC Five Elsewhere");
     const a = await person("Nora None");
     await member(elsewhere.id, a.personId);
+    await member(t.id, (await person("Other Active")).personId);
     expect(await chatContext(a.accountId, t.slug)).toEqual([]);
   });
 

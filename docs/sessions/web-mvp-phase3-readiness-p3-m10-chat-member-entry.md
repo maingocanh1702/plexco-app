@@ -122,7 +122,7 @@ The tail at BASE is `0065_chat_message_author_label.sql` (part A Q7); 0066 is th
 | D11 | catalog: prosecdef true, provolatile 'v', lanname plpgsql, args `p_account_id uuid, p_club_ref text`, owner = person_profile_read's owner, proconfig `['search_path=pg_catalog, public, pg_temp']` (A-12 analog, `db/me-player-reads.test.ts:190-215`) | asserted | CC-11 |
 | D12 | ACL: has_function_privilege true for app, false for app_worker and readonly; proacl explicit; no PUBLIC grantee; the EXECUTE grantees exactly [owner, app] (A-13 analog, `:217-238`) | asserted | CC-12 |
 | D13 | the result columns exactly `tenant_id uuid, timezone text` (exact keys, the A-9 pattern `:591`); prosrc names no tenant_admins, display_name, phone, pay_code or `_enc` | asserted | CC-13 |
-| D14 | a NOBYPASSRLS migration owner (A-14 analog, `db/me-player-reads-nobypass.test.ts`, inside its existing withJobDefinerLock block `:30-35`): D1 still one row, D5 still none | asserted | CC-14 |
+| D14 | a NOBYPASSRLS migration owner (A-14 analog, `db/me-player-reads-nobypass.test.ts`, the last `it` of the A-14 describe; it needs no lock because it names no definer role): D1 still one row, D5 still none | asserted | CC-14 |
 
 ## 4. The wrapper (W3): `db/me-player-reads.ts` and the export block `packages/db/src/index.ts:280-293`
 
