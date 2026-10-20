@@ -6,6 +6,7 @@ import { formatTimestamp } from "../../lib/session-time";
 import type { ChannelState, ChatListError } from "../../lib/use-chat";
 import { useTenantContext } from "../../lib/use-tenant-context";
 import { Button } from "../ui/button";
+import { MessageActions, type RowActions } from "./message-actions";
 import styles from "./message-list.module.css";
 
 type Msg = ChannelState["messages"][number];
@@ -18,9 +19,10 @@ export interface MessageListProps {
   onLoadOlder: () => void;
   olderError: ChatListError | null;
   labelledBy?: string; // id of the heading that names the log
+  actions?: RowActions; // row commands; none = read-only rows
 }
 
-/** Chronological chat log: older-page control, DF-1 labels, tombstones, reply quotes; no actions. */
+/** Chronological chat log: older-page control, DF-1 labels, tombstones, reply quotes, row actions. */
 export function MessageList({
   tenantId,
   messages,
@@ -28,6 +30,7 @@ export function MessageList({
   onLoadOlder,
   olderError,
   labelledBy,
+  actions,
 }: MessageListProps) {
   const t = useT();
   const lang = useLang();
@@ -105,6 +108,7 @@ export function MessageList({
                 <p className={styles.body} dir="auto">
                   {m.body}
                 </p>
+                {actions ? <MessageActions m={m} actions={actions} /> : null}
               </li>
             );
           })}

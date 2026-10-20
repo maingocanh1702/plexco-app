@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChatChannelDto } from "@plexco/core";
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import type { PendingMessage } from "../../lib/use-chat";
 import { Button } from "../ui/button";
@@ -10,7 +10,7 @@ import styles from "./composer.module.css";
 /** The hook's outbox values the composer renders and drives. */
 export interface Outbox {
   pending: PendingMessage[];
-  send(body: string): unknown;
+  send(body: string, replyToMessageId?: string): unknown;
   retry(clientMsgId: string): unknown;
   discard(clientMsgId: string): unknown;
 }
@@ -24,9 +24,11 @@ const EDIT_AGAIN = new Set(["INVALID_BODY", "CHAT_MESSAGE_TOO_LARGE"]);
 export function Composer({
   postPolicy,
   outbox,
+  reply,
 }: {
   postPolicy: ChatChannelDto["postPolicy"] | undefined;
   outbox: Outbox;
+  reply?: { id: string; clear(): void }; // the chosen reply target and its Cancel
 }) {
   const t = useT();
   const fieldId = useId();
@@ -49,11 +51,16 @@ export function Composer({
     run();
     field.current?.focus();
   };
+  const replyId = reply?.id;
+  useEffect(() => {
+    if (replyId) field.current?.focus(); // Reply on a row hands the caret to the field
+  }, [replyId]);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!canSend(body)) return;
     thenFocus(() => {
-      outbox.send(body);
+      outbox.send(body, replyId);
+      reply?.clear();
       setBody("");
     });
   };
@@ -99,6 +106,14 @@ export function Composer({
         </p>
       ) : null}
       <form className={styles.form} onSubmit={submit}>
+        {reply ? (
+          <div className={styles.actions}>
+            <p>{t("Trả lời một tin nhắn", "Reply to a message")}</p>
+            <Button variant="ghost" onClick={() => thenFocus(reply.clear)}>
+              {t("Huỷ", "Cancel")}
+            </Button>
+          </div>
+        ) : null}
         <label className="sr-only" htmlFor={fieldId}>
           {t("Tin nhắn", "Message")}
         </label>

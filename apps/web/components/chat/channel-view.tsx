@@ -13,8 +13,10 @@ import { MessageList } from "./message-list";
 export function ChannelView({ tenantId, channelId }: { tenantId: string; channelId: string }) {
   const t = useT();
   const titleId = useId();
+  const chat = useChatChannel(tenantId, channelId);
   const { state, messages, pending, error, hasOlder, reload, loadOlder, send, retry, discard } =
-    useChatChannel(tenantId, channelId);
+    chat;
+  const [replyTo, setReplyTo] = useState<string | null>(null); // a row's Reply, until sent or cancelled
   // Title and post policy come from the channel list by id; nothing is kept in a URL, storage or module cache.
   const channel = useChatChannels(tenantId).channels.find((c) => c.id === channelId);
   const [olderError, setOlderError] = useState<ChatListError | null>(null);
@@ -55,8 +57,13 @@ export function ChannelView({ tenantId, channelId }: { tenantId: string; channel
         onLoadOlder={() => void loadOlder().then(setOlderError)}
         olderError={olderError}
         labelledBy={channel ? titleId : undefined}
+        actions={{ onReply: setReplyTo, onEdit: chat.edit, onRemove: chat.remove }}
       />
-      <Composer postPolicy={channel?.postPolicy} outbox={{ pending, send, retry, discard }} />
+      <Composer
+        postPolicy={channel?.postPolicy}
+        outbox={{ pending, send, retry, discard }}
+        reply={replyTo ? { id: replyTo, clear: () => setReplyTo(null) } : undefined}
+      />
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import type { ChatLiveMessageDto as Live, ChatTombstoneDto as Gone } from "@plexco/core";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { describeChatError } from "../../lib/chat-error-ui";
 import { LangProvider } from "../../lib/i18n-client";
 import type { ChatListError } from "../../lib/use-chat";
 import { useTenantContext } from "../../lib/use-tenant-context";
+import { afterEdit, type RowActions } from "./message-actions";
 import { MessageList } from "./message-list";
 
 vi.mock("../../lib/use-tenant-context", () => ({ useTenantContext: vi.fn() }));
@@ -119,4 +121,59 @@ describe("MessageList", () => {
     expect(off).toMatch(/role="log"[^>]*><ol/);
     expect(off.match(/<[^>]+>/g)?.join("")).not.toMatch(/msg:|Ann|="[129]"/);
   });
+});
+
+describe("MessageList row actions", () => {
+  const actions: RowActions = {
+    onReply() {},
+    onEdit: async () => null,
+    onRemove: async () => null,
+  };
+  const dialog = /<dialog\b.*?<\/dialog>/g; // closed, one per own live row
+  // the buttons of each row, the closed delete dialog's own two left out
+  const controls = (html: string) =>
+    [...html.matchAll(/<li\b[^>]*>(.*?)<\/li>/g)].map(
+      (m) =>
+        (m[1] ?? "")
+          .replace(dialog, "")
+          .match(/<button\b[^>]*>(.*?)<\/button>/g)
+          ?.map(text) ?? [],
+    );
+  const mine = live("2", { mine: true });
+  it.each<[string, (Live | Gone)[], string[][]]>([
+    [
+      "member: Edit and Delete only on own, Reply on live rows, none on a tombstone",
+      [gone("3"), mine, live("1")],
+      [["Reply"], ["Edit", "Delete", "Reply"], []],
+    ],
+    [
+      "host-shaped: no hide or restore, a moderation tombstone stays inert (RO-L16-1)",
+      [gone("4", "moderation_hidden"), mine, live("1")],
+      [["Reply"], ["Edit", "Delete", "Reply"], []],
+    ],
+  ])("%s", (_name, messages, expected) => {
+    const html = render({ messages, actions });
+    expect(controls(html)).toEqual(expected);
+    expect(html).not.toMatch(/hide|restore/i);
+  });
+
+  it("puts one closed delete dialog on the own live row only", () => {
+    const html = render({ messages: [mine, live("1"), gone("3")], actions });
+    expect(html.match(dialog)?.map(text)).toEqual(["Delete this message? Go back Delete"]);
+    expect(html).not.toMatch(/<dialog\b[^>]*\bopen\b/);
+  });
+
+  const en = (_vi: string, e: string) => e;
+  it.each<[string, number, string, boolean, boolean]>([
+    ["CHAT_EDIT_WINDOW_CLOSED", 409, "This message can no longer be edited.", true, true],
+    ["CHAT_EDIT_CONFLICT", 409, "This message changed; the latest version is shown.", true, false],
+    ["INVALID_BODY", 400, "", false, false],
+    ["ANY_OTHER", 500, "Something went wrong. Please try again.", false, false],
+  ])(
+    "an edit answered %s shows its 5.2.3 copy (closes %s, Edit hidden %s)",
+    (code, status, copy, close, shut) => {
+      const row = { ...describeChatError("edit", { code, status }, en), code };
+      expect(afterEdit(row)).toEqual({ message: copy || row.message, close, shut });
+    },
+  );
 });
