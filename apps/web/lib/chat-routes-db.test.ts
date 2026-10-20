@@ -1055,7 +1055,7 @@ describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, rest
     expect(await modRow(m.id)).toEqual(before);
   });
 
-  it("T2 a foreign tenant -> the one CHAT_FORBIDDEN body; unknown or foreign targets -> one 403", async () => {
+  it("T2 a foreign tenant -> the one CHAT_FORBIDDEN body; unknown, foreign or DM targets -> one 403", async () => {
     const [c, other] = [await club(), await club()];
     const [a, mod, stranger, o] = [
       await actor(c.t),
@@ -1067,6 +1067,8 @@ describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, rest
     const theirs = await send(other, o, "their text");
     // a's message in c2, a same-tenant channel that `mod` still belongs to.
     const { own: elsewhere } = await outsideChannel(c, a, mod);
+    // a's DM with mod: mod is a member, but moderation is club-only (0063 checks the kind first).
+    const { dmId, dmMsg } = await dmWith(a, mod);
     const foreign = await mutate("POST", stranger, c, mine.id, hide());
     expect(foreign).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
     const denied = [
@@ -1074,6 +1076,8 @@ describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, rest
       await mutate("POST", mod, c, theirs.id, hide()),
       await mutate("POST", mod, { t: c.t, c: other.c }, theirs.id, hide()),
       await mutate("POST", mod, c, elsewhere, hide()),
+      await mutate("POST", mod, { t: c.t, c: dmId }, dmMsg, hide()),
+      await mutate("POST", mod, { t: c.t, c: dmId }, dmMsg, hide({ action: "restore" })),
     ];
     const one = (r: (typeof denied)[number]) => JSON.stringify([r.status, r.body.error]);
     expect(denied[0]).toMatchObject({ status: 403, code: "CHAT_MODERATION_FORBIDDEN" });
@@ -1083,6 +1087,20 @@ describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, rest
         (await modRow(theirs.id)).audits +
         (await modRow(elsewhere)).audits,
     ).toBe(0);
+    expect(await modRow(dmMsg)).toEqual({ state: "visible", audits: 0 });
+  });
+
+  it("429 CHAT_RATE_LIMITED from chat_mod_1m (30 per minute per person and tenant); no change, no audit", async () => {
+    const c = await club();
+    const [a, mod] = [await actor(c.t), await moderator(c.t)];
+    const m = await send(c, a, "flagged text");
+    for (let i = 0; i < 30; i++) {
+      const bucket = `chat_mod_1m:${mod.personId}:${c.t}`;
+      expect(await rateLimitCheck(runtime!.pool, bucket, 30, 60)).toBe(true);
+    }
+    const r = await mutate("POST", mod, c, m.id, hide());
+    expect(r).toMatchObject({ status: 429, code: "CHAT_RATE_LIMITED" });
+    expect(await modRow(m.id)).toEqual({ state: "visible", audits: 0 });
   });
 
   it("T18 one commandId on two channels at once: one 200, the loser 409 or a fail-closed 500", async () => {
