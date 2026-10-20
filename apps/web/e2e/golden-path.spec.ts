@@ -387,7 +387,8 @@ test("chat golden path: two members chat live, the unread badge advances and cle
   expect(tenantId, "the seeded Dev Club's tenant id").toBeTruthy();
   await page.goto(`/c/${tenantId}/chat`);
   const ownerLink = page.getByRole("link", { name: /^Kênh chung/ });
-  await expect(ownerLink).toHaveAttribute("href", new RegExp(`^/c/${tenantId}/chat/[^/]+$`));
+  await expect(ownerLink).toHaveAttribute("href", /^\/c\/[^/]+\/chat\/[^/]+$/);
+  expect(await ownerLink.getAttribute("href")).toContain(`/c/${tenantId}/chat/`);
   const channelId = (await ownerLink.getAttribute("href"))?.split("/").pop();
 
   // /c/[tenantId] is the admin workspace: the two chatters are the owner and the co_admin.
