@@ -1,17 +1,34 @@
-import type { ChatChannelDto } from "@plexco/core";
+import type { ChatChannelDto, ChatLiveMessageDto } from "@plexco/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listChannels } from "./chat-api";
+import { editMessage, listChannels, listHistory, markRead, sendMessage } from "./chat-api";
+import { LIVE_PAUSE_MS } from "./use-realtime";
 import {
   CHAT_STREAM,
+  READ_GAP_MS,
+  channelRound,
   channelsRound,
   channelsView,
   createStaleChannels,
+  editAttempt,
+  historyView,
   onChannelsRefresh,
+  readThrough,
   refreshChannels,
+  sendAttempt,
+  type ChannelState,
+  type ChannelUpdate,
   type ChannelsView,
+  type PendingMessage,
+  type ReadState,
 } from "./use-chat";
 
-vi.mock("./chat-api", () => ({ listChannels: vi.fn() }));
+vi.mock("./chat-api", () => ({
+  listChannels: vi.fn(),
+  listHistory: vi.fn(),
+  sendMessage: vi.fn(),
+  editMessage: vi.fn(),
+  markRead: vi.fn(),
+}));
 
 const t = (_vi: string, en: string): string => en;
 const CH = "0b8f2c1e-4d3a-4f6b-9c1d-2e3f4a5b6c7d";
@@ -144,6 +161,163 @@ describe("channelsView: the list states", () => {
     const view = channelsView(fail(code, status), t, "list");
     expect(view).toMatchObject({ state, channels: [], error: { code, retry } });
     expect(view.error?.message).not.toBe("");
+  });
+});
+
+const T = "7c1d9a4e-2b3f-4c5d-8e6a-1b2c3d4e5f60";
+const M1 = "1a2b3c4d-0000-4000-8000-000000000001";
+const CM = "c0ffee00-0000-4000-8000-000000000001";
+const call = { ctx: { tenantId: T, csrfToken: "tok" }, channelId: CH, t };
+const msg = (id: string) =>
+  ({ id, channelId: CH, body: "hi", editCount: 0, tombstone: null }) as ChatLiveMessageDto;
+const view = (over: Partial<ChannelState> = {}) =>
+  ({
+    state: "ready",
+    messages: [],
+    nextCursor: null,
+    error: null,
+    pending: [],
+    off: false,
+    ...over,
+  }) as ChannelState;
+const entry: PendingMessage = { clientMsgId: CM, body: "hi", failed: null };
+const sent = (id: string, duplicate = false) => ({
+  ok: true as const,
+  data: { id, createdAt: "t", duplicate },
+});
+const rs = (over: Partial<ReadState> = {}): ReadState => ({
+  lastId: null,
+  nextAt: 0,
+  busy: false,
+  ...over,
+});
+const roundDeps = (stale = createStaleChannels(), applied: ChannelUpdate[] = []) => ({
+  ...{ tenantId: T, channelId: CH, t, stale },
+  apply: (u: ChannelUpdate) => void applied.push(u),
+});
+
+describe("channel view: send, edit, read cursor and live rounds", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it("confirms an optimistic send once, a duplicate answer too, and retries with the same clientMsgId", async () => {
+    vi.mocked(sendMessage)
+      .mockResolvedValueOnce(fail("CLIENT_NETWORK_ERROR", 0))
+      .mockResolvedValue(sent(M1, true));
+    const failed = (await sendAttempt({ ...call, entry }))(view({ pending: [entry] }));
+    expect(failed.pending[0]?.failed).toMatchObject({ message: "Not sent.", retry: true });
+    const done = (await sendAttempt({ ...call, entry: { ...entry, failed: null } }))(failed);
+    expect(done.pending).toEqual([]);
+    expect(done.messages).toMatchObject([{ id: M1, body: "hi", mine: true }]);
+    expect((await sendAttempt({ ...call, entry }))(done).messages).toHaveLength(1);
+    const posted = vi.mocked(sendMessage).mock.calls.map((c) => c[2]);
+    expect(posted).toEqual([1, 2, 3].map(() => ({ clientMsgId: CM, body: "hi" })));
+  });
+
+  it.each([
+    ["CHAT_EDIT_WINDOW_CLOSED", "This message can no longer be edited.", false],
+    ["CHAT_EDIT_CONFLICT", "This message changed; the latest version is shown.", true],
+  ])(
+    "edit 409 %s shows its message; a conflict refetches, nothing retries",
+    async (code, message, refetch) => {
+      vi.mocked(editMessage).mockResolvedValue(fail(code, 409));
+      expect(await editAttempt({ ...call, message: msg(M1), body: "x" })).toMatchObject({
+        error: { code, message },
+        refetch,
+      });
+      expect(editMessage).toHaveBeenCalledTimes(1);
+      expect(editMessage).toHaveBeenCalledWith(call.ctx, CH, M1, {
+        body: "x",
+        expectedEditCount: 0,
+      });
+    },
+  );
+
+  it.each([
+    [false, {}, 0],
+    [true, { lastId: M1 }, 0],
+    [true, { busy: true }, 0],
+    [true, {}, 1],
+  ])("markRead on a visible=%s tab with %j sends %i call(s)", async (visible, over, calls) => {
+    vi.mocked(markRead).mockResolvedValue({ ok: true, data: {} });
+    await readThrough(call.ctx, CH, M1, visible, rs(over), () => 0);
+    expect(markRead).toHaveBeenCalledTimes(calls);
+  });
+
+  it.each([
+    [{ ok: true as const, data: {} }, M1, 1, READ_GAP_MS],
+    [fail("CHAT_RATE_LIMITED", 429), null, 0, LIVE_PAUSE_MS],
+    [fail("NOT_FOUND", 404), null, 0, READ_GAP_MS],
+  ])(
+    "markRead outcome %j: cursor %s, %i list refresh(es), wait %i",
+    async (result, lastId, refreshes, wait) => {
+      vi.mocked(markRead).mockResolvedValue(result);
+      const refresh = vi.fn();
+      const off = onChannelsRefresh(T, refresh);
+      const state = rs();
+      await readThrough(call.ctx, CH, M1, true, state, () => 1000);
+      off();
+      expect(state).toEqual({ lastId, nextAt: 1000 + wait, busy: false });
+      expect(refresh).toHaveBeenCalledTimes(refreshes);
+    },
+  );
+
+  it.each([
+    ["a frame for this channel", event(CH), 1],
+    ["a resync", { kind: "resync" as const }, 1],
+    ["a frame for another channel", event(T), 0],
+  ])("a round after %s refetches the newest page %i time(s)", async (_name, signal, fetches) => {
+    vi.mocked(listHistory).mockResolvedValue({
+      ok: true,
+      data: { messages: [msg(M1)], nextCursor: null },
+    });
+    const stale = createStaleChannels();
+    const applied: ChannelUpdate[] = [];
+    stale.accept(signal);
+    expect(await channelRound(roundDeps(stale, applied))).toBe(false);
+    expect(vi.mocked(listHistory).mock.calls).toEqual(fetches ? [[T, CH]] : []);
+    expect(applied).toHaveLength(fetches);
+  });
+
+  it("a 429 round pauses silently and marks everything for the catch-up", async () => {
+    vi.mocked(listHistory).mockResolvedValue(fail("CHAT_RATE_LIMITED", 429));
+    const stale = createStaleChannels();
+    const applied: ChannelUpdate[] = [];
+    stale.accept(event());
+    expect(await channelRound(roundDeps(stale, applied))).toBe(true);
+    expect([applied.length, stale.take()?.all]).toEqual([0, true]);
+  });
+
+  it.each([
+    ["AUTH_REQUIRED", 401],
+    ["CHAT_FORBIDDEN", 403],
+    ["TENANT_SUSPENDED", 403],
+  ])("%s turns live off", async (code, status) => {
+    vi.mocked(listHistory).mockResolvedValue(fail(code, status));
+    vi.mocked(sendMessage).mockResolvedValue(fail(code, status));
+    const stale = createStaleChannels();
+    const applied: ChannelUpdate[] = [];
+    stale.accept(event());
+    await channelRound(roundDeps(stale, applied));
+    expect(applied[0]?.(view())).toMatchObject({ state: "error", messages: [], error: { code } });
+    expect((await sendAttempt({ ...call, entry }))(view({ pending: [entry] })).off).toBe(true);
+  });
+
+  it("a network error on a refetch keeps the shown list and messages, offline with its row", () => {
+    const shown: ChannelsView = { state: "ready", channels: [channel], error: null };
+    const next = channelsView(fail("CLIENT_NETWORK_ERROR", 0), t, "list", shown);
+    expect(next).toMatchObject({
+      state: "offline",
+      channels: [channel],
+      error: { code: "CLIENT_NETWORK_ERROR" },
+    });
+    expect(channelsView(fail("CLIENT_NETWORK_ERROR", 0), t, "list").channels).toEqual([]);
+    const kept = historyView(
+      fail("CLIENT_NETWORK_ERROR", 0),
+      t,
+      "history-refetch",
+      view({ messages: [msg(M1)] }),
+    );
+    expect(kept).toMatchObject({ state: "offline", messages: [{ id: M1 }] });
   });
 });
 
