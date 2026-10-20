@@ -1028,7 +1028,7 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
     ]);
   });
 
-  it("chat_definer's memberships grant is column-scoped to exactly id/person_id/tenant_id/status, not the whole table", async () => {
+  it("chat_definer's memberships grant is column-scoped to exactly id/person_id/tenant_id/status/display_name, not the whole table", async () => {
     const { rows } = await ctx.owner.query(
       `SELECT column_name, privilege_type, is_grantable
        FROM information_schema.column_privileges
@@ -1036,6 +1036,7 @@ describe("regression — SECURITY DEFINER ownership/grant matrix (round-04 P2)",
        ORDER BY column_name`,
     );
     expect(rows.map((r) => (r as { column_name: string }).column_name)).toEqual([
+      "display_name",
       "id",
       "person_id",
       "status",

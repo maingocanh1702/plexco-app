@@ -345,6 +345,44 @@ describe("GET /api/chat/channels/:id/messages (history)", () => {
     expect(new Date(first.createdAt).toISOString()).toBe(first.createdAt);
   });
 
+  it("T19b (L15a) a live row carries its author's club label or null (key present); no person id on the wire", async () => {
+    const c = await club();
+    const [a, b] = [await actor(c.t), await actor(c.t)];
+    const name = "Lan Anh";
+    await ctx.owner.query(`UPDATE memberships SET display_name = $1 WHERE id = $2`, [
+      name,
+      a.membershipId,
+    ]);
+    const named = await send(c, a, "named text");
+    const plain = await send(c, b, "plain text");
+    const gone = await send(c, a, "gone text");
+    await asActor(c, a, (tx) => deleteChatMessage(tx, { channelId: c.c, messageId: gone.id }));
+    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const ids = new Set(["id", "channelId", "replyToMessageId"]);
+    for (const reader of [a, b]) {
+      const r = await get(reader, c.t, c.c);
+      expect(r.status).toBe(200);
+      const items = r.body.data.messages as Record<string, unknown>[];
+      expect(items.map((m) => m.id)).toEqual([gone.id, plain.id, named.id]); // newest first
+      expect(items[2]).toMatchObject({
+        authorLabel: name,
+        authorType: "person",
+        mine: reader === a,
+      });
+      expect(items[1]).toHaveProperty("authorLabel", null); // a NULL label keeps its key
+      // the tombstone stays four keys: no authorLabel, although its author has a club name
+      expect(Object.keys(items[0]!).sort()).toEqual(["channelId", "createdAt", "id", "tombstone"]);
+      for (const m of items) {
+        expect(m).not.toHaveProperty("authorPersonId");
+        const rest = Object.entries(m).filter(([k]) => !ids.has(k));
+        expect(JSON.stringify(rest)).not.toMatch(uuid);
+      }
+      for (const secret of [a.personId, b.personId, a.membershipId, b.membershipId]) {
+        expect(JSON.stringify(r.body)).not.toContain(secret);
+      }
+    }
+  });
+
   it("T20 limit absent -> 50, 1 and 100 accepted; 0, 101, abc, 1.5 -> 400", async () => {
     const c = await club();
     const a = await actor(c.t);

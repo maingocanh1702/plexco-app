@@ -221,13 +221,17 @@ export interface ChatChannelDto {
 }
 
 /** A readable chat message (history GET). No author person id or any other person identifier on
- *  the wire (RO-L15-3 g): `mine` + `authorType` only. createdAt and editedAt are ISO-8601 UTC on
- *  the wire; only the history cursor carries L14's raw timestamptz text (D-2, readiness 4.3). */
+ *  the wire (RO-L15-3 g): `mine` + `authorType` + the display-only `authorLabel`. createdAt and
+ *  editedAt are ISO-8601 UTC on the wire; only the history cursor carries L14's raw timestamptz
+ *  text (D-2, readiness 4.3). */
 export interface ChatLiveMessageDto {
   id: string;
   channelId: string;
   authorType: "person" | "assistant" | "system";
   mine: boolean;
+  /** The author's current club display name (0065); null for a non-member, former, merged or
+   *  guest author, a non-person author or a blank name. Display only, never an identifier. */
+  authorLabel: string | null;
   body: string;
   replyToMessageId: string | null;
   editedAt: string | null;

@@ -275,6 +275,27 @@ describe("chat-service wrappers through withChatActor (0063, readiness 4.8)", ()
     expect(walk.filter((x) => msgs.includes(x))).toEqual(msgs);
     const newest = await run(r.t, r.b, (tx) => listChatMessages(tx, { channelId: r.c }));
     expect(newest.map((x) => x.id)).toEqual([...walk].reverse());
+    // L15a: the list row carries 0065's label, read by r.b: the AUTHOR's club name on a live row,
+    // null on a tombstone and for every other author; persons.display_name ('chat-service') never.
+    expect(newest.map((x) => x.authorLabel)).toEqual(newest.map(() => null));
+    const name = "sentinel-5f1e-club-name-a";
+    const setName = (v: string | null) =>
+      q(`UPDATE memberships SET display_name = $3 WHERE tenant_id = $1 AND person_id = $2`, [
+        r.t,
+        r.a,
+        v,
+      ]);
+    await setName(name);
+    try {
+      const named = await run(r.t, r.b, (tx) => listChatMessages(tx, { channelId: r.c }));
+      expect(named.some((x) => x.authorLabel === name)).toBe(true);
+      for (const x of named) {
+        const live = x.tombstone === null && x.authorPersonId === r.a;
+        expect(x.authorLabel).toBe(live ? name : null);
+      }
+    } finally {
+      await setName(null);
+    }
   });
 
   it("V-19 maps each allowlisted P0001 code to a ChatCommandError carrying only the code and its HTTP status", async () => {
