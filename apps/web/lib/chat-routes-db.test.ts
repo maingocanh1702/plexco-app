@@ -1198,6 +1198,10 @@ async function channels(a: Actor | null, tenant: string) {
   return { status: res.status, body, code: body.error?.code };
 }
 
+/** A denial's bytes for a byte-equal compare: status, data and error (meta carries the request id). */
+const one = (r: { status: number; body: Envelope }) =>
+  JSON.stringify([r.status, r.body.data, r.body.error]);
+
 /** The actor's read cursor in the channel, read as owner (null = never marked). */
 async function cursor(c: Club, a: Actor): Promise<string | null> {
   const { rows } = await ctx.owner.query<{ id: string | null }>(
@@ -1288,17 +1292,22 @@ describe("GET /api/chat/channels (list)", () => {
       await channels(member, bare.t),
       await get(stranger, c.t, c.c),
     ];
-    const one = (r: (typeof cases)[number]) =>
-      JSON.stringify([r.status, r.body.data, r.body.error]);
     expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
     for (const r of cases) expect(one(r)).toBe(one(cases[0]!));
   });
 
-  it("T23 a suspended club: its member -> TENANT_SUSPENDED, a non-member -> the one body", async () => {
+  it("T23 a suspended club: its member -> TENANT_SUSPENDED, a non-member -> the one body; R5c an owner-member: the history GET's TENANT_SUSPENDED body, no viewer key", async () => {
     const off = await club(false);
     const [m, stranger] = [await actor(off.t), await actor((await club()).t)];
     expect(await channels(m, off.t)).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
     expect(await channels(stranger, off.t)).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    const boss = await moderator(off.t);
+    const hist = await get(boss, off.t, off.c);
+    expect(hist).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
+    for (const r of [await channels(m, off.t), await channels(boss, off.t)]) {
+      expect(one(r)).toBe(one(hist));
+      expect(JSON.stringify(r.body)).not.toContain('"viewer"');
+    }
   });
 });
 
@@ -1319,6 +1328,55 @@ describe("GET /api/chat/channels viewer flags (L15b decision table: authorize()'
     });
   }
 
+  it("R1d independent flags: an admin granted exactly one of the two actions gets only that flag true", async () => {
+    // Both keys are preset and non-delegable (0047:85-86): the grant trigger rejects a grant of
+    // either and 0049 reads grants only for owner_grantable keys. So this test re-classes the two
+    // registry rows for its own duration (the authority test's registry-row precedent) and
+    // restores them in finally; every other row runs on the migration's registry.
+    const keys = ["chat.message.moderate", "chat.channel.post_restricted"] as const;
+    const c = await club();
+    const boss = await moderator(c.t);
+    const [mods, posts] = [await moderator(c.t, "admin"), await moderator(c.t, "admin")];
+    await ctx.owner.query(
+      `UPDATE tenant_capability_actions
+          SET authority_class = 'owner_grantable', delegable = true, co_admin_default = false
+        WHERE action_key = ANY($1)`,
+      [keys],
+    );
+    try {
+      for (const [grantee, key] of [
+        [mods, keys[0]],
+        [posts, keys[1]],
+      ] as const) {
+        await ctx.owner.query(
+          `INSERT INTO tenant_capability_grants
+             (tenant_id, grantee_person_id, action_key, reason, granted_by_person_id,
+              granted_at, expires_at)
+           VALUES ($1, $2, $3, 'test', $4,
+              clock_timestamp() - interval '1 minute', clock_timestamp() + interval '7 days')`,
+          [c.t, grantee.personId, key, boss.personId],
+        );
+      }
+      expect((await channels(mods, c.t)).body.data.viewer).toStrictEqual({
+        canModerate: true,
+        canPostRestricted: false,
+      });
+      expect((await channels(posts, c.t)).body.data.viewer).toStrictEqual({
+        canModerate: false,
+        canPostRestricted: true,
+      });
+    } finally {
+      await ctx.owner.query(
+        `UPDATE tenant_capability_actions
+            SET authority_class = 'preset', delegable = false, co_admin_default = true
+          WHERE action_key = ANY($1)`,
+        [keys],
+      );
+    }
+    // the registry is back to preset: the same admin holds both flags again
+    expect((await channels(posts, c.t)).body.data.viewer).toStrictEqual(ALL);
+  });
+
   it("R3 inactive admin: viewer flags false", async () => {
     const c = await club();
     const r = await channels(await moderator(c.t, "admin", false), c.t);
@@ -1338,6 +1396,49 @@ describe("GET /api/chat/channels viewer flags (L15b decision table: authorize()'
     expect(r.body.data.viewer).toStrictEqual(NONE);
     // positive control: the same person's row is live in the club that granted it
     expect((await channels(mod, other.t)).body.data.viewer).toStrictEqual(ALL);
+  });
+
+  it("R5b an owner row here without a membership, and another club's owner: the one CHAT_FORBIDDEN body, no viewer key", async () => {
+    const [c, other] = [await club(), await club()];
+    const ghost = await actor(other.t); // signed in, a member of other only
+    await ctx.owner.query(
+      `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+       VALUES ($1, 'web', $2, 'owner', true)`,
+      [c.t, ghost.personId],
+    );
+    const cases = [
+      await channels(await actor(other.t), c.t), // T2's cross-tenant stranger: the reference body
+      await channels(ghost, c.t),
+      await channels(await moderator(other.t), c.t),
+    ];
+    expect(cases[0]).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+    for (const r of cases) {
+      expect(one(r)).toBe(one(cases[0]!));
+      expect(JSON.stringify(r.body)).not.toContain('"viewer"');
+    }
+  });
+
+  it("R6 a demoted admin, no cache: true, then false after active = false, then false once the row is gone (R3r)", async () => {
+    const c = await club();
+    const mod = await moderator(c.t, "admin");
+    const flags = async () => {
+      const r = await channels(mod, c.t);
+      expect(r.status).toBe(200);
+      return r.body.data.viewer;
+    };
+    expect(await flags()).toStrictEqual(ALL);
+    await ctx.owner.query(
+      `UPDATE tenant_admins SET active = false
+        WHERE tenant_id = $1 AND platform = 'web' AND platform_user_lookup_hash = $2`,
+      [c.t, mod.personId],
+    );
+    expect(await flags()).toStrictEqual(NONE);
+    await ctx.owner.query(
+      `DELETE FROM tenant_admins
+        WHERE tenant_id = $1 AND platform = 'web' AND platform_user_lookup_hash = $2`,
+      [c.t, mod.personId],
+    );
+    expect(await flags()).toStrictEqual(NONE); // R3r: a removed admin is the plain-member path
   });
 
   it("R8 wire shape (owner viewer): channels and viewer only, two booleans, no role, reason, grant or stray id", async () => {
