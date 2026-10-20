@@ -1,7 +1,15 @@
+import { readFileSync } from "node:fs";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { describeChatError } from "../../lib/chat-error-ui";
+import { LangProvider } from "../../lib/i18n-client";
 import { createCommandIdKeeper } from "../../lib/use-command-id";
-import { submitModeration, validateModeration } from "./moderation-sheet";
+import {
+  ModerationSheet,
+  moderationNotice,
+  submitModeration,
+  validateModeration,
+} from "./moderation-sheet";
 
 describe("validateModeration (D10, DM-9)", () => {
   it.each(["", " ", "\n\t "])("other with the note %j is blank", (note) =>
@@ -45,5 +53,55 @@ describe("submitModeration (D8, DM-6)", () => {
     expect(sent.map((id) => sent.indexOf(id))).toEqual([0, 0, 0, 3, 4]); // 3 distinct keys
     expect(get.mock.calls).toEqual(Array(5).fill([])); // never a payload: the note is no fingerprint
     expect(settle).not.toHaveBeenCalled(); // a chat failure never settles the key
+  });
+});
+
+const [noop, send] = [vi.fn(), async () => null];
+const sheet = (action: "hide" | "restore") =>
+  renderToStaticMarkup(
+    <LangProvider lang="en">
+      <ModerationSheet action={action} open onModerate={send} onDone={noop} onCancel={noop} />
+    </LangProvider>,
+  );
+
+describe("ModerationSheet markup (DM-7, DM-9)", () => {
+  it.each([
+    ["hide", "Hide this message?", "Hide"],
+    ["restore", "Restore this message?", "Restore"],
+  ] as const)(
+    "%s: its title and confirm, five reasons (first checked), no note, no alert",
+    (action, title, ok) => {
+      const out = sheet(action);
+      expect([out.includes(`>${title}</h2>`), out.includes(`>${ok}</button>`)]).toEqual([
+        true,
+        true,
+      ]);
+      expect([...out.matchAll(/type="radio"[^>]*>([^<]+)</g)].map((m) => m[1])).toEqual([
+        "Spam",
+        "Harassment",
+        "Unsafe content",
+        "Off topic",
+        "Other",
+      ]);
+      expect(out.match(/<input[^>]*checked=""[^>]*>/g)).toEqual([
+        expect.stringContaining('value="spam"'),
+      ]);
+      expect(out).toContain("<legend>Reason (required)</legend>");
+      expect(out).not.toMatch(/Note \(required\)|role="alert"/); // the note is for Other only
+    },
+  );
+
+  it("an error renders one role=alert carrying the row's copy; empty copy, nothing", () => {
+    const out = renderToStaticMarkup(<>{moderationNotice(RATE.message)}</>);
+    expect(out.match(/role="alert"/g)).toHaveLength(1);
+    expect(out).toContain("You are going too fast. Please try again in a moment.");
+    expect(moderationNotice("")).toBeNull();
+  });
+
+  it("the source has no console call, storage, cache or analytics (section 8)", () => {
+    const source = readFileSync(new URL("./moderation-sheet.tsx", import.meta.url), "utf8");
+    expect(source).not.toMatch(
+      /console\.|localStorage|sessionStorage|indexedDB|caches\.|analytics/i,
+    );
   });
 });
