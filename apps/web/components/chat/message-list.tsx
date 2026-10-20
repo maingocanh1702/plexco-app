@@ -6,7 +6,7 @@ import { formatTimestamp } from "../../lib/session-time";
 import type { ChannelState, ChatListError } from "../../lib/use-chat";
 import { useTenantContext } from "../../lib/use-tenant-context";
 import { Button } from "../ui/button";
-import { MessageActions, type RowActions } from "./message-actions";
+import { MessageActions, ModerateEntry, type RowActions } from "./message-actions";
 import styles from "./message-list.module.css";
 
 type Msg = ChannelState["messages"][number];
@@ -97,6 +97,11 @@ export function MessageList({
               return (
                 <li key={m.id} className={styles.row}>
                   <div className={styles.meta}>{removed}</div>
+                  {actions?.onModerate && m.tombstone === "moderation_hidden" ? (
+                    <div className={styles.actions}>
+                      <ModerateEntry id={m.id} action="restore" onModerate={actions.onModerate} />
+                    </div>
+                  ) : null}
                 </li>
               );
             }
