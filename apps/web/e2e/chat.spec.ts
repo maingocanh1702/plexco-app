@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import * as mock from "./support/chat-api-mock";
-import { NETWORK, fail, ok } from "./support/player-api-mock";
+import { NETWORK, fail, ok, raw } from "./support/player-api-mock";
 import { TENANT_ID } from "./support/session-api-mock";
 
 /** L16 chat UI in a real browser; every /api/chat call is mocked (support/chat-api-mock.ts). */
@@ -147,25 +147,33 @@ test.describe("chat web UI (mocked API)", () => {
   });
 
   test("hide with spam, restore with other: two commands, focus follows", async ({ page }) => {
-    const chat = await open(page, VIEW);
+    const logs: string[] = [];
+    page.on("console", (message) => logs.push(message.text()));
+    const peer = mock.message(); // one createdAt: the load and the restore walk both serve it
+    const own = { id: mock.MESSAGE_ID.mine, mine: true, authorLabel: mock.LABEL.me, body: MINE };
+    const chat = await open(page, VIEW, { history: page1(peer, mock.message(own)) });
     await expect.poll(() => chat.callsTo("history").length).toBe(2); // load + stream-open refetch
     await press(page, "Hide").click();
+    await confirmIn(page, "Hide").click(); // no reason picked: the sheet answers, nothing is sent
+    await expect(dialog(page).getByRole("alert")).toHaveText("Choose a reason.");
+    expect(chat.callsTo("moderate")).toHaveLength(0);
+    await dialog(page).getByRole("radio", { name: "Spam", exact: true }).check();
     await confirmIn(page, "Hide").click();
     await expect(press(page, "Restore")).toBeFocused();
     await expect(peerRow(page)).toHaveCount(0);
     await expect(page.getByRole("status").filter({ hasText: "Message hidden." })).toHaveCount(1);
-    const own = mock.message({ id: mock.MESSAGE_ID.mine, mine: true, body: MINE });
-    const gone = mock.tombstone({ id: mock.MESSAGE_ID.peer, tombstone: "moderation_hidden" });
-    chat.reply("history", page1(gone, own)); // the server now holds the real tombstone
     await press(page, "Restore").click();
     await dialog(page).getByRole("radio", { name: "Other", exact: true }).check();
     await dialog(page).getByRole("textbox", { name: "Note (required)" }).fill(NOTE);
-    chat.reply("moderate", ok({ messageId: gone.id, moderationState: "visible", changed: true }));
-    chat.reply("history", page1(mock.message(), own)); // the restore walks history from the top
+    chat.reply("moderate", ok({ messageId: peer.id, moderationState: "visible", changed: true }));
     await confirmIn(page, "Restore").click();
     await expect(peerRow(page)).toHaveCount(1);
     await expect(page.getByRole("status").filter({ hasText: "Message restored." })).toHaveCount(1);
     await expect(peerRow(page).getByRole("button", { name: "Reply", exact: true })).toBeFocused();
+    // the synthetic note is in no console message and in no storage key or value
+    const kept = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]));
+    expect(kept).toContain("plx-lang"); // control: the read does see stored keys
+    expect([...logs, kept].filter((text) => text.includes(NOTE))).toEqual([]);
     const sent = chat.callsTo("moderate");
     expect(sent.map((call) => call.path)).toEqual([MODERATE, MODERATE]); // one hide, one restore
     const [h, r] = sent.map((call) => call.body);
@@ -179,8 +187,9 @@ test.describe("chat web UI (mocked API)", () => {
   test("failed hide keeps the sheet open; the retry reuses the commandId", async ({ page }) => {
     const chat = await open(page, VIEW);
     await expect.poll(() => chat.callsTo("history").length).toBe(2); // load + stream-open refetch
-    chat.failNext("moderate", fail("INTERNAL_ERROR", 500));
+    chat.failNext("moderate", raw(500)); // runChat rethrows: the route sends an empty-body 500
     await press(page, "Hide").click();
+    await dialog(page).getByRole("radio", { name: "Spam", exact: true }).check();
     await confirmIn(page, "Hide").click();
     await expect(dialog(page).getByRole("alert")).toHaveCount(1);
     await expect(peerRow(page)).toHaveCount(1); // a failure is never read as a hide

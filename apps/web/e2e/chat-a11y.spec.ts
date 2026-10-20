@@ -4,7 +4,8 @@ import * as mock from "./support/chat-api-mock";
 import { NETWORK, fail, ok } from "./support/player-api-mock";
 import { TENANT_ID } from "./support/session-api-mock";
 
-/** L16 chat: 2 screens x 5 states x 2 viewports x 2 schemes; a state is a standing mock reply. */
+/** L16 chat: 2 screens x 5 states x 2 viewports x 2 schemes; a state is a standing mock reply.
+ * Plus the moderation sheet open (an interaction, not a reply): 4 cases, viewports x schemes. */
 const LIST = `/c/${TENANT_ID}/chat`;
 const VIEW = `${LIST}/${mock.CHANNEL_ID}`;
 const viewer = { canModerate: true, canPostRestricted: true };
