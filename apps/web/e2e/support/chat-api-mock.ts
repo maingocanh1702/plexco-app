@@ -104,21 +104,24 @@ function answer(route: Route, reply: Reply) {
   });
 }
 
-/** installApiMock's session reply for a role; like the real route it lists admin rows only. */
-const session = (role: string, locale: string) =>
+/** installApiMock's session reply for a persona; like the real route it lists admin rows only. */
+const session = (persona: string, locale: string) =>
   ok({
     personId: "p-e2e",
     expiresAt: "2099-01-01T00:00:00.000Z",
     csrfToken: "e2e-csrf-secret",
-    tenants: [
-      {
-        tenantId: TENANT_ID,
-        role,
-        name: "CLB Cầu Lông Test",
-        timezone: "Asia/Ho_Chi_Minh",
-        locale,
-      },
-    ].filter((tenant) => tenant.role !== "member"),
+    tenants:
+      persona === "member"
+        ? []
+        : [
+            {
+              tenantId: TENANT_ID,
+              role: persona,
+              name: "CLB Cầu Lông Test",
+              timezone: "Asia/Ho_Chi_Minh",
+              locale,
+            },
+          ],
   });
 
 /** Held local SSE server behind GET /api/chat/subscribe, as realtime-stream-mock.ts does. */
@@ -150,20 +153,20 @@ async function installChatStream(page: Page) {
   };
 }
 
-/** Signs in as `role`, answers /api/chat (`replies` over the defaults), holds one SSE stream. */
+/** Signs in as `persona`, answers /api/chat (`replies` over the defaults), holds one SSE stream. */
 export async function installChatApi(
   page: Page,
   replies: Partial<Record<ChatRouteKey, Reply>> = {},
-  opts: { role?: "owner" | "co_admin" | "member"; locale?: "vi" | "en" } = {},
+  opts: { persona?: "owner" | "co_admin" | "member"; locale?: "vi" | "en" } = {},
 ) {
-  const { role = "owner", locale = "vi" } = opts;
+  const { persona = "owner", locale = "vi" } = opts;
   await signIn(page.context());
   await installApiMock(page, [], { locale });
-  if (role !== "owner")
-    await page.route("**/api/auth/session", (route) => answer(route, session(role, locale)));
+  if (persona !== "owner")
+    await page.route("**/api/auth/session", (route) => answer(route, session(persona, locale)));
   // owner and co_admin hold both chat capabilities (preset 0047:85-86); a plain member neither
   const standing: Partial<Record<ChatRouteKey, Reply>> = {
-    ...ready(role !== "member"),
+    ...ready(persona !== "member"),
     ...replies,
   };
   const once: Partial<Record<ChatRouteKey, Reply[]>> = {};

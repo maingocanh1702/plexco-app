@@ -19,7 +19,7 @@ type Role = "owner" | "co_admin" | "member";
 /** Opens `url` in English: the tenant locale and the remembered plx-lang agree. */
 async function open(page: Page, url: string, replies: Replies = {}, role: Role = "owner") {
   await page.addInitScript(() => window.localStorage.setItem("plx-lang", "en"));
-  const chat = await mock.installChatApi(page, replies, { role, locale: "en" });
+  const chat = await mock.installChatApi(page, replies, { persona: role, locale: "en" });
   await page.goto(url);
   return chat;
 }
