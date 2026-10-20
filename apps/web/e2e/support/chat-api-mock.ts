@@ -104,7 +104,7 @@ function answer(route: Route, reply: Reply) {
   });
 }
 
-/** installApiMock's /api/auth/session reply, for the given role. */
+/** installApiMock's session reply for a role; like the real route it lists admin rows only. */
 const session = (role: string, locale: string) =>
   ok({
     personId: "p-e2e",
@@ -118,7 +118,7 @@ const session = (role: string, locale: string) =>
         timezone: "Asia/Ho_Chi_Minh",
         locale,
       },
-    ],
+    ].filter((tenant) => tenant.role !== "member"),
   });
 
 /** Held local SSE server behind GET /api/chat/subscribe, as realtime-stream-mock.ts does. */
@@ -150,18 +150,22 @@ async function installChatStream(page: Page) {
   };
 }
 
-/** Signs in (owner or member), answers /api/chat (`replies` over the defaults), holds one SSE stream. */
+/** Signs in as `role`, answers /api/chat (`replies` over the defaults), holds one SSE stream. */
 export async function installChatApi(
   page: Page,
   replies: Partial<Record<ChatRouteKey, Reply>> = {},
-  opts: { role?: "owner" | "member"; locale?: "vi" | "en" } = {},
+  opts: { role?: "owner" | "co_admin" | "member"; locale?: "vi" | "en" } = {},
 ) {
   const { role = "owner", locale = "vi" } = opts;
   await signIn(page.context());
   await installApiMock(page, [], { locale });
-  if (role === "member")
+  if (role !== "owner")
     await page.route("**/api/auth/session", (route) => answer(route, session(role, locale)));
-  const standing: Partial<Record<ChatRouteKey, Reply>> = { ...ready(role === "owner"), ...replies };
+  // owner and co_admin hold both chat capabilities (preset 0047:85-86); a plain member neither
+  const standing: Partial<Record<ChatRouteKey, Reply>> = {
+    ...ready(role !== "member"),
+    ...replies,
+  };
   const once: Partial<Record<ChatRouteKey, Reply[]>> = {};
   const holds: Partial<Record<ChatRouteKey, Promise<void>[]>> = {};
   const calls: (RecordedCall & { key: ChatRouteKey })[] = [];

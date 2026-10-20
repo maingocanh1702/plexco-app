@@ -14,7 +14,7 @@ const viewer = { canModerate: true, canPostRestricted: true };
 const page1 = (...messages: object[]) => ok({ messages, nextCursor: null });
 const unread = (n: number) => ok({ channels: [mock.channel({ unreadCount: n })], viewer });
 type Replies = Parameters<typeof mock.installChatApi>[1];
-type Role = "owner" | "member";
+type Role = "owner" | "co_admin" | "member";
 
 /** Opens `url` in English: the tenant locale and the remembered plx-lang agree. */
 async function open(page: Page, url: string, replies: Replies = {}, role: Role = "owner") {
@@ -89,7 +89,7 @@ test.describe("chat web UI (mocked API)", () => {
     });
   }
 
-  for (const role of ["owner", "member"] as const) {
+  for (const role of ["owner", "co_admin"] as const) {
     test(`${role}: only Edit, Delete (own) and Reply; no moderation`, async ({ page }) => {
       const urls: string[] = [];
       page.on("request", (request) => urls.push(request.url()));
@@ -102,9 +102,20 @@ test.describe("chat web UI (mocked API)", () => {
     });
   }
 
+  test("plain member: the club workspace shows No access (no member chat entry yet)", async ({
+    page,
+  }) => {
+    const urls: string[] = [];
+    page.on("request", (request) => urls.push(request.url()));
+    await open(page, LIST, {}, "member");
+    // The shell's 403 stays vi: it cannot read the locale of a club the session does not list.
+    await expect(page.getByRole("heading", { name: "Không có quyền truy cập" })).toBeVisible();
+    expect(urls.filter((url) => url.includes("/api/chat"))).toEqual([]);
+  });
+
   test("admins_only hint keeps the composer usable; nav entry links to chat", async ({ page }) => {
     const history = page1(mock.message({ channelId: mock.ADMINS_CHANNEL_ID }));
-    await open(page, `${LIST}/${mock.ADMINS_CHANNEL_ID}`, { history }, "member");
+    await open(page, `${LIST}/${mock.ADMINS_CHANNEL_ID}`, { history }, "co_admin");
     await expect(page.getByText("Only admins can post in this channel")).toBeVisible();
     await field(page).fill("Cho mình hỏi chút");
     await expect(press(page, "Send")).toBeEnabled();
