@@ -480,7 +480,7 @@ export function useChatChannel(tenantId: string, channelId: string) {
     const result = await listHistory(tenantId, channelId, cursor);
     if (!result.ok && liveRoundEffect(result) === "off") {
       // 5.2.1: a final refusal takes the screen's own row (error, live off), as the first load does
-      apply((s) => historyView(result, latest.current.t, "history", s));
+      apply((s) => ({ ...historyView(result, latest.current.t, "history", s), off: true }));
       return null;
     }
     if (!result.ok) return failure("history", result, latest.current.t);

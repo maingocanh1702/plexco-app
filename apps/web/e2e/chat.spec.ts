@@ -53,6 +53,7 @@ test.describe("chat web UI (mocked API)", () => {
     expect(first).toMatch(/client_?msg_?id/i);
     expect(first).toContain(SENT);
     expect(again).toBe(first);
+    await expect(page.getByText("Sending...")).toHaveCount(0);
     await expect(rows(page).filter({ hasText: SENT })).toHaveCount(1);
     expect(chat.callsTo("send")).toHaveLength(2);
   });
@@ -79,6 +80,7 @@ test.describe("chat web UI (mocked API)", () => {
     const history = ok({ messages: [mock.message()], nextCursor: CURSOR });
     const chat = await open(page, VIEW, { history });
     chat.replyOlder(fail("AUTH_REQUIRED", 401)); // only a request carrying the cursor gets it
+    await expect.poll(() => chat.callsTo("history").length).toBe(2);
     await press(page, "Show older messages").click();
     await expect(page.locator("[data-state]")).toHaveAttribute("data-state", "error");
     await expect(page.getByRole("link", { name: "Sign in again" })).toBeVisible();
@@ -114,6 +116,7 @@ test.describe("chat web UI (mocked API)", () => {
       expect(names.sort()).toEqual(["Delete", "Edit", "Reply", "Reply"]);
       await expect(page.getByRole("button", { name: MODERATION })).toHaveCount(0);
       await expect(page.getByRole("menuitem", { name: MODERATION })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: MODERATION })).toHaveCount(0);
       expect(urls.filter((url) => url.includes("/moderation"))).toEqual([]);
     });
   }
