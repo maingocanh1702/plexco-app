@@ -13,9 +13,11 @@ import {
   listChannels,
   listHistory,
   markRead,
+  moderateMessage,
   sendMessage,
   type ChatChannelList,
   type ChatHistoryPage,
+  type ChatModerateInput,
   type ChatResult,
 } from "./chat-api";
 import {
@@ -396,6 +398,43 @@ export async function removeAttempt({
   return { update: (s) => ({ ...s, messages: s.messages.map(gone) }), error: null, refetch: false };
 }
 
+/**
+ * One hide or restore command. The commandId arrives in `input` (minted once per user action by the
+ * caller, reused on every retry) and is never created here. Both answers render from `moderationState`,
+ * never from `changed` (a replay returns the stored `changed`). Hide: the loaded live row becomes the
+ * 4-key tombstone at once, so the hidden body leaves client memory; no refetch, the live frame confirms
+ * it. Restore: the newest page is refetched once by the hook's existing refetch (`refetch: true`), and
+ * nothing is rendered that a server page did not return. `read` hands over the channel state as the
+ * hook holds it; it is the input of the older-page walk (DM-4 steps 2-3) and unused until that lands.
+ */
+export async function moderateAttempt({
+  ctx,
+  channelId,
+  messageId,
+  input,
+  t,
+}: ChannelCall & {
+  messageId: string;
+  input: ChatModerateInput;
+  read: () => ChannelState;
+}): Promise<Settled> {
+  const result = await moderateMessage(ctx, channelId, messageId, input);
+  if (!result.ok) return { update: SAME, error: failure("moderate", result, t), refetch: false };
+  // seam for the older-page walk (DM-4 steps 2-3): it replaces this single newest-page refetch
+  if (result.data.moderationState === "visible")
+    return { update: SAME, error: null, refetch: true };
+  // only a loaded live row: an author_deleted tombstone keeps its kind (0063:526), an unloaded id is a no-op
+  const hidden = (m: ChatMessageDto): ChatMessageDto =>
+    m.id === messageId && m.tombstone === null
+      ? { id: m.id, channelId: m.channelId, createdAt: m.createdAt, tombstone: "moderation_hidden" }
+      : m;
+  return {
+    update: (s) => ({ ...s, messages: s.messages.map(hidden) }),
+    error: null,
+    refetch: false,
+  };
+}
+
 export interface ChannelRoundDeps {
   tenantId: string;
   channelId: string;
@@ -574,6 +613,22 @@ export function useChatChannel(tenantId: string, channelId: string) {
     },
     [ctx, channelId, bound, settle],
   );
+  // the commandId is the caller's (one per user action, reused on a retry): it is never minted here
+  const moderate = useCallback(
+    async (messageId: string, input: ChatModerateInput): Promise<ChatListError | null> => {
+      const apply = bound();
+      const done = await moderateAttempt({
+        ctx: ctx(),
+        channelId,
+        messageId,
+        input,
+        t: latest.current.t,
+        read: () => latest.current.view,
+      });
+      return settle(apply, done);
+    },
+    [ctx, channelId, bound, settle],
+  );
 
   useEffect(() => {
     const sync = () => setVisible(document.visibilityState === "visible");
@@ -616,5 +671,6 @@ export function useChatChannel(tenantId: string, channelId: string) {
     discard,
     edit,
     remove,
+    moderate,
   };
 }

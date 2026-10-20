@@ -1,6 +1,20 @@
-import type { ChatChannelDto, ChatLiveMessageDto, ChatViewerDto } from "@plexco/core";
+import type {
+  ChatChannelDto,
+  ChatLiveMessageDto,
+  ChatMessageDto,
+  ChatTombstoneDto,
+  ChatViewerDto,
+} from "@plexco/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { editMessage, listChannels, listHistory, markRead, sendMessage } from "./chat-api";
+import {
+  editMessage,
+  listChannels,
+  listHistory,
+  markRead,
+  moderateMessage,
+  sendMessage,
+  type ChatModerateInput,
+} from "./chat-api";
 import { LIVE_PAUSE_MS, createRealtimeHub, type EventSourceLike } from "./use-realtime";
 import {
   CHAT_STREAM,
@@ -11,6 +25,7 @@ import {
   createStaleChannels,
   editAttempt,
   historyView,
+  moderateAttempt,
   onChannelsRefresh,
   readThrough,
   refreshChannels,
@@ -28,6 +43,7 @@ vi.mock("./chat-api", () => ({
   sendMessage: vi.fn(),
   editMessage: vi.fn(),
   markRead: vi.fn(),
+  moderateMessage: vi.fn(),
 }));
 
 const t = (_vi: string, en: string): string => en;
@@ -389,6 +405,146 @@ describe("channel view: send, edit, read cursor and live rounds", () => {
       view({ messages: [msg(M1)] }),
     );
     expect(kept).toMatchObject({ state: "offline", messages: [{ id: M1 }] });
+  });
+});
+
+// Moderation fixtures: the FULL real DTOs (api-contract.ts ChatLiveMessageDto and ChatTombstoneDto), synthetic text only
+const M2 = "1a2b3c4d-0000-4000-8000-000000000002";
+const M3 = "1a2b3c4d-0000-4000-8000-000000000003";
+const SYNTHETIC_AT = "2026-10-20T03:00:00.000Z";
+const live = (id: string, over: Partial<ChatLiveMessageDto> = {}): ChatLiveMessageDto => ({
+  id,
+  channelId: CH,
+  authorType: "person",
+  mine: false,
+  authorLabel: "Synthetic Author",
+  body: "synthetic body",
+  replyToMessageId: null,
+  editedAt: null,
+  editCount: 0,
+  tombstone: null,
+  createdAt: SYNTHETIC_AT,
+  ...over,
+});
+const gone = (id: string, kind: ChatTombstoneDto["tombstone"]): ChatTombstoneDto => ({
+  id,
+  channelId: CH,
+  createdAt: SYNTHETIC_AT,
+  tombstone: kind,
+});
+const rows = (...messages: ChatMessageDto[]): ChannelState => view({ messages });
+const HIDE: ChatModerateInput = {
+  action: "hide",
+  reasonCode: "spam",
+  reasonNote: null,
+  commandId: "c0ffee00-0000-4000-8000-0000000000a1",
+};
+const RESTORE: ChatModerateInput = {
+  action: "restore",
+  reasonCode: "other",
+  reasonNote: "synthetic note",
+  commandId: "c0ffee00-0000-4000-8000-0000000000a2",
+};
+// the real 200 of the moderation route (ChatModerateResult): {messageId, moderationState, changed}
+const moderated = (id: string, moderationState: "hidden" | "visible", changed = true) => ({
+  ok: true as const,
+  data: { messageId: id, moderationState, changed },
+});
+const moderate = (state: ChannelState, input: ChatModerateInput, id = M2) =>
+  moderateAttempt({ ...call, messageId: id, input, read: () => state });
+
+describe("moderateAttempt: hide and restore one message", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it.each([
+    ["D1", true],
+    ["D11", false],
+  ])(
+    "%s: hide with changed:%s renders the exact 4-key moderation_hidden tombstone",
+    async (_row, changed) => {
+      vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "hidden", changed));
+      const target = live(M2, { body: "hidden-body-xyz", authorLabel: "Hidden Author xyz" });
+      const before = rows(live(M1), target, live(M3));
+      const done = await moderate(before, HIDE);
+      expect(done).toMatchObject({ error: null, refetch: false });
+      const after = done.update(before).messages;
+      expect(after[1]).toEqual(gone(M2, "moderation_hidden"));
+      expect(Object.keys(after[1] ?? {}).sort()).toEqual([
+        "channelId",
+        "createdAt",
+        "id",
+        "tombstone",
+      ]);
+      expect(JSON.stringify(after[1])).not.toMatch(/hidden-body-xyz|Hidden Author xyz/);
+      expect([after[0], after[2]]).toEqual([before.messages[0], before.messages[2]]);
+      expect(moderateMessage).toHaveBeenCalledTimes(1);
+      expect(moderateMessage).toHaveBeenCalledWith(call.ctx, CH, M2, HIDE);
+      expect(listHistory).not.toHaveBeenCalled();
+    },
+  );
+
+  it("hide rewrites only a loaded live row: an author_deleted tombstone stays, an unloaded id changes nothing", async () => {
+    vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "hidden"));
+    const deleted = rows(live(M1), gone(M2, "author_deleted"));
+    expect((await moderate(deleted, HIDE)).update(deleted).messages).toEqual(deleted.messages);
+    const unloaded = rows(live(M1), live(M3));
+    expect((await moderate(unloaded, HIDE)).update(unloaded).messages).toEqual(unloaded.messages);
+  });
+
+  it.each([true, false])(
+    "restore with changed:%s asks for the one newest-page refetch and invents no row",
+    async (changed) => {
+      vi.mocked(moderateMessage).mockResolvedValue(moderated(M2, "visible", changed));
+      const before = rows(live(M1), gone(M2, "moderation_hidden"));
+      const done = await moderate(before, RESTORE);
+      expect(done).toMatchObject({ error: null, refetch: true });
+      // nothing renders that a server page did not return: the refetch (the hook's settle) brings the row back
+      expect(done.update(before)).toBe(before);
+      expect(moderateMessage).toHaveBeenCalledWith(call.ctx, CH, M2, RESTORE);
+      expect(listHistory).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["CHAT_MODERATION_FORBIDDEN", 403, "You cannot moderate this message.", false],
+    ["CHAT_REASON_INVALID", 422, "The reason or note is not valid.", false],
+    ["CHAT_IDEMPOTENCY_MISMATCH", 409, "Something went wrong. Please try again.", false],
+    ["CHAT_RATE_LIMITED", 429, "You are going too fast. Please try again in a moment.", true],
+    ["CLIENT_NETWORK_ERROR", 0, "You are offline.", true],
+    ["CHAT_DB_ERROR:UNKNOWN", 500, "Something went wrong. Please try again.", true],
+    ["CLIENT_BAD_RESPONSE", 200, "Something went wrong. Please try again.", true],
+  ])(
+    "%s (%i) on hide and on restore: its row, no change, no refetch, never success",
+    async (code, status, message, retry) => {
+      vi.mocked(moderateMessage).mockResolvedValue(fail(code, status));
+      const before = rows(live(M2), gone(M3, "moderation_hidden"));
+      const hide = await moderate(before, HIDE, M2);
+      const restore = await moderate(before, RESTORE, M3);
+      for (const done of [hide, restore]) {
+        expect(done.error).toMatchObject({ code, message, retry });
+        expect(done.refetch).toBe(false);
+        expect(done.update(before)).toBe(before);
+      }
+      expect(vi.mocked(moderateMessage).mock.calls).toEqual([
+        [call.ctx, CH, M2, HIDE],
+        [call.ctx, CH, M3, RESTORE],
+      ]);
+      expect(listHistory).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a retry reaches moderateMessage with the same commandId and the identical input", async () => {
+    vi.mocked(moderateMessage)
+      .mockResolvedValueOnce(fail("CLIENT_NETWORK_ERROR", 0))
+      .mockResolvedValueOnce(moderated(M2, "hidden"));
+    const before = rows(live(M2));
+    const first = await moderate(before, HIDE);
+    expect(first.error).toMatchObject({ code: "CLIENT_NETWORK_ERROR", retry: true });
+    const second = await moderate(before, HIDE);
+    expect(second.error).toBeNull();
+    expect(second.update(before).messages).toEqual([gone(M2, "moderation_hidden")]);
+    // the commandId is only ever the caller's: two attempts, one key, one identical body
+    expect(vi.mocked(moderateMessage).mock.calls.map((c) => c[3])).toEqual([HIDE, HIDE]);
   });
 });
 
