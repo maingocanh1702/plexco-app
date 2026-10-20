@@ -213,7 +213,7 @@ describe("0063 chat read functions (V-12, V-22)", () => {
     };
     for (const p of [d.a, d.mod, d.b]) {
       const page = await asApp(as(d, p), LIST, [d.c, null, null, "after", 100]);
-      expect(page.fields.map((x) => x.name)).toEqual(COLS); // no moderation, actor, reason or revision column
+      expect(page.fields.map((x) => x.name)).toEqual([...COLS, "author_label"]); // no moderation, actor, reason or revision column
       expect(page.rows).toHaveLength(5);
       const shape = (page.rows as Row[]).map((r) => [r.id, [r.body, r.tombstone]]);
       expect(Object.fromEntries(shape)).toEqual(want);

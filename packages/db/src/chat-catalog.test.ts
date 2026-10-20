@@ -347,6 +347,10 @@ const READ_FNS = ["chat_get_message", "chat_list_messages"];
 const READ_RESULT =
   "TABLE(id uuid, channel_id uuid, author_type text, author_person_id uuid, body text, reply_to_message_id uuid, " +
   "edited_at timestamp with time zone, edit_count smallint, tombstone text, created_at timestamp with time zone)";
+const LIST_RESULT =
+  "TABLE(id uuid, channel_id uuid, author_type text, author_person_id uuid, body text, reply_to_message_id uuid, " +
+  "edited_at timestamp with time zone, edit_count smallint, tombstone text, created_at timestamp with time zone, " +
+  "author_label text)";
 
 describe("0063 function catalog (DT-27 function half)", () => {
   const catalog = async () =>
@@ -398,7 +402,7 @@ describe("0063 function catalog (DT-27 function half)", () => {
       chat_get_message: ["p_message uuid", READ_RESULT],
       chat_list_messages: [
         "p_channel uuid, p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_direction text, p_limit integer",
-        READ_RESULT,
+        LIST_RESULT,
       ],
     });
   });
