@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import type { ChatModerateInput } from "../../lib/chat-api";
 import { useLang, useT } from "../../lib/i18n-client";
 import { formatTimestamp } from "../../lib/session-time";
 import type { ChannelState, ChatListError } from "../../lib/use-chat";
@@ -11,6 +12,8 @@ import styles from "./message-list.module.css";
 
 type Msg = ChannelState["messages"][number];
 type Live = Extract<Msg, { tombstone: null }>;
+/** The last finished hide or restore: ids and the action only, never text, a note or a reason. */
+export type Moderated = { id: string; action: ChatModerateInput["action"] };
 
 export interface MessageListProps {
   tenantId: string;
@@ -20,6 +23,7 @@ export interface MessageListProps {
   olderError: ChatListError | null;
   labelledBy?: string; // id of the heading that names the log
   actions?: RowActions; // row commands; none = read-only rows
+  moderated?: Moderated | null; // feeds the status line (N15, N16) and the focus move (DM-7)
 }
 
 /** Chronological chat log: older-page control, DF-1 labels, tombstones, reply quotes, row actions. */
@@ -31,11 +35,24 @@ export function MessageList({
   olderError,
   labelledBy,
   actions,
+  moderated,
 }: MessageListProps) {
   const t = useT();
   const lang = useLang();
   const { timezone } = useTenantContext(tenantId);
   const removed = t("Tin nhắn đã bị gỡ.", "Message removed.");
+  const done = {
+    hide: t("Đã ẩn tin nhắn.", "Message hidden."),
+    restore: t("Đã khôi phục tin nhắn.", "Message restored."),
+  };
+  const row = useRef<HTMLDivElement>(null); // header of the moderated row, to find its <li>
+  const gone = messages.some((m) => m.id === moderated?.id && m.tombstone);
+  // DM-7: a hide unmounts its opener and a restore soon will; land on the row's next control, never <body>
+  useEffect(() => {
+    const li = row.current?.closest("li");
+    if (moderated && document.activeElement === document.body)
+      li?.querySelector<HTMLElement>(gone ? "button" : "[data-reply]")?.focus();
+  }, [moderated, gone]);
   const kind = {
     person: t("Thành viên", "Member"),
     assistant: t("Trợ lý", "Assistant"),
@@ -93,10 +110,13 @@ export function MessageList({
       >
         <ol className={styles.list}>
           {[...messages].reverse().map((m) => {
+            const ref = m.id === moderated?.id ? row : undefined;
             if (m.tombstone) {
               return (
                 <li key={m.id} className={styles.row}>
-                  <div className={styles.meta}>{removed}</div>
+                  <div ref={ref} className={styles.meta}>
+                    {removed}
+                  </div>
                   {actions?.onModerate && m.tombstone === "moderation_hidden" ? (
                     <div className={styles.actions}>
                       <ModerateEntry id={m.id} action="restore" onModerate={actions.onModerate} />
@@ -108,7 +128,7 @@ export function MessageList({
             const at = time(m.createdAt);
             return (
               <li key={m.id} className={m.mine ? `${styles.row} ${styles.mine}` : styles.row}>
-                <div className={styles.meta}>
+                <div ref={ref} className={styles.meta}>
                   {sender(m)}
                   {at ? <span>{at}</span> : null}
                   {m.editedAt ? <span>{t("(đã sửa)", "(edited)")}</span> : null}
@@ -122,6 +142,9 @@ export function MessageList({
             );
           })}
         </ol>
+      </div>
+      <div role="status">
+        {moderated ? <p key={moderated.id}>{done[moderated.action]}</p> : null}
       </div>
     </>
   );

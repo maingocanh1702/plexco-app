@@ -6,7 +6,7 @@ import { LangProvider } from "../../lib/i18n-client";
 import type { ChatListError } from "../../lib/use-chat";
 import { useTenantContext } from "../../lib/use-tenant-context";
 import { afterEdit, type RowActions } from "./message-actions";
-import { MessageList } from "./message-list";
+import { MessageList, type Moderated } from "./message-list";
 
 vi.mock("../../lib/use-tenant-context", () => ({ useTenantContext: vi.fn() }));
 
@@ -178,6 +178,24 @@ describe("MessageList row actions", () => {
     const titles = html.match(dialog)?.map((d) => text(d).split("?")[0]);
     expect(titles).toEqual(["Delete this message", "Hide this message", "Restore this message"]);
     expect(html).not.toMatch(/<dialog\b[^>]*\bopen\b/);
+  });
+
+  it("keeps one persistent status region: empty until told, then the N15 or N16 line", () => {
+    const region = (moderated?: Moderated) =>
+      render({ messages: [live("1")], moderated }).match(/<div role="status">(.*?)<\/div>/)?.[1];
+    expect(region()).toBe(""); // there, and silent
+    expect(text(region({ id: "1", action: "hide" }) ?? "")).toBe("Message hidden.");
+    expect(text(region({ id: "1", action: "restore" }) ?? "")).toBe("Message restored.");
+  });
+
+  it("marks only Reply on a live row as the focus target after a moderation (DM-7)", () => {
+    const html = render({
+      messages: [gone("3", "moderation_hidden"), live("1"), mine],
+      actions: moderator,
+    });
+    expect(
+      html.match(/<button\b[^>]*\bdata-reply="true"[^>]*>(.*?)<\/button>/g)?.map(text),
+    ).toEqual(["Reply", "Reply"]);
   });
 
   it("puts one closed delete dialog on the own live row only", () => {

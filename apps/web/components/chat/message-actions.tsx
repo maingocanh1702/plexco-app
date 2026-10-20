@@ -121,7 +121,7 @@ export function MessageActions({
             {t("Xoá", "Delete")}
           </Button>
         ) : null}
-        <Button variant="ghost" onClick={() => actions.onReply(m.id)}>
+        <Button variant="ghost" data-reply onClick={() => actions.onReply(m.id)}>
           {t("Trả lời", "Reply")}
         </Button>
         {actions.onModerate && !m.mine && m.authorType === "person" ? (
