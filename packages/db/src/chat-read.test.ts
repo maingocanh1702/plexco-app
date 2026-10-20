@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import { setupRlsTestContext, withDefinerReadLock, type RlsTestContext } from "./test-harness.js";
 
 // 0063 read functions chat_list_messages / chat_get_message (readiness 4.1 V-4, V-7, V-12, V-19, V-22; 4.2 list/get
 // pipeline; 4.7 leg 5): DT-21, DT-32, the read legs of DT-1 and DT-17, the command legs of DT-33, DT-35 and keyset
@@ -333,5 +333,245 @@ describe("0063 chat read functions (V-12, V-22)", () => {
       [k.c, k.a, k.t],
     );
     expect(await idsOf(LIST, [k.c, null, null, "after", 1000])).toHaveLength(100);
+  });
+});
+
+// 0065 author_label (L15a readiness 6 L-1..L-4, 7 T1-T9) on the real DB, as the app role, inside the definer reader
+// lock. Names are set by the owner pool AFTER the sends, so a named case also pins L-1 (the CURRENT club name, not a
+// send-time snapshot); every NULL case has a named control row, so an always-NULL label fails; rows are counted, so a
+// join fan-out fails. A club person message always has a membership row in its tenant (0031 membership fk +
+// membership_required_chk + chat_bind_tenant), so T3's "none" is no ACTIVE membership in the channel's tenant.
+// T10 (ACL, owner, attributes after the DROP) is chat-catalog.test.ts "0063 function catalog"; T11 (the display_name
+// column grant) is chat-schema-invariants.test.ts; T12 (the wire DTO) belongs to the apps/web chat route tests.
+describe("0065 chat_list_messages author_label (L15a decision table)", () => {
+  const BASE = process.env.DATABASE_URL_TEST!;
+  type Labelled = Row & { author_label: string | null };
+  /** Sets the display_name of p's active (or guest) membership in t: exactly one row, so no case is vacuous. */
+  const named = async (t: string, p: string, v: string | null) => {
+    const res = await ctx.owner.query(
+      `UPDATE memberships SET display_name = $3
+        WHERE tenant_id = $1 AND person_id = $2 AND status IN ('active', 'guest')`,
+      [t, p, v],
+    );
+    expect(res.rowCount).toBe(1);
+  };
+  /** p's read of the channel's whole history (oldest first) and its id -> author_label map. */
+  const page = async (c: Club, p: string) => {
+    const rows = (await read(as(c, p), LIST, [c.c, null, null, "after", 100])) as Labelled[];
+    return { rows, label: Object.fromEntries(rows.map((r) => [r.id, r.author_label])) };
+  };
+
+  it("T1 an active author with a non-blank club name: the btrim'd name, then its first 120 characters", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const d = await club();
+      const [trimmed, cut] = [await send(d, d.a, "t1-trimmed"), await send(d, d.b, "t1-cut")];
+      await named(d.t, d.a, "  Minh  ");
+      await named(d.t, d.b, `  ${"a".repeat(120)}${"b".repeat(10)}`); // cut-then-trim keeps 118
+      for (const p of [d.a, d.b, d.mod]) {
+        const { rows, label } = await page(d, p);
+        expect(rows).toHaveLength(2);
+        expect(label).toEqual({ [trimmed]: "Minh", [cut]: "a".repeat(120) });
+      }
+    });
+  });
+
+  it("T2 a NULL or spaces-only club name: NULL; a named control row keeps its name", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const d = await club();
+      const [nul, blank] = [await send(d, d.a, "t2-null"), await send(d, d.b, "t2-blank")];
+      const ctl = await send(d, d.mod, "t2-control");
+      await named(d.t, d.a, null);
+      await named(d.t, d.b, "   ");
+      await named(d.t, d.mod, "Mod-name");
+      const { rows, label } = await page(d, d.b);
+      expect(rows).toHaveLength(3);
+      expect(label).toEqual({ [nul]: null, [blank]: null, [ctl]: "Mod-name" });
+    });
+  });
+
+  it("T3 an author left, merged or guest in the channel's tenant, or left there while active and named in another club: NULL; the list still answers", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const [d, e] = [await club(), await club()];
+      const sent: string[] = [];
+      let elsewhere = "";
+      for (const [status, name] of [
+        ["left", "Left-name"],
+        ["merged", "Merged-name"],
+        ["guest", "Guest-name"],
+        ["left", "Gone-name"],
+      ] as const) {
+        const p = await person();
+        const m = await join(d.t, p);
+        sent.push(await send(d, p, `t3-${status}`));
+        await named(d.t, p, name);
+        await q(`UPDATE memberships SET status = $2 WHERE id = $1`, [m, status]);
+        elsewhere = p;
+      }
+      // the last author: left in d (no active membership there), active and named in e
+      await join(e.t, elsewhere);
+      await named(e.t, elsewhere, "Elsewhere-name");
+      const ctl = await send(d, d.a, "t3-control");
+      await named(d.t, d.a, "Control-name");
+      const { rows, label } = await page(d, d.b);
+      expect(rows).toHaveLength(5);
+      expect(label).toEqual({
+        ...Object.fromEntries(sent.map((m) => [m, null])),
+        [ctl]: "Control-name",
+      });
+      for (const name of ["Left-name", "Merged-name", "Guest-name", "Gone-name", "Elsewhere-name"])
+        expect(JSON.stringify(rows)).not.toContain(name);
+    });
+  });
+
+  it("T4 a system or assistant author: NULL, with the reader and every member named", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const d = await club();
+      const ctl = await send(d, d.a, "t4-control");
+      const npc = (type: string) =>
+        id(
+          `INSERT INTO chat_messages (channel_id, author_type, body, client_msg_id)
+             VALUES ($1, $2, $3, $4) RETURNING id`,
+          [d.c, type, `t4-${type}`, randomUUID()],
+        );
+      const [sys, bot] = [await npc("system"), await npc("assistant")];
+      await named(d.t, d.a, "A-name");
+      await named(d.t, d.b, "B-name");
+      await named(d.t, d.mod, "Mod-name");
+      const { rows, label } = await page(d, d.b);
+      expect(rows).toHaveLength(3);
+      // a label keyed by the caller instead of the author would put B-name on both
+      expect(label).toEqual({ [ctl]: "A-name", [sys]: null, [bot]: null });
+    });
+  });
+
+  it("T5 an author_deleted or moderation_hidden row: NULL label and NULL body for the author, a member and the moderator; a restored row is labelled again", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const d = await club();
+      const [ok, gone, hidden, back] = [
+        await send(d, d.a, "t5-visible"),
+        await send(d, d.a, HIDDEN),
+        await send(d, d.a, HIDDEN),
+        await send(d, d.a, "t5-restored"),
+      ];
+      await del(d, gone);
+      await moderate(d, hidden, "hide");
+      await moderate(d, back, "hide");
+      await moderate(d, back, "restore");
+      await named(d.t, d.a, "Author-name");
+      for (const p of [d.a, d.b, d.mod]) {
+        const { rows } = await page(d, p);
+        expect(rows).toHaveLength(4);
+        const shape = rows.map((r) => [r.id, [r.author_label, r.body, r.tombstone]]);
+        expect(Object.fromEntries(shape)).toEqual({
+          [ok]: ["Author-name", "t5-visible", null],
+          [gone]: [null, null, "author_deleted"],
+          [hidden]: [null, null, "moderation_hidden"],
+          [back]: ["Author-name", "t5-restored", null],
+        });
+      }
+    });
+  });
+
+  // fails if the join loses `am.tenant_id = v_ch.tenant_id`: both memberships match, both names appear
+  it("T6 one person active in two clubs under a different name in each: a club's reader sees only that club's name, the other is absent from every column", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const [a, b] = [await club(), await club()];
+      const p = await person();
+      await join(a.t, p);
+      await join(b.t, p);
+      const [inA, inB] = [await send(a, p, "t6-in-a"), await send(b, p, "t6-in-b")];
+      await named(a.t, p, "Alpha-name");
+      await named(b.t, p, "Bravo-name");
+      const cases: [Club, string, string, string][] = [
+        [a, inA, "Alpha-name", "Bravo-name"],
+        [b, inB, "Bravo-name", "Alpha-name"],
+      ];
+      for (const [c, m, mine, other] of cases) {
+        for (const reader of [c.b, p]) {
+          const { rows, label } = await page(c, reader);
+          expect(rows).toHaveLength(1);
+          expect(label).toEqual({ [m]: mine });
+          expect(JSON.stringify(rows)).not.toContain(other);
+        }
+      }
+    });
+  });
+
+  it("T7 the ten 0063 columns then author_label text, nothing else; one function, its argument list and four defaults unchanged; chat_get_message keeps the ten", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const d = await club();
+      await send(d, d.a, "t7-first");
+      await send(d, d.a, "t7-second");
+      const res = await asApp(as(d, d.b), LIST, [d.c, null, null, "before", 50]);
+      expect(res.rows).toHaveLength(2);
+      expect(res.fields.map((x) => x.name)).toEqual([...COLS, "author_label"]);
+      expect(res.fields[COLS.length]!.dataTypeID).toBe(25); // text
+      const defaulted = await asApp(as(d, d.b), "SELECT * FROM chat_list_messages($1)", [d.c]);
+      expect(defaulted.rows).toEqual(res.rows); // the defaults: no cursor, 'before', 50
+      const one = await asApp(as(d, d.b), GET, [res.rows[0].id]);
+      expect(one.fields.map((x) => x.name)).toEqual(COLS);
+      const fns = await q(
+        `SELECT pronargs, pronargdefaults, pg_get_function_identity_arguments(oid) AS args
+           FROM pg_proc WHERE proname = 'chat_list_messages'`,
+      );
+      expect(fns).toEqual([
+        {
+          pronargs: 5,
+          pronargdefaults: 4,
+          args: "p_channel uuid, p_cursor_created_at timestamp with time zone, p_cursor_id uuid, p_direction text, p_limit integer",
+        },
+      ]);
+    });
+  });
+
+  // fails if the label follows chat_messages.membership_id (the left row): NULL or Old-name instead of New-name
+  it("T8 re-join: the author left (the old message keeps the left membership_id) and joined again under a new name: both messages show the current name, the old name never", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const d = await club();
+      const p = await person();
+      const first = await join(d.t, p);
+      const old = await send(d, p, "t8-before-leave");
+      await named(d.t, p, "Old-name");
+      await q(`UPDATE memberships SET status = 'left' WHERE id = $1`, [first]);
+      expect((await page(d, d.b)).label).toEqual({ [old]: null });
+      const second = await join(d.t, p);
+      await named(d.t, p, "New-name");
+      const fresh = await send(d, p, "t8-after-rejoin");
+      const bound = await q(
+        `SELECT id, membership_id FROM chat_messages WHERE id = ANY($1) ORDER BY created_at`,
+        [[old, fresh]],
+      );
+      expect(bound).toEqual([
+        { id: old, membership_id: first },
+        { id: fresh, membership_id: second },
+      ]);
+      for (const reader of [d.b, p]) {
+        const { rows, label } = await page(d, reader);
+        expect(rows).toHaveLength(2);
+        expect(label).toEqual({ [old]: "New-name", [fresh]: "New-name" });
+        expect(JSON.stringify(rows)).not.toContain("Old-name");
+      }
+    });
+  });
+
+  it("T9 authorization unchanged: a non-member, a left-only person and another club's member get CHAT_FORBIDDEN from list (no name in it) and zero rows from get", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const d = await club();
+      const m = await send(d, d.a, "t9");
+      await named(d.t, d.a, "Labelled-name");
+      const [outside, leftOnly] = [await person(), await person()];
+      await join(d.t, leftOnly, "left");
+      const denied: Gucs[] = [
+        { tenant: d.t, person: outside },
+        as(d, leftOnly),
+        as(g, g.a),
+        { tenant: d.t, person: g.a },
+      ];
+      for (const gucs of denied) {
+        expect(await code(gucs, LIST, [d.c, null, null, "before", 50])).toBe("CHAT_FORBIDDEN");
+        expect(await read(gucs, GET, [m])).toEqual([]);
+      }
+      expect((await page(d, d.b)).label).toEqual({ [m]: "Labelled-name" }); // the control
+    });
   });
 });
