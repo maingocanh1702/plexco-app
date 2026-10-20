@@ -48,7 +48,7 @@ export function Composer({
   );
   if (back) {
     setRestored([...restored, back.clientMsgId]);
-    if (!canSend(body)) setBody(back.body);
+    if (body.trim() === "") setBody(back.body);
   }
   // Each action hands focus back to the field, so it never stays on a button that just vanished.
   const thenFocus = (run: () => void) => {
