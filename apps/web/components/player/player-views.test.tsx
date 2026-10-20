@@ -122,7 +122,7 @@ describe("MyClubsView", () => {
     expect(stateOf(html)).toBe("ready");
     for (const label of ["Alpha Club", "Beta Club", "Gamma Club"]) expect(visible).toContain(label);
     expect(visible.match(/Member|Guest/g)).toHaveLength(2); // an unknown status has no label
-    expect(html).not.toContain("club-a1");
+    expect(visible).not.toContain("club-a1"); // only the Chat link's href carries the slug (CE-1)
   });
 
   it("the truncated note shows only when the service capped the list", () => {
@@ -149,6 +149,34 @@ describe("MyClubsView", () => {
     for (const word of ["My clubs", "Member", "Guest"]) {
       expect(text(render(CLUBS, false, "en"))).toContain(word);
     }
+  });
+
+  // L16c: the Chat entry is for an ACTIVE membership only. Each link as [href, label].
+  const chatLinks = (html: string) =>
+    [...html.matchAll(/<a [^>]*href="(\/me\/clubs\/[^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) =>
+      m.slice(1),
+    );
+
+  it("CE-1/CE-4 an active row links to its chat with the encoded slug, labelled in vi and en", () => {
+    const odd: MyClub = { clubRef: "a b/c", clubLabel: "Odd Club", membershipStatus: "active" };
+    expect(chatLinks(render([...CLUBS, odd]))).toEqual([
+      ["/me/clubs/club-a1/chat", "Chat"],
+      ["/me/clubs/a%20b%2Fc/chat", "Chat"],
+    ]);
+    expect(chatLinks(render(CLUBS, false, "vi"))).toEqual([
+      ["/me/clubs/club-a1/chat", "Trò chuyện"],
+    ]);
+  });
+
+  it("CE-2/CE-3 a guest and any other status get no chat link, and their slug is not in the page", () => {
+    const odd: MyClub = {
+      clubRef: "club-d4",
+      clubLabel: "Delta",
+      membershipStatus: "mystery" as never,
+    };
+    const html = render([...CLUBS.slice(1), odd]); // guest, null, unknown
+    expect(chatLinks(html)).toEqual([]);
+    for (const slug of ["club-b2", "club-c3", "club-d4"]) expect(html).not.toContain(slug);
   });
 });
 
@@ -231,5 +259,11 @@ describe("MyRequestsView", () => {
     for (const word of ["My join requests", "Pending", "Requested"]) {
       expect(text(render(ROWS, false, "en"))).toContain(word);
     }
+  });
+
+  it("CE-5 rows carry no action: no link and no button inside a card", () => {
+    const cards = render(ROWS).match(/<li\b.*?<\/li>/g) ?? [];
+    expect(cards).toHaveLength(ROWS.length);
+    for (const card of cards) expect(card).not.toMatch(/<a\b|<button\b/);
   });
 });

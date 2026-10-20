@@ -2,6 +2,7 @@
 
 import { useT } from "../../lib/i18n-client";
 import { getMyClubs } from "../../lib/me-player-api";
+import { Button } from "../ui/button";
 import { FindGame, ListView, PlayerScreen, statusLabel, type ViewProps } from "./player-page";
 
 const MEMBER = new Map<string, [string, string]>([
@@ -9,7 +10,7 @@ const MEMBER = new Map<string, [string, string]>([
   ["guest", ["Khách", "Guest"]],
 ]);
 
-/** S-5 (ME-1): the signed-in account's clubs. `clubRef` is the slug: a React key, never shown. */
+/** S-5 (ME-1): the signed-in account's clubs. `clubRef` is the slug: a React key and the Chat link's path, never shown. */
 export function MyClubsView(props: ViewProps<Awaited<ReturnType<typeof getMyClubs>>>) {
   const t = useT();
   return (
@@ -24,6 +25,13 @@ export function MyClubsView(props: ViewProps<Awaited<ReturnType<typeof getMyClub
         title: c.clubLabel,
         badge: statusLabel(MEMBER, c.membershipStatus, t),
         lines: [],
+        // The chat entry is for an ACTIVE membership only: a guest and any other status get none (fail closed).
+        action:
+          c.membershipStatus === "active" ? (
+            <Button href={`/me/clubs/${encodeURIComponent(c.clubRef)}/chat`} variant="secondary">
+              {t("Trò chuyện", "Chat")}
+            </Button>
+          ) : undefined,
       })}
     />
   );

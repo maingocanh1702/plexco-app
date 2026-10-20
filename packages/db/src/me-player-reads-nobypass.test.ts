@@ -14,7 +14,8 @@ import {
 } from "./test-harness.js";
 
 /**
- * 0059 under a NOSUPERUSER NOBYPASSRLS migration owner (A-14). The rest of the suite migrates as a
+ * 0059 and 0066 (CC-14) under a NOSUPERUSER NOBYPASSRLS migration owner (A-14). The rest of the
+ * suite migrates as a
  * superuser, so there the definers bypass tenant RLS and isolation rests on their explicit person
  * and tenant predicates. Here FORCE RLS binds the owner too: a definer sees a tenant's rows only
  * while it has set app.tenant_id to that tenant itself. A's reads returning A's rows of BOTH clubs
@@ -127,7 +128,7 @@ const items = (r: Awaited<ReturnType<typeof readAll>>) =>
     c.status.kind === "known_amount" ? c.status.items.map((i) => [c.clubRef, i.amountDue]) : [],
   );
 
-describe("0059 under a NOBYPASSRLS migration owner (A-14)", () => {
+describe("0059 and 0066 under a NOBYPASSRLS migration owner (A-14)", () => {
   it("the premise: owner and app cannot bypass RLS, the definers are the owner's, and the owner alone reads 0 memberships", async () => {
     const roles = await su.query<{ rolsuper: boolean; rolbypassrls: boolean }>(
       `SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname IN ($1, 'app')`,
@@ -230,5 +231,23 @@ describe("0059 under a NOBYPASSRLS migration owner (A-14)", () => {
       await c.query("ROLLBACK");
       c.release();
     }
+  });
+
+  it("CC-14 (D14): 0066 account_club_chat_context under this owner: A's active membership is still one row, B's missing one still none", async () => {
+    const tz = await su.query<{ timezone: string }>(`SELECT timezone FROM tenants WHERE id = $1`, [
+      seed.t1,
+    ]);
+    const call = async (accountId: string, slug: string) =>
+      (
+        await app.query(`SELECT * FROM account_club_chat_context($1::uuid, $2::text)`, [
+          accountId,
+          slug,
+        ])
+      ).rows;
+    expect(await call(seed.a.accountId, "l9-nb-one")).toEqual([
+      { tenant_id: seed.t1, timezone: tz.rows[0]!.timezone },
+    ]);
+    // B holds no membership in club two
+    expect(await call(seed.b.accountId, "l9-nb-two")).toEqual([]);
   });
 });

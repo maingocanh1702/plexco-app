@@ -175,6 +175,9 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "app/api/me/sessions/route.ts": "b",
   "app/api/me/charges/route.ts": "b",
   "app/api/me/requests/route.ts": "b",
+  // (b) — L16c: the member's own club chat context. Its only t() is the one deny, sent when NO tenant
+  // was resolved for the caller; a deny in the club's language would tell an unknown slug from a club.
+  "app/api/me/clubs/[clubRef]/chat-context/route.ts": "b",
   "lib/me-route-gate.ts": "b",
   "app/api/auth/logout/route.ts": "b",
   "app/api/auth/logout-all/route.ts": "b",
