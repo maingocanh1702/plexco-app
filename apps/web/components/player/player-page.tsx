@@ -120,6 +120,8 @@ interface Row {
   title: string;
   badge: string | null;
   lines: (string | false | null)[];
+  /** An optional control under the lines (a link); a row without one renders exactly the elements it did before. */
+  action?: ReactNode;
 }
 
 /** Clubs, sessions and requests: the empty state, the card list and the capped-list note, once. */
@@ -151,6 +153,7 @@ export function ListView<D extends { truncated: boolean }, T>({
             </p>
           ) : null,
         )}
+        {r.action}
       </Card>
     </li>
   );

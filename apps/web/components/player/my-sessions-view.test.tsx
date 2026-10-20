@@ -95,6 +95,13 @@ describe("MySessionsView", () => {
     expect(html).not.toContain("<button"); // no leave or cancel control (O-2)
   });
 
+  it("CE-6 rows carry no action: no link and no button inside a card", () => {
+    const cards =
+      render(ready([ACTIVE, { ...ACTIVE, sessionId: "s-2" }])).match(/<li\b.*?<\/li>/g) ?? [];
+    expect(cards).toHaveLength(2);
+    for (const card of cards) expect(card).not.toMatch(/<a\b|<button\b/);
+  });
+
   it("the truncated note shows only when the service capped the list", () => {
     expect(text(render(ready([ACTIVE], true)))).toContain("Not all items are shown");
     expect(text(render(ready([ACTIVE], false)))).not.toContain("Not all items are shown");
