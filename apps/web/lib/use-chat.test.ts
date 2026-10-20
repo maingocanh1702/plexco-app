@@ -1,4 +1,4 @@
-import type { ChatChannelDto, ChatLiveMessageDto } from "@plexco/core";
+import type { ChatChannelDto, ChatLiveMessageDto, ChatViewerDto } from "@plexco/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { editMessage, listChannels, listHistory, markRead, sendMessage } from "./chat-api";
 import { LIVE_PAUSE_MS, createRealtimeHub, type EventSourceLike } from "./use-realtime";
@@ -45,7 +45,12 @@ const channel: ChatChannelDto = {
   postPolicy: "admins_only",
   unreadCount: 3,
 };
-const ok = (channels: ChatChannelDto[]) => ({ ok: true as const, data: { channels } });
+// listChannels (chat-api.ts) always resolves {channels, viewer}: both flags false unless the answer proved otherwise
+const NO_VIEWER: ChatViewerDto = { canModerate: false, canPostRestricted: false };
+const ok = (channels: ChatChannelDto[], viewer: ChatViewerDto = NO_VIEWER) => ({
+  ok: true as const,
+  data: { channels, viewer },
+});
 const fail = (code: string, status: number) => ({ ok: false as const, code, status });
 const event = (channelId = CH) => ({ kind: "event" as const, message: { ...frame, channelId } });
 
