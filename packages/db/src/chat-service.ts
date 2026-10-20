@@ -177,6 +177,11 @@ const MESSAGE_COLUMNS = sql`f.id, f.channel_id AS "channelId", f.author_type AS 
   f.author_person_id AS "authorPersonId", f.body, f.reply_to_message_id AS "replyToMessageId",
   f.edited_at::text AS "editedAt", f.edit_count AS "editCount", f.tombstone, f.created_at::text AS "createdAt"`;
 
+/** A list row: the shared row plus 0065's author_label, the author's current club display name
+ *  (NULL unless a live person message's author is an active member with a non-blank name).
+ *  Display only, never an identifier; chat_get_message has no label, so getChatMessage stays ChatMessage. */
+export type ChatMessageListRow = ChatMessage & { authorLabel: string | null };
+
 /** A NULL direction or limit takes the definer's default (before, 50); WITH ORDINALITY keeps the definer's order. */
 export async function listChatMessages(
   tx: ChatTx,
@@ -187,15 +192,15 @@ export async function listChatMessages(
     direction?: "before" | "after" | null;
     limit?: number | null;
   },
-): Promise<ChatMessage[]> {
+): Promise<ChatMessageListRow[]> {
   const result = await tx.execute(
-    sql`SELECT ${MESSAGE_COLUMNS}
+    sql`SELECT ${MESSAGE_COLUMNS}, f.author_label AS "authorLabel"
       FROM chat_list_messages(${input.channelId}::uuid, ${input.cursorCreatedAt ?? null}::timestamptz,
         ${input.cursorId ?? null}::uuid, ${input.direction ?? null}::text, ${input.limit ?? null}::integer)
         WITH ORDINALITY AS f
       ORDER BY f.ordinality`,
   );
-  return result.rows as ChatMessage[];
+  return result.rows as ChatMessageListRow[];
 }
 
 export async function getChatMessage(

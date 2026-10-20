@@ -345,6 +345,7 @@ describe("chat wire DTOs (M10)", () => {
       | "channelId"
       | "authorType"
       | "mine"
+      | "authorLabel"
       | "body"
       | "replyToMessageId"
       | "editedAt"
@@ -352,11 +353,14 @@ describe("chat wire DTOs (M10)", () => {
       | "tombstone"
       | "createdAt"
     >();
+    // L15a: a display-only club name or null, never an identifier type
+    expectTypeOf<ChatLiveMessageDto["authorLabel"]>().toEqualTypeOf<string | null>();
     const leaky = {
       id: messageId,
       channelId,
       authorType: "person",
       mine: false,
+      authorLabel: null,
       body: "hello",
       replyToMessageId: null,
       editedAt: null,

@@ -152,6 +152,7 @@ export {
   type ChatActor,
   type ChatCommandErrorCode,
   type ChatMessage,
+  type ChatMessageListRow,
   type ChatTx,
 } from "./chat-service.js";
 export { listChatChannels, type ChatChannelRow } from "./chat-channel-reads.js";

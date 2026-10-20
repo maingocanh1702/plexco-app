@@ -1,5 +1,5 @@
 import type { ChatMessageDto } from "@plexco/core";
-import { listChatMessages, sendChatMessage, type ChatMessage } from "@plexco/db";
+import { listChatMessages, sendChatMessage, type ChatMessageListRow } from "@plexco/db";
 
 import { ok } from "../../../../../../lib/api-envelope";
 import {
@@ -15,16 +15,26 @@ const AUTHOR_TYPES = ["person", "assistant", "system"] as const;
 const TOMBSTONES = ["author_deleted", "moderation_hidden"] as const;
 type Params = { params: Promise<{ id: string }> };
 
-/** D-16, G2: a tombstone keeps four keys, no person id ever; a row outside the DTO throws (500). */
-function toDto(row: ChatMessage, personId: string): ChatMessageDto {
-  const { id, channelId, body, replyToMessageId, editCount } = row;
+/** D-16, G2: a tombstone keeps four keys, no person id ever; a row outside the DTO throws (500).
+ *  authorLabel passes through as the definer gave it (L16 renders "You"/"Member"; no fallback here). */
+function toDto(row: ChatMessageListRow, personId: string): ChatMessageDto {
+  const { id, channelId, body, replyToMessageId, editCount, authorLabel } = row;
   const createdAt = toWireTimestamp(row.createdAt);
   const tombstone = TOMBSTONES.find((k) => k === row.tombstone);
   if (tombstone) return { id, channelId, createdAt, tombstone };
   const authorType = AUTHOR_TYPES.find((a) => a === row.authorType);
   if (row.tombstone !== null || body === null || !authorType) throw new Error("chat row");
   const editedAt = row.editedAt === null ? null : toWireTimestamp(row.editedAt);
-  const live = { id, channelId, authorType, body, replyToMessageId, editedAt, editCount };
+  const live = {
+    id,
+    channelId,
+    authorType,
+    authorLabel,
+    body,
+    replyToMessageId,
+    editedAt,
+    editCount,
+  };
   return { ...live, mine: row.authorPersonId === personId, tombstone: null, createdAt };
 }
 
