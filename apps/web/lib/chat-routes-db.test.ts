@@ -362,7 +362,10 @@ describe("GET /api/chat/channels/:id/messages (history)", () => {
     expect(all.body.data).toMatchObject({ nextCursor: null });
     expect(all.body.data.messages).toHaveLength(60);
     for (const bad of ["0", "101", "abc", "1.5"]) {
-      expect(await get(a, c.t, c.c, `&limit=${bad}`)).toMatchObject({ status: 400 });
+      expect(await get(a, c.t, c.c, `&limit=${bad}`)).toMatchObject({
+        status: 400,
+        code: "INVALID_BODY",
+      });
     }
   });
 
