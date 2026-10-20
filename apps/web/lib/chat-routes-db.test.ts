@@ -39,7 +39,7 @@ vi.mock("next/headers", () => ({
   }),
 }));
 // D8 seam: authorize stays the real primitive (the web vitest config sets no mockReset, clearMocks
-// or restoreMocks); only R7 arms a rejection, and it resets the mock in finally.
+// or restoreMocks); only R1d (stubs) and R7 (a rejection) arm it, each resetting it in finally.
 vi.mock("@plexco/db", async (importOriginal) => {
   const m = await importOriginal<typeof import("@plexco/db")>();
   return { ...m, authorize: vi.fn(m.authorize) };
@@ -1335,53 +1335,41 @@ describe("GET /api/chat/channels viewer flags (L15b decision table: authorize()'
     });
   }
 
-  it("R1d independent flags: an admin granted exactly one of the two actions gets only that flag true", async () => {
-    // Both keys are preset and non-delegable (0047:85-86): the grant trigger rejects a grant of
-    // either and 0049 reads grants only for owner_grantable keys. So this test re-classes the two
-    // registry rows for its own duration (the authority test's registry-row precedent) and
-    // restores them in finally; every other row runs on the migration's registry.
+  it("R1d independent flags: each flag is authorize()'s answer for its own action (the D8 seam)", async () => {
+    // Both keys are preset (0047:85-86), so no real fixture allows exactly one of them; the D8
+    // stub answers per action instead and writes no shared database state.
     const keys = ["chat.message.moderate", "chat.channel.post_restricted"] as const;
     const c = await club();
-    const boss = await moderator(c.t);
-    const [mods, posts] = [await moderator(c.t, "admin"), await moderator(c.t, "admin")];
-    await ctx.owner.query(
-      `UPDATE tenant_capability_actions
-          SET authority_class = 'owner_grantable', delegable = true, co_admin_default = false
-        WHERE action_key = ANY($1)`,
-      [keys],
-    );
+    const viewer = await actor(c.t); // a plain member: the real answer is false for both
+    const mock = vi.mocked(authorize);
+    const byAction = (a: { action: string }, b: { action: string }) =>
+      a.action.localeCompare(b.action);
     try {
-      for (const [grantee, key] of [
-        [mods, keys[0]],
-        [posts, keys[1]],
+      for (const [only, expected] of [
+        [keys[0], { canModerate: true, canPostRestricted: false }],
+        [keys[1], { canModerate: false, canPostRestricted: true }],
       ] as const) {
-        await ctx.owner.query(
-          `INSERT INTO tenant_capability_grants
-             (tenant_id, grantee_person_id, action_key, reason, granted_by_person_id,
-              granted_at, expires_at)
-           VALUES ($1, $2, $3, 'test', $4,
-              clock_timestamp() - interval '1 minute', clock_timestamp() + interval '7 days')`,
-          [c.t, grantee.personId, key, boss.personId],
+        const calls: Parameters<typeof authorize>[1][] = [];
+        // answers every call of this GET itself: nothing delegates to the real authorize
+        mock.mockImplementation(async (_tx, p) => {
+          calls.push(p);
+          return p.action === only
+            ? { allowed: true, role: "admin" }
+            : { allowed: false, reason: "not_a_member" };
+        });
+        const r = await channels(viewer, c.t);
+        expect(r.status).toBe(200);
+        expect(r.body.data.viewer).toStrictEqual(expected);
+        // exactly two calls, one per action, for the proved ?tenant= and the session person
+        expect([...calls].sort(byAction)).toStrictEqual(
+          keys
+            .map((action) => ({ tenantId: c.t, action, actorPersonId: viewer.personId }))
+            .sort(byAction),
         );
       }
-      expect((await channels(mods, c.t)).body.data.viewer).toStrictEqual({
-        canModerate: true,
-        canPostRestricted: false,
-      });
-      expect((await channels(posts, c.t)).body.data.viewer).toStrictEqual({
-        canModerate: false,
-        canPostRestricted: true,
-      });
     } finally {
-      await ctx.owner.query(
-        `UPDATE tenant_capability_actions
-            SET authority_class = 'preset', delegable = false, co_admin_default = true
-          WHERE action_key = ANY($1)`,
-        [keys],
-      );
+      mock.mockReset(); // vitest 4: back to the real authorize, the once queue cleared
     }
-    // the registry is back to preset: the same admin holds both flags again
-    expect((await channels(posts, c.t)).body.data.viewer).toStrictEqual(ALL);
   });
 
   it("R3 inactive admin: viewer flags false", async () => {
