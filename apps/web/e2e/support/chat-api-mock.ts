@@ -24,11 +24,14 @@ export const CHANNEL_ID = id(1);
 export const ADMINS_CHANNEL_ID = id(2);
 /** peer/mine fill the default history (peer newest); sent/live/gone are spare ids for a spec. */
 export const MESSAGE_ID = { peer: id(11), mine: id(12), sent: id(13), live: id(14), gone: id(15) };
+/** Rare tokens on purpose: the privacy e2e searches whole bundles for them. */
+export const TITLE = { general: "Chung Qx7", admins: "Thông báo Zk4" } as const;
+export const LABEL = { peer: "Lan Vq3", me: "Minh Jt5" } as const;
 
 /** Fixtures carry exactly the DTO keys (the client's exact-key guards reject any other shape). */
 export const channel = (over: Partial<ChatChannelDto> = {}): ChatChannelDto => ({
   id: CHANNEL_ID,
-  title: "Chung",
+  title: TITLE.general,
   sortOrder: 0,
   isDefault: true,
   postPolicy: "all_members",
@@ -40,7 +43,7 @@ export const message = (over: Partial<ChatLiveMessageDto> = {}): ChatLiveMessage
   channelId: CHANNEL_ID,
   authorType: "person",
   mine: false,
-  authorLabel: "Lan",
+  authorLabel: LABEL.peer,
   body: "Chiều nay mọi người có tới sớm không?",
   replyToMessageId: null,
   editedAt: null,
@@ -63,7 +66,7 @@ const ready = (privileged: boolean): Record<ChatRouteKey, Reply> => ({
       channel(),
       channel({
         id: ADMINS_CHANNEL_ID,
-        title: "Thông báo",
+        title: TITLE.admins,
         isDefault: false,
         postPolicy: "admins_only",
       }),
@@ -73,7 +76,7 @@ const ready = (privileged: boolean): Record<ChatRouteKey, Reply> => ({
   history: ok({
     messages: [
       message(),
-      message({ id: MESSAGE_ID.mine, mine: true, authorLabel: "Minh", body: "Mình tới sớm nhé" }),
+      message({ id: MESSAGE_ID.mine, mine: true, authorLabel: LABEL.me, body: "Mình tới sớm nhé" }),
     ],
     nextCursor: null,
   }),
@@ -117,6 +120,7 @@ const session = (persona: string, locale: string) =>
             {
               tenantId: TENANT_ID,
               role: persona,
+              slug: null,
               name: "CLB Cầu Lông Test",
               timezone: "Asia/Ho_Chi_Minh",
               locale,

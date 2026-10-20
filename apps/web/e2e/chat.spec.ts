@@ -52,6 +52,8 @@ test.describe("chat web UI (mocked API)", () => {
     expect(first).toMatch(/client_?msg_?id/i);
     expect(first).toContain(SENT);
     expect(again).toBe(first);
+    await expect(rows(page).filter({ hasText: SENT })).toHaveCount(1);
+    expect(chat.callsTo("send")).toHaveLength(2);
   });
 
   test("edit own: a closed window shows the 5.2.3 message", async ({ page }) => {
@@ -73,9 +75,11 @@ test.describe("chat web UI (mocked API)", () => {
   });
 
   for (const status of [500, 200]) {
-    test(`unread badge after a ${status} read`, async ({ page }) => {
+    const name = status === 200 ? "read posts on mount" : `unread badge after a ${status} read`;
+    test(name, async ({ page }) => {
       const chat = await open(page, LIST, { channels: unread(3) });
-      const general = page.getByRole("link", { name: /Chung/ });
+      const title = mock.TITLE.general;
+      const general = page.getByRole("link", { name: title });
       await expect(general).toHaveText(/3\s*unread/);
       if (status === 500) chat.failNext("read", fail("INTERNAL_ERROR", 500));
       await general.click();
@@ -85,7 +89,7 @@ test.describe("chat web UI (mocked API)", () => {
       else await page.waitForTimeout(500);
       await page.getByRole("link", { name: "Go back" }).click();
       if (status === 500) await expect(general).toHaveText(/3\s*unread/);
-      else await expect(page.getByRole("link", { name: "Chung", exact: true })).toBeVisible();
+      else await expect(page.getByRole("link", { name: title, exact: true })).toBeVisible();
     });
   }
 
@@ -97,7 +101,8 @@ test.describe("chat web UI (mocked API)", () => {
       await expect(rows(page)).toHaveCount(2);
       const names = await page.getByRole("log").getByRole("button").allInnerTexts();
       expect(names.sort()).toEqual(["Delete", "Edit", "Reply", "Reply"]);
-      await expect(page.locator("button, a").filter({ hasText: MODERATION })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: MODERATION })).toHaveCount(0);
+      await expect(page.getByRole("menuitem", { name: MODERATION })).toHaveCount(0);
       expect(urls.filter((url) => url.includes("/moderation"))).toEqual([]);
     });
   }
@@ -157,7 +162,10 @@ test.describe("chat web UI (mocked API)", () => {
     await expect(page.getByText(MINE)).toHaveCount(0);
   });
 
-  test("privacy: no chat URL, text or author label in caches or storage", async ({ page }) => {
+  test("privacy: no cached chat URL; no chat text, label, title or id leaks", async ({ page }) => {
+    const logged: string[] = []; // every console text and request URL, searched like the caches
+    page.on("console", (entry) => logged.push(entry.text()));
+    page.on("request", (request) => logged.push(request.url()));
     const chat = await open(page, VIEW);
     const worker = () =>
       page.evaluate(async () => (await navigator.serviceWorker.getRegistration())?.active?.state);
@@ -172,6 +180,8 @@ test.describe("chat web UI (mocked API)", () => {
     await press(page, "Save").click();
     await expect.poll(() => chat.callsTo("edit").length).toBe(1);
     expect(chat.callsTo("send")).toHaveLength(1);
+    const clientMsgId = String(chat.callsTo("send")[0]?.body?.clientMsgId);
+    expect(clientMsgId).toMatch(/^[0-9a-f-]{36}$/); // a real uuid, never "undefined"
     await page.waitForTimeout(500);
     const { names, entries } = await page.evaluate(async () => {
       const names = [...Object.entries(localStorage), ...Object.entries(sessionStorage)].flat();
@@ -181,15 +191,15 @@ test.describe("chat web UI (mocked API)", () => {
         for (const request of await cache.keys())
           entries.push([request.url, (await (await cache.match(request))?.text()) ?? ""]);
       }
-      names.push(...(await indexedDB.databases()).map((db) => db.name ?? ""));
       return { names, entries };
     });
+    expect(await page.evaluate(async () => (await indexedDB.databases()).length)).toBe(0);
     // A cached static chunk holds the client's route literal; only a cached /api/chat URL or storage entry leaks.
     const named = [...names, ...entries.map(([url]) => url)];
     expect(named.filter((name) => name.includes("/api/chat"))).toEqual([]);
-    const all = [...named, ...entries.map(([, body]) => body)].join("\n");
-    const secrets = [mock.message().body, MINE, SENT, EDITED];
+    const all = [...named, ...entries.map(([, body]) => body), ...logged].join("\n");
+    const chatText = [mock.message().body, MINE, SENT, EDITED, clientMsgId];
+    const secrets = [...chatText, ...Object.values(mock.TITLE), ...Object.values(mock.LABEL)];
     expect(secrets.filter((text) => all.includes(text))).toEqual([]);
-    expect(all).not.toMatch(/\b(Lan|Minh)\b/);
   });
 });
