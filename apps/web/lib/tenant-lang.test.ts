@@ -282,6 +282,18 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/discovery-route-support.ts": "b",
   // (c) L10b opaque signed cursor and listing-id shape checks: no response body, no t().
   "lib/discovery-cursor.ts": "c",
+  // (a) L15 chat REST (M10): chatGate proves live membership in THIS tenant, then its later errors,
+  // runChat and every route-level 400 (invalidBody(g.lang)) answer in the tenant language; errors
+  // before membership and the one CHAT_FORBIDDEN body keep the default (no oracle, RO-L15-3).
+  "app/api/chat/channels/route.ts": "a",
+  "app/api/chat/channels/[id]/messages/route.ts": "a",
+  "app/api/chat/channels/[id]/messages/[messageId]/route.ts": "a",
+  "app/api/chat/channels/[id]/messages/[messageId]/moderation/route.ts": "a",
+  "app/api/chat/channels/[id]/read/route.ts": "a",
+  "lib/chat-route.ts": "a",
+  // (a) L15 chat stream: its pre-auth 401 keeps the default like the gate's; the rest is built
+  // inside runWithLang, and its SSE frames carry ids only.
+  "app/api/chat/subscribe/route.ts": "a",
 };
 
 function discoverRouteFiles(dir: string, prefix: string): string[] {
