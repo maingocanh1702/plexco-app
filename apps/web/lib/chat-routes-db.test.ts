@@ -935,13 +935,18 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
   });
 });
 
-/** A tenant owner: tenant_capability_authorize grants it chat.message.moderate (T19's fixture). */
-async function moderator(t: string): Promise<Actor> {
+/** A member with a tenant_admins row, by default an active owner, which tenant_capability_authorize
+ *  grants chat.message.moderate (T19's fixture); the L15b viewer rows vary the row's kind and state. */
+async function moderator(
+  t: string,
+  role: "owner" | "admin" | "co_admin" = "owner",
+  active = true,
+): Promise<Actor> {
   const mod = await actor(t);
   await ctx.owner.query(
     `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
-     VALUES ($1, 'web', $2, 'owner', true)`,
-    [t, mod.personId],
+     VALUES ($1, 'web', $2, $3, $4)`,
+    [t, mod.personId, role, active],
   );
   return mod;
 }
@@ -1248,7 +1253,7 @@ describe("GET /api/chat/channels (list)", () => {
     }
   });
 
-  it("T25 a member of two clubs -> 200 exactly ChatChannelDto for ?tenant= only; own rows not unread", async () => {
+  it("T25 a member of two clubs -> 200 exactly ChatChannelDto for ?tenant= only; own rows not unread; R2 plain member: viewer flags false", async () => {
     const [c, other] = [await club(), await club()];
     const [a, b] = [await actor(c.t), await actor(c.t)];
     await ctx.owner.query(
@@ -1261,7 +1266,10 @@ describe("GET /api/chat/channels (list)", () => {
     expect(r.status).toBe(200);
     const general = { id: c.c, title: "general", sortOrder: 0, isDefault: true };
     expect(r.body).toEqual({
-      data: { channels: [{ ...general, postPolicy: "all_members", unreadCount: 3 }] },
+      data: {
+        channels: [{ ...general, postPolicy: "all_members", unreadCount: 3 }],
+        viewer: { canModerate: false, canPostRestricted: false },
+      },
       error: null,
       meta: expect.anything(),
     });
@@ -1291,6 +1299,67 @@ describe("GET /api/chat/channels (list)", () => {
     const [m, stranger] = [await actor(off.t), await actor((await club()).t)];
     expect(await channels(m, off.t)).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
     expect(await channels(stranger, off.t)).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
+  });
+});
+
+describe("GET /api/chat/channels viewer flags (L15b decision table: authorize()'s answer, booleans only)", () => {
+  const ALL = { canModerate: true, canPostRestricted: true };
+  const NONE = { canModerate: false, canPostRestricted: false };
+
+  for (const [row, kind] of [
+    ["R1a", "owner"],
+    ["R1b", "admin"],
+    ["R1c", "co_admin"],
+  ] as const) {
+    it(`${row} ${kind}: viewer flags true`, async () => {
+      const c = await club();
+      const r = await channels(await moderator(c.t, kind), c.t);
+      expect(r.status).toBe(200);
+      expect(r.body.data.viewer).toStrictEqual(ALL); // the primitive's preset answer, not re-derived
+    });
+  }
+
+  it("R3 inactive admin: viewer flags false", async () => {
+    const c = await club();
+    const r = await channels(await moderator(c.t, "admin", false), c.t);
+    expect(r.status).toBe(200);
+    expect(r.body.data.viewer).toStrictEqual(NONE);
+  });
+
+  it("R4 an admin of another club only, a plain member here: viewer flags false", async () => {
+    const [c, other] = [await club(), await club()];
+    const mod = await moderator(other.t);
+    await ctx.owner.query(
+      `INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active')`,
+      [c.t, mod.personId],
+    );
+    const r = await channels(mod, c.t);
+    expect(r.status).toBe(200);
+    expect(r.body.data.viewer).toStrictEqual(NONE);
+    // positive control: the same person's row is live in the club that granted it
+    expect((await channels(mod, other.t)).body.data.viewer).toStrictEqual(ALL);
+  });
+
+  it("R8 wire shape (owner viewer): channels and viewer only, two booleans, no role, reason, grant or stray id", async () => {
+    const c = await club();
+    const mod = await moderator(c.t);
+    const r = await channels(mod, c.t);
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.body.data).sort()).toEqual(["channels", "viewer"]);
+    expect(r.body.data.viewer).toStrictEqual(ALL);
+    expect(r.body.data.channels).toMatchObject([{ id: c.c }]);
+    const text = JSON.stringify(r.body);
+    expect(text).not.toMatch(/"[^"]*(?:role|reason|grant)[^"]*":/i);
+    for (const literal of ['"owner"', '"admin"', '"co_admin"']) {
+      expect(text).not.toContain(literal);
+    }
+    for (const id of [mod.personId, mod.membershipId, mod.accountId, c.t]) {
+      expect(text).not.toContain(id);
+    }
+    // every uuid on the wire is the channel id or the envelope's req_<uuid> request id
+    const uuids =
+      text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [];
+    expect(uuids.filter((u) => u !== c.c && !text.includes(`"req_${u}"`))).toEqual([]);
   });
 });
 
