@@ -603,14 +603,17 @@ describe("POST /api/chat/channels/:id/messages (send)", () => {
 
   it("T9 a reply to an unknown or another channel's message -> 409 CHAT_REPLY_INVALID", async () => {
     const [c, other] = [await club(), await club()];
-    const [a, o] = [await actor(c.t), await actor(other.t)];
+    const [a, b, o] = [await actor(c.t), await actor(c.t), await actor(other.t)];
     const parent = await send(c, a, "parent");
     const elsewhere = await send(other, o, "elsewhere");
-    for (const replyToMessageId of [randomUUID(), elsewhere.id]) {
+    // `a` stays a chat member of c2, so RLS shows `own` and only the channel match can refuse it.
+    const { c2, own } = await outsideChannel(c, b, a);
+    for (const replyToMessageId of [randomUUID(), elsewhere.id, own]) {
       const r = await post(a, c.t, c.c, { ...msg(), replyToMessageId });
       expect(r).toMatchObject({ status: 409, code: "CHAT_REPLY_INVALID" });
     }
     expect(await order(c)).toEqual([parent.id]);
+    expect(await order(c2)).toEqual([own]);
     const r = await post(a, c.t, c.c, { ...msg(), replyToMessageId: parent.id.toUpperCase() });
     expect(r.status).toBe(200);
   });
@@ -1059,17 +1062,24 @@ describe("POST /api/chat/channels/:id/messages/:messageId/moderation (hide, rest
     ];
     const mine = await send(c, a, "flagged text");
     const theirs = await send(other, o, "their text");
+    // a's message in c2, a same-tenant channel that `mod` still belongs to.
+    const { own: elsewhere } = await outsideChannel(c, a, mod);
     const foreign = await mutate("POST", stranger, c, mine.id, hide());
     expect(foreign).toMatchObject({ status: 403, code: "CHAT_FORBIDDEN" });
     const denied = [
       await mutate("POST", mod, c, randomUUID(), hide()),
       await mutate("POST", mod, c, theirs.id, hide()),
       await mutate("POST", mod, { t: c.t, c: other.c }, theirs.id, hide()),
+      await mutate("POST", mod, c, elsewhere, hide()),
     ];
     const one = (r: (typeof denied)[number]) => JSON.stringify([r.status, r.body.error]);
     expect(denied[0]).toMatchObject({ status: 403, code: "CHAT_MODERATION_FORBIDDEN" });
     for (const r of denied) expect(one(r)).toBe(one(denied[0]!));
-    expect((await modRow(mine.id)).audits + (await modRow(theirs.id)).audits).toBe(0);
+    expect(
+      (await modRow(mine.id)).audits +
+        (await modRow(theirs.id)).audits +
+        (await modRow(elsewhere)).audits,
+    ).toBe(0);
   });
 
   it("T18 one commandId on two channels at once: one 200, the loser 409 or a fail-closed 500", async () => {
@@ -1273,11 +1283,14 @@ describe("POST /api/chat/channels/:id/read (read cursor)", () => {
       expect(await cursor(c, a)).toBe(m2);
     }
     expect((await channels(a, c.t)).body.data.channels[0].unreadCount).toBe(0);
-    for (const throughMessageId of [foreign!, randomUUID()]) {
+    // Made after the last channels() read so channels[0] stays c; `a` stays a member of c2.
+    const { c2, own } = await outsideChannel(c, b, a);
+    for (const throughMessageId of [foreign!, own, randomUUID()]) {
       const r = await markRead(a, c.t, c.c, { throughMessageId });
       expect(r).toMatchObject({ status: 404, code: "NOT_FOUND" });
     }
     expect(await cursor(c, a)).toBe(m2);
+    expect(await cursor(c2, a)).toBeNull();
   });
 
   it("T2 cross-tenant, guest, unknown, other-tenant and DM channel -> the one 403 body", async () => {
