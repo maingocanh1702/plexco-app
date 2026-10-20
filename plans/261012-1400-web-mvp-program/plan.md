@@ -6,7 +6,7 @@
 > security reviewer for auth/permissions/secrets/money/webhooks/deployment.
 > Design doc: `design.md` (architecture + conventions every slice follows).
 
-> **Status pointer (2026-10-16):** the milestone table below is stale. The current ledger is `docs/sessions/web-mvp-program-status.md` and the current plan (Phase 3: M6, M9, M10, local-only) is `docs/sessions/web-mvp-phase3-plan.md`.
+> **Status pointer (2026-10-21):** the milestone table below is stale. The current ledger is `docs/sessions/web-mvp-program-status.md`, the current handoff is `docs/sessions/2026-10-21-web-mvp-program-handoff-3.md` and the Phase 3 plan (M6, M9, M10, local-only) is `docs/sessions/web-mvp-phase3-plan.md`. Phase 3 lanes are merged as of `0a4e1b8`; the ledger rows M6, M9 and M10 carry the PR numbers and merge SHAs. Nothing is enabled for real users until the owner's P0 steps (listed in handoff-3).
 
 ## Baseline (measured 2026-10-12 at `main@0db92b9`)
 
