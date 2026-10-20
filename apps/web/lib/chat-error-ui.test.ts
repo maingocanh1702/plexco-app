@@ -23,73 +23,46 @@ const LARGE = "This message is too long (4,000 characters at most).";
 const CAP = "You cannot post in this channel.";
 const REPLY = "The message you replied to is no longer available.";
 const CSRF = "This page is out of date. Please reload it.";
+const CHANGED = "This message changed; the latest version is shown.";
 
 type Ui = ChatErrorState | "keep" | null; // read screens: data-state; edit: "keep" = editor stays open
 type Case = [Action, string, string, boolean, Ui]; // action, "<HTTP> <code>", English copy ("" = silent), retry, ui
-const same = (actions: Action[], key: string, msg: string, ui: Ui): Case[] =>
-  actions.map((a) => [a, key, msg, false, ui]);
+const same = (actions: Action[], key: string, msg: string, ui: Ui, retry = false): Case[] =>
+  actions.map((a) => [a, key, msg, retry, ui]);
+const READS: Action[] = ["list", "history", "list-refetch", "history-refetch"];
 
 // Keys are the first column of the readiness section 5 tables.
 const ROWS: Case[] = [
-  ["list", "403 CHAT_FORBIDDEN", NO_LIST, false, "empty"],
-  ["list", "429 CHAT_RATE_LIMITED", RATE, true, "error"],
-  ["list", "0 CLIENT_NETWORK_ERROR", OFF, true, "offline"],
-  ["list", "400 INVALID_BODY", GEN, true, "error"],
-  ["history", "403 CHAT_FORBIDDEN", NO_ACCESS, false, "error"],
-  ["history", "429 CHAT_RATE_LIMITED", RATE, true, "error"],
-  ["history", "0 CLIENT_NETWORK_ERROR", OFF, true, "offline"],
-  ["history", "400 INVALID_BODY", GEN, true, "error"],
-  ["list-refetch", "429 CHAT_RATE_LIMITED", "", false, null],
-  ["list-refetch", "403 CHAT_FORBIDDEN", NO_LIST, false, "empty"],
-  ["list-refetch", "0 CLIENT_NETWORK_ERROR", OFF, true, "offline"],
-  ["history-refetch", "429 CHAT_RATE_LIMITED", "", false, null],
-  ["history-refetch", "403 CHAT_FORBIDDEN", NO_ACCESS, false, "error"],
+  ...same(["list", "list-refetch"], "403 CHAT_FORBIDDEN", NO_LIST, "empty"),
+  ...same(["list", "history"], "429 CHAT_RATE_LIMITED", RATE, "error", true),
+  ...same(["list", "history", "list-refetch"], "0 CLIENT_NETWORK_ERROR", OFF, "offline", true),
+  ...same(["list", "history"], "400 INVALID_BODY", GEN, "error", true),
+  ...same(["history", "history-refetch"], "403 CHAT_FORBIDDEN", NO_ACCESS, "error"),
+  ...same(["list-refetch", "history-refetch", "read"], "429 CHAT_RATE_LIMITED", "", null),
   ["send", "0 CLIENT_NETWORK_ERROR", "Not sent.", true, null],
-  ["send", "429 CHAT_RATE_LIMITED", RATE, true, null],
+  ...same(["send", "delete"], "429 CHAT_RATE_LIMITED", RATE, null, true),
   ["send", "400 INVALID_BODY", INVALID, false, null],
   ["send", "413 CHAT_MESSAGE_TOO_LARGE", LARGE, false, null],
-  ["send", "403 CHAT_CAPABILITY_REQUIRED", CAP, false, null],
+  ...same(["send", "edit"], "403 CHAT_CAPABILITY_REQUIRED", CAP, null),
   ["send", "409 CHAT_REPLY_INVALID", REPLY, false, null],
-  ["send", "403 CHAT_FORBIDDEN", NO_ACCESS, false, null],
+  ...same(["send", "edit"], "403 CHAT_FORBIDDEN", NO_ACCESS, null),
   ["send", "409 CHAT_IDEMPOTENCY_MISMATCH", GEN, false, null],
   ["edit", "409 CHAT_EDIT_WINDOW_CLOSED", "This message can no longer be edited.", false, null],
-  [
-    "edit",
-    "409 CHAT_EDIT_CONFLICT",
-    "This message changed; the latest version is shown.",
-    false,
-    null,
-  ],
-  ["edit", "403 CHAT_CAPABILITY_REQUIRED", CAP, false, null],
+  ["edit", "409 CHAT_EDIT_CONFLICT", CHANGED, false, null],
   ["edit", "400 INVALID_BODY", INVALID, false, "keep"],
   ["edit", "413 CHAT_MESSAGE_TOO_LARGE", LARGE, false, "keep"],
   ["edit", "429 CHAT_RATE_LIMITED", RATE, true, "keep"],
-  ["edit", "403 CHAT_FORBIDDEN", NO_ACCESS, false, null],
   ["edit", "0 CLIENT_NETWORK_ERROR", GEN, false, "keep"],
   ["delete", "403 CHAT_FORBIDDEN", "You can only delete your own messages.", false, null],
-  ["delete", "429 CHAT_RATE_LIMITED", RATE, true, null],
   ["delete", "0 CLIENT_NETWORK_ERROR", GEN, false, null],
-  ...same(
-    ["list", "history", "list-refetch", "history-refetch"],
-    "401 AUTH_REQUIRED",
-    AUTH,
-    "error",
-  ),
-  ...same(
-    ["list", "history", "list-refetch", "history-refetch"],
-    "403 TENANT_SUSPENDED",
-    SUSP,
-    "error",
-  ),
+  ...same(READS, "401 AUTH_REQUIRED", AUTH, "error"),
+  ...same(READS, "403 TENANT_SUSPENDED", SUSP, "error"),
   ...same(["send", "edit", "delete"], "401 AUTH_REQUIRED", AUTH, null),
   ...same(["send", "edit", "delete"], "403 TENANT_SUSPENDED", SUSP, null),
   ...same(["send", "edit", "delete"], "403 CSRF_INVALID", CSRF, null),
-  ...[
-    "429 CHAT_RATE_LIMITED",
-    "404 NOT_FOUND",
-    "400 INVALID_BODY",
-    "0 CLIENT_NETWORK_ERROR",
-  ].flatMap((key) => same(["read"], key, "", null)),
+  ["read", "404 NOT_FOUND", "", false, null],
+  ["read", "400 INVALID_BODY", "", false, null],
+  ["read", "0 CLIENT_NETWORK_ERROR", "", false, null],
 ];
 // Unknown, empty, bad-response, prototype-named and 5xx answers (a known code under a 5xx included).
 const UNKNOWN = [
@@ -100,9 +73,7 @@ const UNKNOWN = [
   "503 CHAT_RATE_LIMITED",
 ].concat([`200 ${CLIENT_BAD_RESPONSE}`, "400 constructor", "400 __proto__"]);
 const FALLBACK: [Action, string, boolean, Ui][] = [
-  ...(["list", "list-refetch", "history", "history-refetch"] as const).map(
-    (a): [Action, string, boolean, Ui] => [a, GEN, true, "error"],
-  ),
+  ...READS.map((a): [Action, string, boolean, Ui] => [a, GEN, true, "error"]),
   ["send", GEN, true, null],
   ["edit", GEN, false, "keep"],
   ["delete", GEN, false, null],
