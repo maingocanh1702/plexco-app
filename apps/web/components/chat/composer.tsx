@@ -21,13 +21,16 @@ export const canSend = (body: string) => body.trim() !== "" && [...body].length 
 // Rejections of the text itself: it goes back into the field once, to be edited and sent as a new message.
 const EDIT_AGAIN = new Set(["INVALID_BODY", "CHAT_MESSAGE_TOO_LARGE"]);
 
-// Composer plus the outbox of its optimistic sends; always rendered, the server decides who may post (RO-L16-1).
+// Composer plus the outbox of its optimistic sends; always rendered. An admins_only channel locks it unless the
+// server said this viewer canPostRestricted; the server still re-authorizes every send (RO-L16-1).
 export function Composer({
   postPolicy,
+  canPostRestricted = false,
   outbox,
   reply,
 }: {
   postPolicy: ChatChannelDto["postPolicy"] | undefined;
+  canPostRestricted?: boolean; // the channels answer's viewer flag; absent or false locks admins_only
   outbox: Outbox;
   reply?: { id: string; clear(): void }; // the chosen reply target and its Cancel
 }) {
@@ -41,6 +44,7 @@ export function Composer({
   const over = count > BODY_MAX_CHARS;
   const [restored, setRestored] = useState<string[]>([]);
   const admins = postPolicy === "admins_only";
+  const locked = admins && !canPostRestricted; // field and Send off, the hint stays (D7)
   const notSent = t("Chưa gửi được.", "Not sent.");
   // Render-phase restore, no effect: a not-yet-restored body rejection refills an empty field.
   const back = outbox.pending.find(
@@ -61,7 +65,7 @@ export function Composer({
   }, [replyId]);
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (!canSend(body)) return;
+    if (locked || !canSend(body)) return;
     thenFocus(() => {
       outbox.send(body, replyId);
       reply?.clear();
@@ -128,12 +132,13 @@ export function Composer({
           value={body}
           onChange={(e) => setBody(e.target.value)}
           aria-describedby={admins ? `${hintId} ${counterId}` : counterId}
+          disabled={locked}
           autoComplete="off"
         />
         <p id={counterId} className={over ? `${styles.counter} ${styles.over}` : styles.counter}>
           {count}/{BODY_MAX_CHARS}
         </p>
-        <Button type="submit" disabled={!canSend(body)}>
+        <Button type="submit" disabled={locked || !canSend(body)}>
           {t("Gửi", "Send")}
         </Button>
       </form>
