@@ -220,6 +220,21 @@ export interface ChatChannelDto {
   unreadCount: number;
 }
 
+/** The viewer's OWN two chat capabilities in the ?tenant= club, as authorize() answered them for
+ *  this request (L15b). A display hint only: it authorizes nothing, and the L14 definers
+ *  re-authorize every send, edit and moderate server-side. Booleans only, never a role, a reason
+ *  or a person id (DD-56); computed per request, never cached. */
+export interface ChatViewerDto {
+  canModerate: boolean;
+  canPostRestricted: boolean;
+}
+
+/** The 200 data of GET /api/chat/channels?tenant=: the readable channels plus the viewer's flags. */
+export interface ChatChannelListDto {
+  channels: ChatChannelDto[];
+  viewer: ChatViewerDto;
+}
+
 /** A readable chat message (history GET). No author person id or any other person identifier on
  *  the wire (RO-L15-3 g): `mine` + `authorType` + the display-only `authorLabel`. createdAt and
  *  editedAt are ISO-8601 UTC on the wire; only the history cursor carries L14's raw timestamptz
