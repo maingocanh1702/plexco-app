@@ -86,7 +86,11 @@ export function MessageList({
           ) : null}
         </div>
       ) : null}
-      <div role="log" aria-labelledby={labelledBy}>
+      <div
+        role="log"
+        aria-labelledby={labelledBy}
+        aria-label={labelledBy ? undefined : t("Trò chuyện", "Chat")}
+      >
         <ol className={styles.list}>
           {[...messages].reverse().map((m) => {
             if (m.tombstone) {

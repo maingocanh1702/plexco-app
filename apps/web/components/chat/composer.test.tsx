@@ -36,6 +36,16 @@ describe("Composer", () => {
     ["hi", true],
   ])("canSend(%j) is %j", (body, ok) => expect(canSend(body)).toBe(ok));
 
+  it("caps the body at 4000 code points: counter, over class, disabled Send", () => {
+    expect([4000, 4001].map((n) => canSend("x".repeat(n)))).toEqual([true, false]);
+    expect(canSend(String.fromCodePoint(0x1f600).repeat(4000))).toBe(true); // 2 UTF-16 units each
+    expect(render()).toMatch(/<p\b[^>]*>0\/4000<\/p>/);
+    expect(render()).not.toMatch(/<p\b[^>]*over/);
+    const html = render([{ ...row(err("INVALID_BODY", false)), body: "x".repeat(4001) }]); // refills the field
+    expect(html).toMatch(/<p\b[^>]*over[^>]*>4001\/4000<\/p>/);
+    expect(sendOff(html)).toBe(true);
+  });
+
   it.each<[Policy, boolean]>([
     ["all_members", false],
     ["admins_only", true],

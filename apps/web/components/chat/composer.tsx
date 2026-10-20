@@ -15,8 +15,9 @@ export interface Outbox {
   discard(clientMsgId: string): unknown;
 }
 
-// Send stays disabled for a blank body (spec 2.2); the server re-checks.
-export const canSend = (body: string) => body.trim() !== "";
+export const BODY_MAX_CHARS = 4000; // the SQL cap char_length(p_body) > 4000, 0063_chat_message_commands.sql:235
+// Send stays disabled for a blank body (spec 2.2) or past the cap, counted in code points; the server re-checks.
+export const canSend = (body: string) => body.trim() !== "" && [...body].length <= BODY_MAX_CHARS;
 // Rejections of the text itself: it goes back into the field once, to be edited and sent as a new message.
 const EDIT_AGAIN = new Set(["INVALID_BODY", "CHAT_MESSAGE_TOO_LARGE"]);
 
@@ -33,8 +34,11 @@ export function Composer({
   const t = useT();
   const fieldId = useId();
   const hintId = useId();
+  const counterId = useId();
   const field = useRef<HTMLTextAreaElement>(null);
   const [body, setBody] = useState("");
+  const count = [...body].length;
+  const over = count > BODY_MAX_CHARS;
   const [restored, setRestored] = useState<string[]>([]);
   const admins = postPolicy === "admins_only";
   const notSent = t("Chưa gửi được.", "Not sent.");
@@ -123,9 +127,12 @@ export function Composer({
           className={styles.field}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          aria-describedby={admins ? hintId : undefined}
+          aria-describedby={admins ? `${hintId} ${counterId}` : counterId}
           autoComplete="off"
         />
+        <p id={counterId} className={over ? `${styles.counter} ${styles.over}` : styles.counter}>
+          {count}/{BODY_MAX_CHARS}
+        </p>
         <Button type="submit" disabled={!canSend(body)}>
           {t("Gửi", "Send")}
         </Button>

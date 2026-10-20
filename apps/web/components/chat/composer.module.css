@@ -34,6 +34,10 @@
   border-radius: var(--radius-md);
   resize: vertical;
 }
-.field:focus-visible {
-  outline-color: var(--focus-ring);
+.counter {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.over {
+  color: var(--error-text);
 }
