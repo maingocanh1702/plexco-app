@@ -4,6 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import {
+  authorize,
   createWebSession,
   deleteChatMessage,
   editChatMessage,
@@ -37,6 +38,12 @@ vi.mock("next/headers", () => ({
     get: () => (cookieJar.token ? { value: cookieJar.token } : undefined),
   }),
 }));
+// D8 seam: authorize stays the real primitive (the web vitest config sets no mockReset, clearMocks
+// or restoreMocks); only R7 arms a rejection, and it resets the mock in finally.
+vi.mock("@plexco/db", async (importOriginal) => {
+  const m = await importOriginal<typeof import("@plexco/db")>();
+  return { ...m, authorize: vi.fn(m.authorize) };
+});
 
 let ctx: RlsTestContext;
 let runtime: ReturnType<typeof appDb> | undefined;
@@ -1439,6 +1446,42 @@ describe("GET /api/chat/channels viewer flags (L15b decision table: authorize()'
       [c.t, mod.personId],
     );
     expect(await flags()).toStrictEqual(NONE); // R3r: a removed admin is the plain-member path
+  });
+
+  it("R7 authorize infrastructure error: 500 fail-closed, never a quiet false", async () => {
+    const c = await club();
+    const mod = await moderator(c.t);
+    const mock = vi.mocked(authorize);
+    const real = mock.getMockImplementation()!;
+    // pg-shaped: a SQLSTATE plus a detail the sanitizer must drop
+    const fault = Object.assign(new Error("canceling statement due to statement timeout"), {
+      severity: "ERROR",
+      code: "57014",
+      detail: "R7 leak marker",
+    });
+    const spies = (["error", "warn", "log", "info", "debug"] as const).map((k) =>
+      vi.spyOn(console, k),
+    );
+    try {
+      // at 0 the moderate call rejects; at 1 the post_restricted call (the first one runs for real)
+      for (const at of [0, 1]) {
+        if (at === 1) mock.mockImplementationOnce(real);
+        mock.mockRejectedValueOnce(fault);
+        // a rejected GET has no Response, so no body; a resolved one yields null and fails below
+        const reason = await channels(mod, c.t).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(String(reason)).toBe("Error: CHAT_DB_ERROR:57014");
+        const r = await channels(mod, c.t);
+        expect(r.status).toBe(200);
+        expect(r.body.data.viewer).toStrictEqual(ALL); // the real flags, no Once left queued
+      }
+      expect(spies.flatMap((s) => s.mock.calls)).toEqual([]);
+    } finally {
+      for (const s of spies) s.mockRestore();
+      mock.mockReset(); // vitest 4: back to the real authorize, the once queue cleared
+    }
   });
 
   it("R8 wire shape (owner viewer): channels and viewer only, two booleans, no role, reason, grant or stray id", async () => {
