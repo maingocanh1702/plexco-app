@@ -178,6 +178,28 @@ async function outsideChannel(c: Club, a: Actor, b: Actor): Promise<{ c2: Club; 
   return { c2, own };
 }
 
+/** S6: a DM between x and y (one transaction for the deferred trg_chat_dm_two_* triggers) and one
+ *  owner-seeded message by x in it (no tenant, no membership: the schema-invariants seed). */
+async function dmWith(x: Actor, y: Actor): Promise<{ dmId: string; dmMsg: string }> {
+  await ctx.owner.query("BEGIN");
+  const dm = await ctx.owner.query<{ id: string }>(
+    `INSERT INTO chat_channels (kind, dm_key) VALUES ('dm', $1) RETURNING id`,
+    [[x.personId, y.personId].sort().join(":")],
+  );
+  const dmId = dm.rows[0]!.id;
+  await ctx.owner.query(
+    `INSERT INTO chat_members (channel_id, person_id) VALUES ($1, $2), ($1, $3)`,
+    [dmId, x.personId, y.personId],
+  );
+  await ctx.owner.query("COMMIT");
+  const { rows } = await ctx.owner.query<{ id: string }>(
+    `INSERT INTO chat_messages (channel_id, author_person_id, body, client_msg_id)
+     VALUES ($1, $2, 'dm text', gen_random_uuid()::text) RETURNING id`,
+    [dmId, x.personId],
+  );
+  return { dmId, dmMsg: rows[0]!.id };
+}
+
 /** GET history; every chat response, 2xx or 4xx, must be no-store (N1). */
 async function get(a: Actor | null, tenant: string, channel: string, query = "") {
   cookieJar.token = a?.token;
@@ -775,17 +797,7 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
       await actor(other.t),
       await actor(off.t),
     ];
-    await ctx.owner.query("BEGIN");
-    const dm = await ctx.owner.query<{ id: string }>(
-      `INSERT INTO chat_channels (kind, dm_key) VALUES ('dm', $1) RETURNING id`,
-      [[a.personId, b.personId].sort().join(":")],
-    );
-    const dmId = dm.rows[0]!.id;
-    await ctx.owner.query(
-      `INSERT INTO chat_members (channel_id, person_id) VALUES ($1, $2), ($1, $3)`,
-      [dmId, a.personId, b.personId],
-    );
-    await ctx.owner.query("COMMIT");
+    const { dmId, dmMsg } = await dmWith(a, b);
     const mine = await send(c, a, "mine");
     const theirs = await send(other, o, "theirs");
     const { c2, own } = await outsideChannel(c, a, b);
@@ -799,7 +811,7 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
         await mutate(method, a, c, theirs.id, p),
         await mutate(method, a, { t: c.t, c: other.c }, theirs.id, p),
         await mutate(method, a, c2, own, p),
-        await mutate(method, a, { t: c.t, c: dmId }, randomUUID(), p),
+        await mutate(method, a, { t: c.t, c: dmId }, dmMsg, p),
       );
       const r = await mutate(method, m, off, randomUUID(), p);
       expect(r).toMatchObject({ status: 403, code: "TENANT_SUSPENDED" });
@@ -819,6 +831,7 @@ describe("PATCH and DELETE /api/chat/channels/:id/messages/:messageId (edit, del
       edit_count: 0,
       author_deleted_at: null,
     });
+    expect(await row(dmMsg)).toEqual({ body: "dm text", edit_count: 0, author_deleted_at: null });
   });
 
   it("T22 non-uuid tenant, channel or message id, a bad edit body or JSON -> 400, never 500", async () => {
