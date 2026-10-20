@@ -6,8 +6,10 @@ import {
   LIVE_PAUSE_MS,
   LIVE_ROUND_GAP_MS,
   parseRealtimeMessage,
+  SESSIONS_STREAM,
   type EventSourceLike,
   type RealtimeSignal,
+  type RealtimeStream,
 } from "./use-realtime";
 import { liveStreamEnabled } from "./use-sessions-data";
 
@@ -180,6 +182,186 @@ describe("createRealtimeHub", () => {
     }
     expect(r.signals).toEqual([{ kind: "resync" }]); // the open's own resync only
     expect(parseRealtimeMessage(42)).toBeNull();
+  });
+});
+
+describe("L16 stream descriptor: one hub, one EventSource per path per tenant", () => {
+  interface Ping {
+    n: number;
+  }
+  // Frames are bare digit strings: "7" parses, "x" is rejected. No dedupe: every frame is an event.
+  const PING: RealtimeStream<Ping> = {
+    path: "/api/ping/subscribe",
+    parse: (data) => (typeof data === "string" && /^\d+$/.test(data) ? { n: Number(data) } : null),
+  };
+  const OTHER = "22222222-2222-4222-8222-222222222222";
+  const STRANGER = "55555555-5555-4555-8555-555555555555";
+  const SESSIONS_URL = `/api/realtime/subscribe?tenant=${TENANT}`;
+  const PING_URL = `/api/ping/subscribe?tenant=${TENANT}`;
+  const frame = (version: number, sessionId = SESSION) => ({
+    type: "session.updated",
+    sessionId,
+    version,
+  });
+  function pings() {
+    const signals: RealtimeSignal<Ping>[] = [];
+    return {
+      signals,
+      fn: (s: RealtimeSignal<Ping>) => signals.push(s),
+      resyncs: () => signals.filter((s) => s.kind === "resync").length,
+      events: () => signals.flatMap((s) => (s.kind === "event" ? [s.message.n] : [])),
+    };
+  }
+
+  it("the default descriptor is today's sessions stream", () => {
+    expect(SESSIONS_STREAM.path).toBe("/api/realtime/subscribe");
+    const raw = JSON.stringify(frame(3));
+    expect(SESSIONS_STREAM.parse(raw)).toEqual(frame(3));
+    expect(SESSIONS_STREAM.parse(raw)).toEqual(parseRealtimeMessage(raw));
+    const h = hub();
+    const implicit = recorder();
+    const explicit = recorder();
+    h.subscribe(TENANT, implicit.fn); // no descriptor: the sessions stream
+    h.subscribe(OTHER, explicit.fn, SESSIONS_STREAM); // other tenant, else both share one channel
+    expect(FakeSource.all.map((s) => s.url)).toEqual([
+      SESSIONS_URL,
+      `/api/realtime/subscribe?tenant=${OTHER}`,
+    ]);
+    for (const source of FakeSource.all) {
+      source.open();
+      for (const v of [3, 3, 2, 4]) source.push(frame(v));
+      source.push({ ...frame(5), price: 5 }); // R-5: an extra field is dropped
+      source.push(frame(1, STRANGER));
+    }
+    const expected = [
+      { kind: "resync" },
+      { kind: "event", message: frame(3) },
+      { kind: "event", message: frame(4) },
+      { kind: "event", message: frame(1, STRANGER) },
+    ];
+    expect(implicit.signals).toEqual(expected);
+    expect(explicit.signals).toEqual(expected);
+  });
+
+  it("two descriptors for one tenant open two separate streams; closing one leaves the other open", () => {
+    const h = hub();
+    const sessions = recorder();
+    const ping = pings();
+    const offSessions = h.subscribe(TENANT, sessions.fn);
+    const offPing = h.subscribe(TENANT, ping.fn, PING);
+    expect(FakeSource.all.map((s) => s.url)).toEqual([SESSIONS_URL, PING_URL]);
+    const sessionsSource = FakeSource.all[0]!;
+    const pingSource = FakeSource.all[1]!;
+    sessionsSource.open();
+    pingSource.open();
+    sessionsSource.push(frame(1));
+    pingSource.push("7");
+    expect(sessions.signals).toEqual([{ kind: "resync" }, { kind: "event", message: frame(1) }]);
+    expect(ping.signals).toEqual([{ kind: "resync" }, { kind: "event", message: { n: 7 } }]);
+    offSessions();
+    expect(sessionsSource.closed).toBe(true);
+    expect(pingSource.closed).toBe(false);
+    pingSource.push("8");
+    expect(ping.events()).toEqual([7, 8]);
+    offPing();
+    expect(pingSource.closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("each stream has its own source, backoff and resync", async () => {
+    const h = hub();
+    const sessions = recorder();
+    const ping = pings();
+    h.subscribe(TENANT, sessions.fn);
+    h.subscribe(TENANT, ping.fn, PING);
+    const sessionsSource = FakeSource.all[0]!;
+    const pingSource = FakeSource.all[1]!;
+    sessionsSource.open();
+    pingSource.open();
+    pingSource.fail();
+    expect(ping.resyncs()).toBe(2);
+    expect(sessions.resyncs()).toBe(1);
+    expect(pingSource.closed).toBe(true);
+    expect(sessionsSource.closed).toBe(false);
+    expect(delays).toEqual([backoffDelayMs(0, () => 0.999)]);
+    await vi.advanceTimersByTimeAsync(delays[0]!);
+    expect(FakeSource.all.map((s) => s.url)).toEqual([SESSIONS_URL, PING_URL, PING_URL]);
+    expect(delays).toHaveLength(1); // the sessions stream never scheduled a reconnect
+  });
+
+  it("two subscribers of one path and tenant share one source; the last unsubscribe closes it", () => {
+    const h = hub();
+    const off1 = h.subscribe(TENANT, () => undefined, PING);
+    const off2 = h.subscribe(TENANT, () => undefined, PING);
+    const offOther = h.subscribe(OTHER, () => undefined, PING);
+    expect(FakeSource.all.map((s) => s.url)).toEqual([
+      PING_URL,
+      `/api/ping/subscribe?tenant=${OTHER}`,
+    ]);
+    off1();
+    expect(FakeSource.all[0]!.closed).toBe(false);
+    off2();
+    expect(FakeSource.all[0]!.closed).toBe(true);
+    expect(FakeSource.all[1]!.closed).toBe(false);
+    offOther();
+    expect(FakeSource.all[1]!.closed).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a descriptor without dedupe never drops a repeated frame", () => {
+    const ping = pings();
+    hub().subscribe(TENANT, ping.fn, PING);
+    expect(latest().url).toBe(PING_URL);
+    latest().open();
+    for (const data of ["7", "7", "6"]) latest().push(data);
+    expect(ping.events()).toEqual([7, 7, 6]);
+    expect(ping.resyncs()).toBe(1); // the open's own resync
+  });
+
+  it("a descriptor's dedupe names key and version", () => {
+    const keyed: RealtimeStream<Ping> = {
+      ...PING,
+      dedupe: (message) => ({ key: "line", version: message.n }),
+    };
+    const ping = pings();
+    hub().subscribe(TENANT, ping.fn, keyed);
+    expect(latest().url).toBe(PING_URL);
+    latest().open();
+    for (const data of ["7", "7", "6", "8"]) latest().push(data);
+    expect(ping.events()).toEqual([7, 8]);
+  });
+
+  it("a frame the descriptor's parse rejects is dropped", () => {
+    const h = hub();
+    const ping = pings();
+    const sessions = recorder();
+    h.subscribe(TENANT, ping.fn, PING);
+    h.subscribe(TENANT, sessions.fn);
+    expect(FakeSource.all.map((s) => s.url)).toEqual([PING_URL, SESSIONS_URL]);
+    const pingSource = FakeSource.all[0]!;
+    const sessionsSource = FakeSource.all[1]!;
+    pingSource.open();
+    sessionsSource.open();
+    pingSource.push("x");
+    pingSource.push(frame(1)); // a sessions frame is not digits: PING rejects it
+    sessionsSource.push("7"); // a digit string is not a sessions frame: R-5 rejects it
+    expect(ping.signals).toEqual([{ kind: "resync" }]);
+    expect(sessions.signals).toEqual([{ kind: "resync" }]);
+  });
+
+  it("failed opens back off with growing jittered delays, never a tight loop", async () => {
+    hub(() => 0.5).subscribe(TENANT, () => undefined, PING);
+    for (let failure = 0; failure < 7; failure += 1) {
+      const before = FakeSource.all.length;
+      latest().fail(); // the source never opened: no resync, and the backoff is not reset
+      expect(FakeSource.all).toHaveLength(before); // no immediate reconnect
+      await vi.advanceTimersByTimeAsync(delays.at(-1)! - 1);
+      expect(FakeSource.all).toHaveLength(before);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(FakeSource.all).toHaveLength(before + 1);
+    }
+    expect(delays).toEqual([500, 1_000, 2_000, 4_000, 8_000, 15_000, 15_000]);
+    expect(FakeSource.all.map((s) => s.url)).toEqual(Array.from({ length: 8 }, () => PING_URL));
   });
 });
 

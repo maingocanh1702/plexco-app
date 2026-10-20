@@ -3,8 +3,9 @@
 import { useEffect, useRef } from "react";
 
 /**
- * Client side of web live sync (lane L5, readiness R-14, R-15): one native EventSource per tenant
- * per tab, shared by every live view through a reference count. The stream only says "something
+ * Client side of web live sync (lane L5, readiness R-14, R-15): one native EventSource per stream
+ * per tenant per tab (the sessions stream unless a RealtimeStream descriptor names another), shared
+ * by every live view of it through a reference count. The stream only says "something
  * changed"; views refetch through their authorized GET. The browser's own retry is never used: an
  * error closes the source and this module reconnects with full-jitter backoff. A resync is emitted
  * on every open (F2: the first too) and at the first failure after an open (AUTH_REQUIRED or
@@ -16,7 +17,21 @@ export interface RealtimeMessage {
   version: number;
 }
 
-export type RealtimeSignal = { kind: "event"; message: RealtimeMessage } | { kind: "resync" };
+export type RealtimeSignal<M = RealtimeMessage> =
+  { kind: "event"; message: M } | { kind: "resync" };
+
+/**
+ * One live stream (L16): the same-origin path of its SSE endpoint, how a frame is read, and, only
+ * when its frames carry a monotonic version, how a repeated or older frame is dropped. The hub
+ * opens one source per path per tenant, so a descriptor is a module-level constant.
+ */
+export interface RealtimeStream<M = RealtimeMessage> {
+  path: string;
+  // Method syntax on purpose: bivariant, so RealtimeStream<M> is assignable to RealtimeStream<unknown>.
+  parse(data: unknown): M | null;
+  /** Key and monotonic version of a frame; one not newer than the last of its key is dropped. Absent: no frame is ever dropped. */
+  dedupe?(message: M): { key: string; version: number };
+}
 
 export interface EventSourceLike {
   onopen: (() => void) | null;
@@ -64,8 +79,16 @@ export function parseRealtimeMessage(data: unknown): RealtimeMessage | null {
   return { type, sessionId, version };
 }
 
+/** Today's stream: session changes, one monotonic version per sessionId (A11). The default. */
+export const SESSIONS_STREAM: RealtimeStream = {
+  path: "/api/realtime/subscribe",
+  parse: parseRealtimeMessage,
+  dedupe: (message) => ({ key: message.sessionId, version: message.version }),
+};
+
 interface Channel {
-  listeners: Set<(signal: RealtimeSignal) => void>;
+  stream: RealtimeStream<unknown>;
+  listeners: Set<(signal: RealtimeSignal<unknown>) => void>;
   source: EventSourceLike | null;
   timer: unknown;
   attempt: number;
@@ -76,13 +99,13 @@ interface Channel {
 
 export function createRealtimeHub(deps: RealtimeHubDeps) {
   const channels = new Map<string, Channel>();
-  const emit = (channel: Channel, signal: RealtimeSignal) => {
+  const emit = (channel: Channel, signal: RealtimeSignal<unknown>) => {
     for (const listener of [...channel.listeners]) listener(signal);
   };
 
   function connect(tenantId: string, channel: Channel): void {
     channel.timer = null;
-    const source = deps.create(`/api/realtime/subscribe?tenant=${encodeURIComponent(tenantId)}`);
+    const source = deps.create(`${channel.stream.path}?tenant=${encodeURIComponent(tenantId)}`);
     channel.source = source;
     source.onopen = () => {
       if (channel.source !== source) return;
@@ -92,11 +115,14 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
     };
     source.onmessage = (event) => {
       if (channel.source !== source) return;
-      const message = parseRealtimeMessage(event.data);
-      if (!message) return;
-      const last = channel.lastSeen.get(message.sessionId);
-      if (last !== undefined && message.version <= last) return;
-      channel.lastSeen.set(message.sessionId, message.version);
+      const message = channel.stream.parse(event.data);
+      if (message === null) return;
+      const id = channel.stream.dedupe?.(message);
+      if (id) {
+        const last = channel.lastSeen.get(id.key);
+        if (last !== undefined && id.version <= last) return;
+        channel.lastSeen.set(id.key, id.version);
+      }
       emit(channel, { kind: "event", message });
     };
     source.onerror = () => {
@@ -116,10 +142,17 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
   }
 
   return {
-    subscribe(tenantId: string, listener: (signal: RealtimeSignal) => void): () => void {
-      let channel = channels.get(tenantId);
+    subscribe<M = RealtimeMessage>(
+      tenantId: string,
+      listener: (signal: RealtimeSignal<M>) => void,
+      stream?: RealtimeStream<M>,
+    ): () => void {
+      const target: RealtimeStream<unknown> = stream ?? SESSIONS_STREAM;
+      const key = `${target.path}|${tenantId}`;
+      let channel = channels.get(key);
       if (!channel) {
         channel = {
+          stream: target,
           listeners: new Set(),
           source: null,
           timer: null,
@@ -128,15 +161,16 @@ export function createRealtimeHub(deps: RealtimeHubDeps) {
           openedAt: 0,
           lastSeen: new Map(),
         };
-        channels.set(tenantId, channel);
+        channels.set(key, channel);
         connect(tenantId, channel);
       }
-      const entry = (signal: RealtimeSignal) => listener(signal);
+      // Every listener of one path shares that path's message type, so this one cast is sound.
+      const entry = (signal: RealtimeSignal<unknown>) => listener(signal as RealtimeSignal<M>);
       channel.listeners.add(entry);
       return () => {
-        const current = channels.get(tenantId);
+        const current = channels.get(key);
         if (!current?.listeners.delete(entry) || current.listeners.size > 0) return;
-        channels.delete(tenantId);
+        channels.delete(key);
         current.source?.close();
         current.source = null;
         if (current.timer !== null) deps.clearTimeout(current.timer);
@@ -231,12 +265,15 @@ function hub(): ReturnType<typeof createRealtimeHub> | null {
 /**
  * While `enabled`, runs the view's live `round` (true = RATE_LIMITED) for each change of
  * `tenantId` that `accept` takes, through createLiveRounds (F1). Opens nothing otherwise.
+ * `stream` omitted means the sessions stream: pass it whenever M is not RealtimeMessage, and keep
+ * it a module-level constant (it is an effect dependency and the hub's per-path source key).
  */
-export function useRealtime(
+export function useRealtime<M = RealtimeMessage>(
   tenantId: string,
   enabled: boolean,
   round: () => Promise<boolean>,
-  accept: (signal: RealtimeSignal) => boolean = () => true,
+  accept: (signal: RealtimeSignal<M>) => boolean = () => true,
+  stream?: RealtimeStream<M>,
 ): void {
   const latest = useRef({ round, accept });
   useEffect(() => {
@@ -246,13 +283,17 @@ export function useRealtime(
     if (!enabled) return undefined;
     const rounds = createLiveRounds(() => latest.current.round(), browserDeps);
     document.addEventListener("visibilitychange", rounds.visibilityChanged);
-    const off = hub()?.subscribe(tenantId, (signal) => {
-      if (latest.current.accept(signal)) rounds.signal();
-    });
+    const off = hub()?.subscribe(
+      tenantId,
+      (signal: RealtimeSignal<M>) => {
+        if (latest.current.accept(signal)) rounds.signal();
+      },
+      stream,
+    );
     return () => {
       off?.();
       document.removeEventListener("visibilitychange", rounds.visibilityChanged);
       rounds.stop();
     };
-  }, [tenantId, enabled]);
+  }, [tenantId, enabled, stream]);
 }
