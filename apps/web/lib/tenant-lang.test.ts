@@ -245,6 +245,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   "lib/sessions-api.ts": "c",
   // (c) — browser-side typed fetch wrappers; user-facing text comes from the caller's t.
   "lib/chat-api.ts": "c",
+  "lib/use-chat.ts": "c",
   "lib/discover-api.ts": "c",
   "lib/me-player-api.ts": "c",
   "lib/lang-storage.ts": "c",
