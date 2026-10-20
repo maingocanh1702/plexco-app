@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import type { ChatModerateInput } from "../../lib/chat-api";
+import { describeChatError } from "../../lib/chat-error-ui";
 import { useT } from "../../lib/i18n-client";
 import type { ChatListError } from "../../lib/use-chat";
 import { useCommandId, type CommandIdKeeper } from "../../lib/use-command-id";
@@ -54,7 +55,7 @@ export const moderationNotice = (copy: string) => (copy ? <InlineError>{copy}</I
 
 /**
  * Hide or restore one message: ConfirmDialog composed unedited, a reason group, a note for `other` only.
- * `onDone` fires on a 2xx; a failure keeps the sheet open and the confirm button is the manual retry.
+ * `onDone` fires on a 2xx; a failure keeps the sheet open: confirm re-sends only after a retry row (D12).
  */
 export function ModerationSheet({
   action,
@@ -76,11 +77,13 @@ export function ModerationSheet({
   const [note, setNote] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [noRetry, setNoRetry] = useState(false); // D12: a no-retry row; confirm waits for restart()
   // a changed reason or note is a new user action (new command key, no stale notice); a reopen starts clean
   const restart = (next: ModerationReason | null = null, text = "") => {
     setReason(next);
     setNote(text);
     setNotice("");
+    setNoRetry(false);
     keeper.reset();
   };
   useEffect(() => restart(), [open]);
@@ -95,15 +98,17 @@ export function ModerationSheet({
     blank: t("Nhập ghi chú cho lý do khác.", "Enter a note for Other."),
     too_long: t("Ghi chú quá dài.", "This note is too long."),
   };
+  const rejected = () => describeChatError("moderate", { code: "UNKNOWN", status: 500 }, t); // D13
   async function confirm() {
     const check = validateModeration(reason, note);
-    if (busy) return;
+    if (busy || noRetry) return;
     if (!check.ok) return setNotice(copy[check.problem]);
     setBusy(true);
     setNotice("");
     const { reasonCode, reasonNote } = check;
     const sent = submitModeration(keeper, onModerate, { action, reasonCode, reasonNote });
-    const row = await sent.finally(() => setBusy(false)); // a rejected send never leaves the sheet busy
+    const row = await sent.catch(rejected).finally(() => setBusy(false)); // a rejection: GENERIC row
+    setNoRetry(row !== null && !row.retry);
     if (row) setNotice(row.message);
     else onDone();
   }

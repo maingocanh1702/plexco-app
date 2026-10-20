@@ -165,6 +165,7 @@ test.describe("chat web UI (mocked API)", () => {
     await press(page, "Restore").click();
     await dialog(page).getByRole("radio", { name: "Other", exact: true }).check();
     await dialog(page).getByRole("textbox", { name: "Note (required)" }).fill(NOTE);
+    const typed = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage])); // sheet open
     chat.reply("moderate", ok({ messageId: peer.id, moderationState: "visible", changed: true }));
     await confirmIn(page, "Restore").click();
     await expect(peerRow(page)).toHaveCount(1);
@@ -173,7 +174,7 @@ test.describe("chat web UI (mocked API)", () => {
     // the synthetic note is in no console message and in no storage key or value
     const kept = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]));
     expect(kept).toContain("plx-lang"); // control: the read does see stored keys
-    expect([...logs, kept].filter((text) => text.includes(NOTE))).toEqual([]);
+    expect([...logs, typed, kept].filter((text) => text.includes(NOTE))).toEqual([]);
     const sent = chat.callsTo("moderate");
     expect(sent.map((call) => call.path)).toEqual([MODERATE, MODERATE]); // one hide, one restore
     const [h, r] = sent.map((call) => call.body);
@@ -199,6 +200,21 @@ test.describe("chat web UI (mocked API)", () => {
     expect(chat.callsTo("moderate")).toHaveLength(2);
     expect(h1).toEqual({ action: "hide", reasonCode: "spam", reasonNote: null, commandId: UUID });
     expect(h2).toEqual(h1); // the same commandId, the same body
+  });
+
+  test("a no-retry row sends nothing on a second confirm (D12)", async ({ page }) => {
+    const chat = await open(page, VIEW);
+    await expect.poll(() => chat.callsTo("history").length).toBe(2); // load + stream-open refetch
+    chat.failNext("moderate", fail("CHAT_MODERATION_FORBIDDEN", 403)); // the real mapped error body
+    await press(page, "Hide").click();
+    await dialog(page).getByRole("radio", { name: "Spam", exact: true }).check();
+    await confirmIn(page, "Hide").click();
+    await expect(dialog(page).getByRole("alert")).toHaveText("You cannot moderate this message.");
+    await confirmIn(page, "Hide").click(); // the row says no retry: nothing is sent
+    await dialog(page).getByRole("radio", { name: "Harassment", exact: true }).check(); // new action
+    await confirmIn(page, "Hide").click();
+    await expect(press(page, "Restore")).toHaveCount(1); // the default 200: the tombstone
+    expect(chat.callsTo("moderate")).toHaveLength(2); // the second press sent nothing
   });
 
   test("plain member: the club workspace shows No access (no member chat entry yet)", async ({
