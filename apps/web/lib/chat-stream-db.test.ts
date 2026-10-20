@@ -593,16 +593,15 @@ describe("G1/G2 sweep", () => {
         const text = sse ? (await res.body?.cancel(), "<stream>") : await res.text(); // never hang
         seen.push({ where, status: res.status, cache: res.headers.get("cache-control"), text });
       }
-      // Drain every frame the reader got; a timed-out read stays pending, so no chunk is lost.
+      // Drain up to a barrier sent after the last request, keeping every frame read on the way:
+      // the listener plans events one at a time in commit order (realtime-listener.ts drain), so
+      // the barrier's frame follows every earlier event's frame and no fixed idle ends the drain.
+      const bar = await send(c.t, c.c, author, "barrier");
       const frames: string[] = [];
-      let pending: ReturnType<Reader["read"]> | undefined;
-      for (;;) {
-        pending ??= r.read();
-        const idle = new Promise<null>((ok) => setTimeout(() => ok(null), 1_000));
-        const got = await Promise.race([pending, idle]);
-        if (got === null || got.done) break;
-        pending = undefined;
-        frames.push(new TextDecoder().decode(got.value));
+      while (!frames.some((f) => f.includes(bar))) {
+        const got = await next(r); // a frame, else "timeout" (10 s budget) or "done"
+        expect(["timeout", "done"], "the drain reaches the barrier frame").not.toContain(got);
+        frames.push(got);
       }
       const opts = { depth: 8, maxStringLength: null, maxArrayLength: null, breakLength: Infinity };
       const logged = spies.flatMap((s) => s.mock.calls.map((args) => inspect(args, opts)));
@@ -625,7 +624,7 @@ describe("G1/G2 sweep", () => {
       const sendText = seen.find((s) => s.where === "send 200")?.text ?? "{}";
       const sent = (JSON.parse(sendText) as { data?: { id?: string } }).data?.id;
       expect(sent, sendText).toMatch(UUID);
-      const created = [m1, m2, m3, sent];
+      const created = [m1, m2, m3, sent, bar];
       expect(payloads.filter((p) => !created.includes(p))).toEqual([]);
       expect(logged.filter((l) => l.includes(S))).toEqual([]);
       // G2 (RO-L15-3 g): no seeded person uuid and no authorPersonId in any body, error or frame.
