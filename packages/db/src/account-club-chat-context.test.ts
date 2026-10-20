@@ -202,8 +202,16 @@ describe("0066 decision table (D1-D10)", () => {
           expect(r.rows, `${accountId} ${slug}`).toHaveLength(n);
           expect(await guc(), `${accountId} ${slug}`).toBe(prev);
         }
-        await c.query("ROLLBACK");
+        // r1S-1: the other.id pass COMMITs, which a session-level (is_local false) set_config survives
+        await c.query(prev ? "COMMIT" : "ROLLBACK");
+        expect(await guc()).toBe("");
       }
+      // r1S-1: an autocommit hit (the route's pool.query) leaves no tenant on the pooled connection
+      const hit = await c.query(`SELECT * FROM account_club_chat_context($1::uuid, $2::text)`, [
+        a.accountId,
+        t.slug,
+      ]);
+      expect([hit.rows.length, await guc()]).toEqual([1, ""]);
     } finally {
       await c.query("ROLLBACK");
       c.release();
