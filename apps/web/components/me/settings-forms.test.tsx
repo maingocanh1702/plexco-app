@@ -72,8 +72,8 @@ const PRIVACY_NOTE: Copy[] = [
     en: "Your gender is not shown to clubs or other players, and it does not appear on any public page.",
   },
   {
-    vi: "CLB chỉ nhận mức giá được tính từ giới tính của bạn, không nhận chính giới tính đó.",
-    en: "Clubs receive only the price worked out from your gender, not your gender itself.",
+    vi: "CLB chỉ nhận mức giá được tính từ giới tính của bạn, không nhận chính giới tính đó; nhưng nếu CLB đặt giá riêng cho nam hoặc nữ, mức giá đó có thể cho CLB biết giới tính của bạn.",
+    en: "Clubs receive only the price worked out from your gender, not your gender itself; but if a club sets a separate price for men or women, that price can tell the club your gender.",
   },
   {
     vi: "Bạn có thể đổi giới tính đã đặt bất cứ lúc nào bằng cách chọn lựa chọn khác rồi lưu.",

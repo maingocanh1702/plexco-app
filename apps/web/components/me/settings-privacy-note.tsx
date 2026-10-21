@@ -31,8 +31,8 @@ export function SettingsPrivacyNote() {
         </p>
         <p className={styles.caption}>
           {t(
-            "CLB chỉ nhận mức giá được tính từ giới tính của bạn, không nhận chính giới tính đó.",
-            "Clubs receive only the price worked out from your gender, not your gender itself.",
+            "CLB chỉ nhận mức giá được tính từ giới tính của bạn, không nhận chính giới tính đó; nhưng nếu CLB đặt giá riêng cho nam hoặc nữ, mức giá đó có thể cho CLB biết giới tính của bạn.",
+            "Clubs receive only the price worked out from your gender, not your gender itself; but if a club sets a separate price for men or women, that price can tell the club your gender.",
           )}
         </p>
         <p className={styles.caption}>
