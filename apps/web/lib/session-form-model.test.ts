@@ -144,6 +144,45 @@ describe("buildCreateBody", () => {
   });
 });
 
+describe("hideExactAddress (DD-139 D-8, A-11)", () => {
+  it("is off by default", () => {
+    expect(emptyFormValues().hideExactAddress).toBe(false);
+  });
+
+  it("a create body carries it only when on", () => {
+    expect("hideExactAddress" in buildCreateBody(base(), TZ)).toBe(false);
+    expect(buildCreateBody(base({ hideExactAddress: true }), TZ).hideExactAddress).toBe(true);
+  });
+
+  it("the loaded session round-trips to null in both states", () => {
+    expect(valuesFromSession(session).hideExactAddress).toBe(false);
+    expect(buildUpdateBody(valuesFromSession(session), session)).toBeNull();
+    const hidden = { ...session, hideExactAddress: true };
+    expect(valuesFromSession(hidden).hideExactAddress).toBe(true);
+    expect(buildUpdateBody(valuesFromSession(hidden), hidden)).toBeNull();
+  });
+
+  it("turning it on sends exactly the flipped value, and turning it off likewise", () => {
+    const on = { ...valuesFromSession(session), hideExactAddress: true };
+    expect(buildUpdateBody(on, session)).toEqual({ hideExactAddress: true });
+    const hidden = { ...session, hideExactAddress: true };
+    const off = { ...valuesFromSession(hidden), hideExactAddress: false };
+    expect(buildUpdateBody(off, hidden)).toEqual({ hideExactAddress: false });
+  });
+
+  it("a response without the field (older API) loads off and saves nothing extra", () => {
+    const older: Partial<SessionDetailDto> = { ...session };
+    delete older.hideExactAddress;
+    const legacy = older as SessionDetailDto;
+    const loaded = valuesFromSession(legacy);
+    expect(loaded.hideExactAddress).toBe(false);
+    expect(buildUpdateBody(loaded, legacy)).toBeNull();
+    expect(buildUpdateBody({ ...loaded, hideExactAddress: true }, legacy)).toEqual({
+      hideExactAddress: true,
+    });
+  });
+});
+
 describe("buildUpdateBody", () => {
   it("an unusable stored zone round-trips in the fallback zone instead of throwing", () => {
     const odd = { ...session, timezone: "Mars/Olympus_Mons" };
