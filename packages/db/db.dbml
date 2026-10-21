@@ -202,6 +202,7 @@ Table sessions {
   timezone text [not null]
   venue_name text
   venue_address text
+  hide_exact_address boolean [not null, default: false, note: '0067 DD-139 / B1 — tuỳ chọn của host; bật thì public read model và /me không-active chỉ thấy khu vực']
   area text
   skill_level text
   price_amount integer [not null]
@@ -517,6 +518,8 @@ Table public_sessions {
   age_min integer
   age_max integer
   public_listing_id uuid [not null, unique, default: `(encode(public.gen_random_bytes(16), 'hex')::uuid)`, note:'0061 P-2 — opaque 128-bit CSPRNG, đổi mỗi lần session rời public; row key của view']
+  venue_name text [note: '0067 DD-139 / B1 — NULL khi hide_exact_address bật hoặc chưa nhập']
+  venue_address text
   Note: '0033: base SELECT REVOKED khỏi readonly + app; consumer chỉ đọc qua guarded view public_session_share_v (security_barrier, anti-join fence). CHECK id = session_id. 0061: bỏ skill_level, club_display_name (view đọc LIVE alias đã duyệt), host_display_name (không project person); writer = SECURITY DEFINER EXECUTE app_worker.'
 }
 

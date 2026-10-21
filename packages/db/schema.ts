@@ -632,6 +632,8 @@ export const sessions = pgTable("sessions", {
   timezone: text("timezone").notNull(),
   venueName: text("venue_name"),
   venueAddress: text("venue_address"),
+  // 0067 (DD-139 / B1): per-session host option; when true the public read model and non-active /me viewers get the area only
+  hideExactAddress: boolean("hide_exact_address").notNull().default(false),
   area: text("area"),
   skillLevel: text("skill_level"),
   priceAmount: integer("price_amount").notNull().default(0),
@@ -1711,6 +1713,9 @@ export const publicSessions = pgTable("public_sessions", {
   // because the row is deleted whenever the session leaves public. The view's row key.
   publicListingId: uuid("public_listing_id").notNull()
     .default(sql`(encode(public.gen_random_bytes(16), 'hex'))::uuid`),
+  // 0067 (DD-139 / B1): the projected venue, NULL whenever hide_exact_address is ON or no venue was typed
+  venueName: text("venue_name"),
+  venueAddress: text("venue_address"),
 }, (t) => ({
   publicListingUq: uniqueIndex("uq_public_sessions_public_listing_id").on(t.publicListingId),
   // plain btree — a WHERE starts_at > now() predicate is invalid (now() is
