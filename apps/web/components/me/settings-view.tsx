@@ -9,15 +9,17 @@ import { Card } from "../ui/card";
 import { Skeleton } from "../ui/skeleton";
 import { ApiErrorNotice } from "../sessions/api-error-notice";
 import { SettingsChannelsList } from "./settings-channels-list";
+import { SettingsPrivacyNote } from "./settings-privacy-note";
 import { SettingsProfileForm } from "./settings-profile-form";
 import styles from "../settings/settings-layout.module.css";
 
 /**
- * /me/settings: minimal profile (display name), linked channels with unlink, and two read-only
+ * /me/settings: minimal profile (display name), linked channels with unlink, and three read-only
  * sections. UI language is NOT a personal setting: DD-118 makes the club's `tenants.locale` the only
  * language source, so there is no member-level switch to build; the section says where it comes from.
  * Reminder preferences are deferred (OD-6) and the MVP sends no automatic reminders (OD-0), so that
- * section only says so.
+ * section only says so. The third is the gender-data privacy note (DD-39): it renders only while
+ * gender collection is on.
  */
 export function SettingsView() {
   const t = useT();
@@ -72,6 +74,7 @@ export function SettingsView() {
           <SettingsProfileForm initial={profile} csrfToken={csrfToken} onSaved={refresh} />
         </section>
       </Card>
+      {profile.genderCollection ? <SettingsPrivacyNote /> : null}
       <Card>
         <section className={styles.section} aria-labelledby="me-channels">
           <h2 id="me-channels">{t("Kênh đã liên kết", "Linked channels")}</h2>
