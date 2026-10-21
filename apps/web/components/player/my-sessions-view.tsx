@@ -35,7 +35,8 @@ export function MySessionsView(props: ViewProps<Awaited<ReturnType<typeof getMyS
           s.myStatus === "waitlisted" && s.waitlistPosition !== null
             ? ` #${s.waitlistPosition}`
             : "";
-        const active = s.myStatus === "active"; // P-6: the venue is shown for an active seat only
+        // DD-139: the venue is drawn as the server sent it, in full; null draws nothing. The /me
+        // definer decides who sees it (the host's "hide exact address" option), not this view.
         return {
           key: s.sessionId,
           title: sportLabel(s.sportKey, t),
@@ -44,8 +45,8 @@ export function MySessionsView(props: ViewProps<Awaited<ReturnType<typeof getMyS
             s.clubLabel,
             when.range(s.startsAt, s.endsAt, s.timezone),
             s.area,
-            active && s.venueName,
-            active && s.venueAddress,
+            s.venueName,
+            s.venueAddress,
           ],
         };
       }}
