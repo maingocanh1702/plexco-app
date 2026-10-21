@@ -114,14 +114,17 @@ describe("player /me reads", () => {
     });
   });
 
-  it("shows a venue only for an active seat and a position only for a waitlisted one", async () => {
-    const injected = { venueName: "Injected Court", venueAddress: "Injected street" };
+  it("passes the venue through whenever the row carries it (the server decides per DD-139); a position only for a waitlisted seat", async () => {
+    const venue = { venueName: "Court 2", venueAddress: "2 Tan Phong" };
+    const noVenue = { venueName: null, venueAddress: null };
+    const injected = { personId: "p-9", membershipId: "m-9" }; // not whitelisted: still dropped
     mockFetch({
       sessions: [
         SESSION,
-        { ...SESSION, myStatus: "waitlisted", waitlistPosition: 2, ...injected },
-        { ...SESSION, myStatus: "pending", waitlistPosition: 5, ...injected },
-        { ...SESSION, myStatus: "banned", waitlistPosition: 6, ...injected },
+        { ...SESSION, myStatus: "waitlisted", waitlistPosition: 2, ...venue, ...injected },
+        { ...SESSION, myStatus: "pending", waitlistPosition: 5, ...venue, ...injected },
+        { ...SESSION, myStatus: "waitlisted", waitlistPosition: 3, ...noVenue },
+        { ...SESSION, myStatus: "banned", waitlistPosition: 6, ...venue, ...injected },
       ],
       truncated: false,
     });
@@ -140,10 +143,12 @@ describe("player /me reads", () => {
         venueName: "Court 1",
         venueAddress: "1 Nguyễn Văn Linh",
       },
-      { myStatus: "waitlisted", waitlistPosition: 2, venueName: null, venueAddress: null },
-      { myStatus: "pending", waitlistPosition: null, venueName: null, venueAddress: null },
-      { myStatus: null, waitlistPosition: null, venueName: null, venueAddress: null },
+      { myStatus: "waitlisted", waitlistPosition: 2, ...venue },
+      { myStatus: "pending", waitlistPosition: null, ...venue },
+      { myStatus: "waitlisted", waitlistPosition: 3, ...noVenue },
+      { myStatus: null, waitlistPosition: null, ...venue },
     ]);
+    expect(sessions.some((s) => "personId" in s || "membershipId" in s)).toBe(false);
   });
 
   it("an unknown enum value has no label, and only a literal true is truncated", async () => {

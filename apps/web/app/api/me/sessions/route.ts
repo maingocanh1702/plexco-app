@@ -7,8 +7,8 @@ const PRIVATE = { "cache-control": "private, no-store" };
 
 /**
  * GET /api/me/sessions -- the signed-in player's own seats and pending requests (0059, M-3); the
- * venue only for an active seat (M-7, enforced in SQL). The account comes ONLY from the verified
- * session: no query parameter or body is read.
+ * venue follows the session's hide_exact_address option (DD-139, 0067; enforced in SQL). The
+ * account comes ONLY from the verified session: no query parameter or body is read.
  */
 export async function GET(request: Request): Promise<Response> {
   const gate = await resolveMeGate(request, {
