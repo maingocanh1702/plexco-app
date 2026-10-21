@@ -206,6 +206,24 @@ describe("createSession", () => {
     expect(pc).toMatchObject({ c: 1, t: "CreateSession" });
   });
 
+  it("A-7 create: hideExactAddress absent -> false, true -> true; null or a non-boolean -> INVALID_INPUT, zero mutation", async () => {
+    // DD-139 / B1: the per-session option is stored as sent; absent = the column default false.
+    const cases: Array<[Partial<CreateSessionInputPayload>, boolean]> = [
+      [{}, false],
+      [{ hideExactAddress: false }, false],
+      [{ hideExactAddress: true }, true],
+    ];
+    for (const [over, want] of cases) {
+      const { sessionId } = await create(over);
+      const s = await row(`SELECT hide_exact_address FROM sessions WHERE id = $1`, [sessionId]);
+      expect(s.hide_exact_address).toBe(want);
+    }
+    // null included: hide_exact_address is NOT NULL, so null is rejected, never coerced to false.
+    for (const bad of [null, "true", "false", 1, 0, {}, []]) {
+      await expectReject(() => createBad({ hideExactAddress: bad }), "INVALID_INPUT");
+    }
+  });
+
   it("A3: venueAddress is optional plain text, max 200 characters (DD-128 OD-4a)", async () => {
     const absent = await create({});
     const nulled = await create({ venueAddress: null });
@@ -326,6 +344,8 @@ describe("createSession", () => {
       [{ venueAddress: 123 }, "INVALID_TEXT_FIELD"],
       [{ venueAddress: "has\u0000nul" }, "INVALID_TEXT_FIELD"],
       [{ venueAddress: "x".repeat(201) }, "INVALID_TEXT_FIELD"], // DD-128 OD-4a: max 200
+      [{ hideExactAddress: null }, "INVALID_INPUT"], // DD-139: NOT NULL, null rejected
+      [{ hideExactAddress: "yes" }, "INVALID_INPUT"],
       [{ startsAt: t9, endsAt: t9 }, "INVALID_TIME_RANGE"],
       [{ ...pub, area: null }, MDF],
       [{ ...pub, slotsMax: null }, MDF],
@@ -2349,10 +2369,89 @@ describe("updateSession", () => {
     expect([...(payload.changed_fields as string[])].sort()).toEqual(["area", "price_amount"]);
   });
 
-  it("U-ALLFIELDS: a single update maps ALL ten editable fields to their columns, with exact changed_fields (no field silently dropped)", async () => {
+  it("A-5/A-7 update: hideExactAddress absent = unchanged and no event; the same value = no change, no event, version unchanged; a changed value is SET, bumps the version and emits one session.updated with changed_fields exactly ['hide_exact_address']; null or a non-boolean -> INVALID_INPUT, zero mutation", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId);
+    const state = () =>
+      row(`SELECT hide_exact_address, version FROM sessions WHERE id = $1`, [sessionId]);
+    const payloadOf = (ev: unknown) => (ev as { payload: Record<string, unknown> }).payload;
+    expect(await state()).toEqual({ hide_exact_address: false, version }); // the 0067 default
+
+    // The same value (false = current): no change, no event, version unchanged.
+    await update(tenantId, { sessionId, expectedVersion: version, hideExactAddress: false });
+    expect(await state()).toEqual({ hide_exact_address: false, version });
+    expect(await updatedEvents(sessionId)).toHaveLength(0);
+
+    // A-5 turned ON: SET, version + 1, ONE session.updated whose changed_fields is exactly the
+    // option (the public_sessions projector then clears the venue).
+    const on = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      hideExactAddress: true,
+    });
+    expect(on).toMatchObject({
+      sessionId,
+      status: "open",
+      version: version + 1,
+      replayed: false,
+    });
+    expect(await state()).toEqual({ hide_exact_address: true, version: version + 1 });
+    let evs = await updatedEvents(sessionId);
+    expect(evs).toHaveLength(1);
+    expect(evs[0]).toMatchObject({ type: "session.updated" });
+    expect(payloadOf(evs[0])).toEqual({
+      session_id: sessionId,
+      changed_fields: ["hide_exact_address"],
+    });
+
+    // The same value again (true = current), then the option absent with no other field: no
+    // change, no event, version unchanged.
+    await update(tenantId, { sessionId, expectedVersion: version + 1, hideExactAddress: true });
+    await update(tenantId, { sessionId, expectedVersion: version + 1 });
+    expect(await state()).toEqual({ hide_exact_address: true, version: version + 1 });
+    expect(await updatedEvents(sessionId)).toHaveLength(1);
+
+    // Absent beside another field: the option stays ON and changed_fields is exactly ["area"].
+    await update(tenantId, { sessionId, expectedVersion: version + 1, area: "Quận 3" });
+    expect(await state()).toEqual({ hide_exact_address: true, version: version + 2 });
+    evs = await updatedEvents(sessionId);
+    expect(evs).toHaveLength(2);
+    expect(payloadOf(evs[1])).toEqual({ session_id: sessionId, changed_fields: ["area"] });
+
+    // A-5 turned OFF: SET back, one more session.updated with exactly the option (the projector
+    // then restores the venue).
+    await update(tenantId, { sessionId, expectedVersion: version + 2, hideExactAddress: false });
+    expect(await state()).toEqual({ hide_exact_address: false, version: version + 3 });
+    evs = await updatedEvents(sessionId);
+    expect(evs).toHaveLength(3);
+    expect(evs[2]).toMatchObject({ type: "session.updated" });
+    expect(payloadOf(evs[2])).toEqual({
+      session_id: sessionId,
+      changed_fields: ["hide_exact_address"],
+    });
+
+    // null (NOT NULL column) or a non-boolean -> INVALID_INPUT, zero mutation (row, outbox, ledger).
+    for (const bad of [null, "true", "false", 1, 0, {}, []]) {
+      const before = await counts();
+      await expectUpdateReject(
+        () =>
+          update(tenantId, {
+            sessionId,
+            expectedVersion: version + 3,
+            hideExactAddress: bad as unknown as boolean,
+          }),
+        "INVALID_INPUT",
+      );
+      expect(await counts()).toEqual(before);
+      expect(await state()).toEqual({ hide_exact_address: false, version: version + 3 });
+    }
+  });
+
+  it("U-ALLFIELDS: a single update maps ALL eleven editable fields to their columns, with exact changed_fields (no field silently dropped)", async () => {
     const tenantId = await seedTenant("active", "active");
     // Seed a PRIVATE open session at known defaults (timezone Asia/Ho_Chi_Minh, venue NULL,
-    // join_policy 'open'); every one of the ten editable fields below differs from current.
+    // join_policy 'open', hide_exact_address false); every one of the eleven editable fields
+    // below differs from current.
     const { sessionId, version } = await seedSession(tenantId, {
       status: "open",
       visibility: "private",
@@ -2376,6 +2475,7 @@ describe("updateSession", () => {
       venueName: "Sân Cầu Lông A",
       venueAddress: "123 Đường Lê Lợi",
       joinPolicy: "approval",
+      hideExactAddress: true, // DD-139 / B1: the seeded row holds the column default false
     });
     expect(result).toMatchObject({
       sessionId,
@@ -2386,7 +2486,7 @@ describe("updateSession", () => {
     // Every column persisted to its new value (query the FULL row, not just sessionState's six).
     const full = (await row(
       `SELECT starts_at, ends_at, timezone, price_amount, slots_max, visibility, area,
-              venue_name, venue_address, join_policy, version, status
+              venue_name, venue_address, join_policy, hide_exact_address, version, status
          FROM sessions WHERE id = $1`,
       [sessionId],
     )) as {
@@ -2400,6 +2500,7 @@ describe("updateSession", () => {
       venue_name: string;
       venue_address: string;
       join_policy: string;
+      hide_exact_address: boolean;
       version: number;
       status: string;
     };
@@ -2413,9 +2514,10 @@ describe("updateSession", () => {
     expect(full.venue_name).toBe("Sân Cầu Lông A");
     expect(full.venue_address).toBe("123 Đường Lê Lợi");
     expect(full.join_policy).toBe("approval");
+    expect(full.hide_exact_address).toBe(true);
     expect(full.version).toBe(version + 1);
     expect(full.status).toBe("open");
-    // session.updated changed_fields lists ALL ten snake_case columns, exactly; plus the
+    // session.updated changed_fields lists ALL eleven snake_case columns, exactly; plus the
     // visibility flip emits session.visibility_changed. Both payloads are asserted exactly.
     const evs = await updatedEvents(sessionId);
     expect(evs.map((e) => (e as { type: string }).type)).toEqual([
@@ -2428,6 +2530,7 @@ describe("updateSession", () => {
     expect([...(updPayload.changed_fields as string[])].sort()).toEqual([
       "area",
       "ends_at",
+      "hide_exact_address",
       "join_policy",
       "price_amount",
       "slots_max",
