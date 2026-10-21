@@ -144,8 +144,19 @@ Mỗi bước kèm điều phải thấy trên màn hình (giao diện mặc đ�
 | 16 | `/dev-login` → bấm nút **Người chơi** | Đăng nhập bằng persona người chơi. Persona này không quản trị CLB nào nên vào `/onboarding/new-club` |
 | 17 | Mở `/me/sessions`, rồi `/me/charges` | `/me/sessions` có buổi vừa tạo, kèm tên sân và nhãn "Đã có chỗ". `/me/charges` có `100.000đ` ở "Dev Club" và không có nút trả tiền, mã QR hay thông tin ngân hàng |
 | 18 | Mở `/discover` trong cửa sổ ẩn danh (không có phiên đăng nhập) | Trang hiển thị bình thường khi chưa đăng nhập. Chạy cục bộ thì danh sách trống, vì dòng projector công khai vẫn tắt (OPEN-B4) |
+| 19 | Chat quản trị, cửa sổ 1: `/dev-login` → **Chủ CLB** → vào "Dev Club" → mở `/c/<tenantId>/chat` (thêm `/chat` sau `/c/<tenantId>` trên thanh địa chỉ) | Danh sách kênh có liên kết **Kênh chung**, trỏ tới `/c/<tenantId>/chat/<channelId>`. Chủ CLB và quản trị viên chat ở `/c/…` |
+| 20 | Cửa sổ 2, một phiên trình duyệt riêng (Playwright dùng một browser context riêng cho vai này; làm tay thì dùng hồ sơ hoặc trình duyệt khác): `/dev-login` → **Đồng quản trị** → mở cùng `/c/<tenantId>/chat` | Cũng thấy **Kênh chung**. Ghi lại số trên huy hiệu "N tin chưa đọc" của kênh (không có huy hiệu = 0) |
+| 21 | Cửa sổ 1: bấm **Kênh chung**, nhập một tin vào ô **Tin nhắn**, bấm **Gửi** | Cửa sổ 2, không tải lại trang: huy hiệu của **Kênh chung** tăng đúng 1 |
+| 22 | Cửa sổ 2: bấm **Kênh chung** | Tin vừa gửi hiện trong khung tin nhắn; ở tab Network, `POST /api/chat/channels/<channelId>/read` trả `200` |
+| 23 | Cửa sổ 1: gửi tin thứ hai | Cửa sổ 2 hiện tin thứ hai ngay, không tải lại; lời gọi `.../read` lại trả `200` |
+| 24 | Cửa sổ 2: bấm **Quay lại** | Huy hiệu của **Kênh chung** biến mất (0 tin chưa đọc) |
+| 25 | Kiểm duyệt bởi quản trị viên web, cửa sổ 2: bấm lại **Kênh chung**; ở tin thứ hai bấm **Ẩn tin** → chọn **Spam** → bấm **Ẩn tin** trong hộp thoại | Hàng đó thành dòng đã gỡ, có nút **Khôi phục**; cửa sổ 1, không tải lại, tin cuối hiện **"Tin nhắn đã bị gỡ."** |
+| 26 | Cửa sổ 2: bấm **Khôi phục** → chọn **Lý do khác** → điền **Ghi chú (bắt buộc)** → bấm **Khôi phục** trong hộp thoại | Tin thứ hai hiện lại ở cả hai cửa sổ (cửa sổ 1 không tải lại) |
+| 27 | Chat thành viên, cửa sổ 3 (phiên riêng như hàng 20): `/dev-login` → **Người chơi** → mở `/me/clubs` | Hàng "Dev Club" có nhãn "Thành viên" và liên kết **Trò chuyện**. Nếu người chơi seed chưa là thành viên "Dev Club": dừng ở đây; test tự bỏ qua (`skipped`) và in dòng "MEMBER CHAT GOLDEN PATH NOT RUN" |
+| 28 | Cửa sổ 3: bấm **Trò chuyện** ở hàng "Dev Club", rồi bấm **Kênh chung** | Chuyển tới `/me/clubs/dev-club/chat`; **Kênh chung** trỏ tới `/me/clubs/dev-club/chat/<channelId>`. Thành viên không vào chat qua `/c/…` |
+| 29 | Cửa sổ 1 (chủ CLB): mở `/c/<tenantId>/chat` → **Kênh chung**. Cửa sổ 3 gửi một tin, rồi cửa sổ 1 gửi một tin | Mỗi tin hiện ở cửa sổ bên kia, không tải lại |
 
-Lệnh chạy tự động ở §10 chạy cả hai test (hành trình host và hành trình người chơi); thêm `-g "player golden path"` để chỉ chạy hành trình người chơi.
+Lệnh chạy tự động ở §10 chạy cả bốn test: hành trình host (hàng 1-14), hành trình người chơi (hàng 15-17), chat quản trị với kiểm duyệt (hàng 19-26) và chat thành viên (hàng 27-29); thêm `-g "player golden path"` để chỉ chạy hành trình người chơi.
 
 ## 10. Chạy tự động (Playwright, chỉ local)
 
@@ -159,6 +170,8 @@ GOLDEN_PATH_SCREENSHOT_DIR=/tmp/golden-path-shots GOLDEN_PATH_BASE_URL=http://lo
   pnpm --filter @plexco/web exec playwright test --config e2e/golden-path.config.ts
 ```
 
+- Cùng một lệnh chạy cả bốn test, tuần tự (1 worker): `host golden path`, `player golden path`, `chat golden path` (chat quản trị và kiểm duyệt, hàng 19-26) và `member chat golden path` (hàng 27-29). Bốn test không cần biến nào ngoài ba biến `GOLDEN_PATH_*` bên dưới. `player` và `member chat` đi qua người chơi seed và cần người đó đã là thành viên "Dev Club"; nếu chưa, test tự bỏ qua (`skipped`) và in dòng "… NOT RUN: …". `/discover` không nằm trong test nào (chú thích đầu hành trình người chơi trong `apps/web/e2e/golden-path.spec.ts`), nên hàng 18 chỉ làm tay. Trang đó tải danh sách qua `/api/discover`, route này đọc DB bằng `DISCOVERY_DATABASE_URL`, DSN của role `readonly` (mẫu trong `.env.example`, trỏ DB `plexco`, không phải `plexco_smoke`; bước 5 đã đặt password cho role đó). Runbook này không có bước nào đặt biến đó (không sao chép `.env.example`, lệnh bước 7 cũng không truyền nó), và thiếu biến thì route từ chối phục vụ. **Hàng 18 chưa được chạy trong lần đóng Phase 3 này**, nên cách nối biến đó vào server chưa được thử.
+- Một Postgres local và một cổng e2e dùng chung: mỗi lúc chỉ chạy **một** bộ test DB hoặc **một** lần e2e, không chạy song song. Không bao giờ `docker compose down -v`.
 - Chạy lại được nhiều lần mà không cần dọn: tên CLB, slug và tên người chơi có hậu tố riêng mỗi lần chạy.
 - Biến môi trường của spec: `GOLDEN_PATH_BASE_URL` (bắt buộc, gồm cả cổng, khớp `-p` ở bước 7; thiếu thì spec tự skip), `GOLDEN_PATH_SCREENSHOT_DIR` (tuỳ chọn),
   `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1` (tuỳ chọn, xem dưới).
@@ -167,6 +180,11 @@ GOLDEN_PATH_SCREENSHOT_DIR=/tmp/golden-path-shots GOLDEN_PATH_BASE_URL=http://lo
   đợi hết giờ, hoặc dùng DB smoke mới (bộ đếm nằm trong DB; làm lại bước 2 → 6), hoặc chủ động chạy với `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1`:
   khi đó spec đi tiếp trong "Dev Club" cho phần tiền và in ra dòng lớn `!!! GOLDEN PATH: club creation was NOT proven ... !!!` (cả lúc xảy ra lẫn ở cuối log;
   list reporter chỉ hiện stdout, không hiện annotation). Lần chạy kiểu này **không** được tính là đã kiểm tra tạo CLB.
+- **Đọc kết quả (NOT_PROVEN): đọc cuối log, không chỉ dòng "N passed".**
+  - `!!! GOLDEN PATH: club creation was NOT proven ... !!!`: chỉ có khi chạy với `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1` mà giới hạn `tenant-create` đã từ chối tạo CLB; test host đi tiếp trong "Dev Club", **không** chứng minh tạo CLB. Reporter (`apps/web/e2e/support/golden-path-not-proven-reporter.ts`) chỉ in dòng này cho test mang annotation `club-create-throttled`: không có dòng thì không có annotation đó.
+  - `PLAYER GOLDEN PATH NOT RUN: ...` hoặc `MEMBER CHAT GOLDEN PATH NOT RUN: ...` kèm `skipped`: chân đó **không chạy**; `skipped` không phải pass.
+  - `4 passed`, không `skipped`, không dòng `!!! ... NOT proven ...`: cả bốn test đã chạy, gồm tạo CLB.
+- Kết quả đo gần nhất: 2026-10-21, đo tại `0a4e1b8` (DB `plexco_smoke` migrate và seed, server `next dev -H 127.0.0.1 -p 3000` theo bước 4-7): `4 passed (2.1m)`: host 31.2s, player 54.9s, chat 25.2s, member chat 16.0s; không có `skipped`, reporter NOT_PROVEN không in dòng nào. Cờ registry `public_sessions`, `web_realtime`, `zalo_dm` đều `false` trước và sau lần chạy. Chỉ là một lần chạy local.
 - Mỗi tài khoản chỉ được ~60 lời gọi `/api/sessions...` mỗi 60 giây; spec tự giãn nhịp để chạy hai lần liên tiếp không bị `429` ("Bạn thao tác quá nhanh").
   Lần chạy thứ hai ngay sau lần đầu có thể chờ tới ~1 phút ở đầu: bình thường, không phải treo.
 - Timeout rộng có chủ ý (`apps/web/e2e/support/golden-path-timeouts.ts`: cả bài 20 phút, mỗi assertion/điều hướng 4 phút, mỗi thao tác 2 phút). `next dev` biên dịch từng route ở lần gọi đầu và **bỏ trang rảnh sau ~60 giây**, nên **mọi lần chạy** đều biên dịch lại một phần, không chỉ lần đầu; máy đang tải nặng có route mất tới ~113 giây. Đầu mỗi lần chạy spec có bước "warm up the dev server" gọi trước mọi trang và API route của luồng (log `[warm-up] ... in N ms`); log đứng lâu ở bước đó là bình thường, không phải treo.
@@ -188,6 +206,7 @@ GOLDEN_PATH_SCREENSHOT_DIR=/tmp/golden-path-shots GOLDEN_PATH_BASE_URL=http://lo
 | Spec đứng lâu (bất kỳ lần chạy nào) | `next dev` biên dịch route ở lần gọi đầu và bỏ trang rảnh sau ~60 giây | Bình thường, đặc biệt khi máy tải nặng; timeout rộng (bài 20 phút, assertion 4 phút). Xem log `[warm-up]` |
 | Spec FAIL "Club creation was refused by the tenant-create limit" | Đã tạo 3 CLB trong giờ qua bằng persona này | Đợi hết giờ, hoặc DB smoke mới, hoặc `GOLDEN_PATH_ALLOW_SEEDED_CLUB=1` (không chứng minh tạo CLB) |
 | Đăng nhập xong nhưng mất phiên giữa chừng; hoặc `dev:seed` báo `the slug "dev-club" belongs to a club the dev owner persona does not own` | `ENCRYPTION_KEY` của terminal này khác khoá đã dùng để seed (terminal mới, quên nạp) | **Không** sinh khoá mới và **không** seed lại. Chạy lại khối nạp khoá ở bước 6 (đọc `~/.plexco-smoke-encryption-key`) rồi khởi động lại server. Chỉ khi file khoá đã mất: xoá và tạo lại `plexco_smoke` (bước 6) |
+| Log `[warm-up]` có dòng `POST ... -> 403` hoặc `GET ... -> 400` với id toàn số 0 (`00000000-0000-0000-0000-000000000000`) | Bước "warm up" gọi trước từng route bằng id giả chỉ để biên dịch route; helper chỉ ghi trạng thái, chỉ lỗi không trả lời mới làm fail | Bình thường: các dòng này xuất hiện trong chính lần chạy `4 passed` ở trên. Chỉ `warm-up: ... did not answer within ... s` là lỗi thật |
 
 ## Dọn dẹp
 
