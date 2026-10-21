@@ -39,6 +39,7 @@ export interface PlayerCommandDeps {
 // prettier-ignore
 const REPLY = {
   R1: ["Bạn đã có chỗ trong buổi {ref}.", "You have a place in {ref}."],
+  R1amount: ["Số tiền cần trả cho buổi này: {amount}", "Amount due for this session: {amount}"],
   R2: ["Buổi {ref} đã đủ chỗ. Bạn đang ở danh sách chờ, vị trí {n}.", "{ref} is full. You are on the waitlist, position {n}."],
   R3: ["Đã gửi yêu cầu tham gia buổi {ref}. Chủ kèo sẽ duyệt.", "Your request to join {ref} was sent. The host will review it."],
   R4: ["Bạn đã có chỗ trong buổi này.", "You already have a place in this session."],
@@ -150,21 +151,55 @@ async function numberReply(token: string, deps: PlayerCommandDeps): Promise<stri
   const row = list.sessions.find((s) => s.sessionId === claimed?.itemIds[+token - 1]);
   if (!row) return reply("R9");
   const r = await deps.join(row.sessionId);
-  return reply(OUTCOME[r.outcome], { ref: ref(row), n: r.waitlistPosition ?? "" });
+  const seat = reply(OUTCOME[r.outcome], { ref: ref(row), n: r.waitlistPosition ?? "" });
+  if (r.outcome !== "active") return seat;
+  // DD-140 (lane L21): the ACTIVE confirmation adds the amount owed for THIS seat from the /pay
+  // read (one source; item.remaining as the source computes it). No partial marker, so a new and
+  // an existing seat read the same (P-11). Shown only for EXACTLY one matching charge:
+  // 0 or 2+ (never summed, never picked) and a throw (logged by reason only) are R17. Never 0,
+  // never a guess. Waitlisted and requested replies never read money.
+  let line = reply("R17");
+  try {
+    const st = await ownClubPaymentStatus(deps);
+    const items =
+      st.kind === "known_amount" ? st.items.filter((i) => i.sessionRef === row.sessionId) : [];
+    const item = items.length === 1 ? items[0] : undefined;
+    if (item) line = reply("R1amount", { amount: formatVnd(item.remaining) });
+  } catch (error) {
+    // Caught here, not in runPlayerCommand: the seat is already taken, so R17 and never R18.
+    log.error("zalo_join_amount_read_failed", { reason: deps.classify(error) });
+  }
+  return [seat, line].join("\n");
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+type ClubPaymentStatus = Awaited<ReturnType<typeof readMyCharges>>["clubs"][number]["status"];
+
+/**
+ * The ONE outstanding-amount read of this channel, shared by /pay and the /join amount line
+ * (DD-140, lane L21): the replying account's own charges (the link gate's accountRef, never a
+ * client-supplied id) in THIS club. "unavailable" = the account, the summary or the club slug is
+ * not known; "absent" = this club is not in the account's list, kept apart from known_zero.
+ * Never catches: /pay keeps the outer fail-closed catch, the /join amount line has its own.
+ */
+async function ownClubPaymentStatus(
+  deps: PlayerCommandDeps,
+): Promise<{ kind: "unavailable" } | { kind: "absent" } | ClubPaymentStatus> {
+  const account = deps.gate.accountRef;
+  if (!account || !UUID.test(account)) return { kind: "unavailable" };
+  const charges = await deps.readCharges(account);
+  if (charges.summary.kind === "unknown") return { kind: "unavailable" };
+  const { slug } = await deps.payContext([]);
+  if (!slug) return { kind: "unavailable" };
+  return charges.clubs.find((c) => c.clubRef === slug)?.status ?? { kind: "absent" };
+}
+
 // /pay: own charges in THIS club only (4.6, P-17..P-20); any unknown is R-17, never 0 (P-19).
 async function payReply(deps: PlayerCommandDeps): Promise<string> {
-  const account = deps.gate.accountRef;
-  if (!account || !UUID.test(account)) return reply("R17");
-  const charges = await deps.readCharges(account);
-  if (charges.summary.kind === "unknown") return reply("R17");
-  const { slug } = await deps.payContext([]);
-  if (!slug) return reply("R17");
-  const st = charges.clubs.find((c) => c.clubRef === slug)?.status;
-  if (!st || st.kind === "known_zero") return reply("R16");
+  const st = await ownClubPaymentStatus(deps);
+  if (st.kind === "unavailable") return reply("R17");
+  if (st.kind === "absent" || st.kind === "known_zero") return reply("R16");
   if (st.kind !== "known_amount" || st.items.length === 0) return reply("R17");
   const { sessions } = await deps.payContext(st.items.map((i) => i.sessionRef));
   const rows: string[] = [];
