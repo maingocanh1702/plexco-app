@@ -128,8 +128,9 @@ services:
       # KHÔNG khai ở đây).
       # Không còn `env_file: ../.env` (audit 2026-09-06 X-4): worker từng nhận cả file
       # secret (SEPAY/GOOGLE/KMS...) dù không đọc biến nào trong đó.
-      # Giữ nguyên "false" — enablement blocker AP-35, xem .env.example.
-      OUTBOX_DISPATCH_SCHEDULE_ENABLED: "false"
+      # Default commit "true" (B3, DD-141): worker chỉ lên lịch khi cờ đúng "true", bản đồ projector không có stub
+      # và probe registry qua (xem .env.example). Projector seed tắt hết nên event chỉ được ack, chưa gửi gì.
+      OUTBOX_DISPATCH_SCHEDULE_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
