@@ -273,6 +273,9 @@ test.describe("/me/settings", () => {
       options: ["Chưa đặt", "Nam", "Nữ", "Khác", "Không tiết lộ"],
       consent: "Cho phép CLB sử dụng giới tính để tính giá",
       notShared: "Không chia sẻ giới tính",
+      // L22 pinned copy: N1 (the purpose notice at the field) and H (the privacy note heading).
+      notice: "Giới tính của bạn được dùng để tính giá khi CLB đặt giá theo giới tính cho một kèo.",
+      noteHeading: "Dữ liệu giới tính của bạn",
     };
     const en = {
       prompt:
@@ -281,8 +284,12 @@ test.describe("/me/settings", () => {
       options: ["Not set", "Male", "Female", "Other", "Prefer not to say"],
       consent: "Allow clubs to use my gender for pricing",
       notShared: "Gender not shared",
+      notice:
+        "Your gender is used to work out the price when a club sets a price by gender for a session.",
+      noteHeading: "Your gender data",
     };
-    // Unset gender, consent off: the prompt, the 4.9 options in order and the consent-off caption.
+    // Unset gender, consent off: the prompt, the 4.9 options in order and the consent-off caption,
+    // plus the L22 purpose notice at the field and the privacy note heading (both only while ON).
     const expectUnset = async (l: typeof vi) => {
       await expect(page.getByRole("status").filter({ hasText: l.prompt })).toBeVisible();
       const select = page.getByLabel(l.gender, { exact: true });
@@ -290,6 +297,10 @@ test.describe("/me/settings", () => {
       await expect(select.locator("option")).toHaveText(l.options);
       await expect(page.getByLabel(l.consent)).not.toBeChecked();
       await expect(page.getByText(l.notShared)).toBeVisible();
+      const notice = page.locator("#me-gender-notice");
+      await expect(notice).toBeVisible();
+      await expect(notice).toContainText(l.notice);
+      await expect(page.getByRole("heading", { name: l.noteHeading, exact: true })).toBeVisible();
     };
     await page.goto("/me/settings");
     await expectUnset(vi);
@@ -1003,6 +1014,17 @@ const SCREENS = [
     path: `/c/${TENANT_ID}/settings`,
     ready: (p: Page) => p.getByLabel("Token bot Zalo").waitFor(),
   },
+  {
+    // The one flag-ON screen: the mock's genderCollection, set the way the gender test sets it, so the
+    // purpose notice (#me-gender-notice) and the privacy note (#me-privacy) are scanned once.
+    name: "me settings, gender collection on",
+    path: "/me/settings",
+    genderCollection: true,
+    ready: async (p: Page) => {
+      await p.locator("#me-gender-notice").waitFor();
+      await p.locator("#me-privacy").waitFor();
+    },
+  },
 ];
 
 for (const scheme of SCHEMES) {
@@ -1014,7 +1036,8 @@ for (const scheme of SCHEMES) {
       });
       for (const screen of SCREENS) {
         test(screen.name, async ({ page }) => {
-          await install(page);
+          const world = await install(page);
+          if (screen.genderCollection) world.genderCollection = true;
           await page.goto(screen.path);
           await screen.ready(page);
           const results = await new AxeBuilder({ page })
