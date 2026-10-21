@@ -15,6 +15,10 @@ export function DetailsTab({ session }: { session: SessionDetailDto }) {
     [t("Môn", "Sport"), session.sportName],
     [t("Địa điểm", "Venue"), session.venueName ?? dash],
     [t("Địa chỉ", "Address"), session.venueAddress ?? dash],
+    [
+      t("Ẩn địa chỉ chính xác đến khi xác nhận", "Hide exact address until confirmed"),
+      session.hideExactAddress ? t("Bật", "On") : t("Tắt", "Off"),
+    ],
     [t("Khu vực", "Area"), session.area ?? dash],
     [t("Giá mỗi người", "Price per player"), formatVnd(session.priceAmount)],
     [
