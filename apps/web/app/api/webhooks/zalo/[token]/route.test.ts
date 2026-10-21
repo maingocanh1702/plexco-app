@@ -502,8 +502,11 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       if (row.err) vi.mocked(row.leave ? leaveSession : joinSession).mockRejectedValue(row.err);
       // DD-140: one open charge for S1 in this bot's club, through the /pay doubles (T-13 shape).
       if (row.owed) {
-        vi.mocked(readMyCharges).mockResolvedValue(FULL(ONE));
-        vi.mocked(readZaloPayContext).mockResolvedValue({ slug: "club-a", sessions: new Map() });
+        vi.mocked(readMyCharges).mockResolvedValueOnce(FULL(ONE));
+        vi.mocked(readZaloPayContext).mockResolvedValueOnce({
+          slug: "club-a",
+          sessions: new Map(),
+        });
       }
     };
     it("T-3: a replayed message joins once; a redelivered failed event gets R-9", async () => {
