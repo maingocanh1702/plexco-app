@@ -193,6 +193,7 @@ Leads NOT researched into rows (confirm each at the base before any row is writt
 - L13 (#85): O-1 `query_timeout` misses the pool wait, and O-2 the client timeout does not cancel the statement;
 - L16b (#91): the restore walk's `RESTORE_GETS` 20-page ceiling (PR #91 body);
 - L16 (#89): `authorLabel` isolation (verify it is done); L13a (#84): the review residual in the PR #84 body :242-245.
+- L1 (#62): production edge that PR left unchanged: `apps/web/components/pwa/offline-view.tsx:52-55` registers the `online` listener at `0a4e1b8` and the file has no `onLine` check (`git show 0a4e1b8:apps/web/components/pwa/offline-view.tsx | grep -c onLine` = 0); per the PR #62 body (section OPEN) a fallback shown while the browser is already online waits for an event that never comes.
 
 DD-138 completeness: the L14 (#83), L15 (#86), L16 (#89) and L12 (#77) tables come from the lanes' defaults sections. In the source
 ranges below, every line with a default marker (81 lines) was checked against the entry, and the defaults found (the B3 exceptions of L14, L15 and L16; rulings RO-L14-6, RO-L14-7, RO-S11-1, RO-S11-2 and RO-L16-2) became rows; every other lane granted a B3 exception now has its row too; lines without a marker were not read line by line:
