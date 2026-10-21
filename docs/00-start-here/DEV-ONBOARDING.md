@@ -74,7 +74,7 @@ Launch = **web app (installable/offline) + Zalo bot ra mắt song song** → pha
 **Chưa có, đừng đọc nhầm:**
 
 - **0 màn FE** — FE đang **PENDING theo lệnh owner** (DD-116 Option B), không phải "chưa kịp làm". Carve-out DD-119 vẫn **🟡 chưa ratify**. ⚠️ **12/10/2026: gỡ bởi DD-122** (full MVP; DD-119 superseded; chương trình `../autopilot-templates/web-mvp-2026-10-12-RUN.md`).
-- **Projector thật** — production vẫn là `productionStubDeliver` (DLQ mọi delivery) ⇒ `OUTBOX_DISPATCH_SCHEDULE_ENABLED` **OFF**.
+- **Gửi thật qua kênh** — cần owner bật projector trong registry (`outbox_projector_set_enabled`, runbook `outbox-dispatch-enable-rollback.md`); `zalo_dm` còn cần token Zalo thật (P0 của owner). `OUTBOX_DISPATCH_SCHEDULE_ENABLED` default commit `true` (B3, DD-141); worker chỉ lên lịch khi cờ đúng `"true"` và probe registry qua.
 - **Route ĐỌC session** (`GET /api/sessions`, `/[id]`) — chờ DD-56 amendment #3 ký.
 - **In-app Chat** — có DB root `0030`–`0032` và **0 dòng TS production nào đọc `chat_*`**. Schema không phải runtime.
 - **Zalo/Messenger adapter**, đối soát CK runtime, billing entitlement (`resolveCapability()` vẫn **0 caller production**).

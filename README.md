@@ -28,7 +28,7 @@ Zalo/Messenger là kênh acquisition/fallback; **In-app Chat là target primary 
 | Layer | Tech | Ghi chú |
 |---|---|---|
 | **Core** (logic thuần) | TypeScript | `packages/core` — matching, payments-logic, dates, format, i18n, sports |
-| **Bot** | Zalo/Messenger adapters vẫn là target; `apps/bot` live đã có pg-boss queues, fail-closed preflight, outbox dispatcher và scheduler gated | Schedule mặc định OFF; chưa có channel adapter, producer hay real projector |
+| **Bot** | Zalo/Messenger adapters vẫn là target; `apps/bot` live đã có pg-boss queues, fail-closed preflight, outbox dispatcher và scheduler gated | Default commit `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` trong `.env.example` từ 21/10 (B3, DD-141); worker chỉ lên lịch khi cờ đúng chuỗi `"true"` và probe registry qua; mọi projector seed tắt (migration 0056) nên chu kỳ dispatch chạy mà không deliver gì, gửi thật cần bước P0 của owner; chưa có channel adapter, producer hay real projector |
 | **Web** | Next.js App Router, standalone/container; SSE | `apps/web` — surface dashboard + discovery (DD-07/DD-10) |
 | **Database** | PostgreSQL + Drizzle ORM | RLS fail-closed, `tenantRepo` choke-point |
 | **Queue** | pg-boss | Cron, jobs trên Postgres |
@@ -173,7 +173,7 @@ Giới hạn đã biết:
 
 ## Port Registry
 
-> ⚠️ **Code baseline (`main@784bc8d`):** web hiện có health/auth/onboarding routes, chưa có business route. Messenger/Zalo/SePay webhook bên dưới vẫn là **spec/target**. `apps/bot` có shared job mechanics nhưng schedule OFF và chưa có producer/projector nghiệp vụ. Xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).
+> ⚠️ **Code baseline (`main@784bc8d`):** web hiện có health/auth/onboarding routes, chưa có business route. Messenger/Zalo/SePay webhook bên dưới vẫn là **spec/target**. `apps/bot` có shared job mechanics nhưng ~~schedule OFF~~ ⛔ **HẾT HIỆU LỰC 21/10 (DD-141)** — default commit nay `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` (`.env.example`); chỉ đúng chuỗi `"true"` mới bật; registry seed 0056 tắt mọi projector nên chu kỳ dispatch chạy mà không deliver gì và chưa có producer/projector nghiệp vụ. Xem [BUILD-STATUS.md](./docs/standards/BUILD-STATUS.md).
 
 | Service | Port | Ghi chú |
 |---|---|---|
