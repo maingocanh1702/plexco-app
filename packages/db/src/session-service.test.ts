@@ -72,9 +72,32 @@ const HIDDEN_VECTORS: ReadonlyArray<readonly [string, number]> = [
 ];
 type TextField = "area" | "venueName" | "venueAddress";
 const TEXT_FIELDS: readonly TextField[] = ["area", "venueName", "venueAddress"];
+// L23 D3 (strip-first): U+200B is a STRIP code point, so area and venue_name now store it stripped
+// (the L23 SS-R2 tests below); venue_address is not a public name and still refuses it.
 const TEXT_CASES = TEXT_FIELDS.flatMap((field) =>
-  HIDDEN_VECTORS.map(([label, cp]) => ({ field, label, cp })),
+  HIDDEN_VECTORS.filter(([, cp]) => field === "venueAddress" || cp !== 0x200b).map(
+    ([label, cp]) => ({ field, label, cp }),
+  ),
 );
+// L23 (owner A.1, R1-5 rejected): the two session fields shown publicly as names. STRIP_SAMPLES are
+// STRIP code points (text-safety.ts): zero-width space, soft hyphen, Hangul filler, two variation
+// selectors, two tag characters, the unassigned U+2065 and the unassigned U+E0FFF.
+const STRIP_SAMPLES = [0x200b, 0x00ad, 0x3164, 0xfe00, 0xfe0f, 0xe0001, 0xe0020, 0x2065, 0xe0fff];
+const REFUSE_SAMPLES = [0x0007, 0x202e, 0x2028, 0x2800]; // control, bidi, line separator, blank glyph
+const NAME_FIELDS = [
+  { field: "area", column: "area" },
+  { field: "venueName", column: "venue_name" },
+] as const;
+const named = (
+  field: "area" | "venueName",
+  value: string | null,
+): { area?: string | null; venueName?: string | null } =>
+  field === "area" ? { area: value } : { venueName: value };
+const nameOf = async (sessionId: string, column: "area" | "venue_name"): Promise<unknown> =>
+  (await ctx.owner.query(`SELECT area, venue_name FROM sessions WHERE id = $1`, [sessionId]))
+    .rows[0]?.[column];
+const HEART_VS16 = "Sân A " + ch(0x2764) + ch(0xfe0f);
+const FAMILY_ZWJ = ch(0x1f468) + ch(0x200d) + ch(0x1f469) + ch(0x200d) + ch(0x1f467);
 // Accepted text: Vietnamese NFC, the same string decomposed (NFD), an emoji + VS16.
 const OK_TEXTS = [
   "Sân Quận Tân Bình",
@@ -278,13 +301,76 @@ describe("createSession", () => {
     );
   });
 
-  it("TXT5: create stores Vietnamese NFC/NFD and an emoji with VS16 byte for byte; empty and null are accepted clears", async () => {
+  // L23 (owner A.1, R1-5 rejected): one test per decision-table row (R section 6) per name field.
+  describe.each(NAME_FIELDS)("L23 strip-first on create: $field", ({ field, column }) => {
+    it("SS-R1: a name with no STRIP or REFUSE code point is stored as sent", async () => {
+      const r = await create(named(field, "Sân Quận Tân Bình"));
+      expect(await nameOf(r.sessionId, column)).toBe("Sân Quận Tân Bình");
+    });
+
+    it("SS-R2: STRIP code points among visible text are dropped before every check and the insert", async () => {
+      for (const cp of STRIP_SAMPLES) {
+        const r = await create(named(field, "Sân" + ch(cp) + " A"));
+        expect(await nameOf(r.sessionId, column)).toBe("Sân A");
+      }
+    });
+
+    it("SS-R3: STRIP code points only (or with spaces) are handled exactly as the value without them", async () => {
+      for (const rest of ["", "  "]) {
+        const control = await create(named(field, rest));
+        const r = await create(named(field, ch(0x200b) + rest + ch(0xfe0f) + ch(0xe0fff)));
+        expect(await nameOf(r.sessionId, column)).toBe(await nameOf(control.sessionId, column));
+        expect(await nameOf(r.sessionId, column)).toBe(rest);
+      }
+    });
+
+    it("SS-R4 (D11, the owner rule's consequence, no emoji exception): U+FE0F and U+200D are stripped from emoji", async () => {
+      const heart = await create(named(field, HEART_VS16));
+      expect(await nameOf(heart.sessionId, column)).toBe("Sân A " + ch(0x2764));
+      const family = await create(named(field, FAMILY_ZWJ));
+      expect(await nameOf(family.sessionId, column)).toBe(ch(0x1f468) + ch(0x1f469) + ch(0x1f467));
+    });
+
+    it("SS-R5: a control, bidi, line-separator or blank-glyph character is refused as today, also beside a STRIP one", async () => {
+      for (const cp of REFUSE_SAMPLES) {
+        await expectReject(() => create(named(field, "Sân" + ch(cp) + "A")), "INVALID_TEXT_FIELD");
+        await expectReject(
+          () => create(named(field, "Sân" + ch(0x200b) + ch(cp) + "A")),
+          "INVALID_TEXT_FIELD",
+        );
+      }
+    });
+  });
+
+  it("SS-area-R3 public: a STRIP-only area on a public create is MISSING_DISCOVERY_FIELDS like an empty one", async () => {
+    for (const area of ["", ch(0x200b), " " + ch(0x200b) + ch(0xfe0f) + " "]) {
+      await expectReject(
+        () => create({ visibility: "public", slotsMax: 8, area }),
+        "MISSING_DISCOVERY_FIELDS",
+      );
+    }
+  });
+
+  it("SS-venue-R3 public: a STRIP-only venue_name on a public create is handled as empty (stored as the empty string)", async () => {
+    const r = await create({
+      visibility: "public",
+      slotsMax: 8,
+      area: "Quận 1",
+      venueName: ch(0x200b) + ch(0xfe0f),
+    });
+    expect(await nameOf(r.sessionId, "venue_name")).toBe("");
+  });
+
+  // L23 D3/D11 (strip-first): area and venue_name drop the VS16 of the emoji sample; venue_address
+  // keeps today's rule and stores it byte for byte.
+  it("TXT5: create stores Vietnamese NFC/NFD byte for byte and the emoji sample without its VS16 in area and venue_name; empty and null are accepted clears", async () => {
     for (const text of OK_TEXTS) {
       const r = await create({ area: text, venueName: text, venueAddress: text });
       const s = await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
         r.sessionId,
       ]);
-      expect(s).toEqual({ area: text, venue_name: text, venue_address: text });
+      const name = text.split(ch(0xfe0f)).join("");
+      expect(s).toEqual({ area: name, venue_name: name, venue_address: text });
     }
     const empty = await create({ area: "", venueName: "", venueAddress: "" });
     const nulled = await create({ area: null, venueName: null, venueAddress: null });
@@ -3114,15 +3200,156 @@ describe("updateSession", () => {
       () => update(tenantId, { sessionId, expectedVersion: version, venueName: "Sân A\n" }),
       "INVALID_TEXT_FIELD",
     );
-    await expectUpdateReject(
-      () => update(tenantId, { sessionId, expectedVersion: version, area: "Quận 1" + ch(0x200b) }),
-      "INVALID_TEXT_FIELD",
-    );
+    // L23 D3 (strip-first): U+200B is a STRIP code point, so "Quận 1" + U+200B is stripped to the
+    // stored "Quận 1" before the change detection: accepted as no change (was INVALID_TEXT_FIELD).
+    const noop = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      area: "Quận 1" + ch(0x200b),
+    });
+    expect(noop).toMatchObject({ version });
     expect(await sessionState(sessionId)).toMatchObject({ version, area: "Quận 1" });
     expect(await updatedEvents(sessionId)).toHaveLength(0);
   });
 
-  it("TXT5b: update stores Vietnamese NFC/NFD and an emoji with VS16 byte for byte; null and empty clear the field", async () => {
+  // L23 (owner A.1, R1-5 rejected): one test per decision-table row (R section 6) per name field.
+  describe.each(NAME_FIELDS)("L23 strip-first on update: $field", ({ field, column }) => {
+    const seedOpen = async () => {
+      const tenantId = await seedTenant("active", "active");
+      return { tenantId, ...(await seedSession(tenantId, { area: "Quận 1" })) };
+    };
+
+    it("SS-R1: a name with no STRIP or REFUSE code point is stored as sent", async () => {
+      const { tenantId, sessionId, version } = await seedOpen();
+      await update(tenantId, {
+        sessionId,
+        expectedVersion: version,
+        ...named(field, "Sân Quận Tân Bình"),
+      });
+      expect(await nameOf(sessionId, column)).toBe("Sân Quận Tân Bình");
+    });
+
+    it("SS-R2: STRIP code points among visible text are dropped before the change detection, the store and the event", async () => {
+      const { tenantId, sessionId, version: v0 } = await seedOpen();
+      let version = v0;
+      for (const [i, cp] of STRIP_SAMPLES.entries()) {
+        const r = await update(tenantId, {
+          sessionId,
+          expectedVersion: version,
+          ...named(field, `Sân${ch(cp)} ${i}`),
+        });
+        expect(r.version).toBe(version + 1);
+        version = r.version;
+        expect(await nameOf(sessionId, column)).toBe(`Sân ${i}`);
+      }
+      expect(await updatedEvents(sessionId)).toHaveLength(STRIP_SAMPLES.length);
+    });
+
+    it("SS-R2 no change: an update that differs from the stored name only by STRIP code points is no change and emits no event", async () => {
+      const { tenantId, sessionId, version } = await seedOpen();
+      const set = await update(tenantId, {
+        sessionId,
+        expectedVersion: version,
+        ...named(field, "Sân A"),
+      });
+      const events = (await updatedEvents(sessionId)).length;
+      const noop = await update(tenantId, {
+        sessionId,
+        expectedVersion: set.version,
+        ...named(field, "Sân" + ch(0x200b) + " A" + ch(0xfe0f)),
+      });
+      expect(noop.version).toBe(set.version);
+      expect(await nameOf(sessionId, column)).toBe("Sân A");
+      expect(await updatedEvents(sessionId)).toHaveLength(events);
+    });
+
+    it("SS-R3: STRIP code points only (or with spaces) are handled exactly as the value without them", async () => {
+      for (const rest of ["", "  "]) {
+        const control = await seedOpen();
+        const target = await seedOpen();
+        await update(control.tenantId, {
+          sessionId: control.sessionId,
+          expectedVersion: control.version,
+          ...named(field, rest),
+        });
+        await update(target.tenantId, {
+          sessionId: target.sessionId,
+          expectedVersion: target.version,
+          ...named(field, ch(0x200b) + rest + ch(0xfe0f) + ch(0xe0fff)),
+        });
+        expect(await nameOf(target.sessionId, column)).toBe(
+          await nameOf(control.sessionId, column),
+        );
+        expect(await nameOf(target.sessionId, column)).toBe(rest);
+      }
+    });
+
+    it("SS-R4 (D11, the owner rule's consequence, no emoji exception): U+FE0F and U+200D are stripped from emoji", async () => {
+      const { tenantId, sessionId, version } = await seedOpen();
+      const heart = await update(tenantId, {
+        sessionId,
+        expectedVersion: version,
+        ...named(field, HEART_VS16),
+      });
+      expect(await nameOf(sessionId, column)).toBe("Sân A " + ch(0x2764));
+      await update(tenantId, {
+        sessionId,
+        expectedVersion: heart.version,
+        ...named(field, FAMILY_ZWJ),
+      });
+      expect(await nameOf(sessionId, column)).toBe(ch(0x1f468) + ch(0x1f469) + ch(0x1f467));
+    });
+
+    it("SS-R5: a control, bidi, line-separator or blank-glyph character is refused as today, also beside a STRIP one", async () => {
+      const { tenantId, sessionId, version } = await seedOpen();
+      for (const cp of REFUSE_SAMPLES) {
+        for (const value of ["Sân" + ch(cp) + "A", "Sân" + ch(0x200b) + ch(cp) + "A"]) {
+          await expectUpdateReject(
+            () => update(tenantId, { sessionId, expectedVersion: version, ...named(field, value) }),
+            "INVALID_TEXT_FIELD",
+          );
+        }
+      }
+      expect(await sessionState(sessionId)).toMatchObject({ version, area: "Quận 1" });
+      expect(await updatedEvents(sessionId)).toHaveLength(0);
+    });
+  });
+
+  it("SS-area-R3 public: a STRIP-only area on a public session update is MISSING_DISCOVERY_FIELDS like an empty one", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      visibility: "public",
+      area: "Quận 1",
+      slotsMax: 8,
+    });
+    for (const area of ["", ch(0x200b), " " + ch(0x200b) + ch(0xfe0f) + " "]) {
+      await expectUpdateReject(
+        () => update(tenantId, { sessionId, expectedVersion: version, area }),
+        "MISSING_DISCOVERY_FIELDS",
+      );
+    }
+    expect(await sessionState(sessionId)).toMatchObject({ version, area: "Quận 1" });
+  });
+
+  it("SS-venue-R3 public: a STRIP-only venue_name on a public session update is handled as empty (stored as the empty string)", async () => {
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId, {
+      visibility: "public",
+      area: "Quận 1",
+      slotsMax: 8,
+    });
+    const r = await update(tenantId, {
+      sessionId,
+      expectedVersion: version,
+      venueName: ch(0x200b) + ch(0xfe0f),
+    });
+    expect(r.version).toBe(version + 1);
+    expect(await nameOf(sessionId, "venue_name")).toBe("");
+  });
+
+  // L23 D3/D11 (strip-first): area and venue_name drop the VS16 of the emoji sample; venue_address
+  // keeps today's rule and stores it byte for byte.
+  it("TXT5b: update stores Vietnamese NFC/NFD byte for byte and the emoji sample without its VS16 in area and venue_name; null and empty clear the field", async () => {
     const tenantId = await seedTenant("active", "active");
     const seeded = await seedSession(tenantId, { area: "Quận 1" });
     const sessionId = seeded.sessionId;
@@ -3136,11 +3363,12 @@ describe("updateSession", () => {
         venueAddress: text,
       });
       version = r.version;
+      const name = text.split(ch(0xfe0f)).join("");
       expect(
         await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
           sessionId,
         ]),
-      ).toEqual({ area: text, venue_name: text, venue_address: text });
+      ).toEqual({ area: name, venue_name: name, venue_address: text });
     }
     const cleared = await update(tenantId, {
       sessionId,
