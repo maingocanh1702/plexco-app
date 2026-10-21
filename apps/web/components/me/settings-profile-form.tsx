@@ -143,6 +143,7 @@ export function SettingsProfileForm({
           <Select
             label={t("Giới tính", "Gender")}
             value={gender}
+            aria-describedby="me-gender-notice"
             options={[
               { value: "", label: t("Chưa đặt", "Not set") },
               ...GENDER_VALUES.map((v) => ({ value: v, label: genderLabel[v] })),
@@ -153,6 +154,22 @@ export function SettingsProfileForm({
               setSaved(false);
             }}
           />
+          {/* Purpose notice at the point of collection, wired to the Select by aria-describedby.
+              Copy pinned byte for byte in the L22 readiness file (docs/sessions): never reword. */}
+          <p id="me-gender-notice" className={styles.caption}>
+            {t(
+              "Giới tính của bạn được dùng để tính giá khi CLB đặt giá theo giới tính cho một kèo.",
+              "Your gender is used to work out the price when a club sets a price by gender for a session.",
+            )}{" "}
+            {t(
+              "Việc đặt giới tính là tuỳ chọn; nếu để chưa đặt, bạn trả giá mặc định của kèo.",
+              "Setting your gender is optional; if you leave it unset, you pay the default price of the session.",
+            )}{" "}
+            {t(
+              "CLB chỉ được dùng giới tính của bạn để tính giá nếu bạn đánh dấu ô bên dưới.",
+              "Clubs can use your gender for pricing only if you tick the box below.",
+            )}
+          </p>
           <label>
             <input
               type="checkbox"
