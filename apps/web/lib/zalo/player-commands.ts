@@ -155,15 +155,19 @@ async function numberReply(token: string, deps: PlayerCommandDeps): Promise<stri
   if (r.outcome !== "active") return seat;
   // DD-140 (lane L21): the ACTIVE confirmation adds the amount owed for THIS seat from the /pay
   // read (one source; item.remaining as the source computes it). No partial marker, so a new and
-  // an existing seat read the same (P-11). Every other case, a throw included, is R17: never 0,
+  // an existing seat read the same (P-11). Shown only for EXACTLY one matching charge:
+  // 0 or 2+ (never summed, never picked) and a throw (logged by reason only) are R17. Never 0,
   // never a guess. Waitlisted and requested replies never read money.
   let line = reply("R17");
   try {
     const st = await ownClubPaymentStatus(deps);
-    const item = st.kind === "known_amount" && st.items.find((i) => i.sessionRef === row.sessionId);
+    const items =
+      st.kind === "known_amount" ? st.items.filter((i) => i.sessionRef === row.sessionId) : [];
+    const item = items.length === 1 ? items[0] : undefined;
     if (item) line = reply("R1amount", { amount: formatVnd(item.remaining) });
-  } catch {
+  } catch (error) {
     // Caught here, not in runPlayerCommand: the seat is already taken, so R17 and never R18.
+    log.error("zalo_join_amount_read_failed", { reason: deps.classify(error) });
   }
   return [seat, line].join("\n");
 }
