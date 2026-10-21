@@ -53,9 +53,13 @@ describe("DiscoverDetailView", () => {
     expect(text(html)).not.toContain("join slot");
   });
 
-  it("ready: the whitelisted listing fields and the join slot, with no id and no venue", () => {
+  it("ready: the whitelisted listing fields and the join slot, with no id", () => {
     const html = render({ status: "ready", listing: LISTING });
     expect(stateOf(html)).toBe("ready");
+    // A-2, A-6 (DD-139): the server sent no venue (option ON or none typed), so no line and no
+    // placeholder: no empty paragraph and no "null" or "undefined" text.
+    expect(html).not.toMatch(/<p[^>]*><\/p>/);
+    expect(text(html)).not.toMatch(/null|undefined/);
     expect(html).toMatch(/<h1[^>]*>Pickleball cuối tuần<\/h1>/);
     const visible = text(html);
     for (const shown of [
@@ -77,26 +81,25 @@ describe("DiscoverDetailView", () => {
     expect(html).toMatch(/<h1[^>]*>Pickleball<\/h1>/);
   });
 
-  it("ignores non-whitelisted keys: gender, per-gender price, bank, QR and venue never render", () => {
+  it("ready: the venue name and the full address show when the server sends them (A-1, D-5)", () => {
+    const venueName = "Sân Cầu Lông A1";
+    const venueAddress = "12 Phố Huế, phường Hai Bà Trưng, Hà Nội";
+    const html = render({ status: "ready", listing: { ...LISTING, venueName, venueAddress } });
+    const visible = text(html);
+    expect(visible).toContain(venueName);
+    expect(visible).toContain(venueAddress); // full text, no truncation (D-5)
+  });
+
+  it("ignores non-whitelisted keys: gender, per-gender price, bank and QR never render", () => {
     const injected = {
       ...LISTING,
       genderRestriction: "male",
       priceByGender: { male: 70001, female: 50002 },
       bankAccount: "0123456789",
       qrUrl: "https://qr.example/pay",
-      venueName: "San Cau Long A1",
-      venueAddress: "12 Pho Hue",
     } as unknown as DiscoveryListing;
     const html = render({ status: "ready", listing: injected });
-    for (const leaked of [
-      "70001",
-      "50002",
-      "0123456789",
-      "qr.example",
-      "San Cau Long A1",
-      "12 Pho Hue",
-      "male",
-    ]) {
+    for (const leaked of ["70001", "50002", "0123456789", "qr.example", "male"]) {
       expect(html).not.toContain(leaked);
     }
   });
