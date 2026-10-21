@@ -330,7 +330,7 @@ describe("isolation (A-1, A-2)", () => {
 });
 
 describe("sessions and requests (A-3, M-3, M-4, M-5)", () => {
-  it("A-3: venue only when active; waitlisted area + position; pending area only; left, ended, draft, closed, cancelled absent", async () => {
+  it("A-3 (DD-139 B1, A-1 / A-6): option OFF, the default: the venue for active, waitlisted and pending alike; waitlisted area + position; an untyped venue stays null; left, ended, draft, closed, cancelled absent", async () => {
     const t = await club("Three");
     const a = await person("Alice Three");
     const m = await member(t.id, a.personId);
@@ -340,6 +340,11 @@ describe("sessions and requests (A-3, M-3, M-4, M-5)", () => {
     const s3 = await session(t.id, 3);
     const s4 = await session(t.id, 4);
     const s5 = await session(t.id, 6);
+    const s6 = await session(t.id, 7); // no venue typed (A-6): null, never a placeholder
+    await ctx.owner.query(
+      `UPDATE sessions SET venue_name = NULL, venue_address = NULL WHERE id = $1`,
+      [s6],
+    );
     await player(t.id, live, m);
     await player(t.id, s1, m);
     await player(t.id, s2, m, "waitlisted", 3);
@@ -347,6 +352,7 @@ describe("sessions and requests (A-3, M-3, M-4, M-5)", () => {
     await player(t.id, s4, m, "left");
     await player(t.id, s5, m); // a players row wins over a pending request on the same session
     await joinRequest(t.id, s5, a.personId);
+    await player(t.id, s6, m);
     for (const status of ["draft", "closed", "cancelled"]) {
       await player(t.id, await session(t.id, 5, status), m);
     }
@@ -370,12 +376,52 @@ describe("sessions and requests (A-3, M-3, M-4, M-5)", () => {
       sessions: [
         row(live, "active", null, true),
         row(s1, "active", null, true),
-        row(s2, "waitlisted", 3, false),
-        row(s3, "pending", null, false),
+        row(s2, "waitlisted", 3, true),
+        row(s3, "pending", null, true),
         row(s5, "active", null, true),
+        row(s6, "active", null, false),
       ],
       truncated: false,
     });
+  });
+
+  it("DD-139 B1 (A-3 / A-4): option ON: the venue for an active seat only; waitlisted and pending get the area only; a left seat stays absent (M-3); OFF again returns the venue", async () => {
+    const t = await club("Three On");
+    const a = await person("Alice Three On");
+    const m = await member(t.id, a.personId);
+    const active = await session(t.id, 1);
+    const waitlisted = await session(t.id, 2);
+    const pending = await session(t.id, 3);
+    await player(t.id, active, m);
+    await player(t.id, waitlisted, m, "waitlisted", 1);
+    await joinRequest(t.id, pending, a.personId);
+    await player(t.id, await session(t.id, 4), m, "left");
+    const hide = (on: boolean) =>
+      ctx.owner.query(`UPDATE sessions SET hide_exact_address = $2 WHERE tenant_id = $1`, [
+        t.id,
+        on,
+      ]);
+    const venues = async () =>
+      (await listMySessions(ctx.appPool, a.accountId)).sessions.map((s) => [
+        s.sessionId,
+        s.myStatus,
+        s.area,
+        s.venueName,
+        s.venueAddress,
+      ]);
+
+    await hide(true);
+    expect(await venues()).toEqual([
+      [active, "active", AREA, VENUE, ADDRESS],
+      [waitlisted, "waitlisted", AREA, null, null],
+      [pending, "pending", AREA, null, null],
+    ]);
+    await hide(false);
+    expect(await venues()).toEqual([
+      [active, "active", AREA, VENUE, ADDRESS],
+      [waitlisted, "waitlisted", AREA, VENUE, ADDRESS],
+      [pending, "pending", AREA, VENUE, ADDRESS],
+    ]);
   });
 
   it("M-4: own requests pending, approved, rejected on sessions not ended, newest first; expired, cancelled, ended absent", async () => {

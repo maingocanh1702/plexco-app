@@ -250,4 +250,33 @@ describe("0059 and 0066 under a NOBYPASSRLS migration owner (A-14)", () => {
     // B holds no membership in club two
     expect(await call(seed.b.accountId, "l9-nb-two")).toEqual([]);
   });
+
+  it("DD-139 B1 (A-3 / A-4) under this owner: option OFF shows the venue on A's pending row; ON keeps it on the active seat only", async () => {
+    const venues = async () =>
+      (await listMySessions(app, seed.a.accountId)).sessions.map((s) => [
+        s.sessionId,
+        s.myStatus,
+        s.venueName,
+      ]);
+    expect(await venues()).toEqual([
+      [seed.s1, "active", "Hall"],
+      [seed.s2, "active", "Hall"],
+      [seed.s3, "pending", "Hall"],
+    ]);
+    const hide = (on: boolean) =>
+      su.query(`UPDATE sessions SET hide_exact_address = $2 WHERE id = ANY($1::uuid[])`, [
+        [seed.s1, seed.s3],
+        on,
+      ]);
+    await hide(true);
+    try {
+      expect(await venues()).toEqual([
+        [seed.s1, "active", "Hall"],
+        [seed.s2, "active", "Hall"],
+        [seed.s3, "pending", null],
+      ]);
+    } finally {
+      await hide(false);
+    }
+  });
 });
