@@ -232,6 +232,10 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
       "gender_restriction",
       "age_min",
       "age_max",
+      // 0067 (DD-139 / owner decision B1): the projected venue, NULL whenever the
+      // session's hide_exact_address option is ON.
+      "venue_name",
+      "venue_address",
     ]);
   });
 
@@ -565,6 +569,10 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
         "gender_restriction",
         "age_min",
         "age_max",
+        // 0067 (DD-139 / owner decision B1): the projected venue, NULL whenever the
+        // session's hide_exact_address option is ON.
+        "venue_name",
+        "venue_address",
       ].sort(),
     );
     for (const hidden of [
@@ -577,8 +585,10 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     ]) {
       expect(cols).not.toContain(hidden);
     }
+    // venue_address left this list in 0067: the venue is public by default (DD-139 / owner
+    // decision B1), and the writer projects NULL while hide_exact_address is ON.
     const smelly = cols.filter((c) =>
-      /(phone|email|debt|paid|roster|member|account|secret|token|venue_address|fence)/i.test(c),
+      /(phone|email|debt|paid|roster|member|account|secret|token|fence)/i.test(c),
     );
     expect(smelly).toEqual([]);
   });

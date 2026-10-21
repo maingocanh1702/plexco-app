@@ -148,3 +148,238 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.account_my_sessions(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.account_my_sessions(uuid) TO app;
+
+-- ---------------------------------------------------------------------------
+-- Section C (DD-139 / owner decision B1): the share view serves the venue and the writer projects
+-- it unless the host hid it. Created AS job_definer in the 0061:90-91 / 0061:509-510 bracket; this
+-- text supersedes the 0061 text of public_session_share_v and public_sessions_project_session (0061
+-- is never edited). Owner and ACL stay as 0061 set them; the ACL is restated below.
+-- T1: hide_exact_address ON => the writer projects NULL venue columns; the view never serves them.
+-- T3: toggling the option re-projects (the 0061:494 route); the next run clears or restores the venue.
+-- ---------------------------------------------------------------------------
+GRANT CREATE ON SCHEMA public TO job_definer;
+SET ROLE job_definer;
+
+-- CREATE OR REPLACE VIEW may only append columns, and it replaces reloptions: security_barrier is
+-- restated. The 17 columns and the FROM / WHERE part are the 0061 text unchanged.
+CREATE OR REPLACE VIEW public.public_session_share_v WITH (security_barrier = true) AS
+SELECT
+  ps.public_listing_id,
+  ps.sport_key,
+  ps.starts_at,
+  ps.ends_at,
+  ps.area,
+  ps.price_amount,
+  ps.slots_open,
+  t.public_alias AS club_display_name,
+  ps.join_policy,
+  ps.title,
+  ps.session_type,
+  ps.level_min_rank,
+  ps.level_max_rank,
+  ps.level_strict,
+  ps.gender_restriction,
+  ps.age_min,
+  ps.age_max,
+  ps.venue_name,
+  ps.venue_address
+FROM public_sessions ps
+JOIN tenants t ON t.id = ps.tenant_id
+WHERE ps.expires_at > now()
+  AND t.public_alias_status = 'approved'
+  AND t.status NOT IN ('suspended', 'cancelled')
+  AND NOT EXISTS (
+    SELECT 1 FROM public_projection_fences f
+    WHERE f.surface = 'session_share'
+      AND f.target_kind = 'session'
+      AND f.target_id = ps.session_id
+      AND f.deny_scope IN ('public','all')
+  );
+
+-- The 0061 writer with the venue added (R2). CREATE OR REPLACE keeps the owner and the ACL but
+-- resets every omitted attribute, so all of them are restated.
+CREATE OR REPLACE FUNCTION public.public_sessions_project_session(p_session_id uuid, p_event_id uuid)
+RETURNS text
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_found         boolean;
+  v_tenant_id     uuid;
+  v_status        text;
+  v_visibility    text;
+  v_starts_at     timestamptz;
+  v_ends_at       timestamptz;
+  v_area          text;
+  v_price_amount  integer;
+  v_slots_max     integer;
+  v_join_policy   text;
+  v_sport_key     text;
+  v_tenant_status text;
+  v_alias_status  text;
+  v_venue_name    text;
+  v_venue_address text;
+  v_listable      boolean;
+  v_slots_open    integer;
+  v_existed       boolean;
+  v_rows          integer;
+  v_fence_token   uuid;
+  v_disposition   text;
+BEGIN
+  -- D8 (s2 S2-SF-1): D3's observe-then-recompute order needs a fresh snapshot per statement after
+  -- the lock (READ COMMITTED); a caller-held or imported REPEATABLE READ / SERIALIZABLE snapshot
+  -- could replay a past public state.
+  IF current_setting('transaction_isolation') IS DISTINCT FROM 'read committed' THEN
+    RAISE EXCEPTION 'public_sessions_project_session: transaction isolation %',
+      current_setting('transaction_isolation') USING ERRCODE = '25000';
+  END IF;
+  -- P-11: one writer per session at a time; the slug definers take the same lock.
+  PERFORM pg_advisory_xact_lock(hashtextextended('public-sessions:' || p_session_id::text, 0));
+  -- D3 (s1 S-1): observe the DD-12 fence token BEFORE any canonical read. A raise commits with its
+  -- source transition, so every token observed here predates the rows read below; the last
+  -- statement CAS-clears exactly this token, and a raise committed after this read survives.
+  v_fence_token := current_public_session_fence_token(p_session_id);
+
+  -- DD-139 / B1 (T1): the venue is masked at this read (the writer's only read of sessions), so no
+  -- path below can write a venue the host hid; an untyped venue stays NULL.
+  SELECT s.tenant_id, s.status, s.visibility, s.starts_at, s.ends_at, s.area, s.price_amount,
+         s.slots_max, s.join_policy, sp.key, t.status, t.public_alias_status,
+         CASE WHEN s.hide_exact_address THEN NULL ELSE s.venue_name END,
+         CASE WHEN s.hide_exact_address THEN NULL ELSE s.venue_address END
+    INTO v_tenant_id, v_status, v_visibility, v_starts_at, v_ends_at, v_area, v_price_amount,
+         v_slots_max, v_join_policy, v_sport_key, v_tenant_status, v_alias_status,
+         v_venue_name, v_venue_address
+    FROM sessions s
+    JOIN sports sp ON sp.id = s.sport_id
+    JOIN tenants t ON t.id = s.tenant_id
+   WHERE s.id = p_session_id;
+  v_found := FOUND;
+
+  -- Every eligibility condition except slots_max (P-4: future = starts_at > now(); P-7).
+  v_listable := coalesce(
+    v_found
+      AND v_status = 'open'
+      AND v_visibility = 'public'
+      AND v_starts_at > now()
+      AND btrim(coalesce(v_area, '')) <> ''
+      AND v_alias_status = 'approved'
+      AND v_tenant_status NOT IN ('suspended', 'cancelled'),
+    false);
+
+  IF v_listable AND v_slots_max IS NULL THEN
+    -- R-1 / P-6: defensive (sessions_public_capacity_chk makes it unrepresentable for public
+    -- sessions): an unlimited session is never projected, and the event is audited once.
+    DELETE FROM public_sessions WHERE id = p_session_id;
+    UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
+     WHERE session_id = p_session_id AND revoked_at IS NULL;
+    IF p_event_id IS NOT NULL THEN
+      INSERT INTO job_audit_events (job_id, tenant_id, actor, reason, fn_name, operation_id)
+      VALUES (p_event_id, v_tenant_id, 'system', 'public_projection_ineligible_unlimited',
+              'public_sessions_project_session', gen_random_uuid());
+    END IF;
+    v_disposition := 'ineligible_unlimited';
+  ELSIF NOT v_listable THEN
+    -- draft, private, closed, cancelled, past, blank area, no approved alias, suspended or
+    -- cancelled tenant, or no such session: no row; the active slug dies with the listing.
+    DELETE FROM public_sessions WHERE id = p_session_id;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+    UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
+     WHERE session_id = p_session_id AND revoked_at IS NULL;
+    v_disposition := CASE WHEN v_rows > 0 THEN 'deleted' ELSE 'absent' END;
+  ELSE
+    v_slots_open := greatest(0, v_slots_max - session_occupancy(p_session_id));
+
+    IF EXISTS (
+      SELECT 1 FROM public_projection_fences f
+      WHERE f.surface = 'session_share'
+        AND f.target_kind = 'session'
+        AND f.target_id = p_session_id
+        AND f.deny_scope IN ('public','all')
+    ) THEN
+      -- P-16: an eligible recompute under a fence replaces the row (new public_listing_id, active
+      -- slug tombstoned), so a public -> private -> public flip seen only afterwards still rotates.
+      DELETE FROM public_sessions WHERE id = p_session_id;
+      INSERT INTO public_sessions (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+          price_amount, slots_open, join_policy, projected_at, expires_at, public_projection_version,
+          title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction,
+          age_min, age_max, venue_name, venue_address)
+      VALUES (p_session_id, p_session_id, v_tenant_id, v_sport_key, v_starts_at, v_ends_at, v_area,
+          v_price_amount, v_slots_open, v_join_policy, now(), v_starts_at, 1,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, v_venue_name, v_venue_address);
+      UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
+       WHERE session_id = p_session_id AND revoked_at IS NULL;
+      v_disposition := 'rotated';
+    ELSE
+      v_existed := EXISTS (SELECT 1 FROM public_sessions WHERE id = p_session_id);
+      -- P-5: version 1 on insert, +1 only when a projected column changed (re-delivery = no write).
+      -- public_listing_id is never updated. The DD-41 columns are written NULL (P-1).
+      INSERT INTO public_sessions AS ps (id, session_id, tenant_id, sport_key, starts_at, ends_at, area,
+          price_amount, slots_open, join_policy, projected_at, expires_at, public_projection_version,
+          title, session_type, level_min_rank, level_max_rank, level_strict, gender_restriction,
+          age_min, age_max, venue_name, venue_address)
+      VALUES (p_session_id, p_session_id, v_tenant_id, v_sport_key, v_starts_at, v_ends_at, v_area,
+          v_price_amount, v_slots_open, v_join_policy, now(), v_starts_at, 1,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, v_venue_name, v_venue_address)
+      ON CONFLICT (id) DO UPDATE SET
+          sport_key = EXCLUDED.sport_key,
+          starts_at = EXCLUDED.starts_at,
+          ends_at = EXCLUDED.ends_at,
+          area = EXCLUDED.area,
+          price_amount = EXCLUDED.price_amount,
+          slots_open = EXCLUDED.slots_open,
+          join_policy = EXCLUDED.join_policy,
+          projected_at = EXCLUDED.projected_at,
+          expires_at = EXCLUDED.expires_at,
+          public_projection_version = ps.public_projection_version + 1,
+          title = EXCLUDED.title,
+          session_type = EXCLUDED.session_type,
+          level_min_rank = EXCLUDED.level_min_rank,
+          level_max_rank = EXCLUDED.level_max_rank,
+          level_strict = EXCLUDED.level_strict,
+          gender_restriction = EXCLUDED.gender_restriction,
+          age_min = EXCLUDED.age_min,
+          age_max = EXCLUDED.age_max,
+          venue_name = EXCLUDED.venue_name,
+          venue_address = EXCLUDED.venue_address
+        WHERE (ps.sport_key, ps.starts_at, ps.ends_at, ps.area, ps.price_amount, ps.slots_open,
+               ps.join_policy, ps.expires_at, ps.title, ps.session_type, ps.level_min_rank,
+               ps.level_max_rank, ps.level_strict, ps.gender_restriction, ps.age_min, ps.age_max,
+               ps.venue_name, ps.venue_address)
+              IS DISTINCT FROM
+              (EXCLUDED.sport_key, EXCLUDED.starts_at, EXCLUDED.ends_at, EXCLUDED.area,
+               EXCLUDED.price_amount, EXCLUDED.slots_open, EXCLUDED.join_policy, EXCLUDED.expires_at,
+               EXCLUDED.title, EXCLUDED.session_type, EXCLUDED.level_min_rank, EXCLUDED.level_max_rank,
+               EXCLUDED.level_strict, EXCLUDED.gender_restriction, EXCLUDED.age_min, EXCLUDED.age_max,
+               EXCLUDED.venue_name, EXCLUDED.venue_address);
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+      IF NOT v_existed THEN
+        -- P-17: a new listing never inherits a slug minted for an earlier one.
+        UPDATE public_session_share_slugs SET revoked_at = clock_timestamp()
+         WHERE session_id = p_session_id AND revoked_at IS NULL;
+        v_disposition := 'upserted';
+      ELSE
+        v_disposition := CASE WHEN v_rows > 0 THEN 'upserted' ELSE 'unchanged' END;
+      END IF;
+    END IF;
+  END IF;
+
+  -- D3: every path above leaves the row converged, so the CAS-clear of the OBSERVED token is the
+  -- last statement; a newer token (a raise after the observation) is never cleared by this run.
+  IF v_fence_token IS NOT NULL THEN
+    PERFORM clear_public_session_fence(p_session_id, v_fence_token);
+  END IF;
+  RETURN v_disposition;
+END;
+$$;
+
+-- The 0061:477-487 ACL of these two objects, restated as 0061 states it (no other role).
+REVOKE ALL ON FUNCTION public.public_sessions_project_session(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON public.public_session_share_v FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.public_sessions_project_session(uuid, uuid) TO app_worker;
+GRANT SELECT ON public.public_session_share_v TO readonly;
+
+RESET ROLE;
+REVOKE CREATE ON SCHEMA public FROM job_definer;

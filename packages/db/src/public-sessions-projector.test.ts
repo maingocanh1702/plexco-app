@@ -16,7 +16,9 @@ import { setupRlsTestContext, withJobDefinerLock, type RlsTestContext } from "./
 const DB_NAME = "plexco_public_sessions_projector";
 const BASE = process.env.DATABASE_URL_TEST!;
 const HOUR = 3_600_000;
-const SECRET = "Secret"; // every person, guest, tenant name and venue fixture carries it
+// Every person, guest and tenant name fixture carries SECRET; the venue fixture no longer does:
+// the venue is public by default under DD-139 (owner decision B1), so the view serves it.
+const SECRET = "Secret";
 let ctx: RlsTestContext;
 
 beforeAll(async () => {
@@ -63,6 +65,8 @@ const TABLE_COLS = [
   "age_min",
   "age_max",
   "public_listing_id",
+  "venue_name",
+  "venue_address",
 ];
 const VIEW_COLS = [
   "public_listing_id",
@@ -82,8 +86,11 @@ const VIEW_COLS = [
   "gender_restriction",
   "age_min",
   "age_max",
+  "venue_name",
+  "venue_address",
 ];
-const DD41_COLS = VIEW_COLS.slice(9);
+// The eight DD-41 columns (written NULL, P-1); the venue after them is projected (DD-139 / B1).
+const DD41_COLS = VIEW_COLS.slice(9, 17);
 
 /** One app transaction with the tenant GUC set (or deliberately unset), like withTenant. */
 async function asApp<T>(tenantId: string | null, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -126,13 +133,13 @@ async function session(tenantId: string, s: SessionSeed = {}): Promise<string> {
   const [r] = await owner(
     `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
        price_amount, slots_max, visibility, join_policy, status)
-     VALUES ($1, $2, $3, $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', $4, $4, $5, 50000, $6, $7, 'open', $8)
+     VALUES ($1, $2, $3, $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', $4, '1 Public Street', $5, 50000, $6, $7, 'open', $8)
      RETURNING id`,
     [
       tenantId,
       ctx.badmintonSportId,
       starts,
-      `${SECRET} Venue`,
+      "Public Venue",
       s.area ?? "Quan 7",
       s.slotsMax === undefined ? 10 : s.slotsMax,
       s.visibility ?? "public",
@@ -216,7 +223,7 @@ const columns = async (rel: string) =>
   ).map((r) => r.column_name as string);
 
 describe("PSP-1 whitelist of the table, the view and the projector's writes (A-1, A-2)", () => {
-  it("PSP-1a: the table holds exactly the 22 approved columns and the view exactly the 17, in order", async () => {
+  it("PSP-1a: the table holds exactly the 24 approved columns and the view exactly the 19, in order", async () => {
     expect((await columns("public_sessions")).sort()).toEqual([...TABLE_COLS].sort());
     expect(await columns("public_session_share_v")).toEqual(VIEW_COLS);
   });
@@ -246,6 +253,9 @@ describe("PSP-1 whitelist of the table, the view and the projector's writes (A-1
     expect(v).toMatchObject({ club_display_name: "CLB Q7", slots_open: 8, price_amount: 50000 });
     const served = JSON.stringify(v);
     for (const leak of [SECRET, t, sid]) expect(served).not.toContain(leak);
+    // A-1 at the view: the venue is public by default (DD-139 / owner decision B1).
+    expect(v.venue_name).toBe("Public Venue");
+    expect(v.venue_address).toBe("1 Public Street");
   });
 });
 
