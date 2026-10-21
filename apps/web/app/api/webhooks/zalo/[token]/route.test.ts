@@ -473,6 +473,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       limited?: string;
       text?: string;
       calls?: number;
+      owed?: boolean;
       want: string;
     };
     type Code = ConstructorParameters<typeof RosterMoneyError>[0];
@@ -499,6 +500,11 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       });
       vi.mocked(leaveSession).mockResolvedValue({ ...ids, status: "left" });
       if (row.err) vi.mocked(row.leave ? leaveSession : joinSession).mockRejectedValue(row.err);
+      // DD-140: one open charge for S1 in this bot's club, through the /pay doubles (T-13 shape).
+      if (row.owed) {
+        vi.mocked(readMyCharges).mockResolvedValue(FULL(ONE));
+        vi.mocked(readZaloPayContext).mockResolvedValue({ slug: "club-a", sessions: new Map() });
+      }
     };
     it("T-3: a replayed message joins once; a redelivered failed event gets R-9", async () => {
       arm({});
@@ -510,12 +516,18 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       await dm("1", 9103);
       vi.mocked(claimZaloReplyContext).mockResolvedValue(null);
       await dm("1", 9103);
-      expect(sent()).toEqual([R("R1", { ref: REF }), R("R9")]);
+      // No charge doubles: the amount read rejects after the seat is taken, so R1 + R17, never R18.
+      expect(sent()).toEqual([[R("R1", { ref: REF }), R("R17")].join("\n"), R("R9")]);
       expect(joinSession).toHaveBeenCalledTimes(1);
       expect(resolveZaloLinkGate).toHaveBeenCalledTimes(2);
     });
     it.each<NumRow>([
-      { t: "T-6", calls: 1, want: R("R1", { ref: REF }) },
+      {
+        t: "T-6",
+        calls: 1,
+        owed: true,
+        want: [R("R1", { ref: REF }), R("R1amount", { amount: formatVnd(100_000) })].join("\n"),
+      },
       { t: "T-16", n: 1, calls: 1, want: R("R2", { ref: REF, n: 1 }) },
       { t: "T-6", err: E("CHARGE_DERIVATION_UNAVAILABLE"), calls: 1, want: R("R7") },
       { t: "T-6", err: new Error("boom"), calls: 1, want: R("R18") },
@@ -541,6 +553,12 @@ describe("POST /api/webhooks/zalo/[token]", () => {
       if (row.limited) expect(claimZaloReplyContext).not.toHaveBeenCalled();
       const keys = vi.mocked(rateLimited).mock.calls.map((c) => c[0]);
       if (row.limited) expect(keys).toEqual([`zalo-webhook:${BOT}`, row.limited]);
+      if (!row.owed) return;
+      // The same read as /pay: the link gate's own account, this bot's tenant; the sender's DM only.
+      expect(vi.mocked(readMyCharges).mock.calls).toEqual([[expect.anything(), ACC]]);
+      const ctxCall = [expect.anything(), { tenantId: TENANT, sessionIds: [] }];
+      expect(vi.mocked(readZaloPayContext).mock.calls).toEqual([ctxCall]);
+      expect(vi.mocked(sendMessage).mock.calls.map((c) => c[1])).toEqual(["zuser-1"]);
     });
     type Charges = Awaited<ReturnType<typeof readMyCharges>>;
     type Status = Charges["clubs"][number]["status"];
@@ -551,6 +569,7 @@ describe("POST /api/webhooks/zalo/[token]", () => {
     const OTHER = { ...OPEN, sessionRef: S2, amountDue: 99_000, remaining: 99_000 };
     const OWN: Status = { ...K, totalOutstanding: 150_000, chargeCount: 2, items: [OPEN, PART] };
     const B: Status = { ...K, totalOutstanding: 99_000, chargeCount: 1, items: [OTHER] };
+    const ONE: Status = { ...K, totalOutstanding: 100_000, chargeCount: 1, items: [OPEN] };
     const ZERO = { kind: "known_zero" as const, currency: "VND" as const, asOf: AT };
     const UNK = { kind: "unknown" as const, reasonCode: "READ_FAILED" as const, retryable: true };
     const club = (clubRef: string, status: Status) => ({ clubRef, clubLabel: clubRef, status });
