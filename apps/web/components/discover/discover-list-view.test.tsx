@@ -21,6 +21,8 @@ const LISTING: DiscoveryListing = {
   priceAmount: 60000,
   slotsOpen: 4,
   joinPolicy: "open",
+  venueName: null,
+  venueAddress: null,
 };
 const IDLE = { busy: false, error: null as unknown };
 const noop = () => {};

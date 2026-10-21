@@ -13,6 +13,9 @@ const LISTING = {
   slotsOpen: 3,
   clubDisplayName: "Dev Club",
   joinPolicy: "approval",
+  // DD-139 / B1: the venue is public while the host leaves hide_exact_address OFF (A-1).
+  venueName: "Sân Pickleball Phú Mỹ Hưng",
+  venueAddress: "12 Nguyễn Lương Bằng, Tân Phú, Quận 7, TP. Hồ Chí Minh",
 };
 
 // Keys no screen may ever show: gender, a per-gender price, bank and QR data, and the DD-41 columns
@@ -66,6 +69,15 @@ describe("discovery reads", () => {
     });
     mockFetch({ listing: { ...LISTING, ...INJECTED } });
     await expect(getDiscoveryListing("pl_abc")).resolves.toStrictEqual(LISTING);
+  });
+
+  it("parses an absent venue as null, never a placeholder (A-2: hidden or never typed)", async () => {
+    const hidden = { ...LISTING, venueName: undefined, venueAddress: undefined };
+    const expected = { ...LISTING, venueName: null, venueAddress: null };
+    mockFetch({ items: [hidden], nextCursor: null });
+    await expect(listDiscovery()).resolves.toStrictEqual({ items: [expected], nextCursor: null });
+    mockFetch({ listing: hidden });
+    await expect(getDiscoveryListing("pl_abc")).resolves.toStrictEqual(expected);
   });
 
   it("keeps an absent or wrongly typed value as null, never a made-up 0", async () => {

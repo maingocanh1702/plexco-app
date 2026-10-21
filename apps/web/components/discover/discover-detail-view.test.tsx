@@ -21,6 +21,8 @@ const LISTING: DiscoveryListing = {
   priceAmount: 80000,
   slotsOpen: 2,
   joinPolicy: "approval",
+  venueName: null,
+  venueAddress: null,
 };
 const failure = (code: string, status: number) =>
   new ApiClientError(code, "server text", status, "req-1");
