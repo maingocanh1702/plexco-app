@@ -23,7 +23,7 @@ OWNER_SQL='docker exec -i plexco-postgres-1 psql -U plexco -d plexco -v ON_ERROR
 
 1. DB đã migrate tới `0056` (`[migrate] applied=... skipped=...`, không lỗi); DB cũ: chạy `pnpm db:bootstrap` (superuser,
    `DATABASE_URL_MIGRATION`) **trước** `0054`, rồi `pnpm --filter @plexco/db migrate`.
-2. `pnpm --filter @plexco/bot provision:queue` đã chạy; preflight của worker pass (worker log không có `preflight failed`).
+2. `pnpm --filter @plexco/bot provision:queue` đã chạy; preflight của worker pass (worker log không có dòng `[preflight] FAILED`).
 3. Tất cả projector đang tắt:
 
 ```bash

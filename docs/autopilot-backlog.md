@@ -2067,7 +2067,9 @@ notes: **Mirror repo kẹt ở v0.6.0, canonical (`~/Projects/Claude template/au
 
 ## task: dev-app-worker-password-not-restored
 title: Mọi DB suite ghi đè password cluster-global của app_worker và không suite nào khôi phục
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `leaseTestRolePasswords` tại `packages/db/src/test-harness.ts:206` (snapshot rồi khôi phục mật khẩu và cờ LOGIN của các role); row không có `merged_probe`, hand flip không thêm
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 3 (mật khẩu không bao giờ được khôi phục) và root cause 7 (database theo pid bị rò: teardown của `setupRlsTestContext` nay DROP DATABASE), cùng mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Sau một lần chạy test trọn vẹn không cần chạy lại bước mật khẩu của runbook; sau một lần chạy bị ngắt, cluster giữ mật khẩu test tới lần chạy trọn vẹn kế tiếp (PR #62 OPEN, D-2 crash path), nên lệnh runbook vẫn là fallback.
 risk: P2
 change_class: dev-ergonomics
 depends_on: []
@@ -2811,7 +2813,9 @@ notes: **Mở 2026-07-29 từ item (e) của design-probe `db-check-constraint-n
 
 ## task: db-projector-dlq-no-replay-path
 title: projector_deliveries.dlq là trạng thái cuối không có lối ra — không function/route nào replay
-status: idea
+status: merged
+merged: 2026-10-16 · PR #64 (lane L3 p3-m6-outbox-delivery-core), merge 98a4a6c920acbe2647f6e1ef710a21e535be6c8d · `outbox_dlq_replay` tại `packages/db/migrations/0056_outbox_projector_registry_dlq_replay.sql:243`, CLI `scripts/outbox-dlq-replay.mjs:84`; row không có dòng merged_probe và hand flip không thêm (chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). Was: idea. F1: body PR #64, mục Summary ("the owner can inspect and replay the DLQ through a CLI (no HTTP, no UI)"), bảng quyết định ("owner replay of a DLQ row" = pending, attempts 0, một dòng audit; "replay of a non-DLQ row" = refuse, zero writes) và mục "End-to-end DLQ replay" (transcript local: dlq -> `replay` -> pending, attempts 0 -> chu kỳ dispatcher kế tiếp redeliver -> delivered); readiness `docs/sessions/web-mvp-phase3-readiness-p3-m6-outbox-delivery-core.md:248` (D-9) và `docs/sessions/web-mvp-phase3-readiness-p3-m6-outbox-delivery-core.md:258` (D-10). Slug của row này chỉ xuất hiện trong danh sách OPEN của kế hoạch body PR #64 (mục "PR body:" của file readiness, mở đầu ở `docs/sessions/web-mvp-phase3-readiness-p3-m6-outbox-delivery-core.md:474`, slug ở dòng 476) dưới tiêu đề `OPEN (out of scope, for L17 or later lanes)`; danh sách đó không nói đường replay còn thiếu (chỉ `audit-2026-09-06-d6-outbox-no-attempt-bound` có chú thích "outbox-side bound still absent"). F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại hai file:line ở dòng `merged:`, vắng ở `<merge>^1` trên toàn repo. Hai quyết định mở của row do #64 chốt: replay là hàm SECURITY DEFINER `outbox_dlq_replay(p_event_id uuid, p_projector text)` chỉ cho owner (DATABASE_URL_MIGRATION rồi SET ROLE job_definer; app, app_worker, readonly không có EXECUTE, theo D-9 và test A6 của #64) và replay đặt `attempts = 0`. Không đổi bởi flip này: `OUTBOX_DISPATCH_SCHEDULE_ENABLED` vẫn `false` ở mọi default đã commit, bật là bước owner P0; transcript chạy local trên DB scratch, không phải bằng chứng live.
 risk: P1
 change_class: schema-migration
 depends_on: []
@@ -3454,7 +3458,9 @@ notes: |
 
 ## task: session-publish-public-projector
 title: public_sessions projector (first real outbox consumer) — NOT_CODE_READY; PublishSession half re-sliced out
-status: blocked
+status: superseded
+superseded_by: PR #72 (lane L10 p3-m9-public-projector, merge 4ece239852c2ca31513d61c81e418f4bfa556ebf, 2026-10-17): projector `public_sessions_project_session` tại `packages/db/migrations/0061_public_sessions_projector_writer.sql:164`, gọi từ `apps/bot/src/projectors/public-sessions.ts:52`; merged_probe giữ `null` (hand flip chỉ đổi status và thêm superseded_by, note_superseded)
+note_superseded: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). NOT `merged` - row này chưa từng vào lane riêng (contract và manifest của nó đã được đánh dấu superseded bởi DD-133 + lane L10 từ 2026-10-16, chỉ còn là lịch sử); deliverable (projector `public_sessions`) đi qua lane L10. Was: blocked. F1: body PR #72, tiêu đề "L10 p3-m9-public-projector", đoạn mở đầu "The public_sessions projector and its ONE migration" và mục "What changed" ("projectors/public-sessions.ts replaces L3's placeholder"); readiness `docs/sessions/web-mvp-phase3-readiness-p3-m9-public-projector.md:100` và `:426`; UPDATE 2026-10-16 của chính row này ("lane L10 flips this row when it merges"). F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại hai file:line ở dòng `superseded_by`, vắng ở `<merge>^1`. Không đo lại ở lượt đóng này: hai điều kiện cũ của row (fence 0033 đã land theo UPDATE 2026-08-25; occupancy và alias) và privilege audit của 0061, mà body PR #72 pin bằng test PSP-8 và PSP-8b. Không đổi bởi flip này: enablement (`OUTBOX_DISPATCH_SCHEDULE_ENABLED`) vẫn là bước owner P0.
 risk: P1
 change_class: code+migration
 depends_on: []
@@ -5959,7 +5965,9 @@ notes: |
 
 ## task: app-worker-test-password-clash-flake
 title: Flake CI `password authentication failed for user app_worker`: hai mật khẩu test khác nhau cho cùng role cluster-global
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `leaseTestRolePasswords` tại `packages/db/src/test-harness.ts:206` (một `ROLE_PW` duy nhất, mọi writer import nó); merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 1 (hai mật khẩu cho một role cluster-global) và mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Mọi writer nay import `ROLE_PW` nên không lần ghi nào đổi mật khẩu mà suite khác đang dùng. Chưa đóng bởi row này, theo chính body PR #62 (OPEN): jobd-then-chad hold-and-wait, "I3 only partly met", một backlog candidate riêng: row `db-test-nonsuperuser-owner-bootstrap-jobd-before-chat-slot-hold-and-wait`.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -5979,7 +5987,9 @@ notes: |
 
 ## task: db-test-unhandled-57p01-and-load-timeouts
 title: Test DB: `appPool` thiếu listener `error` (57P01 khi teardown) và các timeout/unhandled rejection khi máy tải nặng
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `connectAsApp` tại `packages/db/src/tenant-capability-authority.test.ts:460` (pool có guard 57P01, do teardown đóng; khai báo ở `packages/db/src/test-harness.ts:810`); merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 5 (57P01 ở tenant-capability-authority), 6 (unhandled rejection ở roster-service) và 4 (convoy jobd/chad gây timeout JCL-4, JCL-12, BR-5, JSO-2, JSO-5; sửa tại nguyên nhân, không timeout nào bị nới), cùng mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Chưa đóng bởi row này, theo chính body PR #62 (OPEN): jobd-then-chad hold-and-wait ở ba chỗ ("I3 only partly met", rủi ro tải còn lại, backlog candidate riêng: row `db-test-nonsuperuser-owner-bootstrap-jobd-before-chat-slot-hold-and-wait`).
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -5998,7 +6008,9 @@ notes: |
 
 ## task: e2e-web-pwa-offline-online-flake
 title: Flake `e2e-web`: test offline → online của `pwa.spec.ts` (cục bộ fail 3/8, qua khi chạy lại)
-status: idea
+status: merged
+merged: 2026-10-16 · PR #62, merge cf109e61f7489e67dd62401e2562bd104ab4cd2d · `Debugger.pause` tại `apps/web/e2e/pwa.spec.ts:77` (spec giữ script của trang trong lúc `setOffline(false)` nhả cả hai target); merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #62, root cause 8 (Playwright nhả emulation offline cho page trước, service worker sau) và mục "Backlog rows to flip after merge" nêu đúng row này. F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Chỉ sửa spec: code production, assertion và timeout không đổi. Cạnh production còn lại nằm ở mục OPEN của PR #62 (trang offline chỉ quay lại khi có sự kiện "online"), không thuộc row này.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6126,7 +6138,9 @@ notes: |
 
 ## task: list-sessions-occupied-count-single-source
 title: `listSessions` tính lại `occupiedCount` bằng SQL thay vì dùng chung một công thức với `sessionOccupancy`
-status: idea
+status: merged
+merged: 2026-10-16 · PR #65, merge 8c382917ff9d66bec45d26234520bb5a2c51e0cd · `occupiedCountSql` tại `packages/db/src/session-occupancy.ts:48`; merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #65 (DONE WHEN: "backlog row `list-sessions-occupied-count-single-source` closable") và file readiness của lane p3-m9-occupancy-helper ("closable by this lane"). F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. Một công thức đếm chỗ trong `session-occupancy.ts` thay hai bản chép tay (`sessionOccupancy` ở `session-service.ts` và đoạn danh sách ở `session-read.ts`). Stage 2 của occupancy authority thuộc lane L10 theo body PR #65, không thuộc row này.
 risk: P2
 change_class: code
 depends_on: []
@@ -6274,7 +6288,9 @@ notes: |
 
 ## task: session-text-fields-control-char-validation
 title: `area` / `venue_name` / `venue_address` của session nhận ký tự điều khiển C0 và bidi (ví dụ U+202E, xuống dòng) rồi hiện cho player
-status: idea
+status: merged
+merged: 2026-10-16 · PR #61, merge b0bf565ed72d8c4be3f47d3fe7a4e0e382605928 · `hasHiddenChar` tại `packages/db/src/text-safety.ts:38`; merged_probe giữ `null` (hand flip chỉ đổi status, merged, note_merged)
+note_merged: đóng TAY 2026-10-21 (L17 p3-closeout, đo tại base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72). F1: body PR #61 và file readiness của lane p3-session-text-control-chars cùng ghi "Backlog row `session-text-fields-control-char-validation` is discharged by this PR; flip it at closeout". F2: gh báo MERGED và merge commit là tổ tiên của base. F3: symbol tại file:line ở dòng `merged:`. `area`, `venue_name`, `venue_address` nay bị `createSession` và `updateSession` từ chối ký tự ẩn bằng đúng predicate của display name, và form web chặn cùng tập ký tự.
 risk: P2
 change_class: code
 depends_on: []
@@ -6417,3 +6433,87 @@ notes: |
   reconcile both rows from the same exact origin evidence. Do not change pinned-review policy,
   historical incident narratives, or consumer copies independently. Only a demonstrated adoption
   failure may promote a narrowly required correction ahead of the backend business path.
+
+## task: db-test-job-definer-bootstrap-tuple-concurrently-updated-flake
+title: Test DB: parallel suites can raise `tuple concurrently updated` in bootstrapJobDefiner; serialize the harness-side bootstrap window
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.ts]
+manifest: null
+merged_probe: packages/db/src/test-harness.ts :: withJobDefinerBootstrapLock
+notes: |
+  `packages/db/src/test-harness.ts:229-232` at base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72: `bootstrapJobDefiner` runs `infra/postgres-init/01-job-definer.sql` through `client.query(sql)` and takes no lock of its own; `:701-702` calls it inside `withDefinerReadLock` (the shared side, `:547-550`), so concurrent holders from other suites can run it together. The SQL's own `pg_advisory_xact_lock` and `LOCK TABLE pg_auth_members IN SHARE UPDATE EXCLUSIVE MODE` (`01-job-definer.sql:124` and `:129`, from AP-49 `definer-bootstrap-cluster-wide-serialization`, whose contract section 8 leaves `test-harness.ts` out of scope) self-conflict but do not block ordinary GRANT/REVOKE writers (its own comment, `:93-94`). A second `bootstrapJobDefiner` is defined at `apps/bot/src/test-db.ts:25` (not read for this record).
+  Reported, not re-measured here: parallel-suite runs raised `tuple concurrently updated` at `test-harness.ts:232`; the `ALTER ROLE ... PASSWORD` form is already under the "rlpw" mutex (PR #62, root cause 2), so first measure which concurrent statement conflicts, then serialize that window across suites with one advisory lock, no bespoke retry. source: `test-harness.ts:229-232`, `01-job-definer.sql:124-129` and the AP-49 contract section 8 at the base · recorded at the L17 Phase 3 closeout, 2026-10-21
+
+## task: db-test-definer-role-reads-outside-reader-lock-guard
+title: Test DB: tests that name a definer role outside the definer lock helpers can fail while migrate.test.ts renames the role; audit every site and add a role-aware source-scan guard
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.test.ts, packages/db/src/gender-pricing-definers.test.ts, packages/db/src/chat-catalog.test.ts, packages/db/src/chat-schema-invariants.test.ts, packages/db/src/chat-dm-safety-invariants.test.ts, packages/db/src/identity-link-web.test.ts, packages/db/src/channel-identity-link-gate.test.ts, apps/bot/src/projectors/public-sessions.test.ts]
+manifest: null
+merged_probe: packages/db/src/test-harness.test.ts :: findDefinerRoleReadsOutsideLock
+notes: |
+  `packages/db/src/gender-pricing-definers.test.ts` at base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72 names no lock helper: `:41` lists job_definer, identity_definer and chat_definer in ROLES, and `:115-128` and `:160-167` pass them by name to `has_column_privilege(r::name, ...)` and `has_function_privilege(r::name, ...)` on `ctx.owner` after `setupRlsTestContext` returned, which holds `withDefinerReadLock` only across `bootstrapJobDefiner` and `migrate` (`test-harness.ts:701-704`). `migrate.test.ts:1066` (`hideRealJobDefiner`, run by JCL-2a at `:1089-1092` under `withJobDefinerBreakerLock`) and `:3328` (`hideRealChatDefiner`) rename those cluster-global roles away while `packages/db/vitest.config.ts:18` and `apps/bot/vitest.config.ts:5` run test files in parallel, so a by-name read outside the reader lock can meet a missing role; `rls-invariants.test.ts:2577-2582` (JCL-12) documents the same class and takes `withJobDefinerLock` for it.
+  Measured at the base with `git grep -c` over packages/*/src, apps/*/src, apps/*/lib and apps/*/e2e test files (apps/web/app tests not scanned): seven files have lines naming a definer role and name none of `withDefinerReadLock`, `withJobDefinerLock`, `withJobDefinerBreakerLock`, `withChatDefinerLock`: gender-pricing-definers.test.ts (2 lines), chat-catalog.test.ts (22 lines; its "0063 function catalog" describe `:355-425` reads `pg_roles` and the function owner chat_definer by name with no lock), chat-schema-invariants.test.ts (29), identity-link-web.test.ts (26), chat-dm-safety-invariants.test.ts (4), channel-identity-link-gate.test.ts (1) and apps/bot/src/projectors/public-sessions.test.ts (1). Only the first file was read for a real by-name lookup and a file that names a helper can still hold an unlocked site, so deliverable 1 is a per-site audit of every file naming a definer role; deliverable 2 is a role-aware source-scan guard (style of `apps/bot/src/test-db.test.ts:8`, which guards helper and lock-key duplication only): job_definer needs `withJobDefinerLock` or `withDefinerReadLock`, chat_definer and identity_definer need `withDefinerReadLock` (`withJobDefinerLock` holds only the jobd key, `test-harness.ts:447-451` and `:546-550`). Reported by a Phase 3 lane closeout and not re-measured here: 42704 on the first file while JCL-2a renames job_definer; suggested trigger to schedule it: the same flake class a second time on any PR or main CI. source: files and lines above at the base · recorded at the L17 Phase 3 closeout, 2026-10-21
+
+## task: db-test-privilege-assertions-vs-definer-membership-windows-flake
+title: Test DB: migrate.test.ts windows that GRANT a definer role to app_worker can flip the `permission denied` assertions of chat-dm-safety-invariants.test.ts; read ACL entries (or hold the definer reader lock) there
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.ts, packages/db/src/chat-dm-safety-invariants.test.ts]
+manifest: null
+merged_probe: packages/db/src/test-harness.ts :: readRoleOwnAclPrivileges
+notes: |
+  `packages/db/src/migrate.test.ts` at base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72 runs four windows that GRANT a definer role to the cluster-global runtime role app_worker for one check each: `:1162` (job-core JCL-3b, job_definer, inside the `withJobDefinerBreakerLock` opened at `:1159`), `:1313` (the identity-definer case also named "JCL-3b: granted to a runtime role", identity_definer; the `withIdentityDefinerNameLock(..., "exclusive", ...)` around `withChatDefinerLock` blocks of that part of the file are at `:1225-1226` and `:1374-1375`), `:3093` (job_definer, inside the `withJobDefinerBreakerLock` opened at `:3089`) and `:3745` (chat_definer, inside the `withChatDefinerLock` opened at `:3742`). `packages/db/src/chat-dm-safety-invariants.test.ts:470-485` runs real queries as the app, app_worker and readonly pools and expects `permission denied` (`:479`), and the file names none of `withDefinerReadLock`, `withJobDefinerLock`, `withJobDefinerBreakerLock`, `withChatDefinerLock`, `withIdentityDefinerNameLock`, `withAdvisoryLocks` (`git grep -c` at the base), so nothing keeps those windows out of its assertions: `setupRlsTestContext` takes `withDefinerReadLock` around its bootstrap and migrate step only (`test-harness.ts:699-704`, not across a test body).
+  Reported, not re-measured here: PR #83 body `:148` (RO-L14-8) put `chat-dm-safety-invariants.test.ts:479` on the known-flake list because the identity-definer JCL-3b window grants identity_definer to app_worker cluster-wide while migration 0054 gives identity_definer column SELECT on chat_blocks and chat_reports, so the assertion fails only when the two files overlap (the diagnostic rerun passed); the same body (`:150`, condition 2, `ac8b3c8`) records that L14's own privilege assertions already read each role's own ACL (aclexplode with acldefault) instead of effective privileges. The job_definer and chat_definer windows above have the same shape; no assertion is shown to flip on them, so measure which definer grants reach which tables first. Deliverable: a helper `readRoleOwnAclPrivileges` in `test-harness.ts` (the probe) returning a role's own ACL entries, used by the `chat-dm-safety-invariants.test.ts` denial assertions; or, if they must stay real queries, wrap them in `withDefinerReadLock` (jobd and chst shared, `test-harness.ts:547-550`; every window above holds jobd or chst exclusive, `:452-457` and `:542-544`), never nested inside another reader lock (`:555-556`). Then list which other suites assert a runtime role's denial (28 test files carry a `permission denied`, 42501 or `has_*_privilege` pattern across `packages/db/src`, `apps/bot/src` and `packages/core/src` at the base, an upper bound; only this one was read) and record each one that runs without a reader lock as its own row. Not the same as `db-test-definer-role-reads-outside-reader-lock-guard` (by-name reads that meet a missing role; its guard scans for files that name a definer role, and the `:479` assertion names none). Suggested trigger to schedule it: the same overlap on a second PR or main CI run. source: files and lines above at the base and PR #83 body `:148` · recorded at the L17 Phase 3 closeout, 2026-10-21
+
+## task: db-test-link-code-ttl-upper-bound-host-clock-flake
+title: Test DB: the link-code TTL assertion compares a database-clock expiry with the host clock and no tolerance on the upper bound; read the remaining TTL on the database clock
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/identity-link-code.test.ts]
+manifest: null
+merged_probe: packages/db/src/identity-link-code.test.ts :: remainingTtlMs
+notes: |
+  `packages/db/src/identity-link-code.test.ts:261-266` at base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72 (the account-issued test, `:254`): `first.expiresAt.getTime() - Date.now()` must be greater than `(LINK_CODE_TTL_SECONDS - 30) * 1000` and at most `LINK_CODE_TTL_SECONDS * 1000` (`identity.ts:27`, 10 * 60); the upper bound has no tolerance. `expiresAt` is the `expires_at` that `link_code_issue` returns (`identity.ts:212-234`), and the function sets it to `clock_timestamp() + p_ttl` on the database server (`packages/db/migrations/0043_identity_link_code_issue_consume.sql:212`), while `Date.now()` reads the host clock; a database clock ahead of the host clock by more than the time between the insert and the `Date.now()` read pushes the difference above 600000 ms. The lower bound keeps a 30 s margin; `:405` (`wrong.lockedUntil` against `Date.now()`) mixes the same two clocks but with `cooldownSeconds: 5` (`:401-403`), a 5 s margin, so it is not part of this row; the other `issueLinkCode` test files at the base (`channel-identity-link-gate`, `identity-link-web`, `identity-link-web-nobypass`, `me-settings`, `apps/web/lib/zalo/commands`) have no `expiresAt` comparison.
+  Reported, not re-measured here: PR #76 body `:136` quotes one failure of this test, `AssertionError: expected 600002 to be less than or equal to 600000` at `identity-link-code.test.ts:264`, in a run whose diff did not touch the file; `:283` records one rerun green at 5382a21. The clock-skew cause is inferred from the code above, not measured: no clock offset between the database server and the host was read. Deliverable: a helper `remainingTtlMs` in `identity-link-code.test.ts` (the probe) that reads `expires_at - clock_timestamp()` of the issued code in ONE database statement (both operands on the database clock, no host clock), used by the two assertions at `:261-266` with the 30 s lower margin kept; no sleep and no retry. Suggested trigger to schedule it: the same assertion failing a second time on any PR or main CI run. source: files and lines above at the base and PR #76 body `:136` and `:283` · recorded at the L17 Phase 3 closeout, 2026-10-21
+
+## task: api-contract-test-dto-key-pins-assert-fixtures-not-the-type
+title: Test core: three non-chat DTO key pins in api-contract.test.ts assert the keys of the test's own fixtures, so an optional key added to the DTO type passes; pin `keyof` the types as the chat DTO tests do
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/core/src/api-contract.test.ts]
+manifest: null
+merged_probe: packages/core/src/api-contract.test.ts :: PENDING_JOIN_REQUEST_KEYS
+notes: |
+  `packages/core/src/api-contract.test.ts` at base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72: three tests assert a DTO's key set with `Object.keys(<entry>).sort()` over literal fixtures the test builds itself, `:200-204` (CLOSE_BLOCKED_OPEN_DEBT, `blocked` built at `:188-199` and `satisfies ApiError`), `:253-257` (`pending`, `satisfies PendingJoinRequestDto[]` at `:252`) and `:280-286` (`results`, `satisfies JoinSessionResultDto[]`); the three DTOs are plain interfaces (`packages/core/src/api-contract.ts:188-191`, `:195-199`, `:204-209`). A loop over the test's own literals can only fail when someone edits the fixture: an optional key added to a DTO type (for example `amount?: number`) leaves every fixture valid under `satisfies` and leaves `Object.keys` unchanged, so the titles "ids + display names only (DD-131 OD-1)" (`:188`), "no money, no contact" (`:240`) and "no amount and no venue (P-18)" (`:260`) stay green (inferred from the types and fixtures, not run). The chat DTO tests of the same file pin `expectTypeOf<keyof Dto>().toEqualTypeOf<...>()` (`:339`, `:345-346`, `:352`, `:386`, `:401`), which fails on any added key, optional or not. The loops never call the producers, which build each DTO key by key inline in route code (`apps/web/app/api/sessions/[id]/join-requests/route.ts:36`, `apps/web/app/api/sessions/[id]/join/route.ts:44`, `apps/web/lib/session-command-route.ts:812`).
+  Deliverable: per site one const key list in the test file (`PENDING_JOIN_REQUEST_KEYS` is the probe; siblings `OPEN_BALANCE_PLAYER_KEYS` and `JOIN_SESSION_RESULT_KEYS`) feeding both an exact type-level pin (`expectTypeOf<keyof Dto>().toEqualTypeOf<(typeof LIST)[number]>()`, the chat precedent) and the existing runtime loop, so the two cannot drift; keep the `satisfies` fixtures and add no dependency; then read the route tests of the three producers and record each producer without a runtime key-set pin as its own row (not read for this record, nor whether `pnpm typecheck` compiles this test file, which the type-level pins need and the chat pins at `:339-401` already rely on). source: `api-contract.test.ts:188-286` and `api-contract.ts:188-209` at the base, plus a Phase 3 closeout carry-forward lead (a pointer, not a measurement) · recorded at the L17 Phase 3 closeout, 2026-10-21
+
+## task: db-test-nonsuperuser-owner-bootstrap-jobd-before-chat-slot-hold-and-wait
+title: Test DB: five non-superuser bootstrap sites take the jobd reader lock and then wait for the chat slot another test file keeps until teardown; fix the order at every site in one change, or let the harness own it
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/test-harness.ts, packages/db/src/rls-invariants.test.ts, packages/db/src/tenant-capability-authority.test.ts, packages/db/src/identity-link-web-nobypass.test.ts, packages/db/src/me-player-reads-nobypass.test.ts, packages/db/src/public-alias-nobypass.test.ts, packages/db/src/migrate.test.ts]
+manifest: null
+merged_probe: packages/db/src/test-harness.ts :: bootstrapAndMigrateAsOwner
+notes: |
+  `packages/db/src/test-harness.ts` at base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72: `withJobDefinerLock` is the shared side of the jobd key (`:537-538`; `withJobDefinerBreakerLock`, `:542-543`, is the exclusive side), and `bootstrapChatDefinerForOwner` (`:907`) takes the chat slot with a blocking `pg_advisory_lock` (`acquireChatDefinerLock`, `:486`, called at `:933`) and keeps it until `teardown()` releases it (`:1061`). Five test files wrap the whole sequence in `withJobDefinerLock(..., async () => { bootstrapJobDefinerForOwner(); bootstrapChatDefinerForOwner(); runMigration(); ... })` because `runMigration` reaches 0022, which asserts job_definer (comment at `rls-invariants.test.ts:2091-2103`), so each holds jobd shared while it may wait for a slot another file keeps: `rls-invariants.test.ts:2104-2107` (JCL-1), `tenant-capability-authority.test.ts:454-457`, `identity-link-web-nobypass.test.ts:28-31` (slot kept for the whole file, comment at `:83`), `me-player-reads-nobypass.test.ts:32-36` and `public-alias-nobypass.test.ts:27-31`; the last two are not in the three-site list of PR #62 (body `:303-307`). `migrate.test.ts` has the same order at `:764-767` (BR-6) and `:928-931` (0037) and calls `bootstrapChatDefinerForOwner` at `:874-875`, `:898`, `:4339`, `:4467`, `:4679`, `:4707` and `:5104` (wrappers not read for those); it is also the only file that calls `withJobDefinerBreakerLock` (`git grep -c -w` over packages and apps), so whether its sites must follow a new order is for the audit to decide (not measured here; the scope names the file for that).
+  Reported, not re-measured here: PR #62 body `:303-321` (merged): the order is a latent load risk (N=5 passed in its windows B, C and D); while one site waits on the slot with jobd held and a `migrate.test.ts` breaker such as JCL-2a queues for jobd, every new reader queues behind that breaker (Postgres queues a new shared request, `pg_try_advisory_lock_shared` included, behind a waiting exclusive one) and the readers' 30 s and 60 s test timeouts keep running while they wait; that lane changed no lock order because a partial reorder is unsafe (a slot-first holder's later jobd request queues behind a breaker, the breaker waits on a jobd-first site's hold and that site waits on the holder's slot, a cycle Postgres cannot see because two edges run through JavaScript in separate sessions, so the tests hang to their timeouts). Deliverable: first choose between the two fixes the PR names (`:319-321`): move every jobd-first site that waits for the slot to slot first in ONE change, or make the harness own the order; the probe `bootstrapAndMigrateAsOwner` is the second choice, a `NonSuperuserOwnerContext` method that takes the slot, then jobd shared, then runs the job bootstrap and the migration so no caller picks the order (if the reorder is chosen and adds no symbol, replace the probe when the slice is authored); either way all five files above move together, then repeat PR #62's parallel-load runs and record the measured result; expect a B3 exception or a split (more than three modules). Not the same as `db-test-job-definer-bootstrap-tuple-concurrently-updated-flake` (the bootstrap SQL window) or `db-test-definer-role-reads-outside-reader-lock-guard` (by-name reads that meet a missing role). source: files and lines above at the base and PR #62 body `:303-321` · recorded at the L17 Phase 3 closeout, 2026-10-21
