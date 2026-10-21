@@ -29,10 +29,48 @@ const JOIN = { name: "Tham gia", exact: true } as const;
 const HIDDEN_VENUE = "Sân Bí Mật";
 const PAY_WORDS = /pay|thanh toán|trả ngay|chuyển khoản|qr|ngân hàng|bank/i;
 
-test("waitlisted player sees area and position, no venue", async ({ page }) => {
+test("option OFF: the server sends the venue and the pages show it (A-1, D-6)", async ({
+  page,
+}) => {
+  const ADDRESS = "12 Nguyễn Văn Linh, Quận 7";
   await installPlayerApi(page, {
-    // The injected venue keys are in no whitelist: the pages must drop them.
-    discoverDetail: ok({ listing: listing({ venueName: HIDDEN_VENUE }) }),
+    discoverDetail: ok({ listing: listing({ venueName: VENUE, venueAddress: ADDRESS }) }),
+    join: ok({ join: { outcome: "waitlisted", waitlistPosition: 3 }, replayed: false }),
+    meSessions: ok({
+      sessions: [
+        mySession({
+          sessionId: "sess-e2e-2",
+          myStatus: "waitlisted",
+          waitlistPosition: 3,
+          area: "Thủ Đức",
+          venueName: VENUE,
+          venueAddress: ADDRESS,
+        }),
+      ],
+      truncated: false,
+    }),
+  });
+  await page.goto(DETAIL);
+  await expect(page.locator("main")).toContainText(VENUE);
+  await expect(page.locator("main")).toContainText(ADDRESS);
+
+  await page.getByRole("button", JOIN).click();
+  await expect(page.getByText("Bạn đang trong danh sách chờ #3")).toBeVisible();
+  await page.getByRole("link", { name: "Xem buổi của tôi" }).click();
+  await expect(page.locator("main")).toHaveAttribute("data-state", "ready");
+  const seat = page.locator("main li").filter({ hasText: "Danh sách chờ #3" });
+  await expect(seat).toContainText(VENUE);
+  await expect(seat).toContainText(ADDRESS);
+});
+
+test("option ON: waitlisted player sees area and position, no venue (A-2, A-4)", async ({
+  page,
+}) => {
+  await installPlayerApi(page, {
+    // Option ON: the SQL sends NULL venue columns to a viewer without an active seat (the mock's
+    // NO_VENUE shape). The web join reply stays venue-free, so a venue key injected into it is in
+    // no whitelist: the page must drop it.
+    discoverDetail: ok({ listing: listing({ venueName: null, venueAddress: null }) }),
     join: ok({
       join: { outcome: "waitlisted", waitlistPosition: 3 },
       replayed: false,
@@ -46,15 +84,15 @@ test("waitlisted player sees area and position, no venue", async ({ page }) => {
           myStatus: "waitlisted",
           waitlistPosition: 3,
           area: "Thủ Đức",
-          venueName: HIDDEN_VENUE,
-          venueAddress: HIDDEN_VENUE,
+          venueName: null,
+          venueAddress: null,
         }),
         mySession({
           sessionId: "sess-e2e-3",
           myStatus: "pending",
           area: "Quận 1",
-          venueName: HIDDEN_VENUE,
-          venueAddress: HIDDEN_VENUE,
+          venueName: null,
+          venueAddress: null,
         }),
       ],
       truncated: false,
