@@ -17,6 +17,8 @@ export interface SessionScalarsDto {
   timezone: string;
   venueName: string | null;
   venueAddress: string | null;
+  /** DD-139 / B1: the host's per-session option (host DTO only; public and /me reads enforce it in SQL) */
+  hideExactAddress: boolean;
   area: string | null;
   skillLevel: string | null;
   priceAmount: number;
@@ -130,6 +132,7 @@ export interface SessionFieldsBody {
   area?: string | null;
   venueName?: string | null;
   venueAddress?: string | null;
+  hideExactAddress?: boolean;
   joinPolicy?: "open" | "approval";
 }
 

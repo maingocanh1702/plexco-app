@@ -32,6 +32,7 @@ const session: SessionDetailDto = {
   timezone: TZ,
   venueName: "Sân A",
   venueAddress: null,
+  hideExactAddress: false,
   area: "Q7",
   skillLevel: null,
   priceAmount: 50000,
