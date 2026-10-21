@@ -98,18 +98,33 @@ test("option ON: waitlisted player sees area and position, no venue (A-2, A-4)",
       truncated: false,
     }),
   });
+  // The active seat's address (mock default): no detail page or null row may draw it.
+  const ACTIVE_ADDRESS = "12 Nguyễn Văn Linh";
   await page.goto(DETAIL);
+  // The listing is up once Join shows: the ON listing has no venue, so none may be drawn.
+  await expect(page.getByRole("button", JOIN)).toBeVisible();
+  await expect(page.locator("main")).not.toContainText(VENUE);
+  await expect(page.locator("main")).not.toContainText(ACTIVE_ADDRESS);
   await page.getByRole("button", JOIN).click();
   await expect(page.getByText("Bạn đang trong danh sách chờ #3")).toBeVisible();
   await expect(page.locator("main")).not.toContainText(HIDDEN_VENUE);
+  await expect(page.locator("main")).not.toContainText(VENUE);
+  await expect(page.locator("main")).not.toContainText(ACTIVE_ADDRESS);
 
   await page.getByRole("link", { name: "Xem buổi của tôi" }).click();
   await expect(page.locator("main")).toHaveAttribute("data-state", "ready");
   const seats = page.locator("main li");
   await expect(seats).toHaveCount(3);
   await expect(seats.filter({ hasText: "Đã có chỗ" })).toContainText(VENUE);
+  // Proves ACTIVE_ADDRESS is in the fixture, so the not-asserts below are not vacuous.
+  await expect(seats.filter({ hasText: "Đã có chỗ" })).toContainText(ACTIVE_ADDRESS);
   await expect(seats.filter({ hasText: "Danh sách chờ #3" })).toContainText("Thủ Đức");
+  await expect(seats.filter({ hasText: "Danh sách chờ #3" })).not.toContainText(VENUE);
+  await expect(seats.filter({ hasText: "Danh sách chờ #3" })).not.toContainText(ACTIVE_ADDRESS);
   await expect(seats.filter({ hasText: "Chờ duyệt" })).toContainText("Quận 1");
+  await expect(seats.filter({ hasText: "Chờ duyệt" })).not.toContainText(VENUE);
+  await expect(seats.filter({ hasText: "Chờ duyệt" })).not.toContainText(ACTIVE_ADDRESS);
+  // Join-reply check only (HIDDEN_VENUE is on no /me row); the asserts above hold the ON outcome.
   await expect(page.locator("main")).not.toContainText(HIDDEN_VENUE);
 });
 
