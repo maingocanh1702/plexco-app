@@ -40,6 +40,55 @@ const CHANNELS: LinkedChannelDto[] = [
   { id: "c2", platform: "messenger", status: "inactive", createdAt: "2026-09-01T00:00:00Z" },
 ];
 
+// Pinned L22 copy: the purpose notice N1-N3 at the gender field, and the privacy note heading H plus
+// P1-P6. Pasted byte for byte from the "Copy (pinned)" table of
+// docs/sessions/web-mvp-phase3-readiness-p3-flags-default-on.md. Never reword a string here: a changed
+// sentence needs a new proof in that file first (each sentence is provable from code or a decision).
+type Copy = Record<"vi" | "en", string>;
+const LANGS = ["vi", "en"] as const;
+const NOTICE_ID = "me-gender-notice";
+const NOTICE: Copy[] = [
+  {
+    vi: "Giới tính của bạn được dùng để tính giá khi CLB đặt giá theo giới tính cho một kèo.",
+    en: "Your gender is used to work out the price when a club sets a price by gender for a session.",
+  },
+  {
+    vi: "Việc đặt giới tính là tuỳ chọn; nếu để chưa đặt, bạn trả giá mặc định của kèo.",
+    en: "Setting your gender is optional; if you leave it unset, you pay the default price of the session.",
+  },
+  {
+    vi: "CLB chỉ được dùng giới tính của bạn để tính giá nếu bạn đánh dấu ô bên dưới.",
+    en: "Clubs can use your gender for pricing only if you tick the box below.",
+  },
+];
+const PRIVACY_HEADING: Copy = { vi: "Dữ liệu giới tính của bạn", en: "Your gender data" };
+const PRIVACY_NOTE: Copy[] = [
+  {
+    vi: "Giới tính của bạn được lưu ở dạng mã hoá trên hồ sơ Plexco của bạn.",
+    en: "Your gender is stored encrypted on your Plexco profile.",
+  },
+  {
+    vi: "Giới tính của bạn không được hiển thị cho CLB hay người chơi khác, và không xuất hiện trên bất kỳ trang công khai nào.",
+    en: "Your gender is not shown to clubs or other players, and it does not appear on any public page.",
+  },
+  {
+    vi: "CLB chỉ nhận mức giá được tính từ giới tính của bạn, không nhận chính giới tính đó.",
+    en: "Clubs receive only the price worked out from your gender, not your gender itself.",
+  },
+  {
+    vi: "Bạn có thể đổi giới tính đã đặt bất cứ lúc nào bằng cách chọn lựa chọn khác rồi lưu.",
+    en: "You can change your gender at any time by choosing another option and saving.",
+  },
+  {
+    vi: "Để xoá giới tính khỏi hồ sơ, đặt lại thành Chưa đặt rồi lưu; quyền dùng giới tính để tính giá cũng bị tắt theo.",
+    en: "To remove your gender from your profile, set the field back to Not set and save; the pricing permission is switched off with it.",
+  },
+  {
+    vi: "Để CLB ngừng dùng giới tính mà không xoá nó, bỏ đánh dấu ô cho phép rồi lưu.",
+    en: "To stop clubs using your gender without removing it, untick the box and save.",
+  },
+];
+
 describe("SettingsProfileForm", () => {
   const NO_GENDER = { gender: null, genderConsent: false, genderCollection: false } as const;
   it("renders a labelled, described display-name field and a submit button", () => {
@@ -123,6 +172,31 @@ describe("SettingsProfileForm gender and pricing consent (DD-39, T-24)", () => {
     expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*disabled/);
     expect(html).not.toContain("Gender not shared");
   });
+
+  it("flag ON: the purpose notice N1-N3 sits between the selector and the consent box and describes the select, in vi and en", () => {
+    for (const lang of LANGS) {
+      const html = form({}, lang);
+      const notice = html.match(new RegExp(`<p id="${NOTICE_ID}"[^>]*>(.*?)</p>`));
+      expect(notice?.[1]).toBe(NOTICE.map((s) => s[lang]).join(" "));
+      // A plain paragraph: not a live region, and no control or label inside it.
+      expect(notice?.[0]).not.toMatch(/role=|<(input|select|label|button)[ >]/);
+      expect(html).toMatch(new RegExp(`<select [^>]*aria-describedby="${NOTICE_ID}"`));
+      const selectEnd = html.indexOf("</select>");
+      const noticeAt = html.indexOf(`id="${NOTICE_ID}"`);
+      expect(selectEnd).toBeGreaterThan(-1);
+      expect(noticeAt).toBeGreaterThan(selectEnd);
+      expect(html.indexOf('type="checkbox"')).toBeGreaterThan(noticeAt);
+    }
+  });
+
+  it("flag OFF: no purpose notice in either language, with or without stored data", () => {
+    for (const lang of LANGS)
+      for (const stored of [{}, { gender: "female" }, { genderConsent: true }] as const) {
+        const html = form({ genderCollection: false, ...stored }, lang);
+        expect(html).not.toContain(NOTICE_ID);
+        for (const s of NOTICE) expect(html).not.toContain(s[lang]);
+      }
+  });
 });
 
 describe("SettingsView gender prompt (T-2, U-20)", () => {
@@ -143,6 +217,43 @@ describe("SettingsView gender prompt (T-2, U-20)", () => {
     );
     expect(page({ gender: "male" })).not.toContain(PROMPT);
     expect(page({ genderCollection: false })).not.toContain(PROMPT);
+  });
+
+  it("flag ON: the privacy note renders its heading and exactly P1-P6 in order, in vi and en", () => {
+    for (const lang of LANGS)
+      for (const stored of [{}, { gender: "female", genderConsent: true }] as const) {
+        const html = page(stored, lang);
+        const start = html.indexOf('data-testid="settings-privacy-note"');
+        expect(start).toBeGreaterThan(-1);
+        const note = html.slice(start, html.indexOf("</section>", start));
+        expect(note.match(/<h2[^>]*>(.*?)<\/h2>/)?.[1]).toBe(PRIVACY_HEADING[lang]);
+        expect(Array.from(note.matchAll(/<p[^>]*>(.*?)<\/p>/g), (m) => m[1])).toEqual(
+          PRIVACY_NOTE.map((s) => s[lang]),
+        );
+      }
+  });
+
+  it("flag OFF: no privacy note in either language, with or without stored data", () => {
+    for (const lang of LANGS)
+      for (const stored of [{}, { gender: "female", genderConsent: true }] as const) {
+        const html = page({ genderCollection: false, ...stored }, lang);
+        expect(html).not.toContain("settings-privacy-note");
+        expect(html).not.toContain('id="me-privacy"');
+        for (const s of [PRIVACY_HEADING, ...PRIVACY_NOTE]) expect(html).not.toContain(s[lang]);
+      }
+  });
+
+  it("copy constraints: the not-shared caption goes with consent, and the English page holds no Vietnamese gender copy", () => {
+    // Each negative check has a positive control (the same string present in the other state), so a
+    // mistyped literal fails instead of passing vacuously.
+    const caption: Copy = { vi: "Không chia sẻ giới tính", en: "Gender not shared" };
+    for (const lang of LANGS) {
+      expect(page({ gender: "female" }, lang)).toContain(caption[lang]);
+      expect(page({ gender: "female", genderConsent: true }, lang)).not.toContain(caption[lang]);
+    }
+    // Mirrors settings.spec.ts getByText(/giới tính/i) count 0 on the English page.
+    expect(page({}, "vi")).toMatch(/giới tính/i);
+    expect(page({}, "en")).not.toMatch(/giới tính/i);
   });
 });
 
