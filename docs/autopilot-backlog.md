@@ -6517,3 +6517,113 @@ merged_probe: packages/db/src/test-harness.ts :: bootstrapAndMigrateAsOwner
 notes: |
   `packages/db/src/test-harness.ts` at base 0a4e1b8e9b146c04884b3ee2ff234cc6646fcc72: `withJobDefinerLock` is the shared side of the jobd key (`:537-538`; `withJobDefinerBreakerLock`, `:542-543`, is the exclusive side), and `bootstrapChatDefinerForOwner` (`:907`) takes the chat slot with a blocking `pg_advisory_lock` (`acquireChatDefinerLock`, `:486`, called at `:933`) and keeps it until `teardown()` releases it (`:1061`). Five test files wrap the whole sequence in `withJobDefinerLock(..., async () => { bootstrapJobDefinerForOwner(); bootstrapChatDefinerForOwner(); runMigration(); ... })` because `runMigration` reaches 0022, which asserts job_definer (comment at `rls-invariants.test.ts:2091-2103`), so each holds jobd shared while it may wait for a slot another file keeps: `rls-invariants.test.ts:2104-2107` (JCL-1), `tenant-capability-authority.test.ts:454-457`, `identity-link-web-nobypass.test.ts:28-31` (slot kept for the whole file, comment at `:83`), `me-player-reads-nobypass.test.ts:32-36` and `public-alias-nobypass.test.ts:27-31`; the last two are not in the three-site list of PR #62 (body `:303-307`). `migrate.test.ts` has the same order at `:764-767` (BR-6) and `:928-931` (0037) and calls `bootstrapChatDefinerForOwner` at `:874-875`, `:898`, `:4339`, `:4467`, `:4679`, `:4707` and `:5104` (wrappers not read for those); it is also the only file that calls `withJobDefinerBreakerLock` (`git grep -c -w` over packages and apps), so whether its sites must follow a new order is for the audit to decide (not measured here; the scope names the file for that).
   Reported, not re-measured here: PR #62 body `:303-321` (merged): the order is a latent load risk (N=5 passed in its windows B, C and D); while one site waits on the slot with jobd held and a `migrate.test.ts` breaker such as JCL-2a queues for jobd, every new reader queues behind that breaker (Postgres queues a new shared request, `pg_try_advisory_lock_shared` included, behind a waiting exclusive one) and the readers' 30 s and 60 s test timeouts keep running while they wait; that lane changed no lock order because a partial reorder is unsafe (a slot-first holder's later jobd request queues behind a breaker, the breaker waits on a jobd-first site's hold and that site waits on the holder's slot, a cycle Postgres cannot see because two edges run through JavaScript in separate sessions, so the tests hang to their timeouts). Deliverable: first choose between the two fixes the PR names (`:319-321`): move every jobd-first site that waits for the slot to slot first in ONE change, or make the harness own the order; the probe `bootstrapAndMigrateAsOwner` is the second choice, a `NonSuperuserOwnerContext` method that takes the slot, then jobd shared, then runs the job bootstrap and the migration so no caller picks the order (if the reorder is chosen and adds no symbol, replace the probe when the slice is authored); either way all five files above move together, then repeat PR #62's parallel-load runs and record the measured result; expect a B3 exception or a split (more than three modules). Not the same as `db-test-job-definer-bootstrap-tuple-concurrently-updated-flake` (the bootstrap SQL window) or `db-test-definer-role-reads-outside-reader-lock-guard` (by-name reads that meet a missing role). source: files and lines above at the base and PR #62 body `:303-321` · recorded at the L17 Phase 3 closeout, 2026-10-21
+
+## task: web-public-session-share-page
+title: Web: public share page at `/session/<slug>` (owner Phase 4 row, L12 P-2), the page Phase 3 chose not to build
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/app/session/[slug]/page.tsx]
+manifest: null
+merged_probe: apps/web/app/session/[slug]/page.tsx :: PublicSessionSharePage
+notes: |
+  Phase 4 backlog row from the owner decisions of 2026-10-21: the public share page at `/session/<slug>`. Phase 3 left it out: the DD-138 row `p3-m9-player-web P-2` (`docs/standards/decisions.md:1952` at 2c7dfe7; the full row key is the stable reference, the line moves) records that the share page is not built, because the base had no place that creates a share link and DD-133 (a)-(e) did not require the page at L12 (L12 · #77). The owner listed it for the Phase 4 backlog; the owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
+  > "Share page /session/<slug> (L12 P-2)"
+  Not implemented and not started: `PublicSessionSharePage` has 0 matches at the lane base, so the probe stays valid until a slice adds that symbol at that path. `scope` and `invariants` of an `idea` row are estimates (header rule): refine them against the real code before the row is promoted. source: `docs/standards/decisions.md`, DD-138 row `p3-m9-player-web P-2` and the DD-138 sign-off subsection "Kết quả ký của owner (2026-10-21)" · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+
+## task: web-player-leave-and-cancel
+title: Web: player leave/cancel on web (owner Phase 4 row, L12 P-3), which Phase 3 left waiting for an API
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/app/me/sessions/page.tsx]
+manifest: null
+merged_probe: apps/web/app/me/sessions/page.tsx :: PlayerLeaveSessionButton
+notes: |
+  Phase 4 backlog row from the owner decisions of 2026-10-21: a player can leave or cancel on the web. Phase 3 shipped no such control: the DD-138 row `p3-m9-player-web P-3` (`docs/standards/decisions.md:1953` at 2c7dfe7; the full row key is the stable reference, the line moves) records that only the public join panel (D-3) sends commands, with no leave, cancel or member-style join button, because there is one public join path and leave and cancel wait for an API (O-2) (L12 · #77). The owner listed it for the Phase 4 backlog; the owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
+  > "player leave/cancel on web (L12 P-3)"
+  Not implemented and not started: `PlayerLeaveSessionButton` has 0 matches at the lane base, so the probe stays valid until a slice adds that symbol at that path. `scope` and `invariants` of an `idea` row are estimates (header rule): refine them against the real code before the row is promoted. source: `docs/standards/decisions.md`, DD-138 row `p3-m9-player-web P-3` and the DD-138 sign-off subsection "Kết quả ký của owner (2026-10-21)" · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+
+## task: zalo-outbound-error-mapping-real-bot-verification
+title: Zalo outbound: verify error mapping with the real bot (owner Phase 4 row, L4 Z-6), blocked on the owner's real bot token
+status: blocked
+risk: P2
+change_class: owner-evidence-gate
+depends_on: []
+invariants: [transport-zalo]
+scope: [docs/sessions/zalo-outbound-error-mapping-real-bot-evidence.md]
+manifest: null
+merged_probe: null
+close_by: hand · owner-evidence-gate: closed by recorded real-bot responses, not by a commit
+notes: |
+  Blocked: the evidence can only come from outside the repository, from responses of the real Zalo bot. Who closes it: the owner, who holds the real bot token (that step is the owner's and is not done by this row). With what: one recorded real-bot response per mapped error class, written into `docs/sessions/zalo-outbound-error-mapping-real-bot-evidence.md`. Back to `ready` when the real bot token is available to the lane that records the responses. The mapping to verify is the one the DD-138 row `p3-m6-zalo-outbound Z-6` (`docs/standards/decisions.md:1922` at 2c7dfe7; the full row key is the stable reference, the line moves) records as shipped by L4 (#66): 401, 429, 5xx, other 4xx, a 2xx with `ok:false` by numeric `error_code`, a bad or oversize response, timeout and network failure. The owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
+  > "verify Zalo error mapping with the real bot (L4 Z-6)"
+  Related, different task, not replaced by this row: `zalo-connect-bot-revoked-error-mapping` (`docs/autopilot-backlog.md:6159` at 2c7dfe7). source: `docs/standards/decisions.md`, DD-138 row `p3-m6-zalo-outbound Z-6` and the DD-138 sign-off subsection "Kết quả ký của owner (2026-10-21)" · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+
+## task: docs-sync-phase3-owner-decision-spec-follow-ups
+title: Docs: one lane to sync the Reviewed specs that DD-138 and DD-139..DD-142 name as spec follow-ups
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [billing, transport-zalo, web-app]
+scope: [docs/product/BRD.md, docs/product/PRD.md, docs/product/TDD.md, docs/product/ROADMAP.md, docs/features/FE/feature_billing_lifecycle.md, docs/features/FE/feature_home.md, docs/features/FE/feature_session_management.md, docs/features/FE/feature_marketplace_discovery.md, docs/features/FE/feature_cross_club_join.md, docs/features/BE/feature_billing_lifecycle_tech.md, docs/features/BE/feature_home_tech.md, docs/features/BE/feature_session_management_tech.md, docs/features/BE/feature_cross_club_join_tech.md, docs/features/BE/feature_zalo_channel_tech.md, docs/features/BE/feature_inapp_chat_tech.md, docs/features/BE/feature_player_view_tech.md, docs/features/BE/feature_marketplace_discovery_tech.md, docs/features/BE/feature_user_settings_tech.md, docs/channels/web/ux-sync-design.md]
+manifest: null
+merged_probe: null
+close_by: hand · docs-reconcile: Reviewed spec docs only, no symbol
+notes: |
+  Phase 4 backlog row from the owner decisions of 2026-10-21: one docs lane that syncs the spec follow-ups. The follow-ups are the "Spec follow-up" subsection of the DD-138 entry and the "Spec follow-up" line of each of DD-139, DD-140, DD-141 and DD-142 in `docs/standards/decisions.md`; `scope` is the union of the Reviewed spec files they name (docs only), each listed here only after a file listing at the lane base confirmed it exists. The records lane L19 edits none of those specs; this row is the lane that does. The owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
+  > "one docs lane to sync the DD-138 spec follow-ups"
+  Left out on purpose: `docs/features/FE/feature_chat_fe.md`, which DD-138 labels Draft: a spec that is not Reviewed is not a Reviewed-spec follow-up (readiness record `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md`, row P1). No code, test, migration, workflow, env or config file belongs to this row. `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, the DD-138 "Spec follow-up" subsection and the "Spec follow-up" lines of DD-139, DD-140, DD-141 and DD-142 · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+
+## task: host-pro-late-invoice-retention-period-decision
+title: Host Pro: owner decision of the retention period after a downgrade to Free, with read-only versus hidden Pro-only data (DD-142)
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [billing]
+scope: [docs/standards/decisions.md]
+manifest: null
+merged_probe: null
+close_by: hand · owner decision: closes when the owner records the retention period and read-only vs hidden as a DD entry
+notes: |
+  Phase 4 backlog row from the owner decisions of 2026-10-21: the DD-51 retention period decision. It closes with the owner's decision, not with code: DD-142 records two points as open (⬜ Mở), the retention period for a downgraded Host Pro tenant's data (1 to 3 months) and the behaviour of Pro-only data during retention (read-only versus hidden), and the owner decides them together. This row proposes and applies no default for either. `change_class` is the existing `docs-reconcile` because the closing change is a decision record in `docs/standards/decisions.md`; no new class is introduced. The owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
+  > "DD-51 retention period decision"
+  Closing condition: the owner records the retention period and read-only versus hidden as a decision entry; until then DD-142 stays open on both points and the retention part of the behaviour in row `billing-late-host-pro-invoice-downgrade-to-free` stays undefined. Billing is not in the MVP (DD-132). `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, DD-142 (its ⬜ Mở lines) · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+
+## task: deps-next-advisories-before-staging-deploy
+title: Deps: fix the `next` advisories GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p before any staging deploy (P0-gating; DD-138 `p3-osv-advisories D-8` signed as TEMPORARY only)
+status: idea
+risk: P1
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: [apps/web/package.json, pnpm-lock.yaml]
+manifest: null
+merged_probe: null
+close_by: hand · dependency-security: a version bump adds no symbol
+notes: |
+  P0-gating backlog row from the owner decisions of 2026-10-21; the owner's words, from the owner's section A.1 of 2026-10-21 (the D-8 line), confirmed in the conductor terminal, verbatim:
+  >    - p3-osv-advisories D-8 (`next` advisories untouched): signed as TEMPORARY only -> fix before any staging deploy (#50); add a P0-gating backlog row.
+  The DD-138 row `p3-osv-advisories D-8` (`docs/standards/decisions.md:1915` at 2c7dfe7; the full row key is the stable reference, the line moves) records that the `next` advisories GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p were not touched in the Phase 3 lane L1b (#60) and left under OPEN, and that raising `next` needs its own lane; the owner signed that row as TEMPORARY only on 2026-10-21. `next` is declared at `apps/web/package.json:18` as `^15.1.4` at the lane base. "P0-gating" is the owner's term for the gate: this row must be fixed before any staging deploy (#50), and this row does not deploy and does not mark any owner step done; its own risk is P1.
+  A version bump adds no symbol, so there is no `merged_probe` and the row closes by hand once both advisories are fixed in `apps/web/package.json` and `pnpm-lock.yaml`. Related existing row, not edited: `osv-full-scan-red-on-main-2026-10` (`docs/autopilot-backlog.md:6231`, both GHSA ids at `:6246`, at 2c7dfe7). source: `docs/standards/decisions.md`, DD-138 row `p3-osv-advisories D-8` and the DD-138 sign-off subsection "Kết quả ký của owner (2026-10-21)" · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+
+## task: billing-late-host-pro-invoice-downgrade-to-free
+title: Billing: a late Host Pro invoice gets the 7-day grace, then the tenant is downgraded to Free, never suspended by billing (DD-142), built with the billing epic
+status: idea
+risk: P1
+change_class: core-logic
+depends_on: [feature-billing-lifecycle]
+invariants: [billing, billing-authz]
+scope: [packages/core/src/billing-late-invoice-downgrade.ts]
+manifest: null
+merged_probe: packages/core/src/billing-late-invoice-downgrade.ts :: downgradeLateHostProTenantToFree
+notes: |
+  Backlog row for the owner's decision B4 of 2026-10-21, recorded as DD-142 (amends DD-51); the owner's words, from the owner's decision B4 of 2026-10-21, confirmed in the conductor terminal, the whole paragraph verbatim:
+  > B4. Amend DD-51: a paid Host Pro tenant whose invoice is late gets the 7-day grace, then is DOWNGRADED TO FREE, never suspended by billing. All data, including Pro-only data, is retained for a retention period to be decided later (1 to 3 months); behaviour of Pro-only data during retention (read-only vs hidden) is decided with it. Billing is not in the MVP, so this is a decision-record change plus backlog rows; keep `suspended` for non-billing (admin / abuse) use, P-7 (suspended or cancelled tenants never public) unchanged.
+  Billing is not in the MVP (DD-132), so this row is built with the billing epic and depends on `feature-billing-lifecycle` (`docs/autopilot-backlog.md:845` at 2c7dfe7); until then DD-142 is a decision record plus these backlog rows. The retention period and the read-only versus hidden behaviour of Pro-only data are not decided: they belong to row `host-pro-late-invoice-retention-period-decision`. Not implemented and not started: `downgradeLateHostProTenantToFree` has 0 matches at the lane base, so the probe stays valid until a slice adds that symbol at that path. `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, DD-142 (and DD-132 for billing outside the MVP) · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
