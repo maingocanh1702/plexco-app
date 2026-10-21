@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { sessions } from "../schema.js";
 import { encryptPersonGender } from "./gender-crypto.js";
 import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
+import { getSessionDetail, listSessions } from "./session-read.js";
 import {
   createSession,
   publishSession,
@@ -2445,6 +2446,28 @@ describe("updateSession", () => {
       expect(await counts()).toEqual(before);
       expect(await state()).toEqual({ hide_exact_address: false, version: version + 3 });
     }
+  });
+
+  it("A-7 host read: the host DTOs carry hideExactAddress, false after a plain create and true after an update that set it (DD-139 / B1)", async () => {
+    const detail = (tenantId: string, sessionId: string) =>
+      getSessionDetail(ctx.appDb.db, { tenantId, sessionId });
+    const listed = async (tenantId: string, sessionId: string) =>
+      (await listSessions(ctx.appDb.db, { tenantId })).sessions.find((s) => s.id === sessionId);
+
+    // A plain createSession (the option not sent) reads back false on the host detail.
+    const created = await create();
+    expect((await detail(ctx.tenantA, created.sessionId))?.hideExactAddress).toBe(false);
+
+    // A session at the 0067 column default reads back false on both host DTOs ...
+    const tenantId = await seedTenant("active", "active");
+    const { sessionId, version } = await seedSession(tenantId);
+    expect((await detail(tenantId, sessionId))?.hideExactAddress).toBe(false);
+    expect((await listed(tenantId, sessionId))?.hideExactAddress).toBe(false);
+
+    // ... and true on both after an update that set it.
+    await update(tenantId, { sessionId, expectedVersion: version, hideExactAddress: true });
+    expect((await detail(tenantId, sessionId))?.hideExactAddress).toBe(true);
+    expect((await listed(tenantId, sessionId))?.hideExactAddress).toBe(true);
   });
 
   it("U-ALLFIELDS: a single update maps ALL eleven editable fields to their columns, with exact changed_fields (no field silently dropped)", async () => {

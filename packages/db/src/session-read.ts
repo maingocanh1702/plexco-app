@@ -95,6 +95,8 @@ export interface SessionScalars {
   timezone: string;
   venueName: string | null;
   venueAddress: string | null;
+  // DD-139 / B1: the per-session option, host-only view; the public and /me reads enforce it in SQL
+  hideExactAddress: boolean;
   area: string | null;
   skillLevel: string | null;
   priceAmount: number;
@@ -182,6 +184,7 @@ const scalarColumns = {
   timezone: sessions.timezone,
   venueName: sessions.venueName,
   venueAddress: sessions.venueAddress,
+  hideExactAddress: sessions.hideExactAddress,
   area: sessions.area,
   skillLevel: sessions.skillLevel,
   priceAmount: sessions.priceAmount,
