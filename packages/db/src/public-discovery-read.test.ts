@@ -56,6 +56,8 @@ const VIEW_COLS = [
   "gender_restriction",
   "age_min",
   "age_max",
+  "venue_name",
+  "venue_address",
 ];
 
 /** One statement AS THE APP ROLE under the tenant GUC (withTenant): its first row. */
@@ -83,7 +85,7 @@ async function session(tenantId: string, s: SessionSeed = {}): Promise<string> {
   const [r] = await owner(
     `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
        price_amount, slots_max, visibility, join_policy, status)
-     VALUES ($1, $2, $3, $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', 'Venue', 'Venue', $4, $5, $6,
+     VALUES ($1, $2, $3, $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', 'Venue', 'Venue address', $4, $5, $6,
        'public', 'open', 'open')
      RETURNING id`,
     [
@@ -153,7 +155,7 @@ async function miss(lid: string | null, slug: string | null) {
 }
 
 describe("PDR-1 the whitelist, read as readonly (A-1)", () => {
-  it("A-1: list, detail and share return exactly the 17 view columns with golden values; resolve returns only the target", async () => {
+  it("A-1: list, detail and share return exactly the 19 view columns with golden values; resolve returns only the target", async () => {
     const area = `A1 ${randomUUID()}`;
     const startsAt = at(30);
     const t = await club("CLB Golden");
@@ -176,6 +178,9 @@ describe("PDR-1 the whitelist, read as readonly (A-1)", () => {
       gender_restriction: null,
       age_min: null,
       age_max: null,
+      // 0067 (DD-139 / B1): hide_exact_address is OFF by default, so the fixture's venue is public.
+      venue_name: "Venue",
+      venue_address: "Venue address",
     };
     const page = await list({ area, limit: 20 });
     expect(page).toEqual({ rows: [golden], next: null });
@@ -186,7 +191,41 @@ describe("PDR-1 the whitelist, read as readonly (A-1)", () => {
     expect(await resolve(lid)).toStrictEqual({ tenantId: t, sessionId: sid });
   });
 
-  it("T-20: a gendered session (price_male / price_female set) still serves the 17 view columns with price_amount only", async () => {
+  it("A-2 / A-6: a hidden venue serves NULL in both columns; an untyped venue stays NULL", async () => {
+    const area = `A2 ${randomUUID()}`;
+    const t = await club();
+    const { sid, lid, slug } = await listed(t, { area });
+    const shown = await detail(lid);
+    expect(shown).toMatchObject({ venue_name: "Venue", venue_address: "Venue address" });
+    // (a) A-2: the host turns the option ON; the next projection clears both venue columns only.
+    await owner("UPDATE sessions SET hide_exact_address = true WHERE id = $1", [sid]);
+    expect(await project(sid)).toBe("upserted");
+    const hidden = { ...shown!, venue_name: null, venue_address: null };
+    const page = await list({ area, limit: 20 });
+    expect(page).toEqual({ rows: [hidden], next: null });
+    for (const row of [page.rows[0], await detail(lid), await share(slug)]) {
+      expect(row).toEqual(hidden);
+      expect(Object.keys(row!)).toEqual(VIEW_COLS);
+    }
+    // (b) A-6: a session with no venue typed (option OFF) serves NULL in both, no placeholder.
+    const bareArea = `A6 ${randomUUID()}`;
+    const bare = await session(t, { area: bareArea });
+    await owner("UPDATE sessions SET venue_name = NULL, venue_address = NULL WHERE id = $1", [
+      bare,
+    ]);
+    expect(await project(bare)).toBe("upserted");
+    const bareLid = await listingId(bare);
+    const bareSlug = await rotate(t, bare);
+    const barePage = await list({ area: bareArea, limit: 20 });
+    expect(barePage.rows).toHaveLength(1);
+    for (const row of [barePage.rows[0], await detail(bareLid), await share(bareSlug)]) {
+      expect(Object.keys(row!)).toEqual(VIEW_COLS);
+      expect(row!.venue_name).toBeNull();
+      expect(row!.venue_address).toBeNull();
+    }
+  });
+
+  it("T-20: a gendered session (price_male / price_female set) still serves the 19 view columns with price_amount only", async () => {
     const area = `T20 ${randomUUID()}`;
     const t = await club("CLB Gender");
     const sid = await session(t, { area });

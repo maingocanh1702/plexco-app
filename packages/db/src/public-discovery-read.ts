@@ -28,6 +28,9 @@ export interface DiscoveryListingRow {
   gender_restriction: string | null;
   age_min: number | null;
   age_max: number | null;
+  // 0067 (DD-139 / B1): the projected venue, NULL while hide_exact_address is ON or untyped
+  venue_name: string | null;
+  venue_address: string | null;
 }
 
 /** A keyset position: starts_at as UTC microsecond text (never a JS Date, which truncates). */
@@ -61,10 +64,10 @@ export interface DiscoveryListingTarget {
 
 export const DISCOVERY_PAGE_LIMIT_MAX = 50;
 
-// The 17 view columns, a constant: it is spliced only into the constant statements below.
+// The 19 view columns, a constant: it is spliced only into the constant statements below.
 const COLUMNS = `public_listing_id, sport_key, starts_at, ends_at, area, price_amount, slots_open,
   club_display_name, join_policy, title, session_type, level_min_rank, level_max_rank, level_strict,
-  gender_restriction, age_min, age_max`;
+  gender_restriction, age_min, age_max, venue_name, venue_address`;
 
 const LIST_SQL = `SELECT ${COLUMNS},
        to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS keyset_starts_at

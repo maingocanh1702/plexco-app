@@ -293,7 +293,7 @@ test.describe("create", () => {
   }) => {
     const mock = await open(page, "/new");
     await fillValid(page);
-    await page.getByLabel("Địa chỉ").fill("1 Nguyễn Văn Linh");
+    await page.getByLabel("Địa chỉ", { exact: true }).fill("1 Nguyễn Văn Linh");
     await page.getByRole("button", { name: "Tạo bản nháp" }).click();
     await expect(page).toHaveURL(new RegExp(`${BASE}/new-1$`));
     await expect(page.getByRole("heading", { level: 1, name: "Cầu lông" })).toBeVisible();
@@ -845,7 +845,7 @@ test.describe("edit", () => {
     await expect(page.getByLabel("Giá mỗi người (VND)")).toHaveValue("50.000");
     await expect(page.getByLabel("Bắt đầu")).not.toHaveValue("");
     await expect(page.getByText("Buổi đang mở: bạn đổi được")).toBeVisible();
-    await page.getByLabel("Địa chỉ").fill("1 Nguyễn Văn Linh");
+    await page.getByLabel("Địa chỉ", { exact: true }).fill("1 Nguyễn Văn Linh");
     await page.getByRole("button", { name: "Lưu thay đổi" }).click();
     await expect(page).toHaveURL(new RegExp(`${BASE}/s-open$`));
     const [call] = mock.callsTo("PUT", /\/api\/sessions\/s-open$/);
@@ -883,14 +883,14 @@ test.describe("edit", () => {
     const mock = await open(page, "/s-open/edit");
     await expect(page.getByLabel("Giá mỗi người (VND)")).toHaveValue("50.000"); // loaded at v3
     mock.state.find((s) => s.id === "s-open")!.version = 7;
-    await page.getByLabel("Địa chỉ").fill("Somewhere");
+    await page.getByLabel("Địa chỉ", { exact: true }).fill("Somewhere");
     await page.getByRole("button", { name: "Lưu thay đổi" }).click();
     await expect(page.locator("main").getByRole("alert").first()).toContainText(
       "Kèo vừa được cập nhật",
     );
     await page.getByRole("button", { name: "Tải lại dữ liệu" }).click();
-    await expect(page.getByLabel("Địa chỉ")).toHaveValue("");
-    await page.getByLabel("Địa chỉ").fill("Somewhere");
+    await expect(page.getByLabel("Địa chỉ", { exact: true })).toHaveValue("");
+    await page.getByLabel("Địa chỉ", { exact: true }).fill("Somewhere");
     await page.getByRole("button", { name: "Lưu thay đổi" }).click();
     await expect(page).toHaveURL(new RegExp(`${BASE}/s-open$`));
   });

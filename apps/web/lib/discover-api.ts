@@ -71,6 +71,9 @@ export interface DiscoveryListing {
   priceAmount: number | null;
   slotsOpen: number | null;
   joinPolicy: "open" | "approval" | null;
+  // DD-139 / B1: present when the host left hide_exact_address OFF and typed a venue; absent (null here) otherwise.
+  venueName: string | null;
+  venueAddress: string | null;
 }
 
 export interface DiscoveryPage {
@@ -110,6 +113,8 @@ function parseListing(value: unknown): DiscoveryListing {
     priceAmount: num(row.priceAmount),
     slotsOpen: num(row.slotsOpen),
     joinPolicy: oneOf(row.joinPolicy, JOIN_POLICIES),
+    venueName: str(row.venueName),
+    venueAddress: str(row.venueAddress),
   };
 }
 

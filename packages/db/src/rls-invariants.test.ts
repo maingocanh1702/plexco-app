@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(67); // 0000..0066 (0066 account club chat context, 0065 chat message author label, 0064 channel identity link gate, 0063 chat message commands, 0062 gender pricing, 0061 public sessions projector writer, 0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
+    expect(ctx.migrateResult.applied.length).toBe(68); // 0000..0066 (0066 account club chat context, 0065 chat message author label, 0064 channel identity link gate, 0063 chat message commands, 0062 gender pricing, 0061 public sessions projector writer, 0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(67);
+    expect(second.skipped.length).toBe(68);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -206,6 +206,10 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
         "age_min",
         "age_max",
         "public_listing_id",
+        // 0067 (DD-139 / owner decision B1): the projected venue, NULL whenever the
+        // session's hide_exact_address option is ON.
+        "venue_name",
+        "venue_address",
       ].sort(),
     );
     // The view serves exactly these, in order: never session_id, tenant_id,
@@ -228,14 +232,20 @@ describe("public read model (INV-3 / HR2 / DD-12)", () => {
       "gender_restriction",
       "age_min",
       "age_max",
+      // 0067 (DD-139 / owner decision B1): the projected venue, NULL whenever the
+      // session's hide_exact_address option is ON.
+      "venue_name",
+      "venue_address",
     ]);
   });
 
   it("no public column smells like money/PII/roster", async () => {
+    // venue_address left this list in 0067: the venue is public by default (DD-139 / owner
+    // decision B1), and the writer projects NULL while hide_exact_address is ON.
     const { rows } = await ctx.owner.query(
       `SELECT column_name FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'public_sessions'
-         AND column_name ~* '(phone|email|debt|paid|roster|member|account|secret|token|venue_address)'`,
+         AND column_name ~* '(phone|email|debt|paid|roster|member|account|secret|token)'`,
     );
     expect(rows).toEqual([]);
   });
@@ -559,6 +569,10 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
         "gender_restriction",
         "age_min",
         "age_max",
+        // 0067 (DD-139 / owner decision B1): the projected venue, NULL whenever the
+        // session's hide_exact_address option is ON.
+        "venue_name",
+        "venue_address",
       ].sort(),
     );
     for (const hidden of [
@@ -571,8 +585,10 @@ describe("public projection fences — immediate-deny path (DD-12 / DD-73 Q5 / D
     ]) {
       expect(cols).not.toContain(hidden);
     }
+    // venue_address left this list in 0067: the venue is public by default (DD-139 / owner
+    // decision B1), and the writer projects NULL while hide_exact_address is ON.
     const smelly = cols.filter((c) =>
-      /(phone|email|debt|paid|roster|member|account|secret|token|venue_address|fence)/i.test(c),
+      /(phone|email|debt|paid|roster|member|account|secret|token|fence)/i.test(c),
     );
     expect(smelly).toEqual([]);
   });
@@ -1822,12 +1838,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(67); // 0000..0066
+      expect(res.applied.length).toBe(68); // 0000..0066
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(67);
+        expect(rows.length).toBe(68);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2105,7 +2121,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         await nsCtx.bootstrapJobDefinerForOwner();
         await nsCtx.bootstrapChatDefinerForOwner();
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0066_account_club_chat_context.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0067_session_venue_visibility.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4698,10 +4714,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (67) matches the actual migrations/ directory listing, and the tail is 0066", async () => {
+    it("UCC-8: MIGRATION_COUNT (68) matches the actual migrations/ directory listing, and the tail is 0066", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(67);
-      expect(files[files.length - 1]).toBe("0066_account_club_chat_context.sql");
+      expect(files.length).toBe(68);
+      expect(files[files.length - 1]).toBe("0067_session_venue_visibility.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {

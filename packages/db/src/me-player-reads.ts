@@ -38,7 +38,10 @@ export interface MySession {
   myStatus: "active" | "waitlisted" | "pending";
   /** waitlisted only */
   waitlistPosition: number | null;
-  /** both null unless myStatus is "active" (enforced in SQL) */
+  /**
+   * both null when no venue was typed, or when the host's hide_exact_address option is ON and
+   * myStatus is not "active" (DD-139 / B1, superseding L9 M-7; enforced in SQL)
+   */
   venueName: string | null;
   venueAddress: string | null;
 }

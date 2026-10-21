@@ -44,30 +44,58 @@ const text = (html: string) =>
 const stateOf = (html: string) => /data-state="([a-z]+)"/.exec(html)?.[1];
 
 describe("MySessionsView", () => {
-  it("venue only for an active seat", () => {
-    // These rows carry a venue the SQL definer would have nulled: the view must not trust that (P-6).
-    const leaky = (row: Partial<MySession>) =>
-      ({
-        ...ACTIVE,
-        venueName: "Leaked Court",
-        venueAddress: "1 Leak Street",
-        ...row,
-      }) as MySession;
+  it("A-1, A-3: every row draws the venue the server sent, whatever its seat status", () => {
+    // Option OFF (DD-139): the /me definer sends the venue on waitlisted and requested rows too.
+    // The view has no status rule of its own: it draws what the row carries, in full, never trims.
+    const row = (extra: Partial<MySession>) => ({ ...ACTIVE, ...extra }) as MySession;
     const rows = [
       ACTIVE,
-      leaky({ sessionId: "s-w", myStatus: "waitlisted", waitlistPosition: 3, area: "Đống Đa" }),
-      leaky({ sessionId: "s-p", myStatus: "pending", area: "Thanh Xuân" }),
-      leaky({ sessionId: "s-u", myStatus: "mystery" as never, area: "Ba Đình" }),
+      row({
+        sessionId: "s-w",
+        myStatus: "waitlisted",
+        waitlistPosition: 3,
+        area: "Đống Đa",
+        venueName: "Sân Beta",
+        venueAddress: "Tầng 2, nhà thi đấu Hoàng Văn Thụ, 124 đường Hoàng Hoa Thám, Hà Nội",
+      }),
+      row({
+        sessionId: "s-p",
+        myStatus: "pending",
+        area: "Thanh Xuân",
+        venueName: "Sân Gamma",
+        venueAddress: "56 Nguyễn Trãi",
+      }),
+      row({
+        sessionId: "s-u",
+        myStatus: "mystery" as never,
+        area: "Ba Đình",
+        venueName: "Sân Delta",
+        venueAddress: "7 Trần Hưng Đạo",
+      }),
     ];
     const visible = text(render(ready(rows)));
-    expect(visible).toContain("Sân Alpha");
-    expect(visible).toContain("12 Duy Tân");
-    expect(visible).not.toContain("Leaked Court");
-    expect(visible).not.toContain("Leak Street");
-    // Waitlisted and pending: area (and the position) but no venue; an unknown status has no label.
+    for (const r of rows) {
+      expect(visible).toContain(r.venueName);
+      expect(visible).toContain(r.venueAddress);
+    }
+    // The area line and the waitlist position stay as they were; an unknown status has no label.
     for (const area of ["Đống Đa", "Thanh Xuân", "Ba Đình"]) expect(visible).toContain(area);
     expect(visible).toContain("Waitlisted #3");
     expect(visible.match(/Confirmed|Waitlisted|Pending approval/g)).toHaveLength(3);
+  });
+
+  it("A-4: a row without a venue draws no venue text and no placeholder", () => {
+    // Null = nothing typed, or the host hid it from this viewer: the row is then the venue row
+    // minus the venue text and nothing takes its place. Each field stands on its own.
+    const flat = (extra: Partial<MySession>) =>
+      text(render(ready([{ ...ACTIVE, ...extra } as MySession])));
+    const squash = (s: string) => s.replace(/ +/g, " ").trim();
+    const bare = squash(flat({ venueName: null, venueAddress: null }));
+    expect(bare).toContain("Cầu Giấy");
+    expect(bare).not.toMatch(/Sân Alpha|Duy Tân/);
+    expect(squash(flat({}).replace("Sân Alpha", "").replace("12 Duy Tân", ""))).toBe(bare);
+    expect(squash(flat({ venueAddress: null }).replace("Sân Alpha", ""))).toBe(bare);
+    expect(squash(flat({ venueName: null }).replace("12 Duy Tân", ""))).toBe(bare);
   });
 
   it("times show in the row's own zone, none hardcoded", () => {

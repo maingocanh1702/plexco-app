@@ -31,6 +31,9 @@ const ROW = {
   gender_restriction: null,
   age_min: null,
   age_max: null,
+  // 0067 (DD-139 / B1) A-1: the projector wrote the venue (hide_exact_address OFF, a venue typed).
+  venue_name: "Sân Pickleball Lê Lợi",
+  venue_address: "12 Lê Lợi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
 };
 // DD-39 4.6 (T-20): the twelve exact keys no public JSON may carry (gender_restriction is DD-41).
 const GENDER_KEYS =
@@ -49,6 +52,8 @@ const DTO = {
   slotsOpen: 3,
   clubDisplayName: "Sunrise Club",
   joinPolicy: "open",
+  venueName: "Sân Pickleball Lê Lợi",
+  venueAddress: "12 Lê Lợi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
 };
 const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
 
@@ -81,6 +86,22 @@ afterEach(() => {
 });
 
 describe("GET /api/discover/[publicListingId]", () => {
+  it("A-2 (DD-139 / B1): a listing projected with the venue hidden (both columns NULL) serves the area and no venue key", async () => {
+    vi.mocked(readDiscoveryListing).mockResolvedValueOnce({
+      ...LEAKY,
+      venue_name: null,
+      venue_address: null,
+    });
+    const res = await get(ID);
+    expect([res.status, res.headers.get("cache-control")]).toEqual([200, "no-store"]);
+    const body = (await res.json()) as { data: { listing: object } };
+    const { venueName, venueAddress, ...areaOnly } = DTO;
+    expect(body.data.listing).toEqual(areaOnly);
+    expect(Object.keys(body.data.listing).sort()).toEqual(Object.keys(areaOnly).sort());
+    const text = JSON.stringify(body.data);
+    for (const hidden of [venueName, venueAddress, "venue"]) expect(text).not.toContain(hidden);
+  });
+
   it("A-9: a hit is the whitelist { listing } in the DD-60 envelope, no-store, read as readonly", async () => {
     vi.mocked(readDiscoveryListing).mockResolvedValueOnce({ ...LEAKY, ...GENDER_LEAK });
     const res = await get(ID);

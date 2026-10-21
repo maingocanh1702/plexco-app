@@ -14,8 +14,10 @@ import {
  * Read client for the player's own pages (L12): my clubs, sessions, charges and join requests.
  * Shapes mirror packages/db/src/me-player-reads.ts and follow the rules of discover-api.ts: rebuilt
  * key by key, an unknown enum value is null, a row without its required keys fails the whole read.
- * Fields that depend on state are cut here as well, not only in SQL: a venue is kept only for an
- * active seat, a position only for a waitlisted one, an expiry only for a pending request.
+ * Fields that depend on state are cut here as well, not only in SQL: a position only for a
+ * waitlisted seat, an expiry only for a pending request. The venue is passed through as the server
+ * sends it and never re-derived here: only SQL sees the session's hide_exact_address option
+ * (DD-139; 0067 account_my_sessions returns NULL to a viewer the option hides it from).
  */
 
 export interface MyClub {
@@ -131,8 +133,8 @@ function parseSession(value: unknown): MySession {
     area: str(row.area),
     myStatus,
     waitlistPosition: myStatus === "waitlisted" ? num(row.waitlistPosition) : null,
-    venueName: myStatus === "active" ? str(row.venueName) : null,
-    venueAddress: myStatus === "active" ? str(row.venueAddress) : null,
+    venueName: str(row.venueName),
+    venueAddress: str(row.venueAddress),
   };
 }
 

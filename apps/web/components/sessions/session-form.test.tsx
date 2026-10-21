@@ -90,3 +90,53 @@ describe("SessionForm price mode (DD-39, readiness 4.9)", () => {
     },
   );
 });
+
+describe("SessionForm hide exact address (DD-139 D-3, D-9, A-11)", () => {
+  // [lang, label, help line, Place legend]: the exact D-3 pairs.
+  const copy = [
+    [
+      "vi",
+      "Ẩn địa chỉ chính xác đến khi xác nhận",
+      "Khi bật, chỉ người chơi đã có chỗ mới thấy tên sân và địa chỉ; người khác chỉ thấy khu vực.",
+      "Địa điểm",
+    ],
+    [
+      "en",
+      "Hide exact address until confirmed",
+      "When on, only players with a confirmed seat see the venue name and address; everyone else sees the area only.",
+      "Place",
+    ],
+  ] as const;
+
+  it.each(copy)(
+    "%s: create mode renders it off, wired to its help line, at the end of the Place fieldset",
+    (lang, label, help, place) => {
+      const markup = html("create", lang);
+      // addressField is label-driven: any label -> its <input> + "<id>-hint" paragraph.
+      const field = addressField(markup, label);
+      expect(field.input).toContain('type="checkbox"');
+      expect(field.input).toContain('name="hideExactAddress"');
+      expect(field.input).not.toContain("checked");
+      expect(field.input).toContain(`aria-describedby="${field.forId}-hint"`);
+      expect(field.hint).toBe(help);
+
+      // D-9: the label and its help line sit after the Place legend, before that fieldset closes.
+      const legendAt = markup.indexOf(`<legend>${place}</legend>`);
+      const closeAt = markup.indexOf("</fieldset>", legendAt);
+      const labelAt = markup.indexOf(`>${label}</label>`);
+      const helpAt = markup.indexOf(`<p id="${field.forId}-hint"`);
+      expect(legendAt).toBeGreaterThanOrEqual(0);
+      expect(labelAt).toBeGreaterThan(legendAt);
+      expect(helpAt).toBeGreaterThan(labelAt);
+      expect(helpAt).toBeLessThan(closeAt);
+    },
+  );
+
+  it.each(copy)(
+    "%s: edit mode with hideExactAddress true renders the option checked",
+    (lang, label) => {
+      const markup = html("edit", lang, { hideExactAddress: true });
+      expect(addressField(markup, label).input).toContain('checked=""');
+    },
+  );
+});

@@ -24,8 +24,11 @@ export function sportLabel(key: string, t: TFn): string {
 }
 
 /**
- * The D-1 and D-2 fields of one listing and nothing else: no venue, no gender, no ids (P-4 to
- * P-10). A missing price or slot count renders no line, never a made-up 0.
+ * The D-1 and D-2 fields of one listing and nothing else. Under DD-139 (owner decision B1) the
+ * venue name and the full address render when the server sends them, which it does only while the
+ * host's hide_exact_address option is OFF: the cut is made in SQL, not here. Still no gender and
+ * no ids (P-4 to P-10). A missing price, slot count, venue name or address renders no line, never
+ * a made-up 0 or a placeholder.
  */
 export function ListingSummary({
   listing,
@@ -60,6 +63,8 @@ export function ListingSummary({
       <Heading className={styles.title}>{listing.title ?? sport}</Heading>
       {when ? <p className={styles.meta}>{when}</p> : null}
       {listing.area ? <p className={styles.meta}>{listing.area}</p> : null}
+      {listing.venueName ? <p className={styles.meta}>{listing.venueName}</p> : null}
+      {listing.venueAddress ? <p className={styles.meta}>{listing.venueAddress}</p> : null}
       {listing.clubDisplayName ? <p className={styles.meta}>{listing.clubDisplayName}</p> : null}
       <div className={styles.facts}>
         {listing.title ? <Badge>{sport}</Badge> : null}

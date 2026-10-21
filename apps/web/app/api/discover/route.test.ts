@@ -36,6 +36,9 @@ const ROW = {
   gender_restriction: null,
   age_min: null,
   age_max: null,
+  // 0067 (DD-139 / B1) A-1: the projector wrote the venue (hide_exact_address OFF, a venue typed).
+  venue_name: "Sân Pickleball Lê Lợi",
+  venue_address: "12 Lê Lợi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
 };
 // DD-39 4.6 (T-20): the twelve exact keys no public JSON may carry (gender_restriction is DD-41).
 const GENDER_KEYS =
@@ -54,6 +57,8 @@ const DTO = {
   slotsOpen: 3,
   clubDisplayName: "Sunrise Club",
   joinPolicy: "open",
+  venueName: "Sân Pickleball Lê Lợi",
+  venueAddress: "12 Lê Lợi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
 };
 const NEXT = { startsAt: "2026-11-01T10:00:00.000000Z", publicListingId: ID2 };
 const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
@@ -92,6 +97,39 @@ afterEach(() => {
 });
 
 describe("GET /api/discover", () => {
+  it("A-2 (DD-139 / B1): a row projected with the venue hidden (both columns NULL) serves the area and no venue key", async () => {
+    vi.mocked(listDiscoveryListings).mockResolvedValueOnce({
+      rows: [{ ...LEAKY, venue_name: null, venue_address: null }],
+      next: null,
+    });
+    const res = await get();
+    expect([res.status, res.headers.get("cache-control")]).toEqual([200, "no-store"]);
+    const body = (await res.json()) as { data: { items: object[] } };
+    const { venueName, venueAddress, ...areaOnly } = DTO;
+    expect(body.data.items).toEqual([areaOnly]);
+    expect(body.data.items.map(keys)).toEqual([keys(areaOnly)]);
+    const text = JSON.stringify(body.data);
+    for (const hidden of [venueName, venueAddress, "venue"]) expect(text).not.toContain(hidden);
+  });
+
+  it("A-8 (DD-139 / B1): the DTO key set is the pre-0067 whitelist plus exactly venueName and venueAddress", async () => {
+    const dd41 = `title session_type level_min_rank level_max_rank level_strict gender_restriction
+      age_min age_max`.split(/\s+/);
+    const everyOptional: object = Object.fromEntries(dd41.map((column) => [column, 1]));
+    vi.mocked(listDiscoveryListings).mockResolvedValueOnce({
+      rows: [{ ...LEAKY, ...GENDER_LEAK, ...everyOptional }],
+      next: null,
+    });
+    const res = await get();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { items: object[] } };
+    const pre0067 = `publicListingId sportKey startsAt endsAt area priceAmount slotsOpen
+      clubDisplayName joinPolicy title sessionType levelMinRank levelMaxRank levelStrict
+      genderRestriction ageMin ageMax`.split(/\s+/);
+    const expected = [...pre0067, "venueName", "venueAddress"].sort();
+    expect(body.data.items.map(keys)).toEqual([expected]);
+  });
+
   it("A-5: the whitelist page { items, nextCursor } in the DD-60 envelope, no-store; the cursor resumes the keyset", async () => {
     vi.mocked(listDiscoveryListings).mockResolvedValueOnce({
       rows: [LEAKY, { ...ROW, ...GENDER_LEAK, public_listing_id: ID2, title: "Evening drills" }],

@@ -234,6 +234,9 @@ const OPTIONAL_DTO_KEYS = [
   ["genderRestriction", "gender_restriction"],
   ["ageMin", "age_min"],
   ["ageMax", "age_max"],
+  // 0067 (DD-139 / B1): present only when the projector wrote them (hide_exact_address OFF and a venue typed); the null-drop below keeps them absent otherwise
+  ["venueName", "venue_name"],
+  ["venueAddress", "venue_address"],
 ] as const;
 
 /** The whitelist DTO (readiness 4.4), built key by key: a column the view gains is never served. */

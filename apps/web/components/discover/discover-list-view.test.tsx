@@ -21,6 +21,8 @@ const LISTING: DiscoveryListing = {
   priceAmount: 60000,
   slotsOpen: 4,
   joinPolicy: "open",
+  venueName: null,
+  venueAddress: null,
 };
 const IDLE = { busy: false, error: null as unknown };
 const noop = () => {};
@@ -104,28 +106,42 @@ describe("DiscoverListView", () => {
     }
   });
 
-  it("ignores non-whitelisted keys: gender, per-gender price, bank, QR, venue and session ids never render", () => {
+  it("ready: a card shows the venue name and the full address when the server sends them (A-1, D-5)", () => {
+    const venueName = "Sân Cầu Lông A1";
+    const venueAddress = "12 Phố Huế, phường Hai Bà Trưng, Hà Nội";
+    const visible = text(render(ready([{ ...LISTING, venueName, venueAddress }])));
+    expect(visible).toContain(venueName);
+    expect(visible).toContain(venueAddress); // full text, no truncation (D-5)
+  });
+
+  it("ready: a card without a venue is the venue card minus the venue text, no placeholder (A-2, A-6)", () => {
+    // Null = nothing typed, or the host hid it (option ON): the card is then the venue card minus
+    // the venue text and nothing takes its place, not even a translated label.
+    const venueName = "Sân Cầu Lông A1";
+    const venueAddress = "12 Phố Huế, phường Hai Bà Trưng, Hà Nội";
+    const squash = (s: string) => s.replace(/ +/g, " ").trim();
+    // Not vacuous: the venue render really carries both strings, the bare one neither.
+    const full = text(render(ready([{ ...LISTING, venueName, venueAddress }])));
+    expect(full).toContain(venueName);
+    expect(full).toContain(venueAddress);
+    const bare = squash(text(render(ready([{ ...LISTING, venueName: null, venueAddress: null }]))));
+    expect(bare).toContain("Cầu Giấy");
+    expect(bare).not.toContain(venueName);
+    expect(bare).not.toContain(venueAddress);
+    expect(squash(full.replace(venueName, "").replace(venueAddress, ""))).toBe(bare);
+  });
+
+  it("ignores non-whitelisted keys: gender, per-gender price, bank, QR and session ids never render", () => {
     const injected = {
       ...LISTING,
       genderRestriction: "female",
       priceByGender: { male: 70001, female: 50002 },
       bankAccount: "0123456789",
       qrUrl: "https://qr.example/pay",
-      venueName: "San Cau Long A1",
-      venueAddress: "12 Pho Hue",
       sessionId: "6f1d0f7e-5d0c-4a52-9a53-0d3f6a1b2c3d",
     } as unknown as DiscoveryListing;
     const html = render(ready([injected]));
-    for (const leaked of [
-      "female",
-      "70001",
-      "50002",
-      "0123456789",
-      "qr.example",
-      "San Cau Long A1",
-      "12 Pho Hue",
-      "6f1d0f7e",
-    ]) {
+    for (const leaked of ["female", "70001", "50002", "0123456789", "qr.example", "6f1d0f7e"]) {
       expect(html).not.toContain(leaked);
     }
   });

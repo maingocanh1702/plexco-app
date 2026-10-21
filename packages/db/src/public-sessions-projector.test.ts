@@ -16,7 +16,9 @@ import { setupRlsTestContext, withJobDefinerLock, type RlsTestContext } from "./
 const DB_NAME = "plexco_public_sessions_projector";
 const BASE = process.env.DATABASE_URL_TEST!;
 const HOUR = 3_600_000;
-const SECRET = "Secret"; // every person, guest, tenant name and venue fixture carries it
+// Every person, guest and tenant name fixture carries SECRET; the venue fixture no longer does:
+// the venue is public by default under DD-139 (owner decision B1), so the view serves it.
+const SECRET = "Secret";
 let ctx: RlsTestContext;
 
 beforeAll(async () => {
@@ -63,6 +65,8 @@ const TABLE_COLS = [
   "age_min",
   "age_max",
   "public_listing_id",
+  "venue_name",
+  "venue_address",
 ];
 const VIEW_COLS = [
   "public_listing_id",
@@ -82,8 +86,11 @@ const VIEW_COLS = [
   "gender_restriction",
   "age_min",
   "age_max",
+  "venue_name",
+  "venue_address",
 ];
-const DD41_COLS = VIEW_COLS.slice(9);
+// The eight DD-41 columns (written NULL, P-1); the venue after them is projected (DD-139 / B1).
+const DD41_COLS = VIEW_COLS.slice(9, 17);
 
 /** One app transaction with the tenant GUC set (or deliberately unset), like withTenant. */
 async function asApp<T>(tenantId: string | null, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
@@ -126,13 +133,13 @@ async function session(tenantId: string, s: SessionSeed = {}): Promise<string> {
   const [r] = await owner(
     `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
        price_amount, slots_max, visibility, join_policy, status)
-     VALUES ($1, $2, $3, $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', $4, $4, $5, 50000, $6, $7, 'open', $8)
+     VALUES ($1, $2, $3, $3::timestamptz + interval '2 hours', 'Asia/Ho_Chi_Minh', $4, '1 Public Street', $5, 50000, $6, $7, 'open', $8)
      RETURNING id`,
     [
       tenantId,
       ctx.badmintonSportId,
       starts,
-      `${SECRET} Venue`,
+      "Public Venue",
       s.area ?? "Quan 7",
       s.slotsMax === undefined ? 10 : s.slotsMax,
       s.visibility ?? "public",
@@ -216,7 +223,7 @@ const columns = async (rel: string) =>
   ).map((r) => r.column_name as string);
 
 describe("PSP-1 whitelist of the table, the view and the projector's writes (A-1, A-2)", () => {
-  it("PSP-1a: the table holds exactly the 22 approved columns and the view exactly the 17, in order", async () => {
+  it("PSP-1a: the table holds exactly the 24 approved columns and the view exactly the 19, in order", async () => {
     expect((await columns("public_sessions")).sort()).toEqual([...TABLE_COLS].sort());
     expect(await columns("public_session_share_v")).toEqual(VIEW_COLS);
   });
@@ -246,6 +253,9 @@ describe("PSP-1 whitelist of the table, the view and the projector's writes (A-1
     expect(v).toMatchObject({ club_display_name: "CLB Q7", slots_open: 8, price_amount: 50000 });
     const served = JSON.stringify(v);
     for (const leak of [SECRET, t, sid]) expect(served).not.toContain(leak);
+    // A-1 at the view: the venue is public by default (DD-139 / owner decision B1).
+    expect(v.venue_name).toBe("Public Venue");
+    expect(v.venue_address).toBe("1 Public Street");
   });
 });
 
@@ -846,5 +856,135 @@ describe("PSP-11 expiry sweep, tenant candidates, the 15 routes and the disabled
     expect(
       await owner("SELECT enabled FROM outbox_projectors WHERE name = 'public_sessions'"),
     ).toEqual([{ enabled: false }]);
+  });
+});
+
+describe("PSP-12 the venue follows hide_exact_address (DD-139 / B1): A-1, A-2, A-5, A-6, A-10", () => {
+  // session()'s venue literals; with the option ON neither may reach the base row or the view.
+  const VENUE = "Public Venue";
+  const ADDRESS = "1 Public Street";
+  const hide = (sid: string, on: boolean) =>
+    owner("UPDATE sessions SET hide_exact_address = $2 WHERE id = $1", [sid, on]);
+  // A real change moves only the venue, the version and projected_at (the 0067 DO UPDATE SET).
+  const MOVES = ["venue_name", "venue_address", "public_projection_version", "projected_at"];
+  const snap = (r: Row) => ({
+    venue: [r.venue_name, r.venue_address],
+    version: Number(r.public_projection_version),
+    rest: Object.fromEntries(Object.entries(r).filter(([k]) => !MOVES.includes(k))),
+  });
+
+  it("PSP-12a (A-1): option OFF, the base row and the view row carry the typed venue", async () => {
+    const sid = await session(await club());
+    const [opt] = await owner("SELECT hide_exact_address FROM sessions WHERE id = $1", [sid]);
+    expect(opt).toEqual({ hide_exact_address: false });
+    expect(await project(sid)).toBe("upserted");
+    const row = (await baseRow(sid))!;
+    expect([row.venue_name, row.venue_address]).toEqual([VENUE, ADDRESS]);
+    expect(await viewRow(row.public_listing_id as string)).toMatchObject({
+      venue_name: VENUE,
+      venue_address: ADDRESS,
+    });
+  });
+
+  it("PSP-12b (A-2, A-5): the option turned ON clears the venue at the next projection with one version bump and nothing else moving; turned OFF it returns", async () => {
+    const sid = await session(await club());
+    expect(await project(sid)).toBe("upserted");
+    const shown = snap((await baseRow(sid))!);
+    const lid = await listingId(sid);
+    await hide(sid, true);
+    expect(await project(sid, randomUUID())).toBe("upserted");
+    const hidden = snap((await baseRow(sid))!);
+    expect(hidden).toEqual({ venue: [null, null], version: shown.version + 1, rest: shown.rest });
+    const v = (await viewRow(lid))!;
+    expect(v).toMatchObject({ area: "Quan 7", venue_name: null, venue_address: null });
+    const served = JSON.stringify(v);
+    for (const leak of [VENUE, ADDRESS, SECRET]) expect(served).not.toContain(leak);
+    await hide(sid, false);
+    expect(await project(sid, randomUUID())).toBe("upserted");
+    expect(snap((await baseRow(sid))!)).toEqual({
+      venue: [VENUE, ADDRESS],
+      version: hidden.version + 1,
+      rest: shown.rest,
+    });
+    expect(await viewRow(lid)).toMatchObject({ venue_name: VENUE, venue_address: ADDRESS });
+  });
+
+  it("PSP-12c (A-5): with the option unchanged, ON or OFF, a re-projection is unchanged with no version bump", async () => {
+    const sid = await session(await club());
+    await hide(sid, true);
+    expect(await project(sid)).toBe("upserted");
+    const hidden = snap((await baseRow(sid))!);
+    expect([hidden.venue, hidden.version]).toEqual([[null, null], 1]);
+    await hide(sid, true); // a same-value write is no change
+    expect(await project(sid, randomUUID())).toBe("unchanged");
+    expect(snap((await baseRow(sid))!)).toEqual(hidden);
+    await hide(sid, false);
+    expect(await project(sid, randomUUID())).toBe("upserted");
+    const shown = snap((await baseRow(sid))!);
+    expect([shown.venue, shown.version]).toEqual([[VENUE, ADDRESS], 2]);
+    expect(await project(sid, randomUUID())).toBe("unchanged");
+    expect(snap((await baseRow(sid))!)).toEqual(shown);
+  });
+
+  it("PSP-12d (A-6): an untyped venue projects NULL in both columns with the option OFF, no placeholder", async () => {
+    const sid = await session(await club());
+    const untyped = "UPDATE sessions SET venue_name = NULL, venue_address = NULL WHERE id = $1";
+    await owner(untyped, [sid]);
+    expect(await project(sid)).toBe("upserted");
+    const row = (await baseRow(sid))!;
+    expect([row.venue_name, row.venue_address]).toEqual([null, null]);
+    expect(await viewRow(row.public_listing_id as string)).toMatchObject({
+      venue_name: null,
+      venue_address: null,
+    });
+  });
+
+  // PSP-8 asserts the re-created writer's owner, SECURITY DEFINER and search_path, PSP-8b the
+  // view's owner and rls-invariants its security_barrier; only the volatility is new here.
+  it("PSP-12e (A-10): the re-created writer stays VOLATILE", async () => {
+    const [p] = await owner("SELECT provolatile FROM pg_proc WHERE oid = $1::regprocedure", [
+      "public_sessions_project_session(uuid,uuid)",
+    ]);
+    expect(p).toEqual({ provolatile: "v" });
+  });
+
+  it("PSP-12f (A-2, F1): a session hidden before its first projection projects NULL venue in the base row and the view row", async () => {
+    const sid = await session(await club());
+    await hide(sid, true);
+    expect(await baseRow(sid)).toBeUndefined(); // no row yet: the writer takes the insert arm
+    expect(await project(sid)).toBe("upserted");
+    const row = (await baseRow(sid))!;
+    expect([row.venue_name, row.venue_address]).toEqual([null, null]);
+    const v = (await viewRow(row.public_listing_id as string))!;
+    expect(v).toMatchObject({ area: "Quan 7", venue_name: null, venue_address: null });
+    const served = JSON.stringify(v);
+    for (const leak of [VENUE, ADDRESS]) expect(served).not.toContain(leak);
+    // The writer masks at its read: the session row still holds the typed venue.
+    const typed = "SELECT venue_name, venue_address FROM sessions WHERE id = $1";
+    expect(await owner(typed, [sid])).toEqual([{ venue_name: VENUE, venue_address: ADDRESS }]);
+  });
+
+  it("PSP-12g (A-2, F1): with a share fence raised, the rotated re-insert keeps the venue NULL while the option is ON, and carries it again once OFF", async () => {
+    const t = await club();
+    const sid = await session(t);
+    expect(await project(sid)).toBe("upserted");
+    await raise(t, sid);
+    await hide(sid, true);
+    expect(await project(sid, randomUUID())).toBe("rotated");
+    const hidden = (await baseRow(sid))!;
+    expect([hidden.venue_name, hidden.venue_address]).toEqual([null, null]);
+    const v = (await viewRow(hidden.public_listing_id as string))!;
+    expect(v).toMatchObject({ area: "Quan 7", venue_name: null, venue_address: null });
+    const served = JSON.stringify(v);
+    for (const leak of [VENUE, ADDRESS]) expect(served).not.toContain(leak);
+    await raise(t, sid); // a fence again, so the OFF projection takes the same re-insert arm
+    await hide(sid, false);
+    expect(await project(sid, randomUUID())).toBe("rotated");
+    const shown = (await baseRow(sid))!;
+    expect([shown.venue_name, shown.venue_address]).toEqual([VENUE, ADDRESS]);
+    expect(await viewRow(shown.public_listing_id as string)).toMatchObject({
+      venue_name: VENUE,
+      venue_address: ADDRESS,
+    });
   });
 });

@@ -24,6 +24,8 @@ export interface SessionFormValues {
   slotsMax: string;
   visibility: "private" | "public";
   joinPolicy: "open" | "approval";
+  /** DD-139 / B1: "hide exact address until confirmed"; off (the default) = the venue is public. */
+  hideExactAddress: boolean;
 }
 
 /**
@@ -49,6 +51,7 @@ export const emptyFormValues = (): SessionFormValues => ({
   slotsMax: "",
   visibility: "private",
   joinPolicy: "open",
+  hideExactAddress: false,
 });
 
 export function valuesFromSession(s: SessionDetailDto): SessionFormValues {
@@ -69,6 +72,8 @@ export function valuesFromSession(s: SessionDetailDto): SessionFormValues {
     slotsMax: s.slotsMax === null ? "" : String(s.slotsMax),
     visibility: s.visibility === "public" ? "public" : "private",
     joinPolicy: s.joinPolicy === "approval" ? "approval" : "open",
+    // An older API response without the field reads as off.
+    hideExactAddress: s.hideExactAddress ?? false,
   };
 }
 
@@ -240,6 +245,8 @@ export function buildCreateBody(
   if (area !== null) body.area = area;
   if (venueName !== null) body.venueName = venueName;
   if (venueAddress !== null) body.venueAddress = venueAddress;
+  // DD-139 D-8: sent only when on; absent means off, so an untouched form posts the old body.
+  if (v.hideExactAddress) body.hideExactAddress = true;
   return body;
 }
 
@@ -280,5 +287,9 @@ export function buildUpdateBody(
   if (venueName !== textKey(original.venueName)) body.venueName = venueName;
   const venueAddress = textKey(v.venueAddress);
   if (venueAddress !== textKey(original.venueAddress)) body.venueAddress = venueAddress;
+  // DD-139 D-8: only when it differs; an older response without the field compares as off.
+  if (v.hideExactAddress !== (original.hideExactAddress ?? false)) {
+    body.hideExactAddress = v.hideExactAddress;
+  }
   return Object.keys(body).length === 0 ? null : body;
 }

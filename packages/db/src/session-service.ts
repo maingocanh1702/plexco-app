@@ -79,6 +79,8 @@ export interface CreateSessionInputPayload {
   venueName?: string | null;
   /** Private plain text (DD-06; DD-128 OD-4a), max VENUE_ADDRESS_MAX characters. NEVER in an outbox payload. */
   venueAddress?: string | null;
+  /** DD-139 / B1: absent = false */
+  hideExactAddress?: boolean;
   joinPolicy?: "open" | "approval";
 }
 
@@ -230,6 +232,10 @@ function validateInput(input: CreateSessionInputPayload): void {
       `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters with no control or hidden characters, or null`,
     );
   }
+  // DD-139 / B1: boolean only; null is rejected (hide_exact_address is NOT NULL).
+  if (input.hideExactAddress !== undefined && typeof input.hideExactAddress !== "boolean") {
+    fail("INVALID_INPUT", "hide_exact_address must be a boolean");
+  }
 }
 
 export async function createSession(
@@ -307,6 +313,7 @@ export async function createSession(
         area: input.area ?? null,
         venueName: input.venueName ?? null,
         venueAddress: input.venueAddress ?? null,
+        hideExactAddress: input.hideExactAddress ?? false,
         visibility,
         joinPolicy: input.joinPolicy ?? "open",
         status: "draft",
@@ -1068,6 +1075,7 @@ export type UpdateSessionErrorCode =
   | "INVALID_PRICE"
   | "INVALID_SLOTS"
   | "INVALID_TEXT_FIELD"
+  | "INVALID_INPUT"
   | "COMMAND_ID_CONFLICT";
 
 export class SessionUpdateError extends Error {
@@ -1119,6 +1127,8 @@ export interface UpdateSessionInputPayload {
   area?: string | null;
   venueName?: string | null;
   venueAddress?: string | null;
+  /** DD-139 / B1: absent = unchanged */
+  hideExactAddress?: boolean;
   joinPolicy?: "open" | "approval";
 }
 
@@ -1167,6 +1177,7 @@ interface SessionUpdateSet {
   area?: string | null;
   venueName?: string | null;
   venueAddress?: string | null;
+  hideExactAddress?: boolean;
   joinPolicy?: string;
 }
 
@@ -1319,6 +1330,10 @@ export async function updateSession(
         `venue_address must be a string of at most ${VENUE_ADDRESS_MAX} characters with no control or hidden characters, or null`,
       );
     }
+    // DD-139 / B1: absent = unchanged; boolean only, null rejected (NOT NULL column).
+    if (input.hideExactAddress !== undefined && typeof input.hideExactAddress !== "boolean") {
+      failUpdate("INVALID_INPUT", "hide_exact_address must be a boolean");
+    }
 
     // Lock the session row FOR UPDATE inside the tenant GUC (RLS choke-point) and
     // read the current row UNDER lock — decide from the locked row, never a cache.
@@ -1338,6 +1353,7 @@ export async function updateSession(
         area: sessions.area,
         venueName: sessions.venueName,
         venueAddress: sessions.venueAddress,
+        hideExactAddress: sessions.hideExactAddress,
         joinPolicy: sessions.joinPolicy,
       })
       .from(sessions)
@@ -1450,6 +1466,15 @@ export async function updateSession(
     if (input.venueAddress !== undefined && input.venueAddress !== current.venueAddress) {
       changes.venueAddress = input.venueAddress;
       changedFields.push("venue_address");
+    }
+    // DD-139 / B1: an option-only change emits session.updated ["hide_exact_address"], so the
+    // public_sessions projector re-projects and clears (ON) or restores (OFF) the venue.
+    if (
+      input.hideExactAddress !== undefined &&
+      input.hideExactAddress !== current.hideExactAddress
+    ) {
+      changes.hideExactAddress = input.hideExactAddress;
+      changedFields.push("hide_exact_address");
     }
     if (input.joinPolicy !== undefined && input.joinPolicy !== current.joinPolicy) {
       changes.joinPolicy = input.joinPolicy;
