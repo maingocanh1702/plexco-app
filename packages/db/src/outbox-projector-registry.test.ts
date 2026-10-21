@@ -111,13 +111,13 @@ const required = async (eventId: string) =>
   (await worker("SELECT outbox_required_projectors($1) AS p", [eventId])).rows[0].p as string[];
 
 describe("A1-A3 migration, seeds and route invariants", () => {
-  it("A1: 68 migrations apply with tail 0066 and re-run idempotently", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(68);
+  it("A1: 69 migrations apply with tail 0068 and re-run idempotently", async () => {
+    expect(ctx.migrateResult.applied.length).toBe(69);
     expect(ctx.migrateResult.applied).toContain("0056_outbox_projector_registry_dlq_replay.sql");
-    expect(ctx.migrateResult.applied.at(-1)).toBe("0067_session_venue_visibility.sql");
+    expect(ctx.migrateResult.applied.at(-1)).toBe("0068_public_name_invisible_chars.sql");
     const again = await ctx.remigrate();
     expect(again.applied).toEqual([]);
-    expect(again.skipped.length).toBe(68);
+    expect(again.skipped.length).toBe(69);
   });
 
   // DM-8 (L8): exactly four zalo_dm routes, the three 0057 session types plus 0058's player.promoted
