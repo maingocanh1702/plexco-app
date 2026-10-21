@@ -1,14 +1,14 @@
 # Runbook: bật / rollback outbox dispatch (registry, DLQ, NOTIFY wake)
 
-> **Dành cho:** owner. **Nguồn:** lane L3 `p3-m6-outbox-delivery-core`, migration `0056`, DD-134 (a)(b)(e).
+> **Dành cho:** owner. **Nguồn:** lane L3 `p3-m6-outbox-delivery-core`, migration `0056`, DD-134 (a)(b)(e); default commit của cờ lịch đổi thành `true` theo DD-141 (B3, 2026-10-21), thay DD-134 (e) chỉ cho default commit.
 > Lệnh giữ nguyên tiếng Anh, copy-paste được; chạy từ thư mục gốc repo. Ví dụ dùng Postgres compose local
 > (`plexco-postgres-1`, DB `plexco`); môi trường khác: thay bằng psql tới đúng DB với credential `DATABASE_URL_MIGRATION`.
 > Bật dispatch cho dùng thật với token Zalo thật là **bước P0 của owner**, không phải việc của agent.
 
 ## Quy tắc an toàn
 
-- **Không bao giờ commit `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true`.** Mặc định `false` ở `.env.example` và
-  `infra/docker-compose.yml`; chỉ đặt `true` trong env của **process worker** khi bật.
+- **Default commit của `OUTBOX_DISPATCH_SCHEDULE_ENABLED` là `true`** ở `.env.example` và `infra/docker-compose.yml` (B3, DD-141). Worker chỉ lên lịch khi cờ đúng chuỗi `"true"`, bản đồ projector không chứa stub **và** probe registry qua (migration `0056`); không thì log `outbox dispatch schedule OFF` kèm lý do. Cờ `true` không có nghĩa là đã gửi: projector seed tắt hết nên event chỉ được ack với `{}` cho tới khi owner bật projector; bật dùng thật là **bước P0 của owner** (deliverer Zalo thật, token bot Zalo thật, bật projector trong registry).
+- Event ack trong lúc một projector đang tắt không có dòng delivery cho projector đó; vì claim bỏ qua event đã ack và repo không có đường backfill hay replay cho nó, event đó không bao giờ được gửi tới projector đó, kể cả sau khi bật lại.
 - Đồng hồ worker và DB phải đồng bộ NTP: lệch >= 15 s biến một lần retry sớm thành dlq `malformed_outcome` (replay được).
 - Bật projector chỉ bằng `outbox_projector_set_enabled` (dưới đây), **không** bằng migration, **không** sửa tay bảng.
 - Chỉ bật một projector khi module thật của nó đã merge **và đã deploy trên mọi worker đang chạy** (worker còn placeholder
@@ -32,7 +32,7 @@ $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT name, enabled FROM outbox_projec
 
 ## 2. Bật theo thứ tự an toàn
 
-1. Projector vẫn tắt hết. Đặt `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` **chỉ cho worker**, restart worker
+1. Projector vẫn tắt hết. Xác nhận worker chạy với `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` (default commit đã là `true`; đặt lại cho worker nếu môi trường đang ghi đè), restart worker
    (`pnpm --filter @plexco/bot start:worker`). Log phải có `outbox dispatch schedule registered: "* * * * *"` và
    `[worker] outbox wake listening`; dòng `outbox dispatch schedule OFF — <lý do>` nghĩa là chưa bật (đọc lý do).
 2. Xác nhận heartbeat báo đúng cổng (trong 30 s):

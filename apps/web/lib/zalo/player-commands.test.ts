@@ -2,6 +2,7 @@ import { runWithLang } from "@plexco/core/i18n";
 import { RosterMoneyError } from "@plexco/db";
 import { describe, expect, it, vi } from "vitest";
 import { log } from "../log";
+import { formatVnd } from "../money";
 import { formatSessionDate } from "../session-time";
 import type { ParsedZaloCommand } from "./commands";
 import {
@@ -21,6 +22,7 @@ const V = { ref: "REF", n: 3, N: 9, k: 2, p: 4, amount: "150.000đ" };
 // prettier-ignore
 const ROWS: [ReplyId, string, string][] = [
   ["R1", "Bạn đã có chỗ trong buổi REF.", "You have a place in REF."],
+  ["R1amount", "Số tiền cần trả cho buổi này: 150.000đ", "Amount due for this session: 150.000đ"],
   ["R2", "Buổi REF đã đủ chỗ. Bạn đang ở danh sách chờ, vị trí 3.", "REF is full. You are on the waitlist, position 3."],
   ["R3", "Đã gửi yêu cầu tham gia buổi REF. Chủ kèo sẽ duyệt.", "Your request to join REF was sent. The host will review it."],
   ["R4", "Bạn đã có chỗ trong buổi này.", "You already have a place in this session."],
@@ -278,7 +280,9 @@ describe("runPlayerCommand: /join and the number reply on a join_list context (4
   it("confirm claims the read version, joins the listed session and renders its state (R-1..R-3, T-6, T-8, T-16)", async () => {
     const ref = `${formatSessionDate(AT, "Asia/Ho_Chi_Minh", "en")} · 19:00`;
     const cases: [ReturnType<typeof joined>, string][] = [
-      [joined("active"), `You have a place in ${ref}.`],
+      // DD-140: makeDeps' accountRef "acc-1" is not a UUID, so the amount line is R-17 (D3);
+      // the amount rows D1-D8 are in the /join amount describe at the end of this file.
+      [joined("active"), `You have a place in ${ref}.\n${EN("R17")}`],
       [joined("waitlisted", 3), `${ref} is full. You are on the waitlist, position 3.`],
       [joined("requested"), `Your request to join ${ref} was sent. The host will review it.`],
     ];
@@ -635,5 +639,178 @@ describe("runPlayerCommand: /pay, this club only (4.6, 4.7 R-15..R-18, P-17..P-2
     );
     texts.forEach(expectSafe);
     spy.mockRestore();
+  });
+});
+
+// DD-140 (lane L21, owner B2): the ACTIVE /join confirmation adds the amount owed for THAT seat,
+// read through the helper /pay uses (readCharges(gate.accountRef) + payContext([])). Anything not
+// proven is R-17 (never 0, never R-18); waitlisted, requested and error outcomes never read money.
+const S = sid(1); // num("1") claims sid(1): row(1, 2) renders REF(l), the ref /pay renders too
+const clubA = (status: unknown, summary: unknown = SUM) =>
+  charges([OTHER, club("club-a", status)], summary);
+// S's item is listed second, so neither the first item nor the club total can pass for it.
+const amountDeps = (over: Record<string, unknown> = {}) =>
+  payDeps({ readCharges: clubA(owes([charge(3, 120000), charge(1, 150000)])), ...over });
+const owedText = (l: "vi" | "en", amount: string) =>
+  l === "vi"
+    ? `Bạn đã có chỗ trong buổi ${REF("vi")}.\nSố tiền cần trả cho buổi này: ${amount}`
+    : `You have a place in ${REF("en")}.\nAmount due for this session: ${amount}`;
+const unavailableText = (l: "vi" | "en") =>
+  runWithLang(l, () => `${reply("R1", { ref: REF(l) })}\n${reply("R17")}`);
+const readOnceWithOwnAccount = (d: PlayerCommandDeps) => {
+  expect(d.readCharges).toHaveBeenCalledTimes(1);
+  expect(d.readCharges).toHaveBeenCalledWith(ACC);
+  expect(vi.mocked(d.payContext).mock.calls).toEqual([[[]]]);
+};
+// One row per cause; each overrides ONE thing of amountDeps, which alone renders the amount (D1).
+// The third field marks the rows where a read throws: only those log (R1 review #1).
+const UNAVAILABLE: [string, () => Record<string, unknown>, boolean?][] = [
+  ["accountRef missing", () => ({ gate: { linked: true, accountRef: null } })],
+  ["accountRef not a UUID", () => ({ gate: { linked: true, accountRef: "acc-1" } })],
+  ["summary unknown", () => ({ readCharges: clubA(owes([charge(1, 150000)]), UNK) })],
+  ["payContext slug null", () => ({ payContext: payCtx(null) })],
+  ["club missing", () => ({ readCharges: charges([OTHER]) })],
+  ["club status unknown", () => ({ readCharges: clubA(UNK) })],
+  [
+    "club known_zero, a free session (D4): R-17, not R-16",
+    () => ({ readCharges: clubA({ kind: "known_zero", currency: "VND", asOf: AT }) }),
+  ],
+  [
+    "joined session absent from known_amount, other sessions listed",
+    () => ({ readCharges: clubA(owes([charge(2, 150000), charge(3, 120000)])) }),
+  ],
+  [
+    "two charges for the joined session (two memberships): neither amount, never their sum",
+    () => ({ readCharges: clubA(owes([charge(1, 40000), charge(1, 30000)])) }),
+  ],
+  ["readCharges throws", () => ({ readCharges: unexpected() }), true],
+  ["payContext throws", () => ({ payContext: unexpected() }), true],
+];
+
+describe("runPlayerCommand: the /join ACTIVE reply's amount owed (DD-140, L21 D1-D8)", () => {
+  it("D1 active, new seat: R-1 then this seat's amount owed, read once, after the join", async () => {
+    const d = amountDeps();
+    const texts = [await run(num("1"), d), await run(num("1"), amountDeps(), "vi")];
+    expect(texts).toEqual([owedText("en", "150.000đ"), owedText("vi", "150.000đ")]);
+    texts.forEach(expectNoBankData);
+    expect(d.join).toHaveBeenCalledWith(S);
+    readOnceWithOwnAccount(d);
+    expect(vi.mocked(d.join).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(d.readCharges).mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("D2 active, existing partly paid seat: same shape, current remaining, no partial marker (P-11)", async () => {
+    const over = () => ({
+      readCharges: clubA(owes([charge(3, 120000), charge(1, 50000, "partial")])),
+    });
+    const d = amountDeps(over());
+    const texts = [await run(num("1"), d), await run(num("1"), amountDeps(over()), "vi")];
+    expect(texts).toEqual([owedText("en", "50.000đ"), owedText("vi", "50.000đ")]);
+    for (const text of texts) {
+      expectNoBankData(text);
+      expect(text).not.toMatch(/partly paid|đã trả một phần/);
+    }
+    readOnceWithOwnAccount(d);
+  });
+
+  it("D1-D2 the amount is the source's item.remaining as given, never recomputed", async () => {
+    // amountDue - amountAllocated is 100.000đ here, so only a pass-through of remaining shows 70.000đ.
+    const item = { ...charge(1, 70_000), amountDue: 100_000, amountAllocated: 0 };
+    const over = () => ({ readCharges: clubA(owes([charge(3, 120000), item])) });
+    const texts = [
+      await run(num("1"), amountDeps(over())),
+      await run(num("1"), amountDeps(over()), "vi"),
+    ];
+    expect(texts).toEqual([owedText("en", formatVnd(70_000)), owedText("vi", formatVnd(70_000))]);
+  });
+
+  it.each(UNAVAILABLE)(
+    "D3 amount unavailable (%s): R-1 then R-17, never 0, never R-18",
+    async (_cause, over, throws) => {
+      const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+      for (const l of ["en", "vi"] as const) {
+        spy.mockClear();
+        const text = await run(num("1"), amountDeps(over()), l);
+        expect(text).toBe(unavailableText(l));
+        expectSafe(text);
+        // The outer R-18 handler is never reached; a throw is logged once, by reason only.
+        expect(spy.mock.calls).toStrictEqual(
+          throws ? [["zalo_join_amount_read_failed", { reason: "PROCESSING_ERROR" }]] : [],
+        );
+        // No amount, accountRef or session id in the log: each of them would add a digit.
+        expect(JSON.stringify(spy.mock.calls)).not.toMatch(/\d/);
+      }
+      spy.mockRestore();
+    },
+  );
+
+  it("D5-D6 waitlisted and requested: R-2 and R-3 unchanged, no money read at all", async () => {
+    const cases: [string, number | null, { en: string; vi: string }][] = [
+      [
+        "waitlisted",
+        3,
+        {
+          en: `${REF("en")} is full. You are on the waitlist, position 3.`,
+          vi: `Buổi ${REF("vi")} đã đủ chỗ. Bạn đang ở danh sách chờ, vị trí 3.`,
+        },
+      ],
+      [
+        "requested",
+        null,
+        {
+          en: `Your request to join ${REF("en")} was sent. The host will review it.`,
+          vi: `Đã gửi yêu cầu tham gia buổi ${REF("vi")}. Chủ kèo sẽ duyệt.`,
+        },
+      ],
+    ];
+    for (const [outcome, position, want] of cases)
+      for (const l of ["en", "vi"] as const) {
+        // amountDeps would render an amount for S, so "not called" here is not vacuous.
+        const d = amountDeps({ join: joined(outcome, position) });
+        const text = await run(num("1"), d, l);
+        expect(text).toBe(want[l]);
+        expectSafe(text);
+        expect(d.join).toHaveBeenCalledWith(S);
+        expect(d.readCharges).toHaveBeenCalledTimes(0);
+        expect(d.payContext).toHaveBeenCalledTimes(0);
+      }
+  });
+
+  it("D7 join errors as today: ALREADY_JOINED is R-4, a throw is R-18 logged; no money read", async () => {
+    const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+    const cases: [unknown, ReplyId, string | null][] = [
+      [new RosterMoneyError("ALREADY_JOINED", "x"), "R4", null],
+      [new Error("boom: message text"), "R18", "PROCESSING_ERROR"],
+    ];
+    for (const [error, id, reason] of cases) {
+      spy.mockClear();
+      const d = amountDeps({ join: vi.fn(async () => Promise.reject(error)) });
+      const text = await run(num("1"), d);
+      expect(text).toBe(EN(id));
+      expectSafe(text);
+      expect(spy.mock.calls).toEqual(
+        reason ? [["zalo_player_command_failed", { command: "number", reason }]] : [],
+      );
+      expect(d.readCharges).toHaveBeenCalledTimes(0);
+      expect(d.payContext).toHaveBeenCalledTimes(0);
+    }
+    spy.mockRestore();
+  });
+
+  it("D8 /join and /pay read the same item: same accountRef, same slug read, same remaining", async () => {
+    const X = 45000;
+    const readCharges = charges([OTHER, club("club-a", owes([charge(1, X, "partial")]))]);
+    const payContext = payCtx();
+    const d = payDeps({ readCharges, payContext });
+    const pay = (await run(PAY, d)).split("\n");
+    const join = (await run(num("1"), d)).split("\n");
+    expect(pay[1]).toBe(`- ${PREF("en")}: ${formatVnd(X)} (partly paid)`);
+    expect(join).toEqual([
+      `You have a place in ${REF("en")}.`,
+      `Amount due for this session: ${formatVnd(X)}`,
+    ]);
+    expect(readCharges.mock.calls).toEqual([[ACC], [ACC]]);
+    expect(payContext.mock.calls).toEqual([[[]], [[S]], [[]]]);
   });
 });
