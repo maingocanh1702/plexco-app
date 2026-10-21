@@ -1745,6 +1745,95 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
+## DD-142 — Host Pro trễ invoice: hạ xuống Free, không suspended vì billing (B4) · ✅ Quyết định owner 2026-10-21 (ghi từ mục B4 của bản quyết định owner, đã xác nhận trong terminal của conductor; L19 chỉ ghi lại)
+
+> Từ quyết định B4 của owner (2026-10-21), owner xác nhận trong terminal của conductor cùng ngày; L19 chỉ ghi lại. Không sửa spec Reviewed.
+
+- **Bối cảnh.** DD-51 (`decisions.md:712`, ✅ Chốt 2026-07-16) có quy tắc (2) cho invoice trễ (`:716`); dòng tóm tắt `:72` ghi: invoice trễ → grace 7 ngày rồi suspended. `p3-m9-public-projector P-7` (`decisions.md:1809`): "tenants with status `suspended` or `cancelled` are never projected (writer) and never served (view)". B4 nằm trong cùng bản quyết định owner 2026-10-21 đã ký DD-138 (trừ sáu hàng).
+
+**Quyết định.** Nguyên văn của owner, mục B4 (tiếng Anh như owner viết; bản tiếng Anh này là bản có hiệu lực):
+
+> B4. Amend DD-51: a paid Host Pro tenant whose invoice is late gets the 7-day grace, then is DOWNGRADED TO FREE, never suspended by billing. All data, including Pro-only data, is retained for a retention period to be decided later (1 to 3 months); behaviour of Pro-only data during retention (read-only vs hidden) is decided with it. Billing is not in the MVP, so this is a decision-record change plus backlog rows; keep `suspended` for non-billing (admin / abuse) use, P-7 (suspended or cancelled tenants never public) unchanged.
+
+Cách đọc tiếng Việt (không thêm, không bớt; chỗ nào bản đọc này có thể hẹp hơn hoặc rộng hơn thì bản tiếng Anh thắng): sửa (amend) DD-51: một tenant Host Pro trả phí mà invoice bị trễ được grace 7 ngày, sau đó bị HẠ XUỐNG FREE (DOWNGRADED TO FREE), không bao giờ bị suspended vì billing (never suspended by billing). Mọi dữ liệu, kể cả dữ liệu chỉ có ở Pro (Pro-only data), được giữ lại trong một retention period sẽ quyết định sau (1 đến 3 tháng); hành vi của dữ liệu Pro-only trong thời gian retention (read-only hay hidden) được quyết cùng với nó. Billing không nằm trong MVP, nên đây là một thay đổi decision-record cộng với các hàng backlog; giữ `suspended` cho việc không phải billing (admin / abuse); P-7 (tenant suspended hoặc cancelled không bao giờ public) không đổi.
+
+- **Lý do.** Owner chỉ nêu lý do cho hình thức của quyết định: "Billing is not in the MVP, so this is a decision-record change plus backlog rows". Văn bản B4 không nêu lý do nào khác; entry này không thêm lý do.
+- **Hệ quả.**
+  - **Đảo / sửa.** Sửa DD-51 (`decisions.md:712`), quy tắc (2) (`:716`): sau grace 7 ngày, tenant Host Pro trả phí mà invoice trễ bị hạ xuống Free, không bị `suspended` vì billing. `suspended` giữ cho việc không phải billing (admin / abuse). `p3-m9-public-projector P-7` (`decisions.md:1809`) không đổi, đúng như B4 viết.
+  - **Lane thực thi.** Không có lane: B4 là "a decision-record change plus backlog rows". Hàng backlog: `billing-late-host-pro-invoice-downgrade-to-free` (hành vi hạ xuống Free cho Host Pro trễ invoice) và `dd142-pro-data-retention-period-decision` (retention period và read-only hay hidden).
+  - **⬜ Mở.** Retention period ("to be decided later (1 to 3 months)") và hành vi của dữ liệu Pro-only trong thời gian đó (read-only hay hidden; "decided with it") chưa được quyết; hàng `dd142-pro-data-retention-period-decision`. Chưa có giá trị nào được chọn.
+  - **Spec follow-up** (không sửa ở đây; hàng `docs-dd138-to-dd142-spec-follow-ups-sync` đồng bộ; số dòng đo tại `3a97c7b`). (a) Dòng quy tắc invoice trễ → grace → `suspended` (16): `docs/product/BRD.md` (:271) · `docs/product/PRD.md` (:231) · `docs/product/TDD.md` (:108, :639, :836) · `docs/product/ROADMAP.md` (:639) · `docs/features/FE/feature_billing_lifecycle.md` (:282, :284, :292, :296) · `docs/features/BE/feature_billing_lifecycle_tech.md` (:19, :32, :347, :450, :455, :531). (b) Dòng gắn nhãn `suspended` là trạng thái billing (12): `docs/features/BE/feature_billing_lifecycle_tech.md` (:556, :562, :563) · `docs/features/FE/feature_home.md` (:75) · `docs/features/BE/feature_home_tech.md` (:98) · `docs/features/FE/feature_session_management.md` (:102, :865) · `docs/features/BE/feature_session_management_tech.md` (:259, :323, :670, :672, :1005).
+  - **Trạng thái.** Chưa có gì được implement, bật hay live: billing không nằm trong MVP và entry này chỉ ghi quyết định. Bước P0 nào của owner cũng không bị đụng tới.
+- **Nguồn** (số dòng đo tại `3a97c7b`, trước khi PR này chèn dòng)**.** mục B4 của bản quyết định owner 2026-10-21 (nguyên văn ở trên) · `docs/standards/decisions.md:72`, `:712`, `:716`, `:1809` · các dòng spec ở Hệ quả; danh sách spec follow-up và tiêu chí chọn file: `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md` (bảng "Spec follow-ups per entry").
+
+---
+
+## DD-141 — Đổi mặc định hai cờ thành true (B3) · ✅ Quyết định owner 2026-10-21 (ghi từ mục B3 của bản quyết định owner, đã xác nhận trong terminal của conductor; L19 chỉ ghi lại)
+
+> Từ quyết định B3 của owner (2026-10-21), owner xác nhận trong terminal của conductor cùng ngày; L19 chỉ ghi lại. Không sửa spec Reviewed.
+
+- **Bối cảnh.** `p3-m9-gender-pricing U-15` (`decisions.md:1816`): tên cờ `GENDER_COLLECTION_ENABLED`; chỉ chuỗi "true" bật nó; `.env.example` ghi `GENDER_COLLECTION_ENABLED=false` (theo chính hàng U-15, dòng 173 tại `0a4e1b8`). `p3-m6-outbox-delivery-core D-14` (`decisions.md:1784`): "worker dispatch stays OFF unless `OUTBOX_DISPATCH_SCHEDULE_ENABLED` is exactly the string `true`" (phần còn lại của hàng: xem `decisions.md:1784`). Ở mục A.1 của cùng bản quyết định owner 2026-10-21, owner ghi: "L11 U-15 and L3 D-14 (flags default false): superseded by decision B3."
+
+**Quyết định.** Nguyên văn của owner, mục B3 (tiếng Anh như owner viết; bản tiếng Anh này là bản có hiệu lực):
+
+> B3. Turn the flags ON: `GENDER_COLLECTION_ENABLED` and `OUTBOX_DISPATCH_SCHEDULE_ENABLED` default true (.env.example and config docs). Outbox dispatch still needs the real Zalo deliverer and bot token (owner P0) and keeps its probe guard. Gender collection must ship with a short consent / purpose notice at the point of collection (t(vi, en)) and the privacy text updated; if that is missing, the lane adds it before flipping the default.
+
+Cách đọc tiếng Việt (không thêm, không bớt; chỗ nào bản đọc này có thể hẹp hơn hoặc rộng hơn thì bản tiếng Anh thắng): bật hai cờ (ON): `GENDER_COLLECTION_ENABLED` và `OUTBOX_DISPATCH_SCHEDULE_ENABLED` có default true (trong `.env.example` và config docs). Outbox dispatch vẫn cần deliverer Zalo thật và bot token (bước P0 của owner) và vẫn giữ probe guard của nó. Gender collection phải đi kèm một thông báo ngắn về consent / mục đích (purpose notice) tại điểm thu thập (`t(vi, en)`) và privacy text được cập nhật; nếu thiếu, lane thêm nó trước khi đổi default.
+
+- **Lý do.** Văn bản B3 của owner không nêu lý do; entry này không thêm lý do nào.
+- **Hệ quả.**
+  - **Đảo / sửa.** `p3-m9-gender-pricing U-15` (`decisions.md:1816`) và `p3-m6-outbox-delivery-core D-14` (`decisions.md:1784`): owner ghi "(flags default false): superseded by decision B3". Câu trích dẫn đó của owner quyết định "superseded" bao phủ đến đâu; entry này không thêm hay bớt gì ngoài nó và B3 ở trên. B3 nêu rõ outbox dispatch vẫn cần deliverer Zalo thật và bot token (owner P0) và giữ probe guard.
+  - **Lane thực thi.** L22 (B3): đổi default của hai cờ thành true trong `.env.example` và config docs; với gender collection, thêm thông báo ngắn về consent / mục đích tại điểm thu thập (`t(vi, en)`) và cập nhật privacy text trước khi đổi default, nếu chúng còn thiếu.
+  - **Spec follow-up** (không sửa ở đây; hàng `docs-dd138-to-dd142-spec-follow-ups-sync` đồng bộ; số dòng đo tại `3a97c7b`). `docs/product/TDD.md` (:49, :552, :667), 3 dòng, ghi `OUTBOX_DISPATCH_SCHEDULE_ENABLED` đang OFF / mặc định OFF. `GENDER_COLLECTION_ENABLED` không xuất hiện ở dòng spec nào (0 dòng).
+  - **Trạng thái.** Chưa có gì được implement, bật hay live: L19 chỉ ghi tài liệu và không đổi default nào của hai cờ; L22 là lane đổi default. Bước P0 của owner (deliverer Zalo thật và bot token, như B3 viết) không bị đụng tới.
+- **Nguồn** (số dòng đo tại `3a97c7b`, trước khi PR này chèn dòng)**.** mục B3 của bản quyết định owner 2026-10-21 (nguyên văn ở trên) · mục A.1 (dòng "L11 U-15 and L3 D-14 ...") · `docs/standards/decisions.md:1784`, `:1816` · `docs/product/TDD.md:49`, `:552`, `:667`; danh sách spec follow-up và tiêu chí chọn file: `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md` (bảng "Spec follow-ups per entry").
+
+---
+
+## DD-140 — Số tiền phải trả trong hai tin Zalo (B2) · ✅ Quyết định owner 2026-10-21 (ghi từ mục B2 của bản quyết định owner, đã xác nhận trong terminal của conductor; L19 chỉ ghi lại)
+
+> Từ quyết định B2 của owner (2026-10-21), owner xác nhận trong terminal của conductor cùng ngày; L19 chỉ ghi lại. Không sửa spec Reviewed.
+
+- **Bối cảnh.** `p3-m9-zalo-player-commands P-11` (`decisions.md:1822`, L13 · #85): trả lời `/join` chỉ hiện trạng thái (active / waitlisted at N / requested), cùng chữ cho chỗ mới và chỗ đã có; không số tiền, không địa điểm. `p3-m6-zalo-outbound Z-13` (`decisions.md:1790`, hàng của bảng "Quyết định cần mắt chủ"): "no venue, address, price, roster or name in any DM". DD-134 (`decisions.md:2602`) đã cho đúng MỘT DM Zalo cho player được nâng từ waitlist, "saying they now hold a seat and the fee owed". Ở mục A.1 của cùng bản quyết định owner 2026-10-21, owner ghi về P-11: "L13 P-11 (/join reply status only): signed, amended by decision B2."
+
+**Quyết định.** Nguyên văn của owner, mục B2 (tiếng Anh như owner viết; bản tiếng Anh này là bản có hiệu lực):
+
+> B2. Show the amount owed in the Zalo /join confirmation (active outcome) and in the waitlist-promotion DM (this also matches the DD-134 override: "saying they now hold a seat and the fee owed"). Waitlisted and requested replies stay without an amount. No bank data, no QR (DD-132/DD-135 unchanged). Z-13's "no price in any DM" is amended for these two messages only.
+
+Cách đọc tiếng Việt (không thêm, không bớt; chỗ nào bản đọc này có thể hẹp hơn hoặc rộng hơn thì bản tiếng Anh thắng): hiển thị số tiền phải trả (amount owed) trong tin xác nhận `/join` của Zalo (outcome active) và trong DM khi player được nâng từ waitlist (waitlist-promotion DM) (điều này cũng khớp với override của DD-134: "saying they now hold a seat and the fee owed"). Các câu trả lời waitlisted và requested vẫn không có số tiền. Không có dữ liệu ngân hàng, không có QR (DD-132 và DD-135 không đổi). Câu "no price in any DM" của Z-13 được sửa chỉ cho hai tin nhắn này.
+
+- **Lý do.** Owner nêu: "this also matches the DD-134 override" (override đó là DM "saying they now hold a seat and the fee owed" cho player được nâng từ waitlist). Văn bản B2 không nêu lý do nào khác.
+- **Hệ quả.**
+  - **Đảo / sửa.** `p3-m9-zalo-player-commands P-11` (`decisions.md:1822`): "signed, amended by decision B2" (A.1). `p3-m6-zalo-outbound Z-13` (`decisions.md:1790`): "no price in any DM" được sửa chỉ cho hai tin nhắn này (B2). DD-132 và DD-135 không đổi (B2; DD-135 ở `decisions.md:2559`). B2 khớp với override của DD-134 (`decisions.md:2602`).
+  - **Lane thực thi.** L21 (B2).
+  - **Spec follow-up** (không sửa ở đây; hàng `docs-dd138-to-dd142-spec-follow-ups-sync` đồng bộ; số dòng đo tại `3a97c7b`). `docs/features/BE/feature_zalo_channel_tech.md` (:222), 1 dòng: câu trả lời của outcome Active.
+  - **Trạng thái.** Chưa có gì được implement, bật hay live: L19 chỉ ghi tài liệu; việc hiển thị số tiền trong hai tin là việc của L21.
+- **Nguồn** (số dòng đo tại `3a97c7b`, trước khi PR này chèn dòng)**.** mục B2 của bản quyết định owner 2026-10-21 (nguyên văn ở trên) · mục A.1 (dòng "L13 P-11 ...") · `docs/standards/decisions.md:1790`, `:1822`, `:2559`, `:2602` · `docs/features/BE/feature_zalo_channel_tech.md:222`; danh sách spec follow-up và tiêu chí chọn file: `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md` (bảng "Spec follow-ups per entry").
+
+---
+
+## DD-139 — Venue công khai theo mặc định (B1) · ✅ Quyết định owner 2026-10-21 (ghi từ mục B1 của bản quyết định owner, đã xác nhận trong terminal của conductor; L19 chỉ ghi lại)
+
+> Từ quyết định B1 của owner (2026-10-21), owner xác nhận trong terminal của conductor cùng ngày; L19 chỉ ghi lại. Không sửa spec Reviewed.
+
+- **Bối cảnh.** DD-06 (`decisions.md:231-232`; dòng tóm tắt `:26`) chốt: public chỉ thấy `area`, venue chỉ lộ khi outcome `players.status='active'`. Lane L9 áp luật đó cho đọc `/me` bằng default `p3-m9-me-reads M-7` (`decisions.md:1796`, L9 · #70): "`area` = `sessions.area`; venue (name and address) only when `myStatus` is active, enforced in SQL". DD-133 (`decisions.md:2606`) là entry của public read model, có quyết định D1. Ở mục A.1 của cùng bản quyết định owner 2026-10-21, owner ghi về M-7: "L9 M-7 (venue only when active): REJECTED, replaced by decision B1."
+
+**Quyết định.** Nguyên văn của owner, mục B1 (tiếng Anh như owner viết; bản tiếng Anh này là bản có hiệu lực):
+
+> B1. Venue is PUBLIC by default (reverses DD-06 and L9 M-7). Public cards, discover detail, player web and /me reads show venue name and address to everyone. New per-session host option "hide exact address until confirmed" (default OFF): when ON, behaviour is the old DD-06 rule (public sees area only; exact venue only for players.status = 'active'). Needs a migration (public_sessions / view whitelist amends DD-133 D1 for the venue columns; a sessions column for the option) plus host UI toggle with t(vi, en) copy.
+
+Cách đọc tiếng Việt (không thêm, không bớt; chỗ nào bản đọc này có thể hẹp hơn hoặc rộng hơn thì bản tiếng Anh thắng): venue là PUBLIC theo mặc định (đảo DD-06 và L9 M-7). Public cards, discover detail, player web và /me reads hiển thị venue name và address cho tất cả mọi người. Có một tùy chọn mới theo từng session của host, "hide exact address until confirmed" (mặc định OFF): khi ON, hành vi là luật DD-06 cũ (public chỉ thấy area; venue chính xác chỉ khi `players.status = 'active'`). Cần một migration (whitelist của `public_sessions` / view sửa DD-133 D1 cho các cột venue; một cột trên `sessions` cho tùy chọn) cùng một toggle trên UI của host với copy `t(vi, en)`.
+
+- **Lý do.** Văn bản B1 của owner không nêu lý do; entry này không thêm lý do nào.
+- **Hệ quả.**
+  - **Đảo / sửa.** Đảo DD-06 (`decisions.md:231-232`) và `p3-m9-me-reads M-7` (`decisions.md:1796`), đúng như B1 viết ("reverses DD-06 and L9 M-7"). Whitelist của `public_sessions` / view sửa DD-133 D1 (`decisions.md:2606`) cho các cột venue (B1).
+  - **Lane thực thi.** L20 (B1): migration (whitelist `public_sessions` / view cho các cột venue; một cột trên `sessions` cho tùy chọn) và toggle trên UI của host với copy `t(vi, en)`.
+  - **Spec follow-up** (không sửa ở đây; hàng `docs-dd138-to-dd142-spec-follow-ups-sync` đồng bộ; số dòng đo tại `3a97c7b`). Dòng spec đang ghi luật venue cũ (32): `docs/product/BRD.md` (:464) · `docs/product/PRD.md` (:241, :245, :257, :373) · `docs/product/TDD.md` (:284, :673, :675, :685, :841) · `docs/features/FE/feature_marketplace_discovery.md` (:34, :568) · `docs/features/FE/feature_session_management.md` (:51, :89, :567, :602, :820) · `docs/features/FE/feature_cross_club_join.md` (:33, :48, :50, :56, :70, :139, :200) · `docs/features/BE/feature_cross_club_join_tech.md` (:119, :123, :137, :216, :274, :275) · `docs/features/BE/feature_session_management_tech.md` (:491) · `docs/channels/web/ux-sync-design.md` (:234). Chỉ vế venue của các dòng hợp đồng join (DD-45) (11): `docs/features/BE/feature_session_management_tech.md` (:10, :893, :957, :964) · `docs/features/BE/feature_cross_club_join_tech.md` (:86, :87, :212, :214, :258, :267) · `docs/product/PRD.md` (:255).
+  - **Trạng thái.** Chưa có gì được implement, bật hay live: L19 chỉ ghi tài liệu; migration, cột và toggle là việc của L20.
+- **Nguồn** (số dòng đo tại `3a97c7b`, trước khi PR này chèn dòng)**.** mục B1 của bản quyết định owner 2026-10-21 (nguyên văn ở trên) · mục A.1 (dòng "L9 M-7 ...") · `docs/standards/decisions.md:26`, `:231-232`, `:1796`, `:2606` · các dòng spec ở Hệ quả; danh sách spec follow-up và tiêu chí chọn file: `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md` (bảng "Spec follow-ups per entry").
+
+---
+
 ## DD-138 — Các default đã áp của Phase 3, gộp một entry · 🟡 Đề xuất (chờ owner ký, 2026-10-21)
 
 > Một entry duy nhất liệt kê mọi default mà các lane Phase 3 đã áp trong lúc chờ owner ký. Chưa ký ⇒ các default vẫn là default đã áp, chưa phải quyết định của owner.
