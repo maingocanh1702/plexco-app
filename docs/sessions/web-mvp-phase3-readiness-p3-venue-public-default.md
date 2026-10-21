@@ -33,8 +33,9 @@
 2. Stale window on toggle ON: the outbox re-projection path (threat 3) is the mechanism; the DD-12 fence proposal is DECLINED (the fence
    denies the whole listing, the wrong semantics for "area only", and would re-create the 0033 fence function outside the lane's
    one-migration scope). Stated plainly in T3.
-3. RQ1: the web join response (`packages/core/src/api-contract.ts:203`, signed P-18 `decisions.md:2247`) stays UNCHANGED as the lane's
-   default: conductor reading pending (RQ1, `status/P3-S15a-notes/RULING-RQ1-join-response-venue.md`). Not an open question in scope.
+3. RQ1 answered: conductor reading RO-L20-1 (`status/P3-S15a-notes/conductor-ruling-l20-1.md`), option A: the web join response
+   (`packages/core/src/api-contract.ts:203`, signed P-18 `decisions.md:2247`) stays unchanged (P-18 stands for its venue part); if the
+   owner wants the venue in the web join response too, that is a follow-up lane (B1 does not name it). Not an open question in scope.
 4. Pins: the base count is already 67 => 10 lines 67 -> 68 and 4 lines `0066_account_club_chat_context` -> `0067_session_venue_visibility`
    (section 6). `account_my_sessions` (0059) is re-created OUTSIDE the job_definer bracket; the 0061 writer INSIDE it. P-6 (`:2354`) is
    reversed by B1 for the option OFF like M-7: both are spec follow-ups.
@@ -124,6 +125,9 @@ field set.
   attributes); the view/writer ACL restated at the 0061 place (`:477-487`, before RESET ROLE).
 - **R2 public writer.** Reads `s.venue_name, s.venue_address, s.hide_exact_address`; writes `CASE WHEN s.hide_exact_address THEN NULL ELSE
   s.venue_name END` (address alike) in both INSERTs, DO UPDATE SET and both IS DISTINCT FROM tuples. An untyped venue stays NULL.
+  As built (measured with grep at ccc579b00793856f4be20fd91dc915433cfdd4ad): the CASE masks the venue once at the session read
+  (`0067:249-250`) into the plpgsql variables v_venue_name / v_venue_address; both INSERTs write the variables, DO UPDATE SET uses
+  EXCLUDED and both IS DISTINCT FROM tuples carry the two columns: the same semantics as R2.
 - **R3 /me definer.** Branch (a) seats: `CASE WHEN NOT s.hide_exact_address OR pl.status = 'active' THEN s.venue_name END` (address alike);
   branch (b) pending: `CASE WHEN NOT s.hide_exact_address THEN s.venue_name END` (address alike). Row set (M-3, `:119-120`, `:132-140`)
   unchanged, so left/removed seats return no row.
@@ -214,7 +218,9 @@ survives as the option-ON rule), the DD-06 invariant `:239`. Kept: Z-13 `:1925`,
 `:2075-2083` (L23).
 
 **Conductor readings (PR body, not owner approvals).** RO-L19-4: the share route is a public card and follows B1; DMs, bot replies, chat
-and tournament keep their rules. RQ1: the web join response stays unchanged (pending).
+and tournament keep their rules. RQ1 answered: conductor reading RO-L20-1 (`status/P3-S15a-notes/conductor-ruling-l20-1.md`), option A:
+join response unchanged (P-18 stands for its venue part); if the owner wants the venue in the web join response too, that is a follow-up
+lane (B1 does not name it).
 
 ## 9. Out-of-scope test notes
 
@@ -265,7 +271,9 @@ and `detect_changes` before its commit (grep of callers in the PR body if GitNex
 
 ## 12. OPEN (out of scope for L20)
 
-- O-1 RQ1: web join response (P-18) unchanged, conductor reading pending.
+- O-1 RQ1 answered: conductor reading RO-L20-1 (`status/P3-S15a-notes/conductor-ruling-l20-1.md`), option A: join response unchanged
+  (P-18 stands for its venue part); if the owner wants the venue in the web join response too, that is a follow-up lane
+  (B1 does not name it).
 - O-2 Spec follow-ups of section 8 (Phase 4 docs lane, owner backlog C).
 - O-3 OUT_OF_SCOPE observation: an update of only DD-39 per-gender prices emits no `session.updated` (`session-service.ts:1426-1427`);
   if those prices are projected publicly the public row goes stale (pre-existing; not this lane).
