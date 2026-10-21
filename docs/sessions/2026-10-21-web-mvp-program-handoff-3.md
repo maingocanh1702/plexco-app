@@ -22,13 +22,13 @@
   and runner pin). #58 merged the Phase 3 plan. #75 was closed unmerged and is in no lane list; #78 to #82 are kit-sync PRs, not
   Phase 3 lanes. PR #50 (M5 staging, DigitalOcean) stays open, frozen and owner-only (L17 readiness section 7).
 - Feature flags at 0a4e1b8e: capability registry `public_sessions` false, `web_realtime` false, `zalo_dm` false (read before and after
-  the golden path, section 5); `OUTBOX_DISPATCH_SCHEDULE_ENABLED` false (`.env.example:99`, `docker-compose.yml:132`);
+  the golden path, section 5); `OUTBOX_DISPATCH_SCHEDULE_ENABLED` false (`.env.example:99`, `infra/docker-compose.yml:132`);
   `GENDER_COLLECTION_ENABLED` false (`.env.example:173`, L17 readiness P14).
 - The projectors for `zalo_dm` (#66), `web_realtime` (#67) and `public_sessions` (#72) are merged and disabled in every committed
   default (PR #66 body :18, PR #67 body :23).
 - The ledger carries the same state in its M6, M9 and M10 rows and its dated block.
 
-## 2. Phase 3 PR map (#58-#91; all MERGED)
+## 2. Phase 3 PR map (#58-#91 except #75 and #78-#82; every row MERGED)
 
 PR state and merge commits as measured at 0a4e1b8e; `mergedAt` is UTC (Asia/Saigon = UTC+7). Titles are the PRs' own words and are not
 evidence of live delivery. A lane's readiness file is `docs/sessions/web-mvp-phase3-readiness-p3-<x>.md`, where `p3-<x>` is the branch name
@@ -70,7 +70,7 @@ without its `feat/`, `fix/` or `docs/` prefix (26 files, for #59-#72, #74, #76, 
 Open proposal, pending owner sign-off: **DD-138** in `docs/standards/decisions.md` (the highest number before it was DD-137; L17
 readiness P2). It is ONE entry, status proposal, header dated 2026-10-21; nothing in it is signed. It holds:
 
-- every default the Phase 3 lanes applied (532 rows at the entry's writing, base 0a4e1b8e): a lead table of the decisions that need the
+- every default the Phase 3 lanes applied (550 rows after the review fixes, base 0a4e1b8e): a lead table of the decisions that need the
   owner's eyes (Vietnamese heading in the entry), then one table per lane. Each row reads "default applied, pending owner sign-off" and
   names its lane, PR and source. A default the owner already approved is listed apart as owner-approved (L17 readiness P4, P5);
 - the decision exception M-11 (lane L16c, PR #90): `GET /api/me/clubs/[clubRef]/chat-context` returns `{tenantId, timezone}` to a member
@@ -95,7 +95,7 @@ PR body line numbers are lines of the body text as read at the base measurement;
 Authority: L17 readiness P14 (`docs/sessions/web-mvp-phase3-readiness-p3-closeout.md` :71). These are owner actions; no agent performs
 them and none is marked done in this file.
 
-1. Enable `OUTBOX_DISPATCH_SCHEDULE_ENABLED` for real use (false at `.env.example:99` and `docker-compose.yml:132`, 0a4e1b8e).
+1. Enable `OUTBOX_DISPATCH_SCHEDULE_ENABLED` for real use (false at `.env.example:99` and `infra/docker-compose.yml:132`, 0a4e1b8e).
 2. Connect a real Zalo bot token.
 3. Message real users.
 
@@ -107,7 +107,7 @@ Notes on the same line of that file:
 
 ## 5. Golden-path evidence (local only; no staging, no production)
 
-- Command: the "extended golden path" in `docs/runbooks/local-mvp-smoke.md` (the command L17 adds to that runbook); config
+- Command: the golden-path command in section 10 of `docs/runbooks/local-mvp-smoke.md` (it runs four tests, runbook :173); config
   `apps/web/e2e/golden-path.config.ts` (L17 readiness P12).
 - Result at 0a4e1b8e: 4 passed in 2.1 min: host 31.2 s, player 54.9 s, chat 25.2 s, member chat 16.0 s.
 - Capability flags `public_sessions`, `web_realtime` and `zalo_dm` were false before and after.
@@ -194,8 +194,8 @@ Leads NOT researched into rows (confirm each at the base before any row is writt
 - L16b (#91): the restore walk's `RESTORE_GETS` 20-page ceiling (PR #91 body);
 - L16 (#89): `authorLabel` isolation (verify it is done); L13a (#84): the review residual in the PR #84 body :242-245.
 
-DD-138 completeness: the L14 (#83), L15 (#86), L16 (#89) and L12 (#77) tables come from the lanes' defaults sections. These source
-ranges were not read line by line, so DD-138 completeness for those four lanes is unconfirmed:
+DD-138 completeness: the L14 (#83), L15 (#86), L16 (#89) and L12 (#77) tables come from the lanes' defaults sections. In the source
+ranges below, every line with a default marker (81 lines) was checked against the entry, and the defaults found (the B3 exceptions of L14, L15 and L16; rulings RO-L14-6, RO-L14-7, RO-S11-1, RO-S11-2 and RO-L16-2) became rows; every other lane granted a B3 exception now has its row too; lines without a marker were not read line by line:
 
 - L14 readiness p3-m10-chat-core :30-77 :102-167 :202-597, and PR #83 body :1-122 :156-212 :325-499;
 - L15 readiness p3-m10-chat-api-live :1-49 :148-end, and PR #86 body :1-165 :232-491;
@@ -217,5 +217,5 @@ Reported, not edited by L17:
 - Plan: `docs/sessions/web-mvp-phase3-plan.md` (merged by #58).
 - Lane readiness files: `docs/sessions/web-mvp-phase3-readiness-p3-<x>.md` (section 2). Closeout authority: the L17 readiness (P1 this
   file, P8 flip criteria, P12 golden path, P14 owner steps, section 7 the OPEN list).
-- Runbook: `docs/runbooks/local-mvp-smoke.md` (local golden path, the "extended golden path" command).
+- Runbook: `docs/runbooks/local-mvp-smoke.md` (local golden path; the command is in section 10).
 - Backlog: `docs/autopilot-backlog.md`. Earlier rules and state: handoff 2, sections 1 and 4 to 7 (not re-measured here).
