@@ -111,13 +111,13 @@ const required = async (eventId: string) =>
   (await worker("SELECT outbox_required_projectors($1) AS p", [eventId])).rows[0].p as string[];
 
 describe("A1-A3 migration, seeds and route invariants", () => {
-  it("A1: 67 migrations apply with tail 0066 and re-run idempotently", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(67);
+  it("A1: 68 migrations apply with tail 0066 and re-run idempotently", async () => {
+    expect(ctx.migrateResult.applied.length).toBe(68);
     expect(ctx.migrateResult.applied).toContain("0056_outbox_projector_registry_dlq_replay.sql");
-    expect(ctx.migrateResult.applied.at(-1)).toBe("0066_account_club_chat_context.sql");
+    expect(ctx.migrateResult.applied.at(-1)).toBe("0067_session_venue_visibility.sql");
     const again = await ctx.remigrate();
     expect(again.applied).toEqual([]);
-    expect(again.skipped.length).toBe(67);
+    expect(again.skipped.length).toBe(68);
   });
 
   // DM-8 (L8): exactly four zalo_dm routes, the three 0057 session types plus 0058's player.promoted
@@ -430,10 +430,12 @@ describe("A6-A8 authorization and catalog posture", () => {
           .map((r) => (r.col as string | null) ?? "<table>")
           .sort();
       // 0057 (L4) adds sessions (ends_at, timezone) and the players columns of the zalo_dm targets definer;
-      // 0061 adds the six sessions columns the public_sessions writer recomputes from.
+      // 0061 adds the six sessions columns the public_sessions writer recomputes from;
+      // 0067 adds the three venue columns the writer reads (DD-139 / B1).
       expect(cols("sessions", "SELECT")).toEqual([
         "area",
         "ends_at",
+        "hide_exact_address",
         "id",
         "join_policy",
         "price_amount",
@@ -443,6 +445,8 @@ describe("A6-A8 authorization and catalog posture", () => {
         "status",
         "tenant_id",
         "timezone",
+        "venue_address",
+        "venue_name",
         "version",
         "visibility",
       ]);
@@ -491,6 +495,9 @@ describe("A6-A8 authorization and catalog posture", () => {
         "starts_at",
         "tenant_id",
         "title",
+        // 0067 (DD-139 / B1): the writer also selects, inserts and updates the two venue columns.
+        "venue_address",
+        "venue_name",
       ];
       const notUpdated = ["id", "public_listing_id", "session_id", "tenant_id"];
       expect(cols("public_sessions", "SELECT")).toEqual(psCols);
