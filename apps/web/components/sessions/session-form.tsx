@@ -12,6 +12,7 @@ import {
 } from "../../lib/session-form-model";
 import { describeSessionError, errorField } from "../../lib/session-error-ui";
 import { Button } from "../ui/button";
+import fieldStyles from "../ui/field.module.css";
 import { Select } from "../ui/select";
 import { TextField } from "../ui/text-field";
 import { ApiErrorNotice } from "./api-error-notice";
@@ -58,6 +59,7 @@ export function SessionForm(props: SessionFormProps) {
   const summaryRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const unlimitedId = useId();
+  const hideAddressId = useId();
   const [focusSummary, setFocusSummary] = useState(0);
 
   useEffect(() => {
@@ -212,6 +214,25 @@ export function SessionForm(props: SessionFormProps) {
           hint={t("Cần khi công khai buổi chơi.", "Required to make a session public.")}
           onChange={(e) => set("area", e.target.value)}
         />
+        <div className={styles.check}>
+          <input
+            id={hideAddressId}
+            name="hideExactAddress"
+            type="checkbox"
+            checked={values.hideExactAddress}
+            aria-describedby={`${hideAddressId}-hint`}
+            onChange={(e) => set("hideExactAddress", e.target.checked)}
+          />
+          <label htmlFor={hideAddressId}>
+            {t("Ẩn địa chỉ chính xác đến khi xác nhận", "Hide exact address until confirmed")}
+          </label>
+        </div>
+        <p id={`${hideAddressId}-hint`} className={fieldStyles.hint}>
+          {t(
+            "Khi bật, chỉ người chơi đã có chỗ mới thấy tên sân và địa chỉ; người khác chỉ thấy khu vực.",
+            "When on, only players with a confirmed seat see the venue name and address; everyone else sees the area only.",
+          )}
+        </p>
       </fieldset>
 
       <fieldset className={styles.group}>
