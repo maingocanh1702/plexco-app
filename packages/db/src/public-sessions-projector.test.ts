@@ -947,4 +947,44 @@ describe("PSP-12 the venue follows hide_exact_address (DD-139 / B1): A-1, A-2, A
     ]);
     expect(p).toEqual({ provolatile: "v" });
   });
+
+  it("PSP-12f (A-2, F1): a session hidden before its first projection projects NULL venue in the base row and the view row", async () => {
+    const sid = await session(await club());
+    await hide(sid, true);
+    expect(await baseRow(sid)).toBeUndefined(); // no row yet: the writer takes the insert arm
+    expect(await project(sid)).toBe("upserted");
+    const row = (await baseRow(sid))!;
+    expect([row.venue_name, row.venue_address]).toEqual([null, null]);
+    const v = (await viewRow(row.public_listing_id as string))!;
+    expect(v).toMatchObject({ area: "Quan 7", venue_name: null, venue_address: null });
+    const served = JSON.stringify(v);
+    for (const leak of [VENUE, ADDRESS]) expect(served).not.toContain(leak);
+    // The writer masks at its read: the session row still holds the typed venue.
+    const typed = "SELECT venue_name, venue_address FROM sessions WHERE id = $1";
+    expect(await owner(typed, [sid])).toEqual([{ venue_name: VENUE, venue_address: ADDRESS }]);
+  });
+
+  it("PSP-12g (A-2, F1): with a share fence raised, the rotated re-insert keeps the venue NULL while the option is ON, and carries it again once OFF", async () => {
+    const t = await club();
+    const sid = await session(t);
+    expect(await project(sid)).toBe("upserted");
+    await raise(t, sid);
+    await hide(sid, true);
+    expect(await project(sid, randomUUID())).toBe("rotated");
+    const hidden = (await baseRow(sid))!;
+    expect([hidden.venue_name, hidden.venue_address]).toEqual([null, null]);
+    const v = (await viewRow(hidden.public_listing_id as string))!;
+    expect(v).toMatchObject({ area: "Quan 7", venue_name: null, venue_address: null });
+    const served = JSON.stringify(v);
+    for (const leak of [VENUE, ADDRESS]) expect(served).not.toContain(leak);
+    await raise(t, sid); // a fence again, so the OFF projection takes the same re-insert arm
+    await hide(sid, false);
+    expect(await project(sid, randomUUID())).toBe("rotated");
+    const shown = (await baseRow(sid))!;
+    expect([shown.venue_name, shown.venue_address]).toEqual([VENUE, ADDRESS]);
+    expect(await viewRow(shown.public_listing_id as string)).toMatchObject({
+      venue_name: VENUE,
+      venue_address: ADDRESS,
+    });
+  });
 });
