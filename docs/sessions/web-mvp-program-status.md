@@ -72,6 +72,7 @@ DD-123 → DD-128 và DD-130 đã được đóng bởi DD-131 (owner ký 14/10)
   definer và đóng cửa sổ `same_person` 10 phút (hiện tối đa một dòng audit thừa). Đi kèm hai rủi ro có sẵn: insert con FK phía bot
   chạy đua với link có thể gắn vào Person nguồn đã tombstone; worker test chết giữa lúc revoke/restore có thể để một LOGIN role
   test `SET ROLE identity_definer` được. Backlog: `identity-link-hardening-consumer-column`.
+- **DD-138 — các default Phase 3 chờ owner ký** (một entry gộp mọi default đã áp của các lane Phase 3, PR #59 → #91; owner ký theo nhóm, row chưa ký vẫn chờ). Chi tiết trong `decisions.md` DD-138.
 
 ## Quyết định owner 2026-10-15
 
@@ -105,8 +106,8 @@ Ghi từ tin nhắn của owner "Phase 3 plan approved" (2026-10-16); L0 chỉ g
 2. **#50 (M5) chỉ owner**, đóng băng, ngoài phạm vi MVP. Không có lane nào đụng tới nó.
 3. **Test local:** #57 đã vào `main`; làm theo `docs/runbooks/local-mvp-smoke.md` (Postgres local + dev-login + golden path
    click tay hoặc Playwright). File có trên `main` từ 2026-10-15.
-4. **Lane flake (backlog, mỗi cái một lane):** `app-worker-test-password-clash-flake` · `db-test-unhandled-57p01-and-load-timeouts` ·
-   `e2e-web-pwa-offline-online-flake` · `dev-app-worker-password-not-restored` (hai row password `app_worker` liên quan nhau: làm cùng nhau hoặc theo thứ tự, không sửa chồng). CI đỏ do flake đã biết: chạy lại một lần.
-5. **OSV:** Security run `38456110453` trên `main` có 9 advisory (backlog `osv-full-scan-red-on-main-2026-10`). Owner đã chọn sửa (D5, 2026-10-16): 1 Critical shell-quote + 5 High, một PR riêng cạnh L1 với test đầy đủ; bump cần breaking change đi vào backlog.
+4. ✅ **Lane flake — đã merge PR #62 (`cf109e6`):** `app-worker-test-password-clash-flake` · `db-test-unhandled-57p01-and-load-timeouts` ·
+   `e2e-web-pwa-offline-online-flake` · `dev-app-worker-password-not-restored` (bốn row nay `merged` trong backlog, đo tại `0a4e1b8`; row 57P01 ghi phần PR #62 chỉ đạt một phần). CI đỏ do flake đã biết: chạy lại một lần.
+5. ✅ **OSV — đã merge PR #60 (`45f8c68`):** Security run `38456110453` trên `main` có 9 advisory (backlog `osv-full-scan-red-on-main-2026-10`). Owner đã chọn sửa (D5, 2026-10-16): 1 Critical shell-quote + 5 High, một PR riêng cạnh L1 với test đầy đủ; bump cần breaking change đi vào backlog. Row `osv-full-scan-red-on-main-2026-10` vẫn mở (đo tại `0a4e1b8`: PR #60 ghi braces và hai advisory của `next` là còn mở).
 6. ✅ **Owner đã quyết** hai đề xuất (ack đồng bộ của #47 → DD-134 (d); cổng thoát đợt A → DD-137), 2026-10-16.
-7. **Phiên kế tiếp:** đợt B/C trong phạm vi MVP còn lại là M6, M9, M10 (M9 chỉ phụ thuộc M6). Kế hoạch hiện hành: `web-mvp-phase3-plan.md`; handoff cũ cho agent (lịch sử): `2026-10-14-web-mvp-program-handoff-2.md`.
+7. **Phiên kế tiếp:** đọc `2026-10-21-web-mvp-program-handoff-3.md` (trạng thái sau Phase 3, proposal DD-138 chờ owner ký, các bước P0 do owner thực hiện). Kế hoạch Phase 3: `web-mvp-phase3-plan.md`; handoff cũ (lịch sử): `2026-10-14-web-mvp-program-handoff-2.md`.
