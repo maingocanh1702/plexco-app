@@ -13,7 +13,9 @@ import { createPublicSessionsDeliver, deliverPublicSessions } from "./public-ses
 // definers on the app_worker seat. The registry row is enabled only in this suite's own DB, as the
 // owner; committed state keeps it disabled. Real PG; DATABASE_URL_TEST required.
 const HOUR = 3_600_000;
-const SECRET = "Secret"; // every person, guest, tenant name and venue fixture carries it
+// Every person, guest and tenant name fixture carries SECRET; the venue fixture no longer does:
+// the venue is public by default under DD-139 (owner decision B1), so the view serves it.
+const SECRET = "Secret";
 
 function job(over: Partial<ClaimedDeliveryJob["event"]> = {}): ClaimedDeliveryJob {
   return {
@@ -129,7 +131,7 @@ describe("public_sessions projector against the 0061 definers (as app_worker)", 
         tenantId,
         ctx.badmintonSportId,
         new Date(Date.now() + 24 * HOUR),
-        `${SECRET} Venue`,
+        "Public Venue",
         slotsMax,
         visibility,
       ],
@@ -227,7 +229,12 @@ describe("public_sessions projector against the 0061 definers (as app_worker)", 
     await cycle();
     expect(await delivery(eventId)).toMatchObject({ status: "delivered", error_code: null });
     const row = await viewRow(sid);
-    expect(row).toMatchObject({ slots_open: 3, club_display_name: "CLB Q7", area: "Quan 7" });
+    expect(row).toMatchObject({
+      slots_open: 3,
+      club_display_name: "CLB Q7",
+      area: "Quan 7",
+      venue_name: "Public Venue",
+    });
     expect(JSON.stringify(row)).not.toContain(SECRET);
   });
 
