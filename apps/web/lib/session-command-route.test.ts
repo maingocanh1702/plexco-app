@@ -1418,9 +1418,38 @@ describe("shapeSessionFields", () => {
     >;
     expect(fields.venueAddress).toBe("12 Nguyen Trai");
   });
+
+  it("DD-139 A-7: update forwards hideExactAddress as sent (true and false); absent stays absent", () => {
+    expect(shapeSessionFields({ hideExactAddress: true }).hideExactAddress).toBe(true);
+    expect(shapeSessionFields({ hideExactAddress: false }).hideExactAddress).toBe(false);
+    expect(Object.hasOwn(shapeSessionFields({ venueName: "x" }), "hideExactAddress")).toBe(false);
+  });
+
+  it("DD-139 A-7: update passes a non-boolean hideExactAddress to the command; its INVALID_INPUT is INVALID_BODY 400", async () => {
+    const fields = shapeSessionFields({ hideExactAddress: "yes" }) as Record<string, unknown>;
+    expect(fields.hideExactAddress).toBe("yes");
+    const response = mapSessionCommandError(new SessionUpdateError("INVALID_INPUT", "internal"));
+    const { error } = await envelope(response!);
+    expect(error).toMatchObject({ code: "INVALID_BODY", statusCode: 400 });
+  });
 });
 
 describe("shapeCreateFields", () => {
+  it("DD-139 A-7: create forwards hideExactAddress as sent, the same as update; absent stays absent", () => {
+    const body = { hideExactAddress: true };
+    expect(shapeCreateFields(body)).toEqual({ hideExactAddress: true });
+    expect(shapeCreateFields(body)).toEqual(shapeSessionFields(body));
+    expect(Object.hasOwn(shapeCreateFields({ venueName: "x" }), "hideExactAddress")).toBe(false);
+  });
+
+  it("DD-139 A-7: create passes a non-boolean hideExactAddress to the command; its INVALID_INPUT is INVALID_BODY 400", async () => {
+    const fields = shapeCreateFields({ hideExactAddress: "yes" }) as Record<string, unknown>;
+    expect(fields.hideExactAddress).toBe("yes");
+    const response = mapSessionCommandError(new SessionCommandError("INVALID_INPUT", "internal"));
+    const { error } = await envelope(response!);
+    expect(error).toMatchObject({ code: "INVALID_BODY", statusCode: 400 });
+  });
+
   it("DD-39: POST and PUT carry priceMale / priceFemale, a provided null is a clear, an absent side stays absent", () => {
     const body = { priceMale: 120000, priceFemale: null };
     for (const fields of [shapeCreateFields(body), shapeSessionFields(body)]) {

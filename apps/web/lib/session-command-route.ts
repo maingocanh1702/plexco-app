@@ -371,6 +371,8 @@ export interface SessionFieldPayload {
   area?: string | null;
   venueName?: string | null;
   venueAddress?: string | null;
+  /** DD-139 / B1 "hide exact address until confirmed"; a boolean, validated by the command. */
+  hideExactAddress?: boolean;
   joinPolicy?: "open" | "approval";
 }
 
@@ -399,6 +401,8 @@ const CREATE_FIELD_KEYS = [
   "area",
   "venueName",
   "venueAddress",
+  // DD-139 / B1: passed through untouched; the command answers INVALID_INPUT to a non-boolean.
+  "hideExactAddress",
   "joinPolicy",
 ] as const;
 
