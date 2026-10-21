@@ -135,6 +135,7 @@ describe("listSessions", () => {
         "area",
         "createdAt",
         "endsAt",
+        "hideExactAddress",
         "id",
         "joinPolicy",
         "occupiedCount",
@@ -475,7 +476,7 @@ describe("getSessionDetail", () => {
     // Exact top-level key sets of the detail and of a player: an added gender or per-gender key
     // there fails. Nested keys are not pinned: players[0].charge is null (no charges row seeded).
     expect(Object.keys(g!).sort()).toEqual(
-      "allowPlayerInvite area counts createdAt endsAt guestNotes id joinPolicy players priceAmount priceFemale priceMale skillLevel slotsMax sportId sportKey sportName startsAt status timezone updatedAt venueAddress venueName version visibility"
+      "allowPlayerInvite area counts createdAt endsAt guestNotes hideExactAddress id joinPolicy players priceAmount priceFemale priceMale skillLevel slotsMax sportId sportKey sportName startsAt status timezone updatedAt venueAddress venueName version visibility"
         .split(" ")
         .sort(),
     );
