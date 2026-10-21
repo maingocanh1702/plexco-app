@@ -90,6 +90,27 @@ describe("DiscoverDetailView", () => {
     expect(visible).toContain(venueAddress); // full text, no truncation (D-5)
   });
 
+  it("ready: a listing without a venue is the venue listing minus the venue text, no placeholder (A-2, A-6)", () => {
+    // Null = nothing typed, or the host hid it (option ON): the page is then the venue page minus
+    // the venue text and nothing takes its place, not even a translated label. Each field stands alone.
+    const venueName = "Sân Cầu Lông A1";
+    const venueAddress = "12 Phố Huế, phường Hai Bà Trưng, Hà Nội";
+    const flat = (extra: Partial<DiscoveryListing>) =>
+      text(render({ status: "ready", listing: { ...LISTING, ...extra } }));
+    const squash = (s: string) => s.replace(/ +/g, " ").trim();
+    // Not vacuous: the venue render really carries both strings, the bare one neither.
+    const full = flat({ venueName, venueAddress });
+    expect(full).toContain(venueName);
+    expect(full).toContain(venueAddress);
+    const bare = squash(flat({ venueName: null, venueAddress: null }));
+    expect(bare).toContain("Cầu Giấy");
+    expect(bare).not.toContain(venueName);
+    expect(bare).not.toContain(venueAddress);
+    expect(squash(full.replace(venueName, "").replace(venueAddress, ""))).toBe(bare);
+    expect(squash(flat({ venueName, venueAddress: null }).replace(venueName, ""))).toBe(bare);
+    expect(squash(flat({ venueName: null, venueAddress }).replace(venueAddress, ""))).toBe(bare);
+  });
+
   it("ignores non-whitelisted keys: gender, per-gender price, bank and QR never render", () => {
     const injected = {
       ...LISTING,
