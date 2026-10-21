@@ -21,25 +21,84 @@ const ch = (cp: number) => String.fromCodePoint(cp);
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 const EMOJI = ch(0x1f600);
 
-// One shared sample set (A-4, A-12): [label, input, accepted].
-const REFUSED_CPS = [0x202e, 0x200b, 0x0007, 0x2028, 0x2800, 0x3164, 0x00ad];
-const SAMPLES: [string, string, boolean][] = [
-  ["empty", "", false],
-  ["spaces only", "   ", false],
-  ["61 code points", "x".repeat(61), false],
-  ["61 emoji", EMOJI.repeat(61), false],
-  ["U+FE0F alone", ch(0xfe0f), false],
-  ...REFUSED_CPS.flatMap((cp): [string, string, boolean][] => [
-    [`U+${cp.toString(16)} alone`, ch(cp), false],
-    [`U+${cp.toString(16)} embedded`, `CLB${ch(cp)}Q7`, false],
+// One shared sample set (A-4, A-12): [label, input, stored], stored = the stripped, trimmed value
+// both layers store, or null = refused. Strip first (L23, R D3): U+200B, U+3164 and U+00AD are
+// STRIP code points, so embedded they are removed (once refused); alone they leave an empty alias.
+const REFUSED_CPS = [0x202e, 0x0007, 0x2028, 0x2800];
+const STRIPPED_CPS = [0x200b, 0x3164, 0x00ad];
+const SAMPLES: [string, string, string | null][] = [
+  ["empty", "", null],
+  ["spaces only", "   ", null],
+  ["61 code points", "x".repeat(61), null],
+  ["61 emoji", EMOJI.repeat(61), null],
+  ["U+FE0F alone", ch(0xfe0f), null],
+  ...REFUSED_CPS.flatMap((cp): [string, string, string | null][] => [
+    [`U+${cp.toString(16)} alone`, ch(cp), null],
+    [`U+${cp.toString(16)} embedded`, `CLB${ch(cp)}Q7`, null],
   ]),
-  ["60 code points", "y".repeat(60), true],
-  ["60 emoji", EMOJI.repeat(60), true],
-  ["vietnamese", "CLB Cầu Lông Quận 7", true],
-  ["emoji", `Smash ${EMOJI}`, true],
-  ["combining mark", `Cafe${ch(0x301)} Club`, true],
-  ["emoji + U+FE0F", `${ch(0x2764)}${ch(0xfe0f)} Club`, true],
+  ...STRIPPED_CPS.flatMap((cp): [string, string, string | null][] => [
+    [`U+${cp.toString(16)} alone`, ch(cp), null],
+    [`U+${cp.toString(16)} embedded`, `CLB${ch(cp)}Q7`, "CLBQ7"],
+  ]),
+  ["60 code points", "y".repeat(60), "y".repeat(60)],
+  ["60 emoji", EMOJI.repeat(60), EMOJI.repeat(60)],
+  ["vietnamese", "CLB Cầu Lông Quận 7", "CLB Cầu Lông Quận 7"],
+  ["emoji", `Smash ${EMOJI}`, `Smash ${EMOJI}`],
+  ["combining mark", `Cafe${ch(0x301)} Club`, `Cafe${ch(0x301)} Club`],
+  // The owner rule's consequence (R D11): U+FE0F is stripped, the heart renders as text.
+  ["emoji + U+FE0F", `${ch(0x2764)}${ch(0xfe0f)} Club`, `${ch(0x2764)} Club`],
 ];
+
+// The L23 decision table for the alias (R section 6, rows R1-R5): [input, stored | null].
+const ZWJ = ch(0x200d);
+const ALIAS_TABLE: [string, [string, string | null][]][] = [
+  [
+    "R1 no STRIP or REFUSE code point: unchanged (trimmed as today)",
+    [
+      ["  CLB Cầu Lông Q7  ", "CLB Cầu Lông Q7"],
+      [`Smash ${EMOJI}`, `Smash ${EMOJI}`],
+    ],
+  ],
+  [
+    "R2 STRIP code points among visible text: stored without them, stripped before the trim",
+    [
+      ...[0x200b, 0x00ad, 0x3164, 0xfe00, 0xe0001, 0x2065].map((cp): [string, string] => [
+        `CLB${ch(cp)} Q7`,
+        "CLB Q7",
+      ]),
+      [`${ch(0x200b)} CLB Q7`, "CLB Q7"],
+    ],
+  ],
+  [
+    "R3 only STRIP code points, or them plus spaces: refused like an empty alias",
+    [
+      [ch(0x200b), null],
+      [`${ch(0x200b)}${ch(0xfe0f)}${ch(0xe0001)}`, null],
+      [` ${ch(0x3164)} ${ch(0x00ad)} `, null],
+      ["", null],
+    ],
+  ],
+  [
+    "R4 U+FE0F and U+200D inside emoji sequences: stripped (the owner rule, R D11)",
+    [
+      [`${ch(0x2764)}${ch(0xfe0f)} Club`, `${ch(0x2764)} Club`],
+      [
+        `${ch(0x1f468)}${ZWJ}${ch(0x1f469)}${ZWJ}${ch(0x1f467)} Club`,
+        `${ch(0x1f468)}${ch(0x1f469)}${ch(0x1f467)} Club`,
+      ],
+    ],
+  ],
+  [
+    "R5 control, bidi, line separator or braille blank: refused as today, a strip launders none",
+    [
+      ...[0x0007, 0x202e, 0x2028, 0x2800].map((cp): [string, null] => [`CLB${ch(cp)}Q7`, null]),
+      [`CLB${ch(0x200b)}${ch(0x202e)}Q7`, null],
+    ],
+  ],
+];
+/** Code points in hex, so a failing comparison shows the invisible ones. */
+const cps = (s: string | null) =>
+  s === null ? null : [...s].map((c) => c.codePointAt(0)!.toString(16));
 
 const pool = (r: Role): pg.Pool =>
   r === "app" ? ctx.appPool : r === "app_worker" ? ctx.workerPool : ctx.readonlyPool;
@@ -201,14 +260,16 @@ describe("0060 set definer as app (A-1..A-5, A-22)", () => {
     expect((await snapshot(tenantId)).events).toBe((before.events as number) + 1);
   });
 
-  it("A-4: every refused sample raises 22023 with zero writes; accepted samples are stored", async () => {
+  it("A-4: every refused sample raises 22023 with zero writes; accepted samples are stored stripped", async () => {
     const { tenantId, ownerId } = await club();
-    for (const [label, input, accepted] of SAMPLES) {
+    for (const [label, input, stored] of SAMPLES) {
       const before = await snapshot(tenantId);
       expect(await sqlState(setAlias(tenantId, ownerId, input)), label).toBe(
-        accepted ? "ok" : "22023",
+        stored === null ? "22023" : "ok",
       );
-      if (!accepted) expect(await snapshot(tenantId), label).toEqual(before);
+      if (stored === null) expect(await snapshot(tenantId), label).toEqual(before);
+      else
+        expect(cps((await snapshot(tenantId)).public_alias as string), label).toEqual(cps(stored));
     }
     expect(await sqlState(setAlias(tenantId, ownerId, null as unknown as string))).toBe("22023");
   });
@@ -644,7 +705,15 @@ const codeOf = (p: Promise<unknown>) =>
     () => "ok",
     (e: unknown) => (e instanceof ClubConfigError ? e.code : String(e)),
   );
-const tsAccepts = (v: string) => codeOf(Promise.resolve().then(() => validatePublicAlias(v)));
+/** The TS verdict: the value validatePublicAlias returns (the one sent to the definer), or null. */
+function tsStored(v: string): string | null {
+  try {
+    return validatePublicAlias(v);
+  } catch (e) {
+    if (e instanceof ClubConfigError && e.code === "INVALID_INPUT") return null;
+    throw e;
+  }
+}
 const setTs = (tenantId: string, actor: string, publicAlias: unknown, commandId = randomUUID()) =>
   setPublicAlias(ctx.appDb.db, { tenantId, actorPersonId: actor, commandId, publicAlias });
 const commands = async (tenantId: string) =>
@@ -665,17 +734,21 @@ async function activeClub(status = "active") {
   );
   return c;
 }
-/** The set definer's verdict as app with the GUC, rolled back: true = accepted, false = 22023. */
-async function sqlAccepts(tenantId: string, actor: string, input: string) {
+/** The set definer's stored alias as app with the GUC, rolled back: the value, or null = 22023. */
+async function sqlStored(tenantId: string, actor: string, input: string): Promise<string | null> {
   const c = await ctx.appPool.connect();
   try {
     await c.query("BEGIN");
     await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
-    const state = await sqlState(
-      c.query(`SELECT * FROM tenant_public_alias_set($1, $2, $3)`, [tenantId, actor, input]),
-    );
-    if (state !== "ok" && state !== "22023") throw new Error(`unexpected SQLSTATE ${state}`);
-    return state === "ok";
+    const { rows } = await c.query<Row>(`SELECT * FROM tenant_public_alias_set($1, $2, $3)`, [
+      tenantId,
+      actor,
+      input,
+    ]);
+    return rows[0]!.public_alias as string;
+  } catch (e) {
+    if ((e as { code?: string }).code !== "22023") throw e;
+    return null;
   } finally {
     await c.query("ROLLBACK");
     c.release();
@@ -696,7 +769,7 @@ describe("setPublicAlias / getPublicAlias as app (A-1, A-4, A-5, A-12, A-19, A-2
 
   it("A-4/A-12: TS refuses before any DB call and agrees with the SQL definer per sample", async () => {
     const { tenantId, ownerId } = await activeClub();
-    for (const bad of [null, 42, ...SAMPLES.filter((s) => !s[2]).map((s) => s[1])]) {
+    for (const bad of [null, 42, ...SAMPLES.filter((s) => s[2] === null).map((s) => s[1])]) {
       const p = setPublicAlias(NO_DB, {
         tenantId,
         actorPersonId: ownerId,
@@ -705,10 +778,11 @@ describe("setPublicAlias / getPublicAlias as app (A-1, A-4, A-5, A-12, A-19, A-2
       });
       expect(await codeOf(p), JSON.stringify(bad)).toBe("INVALID_INPUT");
     }
-    for (const [label, input, accepted] of SAMPLES) {
-      const sqlOk = await sqlAccepts(tenantId, ownerId, input);
-      expect(sqlOk, label).toBe(accepted);
-      expect(await tsAccepts(input), label).toBe(sqlOk ? "ok" : "INVALID_INPUT");
+    // Strip first at both layers (L23, R D3): the two agree on the verdict AND the stored value.
+    for (const [label, input, stored] of SAMPLES) {
+      const sqlValue = await sqlStored(tenantId, ownerId, input);
+      expect(cps(sqlValue), label).toEqual(cps(stored));
+      expect(cps(tsStored(input)), label).toEqual(cps(sqlValue));
     }
     expect(await snapshot(tenantId)).toMatchObject({ public_alias: null, events: 0 });
   });
@@ -761,6 +835,41 @@ describe("setPublicAlias / getPublicAlias as app (A-1, A-4, A-5, A-12, A-19, A-2
     expect(await snapshot(tenantId)).toMatchObject({ public_alias: null, events: 0 });
     expect(await commands(tenantId)).toBe(0);
   });
+});
+
+// L23 decision table (R section 6), alias rows R1-R5: one test per row per layer.
+describe("L23 alias decision table, TS layer: validatePublicAlias strips first (R D3)", () => {
+  for (const [row, cases] of ALIAS_TABLE) {
+    it(row, () => {
+      for (const [input, stored] of cases) {
+        expect(cps(tsStored(input)), JSON.stringify(cps(input))).toEqual(cps(stored));
+      }
+    });
+  }
+});
+
+describe("L23 alias decision table, SQL layer: tenant_public_alias_set as app (0068)", () => {
+  for (const [row, cases] of ALIAS_TABLE) {
+    it(row, async () => {
+      const { tenantId, ownerId } = await club();
+      for (const [input, stored] of cases) {
+        const label = JSON.stringify(cps(input));
+        const before = await snapshot(tenantId);
+        if (stored === null) {
+          expect(await sqlState(setAlias(tenantId, ownerId, input)), label).toBe("22023");
+          expect(await snapshot(tenantId), label).toEqual(before);
+        } else {
+          const [set] = await setAlias(tenantId, ownerId, input);
+          expect(cps(set!.public_alias as string), label).toEqual(cps(stored));
+          expect(cps((await snapshot(tenantId)).public_alias as string), label).toEqual(
+            cps(stored),
+          );
+        }
+      }
+      // R2 inputs all strip to one value: only the first set is a change (one event, M-5).
+      if (row.startsWith("R2")) expect((await snapshot(tenantId)).events).toBe(1);
+    });
+  }
 });
 
 describe("owner CLI scripts/public-alias-moderate.mjs (A-13)", () => {

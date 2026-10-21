@@ -240,7 +240,7 @@ describe("public alias (L10a): { commandId, publicAlias } travels alone", () => 
     expect(updateClubConfig).not.toHaveBeenCalled();
   });
 
-  it.each(["", "   ", "x".repeat(61), "a\u202Eb", "a\u200Bb", "a\u0007b", "a\u2028b", "\u2800"])(
+  it.each(["", "   ", "x".repeat(61), "a\u202Eb", "a\u0007b", "a\u2028b", "\u2800"])(
     "A-4: alias %j -> 400 INVALID_BODY (the module's rule); the club is never read",
     async (text) => {
       const res = await alias(text);
@@ -248,6 +248,28 @@ describe("public alias (L10a): { commandId, publicAlias } travels alone", () => 
       expect(getClubConfig).not.toHaveBeenCalled();
     },
   );
+
+  // Strip first (L23, R D3): a + U+200B + b left the refusal list above; invisible-only is empty.
+  it.each(["\u{200B}", " \u{3164} \u{AD} ", "\u{200B}\u{FE0F}\u{E0001}"])(
+    "L23 R3: invisible-only alias %j -> 400 INVALID_BODY like an empty one; the club is never read",
+    async (text) => {
+      const res = await alias(text);
+      expect([res.status, (await env(res)).error?.code]).toEqual([400, "INVALID_BODY"]);
+      expect(getClubConfig).not.toHaveBeenCalled();
+    },
+  );
+
+  it("L23 R2: alias a + U+200B + b is accepted; the module's rule stores and answers ab", async () => {
+    vi.mocked(setPublicAlias).mockImplementation(async (_db, p) => ({
+      ...PENDING,
+      publicAlias: validatePublicAlias(p.publicAlias),
+      changed: true,
+      replayed: false,
+    }));
+    const res = await alias("a\u{200B}b");
+    expect(res.status).toBe(200);
+    expect((await env(res)).data).toEqual({ club: { ...club, ...PENDING, publicAlias: "ab" } });
+  });
 
   it.each([
     ["FORBIDDEN", 403, "FORBIDDEN"],
