@@ -663,7 +663,8 @@ const readOnceWithOwnAccount = (d: PlayerCommandDeps) => {
   expect(vi.mocked(d.payContext).mock.calls).toEqual([[[]]]);
 };
 // One row per cause; each overrides ONE thing of amountDeps, which alone renders the amount (D1).
-const UNAVAILABLE: [string, () => Record<string, unknown>][] = [
+// The third field marks the rows where a read throws: only those log (R1 review #1).
+const UNAVAILABLE: [string, () => Record<string, unknown>, boolean?][] = [
   ["accountRef missing", () => ({ gate: { linked: true, accountRef: null } })],
   ["accountRef not a UUID", () => ({ gate: { linked: true, accountRef: "acc-1" } })],
   ["summary unknown", () => ({ readCharges: clubA(owes([charge(1, 150000)]), UNK) })],
@@ -678,8 +679,12 @@ const UNAVAILABLE: [string, () => Record<string, unknown>][] = [
     "joined session absent from known_amount, other sessions listed",
     () => ({ readCharges: clubA(owes([charge(2, 150000), charge(3, 120000)])) }),
   ],
-  ["readCharges throws", () => ({ readCharges: unexpected() })],
-  ["payContext throws", () => ({ payContext: unexpected() })],
+  [
+    "two charges for the joined session (two memberships): neither amount, never their sum",
+    () => ({ readCharges: clubA(owes([charge(1, 40000), charge(1, 30000)])) }),
+  ],
+  ["readCharges throws", () => ({ readCharges: unexpected() }), true],
+  ["payContext throws", () => ({ payContext: unexpected() }), true],
 ];
 
 describe("runPlayerCommand: the /join ACTIVE reply's amount owed (DD-140, L21 D1-D8)", () => {
@@ -709,17 +714,33 @@ describe("runPlayerCommand: the /join ACTIVE reply's amount owed (DD-140, L21 D1
     readOnceWithOwnAccount(d);
   });
 
+  it("D1-D2 the amount is the source's item.remaining as given, never recomputed", async () => {
+    // amountDue - amountAllocated is 100.000đ here, so only a pass-through of remaining shows 70.000đ.
+    const item = { ...charge(1, 70_000), amountDue: 100_000, amountAllocated: 0 };
+    const over = () => ({ readCharges: clubA(owes([charge(3, 120000), item])) });
+    const texts = [
+      await run(num("1"), amountDeps(over())),
+      await run(num("1"), amountDeps(over()), "vi"),
+    ];
+    expect(texts).toEqual([owedText("en", formatVnd(70_000)), owedText("vi", formatVnd(70_000))]);
+  });
+
   it.each(UNAVAILABLE)(
     "D3 amount unavailable (%s): R-1 then R-17, never 0, never R-18",
-    async (_cause, over) => {
+    async (_cause, over, throws) => {
       const spy = vi.spyOn(log, "error").mockImplementation(() => {});
-      const texts = [
-        await run(num("1"), amountDeps(over())),
-        await run(num("1"), amountDeps(over()), "vi"),
-      ];
-      expect(texts).toEqual([unavailableText("en"), unavailableText("vi")]);
-      texts.forEach(expectSafe);
-      expect(spy).not.toHaveBeenCalled(); // the local catch: the outer R-18 handler is not reached
+      for (const l of ["en", "vi"] as const) {
+        spy.mockClear();
+        const text = await run(num("1"), amountDeps(over()), l);
+        expect(text).toBe(unavailableText(l));
+        expectSafe(text);
+        // The outer R-18 handler is never reached; a throw is logged once, by reason only.
+        expect(spy.mock.calls).toStrictEqual(
+          throws ? [["zalo_join_amount_read_failed", { reason: "PROCESSING_ERROR" }]] : [],
+        );
+        // No amount, accountRef or session id in the log: each of them would add a digit.
+        expect(JSON.stringify(spy.mock.calls)).not.toMatch(/\d/);
+      }
       spy.mockRestore();
     },
   );
