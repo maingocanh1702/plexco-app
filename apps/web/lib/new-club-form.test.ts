@@ -44,8 +44,8 @@ describe("validateNewClub", () => {
   it.each([
     ["CLB " + String.fromCodePoint(0x200b) + "Đống Đa", false],
     ["x".repeat(120) + String.fromCodePoint(0x200b), false],
-    [String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), false],
-    [String.fromCodePoint(0x2764, 0xfe0f), false],
+    ["x".repeat(114) + String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), false], // R5 (owner's rule, emoji stored split): 120 UTF-16 units after the strip, 122 if the ZWJs stayed
+    ["x".repeat(119) + String.fromCodePoint(0x2764, 0xfe0f), false], // R5 (owner's rule, emoji stored split): 120 UTF-16 units after the strip, 121 if U+FE0F stayed
     [String.fromCodePoint(0x20, 0x200b, 0x3164), true],
   ])("name %j -> error %s", (name, hasError) => {
     const error = validateNewClub({ ...ok, name }, t).name;
