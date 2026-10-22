@@ -987,3 +987,200 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
     ).toEqual([{ refused: null, visible: true, interactive_keeps: true, ingress_keeps: true }]);
   }, 30_000);
 });
+
+// L29-W1 (unit U2, section 11): P2 create_host_added_person, T1 tenant_provision and T2
+// tenant_profile_update apply member_name_apply_rule's mode false (section 7's P2, T1 and T2 SQL rows).
+// A refused value raises 22023 with the writer's existing message and writes nothing; any other value
+// stores its strip-and-trim result. Each is called as role `app` with the raw value (WRITERS' P2 trims
+// first, as roster-service.ts does), so the definer's own edge rule decides the edge cells.
+describe("L29-W1 P2, T1 and T2 refuse control, bidi, separator, U+2800 and blank-only names (0070, mode false)", () => {
+  type Verdict =
+    { stored: number[] | null } | { code: string; message: string; untouched: boolean };
+  /** sqlstate's SQLSTATE, with the message of the pg error that carries it. */
+  const refusal = (error: unknown) => {
+    const code = sqlstate(error);
+    let e = error as { code?: unknown; message?: unknown; cause?: unknown };
+    while (e.code !== code) e = e.cause as typeof e;
+    return { code, message: String(e.message) };
+  };
+  const tenantName = async (id: string) =>
+    (await ctx.owner.query<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [id]))
+      .rows[0]!.name;
+  type W1Writer = { id: string; message: string; call: (input: string | null) => Promise<Verdict> };
+  const W1: W1Writer[] = [
+    {
+      id: "P2",
+      message: "create_host_added_person: display name must be 1..100 characters",
+      call: async (input) => {
+        const before = await personCount();
+        let id: string;
+        try {
+          const res = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+            tx.execute(
+              sql`SELECT create_host_added_person(${ctx.tenantA}::uuid, ${host}::uuid, ${input}) AS id`,
+            ),
+          );
+          id = (res.rows[0] as { id: string }).id;
+        } catch (error) {
+          return { ...refusal(error), untouched: (await personCount()) === before };
+        }
+        return { stored: cps(await nameOf(id)) };
+      },
+    },
+    {
+      id: "T1",
+      message: "tenant_provision: name required",
+      call: async (input) => {
+        const slug = `mn-${randomBytes(6).toString("hex")}`;
+        const personId = await insertPerson(SEED);
+        let id: string;
+        try {
+          const { rows } = await ctx.appPool.query<{ id: string }>(
+            `SELECT tenant_provision($1, $2, $3, $4, $5) AS id`,
+            [slug, input, null, null, personId],
+          );
+          id = rows[0]!.id;
+        } catch (error) {
+          const { rows } = await ctx.owner.query(`SELECT 1 FROM tenants WHERE slug = $1`, [slug]);
+          return { ...refusal(error), untouched: rows.length === 0 };
+        }
+        return { stored: cps(await tenantName(id)) };
+      },
+    },
+    {
+      id: "T2",
+      message: "tenant_profile_update: name must be 1..120 chars",
+      call: async (input) => {
+        await ctx.owner.query(`UPDATE tenants SET name = $2 WHERE id = $1`, [ctx.tenantA, SEED]);
+        try {
+          await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+            tx.execute(
+              sql`SELECT id FROM tenant_profile_update(${ctx.tenantA}::uuid, ${host}::uuid, ${input}, ${null}, ${null})`,
+            ),
+          );
+        } catch (error) {
+          return { ...refusal(error), untouched: (await tenantName(ctx.tenantA)) === SEED };
+        }
+        return { stored: cps(await tenantName(ctx.tenantA)) };
+      },
+    },
+  ];
+  const byId = (id: string) => W1.find((w) => w.id === id)!;
+  const BIDI_CONTROL = [
+    0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  ];
+  /** Section 4's 16 Zs blanks: U+00A0, U+1680, U+2000-U+200A, U+202F, U+205F, U+3000. */
+  const ZS_BLANKS = [
+    0xa0,
+    0x1680,
+    ...Array.from({ length: 11 }, (_, i) => 0x2000 + i),
+    0x202f,
+    0x205f,
+    0x3000,
+  ];
+  /** [cell, input, the stored value, or null when the writer refuses]: section 7's P2, T1 and T2 rows. */
+  type Cell = [cell: string, input: string, stored: string | null];
+  const inside =
+    (cls: string) =>
+    (cp: number): Cell => [`${cls} U+${hex(cp)} inside`, mix("Lan", cp, "Nguyen"), null];
+  const CELLS: Cell[] = [
+    ...[0x01, 0x1f, 0x7f, 0x80, 0x9f].map(inside("Cc")),
+    ...BIDI_CONTROL.map(inside("Bidi_Control")),
+    ...[0x2028, 0x2029].map(inside("separator")),
+    ["blank-only: NBSP", mix(0xa0), null],
+    ["blank-only: U+3000", mix(0x3000), null],
+    ["blank-only: the 16 Zs blanks", mix(...ZS_BLANKS), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+2800 inside", mix("Lan", 0x2800, "Nguyen"), null],
+    ["invisible-only", mix(0x200b, 0x3164, 0xe0001), null],
+    ["ordinary", "Lan Nguyen", "Lan Nguyen"],
+    [
+      "ordinary: a Zs blank inside is kept (NBSP)",
+      mix("Lan", 0xa0, "Nguyen"),
+      mix("Lan", 0xa0, "Nguyen"),
+    ],
+    [
+      "ordinary: the strip-and-trim result (NBSP, U+200B, U+3000)",
+      mix(0xa0, "Lan", 0x200b, " Nguyen", 0x3000),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB at both edges is trimmed", mix(0x09, "Lan Nguyen", 0x09), "Lan Nguyen"],
+    [
+      "edge: U+2028 and U+2029 at the edges are trimmed",
+      mix(0x2028, "Lan Nguyen", 0x2029),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB inside is refused", mix("Lan", 0x09, "Nguyen"), null],
+  ];
+  it.each(
+    W1.flatMap((w) =>
+      CELLS.map(([cell, input, stored]) => ({ name: `${w.id}: ${cell}`, w, input, stored })),
+    ),
+  )("L29-W1 $name", async ({ w, input, stored }) => {
+    expect(await w.call(input)).toEqual(
+      stored === null
+        ? { code: "22023", message: w.message, untouched: true }
+        : { stored: cps(stored) },
+    );
+  });
+  it("L29-W1 T2: a NULL p_name keeps the stored name", async () => {
+    expect(await byId("T2").call(null)).toEqual({ stored: cps(SEED) });
+  });
+  it("L29-W1 T1 and T2 accept and refuse the same values (create versus set, threat 4)", async () => {
+    const verdict = (v: Verdict) => ("stored" in v ? v.stored : v.code);
+    for (const [cell, input] of CELLS) {
+      const created = await byId("T1").call(input);
+      const set = await byId("T2").call(input);
+      expect(verdict(created), cell).toEqual(verdict(set));
+    }
+  }, 30_000);
+});
+
+// L29-RC (units U2 and U3, section 11): each definer 0070 re-creates keeps its owner, prosecdef,
+// proconfig and ACL (the RC-ACL pattern above) and its body calls member_name_apply_rule( with the mode
+// of its class. This part pins the three interactive definers, mode false: P2, T1 and T2.
+describe("L29-RC P2, T1 and T2 keep their attributes and call member_name_apply_rule with mode false", () => {
+  const RULE_SIG = "public.member_name_apply_rule(text, boolean)";
+  const RC = [
+    { fn: "create_host_added_person", arg: "p_display_name", calls: 1 },
+    { fn: "tenant_provision", arg: "p_name", calls: 2 },
+    { fn: "tenant_profile_update", arg: "p_name", calls: 1 },
+  ].map((r) => ({ ...r, w: RECREATED.find((w) => fnName(w) === r.fn)! }));
+  it.each(RC)("L29-RC $fn", async ({ arg, calls, w }) => {
+    const { rows } = await ctx.owner.query<Record<string, unknown>>(
+      `SELECT p.prosecdef AS security_definer, p.proconfig AS config,
+              p.proowner = h.proowner AS helper_owner, p.proowner = r.proowner AS rule_owner,
+              p.proowner = anchor.proowner AS anchor_owner,
+              ARRAY(SELECT a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee = p.proowner) AS owner_privileges,
+              ARRAY(SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+                           || ':' || a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee <> p.proowner ORDER BY 1) AS grants,
+              p.prosrc AS src
+         FROM pg_proc p, pg_proc h, pg_proc r, pg_proc anchor
+        WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure AND r.oid = $3::regprocedure
+          AND anchor.oid = 'public.tenant_public_alias_set(uuid, uuid, text)'::regprocedure`,
+      [w.sig, HELPER_SIG, RULE_SIG],
+    );
+    const { src, ...attrs } = rows[0]!;
+    expect(attrs).toEqual({
+      security_definer: true,
+      config: [`search_path=${w.searchPath}`],
+      helper_owner: true,
+      rule_owner: true,
+      anchor_owner: true,
+      owner_privileges: ["EXECUTE"],
+      grants: ["app:EXECUTE"],
+    });
+    // Every call of the rule is the interactive one on the writer's own argument, and the L27 strip
+    // call it replaced is gone (one definition of the rule, threat 6).
+    const body = String(src);
+    expect({
+      calls: body.split("member_name_apply_rule(").length - 1,
+      interactive: body.split(`public.member_name_apply_rule(${arg}, false)`).length - 1,
+      strip: body.includes("public_name_strip_invisible("),
+    }).toEqual({ calls, interactive: calls, strip: false });
+  });
+});
