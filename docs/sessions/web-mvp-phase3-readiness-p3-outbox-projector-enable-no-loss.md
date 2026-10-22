@@ -149,6 +149,16 @@ session.published 20), zalo_dm 0. Smoke and golden-path test traffic only; no pr
 same owner-path conventions as `scripts/outbox-dlq-replay.mjs`: `DATABASE_URL_MIGRATION` only, `SET ROLE job_definer` before any call, `RESET ROLE` after,
 arguments validated before connecting, no credential or payload in output, exit 0 done / 2 refusal / 1 other).
 
+Role (RO-L24-1 condition 2, nothing new): the CLI connects with `DATABASE_URL_MIGRATION` only, read from the environment exactly as
+`scripts/outbox-dlq-replay.mjs` reads it (`:9-11`, `:96-98`; no DSN on the command line, never printed): the migration seat, a `job_definer` member after
+`pnpm db:bootstrap`. It runs every statement after `SET ROLE job_definer` and issues `RESET ROLE` after (`:104`, `:108`). `job_definer` reads `outbox_events`
+(BYPASSRLS, `0022:538`), owns `outbox_projector_routes` (`0056:68`, `:70-71`), reads and writes `projector_deliveries` (`0022:539`), owns
+`job_prepare_projector_delivery` (`0022:498`) and `job_audit_events` (`0022:502`; the expiry INSERT is the table owner's own write, and the append-only
+trigger fires only BEFORE UPDATE OR DELETE, `0022:146-157`), and owns both rebuild functions: `public_sessions_project_session` (`0061:164`) and
+`public_sessions_tenant_candidates` (`0061:332`) are created inside 0061's `SET ROLE job_definer` bracket (`0061:91`, `:509`), the 0067 replacement of the
+first runs inside 0067's (`0067:161`, `:201`, `:384`), and their only EXECUTE grants go to `app_worker` (`0061:484-485`, `0067:381`), which the owner does not
+need. So the CLI needs no new function, grant, role or migration; a write that could not go this way would be a STOP with a slot request, never a widened ACL.
+
 1. Transaction 1 (AM1): `SELECT ... FROM outbox_projectors WHERE name = $name FOR UPDATE`, then REFUSE before enabling (ROLLBACK, exit 2 `unacked_backlog`,
    the count only in the output; nothing enabled, no row, no record) while any event routed to `$name` (the step 2 route join) has `acked_at IS NULL` and
    `created_at` older than `BACKFILL_MAX_AGE` (DB clock); the check also runs on a re-run for an already enabled projector. Otherwise
@@ -159,20 +169,26 @@ arguments validated before connecting, no credential or payload in output, exit 
    (serializes concurrent CLI runs; refuse with exit 2 `projector_disabled` if it is not enabled at this point), then ONE scan of every outbox event ROUTED to
    `$name` (join `outbox_projector_routes`, exact type or the NULL wildcard, same rule as `outbox_required_projectors` `0056:131-136`) that has NO
    `projector_deliveries` row for `$name` and NO expiry record for (event, `$name`); NO `acked_at` filter (an event claimed but not yet acked must be included).
-   Classify with the DB clock (`clock_timestamp()`):
-   - `created_at` within `BACKFILL_MAX_AGE` = 30 minutes AND among the newest `BACKFILL_MAX_ROWS` = 200 of the in-window candidates ->
-     `SELECT job_prepare_projector_delivery(id, $name)` (existing, idempotent ON CONFLICT DO NOTHING, audited `projector_delivery_prepared`); phase 2 then
-     delivers it through the unchanged DD-134 path.
-   - every other candidate (older than the bound, or beyond the count cap) -> ONE expiry record: `INSERT INTO job_audit_events` (job_id = event id, tenant_id =
+   Classify with the DB clock (`clock_timestamp()`), per AM5:
+   - an UNACKED candidate (`acked_at IS NULL`; by AM1 it is inside the bound) -> ALWAYS `SELECT job_prepare_projector_delivery(id, $name)`, outside the
+     count cap (the normal path would deliver it anyway once its ack reads the enabled set; the row closes the in-flight race).
+   - an ACKED candidate with `created_at` within `BACKFILL_MAX_AGE` = 30 minutes AND among the newest `BACKFILL_MAX_ROWS` = 200 of the ACKED in-window
+     candidates -> `SELECT job_prepare_projector_delivery(id, $name)` (existing, idempotent ON CONFLICT DO NOTHING, audited `projector_delivery_prepared`).
+     Phase 2 then delivers every prepared row through the unchanged DD-134 path.
+   - every other ACKED candidate (older than the bound, or beyond the count cap) -> ONE expiry record: `INSERT INTO job_audit_events` (job_id = event id, tenant_id =
      the event's tenant_id, actor `'owner'`, reason `'projector_delivery_expired:<projector>:<age|cap>'`, fn_name `'outbox_projector_enable'`, operation_id = one
      uuid per CLI run, created_at `clock_timestamp()`). The reason must carry the projector because the existing delivery audit rows do not (`0022:309-315`,
      `0022:475-481`, `0056:268-270`); idempotency check = NOT EXISTS a row with that job_id and reason LIKE `'projector_delivery_expired:<projector>:%'`.
+   - Invariant (AM5): a record is written only for an acked event, and an acked event is never claimed again (`0023:180`), so no expiry record is ever
+     followed by a delivery.
 3. public_sessions only, after transaction 2: the canonical rebuild of the 4.7 (h) owner loop with existing functions, for EVERY tenant that has an outbox event
    (complete set: a public session always produced events; this also covers a tenant whose alias was rejected while the projector was off):
    `SELECT public_sessions_project_session(c, NULL) FROM public_sessions_tenant_candidates(t) AS c` (NULL event id = no audit row, `0061:28-31`). Older
    public_sessions events are thus expired-with-record AND their state is rebuilt from canonical rows.
-4. Output: one JSON summary line `{projector, changed, prepared, expired_age, expired_cap, rebuilt_sessions, operation_id}`. Re-running on an already enabled
-   projector is allowed and idempotent (changed=false; prepares and records nothing twice): it is also the recovery path if someone enabled with the raw function.
+4. Output: one JSON summary line `{projector, changed, prepared, expired_age, expired_cap, rebuilt_sessions}`: the projector name, the changed flag and counts
+   only (RO-L24-1 condition 3); the run's operation_id goes into the expiry records only (`job_audit_events.operation_id` is NOT NULL, `0022:133-142`) and is
+   never printed. Re-running on an already enabled projector is allowed and idempotent (changed=false; a second run adds no row and no record): it is also the
+   recovery path if someone enabled with the raw function.
 
 Unchanged, byte-identical: `apps/bot/src/dispatcher.ts`, `apps/bot/src/worker.ts` (probe guard, exact-"true", boot order), every migration and SQL function
 (0022/0023/0056 untouched), the DD-134 values (`dispatcher.ts:16-23`, `:457-472`), the rollback path (rows prepared before a disable wait and resume at
@@ -188,8 +204,8 @@ claimed-not-acked events.
 
 1. Migration only if unavoidable (owner text): B1 is the only migration-free design that closes the loss for all three projectors (A, B2 and D need one; C
    alone covers public_sessions only).
-2. Fail-closed: nothing older than the bound is delivered by the backfill and every other candidate is recorded; A starves fresh events, D grows rows without
-   bound.
+2. Fail-closed: nothing older than the bound is delivered by the backfill, every unacked candidate gets a row and every other acked candidate is recorded
+   (AM5); A starves fresh events, D grows rows without bound.
 3. Fewest concepts: one script, existing functions, one bound and one cap for all three projectors, the existing audit table as the record.
 4. Precedent: `scripts/outbox-dlq-replay.mjs` (owner seat, `SET ROLE job_definer`, exit codes) and the 4.7 (h) owner loop.
 5. Reversible: a script and its tests; no schema and no runtime-path change; removing the script restores today's behaviour.
@@ -212,8 +228,9 @@ Tiers per level3 §6.1. D1-D8 are Tier B: each is "default applied, pending owne
   delivery-time check (a DD-134 outcome change, F1); no bound (threat 2;
   plexco_smoke holds events 5.4 days old); per-projector bounds (D4); the session end as the bound (it already gates only cancelled correctly, `0057:116-126`).
   Default applied, pending owner sign-off.
-- **D3** count cap: `BACKFILL_MAX_ROWS` = 200 per projector per CLI run, newest first among the in-window candidates; every candidate beyond it gets an expiry
-  record (`...:cap`), never left silently. Flood guard (threat 2): one drain delivers up to 500 rows per projector (2.1), the web listener closes every stream
+- **D3** count cap: `BACKFILL_MAX_ROWS` = 200 per projector per CLI run, newest first among the ACKED in-window candidates; every acked candidate beyond it
+  gets an expiry record (`...:cap`), never left silently; an unacked candidate is outside the cap and always gets a row (AM5). Flood guard (threat 2): one
+  drain delivers up to 500 rows per projector (2.1), the web listener closes every stream
   past 1,000 queued events (2.4), and phase 2 interleaves backfilled and fresh rows by event_id (`0022:374`). Newest first: the newest are the least stale.
   Rejected: no cap; oldest first (spends the cap on the events nearest the bound); leaving the remainder for a later run without a record. Default applied,
   pending owner sign-off.
@@ -224,7 +241,8 @@ Tiers per level3 §6.1. D1-D8 are Tier B: each is "default applied, pending owne
   runbook's raw enable (`:13`, `:52-56`). The disable (rollback) stays the raw owner function with `false` (runbook `:60`): pending rows wait (DD-134). Rejected:
   automatic inside the function or a trigger (B2); an enable plus a separate backfill command (two steps to pair: the raw path, R1). Default applied, pending
   owner sign-off.
-- **D6** the expiry record (3.2 step 2): one `job_audit_events` row per (event, projector), reason `'projector_delivery_expired:<projector>:<age|cap>'`, actor
+- **D6** the expiry record (3.2 step 2): one `job_audit_events` row per (event, projector), only for an ACKED candidate older than the bound or beyond the cap
+  (AM5), reason `'projector_delivery_expired:<projector>:<age|cap>'`, actor
   `'owner'`, fn_name `'outbox_projector_enable'`, one operation_id per run, the event's tenant_id; idempotent by NOT EXISTS. Rejected: a delivery row completed
   `delivered` + providerRef `noop_expired` (`zalo-dm.ts:40-46` precedent: completion needs the claim token and live lease of a `claimed` row, `0022:443-451`,
   and the claim picks rows in event_id order, `0022:369-377`, so the owner cannot target one; it would also read as delivered); a `dlq` row (a replayable DLQ
@@ -254,31 +272,44 @@ token rule and hands off.
   `:96`, `:104`, `:108`): exit 2 for `projector_not_found` (P0002, `0056:171-174`), `unacked_backlog` (AM1: transaction 1,
   before enabling; the count only in the output), `projector_disabled` and bad arguments (before connecting), exit 1 otherwise;
   a header comment states the threat model (6.2), the bound, the cap, the AM1 refusal and that a raw enable skips the backfill. Calls only `outbox_projector_set_enabled`,
-  `job_prepare_projector_delivery`, `public_sessions_tenant_candidates`, `public_sessions_project_session` plus the D6 INSERT.
+  `job_prepare_projector_delivery`, `public_sessions_tenant_candidates`, `public_sessions_project_session` plus the D6 INSERT. Classification per AM5 (3.2
+  step 2): every unacked candidate gets a row outside the cap; the cap and the expiry records apply to ACKED candidates only. Connection only from the
+  environment; stdout only the step 4 summary (RO-L24-1 condition 3).
 - **U2** opus/max: NEW `packages/db/src/outbox-projector-enable.test.ts` (real DB: a per-file database through `setupRlsTestContext`, `withJobDefinerLock`,
   owner helpers as in `outbox-projector-registry.test.ts:42-108`; the script run as a child process, as the owner-CLI test
   `apps/bot/src/projector-registry.test.ts:257` runs `outbox-dlq-replay.mjs`; events aged by an owner UPDATE of `created_at`, as A5 ages a lease `:288-291`):
-  rows EN-1..EN-13 (6.3; EN-13 is the AM1 refusal).
+  rows EN-1..EN-15 (6.3; EN-13 is the AM1 refusal), including (AM5, RO-L24-1 conditions 3-4): an unacked in-window candidate beyond the 200 cap gets a
+  delivery row, not a record (EN-14); the `unacked_backlog` way forward: after the exit-2 refusal a worker cycle acks the old events (or the runbook drain
+  step runs), then the CLI succeeds and those acked events older than the bound get an expiry record, never a dead end (EN-15); a second run adds no row
+  and no record (EN-3); the CLI reads its connection only from the environment and prints only counts and projector names (EN-10).
 - **U3** opus/max: `apps/bot/src/projector-registry.test.ts` (extend; lane-owned, AM3; its database `plexco_bot_projector_registry`, helpers `insertEvent` `:148`,
   `deliveries` `:157`, `asOwner` `:166`, `cycle` `:177`; seams `setWebRealtimeDbForTests(workerPool)`, `createZaloDmDeliver({db, send})` with
-  `startZaloStub` (`apps/bot/src/test-zalo-stub.ts:34`), `createPublicSessionsDeliver({db: workerPool})`): rows BS-1..BS-6 (6.3); the rollback pin `:180-206`
-  and the bot A5 pin `:208-229` unchanged.
+  `startZaloStub` (`apps/bot/src/test-zalo-stub.ts:34`), `createPublicSessionsDeliver({db: workerPool})`): rows BS-1..BS-7 (6.3); the rollback pin `:180-206`
+  and the bot A5 pin `:208-229` unchanged. Per projector (web_realtime, zalo_dm, public_sessions; RO-L24-1 condition 5): the boot sequence "the committed
+  flag default true read from `.env.example`, every projector disabled, events produced and acked with `'{}'`, the CLI enables: within the bound delivered
+  (or claimed to the projector), older -> expired with a record, over the cap -> expired with a record" (BS-1..BS-4), the exit-2 refusal (BS-7), the
+  rollback path (disable with pending rows, re-enable) unchanged (BS-5), and "`git diff` shows no change to `apps/bot/src/worker.ts`,
+  `apps/bot/src/dispatcher.ts` or any migration" (section 7 item 7).
 - **U4** sonnet/high: `docs/runbooks/outbox-dispatch-enable-rollback.md` (owner-facing Vietnamese prose kept, commands in English): `:3` (source: lane L24, item
-  1); `:10-11` (events acked while a projector is off: reachable through the CLI within the bound, otherwise expired with a record); `:13`, `:52-56` (the CLI is
-  the only enable: JSON summary, exit codes, the raw enable forbidden, a CLI re-run recovers); `:14-15` (stale: all three modules are wired,
-  `projectors/index.ts:21-25`; the stub code is `no_projector_implemented`, `dispatcher.ts:56-59`); `:44-50` (2.3 as the precondition, D8; the "never assigned
-  more" rationale replaced); `:62-64` (rollback: pending rows wait and resume; events acked while disabled follow the CLI rule at re-enable; the public_sessions
-  rebuild is part of the CLI). Unchanged: `:12`, `:65-67`, `:71-73`, `:87-98`.
+  1); `:10-11` (the 2026-10-21 loss sentence `:11` kept and stated as correct for the OLD path, a direct `outbox_projector_set_enabled` call; through the CLI,
+  events acked while a projector is off are reachable within the bound, otherwise expired with a record); `:13`, `:52-56` (the new enable procedure: the CLI is
+  the only enable, with the bound values, 30 minutes and the newest 200 acked candidates, every unacked candidate prepared outside the cap (AM5); JSON summary,
+  exit codes, the raw enable forbidden, a CLI re-run recovers); `:14-15` (stale: all three modules are wired,
+  `projectors/index.ts:21-25`; the stub code is `no_projector_implemented`, `dispatcher.ts:56-59`); `:44-50` (2.3 as the precondition, D8, with the way
+  forward for `unacked_backlog`: let the worker drain and ack the old events, the drain step 2.3, then run the CLI again; the "never assigned
+  more" rationale replaced); `:62-64` (rollback note: a disable keeps pending rows, which wait and resume; a re-enable through the CLI is idempotent; events
+  acked while disabled follow the CLI rule at re-enable; the public_sessions rebuild is part of the CLI). Unchanged: `:12`, `:65-67`, `:71-73`, `:87-98`.
 
 ## 6. Acceptance matrix
 
 ### 6.1 Decision table
 
-Events: **E1** = produced while the projector was disabled, created within 30 minutes of the CLI run and among its newest 200 candidates; **E2** = produced
-while disabled, older than the bound or beyond the cap; **E3** = produced while the projector was enabled. In-flight events (claimed, not yet acked at the
-scan) are E1 or E2 like acked ones (no `acked_at` filter). Outcomes: **DELIVERED** = a delivery row (backfilled, prepared by phase 1, or resumed) delivered by
-phase 2 on the unchanged DD-134 path; **EXPIRED** = one D6 expiry record, never delivered by the backfill; **REBUILT** = the public_sessions state recomputed
-from canonical rows by 3.2 step 3; **N/A** = not applicable, reason given.
+Events: **E1** = produced while the projector was disabled and, at the scan, either unacked (always prepared, outside the cap; inside the bound by AM1) or
+acked, created within 30 minutes of the CLI run and among its newest 200 acked candidates (AM5); **E2** = produced while disabled, ACKED, older than the
+bound or beyond the cap; **E3** = produced while the projector was enabled. In-flight events (claimed, not yet acked at the scan) are always E1 (no
+`acked_at` filter; AM5), never E2. Outcomes: **DELIVERED** = a delivery row (backfilled, prepared by phase 1, or resumed) delivered by
+phase 2 on the unchanged DD-134 path; **EXPIRED** = one D6 expiry record for an acked event, never delivered (the AM5 invariant, 3.2 step 2); **REBUILT** =
+the public_sessions state recomputed from canonical rows by 3.2 step 3; **N/A** = not applicable, reason given.
 
 | Scenario | Event | web_realtime | zalo_dm | public_sessions |
 |---|---|---|---|---|
@@ -296,17 +327,18 @@ from canonical rows by 3.2 step 3; **N/A** = not applicable, reason given.
 | S4 | E3 (after the raw enable) | DELIVERED (phase 1; an event whose set was read before the raw enable commit has no row and is E1 or E2 at the CLI run) | DELIVERED (same) | DELIVERED (same) |
 
 36 cells (12 rows x 3 projectors): 18 DELIVERED, 9 EXPIRED, 9 N/A with the reason; REBUILT is added to the public_sessions cells of S1, S2 and S4 (E1, E2, and
-S2 E3). No cell is silently dropped. Every E2 cell of an event older than the bound holds unconditionally (AM1): the CLI's transaction 1 refuses with exit 2
-`unacked_backlog` (nothing enabled) while an event routed to the projector is unacked and older than the bound, and only new events can appear after that
-check, so no such event can be claimed and delivered after its expiry record (F2 RESOLVED).
+S2 E3). No cell is silently dropped. Every E2 cell holds unconditionally by the AM5 invariant (3.2 step 2): E2 holds only ACKED events, the only events that
+get an expiry record, and an acked event is never claimed again, so no expiry record is ever followed by a delivery; an unacked candidate always gets a row
+instead, and AM1 keeps every unacked routed event inside the bound (transaction 1 refuses with exit 2 `unacked_backlog`, nothing enabled, while one is older
+than the bound; only new events can appear after that check) (F2 RESOLVED).
 
 ### 6.2 Threat model (stated in U1's header and the PR body)
 
 | # | Threat | Mechanism | Proven by |
 |---|---|---|---|
-| 1 | Silent loss for a projector enabled later | the CLI is the enable; transaction 2 (after the enable commit, routes join, no `acked_at` filter) prepares every in-bound candidate and records every other; a CLI re-run recovers a raw enable (R1) | EN-1, EN-2, EN-4, EN-5, EN-9, EN-11; BS-2, BS-3, BS-4 |
-| 2 | A flood of stale events at enable | the 30-minute bound (DB clock) and the 200-row cap, newest first; the remainder EXPIRED; public_sessions recomputed from canonical rows, not replayed; D8 step 2.3, enforced by the CLI's AM1 refusal | EN-1, EN-2, EN-13; BS-2..BS-4 (back-dated events never delivered) |
-| 3 | A fail-open boot | `worker.ts` unchanged (exact-"true", stub refusal, probe, boot order); projectors seeded disabled (`0056:105-106`); phase 2 skips disabled projectors (`dispatcher.ts:223`); events acked `'{}'` stay reachable within the bound, the rest recorded; the CLI refuses to enable over an unacked routed backlog older than the bound (AM1, exit 2 `unacked_backlog`, nothing enabled), so no such event gets an expiry record and a later delivery | BS-1; EN-13; BS-2..BS-4 first step; unchanged `schedule.test.ts:200-217`, `:566-585`, `:587-620` |
+| 1 | Silent loss for a projector enabled later | the CLI is the enable; transaction 2 (after the enable commit, routes join, no `acked_at` filter) prepares every unacked candidate and the newest 200 acked in-bound ones and records every other acked candidate (AM5); a CLI re-run recovers a raw enable (R1) | EN-1, EN-2, EN-4, EN-5, EN-9, EN-11, EN-14; BS-2, BS-3, BS-4 |
+| 2 | A flood of stale events at enable | the 30-minute bound (DB clock) and the 200-row cap on acked candidates, newest first; the acked remainder EXPIRED (AM5); public_sessions recomputed from canonical rows, not replayed; D8 step 2.3, enforced by the CLI's AM1 refusal | EN-1, EN-2, EN-13; BS-2..BS-4 (back-dated events never delivered), BS-7 |
+| 3 | A fail-open boot | `worker.ts` unchanged (exact-"true", stub refusal, probe, boot order); projectors seeded disabled (`0056:105-106`); phase 2 skips disabled projectors (`dispatcher.ts:223`); events acked `'{}'` stay reachable within the bound, the rest recorded; the CLI refuses to enable over an unacked routed backlog older than the bound (AM1, exit 2 `unacked_backlog`, nothing enabled; the way forward is the drain, EN-15), so no such event gets an expiry record and a later delivery | BS-1; EN-13, EN-15; BS-2..BS-4 first step, BS-7; unchanged `schedule.test.ts:200-217`, `:566-585`, `:587-620` |
 | 4 | Duplicate delivery | ON CONFLICT DO NOTHING on the PK (`0022:306`, `0005:48`); FOR UPDATE serializes CLI runs; the scan skips any event with a row or a record; NOT EXISTS on the record | EN-3, EN-6, EN-7; precedent `outbox-wake.test.ts:229` |
 | 5 | Cross-tenant leakage | delivery rows carry no tenant_id and every reader joins `outbox_events` (`0022:361-363`, `:387-395`, `0056:196`); a record copies its event's tenant_id; the rebuild runs per tenant; owner seat only, no new grant | EN-8, EN-9 |
 
@@ -316,35 +348,48 @@ U2, `packages/db/src/outbox-projector-enable.test.ts` (real DB):
 
 - EN-1 bound: an event acked `'{}'` aged 29 min -> one `pending` row, attempts 0, audit `projector_delivery_prepared`; aged 31 min -> one `...:age` record, no
   row; ages measured with the DB clock; also on a re-enable after a disable (S2).
-- EN-2 cap: more than 200 in-window candidates -> the newest 200 prepared, the rest `...:cap`; the summary counts match.
+- EN-2 cap: more than 200 ACKED in-window candidates -> the newest 200 prepared, the rest `...:cap`; the summary counts match.
 - EN-3 idempotent: a second run -> changed=false, prepared 0, expired 0; one row or one record per (event, projector).
 - EN-4 routes: only routed types are candidates (a zalo_dm non-route gets neither); the web_realtime wildcard covers session-aggregate types; tenant-aggregate
   public_sessions types are candidates.
-- EN-5 in-flight: an event claimed (live lease) but not acked at the scan is a candidate; its later ack without the projector still succeeds (`0023:257-267`).
+- EN-5 in-flight: an event claimed (live lease) but not acked at the scan is a candidate and gets a row, never a record (AM5); its later ack without the
+  projector still succeeds (`0023:257-267`).
 - EN-6 existing: an event with any row for the projector (pending, failed, delivered, dlq) gets no prepare and no record.
 - EN-7 concurrent: two CLI runs at once -> still one row or one record per (event, projector).
 - EN-8 tenant: two tenants in one run -> each record's tenant_id equals its event's.
 - EN-9 rebuild: a session published while off, older than the bound -> EXPIRED and public after the run; a session cancelled while off -> its public row
   deleted; no audit row from the rebuild; a tenant whose alias was rejected while off is covered.
 - EN-10 refusals and output: unknown projector -> exit 2; `projector_disabled` -> exit 2, nothing written (the writer picks the seam); bad arguments or no
-  `DATABASE_URL_MIGRATION` -> refused before connecting; one JSON line with exactly the 3.2 step 4 keys; no credential or payload in stdout or stderr.
+  `DATABASE_URL_MIGRATION` -> refused before connecting; the connection is read only from the environment (no DSN argument); one JSON line with exactly the
+  3.2 step 4 keys (no operation_id: the projector name, the changed flag and counts only); no credential or payload in stdout or stderr.
 - EN-11 raw then CLI: a raw enable, events produced, then the CLI -> changed=false, in-bound no-row events prepared, the rest recorded, rebuild run.
 - EN-12 A5 kept: `outbox-projector-registry.test.ts:274-298` unchanged and green (the claim path; it never runs the CLI).
 - EN-13 unacked backlog refusal (AM1): an unacked event routed to the projector and older than the bound -> exit 2 `unacked_backlog`, the count only in the
   output, the projector stays disabled, no delivery row, no expiry record; the same refusal on a re-run for an already enabled projector, nothing written.
+- EN-14 unacked beyond the cap (AM5): an unacked in-window candidate beyond the 200 cap (more than 200 newer acked in-window candidates) gets a delivery
+  row, not a record; the newest 200 acked ones are prepared and the rest `...:cap`.
+- EN-15 the `unacked_backlog` way forward (RO-L24-1 condition 4): after the exit-2 refusal a worker cycle acks the old events (or the runbook drain step
+  runs), then the CLI succeeds and those acked events older than the bound get an expiry record, never a dead end.
 
 U3, `apps/bot/src/projector-registry.test.ts`:
 
 - BS-1 flag: the committed `OUTBOX_DISPATCH_SCHEDULE_ENABLED` read from `.env.example:91` is `"true"`; `resolveWorkerDispatchEnablement(value, PROJECTORS,
   () => probeOutboxRegistry(workerPool))` -> enabled with every projector disabled (the 0056 seed).
-- BS-2 web_realtime, BS-3 zalo_dm, BS-4 public_sessions: events produced for the projector's routes -> a cycle acks `'{}'`, no row, no record -> the CLI
-  enables -> the next cycle delivers the in-bound events through the projector's seam (zalo_dm: the stub receives each in-bound DM once); a back-dated event gets
-  a record and is never delivered; public_sessions: an old published session is public after the CLI (rebuild) without its event being delivered.
-- BS-5 rollback kept: `:180-206` unchanged and green. BS-6 bot A5 kept: `:208-229` unchanged and green (a raw enable still gains no delivery: R1).
-- Probe guard untouched: `worker.ts` unchanged; `schedule.test.ts:200-217`, `:566-585`, `:587-620`, the DD-134 tests in `dispatcher.test.ts` and the DLQ pins
+- BS-2 web_realtime, BS-3 zalo_dm, BS-4 public_sessions (RO-L24-1 condition 5): the committed flag default `"true"` (BS-1), every projector disabled, events
+  produced for the projector's routes -> a cycle acks `'{}'`, no row, no record -> the CLI enables -> the next cycle delivers the in-bound events through the
+  projector's seam (or claims them to the projector; zalo_dm: the stub receives each in-bound DM once); a back-dated event gets a record and is never
+  delivered; over the 200 cap the acked remainder gets a record (`...:cap`) and is never delivered; public_sessions: an old published session is public after
+  the CLI (rebuild) without its event being delivered.
+- BS-5 rollback kept: `:180-206` unchanged and green; per projector, a disable with pending rows then a CLI re-enable: the pending rows resume (DD-134
+  unchanged) and the CLI adds no row and no record for their events. BS-6 bot A5 kept: `:208-229` unchanged and green (a raw enable still gains no delivery: R1).
+- BS-7 refusal, per projector: an unacked routed event older than the bound -> the CLI exits 2 `unacked_backlog`, the projector stays disabled, no row, no
+  record; after a cycle acks it, the CLI succeeds and the event gets an expiry record (EN-15 in the boot sequence).
+- Probe guard untouched: `git diff` shows no change to `apps/bot/src/worker.ts`, `apps/bot/src/dispatcher.ts` or any migration (section 7 item 7);
+  `schedule.test.ts:200-217`, `:566-585`, `:587-620`, the DD-134 tests in `dispatcher.test.ts` and the DLQ pins
   A6-A11 (`outbox-projector-registry.test.ts:302`, `:349`, `:571-639`) unchanged and green.
 
-Cells to tests: S1 -> BS-2..BS-4, EN-1, EN-2, EN-4, EN-5, EN-9; S2 -> EN-1 (re-enable), EN-6, BS-5; S3 -> EN-12, BS-6, BS-2..BS-4 first step; S4 -> EN-11, BS-6.
+Cells to tests: S1 -> BS-2..BS-4, EN-1, EN-2, EN-4, EN-5, EN-9, EN-14; S2 -> EN-1 (re-enable), EN-6, BS-5; S3 -> EN-12, BS-6, BS-2..BS-4 first step; S4 ->
+EN-11, BS-6; the AM1 precondition of every E2 cell -> EN-13, EN-15, BS-7.
 
 ## 7. Verification
 
@@ -395,13 +440,19 @@ Residual risks (stated in the runbook and the PR body; none is an open question 
 - R1 a raw-function enable skips the backfill, as today, until the CLI is run; the runbook forbids it and a CLI re-run recovers (within the bound DELIVERED,
   otherwise EXPIRED, public_sessions REBUILT); the bound is measured at the CLI run, so a long gap turns in-bound events into expired ones.
 - R2 OUT_OF_SCOPE, DD-134 unchanged: a zalo_dm row prepared BEFORE a rollback disable resumes at any age after the re-enable (the targets definer still refuses
-  ended or changed sessions, `0057:116-126`); an age check at delivery would be a DD-134 decision for the owner.
+  ended or changed sessions, `0057:116-126`); an age check at delivery would be a DD-134 decision for the owner (owner questions OQ1 and OQ2 below).
 - R3 OUT_OF_SCOPE nit (S0a): `claim_projector_delivery_batch` stamps the delivery lease with `now()` (`0022:380`), the outbox claim with `clock_timestamp()`
   (`0023:194`); harmless for autocommit callers.
 
+Owner questions for the PR body (RO-L24-1 condition 6; not lane work: this lane neither builds them nor waits on them):
+
+- OQ1 (F1, a DD-134 decision): should zalo_dm deliveries get a delivery-time age check? This lane adds none; its 30-minute bound applies when a row is
+  prepared (D2, AM2).
+- OQ2 (R2, unchanged): rows resuming after a rollback re-enable deliver at any age, as DD-134 has it today; should that stay?
+
 Flagged against `design-decision.md` by the inventories (recorded, not changed; the orchestrator rules):
 
-- F1 OPEN, the owner's DD-134 decision, not this lane (AM2): D2 bounds a backfilled row's age when it is PREPARED; DD-134's unchanged retries add 1905 s of
+- F1 OWNER QUESTION OQ1 (PR body), the owner's DD-134 decision, not this lane (AM2): D2 bounds a backfilled row's age when it is PREPARED; DD-134's unchanged retries add 1905 s of
   backoff (the runbook `:71-72` states about 39 minutes), so a backfilled zalo_dm DM's worst case is about 70 minutes after the event versus about 39 for the
   live path. A tighter total bound needs a delivery-time age check in zalo_dm (`zalo-dm.ts` step 1, `:89-117`, on `job.event.createdAt`), which would also
   change how DD-134 rollback-resumed rows end (R2); the owner decides it with DD-134. The design adds none and keeps 30 minutes as the default (D2).
@@ -423,14 +474,14 @@ Flagged against `design-decision.md` by the inventories (recorded, not changed; 
 | # | Gate | Evidence | Result |
 |---|---|---|---|
 | 1 | Authority snapshot pinned by SHA | `AUTHORITY_SHA` = the base `575c766047899966782194337f360b6c058ca4ce` (merge of PR #99, L18) = the worktree HEAD at step 0 (measured, header); `e049c92` (PR #97) is an ancestor; every TARGET_FILES path exists on disk | PASS |
-| 2 | Decisions in scope final | owner item 1 of 2026-10-22 (design delegated) and the lane block (section 1); DD-134 and DD-141 unchanged (2.7); D1-D8 pinned as defaults pending owner sign-off, D9 Tier A (section 4); AM1-AM4 applied (3.2, D2, D8, 6.1, 6.2, 6.3, section 10) | PASS |
+| 2 | Decisions in scope final | owner item 1 of 2026-10-22 (design delegated) and the lane block (section 1); DD-134 and DD-141 unchanged (2.7); D1-D8 pinned as defaults pending owner sign-off, D9 Tier A (section 4); AM1-AM5 applied (3.2, 3.3, D2, D3, D6, D8, section 5, 6.1, 6.2, 6.3, section 10); RO-L24-1 conditions 2-6 applied (3.2, section 5, 6.3, section 10) | PASS |
 | 3 | Scope IN/OUT and owner clear | section 5 units U1-U4, one file each; the lane's NEGATIVE SCOPE and FILE OWNERSHIP (`projector-registry.test.ts` lane-owned, AM3); B3 within the pre-approved caps (section 9); section 10 residue | PASS |
 | 4 | Dependencies classified | L18 merged (the base is its merge); L27 (P3-S16e) beside with disjoint files and the shared DB lock (section 7); no migration slot requested (D1) | PASS |
 | 5 | Live schema and code match | section 2, each row measured at the base (S0a SQL inventory and the A5 run, S0b TS inventory) | PASS |
-| 6 | Data, API, state, auth contract | no migration and no SQL object, column, table, endpoint, grant or product error code; the CLI runs on the owner path only (`DATABASE_URL_MIGRATION`, `SET ROLE job_definer`) and calls existing functions plus the D6 audit INSERT (3.2, U1); `dispatcher.ts` and `worker.ts` untouched | PASS |
-| 7 | Fail-closed, idempotency, order | transaction 1 refuses an unacked routed backlog older than the bound before enabling (AM1); transaction 2 starts after the enable commit, FOR UPDATE, no `acked_at` filter (3.2); ON CONFLICT DO NOTHING and NOT EXISTS on the record (threat 4); age and count bounds (3.2, D2) | PASS |
-| 8 | Open questions in scope = 0 | D1-D9 pinned; F2, F3, F6 resolved (AM1, AM3, AM4); F1 is the owner's DD-134 decision outside this lane (AM2); R1-R3 residue out of scope | PASS |
-| 9 | Acceptance matrix with expected results | section 6: the decision table of 36 cells with no silent drop (6.1), the threat model of 5 rows (6.2), EN-1..EN-13 and BS-1..BS-6 mapped to files (6.3) | PASS |
+| 6 | Data, API, state, auth contract | no migration and no SQL object, column, table, endpoint, grant or product error code; the CLI runs on the owner path only (`DATABASE_URL_MIGRATION`, `SET ROLE job_definer`) and calls existing functions plus the D6 audit INSERT (3.2, U1); `job_definer` owns or reads every object it touches, so no new function, grant or role (3.2 role paragraph, RO-L24-1 condition 2); `dispatcher.ts` and `worker.ts` untouched | PASS |
+| 7 | Fail-closed, idempotency, order | transaction 1 refuses an unacked routed backlog older than the bound before enabling (AM1); transaction 2 starts after the enable commit, FOR UPDATE, no `acked_at` filter (3.2); ON CONFLICT DO NOTHING and NOT EXISTS on the record (threat 4); age and count bounds (3.2, D2, D3); expiry records only for acked events, so none is followed by a delivery (AM5) | PASS |
+| 8 | Open questions in scope = 0 | D1-D9 pinned; F2, F3, F6 resolved (AM1, AM3, AM4); F1 and R2 are owner questions OQ1 and OQ2 for the PR body, outside this lane (AM2, RO-L24-1 condition 6); R1-R3 residue out of scope | PASS |
+| 9 | Acceptance matrix with expected results | section 6: the decision table of 36 cells with no silent drop (6.1), the threat model of 5 rows (6.2), EN-1..EN-15 and BS-1..BS-7 mapped to files (6.3) | PASS |
 | 10 | Migration, security, rollback | no migration (D1); opus/max security round (owner credential path, external DMs, delivery policy); the DD-134 rollback path and the probe guard byte-identical (2.7, threat 3); rollback = revert before merge | PASS |
 | 11 | First slice hard dependencies merged | U1 needs only objects present at the base (the owner functions it calls, section 2); L18 merged | PASS |
 | 12 | Implementation handoff ready | sections 5, 7, 8 and 9; the worktree exists at the base, clean at step 0 | PASS |
@@ -449,7 +500,7 @@ TARGET_FILES:
   - docs/sessions/web-mvp-phase3-readiness-p3-outbox-projector-enable-no-loss.md
 NEW_FILES (implementation scope, units U1-U2): scripts/outbox-projector-enable.mjs, packages/db/src/outbox-projector-enable.test.ts
 SLICE: p3-outbox-projector-enable-no-loss
-IN_SCOPE: the owner enable CLI scripts/outbox-projector-enable.mjs (U1: transaction 1 the AM1 unacked-backlog refusal, then the existing enable function; transaction 2 one bounded backfill per projector, 30 minutes and 200 rows newest first, one expiry record in job_audit_events for every other routed candidate; the public_sessions canonical rebuild; one JSON summary line); its real-DB tests packages/db/src/outbox-projector-enable.test.ts (U2, EN-1..EN-13); the boot-sequence tests (flags default true, projectors off, events produced, then the CLI enable, per projector) in apps/bot/src/projector-registry.test.ts (U3, BS-1..BS-6); the runbook docs/runbooks/outbox-dispatch-enable-rollback.md (U4)
+IN_SCOPE: the owner enable CLI scripts/outbox-projector-enable.mjs (U1: transaction 1 the AM1 unacked-backlog refusal, then the existing enable function; transaction 2 one bounded backfill per projector per AM5, every unacked candidate prepared outside the cap and the newest 200 acked candidates within 30 minutes prepared, one expiry record in job_audit_events for every other acked routed candidate; the public_sessions canonical rebuild; one JSON summary line of the projector name, the changed flag and counts); its real-DB tests packages/db/src/outbox-projector-enable.test.ts (U2, EN-1..EN-15); the boot-sequence tests (flags default true, projectors off, events produced, then the CLI enable, per projector) in apps/bot/src/projector-registry.test.ts (U3, BS-1..BS-7); the runbook docs/runbooks/outbox-dispatch-enable-rollback.md (U4)
 OUT_OF_SCOPE: enabling any projector in any environment; a real deliverer, bot token or production env; apps/bot/src/dispatcher.ts, apps/bot/src/worker.ts and the projector modules (unchanged); the probe guard, the DD-134 policy values and rollback path, the exact-"true" semantics of DD-141; any migration or SQL object change; a delivery-time age check (F1, the owner's DD-134 decision); how events are produced; Reviewed specs, docs/legal and decisions.md; PR 50; the files of L27
 G1_DECISION: PASS
 G2_SPEC: PASS
@@ -467,6 +518,6 @@ CLOSURE_MATRIX: PASS
 ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS # none: no migration, no SQL object changes; opus/max security round (owner credential path, external DMs, delivery policy)
 IMPLEMENTATION_ARTIFACTS: PASS
-FIRST_IMPLEMENTATION_STEP: unit U1 (opus/max) - create scripts/outbox-projector-enable.mjs per section 3.2 steps 1-4 with D2-D9 (transaction 1: FOR UPDATE, the AM1 unacked_backlog refusal, then the existing enable; transaction 2: the bounded backfill and the expiry records; the public_sessions rebuild; one JSON summary line) on the conventions of scripts/outbox-dlq-replay.mjs, then commit in the worktree
+FIRST_IMPLEMENTATION_STEP: unit U1 (opus/max) - create scripts/outbox-projector-enable.mjs per section 3.2 steps 1-4 with D2-D9 (transaction 1: FOR UPDATE, the AM1 unacked_backlog refusal, then the existing enable; transaction 2: the bounded backfill per AM5, every unacked candidate prepared outside the cap, the cap and the expiry records for acked candidates only; the public_sessions rebuild; one JSON summary line without operation_id) on the conventions of scripts/outbox-dlq-replay.mjs, then commit in the worktree
 REMAINING_BLOCKERS: none
 ```
