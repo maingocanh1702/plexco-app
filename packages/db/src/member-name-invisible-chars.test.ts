@@ -1877,57 +1877,51 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
   ] as const;
   type Pair = readonly [modeFalse: string | null, modeTrue: string | null];
   type Row = {
-    p: number;
     total: number;
     diffs: [n: number, modeFalse: string | null, modeTrue: string | null][];
   };
   const show = (s: string | null) => JSON.stringify(cps(s));
 
-  it("L29-AG1 every scalar but U+0000 at all three positions: mode false equals checkTypedName, mode true equals normalizeExternalName", async () => {
-    const client = await ctx.superuserDb.pool.connect();
-    // Sent here, before the TypeScript scan below, so PostgreSQL and Node scan at the same time.
-    const pending = client
-      .query<Row>(
-        `SELECT p, count(*)::int AS total,
-                coalesce(json_agg(json_build_array(n, r0, r1))
-                           FILTER (WHERE r0 IS DISTINCT FROM v OR r1 IS DISTINCT FROM v), '[]') AS diffs
-           FROM (SELECT x.p, n, x.v,
-                        public.member_name_apply_rule(x.v, false) AS r0,
-                        public.member_name_apply_rule(x.v, true) AS r1
-                   FROM generate_series(1, 1114111) AS n -- from U+0001: no U+0000 (D1e)
-                  CROSS JOIN LATERAL (VALUES (1, chr(n)), (2, 'a' || chr(n)), (3, 'a' || chr(n) || 'b')) AS x(p, v)
-                  WHERE n NOT BETWEEN 55296 AND 57343) AS s -- no surrogates U+D800..U+DFFF
-          GROUP BY p
-          ORDER BY p`,
-      )
-      .finally(() => client.release());
-    const ts = POSITIONS.map(({ wrap }) => {
-      const diffs = new Map<number, Pair>();
-      let total = 0;
+  it.each(POSITIONS.map((pos, i) => ({ ...pos, p: i + 1 })))(
+    "L29-AG1 every scalar but U+0000 $at: mode false equals checkTypedName, mode true equals normalizeExternalName",
+    async ({ at, wrap, p }) => {
+      const client = await ctx.superuserDb.pool.connect();
+      // Sent here, before the TypeScript scan below, so PostgreSQL and Node scan at the same time.
+      const pending = client
+        .query<Row>(
+          `SELECT count(*)::int AS total,
+                  coalesce(json_agg(json_build_array(n, r0, r1))
+                             FILTER (WHERE r0 IS DISTINCT FROM v OR r1 IS DISTINCT FROM v), '[]') AS diffs
+             FROM (SELECT n, x.v,
+                          public.member_name_apply_rule(x.v, false) AS r0,
+                          public.member_name_apply_rule(x.v, true) AS r1
+                     FROM generate_series(1, 1114111) AS n -- from U+0001: no U+0000 (D1e)
+                    CROSS JOIN LATERAL (VALUES (CASE $1::int WHEN 1 THEN chr(n) WHEN 2 THEN 'a' || chr(n)
+                                                ELSE 'a' || chr(n) || 'b' END)) AS x(v)
+                    WHERE n NOT BETWEEN 55296 AND 57343) AS s -- no surrogates U+D800..U+DFFF`,
+          [p],
+        )
+        .finally(() => client.release());
+      const mine = new Map<number, Pair>();
+      let tsRows = 0;
       // From U+0001 (no U+0000), the surrogates skipped: the same scalars as the SQL scan.
       for (let n = 1; n <= 0x10ffff; n += 1) {
         if (n >= 0xd800 && n <= 0xdfff) continue;
         const v = wrap(String.fromCodePoint(n));
         const pair: Pair = [checkTypedName(v), normalizeExternalName(v)];
-        total += 1;
-        if (pair[0] !== v || pair[1] !== v) diffs.set(n, pair);
+        tsRows += 1;
+        if (pair[0] !== v || pair[1] !== v) mine.set(n, pair);
       }
-      return { total, diffs };
-    });
-    const sql = new Map((await pending).rows.map((r) => [r.p, r] as const));
-    const first: string[] = [];
-    const counts = POSITIONS.map(({ at, wrap }, i) => {
-      const mine = ts[i]!;
-      const theirs = sql.get(i + 1);
+      const theirs = (await pending).rows[0]!;
       const theirDiffs = new Map<number, Pair>();
-      for (const [n, r0, r1] of theirs?.diffs ?? []) theirDiffs.set(n, [r0, r1]);
+      for (const [n, r0, r1] of theirs.diffs) theirDiffs.set(n, [r0, r1]);
       let modeFalse = 0;
       let modeTrue = 0;
-      for (const n of new Set([...mine.diffs.keys(), ...theirDiffs.keys()])) {
+      const first: string[] = [];
+      for (const n of new Set([...mine.keys(), ...theirDiffs.keys()])) {
         const v = wrap(String.fromCodePoint(n));
-        const same: Pair = [v, v];
-        const [want0, want1] = mine.diffs.get(n) ?? same;
-        const [got0, got1] = theirDiffs.get(n) ?? same;
+        const [want0, want1] = mine.get(n) ?? [v, v];
+        const [got0, got1] = theirDiffs.get(n) ?? [v, v];
         if (got0 !== want0) modeFalse += 1;
         if (got1 !== want1) modeTrue += 1;
         if ((got0 !== want0 || got1 !== want1) && first.length < 20) {
@@ -1936,17 +1930,14 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
           );
         }
       }
-      return { at, sqlRows: theirs?.total ?? 0, tsRows: mine.total, modeFalse, modeTrue };
-    });
-    expect({ counts, first }).toEqual({
-      counts: POSITIONS.map(({ at }) => ({
-        at,
+      expect({ sqlRows: theirs.total, tsRows, modeFalse, modeTrue, first }).toEqual({
         sqlRows: SCALARS - 1,
         tsRows: SCALARS - 1,
         modeFalse: 0,
         modeTrue: 0,
-      })),
-      first: [],
-    });
-  }, 300_000);
+        first: [],
+      });
+    },
+    30_000,
+  );
 });
