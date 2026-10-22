@@ -783,6 +783,73 @@ describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and print
     }
   }, 60_000);
 
+  it("EN-10 (rebuild): a disable that commits right after transaction 2 stops the public_sessions rebuild before its first tenant -> projector_disabled (exit 2); transaction 2's row and record stay committed; a club's stale public row is not rewritten", async () => {
+    const tenantId = String(
+      (
+        await one(
+          `INSERT INTO tenants (name, slug, public_alias, public_alias_status)
+           VALUES ('EN10R Club', 'en10r-club', 'CLB EN10R', 'approved') RETURNING id`,
+        )
+      ).id,
+    );
+    // EN-9 (rejected alias)'s club: public while the projector ran, alias rejected while off -> a stale row
+    const sessionId = String(
+      (
+        await one(
+          `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address,
+             area, price_amount, slots_max, visibility, join_policy, status)
+           VALUES ($1, $2, now() + interval '1 day', now() + interval '26 hours', 'Asia/Ho_Chi_Minh',
+             'EN10R Venue', '3 Public Street', 'Quan 7', 50000, 10, 'public', 'open', 'open')
+           RETURNING id`,
+          [tenantId, ctx.badmintonSportId],
+        )
+      ).id,
+    );
+    await worker("SELECT public_sessions_project_session($1, NULL)", [sessionId]);
+    await ctx.owner.query("UPDATE tenants SET public_alias_status = 'rejected' WHERE id = $1", [
+      tenantId,
+    ]);
+    const within = await seedOne("tenant", tenantId, "tenant.public_alias_rejected");
+    const beyond = await seedOne("tenant", tenantId, "tenant.public_alias_rejected");
+    await drain([within, beyond]);
+    await age([beyond], BACKFILL_MAX_AGE_MINUTES + 1);
+    expect(await isPublic(sessionId)).toBe(true);
+    expect(await rebuildCandidates()).toContain(sessionId); // a rebuild would remove the row (EN-9)
+
+    // EN-10's seam one commit later: the second COMMIT ends transaction 2 (the backfill).
+    const seat = await ownerSeat();
+    const send = seat.query.bind(seat) as (
+      sql: string,
+      params?: unknown[],
+    ) => Promise<pg.QueryResult>;
+    let commits = 0;
+    Object.assign(seat, {
+      query: async (sql: string, params?: unknown[]) => {
+        const result = await send(sql, params);
+        if (sql === "COMMIT") {
+          commits += 1;
+          if (commits === 2) await disableInsideLock("public_sessions");
+        }
+        return result;
+      },
+    });
+    try {
+      await expect(enable("public_sessions", seat)).rejects.toMatchObject({
+        name: "Refusal",
+        code: "projector_disabled",
+        message: expect.stringMatching(
+          /was disabled during the rebuild; 0 of \d+ tenants rebuilt$/,
+        ),
+      });
+    } finally {
+      await seat.end();
+    }
+    expect(await isEnabled("public_sessions")).toBe(false);
+    expect(await deliveries("public_sessions", [within, beyond])).toEqual(pending([within]));
+    await expectRecords("public_sessions", [within, beyond], [[beyond, tenantId, "age"]]);
+    expect(await isPublic(sessionId)).toBe(true); // not rewritten: no tenant transaction ran
+  }, 30_000);
+
   it("EN-15: the way forward after unacked_backlog: a worker cycle acks the old events with '{}', then the CLI succeeds and records each ':age'", async () => {
     await addProjector("en15_test", "en15_test_aggregate");
     const old = await seed("en15_test_aggregate", 2);

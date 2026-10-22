@@ -13,15 +13,22 @@
  *      routed to it is unacked and older than the bound (AM1: drain first, let the worker ack); otherwise
  *      it calls outbox_projector_set_enabled(name, true).
  *   2. Transaction 2 (after 1 committed) locks the row again (projector_disabled if a disable came in
- *      between) and scans every routed event with no delivery row and no expiry record for the
- *      projector (AM5): unacked -> job_prepare_projector_delivery, outside the cap; acked, within the
- *      bound and among the newest BACKFILL_MAX_ROWS -> the same; every other acked one -> ONE expiry
- *      record in job_audit_events, reason 'projector_delivery_expired:<name>:age' or ':cap'. Prepared
- *      rows are delivered by the unchanged DD-134 path; a record is only ever written for an acked event,
- *      which is never claimed again, so no record is followed by a delivery.
+ *      between) and classifies, in ONE scan, every routed event with no delivery row and no expiry record
+ *      for the projector (AM5): unacked -> job_prepare_projector_delivery, outside the cap; acked, within
+ *      the bound and among the newest BACKFILL_MAX_ROWS -> the same; every other acked one -> ONE expiry
+ *      record in job_audit_events, reason 'projector_delivery_expired:<name>:age' or ':cap'. That one
+ *      result feeds two set-based statements (the prepares over an id array, the records as one
+ *      INSERT ... SELECT), so the row lock a DD-134 disable waits for is held for three statements, not
+ *      one round trip per candidate. Prepared rows are delivered by the unchanged DD-134 path; a record is
+ *      only ever written for an acked event, which is never claimed again, so no record is followed by a
+ *      delivery.
  *   3. public_sessions only: the canonical rebuild (public_sessions_tenant_candidates +
- *      public_sessions_project_session) for every tenant that has an outbox event (D7).
- * A re-run adds no row and no record; it is also the recovery after an enable with the raw function.
+ *      public_sessions_project_session) for every tenant that has an outbox event (D7): the tenant list is
+ *      read once, then ONE transaction per tenant, each opening with a plain read of `enabled` (no row
+ *      lock, so a DD-134 disable never waits for the rebuild). A disable stops it with projector_disabled;
+ *      the tenants rebuilt before it stay committed.
+ * A re-run adds no row and no record; it is also the recovery after an enable with the raw function and
+ * after an exit 1 that came once transaction 1 had committed (the projector is then enabled).
  *
  * Threat model (readiness 6.2): (1) silent loss for a projector enabled later: every routed event ends
  * delivered or expired with a record; (2) a stale flood at enable time: bounded by age and count;
@@ -82,8 +89,9 @@ SELECT count(*)::int AS n
 // One scan, classified per AM5 against ONE DB-clock cutoff. No acked_at filter: a claimed but unacked event
 // is a candidate too. The record check matches the exact prefix (starts_with, not LIKE: the '_' a projector
 // name may hold is a LIKE wildcard).
-// ponytail: full-history scan (a seq scan over outbox_events per run, then one statement per candidate);
-// add an index or a created_at floor when the table grows.
+// ponytail: full-history scan (a seq scan over outbox_events per run; its result then feeds one prepare
+// statement and one INSERT, each over arrays of every candidate); add an index or a created_at floor when
+// the table grows.
 const CANDIDATES_SQL = `
 WITH bound AS MATERIALIZED (
   SELECT clock_timestamp() - make_interval(mins => $2::int) AS cutoff
@@ -154,39 +162,59 @@ export async function enableProjector(client, projector) {
     ]);
     const operationId = randomUUID(); // one per run: written into the records, never printed
     const out = { prepared: 0, expired_age: 0, expired_cap: 0 };
+    const prepareIds = [];
+    const expiry = { ids: [], tenantIds: [], reasons: [] };
     for (const { id, tenant_id: tenantId, action } of candidates.rows) {
       if (action === "prepare") {
-        await client.query("SELECT job_prepare_projector_delivery($1, $2)", [id, projector]);
+        prepareIds.push(id);
         out.prepared += 1;
         continue;
       }
-      await client.query(
-        `INSERT INTO job_audit_events (job_id, tenant_id, actor, reason, fn_name, operation_id, created_at)
-         VALUES ($1, $2, 'owner', $3, 'outbox_projector_enable', $4, clock_timestamp())`,
-        [id, tenantId, prefix + action, operationId],
-      );
+      expiry.ids.push(id);
+      expiry.tenantIds.push(tenantId);
+      expiry.reasons.push(prefix + action);
       if (action === "age") out.expired_age += 1;
       else out.expired_cap += 1;
     }
+    // The one classification above feeds both statements, so an event lands in exactly one of them.
+    await client.query("SELECT job_prepare_projector_delivery(id, $1) FROM unnest($2::uuid[]) AS id", [
+      projector,
+      prepareIds,
+    ]);
+    await client.query(
+      `INSERT INTO job_audit_events (job_id, tenant_id, actor, reason, fn_name, operation_id, created_at)
+       SELECT t.id, t.tenant_id, 'owner', t.reason, 'outbox_projector_enable', $1, clock_timestamp()
+         FROM unnest($2::uuid[], $3::uuid[], $4::text[]) AS t(id, tenant_id, reason)`,
+      [operationId, expiry.ids, expiry.tenantIds, expiry.reasons],
+    );
     return out;
   });
 
   let rebuilt = 0;
   if (projector === "public_sessions") {
-    rebuilt = await inOwnerTransaction(client, async () => {
-      // ponytail: one statement per tenant that ever produced an outbox event (D7); narrow the set or batch
-      // it when the tenant count grows.
-      const tenants = await client.query("SELECT DISTINCT tenant_id FROM outbox_events");
-      let sessions = 0;
-      for (const { tenant_id: tenantId } of tenants.rows) {
+    const tenants = await inOwnerTransaction(client, async () =>
+      (await client.query("SELECT DISTINCT tenant_id FROM outbox_events")).rows.map((r) => r.tenant_id),
+    );
+    // ponytail: one transaction per tenant that ever produced an outbox event (D7), so a tenant's session
+    // locks end at its commit; a tenant with more candidate sessions than the shared lock table holds
+    // (about 64 x 100 by default) still fails. Narrow the set or split a tenant when that grows.
+    for (const [done, tenantId] of tenants.entries()) {
+      const sessions = await inOwnerTransaction(client, async () => {
+        const row = await client.query("SELECT enabled FROM outbox_projectors WHERE name = $1", [projector]);
+        if (row.rows[0]?.enabled !== true) {
+          throw new Refusal(
+            "projector_disabled",
+            `${projector} was disabled during the rebuild; ${done} of ${tenants.length} tenants rebuilt`,
+          );
+        }
         const result = await client.query(
           "SELECT public_sessions_project_session(c, NULL) FROM public_sessions_tenant_candidates($1) AS c",
           [tenantId],
         );
-        sessions += result.rowCount;
-      }
-      return sessions;
-    });
+        return result.rowCount;
+      });
+      rebuilt += sessions;
+    }
   }
   return { projector, changed, ...counts, rebuilt_sessions: rebuilt };
 }
@@ -239,6 +267,9 @@ async function main(argv, env) {
       return 2;
     }
     console.error(`error: ${error?.code ? `${error.code} ` : ""}${message}`);
+    console.error(
+      "if the enable step had committed, the projector stays enabled: re-run this command (it is idempotent) or disable it",
+    );
     return 1;
   } finally {
     await client.end().catch(() => {});
