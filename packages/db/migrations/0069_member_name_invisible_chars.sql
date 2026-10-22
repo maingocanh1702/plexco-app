@@ -741,9 +741,9 @@ BEGIN
 
   -- persons.display_name, memberships.display_name, tenants.name: the strip, then the trim. A value
   -- with no visible character after that stays as stored (for tenants.name this also keeps
-  -- tenants_name_len_chk satisfied). The trim is the 0060 Unicode whitespace set (c_space, as in the
-  -- 0068 cleanup): wider than the U+0020 trim()/btrim() of the re-created writers other than
-  -- person_profile_update, a harmless direction (the cleanup only ever trims more).
+  -- tenants_name_len_chk satisfied). create_guest_membership copies the strip alone (no trim, no
+  -- NULLIF); the other re-created writers except person_profile_update use U+0020 trim()/btrim().
+  -- The cleanup's trim (0060 Unicode space set c_space, as in 0068) is wider: it only trims more.
   FOR r IN
     SELECT p.id, p.display_name AS v FROM public.persons p
      WHERE p.display_name IS DISTINCT FROM public.public_name_strip_invisible(p.display_name)

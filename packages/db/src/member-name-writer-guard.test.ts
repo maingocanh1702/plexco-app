@@ -19,9 +19,11 @@ const COLUMN: Record<string, RegExp> = {
   tenants: /\bname\b/,
   sessions: /\bvenue_address\b/,
 };
-/** An INSERT, UPDATE or MERGE on one of the four tables (quoted or not); the rest up to `;`. */
+/** An INSERT, UPDATE or MERGE on one of the four tables (quoted or not) or on a format()
+ * placeholder (%I, %s, %L, %1$I, %-10s: a table passed as an argument, so unknown); the rest up
+ * to `;`. */
 const WRITE =
-  /\b(?:insert\s+into|update|merge\s+into)\s+(?:only\s+)?(?:"?public"?\.)?"?(persons|memberships|tenants|sessions)\b"?(?=([^;]*))/g;
+  /\b(?:insert\s+into|update|merge\s+into)\s+(?:only\s+)?(?:(?:"?public"?|%[\d$*-]*[isl])\.)?"?(persons|memberships|tenants|sessions|%[\d$*-]*[isl])\b"?(?=([^;]*))/g;
 /** An INSERT's column list; without one (VALUES, a query, DEFAULT VALUES) it writes every column. */
 const LIST = /^\s*(?:as\s+\w+\s*)?\(\s*"?\w+"?\s*[,)]/;
 const STRIP = "public_name_strip_invisible(";
@@ -29,11 +31,14 @@ const STRIP = "public_name_strip_invisible(";
 /** Lower-cased, with `--` and block comments blanked in place (offsets and line numbers kept). */
 const clean = (sql: string) =>
   sql.toLowerCase().replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "));
-/** Each write statement of the text that writes a guarded column: [head, table, rest up to `;`]. */
+/** Each write statement of the text that writes a guarded column, or any column of a placeholder
+ * table (fail-closed: the table is unknown): [head, table, rest up to `;`]. */
 const writeHits = (sql: string) =>
   [...clean(sql).matchAll(WRITE)].filter(
     ([head, table, rest]) =>
-      COLUMN[table!]!.test(rest!) || (head.startsWith("insert") && !LIST.test(rest!)),
+      table!.startsWith("%") ||
+      COLUMN[table!]!.test(rest!) ||
+      (head.startsWith("insert") && !LIST.test(rest!)),
   );
 /** The tables whose guarded column a write statement of the text names, one entry per write. */
 const writes = (sql: string) => writeHits(sql).map(([, table]) => table!);
@@ -65,11 +70,19 @@ function g1(fns: Fn[]): string[] {
       const src = clean(f.src);
       if (!WRITERS.includes(f.name))
         return [`unlisted writer ${f.sig} (${writes(src).join(", ")})`];
-      // channel_identity_detach is exempt while each of its write statements is NULL_INSERT.
+      // channel_identity_detach is exempt while each of its write statements equals NULL_INSERT,
+      // plus an optional `returning <ident> into <ident>` (0055:203 ends RETURNING id INTO v_new).
       const nullOnly =
         f.name === "channel_identity_detach" &&
-        writeHits(src).every(([h, , r]) => (h + r!).replace(/\s+/g, " ").startsWith(NULL_INSERT));
-      // Ceiling: presence, not data flow (the helper anywhere in a listed body passes); RC-BODY pins it.
+        writeHits(src).every(([h, , r]) => {
+          const stmt = (h + r!).replace(/\s+/g, " ").trim();
+          return (
+            stmt.startsWith(NULL_INSERT) &&
+            /^(?: returning \w+ into \w+)?$/.test(stmt.slice(NULL_INSERT.length))
+          );
+        });
+      // Ceiling: presence, not data flow (the helper anywhere in a listed body passes); RC-BODY pins
+      // only the seven definers 0069 re-creates.
       return src.includes(STRIP) || nullOnly ? [] : [`listed writer without the strip ${f.sig}`];
     }),
     ...WRITERS.filter((w) => !writers.some((f) => f.name === w)).map((w) => `stale entry ${w}`),
@@ -80,9 +93,12 @@ type Hit = { file: string; line: number; sql: string };
 // ponytail: a simple statement splitter (quotes and dollar tags kept whole, comments blanked first).
 // CREATE FUNCTION/PROCEDURE statements are skipped with their bodies because G1 reads them from
 // pg_proc, except in files after 0069: a pg_temp or dropped helper never reaches pg_proc. DO bodies
-// are scanned. Ceiling: `--` inside a string literal, E'' escapes, BEGIN ATOMIC bodies in a file and
-// dynamic SQL (EXECUTE format with the table as an argument, in G1 too): RC-BODY in
-// member-name-invisible-chars.test.ts and review are the backstop; a real SQL parser if one bites.
+// are scanned. A table passed as a format() argument (format('UPDATE %I ...', 'memberships')) is
+// a placeholder write: WRITE counts it in G1 and G2. Ceiling: `--` inside a string literal, E''
+// escapes, BEGIN ATOMIC bodies in a file and SQL text assembled at run time, such as a target table
+// built by string concatenation ('UPDATE ' || v_table), in G1 too. RC-BODY pins only the seven
+// definers 0069 re-creates (member-name-invisible-chars.test.ts), so review is the backstop for a
+// new function; a real SQL parser if one bites.
 /** G2: the statements, DO blocks and post-0069 functions of a file that write a guarded column. */
 function g2(file: string, raw: string): Hit[] {
   const text = clean(raw);
@@ -182,6 +198,27 @@ describe("G1 catalog: every function that writes the four columns is pinned and 
       `listed writer without the strip ${detach.sig}`,
     ]);
   });
+  it("fails on a detach NULL insert with a second VALUES row or an upsert of the name", () => {
+    const detach = fns.find((f) => f.name === "channel_identity_detach")!;
+    for (const tail of [
+      ", (p_label, 'active')",
+      " on conflict (id) do update set display_name = p_label",
+    ]) {
+      const src = `${detach.src}\n${NULL_INSERT}${tail};`;
+      expect(g1(fns.map((f) => (f === detach ? { ...f, src } : f))), tail).toEqual([
+        `listed writer without the strip ${detach.sig}`,
+      ]);
+    }
+  });
+  it("fails on a table passed as a format argument, and passes it once the value strips", () => {
+    const detach = fns.find((f) => f.name === "channel_identity_detach")!;
+    const g1With = (value: string) => {
+      const src = `${detach.src}\nEXECUTE format('UPDATE %I SET display_name = ${value} WHERE id = $2', 'memberships');`;
+      return g1(fns.map((f) => (f === detach ? { ...f, src } : f)));
+    };
+    expect(g1With("$1")).toEqual([`listed writer without the strip ${detach.sig}`]);
+    expect(g1With(`${STRIP}$1)`)).toEqual([]);
+  });
 });
 
 describe("G2 migrations: bare statements and DO blocks that write the four columns are pinned", () => {
@@ -218,6 +255,10 @@ describe("G2 migrations: bare statements and DO blocks that write the four colum
       "create function pg_temp.fix() returns void language sql as $$ update tenants set name = 'raw' $$; select pg_temp.fix();";
     expect(g2("0070_planted.sql", sql).map((h) => h.line)).toEqual([1]);
     expect(g2("0070_planted.sql", sql.replace("'raw'", `${STRIP}'raw')`))).toEqual([]);
+    // Named like a WRITERS member, a pg_temp helper is still scanned (pins `fn[1] !== "pg_temp"`).
+    const named =
+      "create function pg_temp.tenant_provision() returns void language sql as $$ update tenants set name = 'raw' $$;";
+    expect(g2("0070_planted.sql", named).map((h) => h.line)).toEqual([1]);
   });
 });
 
@@ -246,7 +287,7 @@ const FIXTURES = new Set([
 ]);
 /** A Drizzle `.insert(`/`.update(` of one of the four tables, or a raw SQL INSERT or UPDATE of one. */
 const TS_WRITE =
-  /\.(?:insert|update)\(\s*(?:\w+\.)*(persons|memberships|tenants|sessions)\s*\)|\b(?:insert\s+into|update)\s+(?:only\s+)?(?:public\.)?"?(persons|memberships|tenants|sessions)\b/gi;
+  /\.(?:insert|update)\(\s*(?:\w+\.)*(persons|memberships|tenants|sessions)\s*\)|\b(?:insert\s+into|update)\s+(?:only\s+)?(?:"?public"?\.)?"?(persons|memberships|tenants|sessions)\b"?/gi;
 /** The guarded column's TS key per table; tenants has none: it may have no direct writer at all. */
 const TS_KEY: Record<string, string> = {
   persons: "displayName",
@@ -335,5 +376,14 @@ describe("G4 TypeScript: every direct writer of the four tables is pinned and st
         "stale entry gone.ts memberships",
       ].sort(),
     );
+  });
+});
+
+describe("G4 TS_WRITE: a raw SQL writer with a quoted schema and a quoted table", () => {
+  it('gives a hit on UPDATE "public"."persons" SET display_name = $1', () => {
+    const src = 'UPDATE "public"."persons" SET display_name = $1';
+    expect([...src.matchAll(TS_WRITE)].map((m) => (m[1] ?? m[2])!.toLowerCase())).toEqual([
+      "persons",
+    ]);
   });
 });
