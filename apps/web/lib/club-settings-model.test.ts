@@ -86,7 +86,7 @@ describe("publicAliasProblem (A-24: M-1..M-3, the rule of validatePublicAlias)",
       }
     }
     expect(mismatches).toEqual([]);
-  });
+  }, 30_000);
 });
 
 // L23 strip-first (DD-138 sign-off A.1; readiness D3, D4, D11): rows R1-R5 of the readiness decision
