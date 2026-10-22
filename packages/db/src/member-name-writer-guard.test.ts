@@ -1,11 +1,12 @@
 /**
- * L27 unit U3a: the source-scan guard G1-G3 of
+ * L27 units U3a and U3b: the source-scan guard G1-G4 of
  * docs/sessions/web-mvp-phase3-readiness-p3-strip-invisible-member-names.md (section 11, default B8).
  * A writer the inventory missed keeps names unstripped, so these fail when a SQL writer of
  * persons.display_name, memberships.display_name, tenants.name or sessions.venue_address appears
  * without public_name_strip_invisible (G1: function bodies in the catalog; G2: bare statements and
- * DO blocks of the migration files), or when a new trigger on the four tables could rewrite one
- * unseen (G3). Each guard keeps a row that feeds a planted counter-example to the same matcher.
+ * DO blocks of the migration files, plus functions of files after 0069), when a new trigger on the
+ * four tables could rewrite one unseen (G3), or when a TypeScript writer appears unpinned (G4).
+ * Each guard keeps a row that feeds a planted counter-example to the same matcher.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -18,19 +19,24 @@ const COLUMN: Record<string, RegExp> = {
   tenants: /\bname\b/,
   sessions: /\bvenue_address\b/,
 };
-/** An INSERT, UPDATE or MERGE on one of the four tables; the lookahead takes the rest up to `;`. */
+/** An INSERT, UPDATE or MERGE on one of the four tables (quoted or not); the rest up to `;`. */
 const WRITE =
-  /\b(?:insert\s+into|update|merge\s+into)\s+(?:only\s+)?(?:public\.)?(persons|memberships|tenants|sessions)\b(?=([^;]*))/g;
+  /\b(?:insert\s+into|update|merge\s+into)\s+(?:only\s+)?(?:"?public"?\.)?"?(persons|memberships|tenants|sessions)\b"?(?=([^;]*))/g;
+/** An INSERT's column list; without one (VALUES, a query, DEFAULT VALUES) it writes every column. */
+const LIST = /^\s*(?:as\s+\w+\s*)?\(\s*"?\w+"?\s*[,)]/;
 const STRIP = "public_name_strip_invisible(";
 
 /** Lower-cased, with `--` and block comments blanked in place (offsets and line numbers kept). */
 const clean = (sql: string) =>
   sql.toLowerCase().replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "));
+/** Each write statement of the text that writes a guarded column: [head, table, rest up to `;`]. */
+const writeHits = (sql: string) =>
+  [...clean(sql).matchAll(WRITE)].filter(
+    ([head, table, rest]) =>
+      COLUMN[table!]!.test(rest!) || (head.startsWith("insert") && !LIST.test(rest!)),
+  );
 /** The tables whose guarded column a write statement of the text names, one entry per write. */
-const writes = (sql: string) =>
-  [...clean(sql).matchAll(WRITE)]
-    .filter(([, table, rest]) => COLUMN[table!]!.test(rest!))
-    .map(([, table]) => table!);
+const writes = (sql: string) => writeHits(sql).map(([, table]) => table!);
 
 /** Section 11's pinned SQL writers (G1) and triggers (G3), measured at the 0069 tail. */
 const WRITERS = [
@@ -43,7 +49,12 @@ const WRITERS = [
   "tenant_provision",
   "zalo_identity_resolve",
 ];
-const TRIGGERS = ["memberships.trg_memberships_chat_provision"];
+/** "table.trigger timing function" (timing from tgtype): a re-created trigger must match all three. */
+const TRIGGERS = [
+  "memberships.trg_memberships_chat_provision after chat_memberships_provision_trg",
+];
+/** channel_identity_detach's only write (A3): a new person row with a NULL display name. */
+const NULL_INSERT = "insert into public.persons (display_name, status) values (null, 'active')";
 
 type Fn = { sig: string; name: string; src: string };
 /** G1 violations, each naming its function: unlisted writer, listed writer without the strip, stale entry. */
@@ -54,9 +65,11 @@ function g1(fns: Fn[]): string[] {
       const src = clean(f.src);
       if (!WRITERS.includes(f.name))
         return [`unlisted writer ${f.sig} (${writes(src).join(", ")})`];
-      // channel_identity_detach writes the literal NULL only (A3): exempt while its body still does.
+      // channel_identity_detach is exempt while each of its write statements is NULL_INSERT.
       const nullOnly =
-        f.name === "channel_identity_detach" && /values\s*\(\s*null\s*,\s*'active'\s*\)/.test(src);
+        f.name === "channel_identity_detach" &&
+        writeHits(src).every(([h, , r]) => (h + r!).replace(/\s+/g, " ").startsWith(NULL_INSERT));
+      // Ceiling: presence, not data flow (the helper anywhere in a listed body passes); RC-BODY pins it.
       return src.includes(STRIP) || nullOnly ? [] : [`listed writer without the strip ${f.sig}`];
     }),
     ...WRITERS.filter((w) => !writers.some((f) => f.name === w)).map((w) => `stale entry ${w}`),
@@ -65,12 +78,15 @@ function g1(fns: Fn[]): string[] {
 
 type Hit = { file: string; line: number; sql: string };
 // ponytail: a simple statement splitter (quotes and dollar tags kept whole, comments blanked first).
-// CREATE FUNCTION statements are skipped with their dollar-quoted bodies because G1 reads the same
-// bodies from pg_proc; DO bodies are scanned. Ceiling: `--` inside a string literal, E'' escapes,
-// quoted identifiers, dynamic EXECUTE, BEGIN ATOMIC bodies in a file; a real SQL parser if one bites.
-/** G2: the bare statements and DO blocks of one migration file that write a guarded column. */
+// CREATE FUNCTION/PROCEDURE statements are skipped with their bodies because G1 reads them from
+// pg_proc, except in files after 0069: a pg_temp or dropped helper never reaches pg_proc. DO bodies
+// are scanned. Ceiling: `--` inside a string literal, E'' escapes, BEGIN ATOMIC bodies in a file and
+// dynamic SQL (EXECUTE format with the table as an argument, in G1 too): RC-BODY in
+// member-name-invisible-chars.test.ts and review are the backstop; a real SQL parser if one bites.
+/** G2: the statements, DO blocks and post-0069 functions of a file that write a guarded column. */
 function g2(file: string, raw: string): Hit[] {
   const text = clean(raw);
+  const late = Number.parseInt(file, 10) > 69;
   const tag = /\$(?:[a-z_][a-z0-9_]*)?\$/y;
   const hits: Hit[] = [];
   let from = 0;
@@ -82,8 +98,12 @@ function g2(file: string, raw: string): Hit[] {
       i = close < 0 ? text.length - 1 : close + quote.length - 1;
     } else if (i === text.length || text[i] === ";") {
       const sql = text.slice(from, i).trim();
-      const fn = /^create\s+(?:or\s+replace\s+)?(?:function|procedure)\b/.test(sql);
-      if (sql && !fn && writes(sql).length > 0) {
+      const fn =
+        /^create\s+(?:or\s+replace\s+)?(?:function|procedure)\s+(?:"?(\w+)"?\.)?"?(\w+)/.exec(sql);
+      // A function is G1's (pg_proc), except after 0069: there it must strip or be a WRITERS member.
+      const skip =
+        fn && (!late || sql.includes(STRIP) || (fn[1] !== "pg_temp" && WRITERS.includes(fn[2]!)));
+      if (sql && !skip && writes(sql).length > 0) {
         hits.push({ file, line: text.slice(0, text.indexOf(sql, from)).split("\n").length, sql });
       }
       from = i + 1;
@@ -114,8 +134,10 @@ beforeAll(async () => {
   );
   fns = procs.rows;
   const trgs = await ctx.owner.query<{ trg: string }>(
-    `SELECT c.relname || '.' || t.tgname AS trg
+    `SELECT c.relname || '.' || t.tgname || CASE WHEN (t.tgtype & 2) <> 0 THEN ' before ' ELSE ' after ' END
+            || p.proname AS trg
        FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_proc p ON p.oid = t.tgfoid
       WHERE NOT t.tgisinternal AND n.nspname = 'public' AND c.relname = ANY($1) ORDER BY 1`,
     [Object.keys(COLUMN)],
   );
@@ -189,10 +211,12 @@ describe("G3 triggers: the non-internal triggers on the four tables are exactly 
   it("holds on the migrated catalog", () => {
     expect(g3(triggers), "G3 violations (by table.trigger)").toEqual([]);
   });
-  it("fails on a planted trigger and on a missing one", () => {
-    expect(g3(["persons.trg_planted"])).toEqual([
+  it("fails on a planted trigger, a re-timed or re-pointed one, and a missing one", () => {
+    const retimed = "memberships.trg_memberships_chat_provision before planted_trg";
+    expect(g3(["persons.trg_planted", retimed])).toEqual([
       "unlisted trigger persons.trg_planted",
-      "missing trigger memberships.trg_memberships_chat_provision",
+      `unlisted trigger ${retimed}`,
+      `missing trigger ${TRIGGERS[0]}`,
     ]);
   });
 });
