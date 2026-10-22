@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ClubConfigError, validatePatch } from "./club-config-validation.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession } from "./roster-service.js";
@@ -1984,4 +1985,26 @@ describe("L29-TW P2/M1 addMemberToSession refuses with checkTypedName (roster-se
     );
     expect(m).toMatchObject({ display_name: stored, person_name: stored });
   });
+});
+
+describe("L29-TW T2 validatePatch refuses with checkTypedName (club-config-validation.ts)", () => {
+  const run = (name: string) => {
+    try {
+      return validatePatch({ name }).name;
+    } catch (e) {
+      return e instanceof ClubConfigError ? e.code : e;
+    }
+  };
+  it.each([
+    ["Cc U+0001 inside", mix("WA", 1, "O"), "INVALID_INPUT"],
+    ["Bidi_Control U+202E inside", mix("WA", 0x202e, "O"), "INVALID_INPUT"],
+    ["U+2028 inside (was accepted)", mix("WA", 0x2028, "O"), "INVALID_INPUT"],
+    ["U+00A0 only", mix(0xa0), "INVALID_INPUT"],
+    ["U+2800 only (was accepted)", mix(0x2800), "INVALID_INPUT"],
+    ["U+200B only", mix(0x200b), "INVALID_INPUT"],
+    ["U+0000 inside", mix("WA", 0, "O"), "INVALID_INPUT"],
+    ["ordinary WAO Club", "WAO Club", "WAO Club"],
+    ["edge U+0009 before and U+2028 after", mix(9, "WAO", 0x2028), "WAO"],
+    ["121 characters", "a".repeat(121), "INVALID_INPUT"],
+  ])("T2 %s", (_label, sent, want) => expect(run(sent)).toBe(want));
 });

@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { Tx } from "./client.js";
 import { settings } from "../schema.js";
-import { stripInvisibleChars } from "./text-safety.js";
+import { checkTypedName, stripInvisibleChars } from "./text-safety.js";
 
 /** Club-config validation, storage keys and the tenant-tx read model (split from club-config.ts). */
 const INT4_MAX = 2_147_483_647;
@@ -63,9 +63,9 @@ export function validatePatch(patch: ClubConfigPatch): ClubConfigPatch {
     // L27: strip the invisible set first (text-safety.ts), then trim; every check below runs on
     // the stripped value (length counted after the strip), so invisible-only fails as empty.
     const name = typeof patch.name === "string" ? stripInvisibleChars(patch.name).trim() : "";
-    // Control (Cc, incl. NUL) and every Cf not in the strip set (bidi controls among them) are
-    // still refused.
-    if (name.length < 1 || name.length > 120 || /[\p{Cc}\p{Cf}]/u.test(name))
+    // checkTypedName (text-safety.ts) refuses Cc (incl. NUL), Bidi_Control, U+2028/U+2029 and a
+    // name with no visible character left (so also the empty one); only the length cap lives here.
+    if (name.length > 120 || checkTypedName(name) === null)
       bad("name must be 1-120 printable chars");
     out.name = name;
   }
