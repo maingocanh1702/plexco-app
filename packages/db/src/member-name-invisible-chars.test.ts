@@ -2008,3 +2008,37 @@ describe("L29-TW T2 validatePatch refuses with checkTypedName (club-config-valid
     ["121 characters", "a".repeat(121), "INVALID_INPUT"],
   ])("T2 %s", (_label, sent, want) => expect(run(sent)).toBe(want));
 });
+
+// L29-TW (unit U7d, N2): P3's TS entry point; the shared normalizer runs before the SQL call.
+describe("L29-TW P3 resolveZaloIdentity normalizes the Zalo name and never raises (zalo-ingress.ts)", () => {
+  const resolve = (userHash: string, displayName: string | null) =>
+    withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      resolveZaloIdentity(tx, {
+        tenantId: ctx.tenantA,
+        botId: bot,
+        scopeHash: "scope-mn",
+        userHash,
+        userIdEnc: Buffer.from("enc", "utf8"),
+        displayName,
+      }),
+    );
+  it.each([
+    ["U+0000 inside (the bind cell, was 22021)", mix("Mi", 0, "nh"), "Minh"],
+    ["Cc U+0001 inside", mix("Mi", 1, "nh"), "Minh"],
+    ["Bidi_Control U+202E inside", mix("Mi", 0x202e, "nh"), "Minh"],
+    ["U+2028 inside", mix("Mi", 0x2028, "nh"), "Minh"],
+    ["U+00A0 only", mix(0xa0), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+200B only", mix(0x200b), null],
+    ["ordinary Minh Anh", "Minh Anh", "Minh Anh"],
+    ["edge U+0009 before and U+2028 after", mix(9, "Minh", 0x2028), "Minh"],
+  ])("P3 %s", async (_label, sent, want) => {
+    const u = `user-${randomUUID()}`;
+    const { personId, channelIdentityId } = await resolve(u, want); // clean first resolve
+    expect(await resolve(u, sent)).toMatchObject({ personId, channelIdentityId, created: false });
+    const r = await resolve(`user-${randomUUID()}`, sent); // creation stores the normalized name
+    expect(r.created).toBe(true);
+    expect(cps(r.displayName)).toEqual(cps(want));
+    expect(cps(await nameOf(r.personId))).toEqual(cps(want));
+  });
+});
