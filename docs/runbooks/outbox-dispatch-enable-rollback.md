@@ -1,6 +1,6 @@
 # Runbook: bật / rollback outbox dispatch (registry, DLQ, NOTIFY wake)
 
-> **Dành cho:** owner. **Nguồn:** lane L3 `p3-m6-outbox-delivery-core`, migration `0056`, DD-134 (a)(b)(e); default commit của cờ lịch đổi thành `true` theo DD-141 (B3, 2026-10-21), thay DD-134 (e) chỉ cho default commit.
+> **Dành cho:** owner. **Nguồn:** lane L3 `p3-m6-outbox-delivery-core`, migration `0056`, DD-134 (a)(b)(e); default commit của cờ lịch đổi thành `true` theo DD-141 (B3, 2026-10-21), thay DD-134 (e) chỉ cho default commit; bước bật projector là CLI owner `scripts/outbox-projector-enable.mjs` theo lane L24 (quyết định owner 2026-10-22, mục 1: event ack trong lúc projector tắt không được mất lặng lẽ).
 > Lệnh giữ nguyên tiếng Anh, copy-paste được; chạy từ thư mục gốc repo. Ví dụ dùng Postgres compose local
 > (`plexco-postgres-1`, DB `plexco`); môi trường khác: thay bằng psql tới đúng DB với credential `DATABASE_URL_MIGRATION`.
 > Bật dispatch cho dùng thật với token Zalo thật là **bước P0 của owner**, không phải việc của agent.
@@ -8,11 +8,11 @@
 ## Quy tắc an toàn
 
 - **Default commit của `OUTBOX_DISPATCH_SCHEDULE_ENABLED` là `true`** ở `.env.example` và `infra/docker-compose.yml` (B3, DD-141). Worker chỉ lên lịch khi cờ đúng chuỗi `"true"`, bản đồ projector không chứa stub **và** probe registry qua (migration `0056`); không thì log `outbox dispatch schedule OFF` kèm lý do. Cờ `true` không có nghĩa là đã gửi: projector seed tắt hết nên event chỉ được ack với `{}` cho tới khi owner bật projector; bật dùng thật là **bước P0 của owner** (deliverer Zalo thật, token bot Zalo thật, bật projector trong registry).
-- Event ack trong lúc một projector đang tắt không có dòng delivery cho projector đó; vì claim bỏ qua event đã ack và repo không có đường backfill hay replay cho nó, event đó không bao giờ được gửi tới projector đó, kể cả sau khi bật lại.
+- Đường cũ (gọi thẳng `outbox_projector_set_enabled(<tên>, true)`, không qua CLI): event ack trong lúc một projector đang tắt không có dòng delivery cho projector đó; vì claim bỏ qua event đã ack và đường cũ không backfill hay replay cho nó, event đó không bao giờ được gửi tới projector đó, kể cả sau khi bật lại. Câu này (ghi 2026-10-21) vẫn đúng cho đường cũ; CLI ở bước 2.4 thay đường đó.
+- Qua CLI, event ack trong lúc projector tắt tới được projector đó nếu còn trong ngưỡng (tuổi và cap); nếu không thì được ghi một expiry record trong `job_audit_events`. Không event nào bị bỏ lặng lẽ. Giá trị ngưỡng, cap và vị trí record ở bước 2.4.
 - Đồng hồ worker và DB phải đồng bộ NTP: lệch >= 15 s biến một lần retry sớm thành dlq `malformed_outcome` (replay được).
-- Bật projector chỉ bằng `outbox_projector_set_enabled` (dưới đây), **không** bằng migration, **không** sửa tay bảng.
-- Chỉ bật một projector khi module thật của nó đã merge **và đã deploy trên mọi worker đang chạy** (worker còn placeholder
-  trả dlq `projector_not_implemented`): `web_realtime` sau L5; `zalo_dm` sau L4 + bot token thật (P0); `public_sessions` sau L10.
+- Bật projector chỉ bằng CLI owner `node scripts/outbox-projector-enable.mjs enable --projector <tên>` (bước 2.4). **Không** gọi thẳng `outbox_projector_set_enabled(<tên>, true)`: đường raw chỉ đổi cờ, bỏ qua backfill, nên bị cấm để bật (lỡ bật raw thì chạy lại CLI để khôi phục). **Không** bằng migration, **không** sửa tay bảng. Tắt (rollback) vẫn là `outbox_projector_set_enabled(<tên>, false)` (mục 3).
+- Chỉ bật một projector khi module thật của nó **đã deploy trên mọi worker đang chạy**: cả ba (`web_realtime`, `zalo_dm`, `public_sessions`) đã nối trong `apps/bot/src/projectors/index.ts` ở code hiện tại, không còn module nào chờ lane khác; worker chạy bản cũ còn stub trả dlq `no_projector_implemented`. `zalo_dm` vẫn cần bot token thật (bước P0 của owner).
 
 ```bash
 # Owner SQL shell (local compose). Mọi lệnh gọi function của job_definer chạy giữa SET ROLE job_definer ... RESET ROLE.
@@ -41,27 +41,42 @@ $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT name, enabled FROM outbox_projec
 $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_dispatch_schedule_live()" -c "RESET ROLE"   # phải là t
 ```
 
-3. Chờ backlog chưa ack về 0. Khi mọi projector tắt, event được ack với tập rỗng `'{}'`, nên không event cũ nào bị gửi:
+3. Chờ backlog chưa ack về 0. Đây là điều kiện trước của **mỗi** lần bật hoặc bật lại bằng CLI, và chính CLI bắt buộc nó (không chỉ runbook): khi mọi projector tắt, worker ack event với tập rỗng `'{}'`; còn event của projector đó chưa ack mà cũ hơn ngưỡng thì CLI từ chối (exit 2 `unacked_backlog`), nên phân loại của CLI luôn là kết quả cuối:
 
 ```bash
 $OWNER_SQL -c "SELECT count(*) FROM outbox_events WHERE acked_at IS NULL"   # chờ = 0
 ```
 
-4. Rồi mới bật **từng** projector (chỉ event ack sau thời điểm bật mới cần projector đó; event đã ack không bao giờ được gán thêm):
+Gặp `unacked_backlog` không phải ngõ cụt: CLI từ chối trước khi bật, không bật gì, không ghi dòng hay record nào. Để worker ack hết backlog (worker chạy với cờ `"true"` theo bước 2.1-2.2; chờ lệnh đếm trên về 0 chính là bước drain này), rồi chạy lại đúng lệnh CLI. Các event cũ hơn ngưỡng lúc đó đã ack, nên CLI ghi expiry record cho chúng thay vì gửi: không event nào mất lặng lẽ.
+
+4. Rồi mới bật **từng** projector, bằng CLI owner: **đường duy nhất để bật** (lần đầu và bật lại sau rollback). Credential là `DATABASE_URL_MIGRATION` (thành viên `job_definer` sau `pnpm db:bootstrap`), chỉ nằm trong môi trường, không bao giờ trên dòng lệnh:
 
 ```bash
-$OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('web_realtime', true)" -c "RESET ROLE"
+read -rs PW && export DATABASE_URL_MIGRATION="postgres://plexco:${PW}@localhost:5432/plexco" && unset PW   # như mục 4 (DLQ): gõ password + Enter, không hiện, không vào history
+node scripts/outbox-projector-enable.mjs enable --projector web_realtime
 ```
 
-`t` = đã đổi, `f` = vốn đã như vậy, lỗi `projector_not_found` = sai tên.
+CLI chạy hai phần liên tiếp. Transaction đầu từ chối nếu còn event chưa ack cũ hơn ngưỡng (bước 2.3), nếu không thì bật bằng chính function cũ `outbox_projector_set_enabled`. Transaction sau, khi transaction đầu đã commit, quét mọi event thuộc route của projector mà chưa có dòng delivery và chưa có record cho projector đó: event chưa ack **luôn** được chuẩn bị delivery (ngoài cap); event đã ack, còn trong ngưỡng và thuộc nhóm mới nhất trong cap, được chuẩn bị delivery rồi gửi qua đường DD-134 không đổi; mọi event đã ack còn lại được ghi **một** expiry record. Chỉ `public_sessions`: sau đó CLI dựng lại projection từ trạng thái canonical cho mọi tenant có outbox event.
+
+- **Ngưỡng** (mặc định đã áp dụng, chờ owner ký; hằng số `BACKFILL_MAX_AGE_MINUTES` và `BACKFILL_MAX_ROWS` trong `scripts/outbox-projector-enable.mjs`): tuổi tối đa **30 phút** theo `outbox_events.created_at` (đồng hồ DB); tối đa **200** event đã ack trong ngưỡng cho mỗi projector mỗi lần chạy, mới nhất trước. Ngưỡng chặn tuổi event lúc **chuẩn bị** delivery; các retry DD-134 không đổi (mục 4) cộng thêm thời gian của chúng (kiểm tra tuổi lúc gửi cho `zalo_dm`: follow-up lane L31). Ngưỡng có vì giao muộn `zalo_dm` có thể gây hại (tin cũ tới người chơi).
+- **Output:** đúng một dòng JSON trên stdout, chỉ có tên projector, cờ `changed` và các số đếm; không có chuỗi kết nối, credential hay payload event: `{"projector":"<tên>","changed":<true|false>,"prepared":<n>,"expired_age":<n>,"expired_cap":<n>,"rebuilt_sessions":<n>}`. `changed=false` nghĩa là projector vốn đã bật. Lý do từ chối hoặc lỗi in ra stderr.
+- **Exit code:** `0` xong (chạy lại cũng `0`). `2` từ chối: `invalid_argument` (thiếu hoặc sai `--projector`, kiểm trước khi kết nối), `projector_not_found` (sai tên), `unacked_backlog` (không bật gì; hướng đi ở bước 2.3), `projector_disabled` (projector bị tắt xen giữa hai transaction, chưa backfill gì; chạy lại CLI nếu vẫn muốn bật). `1` mọi lỗi khác (chưa đặt `DATABASE_URL_MIGRATION`, không kết nối được, lỗi SQL).
+
+**Expiry record** nằm ở `job_audit_events`: mỗi (event, projector) tối đa một dòng, reason `projector_delivery_expired:<projector>:age` hoặc `projector_delivery_expired:<projector>:cap`. Xem số lượng theo reason:
+
+```bash
+$OWNER_SQL -c "SET ROLE job_definer" -c "SELECT reason, count(*) FROM job_audit_events WHERE starts_with(reason, 'projector_delivery_expired:') GROUP BY reason ORDER BY reason" -c "RESET ROLE"
+```
+
+**Chạy lại và đường raw:** CLI idempotent: chạy lại (`changed=false`) không thêm dòng delivery hay record nào. Đường raw `SELECT outbox_projector_set_enabled('<tên>', true)` **cấm** dùng để bật (chỉ đổi cờ, không backfill); nếu ai lỡ bật bằng đường raw, chạy CLI cho đúng projector đó để khôi phục.
 
 ## 3. Rollback
 
-- **Tắt một projector:** như bước 2.4 với `false`. Có hiệu lực ở lần đọc envelope kế tiếp: tối đa delivery đang gửi dở
-  hoàn tất; dòng vừa claim nằm `claimed` tới khi lease 5 phút hết. Chỉ delivery đã prepare **trước** lúc tắt nằm chờ
-  (`pending`/`failed`; khi bật lại có thể đã cũ). Event ack **trong lúc tắt** được ack không có projector này và **không bao
-  giờ** tới nó, kể cả sau khi bật lại (không backfill; không có dòng dlq nên không replay được). Bật lại xong, owner phải cho
-  projection đã lỡ khoảng đó dựng lại từ trạng thái canonical (đường rebuild/reconcile của chính module); `zalo_dm`: tin của khoảng đó không gửi.
+- **Tắt một projector:** vẫn bằng function raw với `false` (chỉ việc tắt đi đường raw; bật luôn là CLI ở bước 2.4):
+  `$OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('web_realtime', false)" -c "RESET ROLE"`.
+  Có hiệu lực ở lần đọc envelope kế tiếp: tối đa delivery đang gửi dở hoàn tất; dòng vừa claim nằm `claimed` tới khi lease 5 phút hết.
+  Tắt **giữ** các delivery đã prepare **trước** lúc tắt (`pending`/`failed`): chúng nằm chờ và chạy tiếp khi bật lại (khi bật lại có thể đã cũ: follow-up lane L31).
+  Bật lại bằng CLI là idempotent: chạy lại không thêm dòng delivery hay record nào. Event ack **trong lúc tắt** theo đúng quy tắc của CLI lúc bật lại (bước 2.4): chưa có dòng delivery cho projector đó và còn trong ngưỡng thì được chuẩn bị delivery; cũ hơn ngưỡng hoặc vượt cap thì ghi expiry record (`zalo_dm`: tin đó không gửi, đã có record). Riêng `public_sessions`, việc dựng lại projection từ trạng thái canonical đã nằm trong CLI, không còn bước tay.
 - **Tắt hẳn dispatch:** đặt flag `false` (hoặc bỏ) + restart worker: unschedule, không consumer, không LISTEN, không
   draft expiry. Heartbeat báo `false` trong 30 s; `SELECT outbox_dispatch_schedule_live()` về `f` trong 90 s.
 - **Gỡ code:** chỉ sau khi flag đã tắt; schema thì revert bằng một migration mới (không sửa `0056`).
