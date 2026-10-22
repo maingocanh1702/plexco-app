@@ -82,6 +82,7 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     // R5: U+200D and U+FE0F are in the strip set, so the server stores composed emoji split (the
     // owner's rule applied as written, no exception); the form raises no error for them.
     [String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), null], // ZWJ family
+    ["x".repeat(117) + String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), null], // R5: 120 code points after the strip, 122 (too_long) if the two U+200D stayed
     [String.fromCodePoint(0x2764, 0xfe0f), null], // VS16 heart, stored as U+2764 alone
     [String.fromCodePoint(0x845b, 0xe0100), null], // CJK ideograph + ideographic variation selector
     ["Nguyễn Thị Ánh".normalize("NFD"), null], // combining marks after their base letters

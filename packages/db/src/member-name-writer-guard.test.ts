@@ -96,9 +96,10 @@ type Hit = { file: string; line: number; sql: string };
 // are scanned. A table passed as a format() argument (format('UPDATE %I ...', 'memberships')) is
 // a placeholder write: WRITE counts it in G1 and G2. Ceiling: `--` inside a string literal, E''
 // escapes, BEGIN ATOMIC bodies in a file and SQL text assembled at run time, such as a target table
-// built by string concatenation ('UPDATE ' || v_table), in G1 too. RC-BODY pins only the seven
-// definers 0069 re-creates (member-name-invisible-chars.test.ts), so review is the backstop for a
-// new function; a real SQL parser if one bites.
+// built by string concatenation ('UPDATE ' || v_table) or a guarded column passed as a format()
+// argument with a literal table (format('UPDATE memberships SET %I = $1', v_col)), in G1 too.
+// RC-BODY pins only the seven definers 0069 re-creates (member-name-invisible-chars.test.ts), so
+// review is the backstop for a new function; a real SQL parser if one bites.
 /** G2: the statements, DO blocks and post-0069 functions of a file that write a guarded column. */
 function g2(file: string, raw: string): Hit[] {
   const text = clean(raw);
