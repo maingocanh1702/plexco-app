@@ -819,4 +819,171 @@ describe("MG the 0069 L27-CLEANUP block", () => {
   });
 });
 
-// End of the RC and MG blocks: the last block of this file.
+// End of the L27 RC and MG blocks; the L29 blocks follow.
+
+// L29 (lane p3-name-writers-refuse-control-bidi, unit U1; readiness file sections 4, 5 and 11):
+// public.member_name_apply_rule of 0070 section A. EXECUTE is owner-only, so the rule runs as the
+// superuser; the catalog is read through ctx.owner as above.
+describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
+  const RULE = "public.member_name_apply_rule";
+  const RULE_SIG = `${RULE}(text, boolean)`;
+  const run = async <T extends pg.QueryResultRow>(text: string, values: unknown[] = []) =>
+    (await ctx.superuserDb.pool.query<T>(text, values)).rows;
+  const catalog = async (text: string, values: unknown[]) =>
+    (await ctx.owner.query<Record<string, unknown>>(text, values)).rows;
+
+  it("L29-F1 exists once, in public, a plpgsql function returning text", async () => {
+    expect(
+      await catalog(
+        `SELECT n.nspname AS schema, pg_get_function_identity_arguments(p.oid) AS args,
+                p.prorettype::regtype::text AS returns, p.proretset AS returns_set, l.lanname AS language
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           JOIN pg_language l ON l.oid = p.prolang
+          WHERE p.proname = 'member_name_apply_rule'`,
+        [],
+      ),
+    ).toEqual([
+      {
+        schema: "public",
+        args: "p_value text, p_external boolean",
+        returns: "text",
+        returns_set: false,
+        language: "plpgsql",
+      },
+    ]);
+  });
+
+  it("L29-F2 its attributes are the 0068 helper's: IMMUTABLE, STRICT, PARALLEL SAFE, INVOKER, pg_catalog", async () => {
+    const attrs = (sig: string) =>
+      catalog(
+        `SELECT provolatile AS volatility, proisstrict AS strict, proparallel AS parallel,
+                prosecdef AS security_definer, proconfig AS config
+           FROM pg_proc WHERE oid = $1::regprocedure`,
+        [sig],
+      );
+    const helper = await attrs(HELPER_SIG);
+    expect(helper).toEqual([
+      {
+        volatility: "i",
+        strict: true,
+        parallel: "s",
+        security_definer: false,
+        config: ["search_path=pg_catalog"],
+      },
+    ]);
+    expect(await attrs(RULE_SIG)).toEqual(helper);
+  });
+
+  it("L29-F3 its owner is the 0068 helper's owner", async () => {
+    expect(
+      await catalog(
+        `SELECT p.proowner = h.proowner AS helper_owner FROM pg_proc p, pg_proc h
+          WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure`,
+        [RULE_SIG, HELPER_SIG],
+      ),
+    ).toEqual([{ helper_owner: true }]);
+  });
+
+  it("L29-F4 no EXECUTE for PUBLIC, app, app_worker or readonly, and no grant at all", async () => {
+    expect(
+      await catalog(
+        `SELECT has_function_privilege('public', p.oid, 'EXECUTE') AS public_role,
+                has_function_privilege('app', p.oid, 'EXECUTE') AS app,
+                has_function_privilege('app_worker', p.oid, 'EXECUTE') AS app_worker,
+                has_function_privilege('readonly', p.oid, 'EXECUTE') AS readonly,
+                ARRAY(SELECT a.grantee::regrole::text FROM aclexplode(p.proacl) a
+                       WHERE a.grantee <> p.proowner) AS grantees
+           FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+        [RULE_SIG],
+      ),
+    ).toEqual([
+      { public_role: false, app: false, app_worker: false, readonly: false, grantees: [] },
+    ]);
+  });
+
+  it("L29-F5 its R, V and T constants are byte-equal to person_profile_update's (A-12); no RAISE", async () => {
+    const end = "|| ']';";
+    const constants = async (sig: string) => {
+      const [row] = await catalog(`SELECT prosrc FROM pg_proc WHERE oid = $1::regprocedure`, [sig]);
+      const src = String(row!.prosrc);
+      const start = src.indexOf("  c_ws     CONSTANT");
+      const visible = src.indexOf("c_visible CONSTANT", start);
+      const stop = src.indexOf(end, visible);
+      expect(start >= 0 && visible > start && stop > visible, sig).toBe(true);
+      return { src, block: src.slice(start, stop + end.length) };
+    };
+    const rule = await constants(RULE_SIG);
+    expect(rule.block).toBe((await constants("public.person_profile_update(uuid, text)")).block);
+    expect(rule.src.toUpperCase()).not.toContain("RAISE");
+  });
+
+  const BIDI = [
+    0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  ];
+  /** [class, input, mode false (interactive), mode true (ingress and copy)]: section 4's order and edge rule. */
+  type Case = [label: string, input: string, interactive: string | null, ingress: string | null];
+  const CASES: Case[] = [
+    ["ordinary", "Ann Lee", "Ann Lee", "Ann Lee"],
+    [
+      "T at both edges (TAB, U+3000, NBSP, U+2029)",
+      mix(0x09, 0x3000, "Ann", 0xa0, 0x2029),
+      "Ann",
+      "Ann",
+    ],
+    ["Cc inside (U+0001)", mix("Ann", 0x01, "Lee"), null, "AnnLee"],
+    ["Cc inside (U+009F)", mix("Ann", 0x9f, "Lee"), null, "AnnLee"],
+    ["Cc that is also T, inside (TAB)", mix("Ann", 0x09, "Lee"), null, "AnnLee"],
+    ...BIDI.map((cp): Case => [
+      `Bidi_Control U+${hex(cp)} inside`,
+      mix("Ann", cp, "Lee"),
+      null,
+      "AnnLee",
+    ]),
+    ["U+2028 inside", mix("Ann", 0x2028, "Lee"), null, "AnnLee"],
+    ["U+2029 inside", mix("Ann", 0x2029, "Lee"), null, "AnnLee"],
+    [
+      "Zs inside is kept (NBSP)",
+      mix("Ann", 0xa0, "Lee"),
+      mix("Ann", 0xa0, "Lee"),
+      mix("Ann", 0xa0, "Lee"),
+    ],
+    ["Zs only (NBSP, U+3000, U+202F)", mix(0xa0, 0x3000, 0x202f), null, null],
+    ["U+2800 only", mix(0x2800), null, null],
+    ["U+2800 inside", mix("Ann", 0x2800, "Lee"), null, "AnnLee"],
+    ["bidi only", mix(0x202e, 0x2066), null, null],
+    ["invisible only (U+200B, U+2060, VS16)", mix(0x200b, 0x2060, 0xfe0f), null, null],
+    ["invisible inside is stripped (ZWJ)", mix("Ann", 0x200d, "Lee"), "AnnLee", "AnnLee"],
+    ["other R inside (Cf U+0600)", mix("Ann", 0x600, "Lee"), null, "AnnLee"],
+    ["other R inside (Cf U+110BD)", mix("Ann", 0x110bd, "Lee"), null, "AnnLee"],
+    ["T before a removed R is trimmed again (NBSP, U+202E)", mix("Ann", 0xa0, 0x202e), null, "Ann"],
+  ];
+  it.each(CASES)("L29-F5 %s", async (_label, input, interactive, ingress) => {
+    const [row] = await run<{ interactive: string | null; ingress: string | null }>(
+      `SELECT ${RULE}($1::text, false) AS interactive, ${RULE}($1::text, true) AS ingress`,
+      [input],
+    );
+    expect([cps(row!.interactive), cps(row!.ingress)]).toEqual([cps(interactive), cps(ingress)]);
+  });
+
+  it("L29-F5 STRICT: a NULL value or a NULL mode gives NULL", async () => {
+    expect(
+      await run(
+        `SELECT ${RULE}(NULL, false) AS a, ${RULE}(NULL, true) AS b, ${RULE}('Ann', NULL) AS c`,
+      ),
+    ).toEqual([{ a: null, b: null, c: null }]);
+  });
+
+  it("L29-F5 never raises: one value holding every scalar SQL text holds is refused by mode false; mode true gives a value both modes keep", async () => {
+    expect(
+      await run(
+        `WITH s AS MATERIALIZED (
+           SELECT string_agg(chr(g), '' ORDER BY g) AS v
+             FROM generate_series(1, 1114111) g WHERE g < 55296 OR g > 57343
+         ), r AS MATERIALIZED (SELECT ${RULE}(v, false) AS refused, ${RULE}(v, true) AS kept FROM s)
+         SELECT refused, kept IS NOT NULL AS visible, ${RULE}(kept, false) = kept AS interactive_keeps,
+                ${RULE}(kept, true) = kept AS ingress_keeps
+           FROM r`,
+      ),
+    ).toEqual([{ refused: null, visible: true, interactive_keeps: true, ingress_keeps: true }]);
+  }, 30_000);
+});
