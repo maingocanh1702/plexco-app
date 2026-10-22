@@ -563,9 +563,12 @@ project per file, in `groupOrder`), so no other test file of the package can obs
 temporary grant or a membership hand-off. `packages/db/src/role-hiding-isolation-guard.test.ts` fails
 when such a statement (a rename, drop, create or alter of a shared role, a `GRANT` or `REVOKE` of a
 shared-role membership, a call of a harness membership helper) appears in any other test file, and a
-new role-mutating test must be added to that constant. A `--sequence.*` CLI flag resets `groupOrder`
+new role-mutating test must be added to that constant; the guard fails in both directions, so a file
+that stops mutating a shared role must also leave it. A `--sequence.*` CLI flag resets `groupOrder`
 and lets the groups overlap again: keep it off the package `test` script (the guard pins its text) and
-off local runs.
+off local runs. After a killed run, run `pnpm --filter @plexco/db exec vitest run src/migrate.test.ts`
+alone first: its heal puts a hidden `identity_definer` back, and in a full run that file starts only
+after the parallel phase.
 A local database that applied an earlier `0054` text fails the sha256 guard: run `pnpm db:bootstrap`,
 then `pnpm db:reset:test` for a `*_test` database; any other database (`db:reset:test` refuses it)
 must be dropped and recreated through the compose container (`docker compose -f
