@@ -106,7 +106,7 @@ export function hasHiddenChar(value: string): boolean {
  * STRIP_CHAR_RANGES of packages/db/src/text-safety.ts (the single server list), copied as numbers
  * because the code points are invisible in source: Default_Ignorable_Code_Point minus Bidi_Control,
  * Unicode 17.0, 4162 code points in 16 inclusive [first, last] ranges. Client code cannot import
- * @plexco/db (FE-INV-3), so this is the web's one copy; session-form-model.test.ts pins
+ * the db package (FE-INV-3), so this is the web's one copy; session-form-model.test.ts pins
  * stripInvisibleChars against the server function over every code point. Do not fork it:
  * club-settings-model.ts imports stripInvisibleChars from here.
  */
@@ -186,9 +186,10 @@ function hasNewHiddenChar(
 }
 
 /**
- * A text field (area, venue name, address) in the form this client sends and compares: trimmed,
- * blank = null. The server does not trim: it stores the value it receives as-is (session-service.ts),
- * so a legacy value with surrounding spaces is stored raw and only compares equal here after trimming.
+ * The venue address (area and venue name use publicNameKey, which strips first) in the form this
+ * client sends and compares: trimmed, blank = null. The server does not trim: it stores the value
+ * it receives as-is (session-service.ts), so a legacy value with surrounding spaces is stored raw
+ * and only compares equal here after trimming.
  * validateForm's legacy exemptions (address cap, hidden characters) and buildUpdateBody's "changed?"
  * diff ALL compare in this form, so a field exempted as untouched is also never sent (a legacy value
  * with surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).
