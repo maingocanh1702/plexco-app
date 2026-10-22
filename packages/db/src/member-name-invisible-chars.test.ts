@@ -504,5 +504,264 @@ describe("RC-OWNER: the 0069 owner check (B7) covers each of the seven", () => {
   );
 });
 
-// End of the RC blocks. Unit U2c (MG) appends its describe block below this line, reusing ctx and the
-// helpers above (l27Block("CLEANUP") reads the cleanup block; rolledBack runs it and rolls it back).
+// MG (unit U2c, section 11, default B6): the exact text of the 0069 L27-CLEANUP block, replayed on
+// fixture rows seeded through the privileged path, in transactions that are always rolled back. A first
+// run inside the same transaction absorbs what the blocks above left behind, so every expectation is
+// exact; the values that first run leaves unchanged are re-reported by every later run (`carried`).
+describe("MG the 0069 L27-CLEANUP block", () => {
+  const CLEANUP = l27Block("CLEANUP");
+  const COLS = [
+    {
+      table: "persons",
+      col: "display_name",
+      noun: "person",
+      what: "display name",
+      done: "stripped",
+    },
+    {
+      table: "memberships",
+      col: "display_name",
+      noun: "membership",
+      what: "display name",
+      done: "stripped",
+    },
+    { table: "tenants", col: "name", noun: "tenant", what: "name", done: "stripped" },
+    {
+      table: "sessions",
+      col: "venue_address",
+      noun: "session",
+      what: "venue address",
+      done: "stripped and re-projected",
+    },
+  ] as const;
+  type Col = (typeof COLS)[number];
+  const VENUE = COLS[3];
+  // The seeded value of each class and `stripped`, what the block stores for `mixed`: the three name
+  // columns are stripped then trimmed; venue_address is stripped alone, so its outer spaces stay.
+  const NAME = {
+    mixed: mix(0xfeff, " L27", 0x200b, " Mai ", 0xad),
+    stripped: "L27 Mai",
+    invisible: mix(0x200b, 0x2060),
+    clean: "L27 Lan",
+  };
+  const ADDRESS = {
+    mixed: mix(" So 1", 0x200b, " Pho", 0x2060, " "),
+    stripped: " So 1 Pho ",
+    invisible: mix(0xfeff),
+    clean: "So 2 Pho",
+  };
+  const valuesOf = (col: Col) => (col.table === "sessions" ? ADDRESS : NAME);
+  const changed = (col: Col, id: string) =>
+    `0069 cleanup: ${col.noun} ${id} ${col.what} ${col.done}`;
+  const left = (col: Col, id: string) =>
+    `0069 cleanup: ${col.noun} ${id} ${col.what} left unchanged (no visible character after the strip)`;
+  const closing = (p: number, m: number, t: number, s: number, l: number) =>
+    `0069 cleanup: ${p} person names, ${m} membership names, ${t} tenant names changed, ${s} sessions changed and re-projected, ${l} values left unchanged`;
+
+  /** Runs the block on c and returns the NOTICE messages it raised. */
+  async function run(c: pg.PoolClient): Promise<string[]> {
+    const notices: string[] = [];
+    const onNotice = (n: { message?: string | undefined }) => notices.push(n.message ?? "");
+    c.on("notice", onNotice);
+    try {
+      await c.query(CLEANUP);
+    } finally {
+      c.off("notice", onNotice);
+    }
+    return notices;
+  }
+
+  /** One club (clean name, approved alias) hosts every row: per column one row of each class, plus a
+   *  second mixed address with hide_exact_address ON; every session is projected (version 1). */
+  async function seed(c: pg.PoolClient) {
+    const carried = (await run(c)).filter((n) =>
+      n.endsWith("(no visible character after the strip)"),
+    );
+    const insert = async (statement: string, params: unknown[]) =>
+      (await c.query<{ id: string }>(`${statement} RETURNING id`, params)).rows[0]!.id;
+    const slug = () => `l27-${randomUUID()}`;
+    const club = await insert(
+      `INSERT INTO tenants (name, slug, public_alias, public_alias_status) VALUES ($1, $2, 'L27 Alias', 'approved')`,
+      [NAME.clean, slug()],
+    );
+    const tenant = (name: string) =>
+      insert(`INSERT INTO tenants (name, slug) VALUES ($1, $2)`, [name, slug()]);
+    const person = (name: string) =>
+      insert(`INSERT INTO persons (display_name) VALUES ($1)`, [name]);
+    const member = (personId: string, name: string) =>
+      insert(`INSERT INTO memberships (tenant_id, person_id, display_name) VALUES ($1, $2, $3)`, [
+        club,
+        personId,
+        name,
+      ]);
+    const session = (address: string, hidden = false) =>
+      insert(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
+           price_amount, slots_max, visibility, join_policy, status, hide_exact_address)
+         VALUES ($1, $2, now() + interval '7 days', now() + interval '7 days 2 hours', 'Asia/Ho_Chi_Minh',
+           'San L27', $3, 'Quan 1', 50000, 10, 'public', 'open', 'open', $4)`,
+        [club, ctx.badmintonSportId, address, hidden],
+      );
+    const persons = {
+      mixed: await person(NAME.mixed),
+      invisible: await person(NAME.invisible),
+      clean: await person(NAME.clean),
+    };
+    const ids = {
+      persons,
+      memberships: {
+        mixed: await member(persons.mixed, NAME.mixed),
+        invisible: await member(persons.invisible, NAME.invisible),
+        clean: await member(persons.clean, NAME.clean),
+      },
+      tenants: {
+        mixed: await tenant(NAME.mixed),
+        invisible: await tenant(NAME.invisible),
+        clean: club,
+      },
+      sessions: {
+        mixed: await session(ADDRESS.mixed),
+        invisible: await session(ADDRESS.invisible),
+        clean: await session(ADDRESS.clean),
+      },
+    };
+    const hidden = await session(ADDRESS.mixed, true);
+    for (const id of [...Object.values(ids.sessions), hidden]) {
+      const { rows } = await c.query<{ d: string }>(
+        `SELECT public_sessions_project_session($1, NULL) AS d`,
+        [id],
+      );
+      expect(rows[0]!.d).toBe("upserted");
+    }
+    return { ids, hidden, carried };
+  }
+  type Fixture = Awaited<ReturnType<typeof seed>>;
+  const sessionIds = (f: Fixture) => [...Object.values(f.ids.sessions), f.hidden];
+
+  /** id -> [ctid, stored value] of each fixture row (every UPDATE moves the ctid), and
+   *  "public <id>" -> [version, venue_address] of each session's public row. */
+  async function state(c: pg.PoolClient, f: Fixture): Promise<Record<string, unknown[]>> {
+    const out: Record<string, unknown[]> = {};
+    for (const col of COLS) {
+      const { rows } = await c.query<{ id: string; ctid: string; v: string | null }>(
+        `SELECT id, ctid::text AS ctid, ${col.col} AS v FROM ${col.table} WHERE id = ANY($1::uuid[])`,
+        [col === VENUE ? sessionIds(f) : Object.values(f.ids[col.table])],
+      );
+      for (const r of rows) out[r.id] = [r.ctid, r.v];
+    }
+    const { rows } = await c.query<{ id: string; version: number; v: string | null }>(
+      `SELECT id, public_projection_version::int AS version, venue_address AS v
+         FROM public_sessions WHERE id = ANY($1::uuid[])`,
+      [sessionIds(f)],
+    );
+    for (const r of rows) out[`public ${r.id}`] = [r.version, r.v];
+    return out;
+  }
+
+  /** A fingerprint of the four columns and the public rows, read outside every fixture transaction. */
+  const snapshot = async () =>
+    (
+      await ctx.superuserDb.pool.query<{ s: string }>(
+        `SELECT concat_ws(' ',
+           (SELECT md5(string_agg(concat_ws(':', id, display_name), ',' ORDER BY id)) FROM persons),
+           (SELECT md5(string_agg(concat_ws(':', id, display_name), ',' ORDER BY id)) FROM memberships),
+           (SELECT md5(string_agg(concat_ws(':', id, name), ',' ORDER BY id)) FROM tenants),
+           (SELECT md5(string_agg(concat_ws(':', id, venue_address), ',' ORDER BY id)) FROM sessions),
+           (SELECT md5(string_agg(concat_ws(':', id, public_projection_version, venue_address), ',' ORDER BY id))
+              FROM public_sessions)) AS s`,
+      )
+    ).rows[0]!.s;
+  let atStart: string;
+  beforeAll(async () => {
+    atStart = await snapshot();
+  });
+
+  it("strips each mixed value (names then trimmed, venue_address not), keeps invisible-only and clean values, names each row by id only", async () => {
+    await rolledBack(async (c) => {
+      const f = await seed(c);
+      const before = await state(c, f);
+      const notices = await run(c);
+      const after = await state(c, f);
+      for (const col of COLS) {
+        for (const k of ["mixed", "invisible", "clean"] as const) {
+          const id = f.ids[col.table][k];
+          expect(after[id]![1]).toBe(k === "mixed" ? valuesOf(col).stripped : valuesOf(col)[k]);
+          expect(after[id]![0] === before[id]![0]).toBe(k !== "mixed"); // only a mixed row is rewritten
+        }
+      }
+      // Re-projection: the public row follows the stripped address; a hidden address stays masked.
+      const pub = (id: string) => [before[`public ${id}`], after[`public ${id}`]];
+      expect(after[f.hidden]![1]).toBe(ADDRESS.stripped);
+      expect(pub(f.ids.sessions.mixed)).toEqual([
+        [1, ADDRESS.mixed],
+        [2, ADDRESS.stripped],
+      ]);
+      expect(pub(f.hidden)).toEqual([
+        [1, null],
+        [1, null],
+      ]);
+      for (const k of ["invisible", "clean"] as const) {
+        expect(pub(f.ids.sessions[k])).toEqual([
+          [1, ADDRESS[k]],
+          [1, ADDRESS[k]],
+        ]);
+      }
+      expect(notices.sort()).toEqual(
+        [
+          ...COLS.map((col) => changed(col, f.ids[col.table].mixed)),
+          changed(VENUE, f.hidden),
+          ...COLS.map((col) => left(col, f.ids[col.table].invisible)),
+          ...f.carried,
+          closing(1, 1, 1, 2, COLS.length + f.carried.length),
+        ].sort(),
+      );
+      // No NOTICE carries fixture text: none of its visible words, no code point outside printable ASCII.
+      expect(notices.filter((n) => /L27|Mai|Lan|Pho|[^ -~]/.test(n))).toEqual([]);
+    });
+  });
+
+  it("a second run rewrites no row, bumps no version and re-reports only the values left unchanged", async () => {
+    await rolledBack(async (c) => {
+      const f = await seed(c);
+      await run(c);
+      const before = await state(c, f);
+      const notices = await run(c);
+      expect(await state(c, f)).toEqual(before);
+      expect(notices.sort()).toEqual(
+        [
+          ...COLS.map((col) => left(col, f.ids[col.table].invisible)),
+          ...f.carried,
+          closing(0, 0, 0, 0, COLS.length + f.carried.length),
+        ].sort(),
+      );
+    });
+  });
+
+  it("as app (NOSUPERUSER NOBYPASSRLS) over a non-empty table it fails closed with 42501", async () => {
+    await rolledBack(async (c) => {
+      await seed(c);
+      await c.query("SET LOCAL ROLE app");
+      expect(
+        (
+          await c.query(
+            `SELECT r.rolsuper, r.rolbypassrls, row_security_active('public.sessions') AS rls,
+                    pg_relation_size('public.sessions') > 0 AS nonempty
+               FROM pg_roles r WHERE r.rolname = current_user`,
+          )
+        ).rows[0],
+      ).toEqual({ rolsuper: false, rolbypassrls: false, rls: true, nonempty: true });
+      // The message pins the guard: a missing EXECUTE on the helper would also be 42501.
+      await expect(c.query(CLEANUP)).rejects.toMatchObject({
+        code: "42501",
+        message:
+          "0069 cleanup: row security applies to app and persons, memberships, tenants or sessions holds rows it may not see; apply 0069 as the superuser migration role",
+      });
+    });
+  });
+
+  it("leaves the database exactly as it found it", async () => {
+    expect(await snapshot()).toBe(atStart);
+  });
+});
+
+// End of the RC and MG blocks: the last block of this file.
