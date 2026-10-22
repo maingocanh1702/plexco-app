@@ -295,4 +295,449 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     await cycle(new Map([["reg_probe", delivered]]));
     expect(await deliveries(eventId)).toMatchObject([{ status: "delivered" }]);
   });
+
+  describe("boot sequence: flags default true, projectors off, then the owner CLI enables", () => {
+    // L24 U3 (readiness 6.3, BS-1..BS-7): the committed default "true", every real projector seeded
+    // disabled (0056), events acked with '{}', then `scripts/outbox-projector-enable.mjs enable`.
+    const REPO = path.join(HERE, "..", "..", "..");
+    const EXPIRED = "projector_delivery_expired";
+    const ALL_OFF = [
+      { name: "public_sessions", enabled: false },
+      { name: "web_realtime", enabled: false },
+      { name: "zalo_dm", enabled: false },
+    ];
+    const realProjectors = async () =>
+      (
+        await verify.query(
+          "SELECT name, enabled FROM outbox_projectors WHERE name = ANY($1::text[]) ORDER BY name",
+          [[...PROJECTORS.keys()]],
+        )
+      ).rows;
+
+    /**
+     * `node scripts/outbox-projector-enable.mjs <args>` as the runbook runs it (the pattern of
+     * packages/db/src/outbox-projector-enable.test.ts, copied): cwd = the repo root, the owner credential
+     * only in the child's DATABASE_URL_MIGRATION, under the reader lock.
+     */
+    const runEnableCli = (args: string[]) =>
+      withJobDefinerLock(base, async () => {
+        const env = { ...process.env, DATABASE_URL_MIGRATION: testUrl(base, { db: dbName }) };
+        const script = ["scripts/outbox-projector-enable.mjs", ...args];
+        try {
+          const { stdout, stderr } = await promisify(execFile)(process.execPath, script, {
+            cwd: REPO,
+            env,
+            timeout: 30_000,
+          });
+          return { code: 0, stdout, stderr };
+        } catch (error) {
+          const e = error as { code?: number; stdout?: string; stderr?: string };
+          return { code: e.code ?? -1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+        }
+      });
+
+    /** The CLI enables `projector` (exit 0); the test disables it again in its finally. */
+    async function enable(projector: string) {
+      const run = await runEnableCli(["enable", "--projector", projector]);
+      expect(run.code, run.stderr).toBe(0);
+    }
+
+    /** The expiry records the CLI wrote for `ids` (job_audit_events), any projector. */
+    const expiries = async (ids: string[]) =>
+      (
+        await verify.query(
+          "SELECT job_id, reason FROM job_audit_events WHERE starts_with(reason, $1) AND job_id = ANY($2::uuid[]) ORDER BY job_id, reason",
+          [`${EXPIRED}:`, ids],
+        )
+      ).rows;
+
+    /** Owner back-dating on the DB clock, past the 30-minute bound. */
+    const backdate = (ids: string[]) =>
+      verify.query(
+        "UPDATE outbox_events SET created_at = now() - interval '40 minutes' WHERE id = ANY($1::uuid[])",
+        [ids],
+      );
+
+    /** First boot step: every real projector off, so one cycle acks `ids` with '{}': no row, no record. */
+    async function ackedWhileOff(ids: string[], projectors: ReadonlyMap<string, DeliverFn>) {
+      expect(await realProjectors()).toEqual(ALL_OFF);
+      await cycle(projectors);
+      const acked = await verify.query(
+        "SELECT id FROM outbox_events WHERE id = ANY($1::uuid[]) AND acked_at IS NOT NULL",
+        [ids],
+      );
+      expect(acked.rowCount).toBe(ids.length);
+      for (const id of ids) expect(await deliveries(id)).toEqual([]);
+      expect(await expiries(ids)).toEqual([]);
+    }
+
+    /**
+     * zalo_dm through its real deliverer and the stub (the zalo-dm.test.ts fixture: the web tests'
+     * "k" x 32 key, a token only the stub sees, a club with an active bot and an open session).
+     * `promote()` adds an active player with a Zalo identity and its player.promoted event.
+     */
+    async function zaloBoot() {
+      const secrets = await import("@plexco/db/connector-crypto");
+      const { createZaloDmDeliver } = await import("./projectors/zalo-dm.js");
+      const { startZaloStub } = await import("./test-zalo-stub.js");
+      const stub = await startZaloStub();
+      const kms = { KMS_PROVIDER: process.env.KMS_PROVIDER, KMS_KEY_ID: process.env.KMS_KEY_ID };
+      vi.stubEnv("ENCRYPTION_KEY", Buffer.alloc(32, "k").toString("base64"));
+      vi.stubEnv("APP_BASE_URL", "https://app.test");
+      vi.stubEnv("ZALO_BOT_API_BASE", stub.base);
+      delete process.env.KMS_PROVIDER;
+      delete process.env.KMS_KEY_ID;
+      secrets.__resetAuthSecretCacheForTest();
+      const close = async () => {
+        await stub.close();
+        vi.unstubAllEnvs();
+        for (const [key, value] of Object.entries(kms))
+          if (value !== undefined) process.env[key] = value;
+        secrets.__resetAuthSecretCacheForTest();
+      };
+      const token = "654321:FIXTURE-worker-token";
+      const one = async (sql: string, params: unknown[]) =>
+        (await verify.query(sql, params)).rows[0]!;
+      try {
+        const tenant = await one(
+          "INSERT INTO tenants (name, slug, status, locale) VALUES ($1, $1, 'active', 'vi') RETURNING id",
+          [`boot-${randomUUID()}`],
+        );
+        const bot = await one(
+          `INSERT INTO zalo_bots (tenant_id, bot_token_enc, webhook_token, status, webhook_secret_enc, key_version)
+           VALUES ($1, 'unset', $2, 'active', '\\x01', $3) RETURNING id`,
+          [tenant.id, randomUUID(), secrets.connectorKeyVersion()],
+        );
+        const binding = { tenantId: String(tenant.id), botId: String(bot.id) };
+        const sealed = await secrets.encryptConnectorSecret(token, {
+          ...binding,
+          purpose: "bot_token" as const,
+        });
+        await verify.query("UPDATE zalo_bots SET bot_token_enc = $2 WHERE id = $1", [
+          bot.id,
+          secrets.blobToText(sealed.enc),
+        ]);
+        const session = await one(
+          `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status, venue_name, price_amount)
+           SELECT $1, id, now() + interval '1 day', now() + interval '1 day 2 hours', 'Asia/Ho_Chi_Minh', 'open',
+                  'Private Hall', 120000
+             FROM sports WHERE key = 'badminton' RETURNING id`,
+          [tenant.id],
+        );
+        const promote = async () => {
+          const chat = `chat-${randomUUID()}`;
+          const person = await one(
+            "INSERT INTO persons (display_name) VALUES ('Boot Sequence') RETURNING id",
+            [],
+          );
+          const membership = await one(
+            "INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id",
+            [tenant.id, person.id],
+          );
+          const { enc } = await secrets.encryptConnectorSecret(chat, {
+            ...binding,
+            purpose: "channel_user" as const,
+          });
+          await verify.query(
+            `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status, zalo_bot_id)
+             VALUES ($1, 'zalo', $2, $3, 'active', $4)`,
+            [person.id, enc, randomUUID(), bot.id],
+          );
+          const player = await one(
+            `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position, joined_at)
+             VALUES ($1, $2, $3, 'active', NULL, now() - interval '1 hour') RETURNING id`,
+            [tenant.id, session.id, membership.id],
+          );
+          const event = await one(
+            `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+             VALUES ($1, 'session', $2, (SELECT coalesce(max(sequence), 0) + 1 FROM outbox_events WHERE aggregate_id = $2),
+                     'player.promoted', $3)
+             RETURNING id`,
+            [
+              tenant.id,
+              session.id,
+              { session_id: session.id, player_id: player.id, amount_due: 95_000 },
+            ],
+          );
+          return { chat, event: String(event.id) };
+        };
+        const projectors = new Map<string, DeliverFn>([
+          ...PROJECTORS,
+          ["zalo_dm", createZaloDmDeliver({ db: workerPool })],
+        ]);
+        return { stub, token, projectors, promote, close };
+      } catch (error) {
+        await close();
+        throw error;
+      }
+    }
+
+    it('BS-1: the committed OUTBOX_DISPATCH_SCHEDULE_ENABLED is exactly "true" and the worker resolver turns dispatch on with every projector disabled', async () => {
+      const lines = readFileSync(path.join(REPO, ".env.example"), "utf8")
+        .split("\n")
+        .filter((line) => line.startsWith("OUTBOX_DISPATCH_SCHEDULE_ENABLED="));
+      expect(lines).toEqual(["OUTBOX_DISPATCH_SCHEDULE_ENABLED=true"]); // .env.example:91
+      const committed = lines[0]!.slice(lines[0]!.indexOf("=") + 1);
+      expect(committed).toBe("true");
+      const { resolveWorkerDispatchEnablement } = await import("./worker.js");
+      const { probeOutboxRegistry } = await import("./projector-registry.js");
+      await expect(
+        resolveWorkerDispatchEnablement(committed, PROJECTORS, () =>
+          probeOutboxRegistry(workerPool),
+        ),
+      ).resolves.toMatchObject({ enabled: true });
+      expect(await realProjectors()).toEqual(ALL_OFF);
+    });
+
+    it("BS-2 web_realtime: events acked '{}' while off are delivered after the CLI enables; a back-dated one is never delivered and gets one age record", async () => {
+      const webRealtime = await import("./projectors/web-realtime.js");
+      await webRealtime.setWebRealtimeDbForTests(workerPool);
+      try {
+        const ids: string[] = [];
+        for (let i = 0; i < 3; i++) ids.push(await insertEvent("session", "session.updated"));
+        const inBound = ids.slice(0, 2);
+        const aged = ids[2]!;
+        await ackedWhileOff(ids, PROJECTORS);
+        await backdate([aged]);
+        await enable("web_realtime");
+        await cycle(PROJECTORS);
+        for (const id of inBound)
+          expect(await deliveries(id)).toEqual([
+            { projector: "web_realtime", status: "delivered", attempts: 1, error_code: null },
+          ]);
+        expect(await deliveries(aged)).toEqual([]);
+        expect(await expiries(ids)).toEqual([
+          { job_id: aged, reason: `${EXPIRED}:web_realtime:age` },
+        ]);
+      } finally {
+        await webRealtime.setWebRealtimeDbForTests(null);
+        await asOwner("SELECT outbox_projector_set_enabled('web_realtime', false)", []);
+      }
+    }, 30_000);
+
+    it("BS-3 zalo_dm: promotion DMs acked '{}' while off reach the stub once each after the CLI enables; a back-dated one is never sent and gets one age record", async () => {
+      const zalo = await zaloBoot();
+      try {
+        const promoted = [await zalo.promote(), await zalo.promote(), await zalo.promote()];
+        const ids = promoted.map((p) => p.event);
+        const inBound = promoted.slice(0, 2);
+        const aged = promoted[2]!;
+        await ackedWhileOff(ids, zalo.projectors);
+        expect(zalo.stub.calls).toEqual([]);
+        await backdate([aged.event]);
+        await enable("zalo_dm");
+        await cycle(zalo.projectors);
+        await cycle(zalo.projectors); // a delivered row is never claimed again
+        expect(zalo.stub.calls.map((call) => call.chatId).sort()).toEqual(
+          inBound.map((p) => p.chat).sort(),
+        );
+        expect(zalo.stub.calls.every((call) => call.token === zalo.token)).toBe(true);
+        for (const p of inBound)
+          expect(await deliveries(p.event)).toEqual([
+            { projector: "zalo_dm", status: "delivered", attempts: 1, error_code: null },
+          ]);
+        expect(await deliveries(aged.event)).toEqual([]);
+        expect(await expiries(ids)).toEqual([
+          { job_id: aged.event, reason: `${EXPIRED}:zalo_dm:age` },
+        ]);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
+    // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
+    // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
+    const NAMES = ["web_realtime", "zalo_dm", "public_sessions"];
+    const CAP = 200; // BACKFILL_MAX_ROWS (D3), checked against the script in the cap case
+    const UNACKED = "SELECT 1 FROM outbox_events WHERE id = ANY($1::uuid[]) AND acked_at IS NULL";
+    const ROWS = "SELECT 1 FROM projector_deliveries WHERE event_id = ANY($1::uuid[])";
+    const DELIVERED = `${ROWS} AND status = 'delivered'`;
+    const rowCount = async (sql: string, ids: string[]) =>
+      (await verify.query(sql, [ids])).rowCount ?? 0;
+    const disable = (projector: string) =>
+      asOwner("SELECT outbox_projector_set_enabled($1, false)", [projector]);
+    /** One (aggregate_type, event_type) the projector routes; a wildcard route gets a probe type. */
+    const routeOf = async (projector: string) =>
+      (
+        await verify.query<{ aggregate_type: string; event_type: string }>(
+          `SELECT aggregate_type, coalesce(event_type, 'boot.probe') AS event_type
+             FROM outbox_projector_routes WHERE projector = $1 ORDER BY aggregate_type, event_type LIMIT 1`,
+          [projector],
+        )
+      ).rows[0]!;
+    async function cycleUntil(
+      projectors: ReadonlyMap<string, DeliverFn>,
+      done: () => Promise<boolean>,
+    ) {
+      for (let i = 0; i < 20 && !(await done()); i++) await cycle(projectors);
+      expect(await done()).toBe(true);
+    }
+
+    it("BS-4 public_sessions: a session published while off is public after the CLI (rebuild); its in-bound events are delivered through the seam; a back-dated one is never delivered and gets one age record", async () => {
+      const { createPublicSessionsDeliver } = await import("./projectors/public-sessions.js");
+      const seam = new Map<string, DeliverFn>([
+        ["public_sessions", createPublicSessionsDeliver({ db: workerPool })],
+      ]);
+      const idOf = async (sql: string, params: unknown[]) =>
+        String((await verify.query(sql, params)).rows[0]!.id);
+      const club = await idOf(
+        `INSERT INTO tenants (name, slug, public_alias, public_alias_status)
+         VALUES ('BS4 Club', 'bs4-club', 'CLB BS4', 'approved') RETURNING id`,
+        [],
+      );
+      // EN-9's open public session (packages/db/src/outbox-projector-enable.test.ts), minimum columns
+      const session = await idOf(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address,
+           area, price_amount, slots_max, visibility, join_policy, status)
+         SELECT $1, id, now() + interval '1 day', now() + interval '26 hours', 'Asia/Ho_Chi_Minh',
+           'BS4 Venue', '1 Public Street', 'Quan 7', 50000, 10, 'public', 'open', 'open'
+           FROM sports WHERE key = 'badminton' RETURNING id`,
+        [club],
+      );
+      const route = await routeOf("public_sessions");
+      expect(route.aggregate_type).toBe("session");
+      const ids = (
+        await verify.query<{ id: string }>(
+          `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+           SELECT $1, 'session', $2, g, $3, '{}'::jsonb FROM generate_series(1, 3) AS g RETURNING id`,
+          [club, session, route.event_type],
+        )
+      ).rows.map((row) => row.id);
+      const inBound = ids.slice(0, 2);
+      const aged = ids[2]!;
+      const isPublic = async () =>
+        (await rowCount("SELECT 1 FROM public_sessions WHERE id = ANY($1::uuid[])", [session])) ===
+        1;
+      try {
+        await ackedWhileOff(ids, seam);
+        await backdate([aged]);
+        expect(await isPublic()).toBe(false);
+        await enable("public_sessions");
+        expect(await isPublic()).toBe(true); // the CLI's rebuild, before any delivery
+        await cycleUntil(seam, async () => (await rowCount(DELIVERED, inBound)) === 2);
+        for (const event of inBound)
+          expect(await deliveries(event)).toEqual([
+            { projector: "public_sessions", status: "delivered", attempts: 1, error_code: null },
+          ]);
+        expect(await deliveries(aged)).toEqual([]);
+        expect(await expiries(ids)).toEqual([
+          { job_id: aged, reason: `${EXPIRED}:public_sessions:age` },
+        ]);
+      } finally {
+        await disable("public_sessions");
+      }
+    }, 30_000);
+
+    it("cap: more than BACKFILL_MAX_ROWS acked in-window web_realtime events -> the newest are delivered, each older one gets exactly one cap record and is never delivered", async () => {
+      const script = readFileSync(
+        path.join(REPO, "scripts", "outbox-projector-enable.mjs"),
+        "utf8",
+      );
+      expect(script).toContain(`BACKFILL_MAX_ROWS = ${CAP};`);
+      const type = "session.boot_cap"; // routed by web_realtime's ('session', NULL) wildcard
+      // one owner insert, 1 microsecond apart and newer than every earlier event (newest first, D3)
+      await verify.query(
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, created_at)
+         SELECT $1, 'session', gen_random_uuid(), 1, $2, '{}'::jsonb, now() - g * interval '1 microsecond'
+           FROM generate_series(1, $3::int) AS g`,
+        [tenantId, type, CAP + 5],
+      );
+      const ids = (
+        await verify.query<{ id: string }>(
+          "SELECT id FROM outbox_events WHERE type = $1 ORDER BY created_at DESC, id DESC",
+          [type],
+        )
+      ).rows.map((row) => row.id);
+      const newest = ids.slice(0, CAP);
+      const rest = ids.slice(CAP);
+      try {
+        expect(await realProjectors()).toEqual(ALL_OFF);
+        await cycleUntil(PROJECTORS, async () => (await rowCount(UNACKED, ids)) === 0);
+        expect(await rowCount(ROWS, ids)).toBe(0);
+        expect(await expiries(ids)).toEqual([]);
+        await enable("web_realtime");
+        const only = new Map<string, DeliverFn>([["web_realtime", delivered]]);
+        await cycleUntil(only, async () => (await rowCount(DELIVERED, newest)) === CAP);
+        const rows = (
+          await verify.query(
+            "SELECT event_id, projector, status FROM projector_deliveries WHERE event_id = ANY($1::uuid[])",
+            [ids],
+          )
+        ).rows;
+        expect(rows.map((row) => row.event_id).sort()).toEqual([...newest].sort());
+        expect(
+          rows.every((row) => row.projector === "web_realtime" && row.status === "delivered"),
+        ).toBe(true);
+        const records = await expiries(ids);
+        expect(records.map((row) => row.job_id).sort()).toEqual([...rest].sort());
+        expect(records.every((row) => row.reason === `${EXPIRED}:web_realtime:cap`)).toBe(true);
+      } finally {
+        await disable("web_realtime");
+      }
+    }, 60_000);
+
+    it.each(NAMES)(
+      "BS-7 %s: an unacked routed event older than the bound -> the CLI exits 2 unacked_backlog and changes nothing; after a cycle acks it the CLI succeeds and records one age",
+      async (projector) => {
+        const route = await routeOf(projector);
+        const id = await insertEvent(route.aggregate_type, route.event_type);
+        await backdate([id]);
+        try {
+          const refused = await runEnableCli(["enable", "--projector", projector]);
+          expect(refused.code).toBe(2);
+          expect(refused.stderr).toContain("unacked_backlog");
+          expect(await realProjectors()).toEqual(ALL_OFF);
+          expect(await deliveries(id)).toEqual([]);
+          expect(await expiries([id])).toEqual([]);
+          await ackedWhileOff([id], PROJECTORS);
+          await enable(projector);
+          expect(await deliveries(id)).toEqual([]);
+          expect(await expiries([id])).toEqual([
+            { job_id: id, reason: `${EXPIRED}:${projector}:age` },
+          ]);
+        } finally {
+          await disable(projector);
+        }
+      },
+      30_000,
+    );
+
+    it.each(NAMES)(
+      "BS-5 %s: a disable keeps the pending rows and a CLI re-enable resumes them (DD-134 unchanged), adding no row and no record for their events",
+      async (projector) => {
+        const route = await routeOf(projector);
+        const ids = [
+          await insertEvent(route.aggregate_type, route.event_type),
+          await insertEvent(route.aggregate_type, route.event_type),
+        ];
+        const spy = vi.fn(delivered);
+        const only = new Map<string, DeliverFn>([[projector, spy]]);
+        const pending = { projector, status: "pending", attempts: 0, error_code: null };
+        const audits = () =>
+          rowCount("SELECT 1 FROM job_audit_events WHERE job_id = ANY($1::uuid[])", ids);
+        try {
+          await ackedWhileOff(ids, only);
+          await enable(projector);
+          await disable(projector);
+          await cycle(only);
+          expect(spy).not.toHaveBeenCalled();
+          for (const id of ids) expect(await deliveries(id)).toEqual([pending]);
+          const before = await audits();
+          await enable(projector);
+          for (const id of ids) expect(await deliveries(id)).toEqual([pending]);
+          expect(await audits()).toBe(before);
+          expect(await expiries(ids)).toEqual([]);
+          await cycleUntil(only, async () => (await rowCount(DELIVERED, ids)) === ids.length);
+          for (const id of ids)
+            expect(await deliveries(id)).toEqual([
+              { ...pending, status: "delivered", attempts: 1 },
+            ]);
+        } finally {
+          await disable(projector);
+        }
+      },
+      30_000,
+    );
+  });
 });
