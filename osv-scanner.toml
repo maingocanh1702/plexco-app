@@ -5,3 +5,29 @@
 # (b) why the specific advisory cannot be triggered in this repo, and
 # (c) an ignoreUntil date that forces a re-review. Anything runtime-reachable,
 # or anything on the money/auth path, gets patched instead of ignored.
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-12-21
+reason = """
+braces 3.0.3 (CVE-2026-93687, High 8.7; no fixed release, last affected
+3.0.3), reached only via the root devDependency @next/eslint-plugin-next
+15.5.20 -> fast-glob 3.3.1 -> micromatch 4.0.8 -> braces 3.0.3 (lint tooling,
+never shipped). `pnpm why -r --prod braces` is empty: no web or bot runtime
+chain.
+
+The advisory is a stack-exhaustion denial of service through deeply nested
+brace patterns. Here every pattern comes from the repo's own lint and build
+configuration, never from request or user input. Next also vendors braces
+code inside its build-time file tracer (next/dist/compiled/@vercel/nft, not a
+lockfile package); only next/dist/build/collect-build-traces.js and
+next/dist/build/webpack/plugins/next-trace-entrypoints-plugin.js load it
+(`next build`), never next/dist/server or the request path.
+
+Not patched because no fixed braces release exists. Decision: lane L25 rule
+RO-L25-1 (i), a conductor decision under the owner's delegation of
+2026-10-22, not an owner signature; review owner: the repository owner.
+Reverse by deleting this entry. Re-review at ignoreUntil, or sooner if braces
+publishes a fixed release, if @next/eslint-plugin-next drops micromatch, or if
+braces gains a runtime path.
+"""
