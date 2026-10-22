@@ -21,6 +21,7 @@ import { closePendingJoinRequestOnExit } from "./join-request-service.js";
 import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
+import { stripInvisibleChars } from "./text-safety.js";
 
 /**
  * Host roster commands. `addMemberToSession` is the canonical join choke-point (DD-41 name); its
@@ -106,7 +107,10 @@ async function resolveMembership(
     return m.id;
   }
 
-  const name = (member as { displayName: string }).displayName;
+  const rawName = (member as { displayName: unknown }).displayName;
+  // L27: strip invisible code points first so the person and the membership row get the same value;
+  // an invisible-only name then fails exactly like an empty one. Non-strings reach the guard below as-is.
+  const name = typeof rawName === "string" ? stripInvisibleChars(rawName) : rawName;
   if (!isBoundedText(name, 1, DISPLAY_NAME_MAX) || name.trim().length === 0) {
     return fail("INVALID_INPUT", `displayName must be 1..${DISPLAY_NAME_MAX} characters`);
   }
