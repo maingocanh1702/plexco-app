@@ -1184,3 +1184,260 @@ describe("L29-RC P2, T1 and T2 keep their attributes and call member_name_apply_
     }).toEqual({ calls, interactive: calls, strip: false });
   });
 });
+
+// L29-W2 and L29-I1-I3 (unit U3, section 11): P3 zalo_identity_resolve, P4 auth_login_google and
+// M2 create_guest_membership apply member_name_apply_rule's mode true (section 7's P3, P4 and M2 SQL
+// rows): the class is removed and the rest stored, NULL when no visible character is left, never ''.
+// Each SQL is called as role `app` with the raw value (no TypeScript normalizer in front), so the
+// definer's own rule decides every cell; P3 cuts to 120 after it. A name never fails an ingress
+// writer and never changes the identity it resolves (threat 5).
+describe("L29-W2 and L29-I1-I3 P3, P4 and M2 normalize control, bidi, separator, U+2800 and blank-only names and never raise (0070, mode true)", () => {
+  type Zalo = { person_id: string; created: boolean; display_name: string | null };
+  type Google = { account_id: string; person_id: string; outcome: string };
+  /** P3's SQL as resolveZaloIdentity calls it; the returned display_name is the stored one. */
+  const zalo = async (input: string | null, userHash = `user-${randomUUID()}`) => {
+    const res = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.execute(
+        sql`SELECT person_id, created, display_name
+              FROM zalo_identity_resolve(${ctx.tenantA}::uuid, ${bot}::uuid, 'scope-mn', ${userHash},
+                                         ${Buffer.from("enc", "utf8")}, ${input})`,
+      ),
+    );
+    const r = res.rows[0] as Zalo;
+    expect(cps(r.display_name)).toEqual(cps(await nameOf(r.person_id)));
+    return r;
+  };
+  /** P4 as WRITERS' P4 calls it; a caller may repeat the subject and the email lookup hash. */
+  const google = async (
+    input: string | null,
+    subject = `gsub-${randomBytes(16).toString("hex")}`,
+    email = `glk-${randomBytes(10).toString("hex")}`,
+  ) =>
+    (
+      await ctx.appPool.query<Google>(
+        `SELECT account_id, person_id, outcome FROM auth_login_google($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          subject,
+          email,
+          randomBytes(24),
+          "kv1",
+          randomUUID(),
+          input,
+          `req-mn-${randomBytes(4).toString("hex")}`,
+        ],
+      )
+    ).rows[0]!;
+  /** M2: the source seeded raw by ctx.owner and reset after the read, as the MN block's M2 does. */
+  const guest = async (input: string | null) => {
+    const personId = await insertPerson(input);
+    const res = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.execute(
+        sql`SELECT create_guest_membership(${ctx.tenantA}::uuid, ${personId}::uuid) AS id`,
+      ),
+    );
+    const { rows } = await ctx.owner.query<{ display_name: string | null }>(
+      `SELECT display_name FROM memberships WHERE id = $1`,
+      [(res.rows[0] as { id: string }).id],
+    );
+    await ctx.owner.query(`UPDATE persons SET display_name = $2 WHERE id = $1`, [personId, SEED]);
+    return rows[0]!.display_name;
+  };
+  type W2Writer = { id: string; stored: (input: string | null) => Promise<string | null> };
+  const W2: W2Writer[] = [
+    {
+      id: "P3",
+      stored: async (input) => {
+        const r = await zalo(input);
+        expect(r.created).toBe(true); // a new Zalo user resolves whatever its name
+        return r.display_name;
+      },
+    },
+    {
+      id: "P4",
+      stored: async (input) => {
+        const r = await google(input);
+        expect(r.outcome).toBe("login_success"); // a new Google subject signs in whatever its name
+        return nameOf(r.person_id);
+      },
+    },
+    { id: "M2", stored: guest },
+  ];
+  const BIDI_CONTROL = [
+    0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  ];
+  /** Section 4's 16 Zs blanks: U+00A0, U+1680, U+2000-U+200A, U+202F, U+205F, U+3000. */
+  const ZS_BLANKS = [
+    0xa0,
+    0x1680,
+    ...Array.from({ length: 11 }, (_, i) => 0x2000 + i),
+    0x202f,
+    0x205f,
+    0x3000,
+  ];
+  /** [cell, input, the stored value, or null for NULL]: section 7's P3, P4 and M2 SQL rows. */
+  type Cell = [cell: string, input: string, stored: string | null];
+  const inside =
+    (cls: string) =>
+    (cp: number): Cell => [`${cls} U+${hex(cp)} inside`, mix("Lan", cp, "Nguyen"), "LanNguyen"];
+  const CELLS: Cell[] = [
+    ...[0x01, 0x1f, 0x7f, 0x80, 0x9f].map(inside("Cc")),
+    ...BIDI_CONTROL.map(inside("Bidi_Control")),
+    ...[0x2028, 0x2029].map(inside("separator")),
+    ["blank-only: NBSP", mix(0xa0), null],
+    ["blank-only: U+3000", mix(0x3000), null],
+    ["blank-only: the 16 Zs blanks", mix(...ZS_BLANKS), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+2800 inside is removed", mix("Lan", 0x2800, "Nguyen"), "LanNguyen"],
+    ["invisible-only", mix(0x200b, 0x3164, 0xe0001), null],
+    ["invisible-only with spaces", mix(" ", 0x200b, " ", 0xfeff, " "), null],
+    ["bidi-only (an override and an isolate)", mix(0x202e, 0x2066), null],
+    ["ordinary", "Lan Nguyen", "Lan Nguyen"],
+    [
+      "ordinary: a Zs blank inside is kept (NBSP)",
+      mix("Lan", 0xa0, "Nguyen"),
+      mix("Lan", 0xa0, "Nguyen"),
+    ],
+    [
+      "ordinary: the strip-and-trim result (NBSP, U+200B, U+3000)",
+      mix(0xa0, "Lan", 0x200b, " Nguyen", 0x3000),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB at both edges is trimmed", mix(0x09, "Lan Nguyen", 0x09), "Lan Nguyen"],
+    [
+      "edge: U+2028 and U+2029 at the edges are trimmed",
+      mix(0x2028, "Lan Nguyen", 0x2029),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB inside is removed", mix("Lan", 0x09, "Nguyen"), "LanNguyen"],
+    [
+      "edge: a blank left before a removed bidi is trimmed (NBSP, U+202E)",
+      mix("Lan", 0xa0, 0x202e),
+      "Lan",
+    ],
+  ];
+  it.each(
+    W2.flatMap((w) =>
+      CELLS.map(([cell, input, stored]) => ({ name: `${w.id}: ${cell}`, w, input, stored })),
+    ),
+  )("L29-W2 $name", async ({ w, input, stored }) => {
+    expect(cps(await w.stored(input))).toEqual(cps(stored));
+  });
+  it("L29-W2 P3: the 120 cut applies after the normalization", async () => {
+    // Cut first, the override would take one of the 120 places and leave 119 a's.
+    const r = await zalo(mix(0x202e, "a".repeat(120), 0x202c, "b"));
+    expect(r.display_name).toBe("a".repeat(120));
+  });
+
+  // L29-I1: every Cc, Cf, Zl and Zp scalar SQL text can hold (no U+0000; a superset of section 4's
+  // R), alone and among visible text, then section 11's hostile names: each call completes, the P3
+  // user resolves (created) and the P4 subject signs in (login_success), and nothing stores ''.
+  it.each(["P3", "P4"])(
+    "L29-I1 %s never raises on a hostile name",
+    async (id) => {
+      const control = /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]$/u;
+      const every: number[] = [];
+      for (let cp = 1; cp <= 0x10ffff; cp++) {
+        if ((cp < 0xd800 || cp > 0xdfff) && control.test(String.fromCodePoint(cp))) every.push(cp);
+      }
+      const hostile = [
+        mix("Lan", ...every, "Nguyen"),
+        mix(...every),
+        mix(0x202e, "Lan Nguyen", 0x202c),
+        mix("Lan", 0x2028, "Nguyen"),
+        mix(...ZS_BLANKS, 0x2800),
+        mix(0x200b, 0x3164, 0xe0001),
+      ];
+      const w = W2.find((x) => x.id === id)!;
+      for (const input of hostile) {
+        expect(await w.stored(input)).not.toBe("");
+      }
+    },
+    30_000,
+  );
+
+  // L29-I2: the identity is decided by the provider ids alone, so a hostile name, first or second,
+  // gives what two clean names give: the same person (and account) and the same created or outcome pair.
+  const HOSTILE = mix(0x202e, "Lan", 0x2028, "Nguyen", 0x01);
+  it("L29-I2 P3: a hostile and a clean name resolve the same person, in either order", async () => {
+    const pair = async (first: string, second: string) => {
+      const userHash = `user-${randomUUID()}`;
+      const a = await zalo(first, userHash);
+      const b = await zalo(second, userHash);
+      return { created: [a.created, b.created], same: a.person_id === b.person_id };
+    };
+    const clean = await pair("Lan Nguyen", "Lan Nguyen");
+    expect(clean).toEqual({ created: [true, false], same: true });
+    expect(await pair(HOSTILE, "Lan Nguyen")).toEqual(clean);
+    expect(await pair("Lan Nguyen", HOSTILE)).toEqual(clean);
+  });
+  it("L29-I2 P4: a hostile and a clean name sign in to the same account and person, in either order", async () => {
+    const pair = async (first: string, second: string) => {
+      const subject = `gsub-${randomBytes(16).toString("hex")}`;
+      const email = `glk-${randomBytes(10).toString("hex")}`;
+      const a = await google(first, subject, email);
+      const b = await google(second, subject, email);
+      return {
+        outcomes: [a.outcome, b.outcome],
+        same: a.account_id === b.account_id && a.person_id === b.person_id,
+      };
+    };
+    const clean = await pair("Lan Nguyen", "Lan Nguyen");
+    expect(clean.same).toBe(true);
+    expect(await pair(HOSTILE, "Lan Nguyen")).toEqual(clean);
+    expect(await pair("Lan Nguyen", HOSTILE)).toEqual(clean);
+  });
+
+  // L29-I3: a NULL display name stays NULL (P3 and P4 ingress, M2's NULL source).
+  it.each(W2)("L29-I3 $id: a NULL display name stays NULL", async ({ stored }) => {
+    expect(await stored(null)).toBeNull();
+  });
+});
+
+// L29-RC part two (unit U3, section 11): the ingress and copy definers 0070 re-creates, mode true.
+// P3, P4 and M2 keep their owner, prosecdef, proconfig and ACL (the RC-ACL pattern above), and every
+// call of the rule is the ingress one on the writer's own argument (M2: the copied source column).
+describe("L29-RC P3, P4 and M2 keep their attributes and call member_name_apply_rule with mode true", () => {
+  const RULE_SIG = "public.member_name_apply_rule(text, boolean)";
+  const RC = [
+    { fn: "zalo_identity_resolve", arg: "p_display_name" },
+    { fn: "auth_login_google", arg: "p_display_name" },
+    { fn: "create_guest_membership", arg: "p.display_name" },
+  ].map((r) => ({ ...r, w: RECREATED.find((w) => fnName(w) === r.fn)! }));
+  it.each(RC)("L29-RC $fn", async ({ arg, w }) => {
+    const { rows } = await ctx.owner.query<Record<string, unknown>>(
+      `SELECT p.prosecdef AS security_definer, p.proconfig AS config,
+              p.proowner = h.proowner AS helper_owner, p.proowner = r.proowner AS rule_owner,
+              p.proowner = anchor.proowner AS anchor_owner,
+              ARRAY(SELECT a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee = p.proowner) AS owner_privileges,
+              ARRAY(SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+                           || ':' || a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee <> p.proowner ORDER BY 1) AS grants,
+              p.prosrc AS src
+         FROM pg_proc p, pg_proc h, pg_proc r, pg_proc anchor
+        WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure AND r.oid = $3::regprocedure
+          AND anchor.oid = 'public.tenant_public_alias_set(uuid, uuid, text)'::regprocedure`,
+      [w.sig, HELPER_SIG, RULE_SIG],
+    );
+    const { src, ...attrs } = rows[0]!;
+    expect(attrs).toEqual({
+      security_definer: true,
+      config: [`search_path=${w.searchPath}`],
+      helper_owner: true,
+      rule_owner: true,
+      anchor_owner: true,
+      owner_privileges: ["EXECUTE"],
+      grants: ["app:EXECUTE"],
+    });
+    // One call of the rule, the ingress one on the writer's own argument, and the L27 strip call it
+    // replaced is gone (one definition of the rule, threat 6).
+    const body = String(src);
+    expect({
+      calls: body.split("member_name_apply_rule(").length - 1,
+      ingress: body.split(`public.member_name_apply_rule(${arg}, true)`).length - 1,
+      strip: body.includes("public_name_strip_invisible("),
+    }).toEqual({ calls: 1, ingress: 1, strip: false });
+  });
+});
