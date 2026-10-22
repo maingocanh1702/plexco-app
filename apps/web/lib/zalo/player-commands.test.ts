@@ -672,10 +672,6 @@ const UNAVAILABLE: [string, () => Record<string, unknown>, boolean?][] = [
   ["club missing", () => ({ readCharges: charges([OTHER]) })],
   ["club status unknown", () => ({ readCharges: clubA(UNK) })],
   [
-    "club known_zero, a free session (D4): R-17, not R-16",
-    () => ({ readCharges: clubA({ kind: "known_zero", currency: "VND", asOf: AT }) }),
-  ],
-  [
     "joined session absent from known_amount, other sessions listed",
     () => ({ readCharges: clubA(owes([charge(2, 150000), charge(3, 120000)])) }),
   ],
@@ -745,6 +741,23 @@ describe("runPlayerCommand: the /join ACTIVE reply's amount owed (DD-140, L21 D1
     },
   );
 
+  it("D4 active, club known_zero (owner item 5): R-1 then R-16, as /pay renders it, no log", async () => {
+    const spy = vi.spyOn(log, "error").mockImplementation(() => {});
+    const over = () => ({
+      readCharges: clubA({ kind: "known_zero", currency: "VND", asOf: AT }),
+    });
+    const d = amountDeps(over());
+    const texts = [await run(num("1"), d), await run(num("1"), amountDeps(over()), "vi")];
+    expect(texts).toEqual([
+      `You have a place in ${REF("en")}.\nYou have nothing to pay.`,
+      `Bạn đã có chỗ trong buổi ${REF("vi")}.\nBạn không có khoản nào cần trả.`,
+    ]);
+    texts.forEach(expectSafe);
+    readOnceWithOwnAccount(d);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it("D5-D6 waitlisted and requested: R-2 and R-3 unchanged, no money read at all", async () => {
     const cases: [string, number | null, { en: string; vi: string }][] = [
       [
@@ -812,5 +825,17 @@ describe("runPlayerCommand: the /join ACTIVE reply's amount owed (DD-140, L21 D1
     ]);
     expect(readCharges.mock.calls).toEqual([[ACC], [ACC]]);
     expect(payContext.mock.calls).toEqual([[[]], [[S]], [[]]]);
+  });
+
+  it("D4/D8 known_zero (owner item 5): the /join amount line is the whole /pay reply, en and vi", async () => {
+    for (const l of ["en", "vi"] as const) {
+      const d = amountDeps({
+        readCharges: clubA({ kind: "known_zero", currency: "VND", asOf: AT }),
+      });
+      const pay = await run(PAY, d, l);
+      const join = (await run(num("1"), d, l)).split("\n");
+      expect(join).toEqual([runWithLang(l, () => reply("R1", { ref: REF(l) })), pay]);
+      expect(pay).toBe(runWithLang(l, () => reply("R16")));
+    }
   });
 });

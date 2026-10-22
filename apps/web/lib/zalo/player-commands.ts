@@ -158,9 +158,13 @@ async function numberReply(token: string, deps: PlayerCommandDeps): Promise<stri
   // an existing seat read the same (P-11). Shown only for EXACTLY one matching charge:
   // 0 or 2+ (never summed, never picked) and a throw (logged by reason only) are R17. Never 0,
   // never a guess. Waitlisted and requested replies never read money.
+  // known_zero (the club owes nothing: a free session or a fully paid seat) shows R16 exactly as
+  // /pay renders it (owner decision item 5 of 2026-10-22; DD-143 expected). absent stays R17: it
+  // can mean a different person (P-29) or an ended membership and proves nothing about this seat.
   let line = reply("R17");
   try {
     const st = await ownClubPaymentStatus(deps);
+    if (st.kind === "known_zero") line = reply("R16");
     const items =
       st.kind === "known_amount" ? st.items.filter((i) => i.sessionRef === row.sessionId) : [];
     const item = items.length === 1 ? items[0] : undefined;
