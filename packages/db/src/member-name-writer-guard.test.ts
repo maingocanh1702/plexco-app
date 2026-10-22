@@ -196,3 +196,87 @@ describe("G3 triggers: the non-internal triggers on the four tables are exactly 
     ]);
   });
 });
+
+/** L27 unit U3b, G4: the TypeScript trees section 11 scans, minus tests, apps/web/e2e and fixtures. */
+const ROOT = new URL("../../../", import.meta.url);
+const TS_DIRS = ["packages/db/src", "packages/db/scripts", "apps/web", "apps/bot/src"];
+const SKIP = new Set(["node_modules", ".next", "apps/web/e2e"]);
+const FIXTURES = new Set([
+  "packages/db/src/test-harness.ts",
+  "packages/db/src/roster-money-fixtures.ts",
+  "packages/db/scripts/dev-seed-club-members.ts",
+]);
+/** A Drizzle `.insert(`/`.update(` of one of the four tables, or a raw SQL INSERT or UPDATE of one. */
+const TS_WRITE =
+  /\.(?:insert|update)\(\s*(?:\w+\.)*(persons|memberships|tenants|sessions)\s*\)|\b(?:insert\s+into|update)\s+(?:only\s+)?(?:public\.)?"?(persons|memberships|tenants|sessions)\b/gi;
+/** The guarded column's TS key per table; tenants has none: it may have no direct writer at all. */
+const TS_KEY: Record<string, string> = {
+  persons: "displayName",
+  memberships: "displayName",
+  sessions: "venueAddress",
+};
+/** Section 11's direct writers measured at the 0069 tail: "file table" -> writes the column. */
+const DIRECT: Record<string, boolean> = {
+  "packages/db/src/roster-service.ts memberships": true,
+  "packages/db/src/session-service.ts sessions": true,
+  "packages/db/src/tenant.ts sessions": false,
+};
+
+const scan = (dir: string): string[] =>
+  readdirSync(new URL(`${dir}/`, ROOT), { withFileTypes: true }).flatMap((d) => {
+    const rel = `${dir}/${d.name}`;
+    if (d.isDirectory()) return SKIP.has(d.name) || SKIP.has(rel) ? [] : scan(rel);
+    return /(?<!\.test)\.tsx?$/.test(d.name) ? [rel] : [];
+  });
+
+// ponytail: file-level presence, not data flow (any stripInvisibleChars( call passes a writer
+// file; an aliased table import escapes the matcher); the MN and TS rows prove the actual strip.
+function g4(files: Record<string, string>, pinned = DIRECT): string[] {
+  const found = new Set(
+    Object.entries(files).flatMap(([file, src]) =>
+      [...src.matchAll(TS_WRITE)].map((m) => `${file} ${(m[1] ?? m[2])!.toLowerCase()}`),
+    ),
+  );
+  const bad = [...found].flatMap((hit) => {
+    const [file, table] = hit.split(" ") as [string, string];
+    const key = TS_KEY[table];
+    if (!key) return [`tenants direct writer ${file}`];
+    if (pinned[hit] === undefined) return [`unlisted direct writer ${hit}`];
+    const strips = files[file]!.includes("stripInvisibleChars(");
+    if (pinned[hit]) return strips ? [] : [`pinned writer without the strip ${hit}`];
+    return files[file]!.includes(key) ? [`pinned non-writer names ${key} ${hit}`] : [];
+  });
+  const stale = Object.keys(pinned).filter((p) => !found.has(p));
+  return [...bad, ...stale.map((p) => `stale entry ${p}`)];
+}
+
+describe("G4 TypeScript: every direct writer of the four tables is pinned and strips", () => {
+  const all = TS_DIRS.flatMap(scan);
+  const files = Object.fromEntries(
+    all.filter((f) => !FIXTURES.has(f)).map((f) => [f, readFileSync(new URL(f, ROOT), "utf8")]),
+  );
+  it("holds on the sources: every tree scanned, the measured direct-writer list", () => {
+    const seen = TS_DIRS.filter((d) => all.some((f) => f.startsWith(`${d}/`)));
+    expect(seen, "every tree scanned").toEqual(TS_DIRS);
+    expect(g4(files), "G4 violations (by file table)").toEqual([]);
+  });
+  it("fails on planted rows: unlisted, tenants, no strip, key named, stale", () => {
+    const planted = {
+      "u.ts": "await tx.insert(schema.persons).values({ displayName });",
+      "t.ts": "await db.query(`UPDATE\n  tenants SET name = $1`);",
+      "w.ts": "await tx.update(sessions).set({ venueAddress: v.trim() });",
+      "n.ts": "await tx.insert(sessions).values({ venueAddress: null });",
+      "i.ts": "await tx.select().from(persons); await tx.delete(memberships);",
+    };
+    const pinned = { "w.ts sessions": true, "n.ts sessions": false, "gone.ts memberships": true };
+    expect(g4(planted, pinned).sort()).toEqual(
+      [
+        "unlisted direct writer u.ts persons",
+        "tenants direct writer t.ts",
+        "pinned writer without the strip w.ts sessions",
+        "pinned non-writer names venueAddress n.ts sessions",
+        "stale entry gone.ts memberships",
+      ].sort(),
+    );
+  });
+});
