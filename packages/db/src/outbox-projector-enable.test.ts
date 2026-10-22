@@ -549,7 +549,10 @@ describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and print
     expect(await isPublic(cancelled)).toBe(true);
     await ctx.owner.query("UPDATE sessions SET status = 'cancelled' WHERE id = $1", [cancelled]);
     const published = await openSession();
-    const events = [await seedOne("session", tenantId, type), await seedOne("session", tenantId, type)];
+    const events = [
+      await seedOne("session", tenantId, type),
+      await seedOne("session", tenantId, type),
+    ];
     await drain(events);
     await age(events, BACKFILL_MAX_AGE_MINUTES + 1);
     expect(await isPublic(published)).toBe(false);
@@ -568,6 +571,58 @@ describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and print
         events,
         events.map((id): [string, string, Why] => [id, tenantId, "age"]),
       );
+      expect(await otherAudits()).toBe(auditsBefore);
+    } finally {
+      await setEnabled("public_sessions", false);
+    }
+  }, 30_000);
+
+  it("EN-9 (rejected alias): a club whose alias was rejected while off keeps no stale public row: its row, public while it ran, is gone after the run, as 0067's writer decides (no approved alias -> not listable -> no row); the event past the bound gets one ':age' record; the rebuild writes no audit row", async () => {
+    const tenantId = String(
+      (
+        await one(
+          `INSERT INTO tenants (name, slug, public_alias, public_alias_status)
+           VALUES ('EN9R Club', 'en9r-club', 'CLB EN9R', 'approved') RETURNING id`,
+        )
+      ).id,
+    );
+    // EN-9's open public session, minimum columns: listable in every way but the alias
+    const sessionId = String(
+      (
+        await one(
+          `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address,
+             area, price_amount, slots_max, visibility, join_policy, status)
+           VALUES ($1, $2, now() + interval '1 day', now() + interval '26 hours', 'Asia/Ho_Chi_Minh',
+             'EN9R Venue', '2 Public Street', 'Quan 7', 50000, 10, 'public', 'open', 'open')
+           RETURNING id`,
+          [tenantId, ctx.badmintonSportId],
+        )
+      ).id,
+    );
+    await worker("SELECT public_sessions_project_session($1, NULL)", [sessionId]); // public while it ran
+    expect(await isPublic(sessionId)).toBe(true);
+    // while off: public-sessions-projector.test.ts PSP-4's rejection; the view hides the club, the row stays
+    await ctx.owner.query("UPDATE tenants SET public_alias_status = 'rejected' WHERE id = $1", [
+      tenantId,
+    ]);
+    const event = await seedOne("tenant", tenantId, "tenant.public_alias_rejected");
+    await drain([event]);
+    await age([event], BACKFILL_MAX_AGE_MINUTES + 1);
+    expect(await isPublic(sessionId)).toBe(true); // stale until a rebuild
+    const candidates = await rebuildCandidates();
+    expect(candidates).toContain(sessionId);
+    const tenantRows = async () =>
+      Number(
+        (await one("SELECT count(*) AS n FROM public_sessions WHERE tenant_id = $1", [tenantId])).n,
+      );
+    const auditsBefore = await otherAudits();
+    try {
+      expect(await enable("public_sessions")).toEqual(
+        summary("public_sessions", { expired_age: 1, rebuilt_sessions: candidates.length }),
+      );
+      expect(await tenantRows()).toBe(0);
+      expect(await deliveries("public_sessions", [event])).toEqual([]);
+      await expectRecords("public_sessions", [event], [[event, tenantId, "age"]]);
       expect(await otherAudits()).toBe(auditsBefore);
     } finally {
       await setEnabled("public_sessions", false);
@@ -593,7 +648,11 @@ describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and print
 
     // Argument errors are refused before connecting: with DATABASE_URL_MIGRATION unset ("") a run that got
     // past parsing ends in exit 1 instead. A DSN argument is one of them: the connection is environment only.
-    const badArgs = [[], ["enable", "--projector", "Bad-Name"], ["enable", "--projector", "en10_test", ownerUrl()]];
+    const badArgs = [
+      [],
+      ["enable", "--projector", "Bad-Name"],
+      ["enable", "--projector", "en10_test", ownerUrl()],
+    ];
     for (const args of badArgs) {
       const run = await runCli(args, "");
       expect([run.status, run.stdout]).toEqual([2, ""]);
@@ -613,7 +672,10 @@ describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and print
     // backfill). The seam is the CLI's own client, whose first COMMIT ends transaction 1; main() maps every
     // Refusal to exit 2, as the unknown-projector run above shows.
     const seat = await ownerSeat();
-    const send = seat.query.bind(seat) as (sql: string, params?: unknown[]) => Promise<pg.QueryResult>;
+    const send = seat.query.bind(seat) as (
+      sql: string,
+      params?: unknown[],
+    ) => Promise<pg.QueryResult>;
     let commits = 0;
     Object.assign(seat, {
       query: async (sql: string, params?: unknown[]) => {
