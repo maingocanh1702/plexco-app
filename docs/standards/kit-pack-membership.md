@@ -147,6 +147,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/check-dev-login-exclusion.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/check-dev-login-exclusion.test.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/outbox-dlq-replay.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/outbox-projector-enable.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/public-alias-moderate.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/ap-evidence.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
@@ -169,6 +170,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/check-dev-login-exclusion.mjs`** — No canonical copy. Repo-owned CI guard (local-only dev-login, S5): fails `pnpm test` when the dev-login flag appears in deploy, container or CI config; the scanned globs are listed once, in the script header.
 - **`scripts/check-dev-login-exclusion.test.mjs`** — No canonical copy. Tests the guard on planted occurrences, a clean tree, the git listing and this repository.
 - **`scripts/outbox-dlq-replay.mjs`** — No canonical copy. Repo-owned owner CLI (L3): DLQ inspect and replay through job_definer definers.
+- **`scripts/outbox-projector-enable.mjs`** — No canonical copy. Repo-owned owner CLI (L24): enables an outbox projector with a bounded backfill through existing job_definer definers.
 - **`scripts/public-alias-moderate.mjs`** — No canonical copy. Repo-owned owner CLI (L10a): public alias moderation (list pending, approve, reject) through the 0060 owner-only definers.
 
 ---
