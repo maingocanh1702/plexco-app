@@ -52,10 +52,22 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
+// zalo_dm's delivery age bound: ONE definition, shared with apps/bot/src/dispatcher.ts (DD-146), and
+// validated at load as there (a positive integer, else throw: fail closed).
+const zaloDmDeliveryAgeBound = createRequire(import.meta.url)("../apps/bot/src/zalo-dm-delivery-age-bound.json");
+export const ZALO_DM_MAX_AGE_MINUTES = zaloDmDeliveryAgeBound.maxAgeMinutes;
+if (!Number.isInteger(ZALO_DM_MAX_AGE_MINUTES) || ZALO_DM_MAX_AGE_MINUTES <= 0) {
+  throw new Error("zalo-dm-delivery-age-bound.json: maxAgeMinutes must be a positive integer");
+}
+
 // D2 and D3 of the readiness file (Tier B defaults, pending owner sign-off).
-// BACKFILL_MAX_AGE_MINUTES caps an event's age when its delivery row is PREPARED. It is of the order of
-// DD-134's own retry stretch (8 attempts, waits of 15 s x 2^(n-1) = 1905 s of backoff), so a backfilled DM
-// lands at worst about 70 minutes after its event against about 39 on the live path (AM2).
+// A projector's age bound is used by the step-1 refusal and the step-2 window: it caps an event's age when
+// its delivery row is PREPARED. zalo_dm uses the shared delivery age bound from
+// apps/bot/src/zalo-dm-delivery-age-bound.json (DD-146: the dispatcher expires a zalo_dm delivery past the
+// same bound at delivery time, so each projector has one bound; DF6 of the L31 readiness file
+// docs/sessions/web-mvp-phase3-readiness-p3-zalo-dm-delivery-age-expiry.md). Every other projector keeps
+// BACKFILL_MAX_AGE_MINUTES (30), of the order of DD-134's own retry stretch (8 attempts, waits of
+// 15 s x 2^(n-1) = 1905 s of backoff).
 // BACKFILL_MAX_ROWS is the flood guard of threat 2 (readiness 6.2): at most this many ACKED in-window
 // events per projector per run, newest first; every other acked candidate gets an expiry record.
 export const BACKFILL_MAX_AGE_MINUTES = 30;
@@ -135,15 +147,17 @@ async function inOwnerTransaction(client, work) {
  * `client` is a connected pg.Client on the owner path. Returns the summary; throws a Refusal for exit 2.
  */
 export async function enableProjector(client, projector) {
+  // DF6 (lane L31): the CLI's first per-projector bound (see the bound comment at the top).
+  const maxAgeMinutes = projector === "zalo_dm" ? ZALO_DM_MAX_AGE_MINUTES : BACKFILL_MAX_AGE_MINUTES;
   const changed = await inOwnerTransaction(client, async () => {
     const found = await client.query("SELECT 1 FROM outbox_projectors WHERE name = $1 FOR UPDATE", [projector]);
     if (found.rowCount === 0) throw new Refusal("projector_not_found", projector);
-    const backlog = await client.query(UNACKED_BACKLOG_SQL, [projector, BACKFILL_MAX_AGE_MINUTES]);
+    const backlog = await client.query(UNACKED_BACKLOG_SQL, [projector, maxAgeMinutes]);
     const unacked = backlog.rows[0].n;
     if (unacked > 0) {
       throw new Refusal(
         "unacked_backlog",
-        `${unacked} routed events are unacked and older than ${BACKFILL_MAX_AGE_MINUTES} minutes; let the worker ack them (runbook), then re-run`,
+        `${unacked} routed events are unacked and older than ${maxAgeMinutes} minutes; let the worker ack them (runbook), then re-run`,
       );
     }
     const set = await client.query("SELECT outbox_projector_set_enabled($1, true) AS changed", [projector]);
@@ -158,7 +172,7 @@ export async function enableProjector(client, projector) {
     const prefix = `${EXPIRY_REASON}:${projector}:`;
     const candidates = await client.query(CANDIDATES_SQL, [
       projector,
-      BACKFILL_MAX_AGE_MINUTES,
+      maxAgeMinutes,
       BACKFILL_MAX_ROWS,
       prefix,
     ]);
