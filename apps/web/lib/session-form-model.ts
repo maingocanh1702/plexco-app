@@ -103,21 +103,93 @@ export function hasHiddenChar(value: string): boolean {
 }
 
 /**
- * True when the value this form would SEND (trimmed, blank = null) holds a hidden character. In
- * edit mode a value whose textKey equals the loaded one is skipped: buildUpdateBody compares in the
- * same form and does not send it, so a legacy value must not block saving other fields; once edited
- * it is held to the rule.
+ * STRIP_CHAR_RANGES of packages/db/src/text-safety.ts (the single server list), copied as numbers
+ * because the code points are invisible in source: Default_Ignorable_Code_Point minus Bidi_Control,
+ * Unicode 17.0, 4162 code points in 16 inclusive [first, last] ranges. Client code cannot import
+ * the db package (FE-INV-3), so this is the web's one copy; session-form-model.test.ts pins
+ * stripInvisibleChars against the server function over every code point. Do not fork it:
+ * club-settings-model.ts imports stripInvisibleChars from here.
  */
-function hasNewHiddenChar(raw: string, initialRaw: string | undefined): boolean {
-  const sent = textOrNull(raw);
-  if (sent === null || !hasHiddenChar(sent)) return false;
-  return initialRaw === undefined || sent !== textKey(initialRaw);
+const STRIP_CHAR_RANGES: readonly (readonly [first: number, last: number])[] = [
+  [0x00ad, 0x00ad],
+  [0x034f, 0x034f],
+  [0x115f, 0x1160],
+  [0x17b4, 0x17b5],
+  [0x180b, 0x180f],
+  [0x200b, 0x200d],
+  [0x2060, 0x2065],
+  [0x206a, 0x206f],
+  [0x3164, 0x3164],
+  [0xfe00, 0xfe0f],
+  [0xfeff, 0xfeff],
+  [0xffa0, 0xffa0],
+  [0xfff0, 0xfff8],
+  [0x1bca0, 0x1bca3],
+  [0x1d173, 0x1d17a],
+  [0xe0000, 0xe0fff],
+];
+
+function isStripCodePoint(codePoint: number): boolean {
+  return STRIP_CHAR_RANGES.some(([first, last]) => codePoint >= first && codePoint <= last);
 }
 
 /**
- * A text field (area, venue name, address) in the form this client sends and compares: trimmed,
- * blank = null. The server does not trim: it stores the value it receives as-is (session-service.ts),
- * so a legacy value with surrounding spaces is stored raw and only compares equal here after trimming.
+ * Client mirror of stripInvisibleChars (packages/db/src/text-safety.ts, L23, DD-138 sign-off A.1: the
+ * strip every publicly displayed name goes through before any other check; here the session area and
+ * venue name). Removes every STRIP code point and changes nothing else (no trim, no normalisation).
+ * It is the server's linear scan over UTF-16 code units, not one regex pass: a lone high and a lone
+ * low surrogate around a stripped code point meet once it is gone, and the code point they form gets
+ * the same test (U+DB40 U+200B U+DD00 leaves nothing; one regex pass would leave U+E0100, a variation
+ * selector). The rule as written strips U+200D and U+FE0F, so a composed emoji splits (no exception).
+ */
+export function stripInvisibleChars(value: string): string {
+  const kept: string[] = [];
+  for (const unit of value.split("")) {
+    const code = unit.charCodeAt(0);
+    const last = kept[kept.length - 1]?.charCodeAt(0) ?? 0;
+    if (code >= 0xdc00 && code <= 0xdfff && last >= 0xd800 && last <= 0xdbff) {
+      // A low surrogate after a kept high surrogate: the pair is one code point.
+      if (isStripCodePoint(0x10000 + (last - 0xd800) * 0x400 + (code - 0xdc00))) kept.pop();
+      else kept.push(unit);
+    } else if (!isStripCodePoint(code)) {
+      kept.push(unit);
+    }
+  }
+  return kept.join("");
+}
+
+/**
+ * area and venue name as this form validates, sends and compares them (L23): STRIP code points
+ * removed first, then the usual trim (textOrNull), blank = null. A value of invisible code points
+ * only is therefore exactly an empty one (same message, same sent value). venueAddress is not a
+ * public name and keeps textOrNull / textKey.
+ */
+const publicNameOrNull = (raw: string): string | null => textOrNull(stripInvisibleChars(raw));
+const publicNameKey = (raw: string | null | undefined): string | null =>
+  publicNameOrNull(raw ?? "");
+
+/**
+ * True when the value this form would SEND holds a hidden character. `key` turns a raw field into
+ * the value sent (trimmed, blank = null; publicNameOrNull for the public names, so stripped first).
+ * In edit mode a value whose key equals the loaded one is skipped: buildUpdateBody compares in the
+ * same form and does not send it, so a legacy value must not block saving other fields; once edited
+ * it is held to the rule.
+ */
+function hasNewHiddenChar(
+  raw: string,
+  initialRaw: string | undefined,
+  key: (raw: string) => string | null = textOrNull,
+): boolean {
+  const sent = key(raw);
+  if (sent === null || !hasHiddenChar(sent)) return false;
+  return initialRaw === undefined || sent !== key(initialRaw);
+}
+
+/**
+ * The venue address (area and venue name use publicNameKey, which strips first) in the form this
+ * client sends and compares: trimmed, blank = null. The server does not trim: it stores the value
+ * it receives as-is (session-service.ts), so a legacy value with surrounding spaces is stored raw
+ * and only compares equal here after trimming.
  * validateForm's legacy exemptions (address cap, hidden characters) and buildUpdateBody's "changed?"
  * diff ALL compare in this form, so a field exempted as untouched is also never sent (a legacy value
  * with surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).
@@ -153,7 +225,7 @@ export function validateForm(
     );
   }
 
-  if (hasNewHiddenChar(v.venueName, initial?.venueName)) {
+  if (hasNewHiddenChar(v.venueName, initial?.venueName, publicNameOrNull)) {
     e.venueName = t(
       "Tên sân không được chứa ký tự điều khiển hoặc ký tự ẩn.",
       "The venue name cannot contain control or hidden characters.",
@@ -177,7 +249,7 @@ export function validateForm(
   }
 
   // Area after the address: the summary lists errors in form order (venue name, address, area).
-  if (hasNewHiddenChar(v.area, initial?.area)) {
+  if (hasNewHiddenChar(v.area, initial?.area, publicNameOrNull)) {
     e.area = t(
       "Khu vực không được chứa ký tự điều khiển hoặc ký tự ẩn.",
       "The area cannot contain control or hidden characters.",
@@ -209,7 +281,7 @@ export function validateForm(
   }
 
   if (v.visibility === "public") {
-    if (v.area.trim() === "") {
+    if (publicNameOrNull(v.area) === null) {
       e.area = t("Kèo công khai cần có khu vực.", "A public session needs an area.");
     }
     if (slots === null) {
@@ -239,8 +311,8 @@ export function buildCreateBody(
     visibility: v.visibility,
     joinPolicy: v.joinPolicy,
   };
-  const area = textOrNull(v.area);
-  const venueName = textOrNull(v.venueName);
+  const area = publicNameOrNull(v.area);
+  const venueName = publicNameOrNull(v.venueName);
   const venueAddress = textOrNull(v.venueAddress);
   if (area !== null) body.area = area;
   if (venueName !== null) body.venueName = venueName;
@@ -281,10 +353,12 @@ export function buildUpdateBody(
   if (slots !== original.slotsMax) body.slotsMax = slots;
   if (v.visibility !== original.visibility) body.visibility = v.visibility;
   if (v.joinPolicy !== original.joinPolicy) body.joinPolicy = v.joinPolicy;
-  const area = textKey(v.area);
-  if (area !== textKey(original.area)) body.area = area;
-  const venueName = textKey(v.venueName);
-  if (venueName !== textKey(original.venueName)) body.venueName = venueName;
+  // L23: the public names compare and send in stripped form (publicNameKey, both sides), so a value
+  // equal to the loaded one after stripping is no change and the sent value is the stripped one.
+  const area = publicNameKey(v.area);
+  if (area !== publicNameKey(original.area)) body.area = area;
+  const venueName = publicNameKey(v.venueName);
+  if (venueName !== publicNameKey(original.venueName)) body.venueName = venueName;
   const venueAddress = textKey(v.venueAddress);
   if (venueAddress !== textKey(original.venueAddress)) body.venueAddress = venueAddress;
   // DD-139 D-8: only when it differs; an older response without the field compares as off.

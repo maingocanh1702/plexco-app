@@ -6,7 +6,7 @@ import { CLUB_ACTION, ClubConfigError } from "./club-config.js";
 import { pgErrorHasCode } from "./pg-error.js";
 import { authorize } from "./tenant-capability-authority.js";
 import { withTenant } from "./tenant.js";
-import { hasHiddenChar, hasVisibleChar } from "./text-safety.js";
+import { hasHiddenChar, hasVisibleChar, stripInvisibleChars } from "./text-safety.js";
 
 /**
  * Club public alias (Phase 3 L10a, migration 0060): the only club name that may ever become public
@@ -38,14 +38,16 @@ export interface SetPublicAliasParams {
 export type SetPublicAliasResult = PublicAliasState & { changed: boolean; replayed: boolean };
 
 /**
- * Trim, then 1..60 code points, no hidden character and at least one visible one: the display-name
- * rule of me-settings.ts over the same text-safety constants that the 0060 set definer enumerates.
+ * Strip the invisible set (text-safety.ts, L23), trim, then 1..60 code points, no hidden character
+ * and at least one visible one: the display-name rule of me-settings.ts on the stripped value, the
+ * order of the set definer (0060, re-created by 0068 to strip before its trim). The stripped,
+ * trimmed value is the one returned and stored; an invisible-only alias is refused like an empty one.
  */
 export function validatePublicAlias(raw: unknown): string {
   if (typeof raw !== "string") {
     throw new ClubConfigError("INVALID_INPUT", "public alias must be a string");
   }
-  const alias = raw.trim();
+  const alias = stripInvisibleChars(raw).trim();
   const length = [...alias].length;
   if (length < 1 || length > PUBLIC_ALIAS_MAX || hasHiddenChar(alias) || !hasVisibleChar(alias)) {
     throw new ClubConfigError(

@@ -1,6 +1,6 @@
 import type { ClubConfigDto, ClubPatchBody } from "./club-settings-client";
 import { INT4_MAX, formatVndInput, parseVndInput } from "./money";
-import { hasHiddenChar } from "./session-form-model";
+import { hasHiddenChar, stripInvisibleChars } from "./session-form-model";
 
 /**
  * Pure model of the club settings forms: option lists and "what changed" -> PATCH body. The route
@@ -42,13 +42,26 @@ export function clubNameProblem(raw: string): ClubNameProblem | null {
 export type PublicAliasProblem = ClubNameProblem;
 
 /**
- * Client mirror of validatePublicAlias (packages/db/src/public-alias.ts, the 0060 set definer): trim only,
- * 1..60 CODE POINTS (not UTF-16 units, unlike clubNameProblem), no hidden character (hasHiddenChar,
- * the pinned text-safety mirror) and at least one visible one, i.e. neither whitespace nor
- * Default_Ignorable (`\p{DI}`): an invisible-only alias renders blank, so it reads as "empty".
+ * The public alias as this form validates and sends it (L23, DD-138 sign-off A.1): the invisible set
+ * removed first (stripInvisibleChars, the web's one mirror of the server list, not a second copy),
+ * then the usual trim. Strip before trim, as validatePublicAlias and the 0068 set definer do, so an
+ * invisible code point next to spaces cannot survive the trim.
+ */
+export function publicAliasValue(raw: string): string {
+  return stripInvisibleChars(raw).trim();
+}
+
+/**
+ * Client mirror of validatePublicAlias (packages/db/src/public-alias.ts, the 0060 set definer as
+ * re-created by 0068): the alias is stripped and trimmed (publicAliasValue), then 1..60 CODE POINTS
+ * (not UTF-16 units, unlike clubNameProblem), no hidden character (hasHiddenChar, the pinned
+ * text-safety mirror: the code points the strip leaves, such as controls, bidi controls, U+2028 and
+ * U+2800, are still refused) and at least one visible one, i.e. neither whitespace nor
+ * Default_Ignorable (`\p{DI}`). An invisible-only alias is stripped to nothing, so it reads as
+ * "empty": exactly the problem an empty alias gets.
  */
 export function publicAliasProblem(raw: string): PublicAliasProblem | null {
-  const alias = raw.trim();
+  const alias = publicAliasValue(raw);
   const length = [...alias].length;
   if (length < 1) return "empty";
   if (length > 60) return "too_long";

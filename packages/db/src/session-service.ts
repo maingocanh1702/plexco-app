@@ -19,7 +19,7 @@ import { effectiveByCharge } from "./roster-money-shared.js";
 // Call-time-only cycle (P-19), like roster-money-shared.ts's import of this module.
 import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy, sessionActiveRosterCount } from "./session-occupancy.js";
-import { hasHiddenChar } from "./text-safety.js";
+import { hasHiddenChar, stripInvisibleChars } from "./text-safety.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -113,6 +113,24 @@ const isValidDate = (value: unknown): value is Date =>
   value.getUTCFullYear() <= 9999; // representable by PostgreSQL timestamptz
 const isInt4 = (value: unknown, min: number): boolean =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= INT4_MAX;
+/**
+ * L23 D3, strip first: area and venue_name are publicly displayed names, so a string value loses every
+ * STRIP code point (text-safety.ts) before ANY check reads it. The value that is validated, compared,
+ * stored and evented is the stripped one; a stripped value equal to the stored one is no change. Every
+ * other value, and a payload that is not a plain object, passes unchanged to the existing checks.
+ * venue_address is not a public name and keeps today's rule.
+ */
+function stripPublicNames<T extends { area?: string | null; venueName?: string | null }>(
+  input: T,
+): T {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
+  const { area, venueName } = input;
+  return {
+    ...input,
+    ...(typeof area === "string" ? { area: stripInvisibleChars(area) } : {}),
+    ...(typeof venueName === "string" ? { venueName: stripInvisibleChars(venueName) } : {}),
+  };
+}
 /**
  * Optional text: undefined, null or a string with no hidden character (text-safety.ts, the same rule as
  * display names: control, format, bidi, zero-width, line and paragraph separators). Applied to the RAW
@@ -242,7 +260,8 @@ export async function createSession(
   db: Db,
   params: CreateSessionParams,
 ): Promise<CreateSessionResult> {
-  const { tenantId, commandId, input } = params;
+  const { tenantId, commandId } = params;
+  const input = stripPublicNames(params.input);
   return withTenant(db, tenantId, async (tx) => {
     // Reserve the command key GLOBALLY (command-type-INDEPENDENT) to match the
     // processed_commands (tenant_id, command_id) uniqueness: a concurrent command of ANY type
@@ -1210,7 +1229,8 @@ export async function updateSession(
   db: Db,
   params: UpdateSessionParams,
 ): Promise<UpdateSessionResult> {
-  const { tenantId, commandId, input } = params;
+  const { tenantId, commandId } = params;
+  const input = stripPublicNames(params.input);
   return withTenant(db, tenantId, async (tx) => {
     // Validate the payload shape UP FRONT (typed error, never a raw TypeError):
     // `input` is untrusted user payload (only tenantId/commandId are trusted). A
