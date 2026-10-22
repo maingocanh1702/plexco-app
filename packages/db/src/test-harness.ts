@@ -226,18 +226,54 @@ const JOB_DEFINER_BOOTSTRAP_SQL_PATH = path.join(
   "01-job-definer.sql",
 );
 
+/** packages/db/src/migrate.ts's ADVISORY_LOCK_KEY (:31), copied; a test pins the two equal. */
+export const MIGRATE_ADVISORY_LOCK_KEY = 0x706c7863; // "plxc"
+
+/**
+ * Serializes bootstrapJobDefiner's 01-job-definer.sql run with migrate() of the same database.
+ * Race: 01:179's GRANT USAGE ON SCHEMA public rewrites the pg_namespace row of `public` in the
+ * client's database; a concurrent migrate() of that database rewrites the same row
+ * (migrate.test.ts's migrate(BASE!) applying every migration to CI's unmigrated plexco_test), and
+ * the loser fails with "tuple concurrently updated". 01's own jdlk already serializes 01 with 01.
+ * A lock, not a retry: owner decision item 9. The runner's own key, as a new key would not
+ * serialize against migrate(): conductor ruling RO-L18-1. Advisory locks are database-local.
+ * Lock order: [idnm] -> chad/chst or jobd/chst (their own lock clients) -> plxc (the caller's
+ * client, here) -> 01's in-script jdlk and pg_auth_members lock; migrate() holds only plxc, then
+ * its DDL. migrate.test.ts:2789-2791 and :2845 spy pg.Client.prototype.query
+ * on "pg_advisory_lock", which this lock SQL matches (safe: no bootstrap runs in those tests).
+ * Proof: docs/sessions/web-mvp-phase3-readiness-p3-test-harness-job-definer-bootstrap-lock.md
+ */
+export async function withJobDefinerBootstrapLock<T>(
+  client: pg.Client,
+  fn: () => Promise<T>,
+): Promise<T> {
+  await client.query("SELECT pg_advisory_lock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+  let succeeded = false;
+  try {
+    const result = await fn();
+    succeeded = true;
+    return result;
+  } finally {
+    // After fn's own ROLLBACK, so never inside an aborted transaction; never masks fn's error.
+    const unlock = client.query("SELECT pg_advisory_unlock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+    await (succeeded ? unlock : unlock.catch(() => {}));
+  }
+}
+
 export async function bootstrapJobDefiner(client: pg.Client): Promise<void> {
   const sql = await readFile(JOB_DEFINER_BOOTSTRAP_SQL_PATH, "utf8");
-  try {
-    await client.query(sql);
-  } catch (error) {
-    // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/01-job-definer.sql),
-    // so a rejection (e.g. codex round-08's runtime-role denylist) leaves that transaction open
-    // and aborted on `client` — every later query on the same connection would fail with "current
-    // transaction is aborted" otherwise. Mirrors migrate.ts's own catch-and-ROLLBACK idiom.
-    await client.query("ROLLBACK");
-    throw error;
-  }
+  await withJobDefinerBootstrapLock(client, async () => {
+    try {
+      await client.query(sql);
+    } catch (error) {
+      // The file wraps itself in an explicit BEGIN/COMMIT (infra/postgres-init/01-job-definer.sql),
+      // so a rejection (e.g. codex round-08's runtime-role denylist) leaves that transaction open
+      // and aborted on `client` — every later query on the same connection would fail with "current
+      // transaction is aborted" otherwise. Mirrors migrate.ts's own catch-and-ROLLBACK idiom.
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  });
 }
 
 /**
