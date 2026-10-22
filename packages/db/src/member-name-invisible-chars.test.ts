@@ -225,5 +225,94 @@ describe("MN persons.display_name definers", () => {
   );
 });
 
+// MN rows R1-R5 for the membership and tenant definers 0069 re-creates (unit U2a2): M2
+// create_guest_membership, T1 tenant_provision and T2 tenant_profile_update, each called as role
+// `app` with the statement its TypeScript caller runs. All three keep R4 as sent: M2 copies the
+// source as it holds it, T1 accepts it (O1), and T2 refuses Cc and Cf only in its TypeScript
+// validator (club-config.ts, the U5 rows), never in the definer. R5 (section 7) for
+// memberships.display_name and tenants.name: the ZWJ family and the VS16 heart lose U+200D and
+// U+FE0F. This is the owner's rule (decision item 6) applied as written: no emoji exception.
+describe("MN memberships.display_name and tenants.name definers", () => {
+  const tenantName = async (id: string) =>
+    (await ctx.owner.query<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [id]))
+      .rows[0]?.name ?? null;
+  type Definer = {
+    name: string;
+    r3: (r: Row) => Outcome;
+    call: (input: string) => Promise<Outcome>;
+  };
+  /** `r3` is the definer's R3 verdict; every other row stores the row's `clean` value. */
+  const DEFINERS: Definer[] = [
+    {
+      name: "M2 create_guest_membership (session-join-service.ts mintGuestMembership)",
+      // The copy is the strip alone (no trim, no NULLIF), so R3 leaves what an empty source leaves
+      // today (its live body copies it as it is): the visible remainder, '' or the spaces.
+      r3: (r) => ({ stored: cps([...r.input].filter((c) => c === " ").join("")) }),
+      call: async (input) => {
+        // After 0069 an unstripped persons name exists only as a value the cleanup left (B6), so
+        // ctx.owner seeds it, then resets it after the read (no stray value for the MG block).
+        const personId = await insertPerson(input);
+        const res = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+          tx.execute(
+            sql`SELECT create_guest_membership(${ctx.tenantA}::uuid, ${personId}::uuid) AS id`,
+          ),
+        );
+        const { rows } = await ctx.owner.query<{ display_name: string | null }>(
+          `SELECT display_name FROM memberships WHERE id = $1`,
+          [(res.rows[0] as { id: string }).id],
+        );
+        await ctx.owner.query(`UPDATE persons SET display_name = $2 WHERE id = $1`, [
+          personId,
+          SEED,
+        ]);
+        return { stored: cps(rows[0]!.display_name) };
+      },
+    },
+    {
+      name: "T1 tenant_provision (auth.ts provisionTenant)",
+      r3: () => ({ code: "22023", untouched: true }), // 'name required', as for an empty name today
+      call: async (input) => {
+        const slug = `mn-${randomBytes(6).toString("hex")}`;
+        const personId = await insertPerson(SEED);
+        let id: string;
+        try {
+          const { rows } = await ctx.appPool.query<{ id: string }>(
+            `SELECT tenant_provision($1, $2, $3, $4, $5) AS id`,
+            [slug, input, null, null, personId],
+          );
+          id = rows[0]!.id;
+        } catch (error) {
+          const { rows } = await ctx.owner.query(`SELECT 1 FROM tenants WHERE slug = $1`, [slug]);
+          return { code: sqlstate(error), untouched: rows.length === 0 };
+        }
+        return { stored: cps(await tenantName(id)) };
+      },
+    },
+    {
+      name: "T2 tenant_profile_update (club-config.ts updateClubConfig)",
+      r3: () => ({ code: "22023", untouched: true }), // 'name must be 1..120 chars', as for ''
+      call: async (input) => {
+        await ctx.owner.query(`UPDATE tenants SET name = $2 WHERE id = $1`, [ctx.tenantA, SEED]);
+        try {
+          await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+            tx.execute(
+              sql`SELECT id FROM tenant_profile_update(${ctx.tenantA}::uuid, ${host}::uuid, ${input}, ${null}, ${null})`,
+            ),
+          );
+        } catch (error) {
+          return { code: sqlstate(error), untouched: (await tenantName(ctx.tenantA)) === SEED };
+        }
+        return { stored: cps(await tenantName(ctx.tenantA)) };
+      },
+    },
+  ];
+  it.each(DEFINERS.flatMap((w) => ROWS.map((r) => ({ name: `${w.name}: ${r.row}`, w, r }))))(
+    "$name",
+    async ({ w, r }) => {
+      expect(await w.call(r.input)).toEqual(r.cls === "R3" ? w.r3(r) : { stored: cps(r.clean) });
+    },
+  );
+});
+
 // End of the MN block. Units U2b (RC-BODY, RC-ACL, RC-OWNER) and U2c (MG) append their describe
 // blocks below this line, reusing ctx and the helpers above.
