@@ -545,5 +545,199 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         await zalo.close();
       }
     }, 30_000);
+
+    // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
+    // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
+    const NAMES = ["web_realtime", "zalo_dm", "public_sessions"];
+    const CAP = 200; // BACKFILL_MAX_ROWS (D3), checked against the script in the cap case
+    const UNACKED = "SELECT 1 FROM outbox_events WHERE id = ANY($1::uuid[]) AND acked_at IS NULL";
+    const ROWS = "SELECT 1 FROM projector_deliveries WHERE event_id = ANY($1::uuid[])";
+    const DELIVERED = `${ROWS} AND status = 'delivered'`;
+    const rowCount = async (sql: string, ids: string[]) =>
+      (await verify.query(sql, [ids])).rowCount ?? 0;
+    const disable = (projector: string) =>
+      asOwner("SELECT outbox_projector_set_enabled($1, false)", [projector]);
+    /** One (aggregate_type, event_type) the projector routes; a wildcard route gets a probe type. */
+    const routeOf = async (projector: string) =>
+      (
+        await verify.query<{ aggregate_type: string; event_type: string }>(
+          `SELECT aggregate_type, coalesce(event_type, 'boot.probe') AS event_type
+             FROM outbox_projector_routes WHERE projector = $1 ORDER BY aggregate_type, event_type LIMIT 1`,
+          [projector],
+        )
+      ).rows[0]!;
+    async function cycleUntil(
+      projectors: ReadonlyMap<string, DeliverFn>,
+      done: () => Promise<boolean>,
+    ) {
+      for (let i = 0; i < 20 && !(await done()); i++) await cycle(projectors);
+      expect(await done()).toBe(true);
+    }
+
+    it("BS-4 public_sessions: a session published while off is public after the CLI (rebuild); its in-bound events are delivered through the seam; a back-dated one is never delivered and gets one age record", async () => {
+      const { createPublicSessionsDeliver } = await import("./projectors/public-sessions.js");
+      const seam = new Map<string, DeliverFn>([
+        ["public_sessions", createPublicSessionsDeliver({ db: workerPool })],
+      ]);
+      const idOf = async (sql: string, params: unknown[]) =>
+        String((await verify.query(sql, params)).rows[0]!.id);
+      const club = await idOf(
+        `INSERT INTO tenants (name, slug, public_alias, public_alias_status)
+         VALUES ('BS4 Club', 'bs4-club', 'CLB BS4', 'approved') RETURNING id`,
+        [],
+      );
+      // EN-9's open public session (packages/db/src/outbox-projector-enable.test.ts), minimum columns
+      const session = await idOf(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address,
+           area, price_amount, slots_max, visibility, join_policy, status)
+         SELECT $1, id, now() + interval '1 day', now() + interval '26 hours', 'Asia/Ho_Chi_Minh',
+           'BS4 Venue', '1 Public Street', 'Quan 7', 50000, 10, 'public', 'open', 'open'
+           FROM sports WHERE key = 'badminton' RETURNING id`,
+        [club],
+      );
+      const route = await routeOf("public_sessions");
+      expect(route.aggregate_type).toBe("session");
+      const ids = (
+        await verify.query<{ id: string }>(
+          `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+           SELECT $1, 'session', $2, g, $3, '{}'::jsonb FROM generate_series(1, 3) AS g RETURNING id`,
+          [club, session, route.event_type],
+        )
+      ).rows.map((row) => row.id);
+      const inBound = ids.slice(0, 2);
+      const aged = ids[2]!;
+      const isPublic = async () =>
+        (await rowCount("SELECT 1 FROM public_sessions WHERE id = ANY($1::uuid[])", [session])) ===
+        1;
+      try {
+        await ackedWhileOff(ids, seam);
+        await backdate([aged]);
+        expect(await isPublic()).toBe(false);
+        await enable("public_sessions");
+        expect(await isPublic()).toBe(true); // the CLI's rebuild, before any delivery
+        await cycleUntil(seam, async () => (await rowCount(DELIVERED, inBound)) === 2);
+        for (const event of inBound)
+          expect(await deliveries(event)).toEqual([
+            { projector: "public_sessions", status: "delivered", attempts: 1, error_code: null },
+          ]);
+        expect(await deliveries(aged)).toEqual([]);
+        expect(await expiries(ids)).toEqual([
+          { job_id: aged, reason: `${EXPIRED}:public_sessions:age` },
+        ]);
+      } finally {
+        await disable("public_sessions");
+      }
+    }, 30_000);
+
+    it("cap: more than BACKFILL_MAX_ROWS acked in-window web_realtime events -> the newest are delivered, each older one gets exactly one cap record and is never delivered", async () => {
+      const script = readFileSync(
+        path.join(REPO, "scripts", "outbox-projector-enable.mjs"),
+        "utf8",
+      );
+      expect(script).toContain(`BACKFILL_MAX_ROWS = ${CAP};`);
+      const type = "session.boot_cap"; // routed by web_realtime's ('session', NULL) wildcard
+      // one owner insert, 1 microsecond apart and newer than every earlier event (newest first, D3)
+      await verify.query(
+        `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload, created_at)
+         SELECT $1, 'session', gen_random_uuid(), 1, $2, '{}'::jsonb, now() - g * interval '1 microsecond'
+           FROM generate_series(1, $3::int) AS g`,
+        [tenantId, type, CAP + 5],
+      );
+      const ids = (
+        await verify.query<{ id: string }>(
+          "SELECT id FROM outbox_events WHERE type = $1 ORDER BY created_at DESC, id DESC",
+          [type],
+        )
+      ).rows.map((row) => row.id);
+      const newest = ids.slice(0, CAP);
+      const rest = ids.slice(CAP);
+      try {
+        expect(await realProjectors()).toEqual(ALL_OFF);
+        await cycleUntil(PROJECTORS, async () => (await rowCount(UNACKED, ids)) === 0);
+        expect(await rowCount(ROWS, ids)).toBe(0);
+        expect(await expiries(ids)).toEqual([]);
+        await enable("web_realtime");
+        const only = new Map<string, DeliverFn>([["web_realtime", delivered]]);
+        await cycleUntil(only, async () => (await rowCount(DELIVERED, newest)) === CAP);
+        const rows = (
+          await verify.query(
+            "SELECT event_id, projector, status FROM projector_deliveries WHERE event_id = ANY($1::uuid[])",
+            [ids],
+          )
+        ).rows;
+        expect(rows.map((row) => row.event_id).sort()).toEqual([...newest].sort());
+        expect(
+          rows.every((row) => row.projector === "web_realtime" && row.status === "delivered"),
+        ).toBe(true);
+        const records = await expiries(ids);
+        expect(records.map((row) => row.job_id).sort()).toEqual([...rest].sort());
+        expect(records.every((row) => row.reason === `${EXPIRED}:web_realtime:cap`)).toBe(true);
+      } finally {
+        await disable("web_realtime");
+      }
+    }, 60_000);
+
+    it.each(NAMES)(
+      "BS-7 %s: an unacked routed event older than the bound -> the CLI exits 2 unacked_backlog and changes nothing; after a cycle acks it the CLI succeeds and records one age",
+      async (projector) => {
+        const route = await routeOf(projector);
+        const id = await insertEvent(route.aggregate_type, route.event_type);
+        await backdate([id]);
+        try {
+          const refused = await runEnableCli(["enable", "--projector", projector]);
+          expect(refused.code).toBe(2);
+          expect(refused.stderr).toContain("unacked_backlog");
+          expect(await realProjectors()).toEqual(ALL_OFF);
+          expect(await deliveries(id)).toEqual([]);
+          expect(await expiries([id])).toEqual([]);
+          await ackedWhileOff([id], PROJECTORS);
+          await enable(projector);
+          expect(await deliveries(id)).toEqual([]);
+          expect(await expiries([id])).toEqual([
+            { job_id: id, reason: `${EXPIRED}:${projector}:age` },
+          ]);
+        } finally {
+          await disable(projector);
+        }
+      },
+      30_000,
+    );
+
+    it.each(NAMES)(
+      "BS-5 %s: a disable keeps the pending rows and a CLI re-enable resumes them (DD-134 unchanged), adding no row and no record for their events",
+      async (projector) => {
+        const route = await routeOf(projector);
+        const ids = [
+          await insertEvent(route.aggregate_type, route.event_type),
+          await insertEvent(route.aggregate_type, route.event_type),
+        ];
+        const spy = vi.fn(delivered);
+        const only = new Map<string, DeliverFn>([[projector, spy]]);
+        const pending = { projector, status: "pending", attempts: 0, error_code: null };
+        const audits = () =>
+          rowCount("SELECT 1 FROM job_audit_events WHERE job_id = ANY($1::uuid[])", ids);
+        try {
+          await ackedWhileOff(ids, only);
+          await enable(projector);
+          await disable(projector);
+          await cycle(only);
+          expect(spy).not.toHaveBeenCalled();
+          for (const id of ids) expect(await deliveries(id)).toEqual([pending]);
+          const before = await audits();
+          await enable(projector);
+          for (const id of ids) expect(await deliveries(id)).toEqual([pending]);
+          expect(await audits()).toBe(before);
+          expect(await expiries(ids)).toEqual([]);
+          await cycleUntil(only, async () => (await rowCount(DELIVERED, ids)) === ids.length);
+          for (const id of ids)
+            expect(await deliveries(id)).toEqual([
+              { ...pending, status: "delivered", attempts: 1 },
+            ]);
+        } finally {
+          await disable(projector);
+        }
+      },
+      30_000,
+    );
   });
 });
