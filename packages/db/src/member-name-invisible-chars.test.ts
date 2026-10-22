@@ -42,7 +42,7 @@ const SEED = "Web";
 let host: string; // an active web admin of tenant A: the actor create_host_added_person checks
 let bot: string; // a Zalo bot of tenant A: the bot zalo_identity_resolve checks
 
-async function insertPerson(name: string): Promise<string> {
+async function insertPerson(name: string | null): Promise<string> {
   const { rows } = await ctx.owner.query<{ id: string }>(
     `INSERT INTO persons (display_name) VALUES ($1) RETURNING id`,
     [name],
@@ -247,7 +247,7 @@ describe("MN memberships.display_name and tenants.name definers", () => {
   type Definer = {
     name: string;
     r3: (r: Row) => Outcome;
-    call: (input: string) => Promise<Outcome>;
+    call: (input: string | null) => Promise<Outcome>;
   };
   /** `r3` is the definer's R3 verdict; every other row stores the row's `clean` value. */
   const DEFINERS: Definer[] = [
@@ -320,6 +320,16 @@ describe("MN memberships.display_name and tenants.name definers", () => {
       expect(await w.call(r.input)).toEqual(r.cls === "R3" ? w.r3(r) : { stored: cps(r.clean) });
     },
   );
+  // The NULL rows (section 6 has none): the helper is STRICT (0068:54), so a NULL stays NULL. T2 with
+  // p_name NULL (a timezone- or locale-only update) keeps the stored name; M2 for a person with no
+  // display name (a Google login without one, DD-26) stores a NULL membership name, never ''.
+  const byId = (id: string) => DEFINERS.find((d) => d.name.startsWith(`${id} `))!;
+  it("T2 tenant_profile_update: NULL p_name keeps the stored name", async () => {
+    expect(await byId("T2").call(null)).toEqual({ stored: cps(SEED) });
+  });
+  it("M2 create_guest_membership: a person with a NULL display_name gives a NULL name", async () => {
+    expect(await byId("M2").call(null)).toEqual({ stored: null });
+  });
 });
 
 // RC-BODY, RC-ACL and RC-OWNER (unit U2b, section 11): one row per definer 0069 re-creates. Every pin
@@ -454,10 +464,20 @@ describe("RC-ACL: each keeps its previous CREATE's attributes, the helper's owne
     // STRICT or PARALLEL clause, so the pins are VOLATILE, CALLED ON NULL INPUT and PARALLEL UNSAFE.
     const { header } = previousCreate(w);
     expect(header).toContain(`\nSECURITY DEFINER\nSET search_path = ${w.searchPath}\n`);
-    expect(header).not.toMatch(/STABLE|IMMUTABLE|STRICT|PARALLEL|RETURNS NULL/);
+    expect(header).not.toMatch(
+      /STABLE|IMMUTABLE|STRICT|PARALLEL|RETURNS NULL|COST|ROWS|LEAKPROOF|SUPPORT/,
+    );
+    // Nor a COST, ROWS, LEAKPROOF or SUPPORT clause (and no migration ALTERs one), so the values before
+    // 0069 are the defaults: COST 100, ROWS 1000 for a set-returning function (else 0), NOT LEAKPROOF,
+    // no support function. The owner is also pinned absolutely, to the owner of 0068's alias definer
+    // (the PS-OWNER-REPAIR anchor, untouched by 0069): moving the helper and all seven together fails.
+    const set = header.includes("RETURNS TABLE") || header.includes("RETURNS SETOF");
     const { rows } = await ctx.owner.query<Record<string, unknown>>(
       `SELECT p.prosecdef AS security_definer, p.proconfig AS config, p.provolatile AS volatility,
-              p.proisstrict AS strict, p.proparallel AS parallel, p.proowner = h.proowner AS helper_owner,
+              p.proisstrict AS strict, p.proparallel AS parallel, p.proleakproof AS leakproof,
+              p.procost::int AS cost, p.proretset AS returns_set, p.prorows::int AS est_rows,
+              p.prosupport::text AS support, p.proowner = h.proowner AS helper_owner,
+              p.proowner = anchor.proowner AS anchor_owner,
               ARRAY(SELECT a.privilege_type
                       FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
                      WHERE a.grantee = p.proowner) AS owner_privileges,
@@ -465,8 +485,9 @@ describe("RC-ACL: each keeps its previous CREATE's attributes, the helper's owne
                            || ':' || a.privilege_type
                       FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
                      WHERE a.grantee <> p.proowner ORDER BY 1) AS grants
-         FROM pg_proc p, pg_proc h
-        WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure`,
+         FROM pg_proc p, pg_proc h, pg_proc anchor
+        WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure
+          AND anchor.oid = 'public.tenant_public_alias_set(uuid, uuid, text)'::regprocedure`,
       [w.sig, HELPER_SIG],
     );
     expect(rows[0]).toEqual({
@@ -475,7 +496,13 @@ describe("RC-ACL: each keeps its previous CREATE's attributes, the helper's owne
       volatility: "v",
       strict: false,
       parallel: "u",
+      leakproof: false,
+      cost: 100,
+      returns_set: set,
+      est_rows: set ? 1000 : 0,
+      support: "-",
       helper_owner: true,
+      anchor_owner: true,
       owner_privileges: ["EXECUTE"],
       grants: ["app:EXECUTE"], // the base ACL (0012-0058): REVOKE ALL FROM PUBLIC, GRANT EXECUTE TO app
     });
@@ -538,16 +565,20 @@ describe("MG the 0069 L27-CLEANUP block", () => {
   const VENUE = COLS[3];
   // The seeded value of each class and `stripped`, what the block stores for `mixed`: the three name
   // columns are stripped then trimmed; venue_address is stripped alone, so its outer spaces stay.
+  // `residue` is invisible too, but what is left is not empty (U+202E; two spaces): it tells the
+  // block's `~ c_visible` test apart from `<> ''`.
   const NAME = {
     mixed: mix(0xfeff, " L27", 0x200b, " Mai ", 0xad),
     stripped: "L27 Mai",
     invisible: mix(0x200b, 0x2060),
+    residue: mix(0x200b, 0x202e),
     clean: "L27 Lan",
   };
   const ADDRESS = {
     mixed: mix(" So 1", 0x200b, " Pho", 0x2060, " "),
     stripped: " So 1 Pho ",
     invisible: mix(0xfeff),
+    residue: mix(" ", 0x200b, " "),
     clean: "So 2 Pho",
   };
   const valuesOf = (col: Col) => (col.table === "sessions" ? ADDRESS : NAME);
@@ -605,6 +636,7 @@ describe("MG the 0069 L27-CLEANUP block", () => {
     const persons = {
       mixed: await person(NAME.mixed),
       invisible: await person(NAME.invisible),
+      residue: await person(NAME.residue),
       clean: await person(NAME.clean),
     };
     const ids = {
@@ -612,16 +644,19 @@ describe("MG the 0069 L27-CLEANUP block", () => {
       memberships: {
         mixed: await member(persons.mixed, NAME.mixed),
         invisible: await member(persons.invisible, NAME.invisible),
+        residue: await member(persons.residue, NAME.residue),
         clean: await member(persons.clean, NAME.clean),
       },
       tenants: {
         mixed: await tenant(NAME.mixed),
         invisible: await tenant(NAME.invisible),
+        residue: await tenant(NAME.residue),
         clean: club,
       },
       sessions: {
         mixed: await session(ADDRESS.mixed),
         invisible: await session(ADDRESS.invisible),
+        residue: await session(ADDRESS.residue),
         clean: await session(ADDRESS.clean),
       },
     };
@@ -683,7 +718,7 @@ describe("MG the 0069 L27-CLEANUP block", () => {
       const notices = await run(c);
       const after = await state(c, f);
       for (const col of COLS) {
-        for (const k of ["mixed", "invisible", "clean"] as const) {
+        for (const k of ["mixed", "invisible", "residue", "clean"] as const) {
           const id = f.ids[col.table][k];
           expect(after[id]![1]).toBe(k === "mixed" ? valuesOf(col).stripped : valuesOf(col)[k]);
           expect(after[id]![0] === before[id]![0]).toBe(k !== "mixed"); // only a mixed row is rewritten
@@ -700,7 +735,7 @@ describe("MG the 0069 L27-CLEANUP block", () => {
         [1, null],
         [1, null],
       ]);
-      for (const k of ["invisible", "clean"] as const) {
+      for (const k of ["invisible", "residue", "clean"] as const) {
         expect(pub(f.ids.sessions[k])).toEqual([
           [1, ADDRESS[k]],
           [1, ADDRESS[k]],
@@ -711,8 +746,9 @@ describe("MG the 0069 L27-CLEANUP block", () => {
           ...COLS.map((col) => changed(col, f.ids[col.table].mixed)),
           changed(VENUE, f.hidden),
           ...COLS.map((col) => left(col, f.ids[col.table].invisible)),
+          ...COLS.map((col) => left(col, f.ids[col.table].residue)),
           ...f.carried,
-          closing(1, 1, 1, 2, COLS.length + f.carried.length),
+          closing(1, 1, 1, 2, 2 * COLS.length + f.carried.length),
         ].sort(),
       );
       // No NOTICE carries fixture text: none of its visible words, no code point outside printable ASCII.
@@ -730,11 +766,24 @@ describe("MG the 0069 L27-CLEANUP block", () => {
       expect(notices.sort()).toEqual(
         [
           ...COLS.map((col) => left(col, f.ids[col.table].invisible)),
+          ...COLS.map((col) => left(col, f.ids[col.table].residue)),
           ...f.carried,
-          closing(0, 0, 0, 0, COLS.length + f.carried.length),
+          closing(0, 0, 0, 0, 2 * COLS.length + f.carried.length),
         ].sort(),
       );
     });
+  });
+
+  // The 42501 run below reaches the guard through sessions alone; this text pin covers all four.
+  it("guards each of the four tables with its own row_security_active clause, before the first loop", () => {
+    const loop = CLEANUP.indexOf("FOR r IN");
+    const clause = (t: string) =>
+      `row_security_active('public.${t}') AND pg_relation_size('public.${t}') > 0`;
+    expect(loop).toBeGreaterThan(0);
+    expect(CLEANUP.split("row_security_active('").length - 1).toBe(4);
+    for (const col of COLS) {
+      expect(CLEANUP.slice(0, loop).split(clause(col.table)).length - 1, col.table).toBe(1);
+    }
   });
 
   it("as app (NOSUPERUSER NOBYPASSRLS) over a non-empty table it fails closed with 42501", async () => {
