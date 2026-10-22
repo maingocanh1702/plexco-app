@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,7 +8,9 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireChatDefinerLock,
+  bootstrapJobDefiner,
   createRolePasswordLeaser,
+  MIGRATE_ADVISORY_LOCK_KEY,
   setupRlsTestContext,
   withAdvisoryLocks,
   withDefinerReadLock,
@@ -504,4 +506,129 @@ describe("setupRlsTestContext (HRN)", () => {
     },
     REAL_LOCK_TIMEOUT_MS,
   );
+});
+
+describe("withJobDefinerBootstrapLock (JDB)", () => {
+  // Advisory locks are database-local, so every JDB client works on this scratch database alone.
+  const JDB_DB = "plexco_harness_jdb_check";
+  /** NOLOGIN grantee for the runner-like GRANT/REVOKE writers of the serialization tests. */
+  const JDB_ROLE = "plexco_harness_jdb_grantee";
+  const jdbUrl = () => {
+    const u = new URL(taggedUrl().url);
+    u.pathname = `/${JDB_DB}`;
+    return u.toString();
+  };
+  /** Runner-like: rewrites 01:179's row (pg_namespace's `public`) inside one transaction. */
+  const RUNNER_LIKE_WRITE =
+    `BEGIN; GRANT USAGE ON SCHEMA public TO ${JDB_ROLE}; ` +
+    `REVOKE USAGE ON SCHEMA public FROM ${JDB_ROLE}; COMMIT`;
+
+  beforeAll(async () => {
+    await observer.query(`DROP DATABASE IF EXISTS ${JDB_DB} WITH (FORCE)`);
+    await observer.query(`DROP ROLE IF EXISTS ${JDB_ROLE}`);
+    await observer.query(`CREATE ROLE ${JDB_ROLE} NOLOGIN`);
+    await observer.query(`CREATE DATABASE ${JDB_DB}`);
+  }, REAL_LOCK_TIMEOUT_MS);
+
+  afterAll(async () => {
+    // The database first: it holds the role's grants, which would block DROP ROLE.
+    await observer.query(`DROP DATABASE IF EXISTS ${JDB_DB} WITH (FORCE)`);
+    await observer.query(`DROP ROLE IF EXISTS ${JDB_ROLE}`);
+  }, REAL_LOCK_TIMEOUT_MS);
+
+  it("JDB-1: the key is migrate.ts's ADVISORY_LOCK_KEY, taken there with pg_advisory_lock($1)", () => {
+    const src = readFileSync(path.join(HERE, "migrate.ts"), "utf8");
+    const parsed = /^const ADVISORY_LOCK_KEY = (0x[0-9a-fA-F]+);/m.exec(src)?.[1];
+    expect(Number(parsed)).toBe(MIGRATE_ADVISORY_LOCK_KEY);
+    expect(src).toContain(`client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY])`);
+  });
+
+  it(
+    "JDB-2: a bootstrap waits in pg_locks while the runner holds plxc, then resolves lock-free",
+    async () => {
+      const h = new pg.Client({ connectionString: jdbUrl() });
+      const b = new pg.Client({ connectionString: jdbUrl() });
+      try {
+        await h.connect();
+        await b.connect();
+        await h.query("SELECT pg_advisory_lock($1)", [MIGRATE_ADVISORY_LOCK_KEY]); // migrate.ts's SQL
+        const pid: number = (await b.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        let settled = false;
+        const settle = () => {
+          settled = true;
+        };
+        const boot = withDefinerReadLock(BASE!, () => bootstrapJobDefiner(b));
+        void boot.then(settle, settle);
+        const mine =
+          "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND pid = $1";
+        // plxc as one bigint key: classid = its high 32 bits (0), objid = its low 32, objsubid = 1.
+        const waiting = `${mine} AND classid = 0 AND objid = 1886156899 AND objsubid = 1 AND NOT granted`;
+        await expect
+          .poll(async () => (await h.query(waiting, [pid])).rows[0].n, { timeout: 90_000 })
+          .toBe(1);
+        expect(settled).toBe(false);
+        await h.query(RUNNER_LIKE_WRITE);
+        await h.query("SELECT pg_advisory_unlock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+        await boot;
+        expect((await h.query(mine, [pid])).rows).toEqual([{ n: 0 }]);
+      } finally {
+        await Promise.all([h.end(), b.end()]);
+      }
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
+
+  it(
+    "JDB-3: a bootstrap whose SQL throws rejects with that error, its client usable and plxc free",
+    async () => {
+      const client = new pg.Client({ connectionString: jdbUrl() });
+      const other = new pg.Client({ connectionString: jdbUrl() });
+      try {
+        await client.connect();
+        await other.connect();
+        // 01 runs inside its own BEGIN, so a read-only default fails its first write with 25006
+        // while plxc is held: CREATE ROLE when job_definer is missing, else GRANT ROLE (01:159).
+        await client.query("SET default_transaction_read_only = on");
+        await expect(bootstrapJobDefiner(client)).rejects.toMatchObject({
+          code: "25006",
+          message: expect.stringMatching(
+            /^cannot execute (CREATE ROLE|GRANT ROLE|GRANT) in a read-only transaction$/,
+          ),
+        });
+        expect((await client.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
+        await client.query("RESET default_transaction_read_only");
+        const tryLock = "SELECT pg_try_advisory_lock($1) AS ok";
+        const { rows } = await other.query(tryLock, [MIGRATE_ADVISORY_LOCK_KEY]);
+        expect(rows).toEqual([{ ok: true }]);
+        await other.query("SELECT pg_advisory_unlock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+      } finally {
+        await Promise.all([client.end(), other.end()]);
+      }
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
+
+  it("JDB-4: 20 rounds of a bootstrap racing a runner-like plxc writer all fulfil", async () => {
+    const h = new pg.Client({ connectionString: jdbUrl() });
+    const b = new pg.Client({ connectionString: jdbUrl() });
+    const runnerLike = async () => {
+      await h.query("SELECT pg_advisory_lock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+      try {
+        await h.query(RUNNER_LIKE_WRITE);
+      } finally {
+        await h.query("SELECT pg_advisory_unlock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+      }
+    };
+    try {
+      await h.connect();
+      await b.connect();
+      const started = performance.now();
+      for (let round = 0; round < 20; round++) {
+        await Promise.all([withDefinerReadLock(BASE!, () => bootstrapJobDefiner(b)), runnerLike()]);
+      }
+      console.info(`JDB-4: 20 rounds in ${Math.round(performance.now() - started)} ms`);
+    } finally {
+      await Promise.all([h.end(), b.end()]);
+    }
+  }, 120_000);
 });
