@@ -115,3 +115,18 @@ export function hasHiddenChar(value: string): boolean {
 export function hasVisibleChar(value: string): boolean {
   return VISIBLE_CHAR.test(value);
 }
+
+/** Typed-name rule; SQL twin member_name_apply_rule, mode false. Null: the writer refuses. */
+export function checkTypedName(value: string): string | null {
+  const name = stripInvisibleChars(value).trim();
+  return hasHiddenChar(name) || !hasVisibleChar(name) ? null : name;
+}
+
+/** Ingress and copy rule; SQL twin member_name_apply_rule, mode true. Never throws, never ''. */
+export function normalizeExternalName(value: string): string | null {
+  const name = [...stripInvisibleChars(value).trim()]
+    .filter((c) => !hasHiddenChar(c))
+    .join("")
+    .trim();
+  return hasVisibleChar(name) ? name : null;
+}

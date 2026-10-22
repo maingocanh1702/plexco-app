@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { validateDisplayName } from "./me-settings.js";
 import {
+  checkTypedName,
   hasHiddenChar,
   hasVisibleChar,
+  normalizeExternalName,
   STRIP_CHAR_RANGES,
   stripInvisibleChars,
 } from "./text-safety.js";
@@ -129,4 +132,63 @@ describe("stripInvisibleChars: the public-name strip (L23, DD-138 A.1)", () => {
       expect(stripInvisibleChars(once)).toBe(once);
     }
   });
+});
+
+describe("L29-T text-safety: the typed-name check and the external-name normalizer (L29, readiness D1, D2, D5a)", () => {
+  // Three positions per scalar: alone, at an edge, inside visible text. A hidden code point that
+  // trim() also removes (TAB, LF, U+2028, U+2029) is trimmed away at an edge, refused inside (D1d).
+  const placed = (c: string): string[] => [c, c + "ab", "a" + c + "b"];
+  const badScalars = (ok: (value: string, alone: boolean) => boolean): number[] => {
+    const bad: number[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      if (!placed(cps(cp)).every((value, i) => ok(value, i === 0))) bad.push(cp);
+    }
+    return bad;
+  };
+
+  it("L29-T1: checkTypedName is strip, trim, hidden test, visible test, over every scalar", () => {
+    const bad = badScalars((value) => {
+      const t = stripInvisibleChars(value).trim();
+      const expected = hasHiddenChar(t) || !hasVisibleChar(t) ? null : t;
+      const got = checkTypedName(value);
+      return got === expected && got !== "" && (got === null || !hasHiddenChar(got));
+    });
+    expect(bad).toEqual([]);
+  }, 30_000);
+
+  it("L29-T2: normalizeExternalName never throws or returns '', keeps no hidden code point, is idempotent and agrees with checkTypedName, over every scalar", () => {
+    const bad = badScalars((value, alone) => {
+      let got: string | null;
+      try {
+        got = normalizeExternalName(value);
+      } catch {
+        return false;
+      }
+      // Null exactly when a lone code point leaves nothing visible: visible text never goes away.
+      const mustBeNull = alone && !(hasVisibleChar(value) && !hasHiddenChar(value));
+      if ((got === null) !== mustBeNull) return false;
+      if (got === null) return true;
+      const typed = checkTypedName(value);
+      return (
+        got !== "" &&
+        !hasHiddenChar(got) &&
+        normalizeExternalName(got) === got &&
+        (typed === null || typed === got)
+      );
+    });
+    expect(bad).toEqual([]);
+  }, 30_000);
+
+  it("L29-T3: validateDisplayName equals checkTypedName inside its length bound, over every scalar", () => {
+    const validated = (value: string): string | null => {
+      try {
+        return validateDisplayName(value);
+      } catch {
+        return null; // A refusal counts as null.
+      }
+    };
+    const bad = badScalars((value) => validated(value) === checkTypedName(value));
+    expect(bad).toEqual([]);
+  }, 30_000);
 });
