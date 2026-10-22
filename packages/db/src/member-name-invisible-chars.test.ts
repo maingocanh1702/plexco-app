@@ -1,14 +1,22 @@
 /**
  * L27 (owner decision item 6, 2026-10-22): the SQL layer of migration 0069 for the member-facing names
- * (docs/sessions/web-mvp-phase3-readiness-p3-strip-invisible-member-names.md, sections 6, 7 and 11).
- *   MN  rows R1-R5 of the section 6 decision table for the four persons.display_name definers that
- *       0069 re-creates (P1 person_profile_update, P2 create_host_added_person, P3
- *       zalo_identity_resolve, P4 auth_login_google), each called the way its TypeScript caller calls
- *       it, as role `app`; ctx.owner seeds the fixtures and reads the stored value back.
+ * (docs/sessions/web-mvp-phase3-readiness-p3-strip-invisible-member-names.md, sections 6, 7, 10 and 11),
+ * over the seven definers 0069 re-creates (P1-P4 persons.display_name, M2 memberships.display_name,
+ * T1-T2 tenants.name).
+ *   MN        rows R1-R5 of the section 6 decision table per definer, each called the way its
+ *             TypeScript caller calls it, as role `app`; ctx.owner seeds and reads the stored value.
+ *   RC-BODY   each live body is its previous CREATE's with exactly the section 10 substitution.
+ *   RC-ACL    each keeps its previous CREATE's attributes, the helper's owner and EXECUTE for app only.
+ *   RC-OWNER  the 0069 L27-OWNER-CHECK block passes as applied and raises 42501 once any one of the
+ *             seven has another owner, rolled back.
+ *   MG        (unit U2c) the 0069 L27-CLEANUP block replayed on fixtures, rolled back.
  * Inputs are built from code points (String.fromCodePoint), never pasted.
  */
 import { randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
+import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 import { withTenant } from "./tenant.js";
@@ -314,5 +322,187 @@ describe("MN memberships.display_name and tenants.name definers", () => {
   );
 });
 
-// End of the MN block. Units U2b (RC-BODY, RC-ACL, RC-OWNER) and U2c (MG) append their describe
-// blocks below this line, reusing ctx and the helpers above.
+// RC-BODY, RC-ACL and RC-OWNER (unit U2b, section 11): one row per definer 0069 re-creates. Every pin
+// is read off the definer's previous CREATE in the migration its row names; `subs` is the section 10
+// substitution table verbatim, as [today, 0069] pairs.
+const H = "public.public_name_strip_invisible";
+const HELPER_SIG = `${H}(text)`;
+type Recreated = { sig: string; file: string; searchPath: string; subs: [string, string][] };
+const RECREATED: Recreated[] = [
+  {
+    sig: "public.auth_login_google(text, text, bytea, text, uuid, text, text)",
+    file: "0017_oauth_transactions.sql",
+    searchPath: "public, pg_temp",
+    subs: [["NULLIF(trim(p_display_name), '')", `NULLIF(trim(${H}(p_display_name)), '')`]],
+  },
+  {
+    sig: "public.create_host_added_person(uuid, uuid, text)",
+    file: "0051_host_add_person_definer.sql",
+    searchPath: "pg_catalog, public, pg_temp",
+    subs: [["v_name := btrim(p_display_name);", `v_name := btrim(${H}(p_display_name));`]],
+  },
+  {
+    sig: "public.zalo_identity_resolve(uuid, uuid, text, text, bytea, text)",
+    file: "0053_zalo_ingress.sql",
+    searchPath: "pg_catalog, public, pg_temp",
+    subs: [
+      [
+        "left(nullif(btrim(p_display_name), ''), 120)",
+        `left(nullif(btrim(${H}(p_display_name)), ''), 120)`,
+      ],
+    ],
+  },
+  {
+    sig: "public.person_profile_update(uuid, text)",
+    file: "0055_me_settings_definers.sql",
+    searchPath: "pg_catalog, public, pg_temp",
+    subs: [["regexp_replace(p_display_name, ", `regexp_replace(${H}(p_display_name), `]],
+  },
+  {
+    sig: "public.create_guest_membership(uuid, uuid)",
+    file: "0058_player_self_join.sql",
+    searchPath: "pg_catalog, public, pg_temp",
+    subs: [["SELECT p.display_name INTO v_name", `SELECT ${H}(p.display_name) INTO v_name`]],
+  },
+  {
+    sig: "public.tenant_provision(text, text, text, text, uuid)",
+    file: "0037_tenant_provision_rls_self_scope.sql",
+    searchPath: "public, pg_temp",
+    subs: [
+      ["trim(coalesce(p_name, ''))", `trim(coalesce(${H}(p_name), ''))`],
+      ["trim(p_name)", `trim(${H}(p_name))`],
+    ],
+  },
+  {
+    sig: "public.tenant_profile_update(uuid, uuid, text, text, text)",
+    file: "0052_tenant_profile_definers.sql",
+    searchPath: "pg_catalog, public, pg_temp",
+    subs: [["v_name text := btrim(p_name);", `v_name text := btrim(${H}(p_name));`]],
+  },
+];
+const fnName = (w: Recreated) => w.sig.slice("public.".length, w.sig.indexOf("("));
+const migration = (file: string) =>
+  readFileSync(fileURLToPath(new URL(`../migrations/${file}`, import.meta.url)), "utf8");
+
+/** The definer's last CREATE in its migration: the header up to `AS $$`, and the body as prosrc holds it. */
+function previousCreate(w: Recreated): { header: string; body: string } {
+  const text = migration(w.file);
+  const at = Math.max(
+    text.lastIndexOf(`\nCREATE FUNCTION ${fnName(w)}(`),
+    text.lastIndexOf(`\nCREATE OR REPLACE FUNCTION ${fnName(w)}(`),
+  );
+  const open = text.indexOf("\nAS $$\n", at);
+  const close = text.indexOf("\n$$;\n", open);
+  if (at < 0 || open < 0 || close < 0) throw new Error(`${w.file}: no CREATE of ${fnName(w)}`);
+  return { header: text.slice(at, open + 1), body: text.slice(open + 6, close + 1) };
+}
+
+/** A 0069 block: the text between its two L27-<name> marker lines, each present exactly once. */
+function l27Block(name: "OWNER-CHECK" | "CLEANUP"): string {
+  const text = migration("0069_member_name_invisible_chars.sql");
+  const begin = `\n-- L27-${name}-BEGIN\n`;
+  const end = `\n-- L27-${name}-END`;
+  const from = text.indexOf(begin);
+  const to = text.indexOf(end);
+  if (from < 0 || to < from || text.includes(begin, from + 1) || text.includes(end, to + 1)) {
+    throw new Error(`0069: expected one L27-${name}-BEGIN line, then one L27-${name}-END line`);
+  }
+  return text.slice(from + begin.length, to);
+}
+
+/** Runs fn on a superuser connection inside a transaction that is always rolled back. */
+async function rolledBack(fn: (c: pg.PoolClient) => Promise<void>): Promise<void> {
+  const c = await ctx.superuserDb.pool.connect();
+  try {
+    await c.query("BEGIN");
+    await fn(c);
+  } finally {
+    await c.query("ROLLBACK");
+    c.release();
+  }
+}
+
+/** Owner and ACL of the helper and the seven: what a no-op block or a rolled-back move leaves as it was. */
+async function ownership(c: pg.ClientBase): Promise<Record<string, unknown>[]> {
+  const { rows } = await c.query<Record<string, unknown>>(
+    `SELECT p.oid::regprocedure::text AS fn, p.proowner::regrole::text AS owner, p.proacl::text AS acl
+       FROM pg_proc p WHERE p.oid = ANY($1::regprocedure[]) ORDER BY 1`,
+    [[HELPER_SIG, ...RECREATED.map((w) => w.sig)]],
+  );
+  return rows;
+}
+
+describe("RC-BODY: each live body is its previous CREATE's with exactly the section 10 substitution", () => {
+  it.each(RECREATED)("$sig from $file", async (w) => {
+    const previous = previousCreate(w).body;
+    let want = previous;
+    for (const [today, next] of w.subs) {
+      expect(previous.split(today).length - 1, today).toBe(1); // tenant_provision: two pairs, once each
+      want = want.split(today).join(next);
+    }
+    const { rows } = await ctx.owner.query<{ src: string }>(
+      `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
+      [w.sig],
+    );
+    expect(rows[0]!.src).toBe(want);
+  });
+});
+
+describe("RC-ACL: each keeps its previous CREATE's attributes, the helper's owner and EXECUTE for app only", () => {
+  it.each(RECREATED)("$sig", async (w) => {
+    // The previous CREATE states SECURITY DEFINER with this search_path and no STABLE, IMMUTABLE,
+    // STRICT or PARALLEL clause, so the pins are VOLATILE, CALLED ON NULL INPUT and PARALLEL UNSAFE.
+    const { header } = previousCreate(w);
+    expect(header).toContain(`\nSECURITY DEFINER\nSET search_path = ${w.searchPath}\n`);
+    expect(header).not.toMatch(/STABLE|IMMUTABLE|STRICT|PARALLEL|RETURNS NULL/);
+    const { rows } = await ctx.owner.query<Record<string, unknown>>(
+      `SELECT p.prosecdef AS security_definer, p.proconfig AS config, p.provolatile AS volatility,
+              p.proisstrict AS strict, p.proparallel AS parallel, p.proowner = h.proowner AS helper_owner,
+              ARRAY(SELECT a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee = p.proowner) AS owner_privileges,
+              ARRAY(SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+                           || ':' || a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee <> p.proowner ORDER BY 1) AS grants
+         FROM pg_proc p, pg_proc h
+        WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure`,
+      [w.sig, HELPER_SIG],
+    );
+    expect(rows[0]).toEqual({
+      security_definer: true,
+      config: [`search_path=${w.searchPath}`],
+      volatility: "v",
+      strict: false,
+      parallel: "u",
+      helper_owner: true,
+      owner_privileges: ["EXECUTE"],
+      grants: ["app:EXECUTE"], // the base ACL (0012-0058): REVOKE ALL FROM PUBLIC, GRANT EXECUTE TO app
+    });
+  });
+});
+
+describe("RC-OWNER: the 0069 owner check (B7) covers each of the seven", () => {
+  const OWNER_CHECK = l27Block("OWNER-CHECK");
+  it.each(RECREATED)(
+    "$sig: a no-op as applied; 42501 once its owner moves to readonly; rolled back, nothing changed",
+    async (w) => {
+      const before = await ownership(ctx.owner);
+      await rolledBack(async (c) => {
+        await c.query(OWNER_CHECK);
+        expect(await ownership(c)).toEqual(before);
+        await c.query(`ALTER FUNCTION ${w.sig} OWNER TO readonly`);
+        await expect(c.query(OWNER_CHECK)).rejects.toMatchObject({
+          code: "42501",
+          message: expect.stringMatching(
+            new RegExp(`${fnName(w)}[(][^)]*[)] [(]owner readonly[)]$`),
+          ),
+        });
+      });
+      expect(await ownership(ctx.owner)).toEqual(before);
+    },
+  );
+});
+
+// End of the RC blocks. Unit U2c (MG) appends its describe block below this line, reusing ctx and the
+// helpers above (l27Block("CLEANUP") reads the cleanup block; rolledBack runs it and rolls it back).
