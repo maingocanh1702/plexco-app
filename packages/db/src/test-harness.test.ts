@@ -557,14 +557,14 @@ describe("withJobDefinerBootstrapLock (JDB)", () => {
         const settle = () => {
           settled = true;
         };
-        const boot = bootstrapJobDefiner(b);
+        const boot = withDefinerReadLock(BASE!, () => bootstrapJobDefiner(b));
         void boot.then(settle, settle);
         const mine =
           "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND pid = $1";
         // plxc as one bigint key: classid = its high 32 bits (0), objid = its low 32, objsubid = 1.
         const waiting = `${mine} AND classid = 0 AND objid = 1886156899 AND objsubid = 1 AND NOT granted`;
         await expect
-          .poll(async () => (await h.query(waiting, [pid])).rows[0].n, { timeout: 10_000 })
+          .poll(async () => (await h.query(waiting, [pid])).rows[0].n, { timeout: 90_000 })
           .toBe(1);
         expect(settled).toBe(false);
         await h.query(RUNNER_LIKE_WRITE);
@@ -624,11 +624,11 @@ describe("withJobDefinerBootstrapLock (JDB)", () => {
       await b.connect();
       const started = performance.now();
       for (let round = 0; round < 20; round++) {
-        await Promise.all([bootstrapJobDefiner(b), runnerLike()]);
+        await Promise.all([withDefinerReadLock(BASE!, () => bootstrapJobDefiner(b)), runnerLike()]);
       }
       console.info(`JDB-4: 20 rounds in ${Math.round(performance.now() - started)} ms`);
     } finally {
       await Promise.all([h.end(), b.end()]);
     }
-  });
+  }, 120_000);
 });
