@@ -131,3 +131,216 @@ BEGIN
 END
 $l29_owner_check$;
 -- L29-OWNER-CHECK-END
+
+-- L29-SECTION-B-BEGIN
+-- Section B (unit U2): the three interactive writers call the rule in mode false (readiness
+-- sections 5 and 7). Each body is its L27 body in 0069, copied mechanically by its exact line range;
+-- only the named substitution lines differ, so SECURITY DEFINER, the volatility and the search_path
+-- are restated unchanged. CREATE OR REPLACE keeps the owner and the ACL, so there is no REVOKE or
+-- GRANT here; the L29 owner check above (42501) asserts their owner before they are replaced.
+-- A NULL result of the rule makes each definer raise its own existing 22023 message (no new
+-- message, no new error code). tenant_profile_update still keeps the name for a NULL argument (its
+-- test checks p_name first) and now refuses a non-NULL argument whose result is NULL.
+
+-- create_host_added_person: L27 body 0069_member_name_invisible_chars.sql:292-337, re-created with this substitution:
+--   [v_name := btrim(public.public_name_strip_invisible(p_display_name));] -> [v_name := public.member_name_apply_rule(p_display_name, false);]
+CREATE OR REPLACE FUNCTION create_host_added_person(
+  p_tenant_id uuid,
+  p_actor_person_id uuid,
+  p_display_name text
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_ctx uuid;
+  v_name text;
+  v_id uuid;
+BEGIN
+  BEGIN
+    v_ctx := NULLIF(current_setting('app.tenant_id', true), '')::uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    v_ctx := NULL;
+  END;
+  IF p_tenant_id IS NULL OR v_ctx IS NULL OR p_tenant_id <> v_ctx THEN
+    RAISE EXCEPTION 'create_host_added_person: tenant context mismatch'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  IF p_actor_person_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM public.tenant_admins ta
+     WHERE ta.tenant_id = p_tenant_id
+       AND ta.platform = 'web'
+       AND ta.platform_user_lookup_hash = p_actor_person_id::text
+       AND ta.active
+  ) THEN
+    RAISE EXCEPTION 'create_host_added_person: actor is not an active tenant admin'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  v_name := public.member_name_apply_rule(p_display_name, false);
+  IF v_name IS NULL OR char_length(v_name) < 1 OR char_length(v_name) > 100 THEN
+    RAISE EXCEPTION 'create_host_added_person: display name must be 1..100 characters'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  INSERT INTO public.persons (display_name) VALUES (v_name) RETURNING id INTO v_id;
+  RETURN v_id;
+END;
+$$;
+
+-- tenant_provision: L27 body 0069_member_name_invisible_chars.sql:561-642, re-created with this substitution:
+--   [IF trim(coalesce(public.public_name_strip_invisible(p_name), '')) = '' THEN] -> [IF public.member_name_apply_rule(p_name, false) IS NULL THEN]
+--   [VALUES (trim(public.public_name_strip_invisible(p_name)), p_slug,] -> [VALUES (public.member_name_apply_rule(p_name, false), p_slug,]
+CREATE OR REPLACE FUNCTION tenant_provision(
+  p_slug text, p_name text, p_timezone text, p_locale text, p_person_id uuid
+) RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_tenant uuid;
+  v_owned boolean;
+  v_conflict boolean;
+  v_prev_tenant text := current_setting('app.tenant_id', true);
+BEGIN
+  IF p_slug !~ '^[a-z0-9][a-z0-9-]{1,62}$' THEN
+    RAISE EXCEPTION 'tenant_provision: invalid slug' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF public.member_name_apply_rule(p_name, false) IS NULL THEN
+    RAISE EXCEPTION 'tenant_provision: name required' USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- ATOMIC create-or-lookup: ON CONFLICT waits for a concurrent inserter's
+  -- transaction to finish, so the reselect below always sees the committed
+  -- winner (two same-owner tabs both get the tenant id, never a false 409).
+  INSERT INTO tenants(name, slug, status, locale, timezone)
+  VALUES (public.member_name_apply_rule(p_name, false), p_slug, 'active', coalesce(p_locale, 'vi'),
+          coalesce(p_timezone, 'Asia/Ho_Chi_Minh'))
+  ON CONFLICT (slug) DO NOTHING
+  RETURNING id INTO v_tenant;
+
+  v_conflict := (v_tenant IS NULL);
+  IF v_conflict THEN
+    SELECT id INTO v_tenant FROM tenants WHERE slug = p_slug;
+  END IF;
+
+  -- 0037: every tenant-scoped statement below runs under FORCE RLS regardless
+  -- of who owns this function. Scope the transaction to the tenant just
+  -- resolved; the caller's previous value is restored on every exit path
+  -- (a RAISE aborts this block's subtransaction, which also reverts the
+  -- txn-local GUC — the EXCEPTION clause restores it explicitly anyway).
+  PERFORM set_config('app.tenant_id', v_tenant::text, true);
+
+  IF v_conflict THEN
+    -- idempotent ONLY for the web OWNER/ADMIN of that tenant — a mere member
+    -- re-submitting the slug must get SLUG_TAKEN, not the tenant id.
+    SELECT EXISTS (
+      SELECT 1 FROM tenant_admins ta
+      WHERE ta.tenant_id = v_tenant
+        AND ta.platform = 'web'
+        AND ta.platform_user_lookup_hash = p_person_id::text
+        AND ta.role IN ('owner','admin')
+        AND ta.active
+    ) INTO v_owned;
+    IF v_owned THEN
+      PERFORM set_config('app.tenant_id', coalesce(v_prev_tenant, ''), true);
+      RETURN v_tenant; -- idempotent re-submit by the same owner
+    END IF;
+    RAISE EXCEPTION 'tenant_provision: slug taken' USING ERRCODE = 'unique_violation';
+  END IF;
+
+  INSERT INTO memberships(tenant_id, person_id, status)
+  VALUES (v_tenant, p_person_id, 'active');
+
+  -- Web owner authz row. platform_user_lookup_hash carries the INTERNAL person
+  -- uuid for platform='web' (not platform PII — nothing to hash).
+  INSERT INTO tenant_admins(tenant_id, platform, platform_user_lookup_hash, role)
+  VALUES (v_tenant, 'web', p_person_id::text, 'owner');
+
+  -- FREE plan: active immediately, no trial, no period end in practice.
+  -- DD-29: plan_key 'free' (was 'free_web' — see 0028 header).
+  INSERT INTO subscriptions(tenant_id, plan_key, plan_version, status,
+                            period_start, period_end)
+  VALUES (v_tenant, 'free', 1, 'active', now(), 'infinity');
+
+  INSERT INTO onboarding_runs(tenant_id, status) VALUES (v_tenant, 'in_progress');
+
+  PERFORM set_config('app.tenant_id', coalesce(v_prev_tenant, ''), true);
+  RETURN v_tenant;
+EXCEPTION WHEN OTHERS THEN
+  PERFORM set_config('app.tenant_id', coalesce(v_prev_tenant, ''), true);
+  RAISE;
+END;
+$$;
+
+-- tenant_profile_update: L27 body 0069_member_name_invisible_chars.sql:646-707, re-created with this substitution:
+--   [v_name text := btrim(public.public_name_strip_invisible(p_name));] -> [v_name text := public.member_name_apply_rule(p_name, false);]
+--   [IF p_name IS NOT NULL AND (char_length(v_name) < 1 OR] -> [IF p_name IS NOT NULL AND (v_name IS NULL OR char_length(v_name) < 1 OR]
+CREATE OR REPLACE FUNCTION tenant_profile_update(
+  p_tenant_id uuid,
+  p_actor_person_id uuid,
+  p_name text,
+  p_timezone text,
+  p_locale text
+)
+RETURNS TABLE (id uuid, name text, slug text, timezone text, locale text)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  v_ctx uuid;
+  v_allowed boolean;
+  v_name text := public.member_name_apply_rule(p_name, false);
+BEGIN
+  BEGIN
+    v_ctx := NULLIF(current_setting('app.tenant_id', true), '')::uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    v_ctx := NULL;
+  END;
+  IF p_tenant_id IS NULL OR v_ctx IS NULL OR p_tenant_id <> v_ctx THEN
+    RAISE EXCEPTION 'tenant_profile_update: tenant context mismatch'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- Authorization FIRST (DD-56): owner, or admin/co_admin via the content.manage preset.
+  SELECT a.allowed INTO v_allowed
+    FROM public.tenant_capability_authorize(p_tenant_id, 'content.manage', p_actor_person_id) a;
+  IF v_allowed IS NOT TRUE THEN
+    RAISE EXCEPTION 'tenant_profile_update: not permitted'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  IF p_name IS NOT NULL AND (v_name IS NULL OR char_length(v_name) < 1 OR char_length(v_name) > 120) THEN
+    RAISE EXCEPTION 'tenant_profile_update: name must be 1..120 chars'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF p_locale IS NOT NULL AND p_locale NOT IN ('vi', 'en') THEN
+    RAISE EXCEPTION 'tenant_profile_update: unsupported locale'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  IF p_timezone IS NOT NULL AND (btrim(p_timezone) = '' OR char_length(p_timezone) > 64) THEN
+    RAISE EXCEPTION 'tenant_profile_update: timezone must be 1..64 chars'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  RETURN QUERY
+    WITH u AS (
+      UPDATE public.tenants t
+         SET name = coalesce(v_name, t.name),
+             timezone = coalesce(p_timezone, t.timezone),
+             locale = coalesce(p_locale, t.locale)
+       WHERE t.id = p_tenant_id
+      RETURNING t.id, t.name, t.slug, t.timezone, t.locale
+    )
+    SELECT u.id, u.name, u.slug, u.timezone, u.locale FROM u;
+END;
+$$;
+
+-- L29-SECTION-B-END
