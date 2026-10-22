@@ -15,8 +15,8 @@ const ROOT = new URL("../../../", import.meta.url);
 const SKIP = new Set(["node_modules", "dist", ".next"]);
 /** vitest's default include pattern. */
 const VITEST_DEFAULT = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
-/** The test helpers named in step 0: both test-harness.ts files, apps/bot's test-db.ts, roster-money-fixtures.ts. */
-const HELPER = /(?:harness|test-db|fixtures)\.tsx?$/;
+/** Every source file but a declaration file: a support module or a re-exported mutator that a parallel test calls is scanned too. */
+const SOURCE = /(?<!\.d)\.[cm]?[jt]sx?$/;
 /** Strings and template literals (kept) and comments (blanked, newlines kept). */
 const STRIP =
   /"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\[\s\S]|[^\x60\\])*\x60|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
@@ -25,6 +25,8 @@ const STATEMENT = /\b(?:(GRANT|REVOKE)|(ALTER|CREATE|DROP)\s+(?:ROLE|USER|GROUP)
 /** A role list, then TO or FROM: an object grant's ON breaks the list, so object grants stay out (row OBJ). */
 const MEMBERSHIP =
   /^\s+(?:(?:ADMIN|INHERIT|SET)\s+OPTION\s+FOR\s+)?(?:"[^"]*"|\$\{[^}]*\}|%[\d$*-]*[isl]|[\w$]+)(?:\s*,\s*(?:"[^"]*"|\$\{[^}]*\}|%[\d$*-]*[isl]|[\w$]+))*\s+(?:TO|FROM)\b/i;
+/** The list sits outside the literal (a quote, then + or ||) or is missing, so the statement is never exempt as an object grant. */
+const SPLIT_LIST = /^\s*(?:["'\x60]\s*(?:\+|\|\|)|$)/;
 /** Row DL: the per-database setting form, keyed by the file's own database. */
 const DATABASE_SETTING = /^\s+(?:"[^"]*"|\$\{[^}]*\}|%[\d$*-]*[isl]|[\w$]+)\s+IN\s+DATABASE\b/i;
 /** A shared role: any definer (job, chat, identity, a future one), app, app_worker, app_user, readonly, plexco, or ALL roles. */
@@ -48,6 +50,7 @@ const MUTATORS = new Map([
 
 const HARNESS = "packages/db/src/test-harness.ts";
 const HARNESS_TEST = "packages/db/src/test-harness.test.ts";
+const MIGRATE = "packages/db/src/migrate.ts";
 /** Hits allowed outside the isolated files: [file, hit, exact count]; a new copy fails until it is reviewed. */
 const PINS: [string, string, number][] = [
   // PL: the harness's permanent password lease of the shared runtime roles (:162, :183).
@@ -78,6 +81,10 @@ const PINS: [string, string, number][] = [
   [HARNESS_TEST, `\${roleC} LOGIN PASSWORD 'rpw_orig_c'`, 1],
   [HARNESS_TEST, `IF EXISTS \${JDB_ROLE}`, 2],
   [HARNESS_TEST, `\${JDB_ROLE} NOLOGIN`, 1],
+  // BS: migrate()'s permanent, idempotent role ensure (ensureRoleExists, BR-1: CREATE ROLE when absent,
+  // no temporary state) and its refusal message (:161, :166).
+  [MIGRATE, `with unsafe identifier \${JSON.stringify(role)}`, 1],
+  [MIGRATE, `\${role} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, 1],
 ];
 
 /** Every hit in one source: a statement's trimmed region or a mutator's name. */
@@ -86,7 +93,7 @@ const scan = (source: string): string[] => {
   const hits: string[] = [];
   for (const [, membership, verb, region = ""] of code.matchAll(STATEMENT)) {
     const exempt = membership
-      ? !MEMBERSHIP.test(region)
+      ? !MEMBERSHIP.test(region) && !SPLIT_LIST.test(region)
       : verb?.toUpperCase() === "ALTER" && DATABASE_SETTING.test(region);
     if (!exempt && (SHARED.test(region) || DYNAMIC.test(region))) hits.push(region.trim());
   }
@@ -98,9 +105,10 @@ const walk = (dir: string): string[] =>
   readdirSync(new URL(`${dir}/`, ROOT), { withFileTypes: true }).flatMap((d) => {
     const rel = `${dir}/${d.name}`;
     if (d.isDirectory()) return SKIP.has(d.name) ? [] : walk(rel);
-    return VITEST_DEFAULT.test(d.name) || HELPER.test(d.name) ? [rel] : [];
+    return SOURCE.test(d.name) ? [rel] : [];
   });
-const testFiles = () => [...walk("packages"), ...walk("apps")];
+const sourceFiles = () => [...walk("packages"), ...walk("apps")];
+const readJson = <T>(path: string): T => JSON.parse(readFileSync(new URL(path, ROOT), "utf8")) as T;
 
 describe("role-hiding isolation guard (L32)", () => {
   it("flags a planted role statement and ignores its commented twins", () => {
@@ -108,10 +116,13 @@ describe("role-hiding isolation guard (L32)", () => {
     const statement = ["ALTER", "ROLE", region].join(" ");
     expect(scan(`await su.query(\`${statement}\`);`)).toEqual([region]);
     expect(scan(`// ${statement}\n/* ${statement} */`)).toEqual([]);
+    // A role list concatenated outside the literal cannot be read: flagged, not exempt as an object grant.
+    const list = `" + "job_definer" + " TO app_worker")`;
+    expect(scan(`await su.query("${"GR" + "ANT"} ${list};`)).toEqual([list]);
   });
 
   it("finds shared-role mutations only in the isolated test files", () => {
-    const files = testFiles();
+    const files = sourceFiles();
     const hits = new Map(
       files.map((file) => [file, scan(readFileSync(new URL(file, ROOT), "utf8"))]),
     );
@@ -131,8 +142,8 @@ describe("role-hiding isolation guard (L32)", () => {
     expect(mismatched).toEqual([]);
     expect(Object.entries(flagged).filter(([file]) => !isolated.includes(file))).toEqual([]);
     expect(Object.keys(flagged).sort()).toEqual(isolated);
-    // Measured 240 at 56d31b2, this file included; a broken walk falls far below.
-    expect(files.length).toBeGreaterThan(220);
+    // Measured 574 at e37411a (every source file under packages/ and apps/, this file included); a broken walk falls far below.
+    expect(files.length).toBeGreaterThan(550);
   }, 30_000);
 
   it("runs every package test file, each isolated file alone in a later group", () => {
@@ -143,6 +154,11 @@ describe("role-hiding isolation guard (L32)", () => {
         exclude?: string[];
         sequence: { groupOrder: number };
       };
+    };
+    type Pkg = {
+      scripts: { test: string };
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
     };
     const [parallel, ...isolated] = (config.test?.projects ?? []) as Project[];
     expect(config.test).toMatchObject({
@@ -163,17 +179,29 @@ describe("role-hiding isolation guard (L32)", () => {
     expect(new Set(groups).size).toBe(groups.length);
     expect(Math.min(...groups)).toBeGreaterThan(0);
     // Any flag here (--project, --sequence, --fileParallelism, a file filter) could run a subset or reorder the groups.
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-      scripts: { test: string };
-    };
-    expect(pkg.scripts.test).toBe("vitest run --passWithNoTests");
+    expect(readJson<Pkg>("packages/db/package.json").scripts.test).toBe(
+      "vitest run --passWithNoTests",
+    );
     // The base config had no include, so vitest's default pattern ran every such file: each must still be a src test file.
-    const unrun = testFiles().filter(
+    const unrun = sourceFiles().filter(
       (f) =>
         f.startsWith("packages/db/") &&
         VITEST_DEFAULT.test(f) &&
         !/^packages\/db\/src\/.+\.test\.ts$/.test(f),
     );
     expect(unrun).toEqual([]);
+    // The apps' tests check privileges and read pg_roles. pnpm's default topological order starts them only after
+    // the db suite exits; --parallel or --no-sort would let them overlap its isolated groups.
+    const dependsOnDb = ["apps/bot", "apps/web"].map((app) => {
+      const { dependencies, devDependencies } = readJson<Pkg>(`${app}/package.json`);
+      return [app, "@plexco/db" in { ...dependencies, ...devDependencies }];
+    });
+    expect(dependsOnDb).toEqual([
+      ["apps/bot", true],
+      ["apps/web", true],
+    ]);
+    const rootTest = readJson<Pkg>("package.json").scripts.test;
+    expect(rootTest).toMatch(/(?:^|&& )pnpm -r run test$/);
+    expect(rootTest).not.toMatch(/--parallel|--no-sort/);
   }, 30_000);
 });
