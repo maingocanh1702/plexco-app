@@ -1502,3 +1502,219 @@ describe("L29-RC P3, P4 and M2 keep their attributes and call member_name_apply_
     }).toEqual({ calls: 1, ingress: 1, strip: false });
   });
 });
+
+// L29-C (unit U4a, readiness sections 8 and 11, D4): the exact text of the 0070 L29-CLEANUP block,
+// replayed as MG replays 0069's: fixture rows seeded through the privileged path, transactions that
+// are always rolled back, and a first run that absorbs what the blocks above left behind (the tenant
+// names that run keeps are re-reported by every later run: `carried`).
+
+/** The 0070 L29-CLEANUP block: the text between its two marker lines, each present exactly once. */
+function l29Cleanup(): string {
+  const text = migration("0070_member_name_control_chars.sql");
+  const begin = "\n-- L29-CLEANUP-BEGIN\n";
+  const end = "\n-- L29-CLEANUP-END";
+  const from = text.indexOf(begin);
+  const to = text.indexOf(end);
+  if (from < 0 || to < from || text.includes(begin, from + 1) || text.includes(end, to + 1)) {
+    throw new Error("0070: expected one L29-CLEANUP-BEGIN line, then one L29-CLEANUP-END line");
+  }
+  return text.slice(from + begin.length, to);
+}
+
+describe("L29-C the 0070 L29-CLEANUP block normalizes the four columns in mode true", () => {
+  const CLEANUP = l29Cleanup();
+  const COLS = [
+    ["persons", "display_name", "person", "display name"],
+    ["memberships", "display_name", "membership", "display name"],
+    ["tenants", "name", "tenant", "name"],
+    ["sessions", "venue_address", "session", "venue address"],
+  ] as const;
+  type Table = (typeof COLS)[number][0];
+  const KINDS = ["mixed", "blank", "invisible", "clean"] as const;
+  type Kind = (typeof KINDS)[number];
+  // mixed: a Bidi_Control, U+2029 and a Cc inside the text; blank: blank-looking code points, none
+  // of them default-ignorable; invisible: default-ignorable only, which the 0069 block keeps.
+  const VALUE: Record<Kind, string> = {
+    mixed: mix("L29", 0x202e, " Mai", 0x2029, 0x7),
+    blank: mix(0xa0, 0x2800, 0x3000),
+    invisible: mix(0x200b, 0x2060),
+    clean: "L29 Lan",
+  };
+  // What the block leaves: the rule's value, NULL when nothing visible is left, except tenants.name,
+  // which keeps such a value as stored (D4). A clean value is no candidate.
+  const stored = (table: Table, k: Kind) =>
+    k === "mixed" ? "L29 Mai" : k === "clean" || table === "tenants" ? VALUE[k] : null;
+  const changed = (noun: string, what: string, id: string) =>
+    `0070 cleanup: ${noun} ${id} ${what} normalized${noun === "session" ? " and re-projected" : ""}`;
+  const left = (id: string) =>
+    `0070 cleanup: tenant ${id} name left unchanged (no visible character after the rule)`;
+  const closing = (p: number, m: number, t: number, s: number, l: number) =>
+    `0070 cleanup: ${p} person names, ${m} membership names, ${t} tenant names changed, ${s} sessions changed and re-projected, ${l} tenant names left unchanged`;
+
+  /** Runs the block on c and returns the NOTICE messages it raised. */
+  async function run(c: pg.PoolClient): Promise<string[]> {
+    const notices: string[] = [];
+    const onNotice = (n: { message?: string | undefined }) => notices.push(n.message ?? "");
+    c.on("notice", onNotice);
+    try {
+      await c.query(CLEANUP);
+    } finally {
+      c.off("notice", onNotice);
+    }
+    return notices;
+  }
+
+  /** One club (clean name, approved alias) hosts a row of each kind per column, plus a hidden mixed
+   *  address (hide_exact_address ON); every session is projected (version 1). */
+  async function seed(c: pg.PoolClient) {
+    const carried = (await run(c)).filter((n) =>
+      n.endsWith("(no visible character after the rule)"),
+    );
+    const insert = async (statement: string, params: unknown[]) =>
+      (await c.query<{ id: string }>(`${statement} RETURNING id`, params)).rows[0]!.id;
+    const slug = () => `l29-${randomUUID()}`;
+    const club = await insert(
+      `INSERT INTO tenants (name, slug, public_alias, public_alias_status) VALUES ($1, $2, 'L29 Alias', 'approved')`,
+      [VALUE.clean, slug()],
+    );
+    const session = (address: string, hide: boolean) =>
+      insert(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
+           price_amount, slots_max, visibility, join_policy, status, hide_exact_address)
+         VALUES ($1, $2, now() + interval '7 days', now() + interval '7 days 2 hours', 'Asia/Ho_Chi_Minh',
+           'San L29', $3, 'Quan 1', 50000, 10, 'public', 'open', 'open', $4)`,
+        [club, ctx.badmintonSportId, address, hide],
+      );
+    const ids = { persons: {}, memberships: {}, tenants: {}, sessions: {} } as Record<
+      Table,
+      Record<Kind, string>
+    >;
+    for (const k of KINDS) {
+      ids.persons[k] = await insert(`INSERT INTO persons (display_name) VALUES ($1)`, [VALUE[k]]);
+      ids.memberships[k] = await insert(
+        `INSERT INTO memberships (tenant_id, person_id, display_name) VALUES ($1, $2, $3)`,
+        [club, ids.persons[k], VALUE[k]],
+      );
+      ids.tenants[k] =
+        k === "clean"
+          ? club
+          : await insert(`INSERT INTO tenants (name, slug) VALUES ($1, $2)`, [VALUE[k], slug()]);
+      ids.sessions[k] = await session(VALUE[k], false);
+    }
+    const hidden = await session(VALUE.mixed, true);
+    for (const id of [...Object.values(ids.sessions), hidden]) {
+      const { rows } = await c.query<{ d: string }>(
+        `SELECT public_sessions_project_session($1, NULL) AS d`,
+        [id],
+      );
+      expect(rows[0]!.d).toBe("upserted");
+    }
+    return { ids, hidden, carried };
+  }
+  type Fixture = Awaited<ReturnType<typeof seed>>;
+
+  /** id -> [ctid, stored value] of each fixture row (an UPDATE moves the ctid) and "public <id>" ->
+   *  [version, venue_address] of each session's public row. */
+  async function state(c: pg.PoolClient, f: Fixture): Promise<Record<string, unknown[]>> {
+    const out: Record<string, unknown[]> = {};
+    const sessions = [...Object.values(f.ids.sessions), f.hidden];
+    for (const [table, col] of COLS) {
+      const { rows } = await c.query<{ id: string; ctid: string; v: string | null }>(
+        `SELECT id, ctid::text AS ctid, ${col} AS v FROM ${table} WHERE id = ANY($1::uuid[])`,
+        [table === "sessions" ? sessions : Object.values(f.ids[table])],
+      );
+      for (const r of rows) out[r.id] = [r.ctid, r.v];
+    }
+    const { rows } = await c.query<{ id: string; version: number; v: string | null }>(
+      `SELECT id, public_projection_version::int AS version, venue_address AS v
+         FROM public_sessions WHERE id = ANY($1::uuid[])`,
+      [sessions],
+    );
+    for (const r of rows) out[`public ${r.id}`] = [r.version, r.v];
+    return out;
+  }
+
+  it("L29-C3 a second run rewrites no row, bumps no version and re-reports only the tenant names it keeps", async () => {
+    await rolledBack(async (c) => {
+      const f = await seed(c);
+      await run(c);
+      const before = await state(c, f);
+      const notices = await run(c);
+      expect(await state(c, f)).toEqual(before);
+      expect(notices.sort()).toEqual(
+        [
+          left(f.ids.tenants.blank),
+          left(f.ids.tenants.invisible),
+          ...f.carried,
+          closing(0, 0, 0, 0, 2 + f.carried.length),
+        ].sort(),
+      );
+    });
+  });
+
+  it("L29-C4 normalizes seeded values in all four columns (tenants.name per D4), re-projects each changed session, names rows by id only", async () => {
+    await rolledBack(async (c) => {
+      const f = await seed(c);
+      const before = await state(c, f);
+      const notices = await run(c);
+      const after = await state(c, f);
+      for (const [table] of COLS) {
+        for (const k of KINDS) {
+          const id = f.ids[table][k];
+          const v = stored(table, k);
+          const moved = after[id]![0] !== before[id]![0]; // every UPDATE moves the ctid
+          expect({ table, k, v: after[id]![1], moved }).toEqual({
+            table,
+            k,
+            v,
+            moved: v !== VALUE[k],
+          });
+        }
+      }
+      // Each changed visible address bumps its public row; the hidden one stays masked.
+      const pub = (id: string) => [before[`public ${id}`], after[`public ${id}`]];
+      const s = f.ids.sessions;
+      expect([pub(s.mixed), pub(s.blank), pub(s.invisible), pub(s.clean)]).toEqual([
+        [
+          [1, VALUE.mixed],
+          [2, "L29 Mai"],
+        ],
+        [
+          [1, VALUE.blank],
+          [2, null],
+        ],
+        [
+          [1, VALUE.invisible],
+          [2, null],
+        ],
+        [
+          [1, VALUE.clean],
+          [1, VALUE.clean],
+        ],
+      ]);
+      expect([after[f.hidden]![1], pub(f.hidden)]).toEqual([
+        "L29 Mai",
+        [
+          [1, null],
+          [1, null],
+        ],
+      ]);
+      expect(notices.sort()).toEqual(
+        [
+          ...COLS.flatMap(([table, , noun, what]) =>
+            KINDS.filter((k) => stored(table, k) !== VALUE[k]).map((k) =>
+              changed(noun, what, f.ids[table][k]),
+            ),
+          ),
+          changed("session", "venue address", f.hidden),
+          left(f.ids.tenants.blank),
+          left(f.ids.tenants.invisible),
+          ...f.carried,
+          closing(3, 3, 1, 4, 2 + f.carried.length),
+        ].sort(),
+      );
+      // No NOTICE carries fixture text: none of its words, no code point outside printable ASCII.
+      expect(notices.filter((n) => /L29|Mai|Lan|[^ -~]/.test(n))).toEqual([]);
+    });
+  });
+});

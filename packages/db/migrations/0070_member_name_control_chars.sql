@@ -706,3 +706,85 @@ END;
 $$;
 
 -- L29-SECTION-C-END
+
+-- ============================================================================
+-- Section D: the one-time cleanup (readiness section 8, D4): 0069's L27-CLEANUP block with the rule
+-- in mode true. It runs after the owner check above, as the superuser migration role, rewrites only
+-- the rows the rule changes, names rows by id and counts only, and a second run changes nothing.
+-- L29-CLEANUP-BEGIN
+DO $l29_cleanup$
+DECLARE
+  r             record;
+  v_new         text;
+  n_persons     integer := 0;
+  n_memberships integer := 0;
+  n_tenants     integer := 0;
+  n_sessions    integer := 0;
+  n_left        integer := 0;
+BEGIN
+  -- Never silently skip a row row security hides: 0069's guard over the four tables.
+  IF (row_security_active('public.persons') AND pg_relation_size('public.persons') > 0)
+     OR (row_security_active('public.memberships') AND pg_relation_size('public.memberships') > 0)
+     OR (row_security_active('public.tenants') AND pg_relation_size('public.tenants') > 0)
+     OR (row_security_active('public.sessions') AND pg_relation_size('public.sessions') > 0) THEN
+    RAISE EXCEPTION '0070 cleanup: row security applies to % and persons, memberships, tenants or sessions holds rows it may not see; apply 0070 as the superuser migration role',
+      current_user USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- persons and memberships display names and venue_address are nullable: they take the rule's
+  -- value, NULL when no visible character is left (every reader tolerates NULL).
+  FOR r IN
+    SELECT p.id, p.display_name AS v FROM public.persons p
+     WHERE p.display_name IS DISTINCT FROM public.member_name_apply_rule(p.display_name, true)
+     ORDER BY p.id FOR UPDATE
+  LOOP
+    UPDATE public.persons SET display_name = public.member_name_apply_rule(r.v, true) WHERE id = r.id;
+    n_persons := n_persons + 1;
+    RAISE NOTICE '0070 cleanup: person % display name normalized', r.id;
+  END LOOP;
+
+  FOR r IN
+    SELECT m.id, m.display_name AS v FROM public.memberships m
+     WHERE m.display_name IS DISTINCT FROM public.member_name_apply_rule(m.display_name, true)
+     ORDER BY m.id FOR UPDATE
+  LOOP
+    UPDATE public.memberships SET display_name = public.member_name_apply_rule(r.v, true) WHERE id = r.id;
+    n_memberships := n_memberships + 1;
+    RAISE NOTICE '0070 cleanup: membership % display name normalized', r.id;
+  END LOOP;
+
+  -- tenants.name is NOT NULL (tenants_name_len_chk 1..120): a name the rule would make NULL stays as
+  -- stored, as 0069 leaves an invisible-only one, and every run re-reports it.
+  FOR r IN
+    SELECT t.id, t.name AS v FROM public.tenants t
+     WHERE t.name IS DISTINCT FROM public.member_name_apply_rule(t.name, true)
+     ORDER BY t.id FOR UPDATE
+  LOOP
+    v_new := public.member_name_apply_rule(r.v, true);
+    IF v_new IS NOT NULL THEN
+      UPDATE public.tenants SET name = v_new WHERE id = r.id;
+      n_tenants := n_tenants + 1;
+      RAISE NOTICE '0070 cleanup: tenant % name normalized', r.id;
+    ELSE
+      n_left := n_left + 1;
+      RAISE NOTICE '0070 cleanup: tenant % name left unchanged (no visible character after the rule)', r.id;
+    END IF;
+  END LOOP;
+
+  -- The projector's own path (its lock, fence and hide_exact_address mask) rewrites the public row.
+  FOR r IN
+    SELECT s.id, s.venue_address AS v FROM public.sessions s
+     WHERE s.venue_address IS DISTINCT FROM public.member_name_apply_rule(s.venue_address, true)
+     ORDER BY s.id FOR UPDATE
+  LOOP
+    UPDATE public.sessions SET venue_address = public.member_name_apply_rule(r.v, true) WHERE id = r.id;
+    PERFORM public.public_sessions_project_session(r.id, NULL);
+    n_sessions := n_sessions + 1;
+    RAISE NOTICE '0070 cleanup: session % venue address normalized and re-projected', r.id;
+  END LOOP;
+
+  RAISE NOTICE '0070 cleanup: % person names, % membership names, % tenant names changed, % sessions changed and re-projected, % tenant names left unchanged',
+    n_persons, n_memberships, n_tenants, n_sessions, n_left;
+END
+$l29_cleanup$;
+-- L29-CLEANUP-END
