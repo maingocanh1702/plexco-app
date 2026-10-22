@@ -7,6 +7,9 @@
  * DO blocks of the migration files, plus functions of files after 0069), when a new trigger on the
  * four tables could rewrite one unseen (G3), or when a TypeScript writer appears unpinned (G4).
  * Each guard keeps a row that feeds a planted counter-example to the same matcher.
+ * L29 unit U5a (RO-L29-3 group 5): G1 also accepts the rule public.member_name_apply_rule (0070),
+ * only while the rule's own definition strips first; L29-G1 (L29 readiness section 11) pins every
+ * writer a migration after 0069 defines to the rule.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -61,11 +64,39 @@ const TRIGGERS = [
 /** channel_identity_detach's only write (A3): a new person row with a NULL display name. */
 const NULL_INSERT = "insert into public.persons (display_name, status) values (null, 'active')";
 
+/** RO-L29-3 group 5: a listed writer may strip through the rule (0070) instead of calling the helper
+ * directly, schema-qualified as every 0070 definer calls it (a look-alike name or an unqualified call
+ * does not count), and only while every catalog definition of the rule reads its argument through
+ * the helper alone: each use of p_value or $1 is exactly public.public_name_strip_invisible(p_value),
+ * so the strip comes before any other processing and the transitive guarantee is tested, not
+ * assumed. A renamed parameter fails closed. Threat model: drift in a later migration, not a hostile
+ * author (who could edit this file); ceiling: substring presence, as STRIP's. */
+const RULE = "public.member_name_apply_rule(";
+const RULE_NAME = "member_name_apply_rule";
+const STRIP_ARG = `public.${STRIP}p_value)`;
+const stripsFirst = (src: string) => {
+  const body = clean(src);
+  return body.includes(STRIP_ARG) && !/\bp_value\b|\$1\b/.test(body.split(STRIP_ARG).join(" "));
+};
+/** The six definers 0070 re-creates (P2, T1, T2, P3, P4, M2), each calling the rule. */
+const VIA_RULE = [
+  "auth_login_google",
+  "create_guest_membership",
+  "create_host_added_person",
+  "tenant_profile_update",
+  "tenant_provision",
+  "zalo_identity_resolve",
+];
 type Fn = { sig: string; name: string; src: string };
-/** G1 violations, each naming its function: unlisted writer, listed writer without the strip, stale entry. */
+/** G1 violations, each naming its function: unlisted writer, listed writer without the strip, stale entry,
+ * and (RO-L29-3 group 5) a definition of the rule that does not strip first. */
 function g1(fns: Fn[]): string[] {
   const writers = fns.filter((f) => writes(f.src).length > 0);
+  const rules = fns.filter((f) => f.name === RULE_NAME);
+  const unsafe = rules.filter((r) => !stripsFirst(r.src));
+  const ruleStrips = rules.length > 0 && unsafe.length === 0;
   return [
+    ...unsafe.map((r) => `rule without the strip first ${r.sig}`),
     ...writers.flatMap((f) => {
       const src = clean(f.src);
       if (!WRITERS.includes(f.name))
@@ -81,9 +112,10 @@ function g1(fns: Fn[]): string[] {
             /^(?: returning \w+ into \w+)?$/.test(stmt.slice(NULL_INSERT.length))
           );
         });
-      // Ceiling: presence, not data flow (the helper anywhere in a listed body passes); RC-BODY pins
-      // only the seven definers 0069 re-creates.
-      return src.includes(STRIP) || nullOnly ? [] : [`listed writer without the strip ${f.sig}`];
+      // Ceiling: presence, not data flow (the helper, or the rule while it strips first, anywhere in
+      // a listed body passes); RC-BODY pins only the seven definers 0069 re-creates.
+      const strips = src.includes(STRIP) || (ruleStrips && src.includes(RULE));
+      return strips || nullOnly ? [] : [`listed writer without the strip ${f.sig}`];
     }),
     ...WRITERS.filter((w) => !writers.some((f) => f.name === w)).map((w) => `stale entry ${w}`),
   ];
@@ -219,6 +251,136 @@ describe("G1 catalog: every function that writes the four columns is pinned and 
     };
     expect(g1With("$1")).toEqual([`listed writer without the strip ${detach.sig}`]);
     expect(g1With(`${STRIP}$1)`)).toEqual([]);
+  });
+  it("pins the rule: one definition, reading its argument only through the helper, called by six", () => {
+    const rules = fns.filter((f) => f.name === RULE_NAME);
+    expect(
+      rules.map((f) => stripsFirst(f.src)),
+      "one rule, stripping first",
+    ).toEqual([true]);
+    const callers = fns.filter((f) => WRITERS.includes(f.name) && clean(f.src).includes(RULE));
+    expect(callers.map((f) => f.name).sort(), "the listed writers calling it").toEqual(VIA_RULE);
+  });
+  it("fails on a rule that does not strip first, and then on each writer calling it", () => {
+    const rule = fns.find((f) => f.name === RULE_NAME)!;
+    const callers = fns
+      .filter((f) => VIA_RULE.includes(f.name))
+      .map((f) => `listed writer without the strip ${f.sig}`);
+    for (const src of [
+      "begin return public.public_name_strip_invisible(btrim(p_value)); end",
+      "declare v text := btrim(p_value); begin return public.public_name_strip_invisible(v); end",
+      "begin if p_value ~ 'x' then return null; end if; return public.public_name_strip_invisible(p_value); end",
+      "begin return public.public_name_strip_invisible(p_value) || $1; end",
+      "begin return x_public_name_strip_invisible(p_value); end",
+      "begin return btrim(p_value); end",
+    ]) {
+      expect(g1(fns.map((f) => (f === rule ? { ...f, src } : f))).sort(), src).toEqual(
+        [`rule without the strip first ${rule.sig}`, ...callers].sort(),
+      );
+    }
+    expect(g1(fns.filter((f) => f !== rule)).sort(), "no rule").toEqual([...callers].sort());
+    const minimal = { ...rule, src: `begin return ${STRIP_ARG}; end` };
+    expect(g1(fns.map((f) => (f === rule ? minimal : f))), "a minimal rule").toEqual([]);
+  });
+  it("fails on a listed writer calling a look-alike rule, the rule unqualified or another function", () => {
+    const listed = fns.find((f) => f.name === "tenant_profile_update")!;
+    const g1With = (value: string) => {
+      const src = `begin update tenants set name = ${value} where id = p_id; end`;
+      return g1(fns.map((f) => (f === listed ? { ...f, src } : f)));
+    };
+    for (const value of [
+      "public.member_name_apply_rule_lite(p_name, false)",
+      "x_member_name_apply_rule(p_name, false)",
+      "member_name_apply_rule(p_name, false)",
+      "public.member_name_tidy(p_name)",
+    ]) {
+      expect(g1With(value), value).toEqual([`listed writer without the strip ${listed.sig}`]);
+    }
+    expect(g1With(`${RULE}p_name, false)`), "the rule").toEqual([]);
+  });
+});
+
+/** L29-G1 (L29 readiness section 11): a function that a migration after 0069 defines and that writes
+ * a guarded column calls the rule, except by name P1 person_profile_update (keeps 0069's own rule)
+ * and P5 channel_identity_detach (writes NULL only, G1's nullOnly); M3 (NULL) is no writer the
+ * scanner sees (it is not in WRITERS), so it needs no name. */
+const L29_EXEMPT = ["person_profile_update", "channel_identity_detach"];
+/** The functions a file defines: G2's header match, not anchored (comments are blanked first). */
+const DEFINES = /\bcreate\s+(?:or\s+replace\s+)?(?:function|procedure)\s+(?:"?\w+"?\.)?"?(\w+)/g;
+// ponytail: the body is the catalog's (pg_proc holds the latest definition) and the file only dates
+// it, so a pg_temp or dropped helper of a late file is left to G2; a file-side body split if one bites.
+const lateWriters = (files: Record<string, string>, catalog: Fn[]) => {
+  const late = Object.entries(files)
+    .filter(([file]) => Number.parseInt(file, 10) > 69)
+    .flatMap(([, raw]) => [...clean(raw).matchAll(DEFINES)].map(([, name]) => name!));
+  return catalog.filter(
+    (f) => late.includes(f.name) && !L29_EXEMPT.includes(f.name) && writes(f.src).length > 0,
+  );
+};
+const l29g1 = (files: Record<string, string>, catalog: Fn[]) =>
+  lateWriters(files, catalog)
+    .filter((f) => !clean(f.src).includes(RULE))
+    .map((f) => `post-0069 writer without the rule ${f.sig}`);
+
+describe("L29-G1 migrations after 0069: every writer they define calls the rule", () => {
+  const files = Object.fromEntries(
+    readdirSync(new URL("../migrations/", import.meta.url))
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => [f, migration(f)] as const),
+  );
+  /** A planted migration file defining `name` with `body`, and the catalog it would leave. */
+  const plant = (file: string, name: string, body: string) => ({
+    files: {
+      ...files,
+      [file]: `CREATE OR REPLACE FUNCTION public.${name}(p_id uuid, p_name text) RETURNS void\nLANGUAGE plpgsql AS $$\n${body}\n$$;\n`,
+    },
+    catalog: [
+      ...fns.filter((f) => f.name !== name),
+      { sig: `${name}(uuid,text)`, name, src: body },
+    ],
+  });
+  const update = (value: string) =>
+    `begin update persons set display_name = ${value} where id = p_id; end`;
+
+  it("holds on packages/db/migrations: 0070's six definers, each calling the rule", () => {
+    expect(
+      lateWriters(files, fns)
+        .map((f) => f.name)
+        .sort(),
+      "the late writers",
+    ).toEqual(VIA_RULE);
+    expect(l29g1(files, fns)).toEqual([]);
+  });
+  it("fails on a late writer calling only the helper or neither, also a re-created listed one", () => {
+    const cases: [string, string, string][] = [
+      ["0070_planted.sql", "planted", update(`${STRIP}p_name)`)],
+      ["0071_planted.sql", "planted", update("btrim(p_name)")],
+      [
+        "0071_planted.sql",
+        "tenant_profile_update",
+        `begin update tenants set name = btrim(${STRIP}p_name)) where id = p_id; end`,
+      ],
+    ];
+    for (const [file, name, body] of cases) {
+      const { files: planted, catalog } = plant(file, name, body);
+      expect(l29g1(planted, catalog), `${file} ${name}`).toEqual([
+        `post-0069 writer without the rule ${name}(uuid,text)`,
+      ]);
+    }
+  });
+  it("passes it once it calls the rule, in a 0069 file, and P1 and P5 by name only", () => {
+    const ruled = plant("0071_planted.sql", "planted", update(`${RULE}p_name, false)`));
+    expect(l29g1(ruled.files, ruled.catalog), "the rule").toEqual([]);
+    const old = plant("0069_planted.sql", "planted", update(`${STRIP}p_name)`));
+    expect(l29g1(old.files, old.catalog), "a 0069 file").toEqual([]);
+    for (const name of L29_EXEMPT) {
+      const real = fns.find((f) => f.name === name)!;
+      expect([writes(real.src).length > 0, clean(real.src).includes(RULE)], name).toEqual([
+        true,
+        false,
+      ]);
+      expect(l29g1(plant("0071_planted.sql", name, "select 1").files, fns), name).toEqual([]);
+    }
   });
 });
 
