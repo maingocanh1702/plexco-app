@@ -514,6 +514,11 @@ bash "$N/scripts/lockfile-diff.sh" fb8ee675b49f9460ae8332950c82b40ec30610de <rev
   fallback is used, the PR body says so and a dated line is added at the end of this section.
 - STOP with a ruling request on anything that adds or removes a package, changes a major version, or moves a package
   outside the vite and vitest family.
+- 2026-10-22 (run 3, unit U2, commit `42cc006`): the fallback was used. After the four vitest lines and the floor, a
+  plain `pnpm install` moved the vitest family to 4.1.12 but kept vite 7.3.6 ("unmet peer vite@^7.3.7: found 7.3.6");
+  with the root devDependency `"vite": "^7.3.7"` added, a second plain install moved vite to 7.3.7 with no unmet peer.
+  The lockfile check then reads LOCKFILE_DIFF_OK with exactly the 9 names, 340 -> 340 keys, and the overrides header
+  diff is the one line `vite@7: ^7.3.7` (`r3-u2-lockfile-diff.txt`, `r3-u2-install.log`, `r3-u2-fallback-install.log`).
 
 ### 9.3 Intended set and the PR-B lockfile check (replaces 3.2's "final" line for PR-B)
 
