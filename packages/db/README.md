@@ -562,7 +562,9 @@ alone, one at a time, after every other test file (project `parallel` first, the
 project per file, in `groupOrder`), so no other test file of the package can observe a hidden role, a
 temporary grant or a membership hand-off. `packages/db/src/role-hiding-isolation-guard.test.ts` fails
 when such a statement (a rename, drop, create or alter of a shared role, a `GRANT` or `REVOKE` of a
-shared-role membership, a call of a harness membership helper) appears in any other test file, and a
+shared-role membership, a call of a harness membership helper) appears in any other source file under
+`packages/` or `apps/` (support modules and production code included; the reviewed exceptions are the
+guard's `PINS`), and a
 new role-mutating test must be added to that constant; the guard fails in both directions, so a file
 that stops mutating a shared role must also leave it. A `--sequence.*` CLI flag resets `groupOrder`
 and lets the groups overlap again: keep it off the package `test` script (the guard pins its text) and
