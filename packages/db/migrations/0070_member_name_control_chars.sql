@@ -344,3 +344,365 @@ END;
 $$;
 
 -- L29-SECTION-B-END
+
+-- L29-SECTION-C-BEGIN
+-- Section C (unit U3a): the ingress and copy writers call the rule in mode true (readiness
+-- sections 5 and 7, decision D2c): normalize, never raise. Each body is its L27 body in 0069,
+-- copied mechanically by its exact line range; only the named substitution line differs, so
+-- SECURITY DEFINER, the volatility and the search_path are restated unchanged. CREATE OR REPLACE
+-- keeps the owner and the ACL, so there is no REVOKE or GRANT here; the L29 owner check above
+-- (42501) asserts their owner before they are replaced. Mode true raises nothing and returns NULL
+-- when no visible character remains, never '': zalo_identity_resolve still cuts to 120 after the
+-- normalization, auth_login_google keeps no length cap, and create_guest_membership copies NULL
+-- for an invisible-only or blank-only person name (a NULL source stays NULL).
+
+-- zalo_identity_resolve: L27 body 0069_member_name_invisible_chars.sql:341-425, re-created with this substitution:
+--   [v_name text := left(nullif(btrim(public.public_name_strip_invisible(p_display_name)), ''), 120);] -> [v_name text := left(public.member_name_apply_rule(p_display_name, true), 120);]
+CREATE OR REPLACE FUNCTION zalo_identity_resolve(
+  p_tenant_id uuid, p_bot_id uuid, p_scope_hash text, p_user_hash text,
+  p_user_id_enc bytea, p_display_name text
+)
+RETURNS TABLE (person_id uuid, channel_identity_id uuid, created boolean,
+               display_name text, has_account boolean)
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+#variable_conflict use_column
+DECLARE
+  v_ctx uuid;
+  v_person uuid;
+  v_ci uuid;
+  v_created boolean := false;
+  v_status text;
+  v_name text := left(public.member_name_apply_rule(p_display_name, true), 120);
+BEGIN
+  BEGIN
+    v_ctx := NULLIF(current_setting('app.tenant_id', true), '')::uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    v_ctx := NULL;
+  END;
+  IF p_tenant_id IS NULL OR v_ctx IS NULL OR p_tenant_id <> v_ctx THEN
+    RAISE EXCEPTION 'zalo_identity_resolve: tenant context mismatch'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_bot_id IS NULL OR p_scope_hash IS NULL OR p_user_hash IS NULL OR p_user_id_enc IS NULL
+     OR p_scope_hash = '' OR p_user_hash = '' THEN
+    RAISE EXCEPTION 'zalo_identity_resolve: scope, user hash and ciphertext are required'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  PERFORM 1 FROM public.zalo_bots b WHERE b.id = p_bot_id AND b.tenant_id = p_tenant_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'zalo_identity_resolve: bot not in tenant'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  SELECT ci.id, ci.person_id, ci.status INTO v_ci, v_person, v_status
+    FROM public.channel_identities ci
+   WHERE ci.platform = 'zalo' AND ci.provider_scope_lookup_hash = p_scope_hash
+     AND ci.platform_user_lookup_hash = p_user_hash;
+  IF NOT FOUND THEN
+    BEGIN
+      INSERT INTO public.persons (display_name, status) VALUES (v_name, 'active')
+        RETURNING id INTO v_person;
+      INSERT INTO public.channel_identities
+        (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status,
+         provider_scope_lookup_hash, zalo_bot_id)
+        VALUES (v_person, 'zalo', p_user_id_enc, p_user_hash, 'active', p_scope_hash, p_bot_id)
+        RETURNING id INTO v_ci;
+      v_created := true;
+      v_status := 'active';
+    EXCEPTION WHEN unique_violation THEN
+      -- Only a concurrent first event can race here (the block rolled back our persons row):
+      -- re-read the winner, else refuse.
+      SELECT ci.id, ci.person_id, ci.status INTO v_ci, v_person, v_status
+        FROM public.channel_identities ci
+       WHERE ci.platform = 'zalo' AND ci.provider_scope_lookup_hash = p_scope_hash
+         AND ci.platform_user_lookup_hash = p_user_hash;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'zalo_identity_resolve: identity scope conflict'
+          USING ERRCODE = 'integrity_constraint_violation';
+      END IF;
+    END;
+  END IF;
+  -- Tombstoning must NEVER rely on channel_identities.status: refuse any non-active Person.
+  PERFORM 1 FROM public.persons p WHERE p.id = v_person AND p.status = 'active';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'zalo_identity_resolve: person is not active'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  -- The unique ignores status, so an inactive row would otherwise lock the user out forever.
+  IF v_status <> 'active' THEN
+    UPDATE public.channel_identities SET status = 'active' WHERE id = v_ci;
+  END IF;
+
+  RETURN QUERY
+    SELECT v_person, v_ci, v_created,
+           (SELECT p.display_name FROM public.persons p WHERE p.id = v_person),
+           EXISTS (SELECT 1 FROM public.accounts a WHERE a.person_id = v_person);
+END;
+$$;
+
+-- auth_login_google: L27 body 0069_member_name_invisible_chars.sql:104-288, re-created with this substitution:
+--   [INSERT INTO persons(display_name) VALUES (NULLIF(trim(public.public_name_strip_invisible(p_display_name)), ''))] -> [INSERT INTO persons(display_name) VALUES (public.member_name_apply_rule(p_display_name, true))]
+CREATE OR REPLACE FUNCTION auth_login_google(
+  p_subject_hash text,
+  p_email_lookup_hash text,
+  p_email_enc bytea,
+  p_kms_key_version text,
+  p_account_email_id uuid,
+  p_display_name text,
+  p_request_ref text
+) RETURNS TABLE (account_id uuid, person_id uuid, outcome text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_subject_account uuid;
+  v_subject_person  uuid;
+  v_email_id        uuid;
+  v_email_account   uuid;
+  v_email_verified  boolean;
+  v_new_person      uuid;
+  v_new_account     uuid;
+  v_result_account  uuid;
+  v_result_person   uuid;
+  v_outcome         text;
+BEGIN
+  IF p_subject_hash IS NULL OR length(p_subject_hash) < 16 THEN
+    RAISE EXCEPTION 'auth_login_google: invalid subject hash'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+
+  -- (1) Read-only resolve BOTH owners (no lock). now() here is a candidate
+  --     filter only; the mutation runs under the locks below.
+  SELECT ai.account_id, a.person_id INTO v_subject_account, v_subject_person
+  FROM account_identities ai
+  JOIN accounts a ON a.id = ai.account_id
+  WHERE ai.platform = 'google' AND ai.platform_user_hash = p_subject_hash;
+
+  SELECT ae.id, ae.account_id, (ae.verified_at IS NOT NULL)
+    INTO v_email_id, v_email_account, v_email_verified
+  FROM account_emails ae
+  WHERE ae.email_lookup_hash = p_email_lookup_hash;
+
+  -- (2) Serialize concurrent logins on TWO domain-separated advisory locks
+  --     (§5.2 step 3 "absent email -> advisory lock from email_lookup_hash"),
+  --     always in this fixed order (email then subject) so no lock-order
+  --     inversion / deadlock is possible; the two key spaces are disjoint
+  --     (distinct string prefixes). hashtextextended keeps the full 64-bit key
+  --     space (hashtext is 32-bit) to minimise cross-key collisions.
+  --   * EMAIL lock: a cell-1 create and a cell-2/3 promote/attach for the SAME
+  --     address never race — the loser re-resolves below and sees the winner.
+  --   * SUBJECT lock (codex round-01 [P1]): two concurrent logins for the SAME
+  --     Google subject but DIFFERENT returned emails take different email locks,
+  --     so without this both could resolve the subject as absent and each
+  --     attach it to a different account (the loser's ON CONFLICT identity
+  --     insert no-ops, yet the function would still return that account with
+  --     login_success — authenticating the subject into the WRONG account).
+  --     Serializing on the subject makes the loser block here, re-resolve with
+  --     the subject now PRESENT, and take the subject branch (login the correct
+  --     account, or cell-7 identity_conflict) instead of a second attach.
+  PERFORM pg_advisory_xact_lock(hashtextextended('auth-oauth-email:' || p_email_lookup_hash, 0));
+  PERFORM pg_advisory_xact_lock(hashtextextended('auth-oauth-subject:' || p_subject_hash, 0));
+
+  -- (3) Parent tier, parent-first: lock the involved existing accounts in
+  --     ascending UUID order (§5.2 step 3), then the account_emails row. A
+  --     cell-1 create has neither yet — the advisory lock above is its
+  --     serialization point. DISTINCT collapses a same-account subject+email.
+  PERFORM 1 FROM accounts
+  WHERE id IN (v_subject_account, v_email_account) AND id IS NOT NULL
+  ORDER BY id
+  FOR UPDATE;
+  IF v_email_id IS NOT NULL THEN
+    PERFORM 1 FROM account_emails WHERE id = v_email_id FOR UPDATE;
+  END IF;
+
+  -- (4) Re-resolve under the locks (§5.2 step 6): the advisory + row locks make
+  --     a concurrent creator's commit visible now.
+  SELECT ai.account_id, a.person_id INTO v_subject_account, v_subject_person
+  FROM account_identities ai
+  JOIN accounts a ON a.id = ai.account_id
+  WHERE ai.platform = 'google' AND ai.platform_user_hash = p_subject_hash;
+
+  SELECT ae.id, ae.account_id, (ae.verified_at IS NOT NULL)
+    INTO v_email_id, v_email_account, v_email_verified
+  FROM account_emails ae
+  WHERE ae.email_lookup_hash = p_email_lookup_hash;
+
+  -- (5) Apply the collision cell.
+  IF v_subject_account IS NOT NULL THEN
+    -- Subject already exists — the stable identity owner (cells 4/5/6/7). A
+    -- Google email change never rebinds the account (email-change is a separate
+    -- re-auth+verify workflow, out of D1 scope), so the returned email only
+    -- MATTERS for the cell-7 conflict check.
+    IF v_email_id IS NOT NULL AND v_email_verified
+       AND v_email_account IS DISTINCT FROM v_subject_account THEN
+      -- Cell 7: the proven-verified email belongs to a DIFFERENT account.
+      -- Fail closed — no auto-merge, no session (→ DD-53).
+      v_result_account := v_subject_account;
+      v_result_person  := v_subject_person;
+      v_outcome        := 'identity_conflict';
+    ELSE
+      -- Cells 4 (email @ A), 5 (email absent), 6 (email pending @ B): log in
+      -- account A by its stable subject; mutate NOTHING (never create/promote a
+      -- contact, never touch B's pending attempts/tokens).
+      v_result_account := v_subject_account;
+      v_result_person  := v_subject_person;
+      v_outcome        := 'login_success';
+    END IF;
+  ELSE
+    -- Subject absent (cells 1/2/3).
+    IF v_email_id IS NULL THEN
+      -- Cell 1 (new/new): create Person + Account + verified account_emails
+      -- (using the app-preallocated id so the ciphertext AAD stays valid) +
+      -- Google identity, atomically.
+      INSERT INTO persons(display_name) VALUES (public.member_name_apply_rule(p_display_name, true))
+        RETURNING id INTO v_new_person;
+      INSERT INTO accounts(person_id) VALUES (v_new_person) RETURNING id INTO v_new_account;
+      INSERT INTO account_emails(id, account_id, email_lookup_hash, email_enc, kms_key_version, verified_at)
+        VALUES (p_account_email_id, v_new_account, p_email_lookup_hash, p_email_enc, p_kms_key_version, now());
+      INSERT INTO account_identities(account_id, platform, platform_user_hash, verified_at)
+        VALUES (v_new_account, 'google', p_subject_hash, now());
+      v_result_account := v_new_account;
+      v_result_person  := v_new_person;
+      v_outcome        := 'login_success';
+    ELSIF v_email_verified THEN
+      -- Cell 2: the verified email belongs to account A — DD-50 strong proof.
+      -- Attach the Google identity to A; create no second account. ON CONFLICT
+      -- keeps a re-login idempotent under the advisory-lock serialization.
+      INSERT INTO account_identities(account_id, platform, platform_user_hash, verified_at)
+        VALUES (v_email_account, 'google', p_subject_hash, now())
+        ON CONFLICT (platform, platform_user_hash) DO NOTHING;
+      -- alias `accounts`: the column `person_id` would otherwise be ambiguous
+      -- with this function's OUT parameter of the same name.
+      SELECT a.person_id INTO v_result_person FROM accounts a WHERE a.id = v_email_account;
+      v_result_account := v_email_account;
+      v_outcome        := 'login_success';
+    ELSE
+      -- Cell 3: the email is PENDING on account A. Promote it (a verified Google
+      -- email is DD-50 strong proof), supersede ALL of A's pending attempts and
+      -- their verify tokens, NULL the password/registration-key candidates and
+      -- COPY NONE (a pre-registration hijack must not silently install its
+      -- password), then attach the Google identity.
+      UPDATE account_emails
+      SET verified_at = now(), pending_expires_at = NULL, updated_at = now()
+      WHERE id = v_email_id;
+
+      UPDATE auth_pending_email_registrations
+      SET superseded_at = transaction_timestamp(), password_phc = NULL, registration_key_hash = NULL
+      WHERE account_email_id = v_email_id
+        AND consumed_at IS NULL AND superseded_at IS NULL;
+
+      UPDATE auth_email_tokens
+      SET superseded_at = transaction_timestamp()
+      WHERE account_email_id = v_email_id
+        AND purpose = 'verify_email'
+        AND consumed_at IS NULL AND superseded_at IS NULL;
+
+      INSERT INTO account_identities(account_id, platform, platform_user_hash, verified_at)
+        VALUES (v_email_account, 'google', p_subject_hash, now())
+        ON CONFLICT (platform, platform_user_hash) DO NOTHING;
+      -- alias `accounts`: the column `person_id` would otherwise be ambiguous
+      -- with this function's OUT parameter of the same name.
+      SELECT a.person_id INTO v_result_person FROM accounts a WHERE a.id = v_email_account;
+      v_result_account := v_email_account;
+      v_outcome        := 'login_success';
+    END IF;
+  END IF;
+
+  -- (6) Per-lane audit (§8.3 v1.85), SAME transaction as the cell above. Cells
+  --     1-6 write login_success, cell 7 writes identity_conflict. session_epoch
+  --     / link_codes_revoked / merge_artifacts_cancelled stay NULL (no session
+  --     revoke, no link-code work on this lane).
+  INSERT INTO auth_audit_events(
+    event_type, account_id, outcome_class, actor_class, request_ref
+  ) VALUES (
+    v_outcome, v_result_account,
+    CASE WHEN v_outcome = 'identity_conflict' THEN 'conflict' ELSE 'success' END,
+    'google', p_request_ref
+  );
+
+  account_id := v_result_account;
+  person_id  := v_result_person;
+  outcome    := v_outcome;
+  RETURN NEXT;
+END;
+$$;
+
+-- create_guest_membership: L27 body 0069_member_name_invisible_chars.sql:487-556, re-created with this substitution:
+--   [SELECT public.public_name_strip_invisible(p.display_name) INTO v_name] -> [SELECT public.member_name_apply_rule(p.display_name, true) INTO v_name]
+CREATE OR REPLACE FUNCTION create_guest_membership(
+  p_tenant_id uuid,
+  p_person_id uuid
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+DECLARE
+  v_ctx uuid;
+  v_name text;
+  v_id uuid;
+BEGIN
+  BEGIN
+    v_ctx := NULLIF(current_setting('app.tenant_id', true), '')::uuid;
+  EXCEPTION WHEN invalid_text_representation THEN
+    v_ctx := NULL;
+  END;
+  IF p_tenant_id IS NULL OR v_ctx IS NULL OR p_tenant_id <> v_ctx THEN
+    RAISE EXCEPTION 'create_guest_membership: tenant context mismatch'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- FOR SHARE (a lock, not a write): a concurrent 0054 empty-person reparent cannot flip this person
+  -- to 'merged' between this check and the insert; if it got there first, the re-checked row fails
+  -- status = 'active' after it commits and this function raises.
+  SELECT public.member_name_apply_rule(p.display_name, true) INTO v_name
+    FROM public.persons p
+   WHERE p.id = p_person_id
+     AND p.status = 'active'
+     FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'create_guest_membership: person is not active'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  SELECT m.id INTO v_id
+    FROM public.memberships m
+   WHERE m.tenant_id = p_tenant_id
+     AND m.person_id = p_person_id
+     AND m.status IN ('active', 'guest')
+     FOR SHARE;
+  IF FOUND THEN
+    RETURN v_id;
+  END IF;
+
+  INSERT INTO public.memberships (tenant_id, person_id, status, display_name)
+  VALUES (p_tenant_id, p_person_id, 'guest', v_name)
+  ON CONFLICT (tenant_id, person_id) WHERE status IN ('active', 'guest') DO NOTHING
+  RETURNING id INTO v_id;
+  IF v_id IS NOT NULL THEN
+    RETURN v_id;
+  END IF;
+
+  -- A concurrent first call inserted the row and committed while this INSERT waited on it
+  -- (READ COMMITTED: this statement takes a fresh snapshot and sees it).
+  SELECT m.id INTO v_id
+    FROM public.memberships m
+   WHERE m.tenant_id = p_tenant_id
+     AND m.person_id = p_person_id
+     AND m.status IN ('active', 'guest')
+     FOR SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'create_guest_membership: no live membership after insert'
+      USING ERRCODE = 'serialization_failure';
+  END IF;
+  RETURN v_id;
+END;
+$$;
+
+-- L29-SECTION-C-END
