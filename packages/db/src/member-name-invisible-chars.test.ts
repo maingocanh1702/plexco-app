@@ -18,6 +18,9 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
+import { RosterMoneyError } from "./roster-money-shared.js";
+import { addMemberToSession } from "./roster-service.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 import { withTenant } from "./tenant.js";
 import { checkTypedName, normalizeExternalName } from "./text-safety.js";
@@ -1940,4 +1943,45 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
     },
     30_000,
   );
+});
+
+describe("L29-TW P2/M1 addMemberToSession refuses with checkTypedName (roster-service.ts)", () => {
+  const fx = fixtures(() => ctx);
+  const world = { tenantId: "", actorPersonId: "", sessionId: "", source: "host_add" as const };
+  beforeAll(async () => {
+    world.tenantId = await fx.seedTenant();
+    world.actorPersonId = await fx.seedAdmin(world.tenantId, "owner");
+    world.sessionId = await fx.seedSession(world.tenantId, {});
+  }, 30_000);
+  const add = (member: { displayName: string }) =>
+    addMemberToSession(ctx.appDb.db, { ...world, commandId: nextCommandId(), member });
+  const seen = () =>
+    fx.row("SELECT (SELECT count(*) FROM persons) p, (SELECT count(*) FROM memberships) m");
+  it.each<[string, string, string | null]>([
+    ["Cc U+0001 inside", mix("Mi", 1, "nh"), null],
+    ["Bidi_Control U+202E inside", mix("Mi", 0x202e, "nh"), null],
+    ["U+2028 inside", mix("Mi", 0x2028, "nh"), null],
+    ["U+00A0 only", mix(0xa0), null],
+    ["U+3000 only", mix(0x3000), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+200B only", mix(0x200b), null],
+    ["U+0000 inside", mix("Mi", 0, "nh"), null],
+    ["ordinary Minh Anh", "Minh Anh", "Minh Anh"],
+    ["edge U+0009 before and U+2028 after", mix(9, "Minh", 0x2028), "Minh"],
+  ])("host add %s", async (_label, sent, stored) => {
+    const before = await seen();
+    const out = await add({ displayName: sent }).catch((e: unknown) => e);
+    if (stored === null) {
+      expect(out, "expected the host add to reject").toBeInstanceOf(RosterMoneyError);
+      expect((out as RosterMoneyError).code).toBe("INVALID_INPUT");
+      expect(await seen()).toEqual(before);
+      return;
+    }
+    const m = await fx.row(
+      `SELECT m.display_name, p.display_name AS person_name
+       FROM memberships m JOIN persons p ON p.id = m.person_id WHERE m.id = $1`,
+      [(out as { membershipId: string }).membershipId],
+    );
+    expect(m).toMatchObject({ display_name: stored, person_name: stored });
+  });
 });
