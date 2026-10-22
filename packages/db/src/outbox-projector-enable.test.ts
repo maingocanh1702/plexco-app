@@ -10,6 +10,7 @@
  * never reach another row's projector. EN-4 alone uses the three seeded projectors, disables them again and
  * leaves its own events' pending rows behind (no dispatcher runs here). Ages are set on the DB clock.
  */
+import { spawnSync } from "node:child_process";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // @ts-expect-error -- the owner CLI is an untyped .mjs; the three exports used here are typed below
@@ -428,4 +429,315 @@ describe("EN-1..EN-8 the owner enable CLI reaches events acked while their proje
     );
     expect(await deliveries("en8_test", [a, b, bWithin])).toEqual(pending([bWithin]));
   });
+});
+
+/** The per-file database's owner URL: the CLI gets it only through its child environment. */
+function ownerUrl(): string {
+  const url = new URL(BASE);
+  url.pathname = `/${DB_NAME}`;
+  return url.toString();
+}
+
+type CliRun = { status: number | null; stdout: string; stderr: string };
+
+/**
+ * `node scripts/outbox-projector-enable.mjs <args>` as the runbook runs it: cwd = the repo root, the owner
+ * credential only in the child's DATABASE_URL_MIGRATION (`url`; "" leaves it unset), under the reader lock.
+ */
+const runCli = (args: string[], url = ownerUrl()): Promise<CliRun> =>
+  withJobDefinerLock(BASE, async () => {
+    const run = spawnSync(process.execPath, ["scripts/outbox-projector-enable.mjs", ...args], {
+      cwd: new URL("../../../", import.meta.url),
+      env: { ...process.env, DATABASE_URL_MIGRATION: url },
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    return { status: run.status, stdout: run.stdout, stderr: run.stderr };
+  });
+
+/** Neither stream of a CLI run carries the owner URL, its password or any of `texts`. */
+function expectNoSecret(run: CliRun, ...texts: string[]): void {
+  const url = ownerUrl();
+  const secrets = [url, decodeURIComponent(new URL(url).password), ...texts].filter(Boolean);
+  for (const stream of [run.stdout, run.stderr]) {
+    for (const secret of secrets) expect(stream).not.toContain(secret);
+  }
+}
+
+const isEnabled = async (name: string) =>
+  (await one("SELECT enabled FROM outbox_projectors WHERE name = $1", [name])).enabled;
+
+/** The DD-134 disable on the superuser seat, for a caller that already holds the reader lock. */
+async function disableInsideLock(name: string): Promise<void> {
+  await ctx.owner.query("BEGIN");
+  try {
+    await ctx.owner.query("SET LOCAL ROLE job_definer");
+    await ctx.owner.query("SELECT outbox_projector_set_enabled($1, false)", [name]);
+    await ctx.owner.query("COMMIT");
+  } catch (error) {
+    await ctx.owner.query("ROLLBACK");
+    throw error;
+  }
+}
+
+/** A public_sessions route of the session aggregate (0056 names its event type: no wildcard). */
+const sessionRouteType = async () =>
+  String(
+    (
+      await one(
+        `SELECT event_type FROM outbox_projector_routes
+          WHERE projector = 'public_sessions' AND aggregate_type = 'session' ORDER BY event_type LIMIT 1`,
+      )
+    ).event_type,
+  );
+
+/** What the public_sessions rebuild projects (D7): the candidates of every tenant with an outbox event. */
+const rebuildCandidates = () =>
+  ownerPath(async (c) =>
+    (
+      await c.query(
+        `SELECT s AS id FROM (SELECT DISTINCT tenant_id FROM outbox_events) t,
+                public_sessions_tenant_candidates(t.tenant_id) AS s`,
+      )
+    ).rows.map((r) => r.id as string),
+  );
+
+const isPublic = async (sessionId: string) =>
+  (await rows("SELECT 1 FROM public_sessions WHERE id = $1", [sessionId])).length === 1;
+
+/** Audit rows other than the CLI's records and the switch's own: what a rebuild would add. */
+const otherAudits = async () =>
+  Number(
+    (
+      await one(
+        `SELECT count(*) AS n FROM job_audit_events
+          WHERE fn_name IS DISTINCT FROM 'outbox_projector_enable'
+            AND fn_name IS DISTINCT FROM 'outbox_projector_set_enabled'`,
+      )
+    ).n,
+  );
+
+describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and prints counts only", () => {
+  // EN-12 (A5 kept): outbox-projector-registry.test.ts runs in the same locked command; nothing here asserts on it.
+
+  it("EN-9: public_sessions is rebuilt from canonical state: a session published while off, its event past the bound -> ':age' record and public after the run (rebuilt_sessions counts it); one cancelled while off -> its public row deleted; the rebuild writes no audit row", async () => {
+    const type = await sessionRouteType();
+    const tenantId = String(
+      (
+        await one(
+          `INSERT INTO tenants (name, slug, public_alias, public_alias_status)
+           VALUES ('EN9 Club', 'en9-club', 'CLB EN9', 'approved') RETURNING id`,
+        )
+      ).id,
+    );
+    // public-sessions-projector.test.ts's open public session, minimum columns
+    const openSession = async () =>
+      String(
+        (
+          await one(
+            `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address,
+               area, price_amount, slots_max, visibility, join_policy, status)
+             VALUES ($1, $2, now() + interval '1 day', now() + interval '26 hours', 'Asia/Ho_Chi_Minh',
+               'EN9 Venue', '1 Public Street', 'Quan 7', 50000, 10, 'public', 'open', 'open')
+             RETURNING id`,
+            [tenantId, ctx.badmintonSportId],
+          )
+        ).id,
+      );
+    const cancelled = await openSession();
+    await worker("SELECT public_sessions_project_session($1, NULL)", [cancelled]); // public while it ran
+    expect(await isPublic(cancelled)).toBe(true);
+    await ctx.owner.query("UPDATE sessions SET status = 'cancelled' WHERE id = $1", [cancelled]);
+    const published = await openSession();
+    const events = [await seedOne("session", tenantId, type), await seedOne("session", tenantId, type)];
+    await drain(events);
+    await age(events, BACKFILL_MAX_AGE_MINUTES + 1);
+    expect(await isPublic(published)).toBe(false);
+    const candidates = await rebuildCandidates();
+    expect(candidates).toContain(published);
+    const auditsBefore = await otherAudits();
+    try {
+      expect(await enable("public_sessions")).toEqual(
+        summary("public_sessions", { expired_age: 2, rebuilt_sessions: candidates.length }),
+      );
+      expect(await isPublic(published)).toBe(true);
+      expect(await isPublic(cancelled)).toBe(false);
+      expect(await deliveries("public_sessions", events)).toEqual([]);
+      await expectRecords(
+        "public_sessions",
+        events,
+        events.map((id): [string, string, Why] => [id, tenantId, "age"]),
+      );
+      expect(await otherAudits()).toBe(auditsBefore);
+    } finally {
+      await setEnabled("public_sessions", false);
+    }
+  }, 30_000);
+
+  it("EN-10: refusals exit 2 with nothing written (bad arguments before connecting, an unknown projector, a disable between the two transactions); success prints ONE JSON line of the summary keys; no credential or payload in either stream", async () => {
+    await addProjector("en10_test", "en10_test_aggregate");
+    const within = await seedOne("en10_test_aggregate");
+    const beyond = await seedOne("en10_test_aggregate");
+    const payloadText = "en10 payload text the CLI never prints";
+    await ctx.owner.query(
+      "UPDATE outbox_events SET payload = jsonb_build_object('text', $2::text) WHERE id = $1",
+      [within, payloadText],
+    );
+    await drain([within, beyond]);
+    await age([beyond], BACKFILL_MAX_AGE_MINUTES + 1);
+    const nothingWritten = async () => {
+      expect(await isEnabled("en10_test")).toBe(false);
+      expect(await deliveries("en10_test", [within, beyond])).toEqual([]);
+      await expectRecords("en10_test", [within, beyond], []);
+    };
+
+    // Argument errors are refused before connecting: with DATABASE_URL_MIGRATION unset ("") a run that got
+    // past parsing ends in exit 1 instead. A DSN argument is one of them: the connection is environment only.
+    const badArgs = [[], ["enable", "--projector", "Bad-Name"], ["enable", "--projector", "en10_test", ownerUrl()]];
+    for (const args of badArgs) {
+      const run = await runCli(args, "");
+      expect([run.status, run.stdout]).toEqual([2, ""]);
+      expect(run.stderr).toMatch(/^refused: invalid_argument: /);
+      expectNoSecret(run);
+    }
+    const unset = await runCli(["enable", "--projector", "en10_test"], "");
+    expect([unset.status, unset.stdout]).toEqual([1, ""]);
+    expect(unset.stderr).toContain("DATABASE_URL_MIGRATION is not set");
+    const unknown = await runCli(["enable", "--projector", "en10_unknown"]);
+    expect([unknown.status, unknown.stdout]).toEqual([2, ""]);
+    expect(unknown.stderr).toContain("refused: projector_not_found: en10_unknown");
+    expectNoSecret(unknown);
+    await nothingWritten();
+
+    // projector_disabled: a disable commits between transaction 1 (the enable) and transaction 2 (the
+    // backfill). The seam is the CLI's own client, whose first COMMIT ends transaction 1; main() maps every
+    // Refusal to exit 2, as the unknown-projector run above shows.
+    const seat = await ownerSeat();
+    const send = seat.query.bind(seat) as (sql: string, params?: unknown[]) => Promise<pg.QueryResult>;
+    let commits = 0;
+    Object.assign(seat, {
+      query: async (sql: string, params?: unknown[]) => {
+        const result = await send(sql, params);
+        if (sql === "COMMIT") {
+          commits += 1;
+          if (commits === 1) await disableInsideLock("en10_test");
+        }
+        return result;
+      },
+    });
+    try {
+      await expect(enable("en10_test", seat)).rejects.toMatchObject({
+        name: "Refusal",
+        code: "projector_disabled",
+      });
+    } finally {
+      await seat.end();
+    }
+    expect(commits).toBe(1);
+    await nothingWritten();
+
+    const run = await runCli(["enable", "--projector", "en10_test"]);
+    expect(run.status, run.stderr).toBe(0);
+    const [line, ...rest] = run.stdout.split("\n");
+    expect(rest).toEqual([""]); // exactly one line
+    // exactly the 3.2 step 4 keys: the projector name, the changed flag and counts (no operation_id)
+    expect(JSON.parse(line!)).toStrictEqual(summary("en10_test", { prepared: 1, expired_age: 1 }));
+    expectNoSecret(run, payloadText);
+  }, 60_000);
+
+  it("EN-11: a raw enable (the old path, no backfill) then the CLI -> changed=false, the in-bound event prepared, the older one ':age', the rebuild run", async () => {
+    const type = await sessionRouteType();
+    const within = await seedOne("session", ctx.tenantA, type);
+    const beyond = await seedOne("session", ctx.tenantA, type);
+    await drain([within, beyond]);
+    await age([beyond], BACKFILL_MAX_AGE_MINUTES + 1);
+    try {
+      expect(await setEnabled("public_sessions", true)).toBe(true);
+      expect(await deliveries("public_sessions", [within, beyond])).toEqual([]);
+      const candidates = await rebuildCandidates();
+      expect(candidates.length).toBeGreaterThan(0);
+      expect(await enable("public_sessions")).toEqual(
+        summary("public_sessions", {
+          changed: false,
+          prepared: 1,
+          expired_age: 1,
+          rebuilt_sessions: candidates.length,
+        }),
+      );
+      expect(await deliveries("public_sessions", [within, beyond])).toEqual(pending([within]));
+      await expectRecords("public_sessions", [within, beyond], [[beyond, ctx.tenantA, "age"]]);
+    } finally {
+      await setEnabled("public_sessions", false);
+    }
+  }, 30_000);
+
+  it("EN-13: an unacked routed event older than the bound -> exit 2 unacked_backlog with the count only; the projector stays disabled, no row, no record; the same refusal once it is enabled raw, nothing written", async () => {
+    await addProjector("en13_test", "en13_test_aggregate");
+    const stuck = await seedOne("en13_test_aggregate");
+    await age([stuck], BACKFILL_MAX_AGE_MINUTES + 1);
+    const refused = async () => {
+      const run = await runCli(["enable", "--projector", "en13_test"]);
+      expect([run.status, run.stdout]).toEqual([2, ""]);
+      expect(run.stderr).toMatch(/^refused: unacked_backlog: 1 routed events are unacked/);
+      expect(run.stderr).not.toContain(stuck);
+      expectNoSecret(run);
+      expect(await deliveries("en13_test", [stuck])).toEqual([]);
+      await expectRecords("en13_test", [stuck], []);
+    };
+    await refused();
+    expect(await isEnabled("en13_test")).toBe(false);
+    try {
+      expect(await setEnabled("en13_test", true)).toBe(true);
+      await refused();
+      expect(await isEnabled("en13_test")).toBe(true);
+    } finally {
+      await setEnabled("en13_test", false); // a later drain acks `stuck` with '{}'
+    }
+  }, 30_000);
+
+  it("EN-14: an unacked in-window candidate beyond the cap gets a delivery row, never a record; the newest BACKFILL_MAX_ROWS acked are prepared, the rest ':cap' (AM5)", async () => {
+    const extra = 2;
+    await addProjector("en14_test", "en14_test_aggregate");
+    const acked = await seed("en14_test_aggregate", BACKFILL_MAX_ROWS + extra);
+    await drain(acked);
+    await age(acked, 1, 5); // all inside the bound, acked[0] the newest
+    const lagging = await seedOne("en14_test_aggregate"); // never claimed: unacked
+    await age([lagging], BACKFILL_MAX_AGE_MINUTES - 5); // older than every acked one, inside the bound
+    expect(60 + 5 * (acked.length - 1)).toBeLessThan((BACKFILL_MAX_AGE_MINUTES - 5) * 60);
+    try {
+      expect(await enable("en14_test")).toEqual(
+        summary("en14_test", { prepared: BACKFILL_MAX_ROWS + 1, expired_cap: extra }),
+      );
+      expect(await deliveries("en14_test", [...acked, lagging])).toEqual(
+        pending([...acked.slice(0, BACKFILL_MAX_ROWS), lagging]),
+      );
+      await expectRecords(
+        "en14_test",
+        [...acked, lagging],
+        acked.slice(BACKFILL_MAX_ROWS).map((id): [string, string, Why] => [id, ctx.tenantA, "cap"]),
+      );
+    } finally {
+      await setEnabled("en14_test", false); // `lagging` stays unacked: a later drain acks it with '{}'
+    }
+  }, 60_000);
+
+  it("EN-15: the way forward after unacked_backlog: a worker cycle acks the old events with '{}', then the CLI succeeds and records each ':age'", async () => {
+    await addProjector("en15_test", "en15_test_aggregate");
+    const old = await seed("en15_test_aggregate", 2);
+    await age(old, BACKFILL_MAX_AGE_MINUTES + 1);
+    const refused = await runCli(["enable", "--projector", "en15_test"]);
+    expect([refused.status, refused.stdout]).toEqual([2, ""]);
+    expect(refused.stderr).toContain("refused: unacked_backlog: 2 routed events");
+    expect(await isEnabled("en15_test")).toBe(false);
+    await drain(old); // the cycle the runbook waits for: the projector is off, so each ack carries '{}'
+    const run = await runCli(["enable", "--projector", "en15_test"]);
+    expect(run.status, run.stderr).toBe(0);
+    expect(JSON.parse(run.stdout)).toStrictEqual(summary("en15_test", { expired_age: 2 }));
+    expect(await deliveries("en15_test", old)).toEqual([]);
+    await expectRecords(
+      "en15_test",
+      old,
+      old.map((id): [string, string, Why] => [id, ctx.tenantA, "age"]),
+    );
+  }, 30_000);
 });
