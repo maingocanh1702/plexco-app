@@ -1,9 +1,14 @@
-import { stripInvisibleChars as serverStripInvisibleChars, validateDisplayName } from "@plexco/db";
+import {
+  checkTypedName as serverCheckTypedName,
+  stripInvisibleChars as serverStripInvisibleChars,
+  validateDisplayName,
+} from "@plexco/db";
 import { describe, expect, it } from "vitest";
 import {
   VENUE_ADDRESS_MAX,
   buildCreateBody,
   buildUpdateBody,
+  checkTypedName,
   emptyFormValues,
   hasHiddenChar,
   stripInvisibleChars,
@@ -478,6 +483,33 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
     }
     expect(mismatches).toEqual([]);
   }, 30_000);
+
+  // L29 V1/V2 web cells (validateForm unchanged by L29): the address is stripped, then trimmed.
+  const V_CELLS: [string, string, string | null, string | null][] = [
+    ["U+00A0 only", ch(0xa0), null, null],
+    ["U+3000 only", ch(0x3000), null, null],
+    ["U+2800 only", ch(0x2800), EN_COPY.venueAddress, null],
+    [
+      "U+0009 before and U+2028 after the address",
+      ch(0x9) + "12 Nguyen Trai" + ch(0x2028),
+      null,
+      "12 Nguyen Trai",
+    ],
+  ];
+
+  it.each(V_CELLS)("L29 V web cell: the address is %s", (_label, address, error, sent) => {
+    const values = base({ venueAddress: address });
+    expect(validateForm(values, TZ, en)).toEqual(error === null ? {} : { venueAddress: error });
+    if (error !== null) {
+      expect(validateForm(values, TZ, (v: string) => v)).toEqual({
+        venueAddress: VI_COPY.venueAddress,
+      });
+    } else if (sent === null) {
+      expect("venueAddress" in buildCreateBody(values, TZ)).toBe(false);
+    } else {
+      expect(buildCreateBody(values, TZ).venueAddress).toBe(sent);
+    }
+  });
 });
 
 // L23 strip-first (DD-138 sign-off A.1; readiness D3, D4, D10, D11) and L27 (B9): the web mirror of
@@ -626,5 +658,20 @@ describe("L23, L27: the session form strips invisible code points from area, ven
       expect(serverStripInvisibleChars(input)).toBe(expected);
       expect(stripInvisibleChars(input)).toBe(expected);
     }
+  }, 30_000);
+
+  // L29 U8d: the web checkTypedName agrees with the server rule over every scalar.
+  it("L29-AG2 the web checkTypedName equals @plexco/db checkTypedName over every scalar", () => {
+    const mismatches: number[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      for (const input of [ch(cp), "a" + ch(cp), "a" + ch(cp) + "b"]) {
+        if (checkTypedName(input) !== serverCheckTypedName(input)) {
+          mismatches.push(cp);
+          break;
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
   }, 30_000);
 });
