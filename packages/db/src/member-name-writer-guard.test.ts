@@ -175,6 +175,13 @@ describe("G1 catalog: every function that writes the four columns is pinned and 
       ].sort(),
     );
   });
+  it("fails on channel_identity_detach's real body plus a raw UPDATE of persons.display_name", () => {
+    const detach = fns.find((f) => f.name === "channel_identity_detach")!;
+    const src = `${detach.src}\nUPDATE persons SET display_name = p_label;`;
+    expect(g1(fns.map((f) => (f === detach ? { ...f, src } : f)))).toEqual([
+      `listed writer without the strip ${detach.sig}`,
+    ]);
+  });
 });
 
 describe("G2 migrations: bare statements and DO blocks that write the four columns are pinned", () => {
@@ -194,16 +201,23 @@ describe("G2 migrations: bare statements and DO blocks that write the four colum
       [true],
     );
   });
-  it("fails on a planted bare writer and DO block, past a function body, a comment and a grant", () => {
+  it("fails on planted bare, DO, quoted and positional writers, past a function, a comment, a grant", () => {
     const planted = [
       "create function f() returns void language plpgsql as $f$ begin update persons set display_name = 'x'; end $f$;",
       "-- update tenants set name = 'a comment';",
       "update public.tenants set name = 'y; still one statement';",
       "do $$ begin update sessions set venue_address = null; end $$;",
       "grant update (display_name) on memberships to app; insert into sessions (status) values ('draft');",
+      'update "public"."persons" set display_name = p_raw;',
+      "insert into memberships select * from memberships; insert into tenants default values;",
     ].join("\n");
-    const at = g2("planted.sql", planted).map((h) => `${h.file}:${h.line}`);
-    expect(at).toEqual(["planted.sql:3", "planted.sql:4"]);
+    expect(g2("planted.sql", planted).map((h) => h.line)).toEqual([3, 4, 6, 7, 7]);
+  });
+  it("fails on a raw pg_temp helper in a file after 0069, and passes it once it strips", () => {
+    const sql =
+      "create function pg_temp.fix() returns void language sql as $$ update tenants set name = 'raw' $$; select pg_temp.fix();";
+    expect(g2("0070_planted.sql", sql).map((h) => h.line)).toEqual([1]);
+    expect(g2("0070_planted.sql", sql.replace("'raw'", `${STRIP}'raw')`))).toEqual([]);
   });
 });
 
@@ -239,12 +253,15 @@ const TS_KEY: Record<string, string> = {
   memberships: "displayName",
   sessions: "venueAddress",
 };
-/** Section 11's direct writers measured at the 0069 tail: "file table" -> writes the column. */
-const DIRECT: Record<string, boolean> = {
-  "packages/db/src/roster-service.ts memberships": true,
-  "packages/db/src/session-service.ts sessions": true,
-  "packages/db/src/tenant.ts sessions": false,
+/** Section 11's direct writers at the 0069 tail: "file table" -> [writes the column, write sites];
+ * a new write site inside a pinned file fails until its pin is reviewed. */
+const DIRECT: Record<string, [boolean, number]> = {
+  "packages/db/src/roster-service.ts memberships": [true, 1],
+  "packages/db/src/session-service.ts sessions": [true, 5],
+  "packages/db/src/tenant.ts sessions": [false, 1],
 };
+/** One of the four tables imported under another name would hide its writes from TS_WRITE. */
+const ALIAS = /\bimport\s[^;]*\b(?:persons|memberships|tenants|sessions)\s+as\s+\w/;
 
 const scan = (dir: string): string[] =>
   readdirSync(new URL(`${dir}/`, ROOT), { withFileTypes: true }).flatMap((d) => {
@@ -254,24 +271,31 @@ const scan = (dir: string): string[] =>
   });
 
 // ponytail: file-level presence, not data flow (any stripInvisibleChars( call passes a writer
-// file; an aliased table import escapes the matcher); the MN and TS rows prove the actual strip.
+// file; a table held in a variable escapes the matcher); the MN and TS rows prove the actual strip.
+// Not scanned: packages/core, packages/db outside src and scripts, apps/bot outside src,
+// apps/web/e2e, the fixtures and .mts/.cts/.js/.mjs/.cjs files (add a tree or extension first).
 function g4(files: Record<string, string>, pinned = DIRECT): string[] {
-  const found = new Set(
-    Object.entries(files).flatMap(([file, src]) =>
-      [...src.matchAll(TS_WRITE)].map((m) => `${file} ${(m[1] ?? m[2])!.toLowerCase()}`),
-    ),
+  const hits = Object.entries(files).flatMap(([file, src]) =>
+    [...src.matchAll(TS_WRITE)].map((m) => `${file} ${(m[1] ?? m[2])!.toLowerCase()}`),
   );
-  const bad = [...found].flatMap((hit) => {
+  const found = new Map<string, number>();
+  hits.forEach((h) => found.set(h, (found.get(h) ?? 0) + 1));
+  const aliased = Object.entries(files).flatMap(([file, src]) =>
+    ALIAS.test(src) ? [`aliased table import ${file}`] : [],
+  );
+  const bad = [...found].flatMap(([hit, sites]) => {
     const [file, table] = hit.split(" ") as [string, string];
     const key = TS_KEY[table];
     if (!key) return [`tenants direct writer ${file}`];
-    if (pinned[hit] === undefined) return [`unlisted direct writer ${hit}`];
+    const pin = pinned[hit];
+    if (pin === undefined) return [`unlisted direct writer ${hit}`];
+    if (pin[1] !== sites) return [`write sites ${sites} (pinned ${pin[1]}) ${hit}`];
     const strips = files[file]!.includes("stripInvisibleChars(");
-    if (pinned[hit]) return strips ? [] : [`pinned writer without the strip ${hit}`];
+    if (pin[0]) return strips ? [] : [`pinned writer without the strip ${hit}`];
     return files[file]!.includes(key) ? [`pinned non-writer names ${key} ${hit}`] : [];
   });
   const stale = Object.keys(pinned).filter((p) => !found.has(p));
-  return [...bad, ...stale.map((p) => `stale entry ${p}`)];
+  return [...aliased, ...bad, ...stale.map((p) => `stale entry ${p}`)];
 }
 
 describe("G4 TypeScript: every direct writer of the four tables is pinned and strips", () => {
@@ -284,21 +308,30 @@ describe("G4 TypeScript: every direct writer of the four tables is pinned and st
     expect(seen, "every tree scanned").toEqual(TS_DIRS);
     expect(g4(files), "G4 violations (by file table)").toEqual([]);
   });
-  it("fails on planted rows: unlisted, tenants, no strip, key named, stale", () => {
+  it("fails on planted rows: unlisted, tenants, no strip, key named, stale, extra site, alias", () => {
     const planted = {
       "u.ts": "await tx.insert(schema.persons).values({ displayName });",
       "t.ts": "await db.query(`UPDATE\n  tenants SET name = $1`);",
       "w.ts": "await tx.update(sessions).set({ venueAddress: v.trim() });",
       "n.ts": "await tx.insert(sessions).values({ venueAddress: null });",
       "i.ts": "await tx.select().from(persons); await tx.delete(memberships);",
+      "c.ts": "tx.insert(sessions).values(x); tx.update(sessions).set(stripInvisibleChars(y));",
+      "a.ts": 'import { sessions as s } from "./schema";',
     };
-    const pinned = { "w.ts sessions": true, "n.ts sessions": false, "gone.ts memberships": true };
+    const pinned: typeof DIRECT = {
+      "w.ts sessions": [true, 1],
+      "n.ts sessions": [false, 1],
+      "c.ts sessions": [true, 1],
+      "gone.ts memberships": [true, 1],
+    };
     expect(g4(planted, pinned).sort()).toEqual(
       [
         "unlisted direct writer u.ts persons",
         "tenants direct writer t.ts",
         "pinned writer without the strip w.ts sessions",
         "pinned non-writer names venueAddress n.ts sessions",
+        "write sites 2 (pinned 1) c.ts sessions",
+        "aliased table import a.ts",
         "stale entry gone.ts memberships",
       ].sort(),
     );
