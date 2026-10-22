@@ -5,6 +5,7 @@ import {
   requiredProjectorsFor,
   type ProjectorEvent,
 } from "./projector-registry.js";
+import zaloDmDeliveryAgeBound from "./zalo-dm-delivery-age-bound.json" with { type: "json" };
 
 const DEFAULT_BATCH_LIMIT = 25;
 
@@ -57,6 +58,52 @@ export const productionStubDeliver: DeliverFn = async () => ({
   result: "dlq",
   errorCode: "no_projector_implemented",
 });
+
+/** DD-146 bound in minutes, defined ONCE (the enable CLI reads the same JSON); checked at load. */
+export const ZALO_DM_MAX_AGE_MINUTES: number = zaloDmDeliveryAgeBound.maxAgeMinutes;
+if (!Number.isInteger(ZALO_DM_MAX_AGE_MINUTES) || ZALO_DM_MAX_AGE_MINUTES <= 0) {
+  throw new Error("zalo-dm-delivery-age-bound.json: maxAgeMinutes must be a positive integer");
+}
+
+/** A Date the age query can take as $1; an Invalid Date there would make the query throw. */
+export function isReadableEventTime(value: unknown): value is Date {
+  return value instanceof Date && Number.isFinite(value.getTime());
+}
+
+export type ZaloDmAgeVerdict =
+  { expired: false; ageSeconds: number } | { expired: true; ageSeconds: number | "unreadable" };
+
+/** Strict `>`: the bound itself delivers. Only a finite number is readable (Number(null) is 0). */
+export function zaloDmAgeVerdict(raw: unknown): ZaloDmAgeVerdict {
+  if (typeof raw !== "number" || !Number.isFinite(raw))
+    return { expired: true, ageSeconds: "unreadable" };
+  return { expired: raw > ZALO_DM_MAX_AGE_MINUTES * 60, ageSeconds: raw };
+}
+
+/**
+ * DD-146 (L31) threat model. The age check runs for every `zalo_dm` row before deliver() on every
+ * path: live attempt or retry, backfill, CLI or raw re-enable, DLQ replay.
+ * 1 stale DM ("you hold a seat, fee X" after it stopped being true): age > bound ends the row as
+ *   delivered/noop_expired; no deliver(), no targets read, no send, no recipient write;
+ * 2 bypasses: every path reaches deliver() through the one call site this check guards;
+ * 3 clock error: the age is on the DATABASE clock (clock_timestamp()), never Date.now() or
+ *   options.now; an unreadable event time expires without a query (fail closed);
+ * 4 silent drop: the terminal row plus one warning line (ids and integers only); a failed clock
+ *   read propagates and leaves the row claimed, re-checked at its reclaim;
+ * 5 dropping a live retry: the bound exceeds the measured live worst case, and `>` is strict;
+ * 6 drift: one definition of the bound (zalo-dm-delivery-age-bound.json, also read by the CLI).
+ */
+export async function zaloDmDeliveryAge(
+  db: pg.Pool,
+  createdAt: unknown,
+): Promise<ZaloDmAgeVerdict> {
+  if (!isReadableEventTime(createdAt)) return { expired: true, ageSeconds: "unreadable" };
+  const result = await db.query<{ age_s: unknown }>(
+    "SELECT date_part('epoch', clock_timestamp() - $1::timestamptz) AS age_s",
+    [createdAt],
+  );
+  return zaloDmAgeVerdict(result.rows[0]?.age_s);
+}
 
 export interface DispatchCycleOptions {
   projectors: ProjectorMap;
@@ -251,9 +298,15 @@ export async function runDispatchCycle(
         event,
       };
 
+      // DD-146: an expired zalo_dm row ends as delivered/noop_expired without deliver(). Awaited
+      // OUTSIDE the try: a clock-read error aborts the cycle, never a dlq deliver_threw.
+      const expiry =
+        job.projector === "zalo_dm" ? await zaloDmDeliveryAge(pool, job.event.createdAt) : null;
       let outcome: DeliveryOutcome;
       try {
-        outcome = await deliver(job);
+        outcome = expiry?.expired
+          ? { result: "delivered", providerRef: "noop_expired" }
+          : await deliver(job);
       } catch {
         // deliver() is contracted to RETURN a DeliveryOutcome, not throw.
         // codex round-09 [P1]: an untyped throw is AMBIGUOUS — it can mean
@@ -323,6 +376,17 @@ export async function runDispatchCycle(
       // lease expires) while logs claim it was handled.
       if (completeResult.rows[0]?.complete_projector_delivery === true) {
         summary.processedDeliveries += 1;
+        // DD-146 record: ids, the projector and integers only; a stale completion logs nothing.
+        if (expiry?.expired) {
+          const bound = ZALO_DM_MAX_AGE_MINUTES * 60;
+          const age =
+            expiry.ageSeconds === "unreadable"
+              ? `age unreadable, bound ${bound}s`
+              : `age ${Math.ceil(expiry.ageSeconds)}s > bound ${bound}s`;
+          console.warn(
+            `[dispatcher] delivery expired: ${age} (event ${job.eventId}, projector ${job.projector})`,
+          );
+        }
       } else {
         summary.staleCompletionSkips += 1;
         // codex round-09 [P1]: a stale completion can mean the lease
