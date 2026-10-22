@@ -63,7 +63,8 @@ export function validatePatch(patch: ClubConfigPatch): ClubConfigPatch {
     // L27: strip the invisible set first (text-safety.ts), then trim; every check below runs on
     // the stripped value (length counted after the strip), so invisible-only fails as empty.
     const name = typeof patch.name === "string" ? stripInvisibleChars(patch.name).trim() : "";
-    // Control (Cc, incl. NUL) and the Cf chars outside the strip set (bidi controls) are rejected.
+    // Control (Cc, incl. NUL) and every Cf not in the strip set (bidi controls among them) are
+    // still refused.
     if (name.length < 1 || name.length > 120 || /[\p{Cc}\p{Cf}]/u.test(name))
       bad("name must be 1-120 printable chars");
     out.name = name;

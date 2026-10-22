@@ -45,6 +45,7 @@ describe("validateNewClub", () => {
     ["CLB " + String.fromCodePoint(0x200b) + "Đống Đa", false],
     ["x".repeat(120) + String.fromCodePoint(0x200b), false],
     [String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), false],
+    [String.fromCodePoint(0x2764, 0xfe0f), false],
     [String.fromCodePoint(0x20, 0x200b, 0x3164), true],
   ])("name %j -> error %s", (name, hasError) => {
     const error = validateNewClub({ ...ok, name }, t).name;

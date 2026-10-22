@@ -68,7 +68,7 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     [String.fromCodePoint(0x20, 0x200b, 0x20), "empty"], // R3: strip, then trim
     ["a" + String.fromCodePoint(0x200b, 0x09) + "b", "invalid_chars"], // R4: a control is not masked
     [String.fromCodePoint(0x2028) + "Lan" + String.fromCodePoint(0x2029), null], // trimmed edges
-    [String.fromCodePoint(0x2764, 0xfe0f) + " Lan", null], // variation selectors stay allowed
+    [String.fromCodePoint(0x2764, 0xfe0f) + " Lan", null], // U+FE0F is stripped (R5); the name is accepted
     // No visible code point (only variation selectors, unassigned default-ignorables, whitespace):
     // it renders blank, so it reads as empty. Same rule as validateDisplayName / 0055 c_visible.
     [String.fromCodePoint(0xfe0f), "empty"],
