@@ -23,6 +23,7 @@ import { ClubConfigError, validatePatch } from "./club-config-validation.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession } from "./roster-service.js";
+import { createSession, updateSession } from "./session-service.js";
 import { seedPersonAccount, setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 import { withTenant } from "./tenant.js";
 import { checkTypedName, normalizeExternalName } from "./text-safety.js";
@@ -2063,5 +2064,66 @@ describe("L29-TW T1 provisionTenant refuses with checkTypedName (auth.ts)", () =
     const { rows } = await ctx.owner.query(`SELECT name FROM tenants WHERE slug = $1`, [slug]);
     const stored = rows.map((r: { name: string }) => cps(r.name));
     expect(stored).toEqual(want === null ? [] : [cps(want)]);
+  });
+});
+
+describe("L29-TW V1/V2 createSession and updateSession store venue_address by the shared check (session-service.ts)", () => {
+  const day = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const createV = (venueAddress: string | null) =>
+    createSession(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      commandId: randomUUID(),
+      input: {
+        sportId: ctx.badmintonSportId,
+        startsAt: new Date(day),
+        endsAt: new Date(day + 2 * 60 * 60 * 1000),
+        timezone: "Asia/Ho_Chi_Minh",
+        priceAmount: 120000,
+        venueAddress,
+      },
+    });
+  const countSessions = async () =>
+    ((await ctx.owner.query(`SELECT count(*)::int AS n FROM sessions`)).rows[0] as { n: number }).n;
+  const storedAddress = async (id: string) =>
+    (
+      (await ctx.owner.query(`SELECT venue_address FROM sessions WHERE id = $1`, [id])).rows[0] as {
+        venue_address: string | null;
+      }
+    ).venue_address;
+  // [label, sent, error code or null, stored value when no error]
+  it.each<[string, string, string | null, string | null]>([
+    ["Cc U+0001 inside", mix("12 Nguyen", 1, "Trai"), "INVALID_TEXT_FIELD", null],
+    ["Bidi_Control U+202E inside", mix("12 Nguyen", 0x202e, "Trai"), "INVALID_TEXT_FIELD", null],
+    ["U+2028 inside", mix("12 Nguyen", 0x2028, "Trai"), "INVALID_TEXT_FIELD", null],
+    ["U+2800 only", mix(0x2800), "INVALID_TEXT_FIELD", null],
+    ["U+00A0 only", mix(0xa0), null, null],
+    ["U+3000 only", mix(0x3000), null, null],
+    ["U+200B only", mix(0x200b), null, null],
+    ["empty string", "", null, null],
+    ["ordinary with outer spaces", " 12 Nguyen Trai ", null, "12 Nguyen Trai"],
+    [
+      "edge U+0009 before and U+2028 after",
+      mix(9, "12 Nguyen Trai", 0x2028),
+      null,
+      "12 Nguyen Trai",
+    ],
+  ])("V1 createSession %s", async (_label, sent, code, want) => {
+    const before = await countSessions();
+    const out = await createV(sent).catch((e: unknown) => e);
+    if (code !== null) {
+      expect((out as { code?: unknown }).code, "expected createSession to reject").toBe(code);
+      expect(await countSessions()).toBe(before);
+      return;
+    }
+    expect(await storedAddress((out as { sessionId: string }).sessionId)).toBe(want);
+  });
+  it("V2 updateSession stores a U+00A0-only venue_address as NULL", async () => {
+    const made = await createV("12 Nguyen Trai");
+    await updateSession(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      commandId: randomUUID(),
+      input: { sessionId: made.sessionId, expectedVersion: made.version, venueAddress: mix(0xa0) },
+    });
+    expect(await storedAddress(made.sessionId)).toBeNull();
   });
 });
