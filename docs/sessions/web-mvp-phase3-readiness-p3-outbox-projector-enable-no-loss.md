@@ -146,12 +146,13 @@ session.published 20), zalo_dm 0. Smoke and golden-path test traffic only; no pr
 
 **B1 + the per-projector rule = "the owner enable CLI with a bounded backfill" (NO migration).** A new owner CLI
 `scripts/outbox-projector-enable.mjs enable --projector <name>` IS the enable step (it replaces the runbook's raw `SELECT outbox_projector_set_enabled(...)` step;
-same owner-path conventions as `scripts/outbox-dlq-replay.mjs`: `DATABASE_URL_MIGRATION` only, `SET ROLE job_definer` before any call, `RESET ROLE` after,
+same owner-path conventions as `scripts/outbox-dlq-replay.mjs`: `DATABASE_URL_MIGRATION` only, `SET LOCAL ROLE job_definer` inside each READ COMMITTED transaction (so the role ends with the transaction; no `RESET ROLE`),
 arguments validated before connecting, no credential or payload in output, exit 0 done / 2 refusal / 1 other).
 
 Role (RO-L24-1 condition 2, nothing new): the CLI connects with `DATABASE_URL_MIGRATION` only, read from the environment exactly as
 `scripts/outbox-dlq-replay.mjs` reads it (`:9-11`, `:96-98`; no DSN on the command line, never printed): the migration seat, a `job_definer` member after
-`pnpm db:bootstrap`. It runs every statement after `SET ROLE job_definer` and issues `RESET ROLE` after (`:104`, `:108`). `job_definer` reads `outbox_events`
+`pnpm db:bootstrap`. It runs every statement inside a READ COMMITTED transaction that opens with `SET LOCAL ROLE job_definer`, so the role ends with each transaction and
+there is no `RESET ROLE` (the precedent `scripts/outbox-dlq-replay.mjs` brackets its calls with `SET ROLE` ... `RESET ROLE`, `:104`, `:108`). `job_definer` reads `outbox_events`
 (BYPASSRLS, `0022:538`), owns `outbox_projector_routes` (`0056:68`, `:70-71`), reads and writes `projector_deliveries` (`0022:539`), owns
 `job_prepare_projector_delivery` (`0022:498`) and `job_audit_events` (`0022:502`; the expiry INSERT is the table owner's own write, and the append-only
 trigger fires only BEFORE UPDATE OR DELETE, `0022:146-157`), and owns both rebuild functions: `public_sessions_project_session` (`0061:164`) and
@@ -178,13 +179,18 @@ need. So the CLI needs no new function, grant, role or migration; a write that c
    - every other ACKED candidate (older than the bound, or beyond the count cap) -> ONE expiry record: `INSERT INTO job_audit_events` (job_id = event id, tenant_id =
      the event's tenant_id, actor `'owner'`, reason `'projector_delivery_expired:<projector>:<age|cap>'`, fn_name `'outbox_projector_enable'`, operation_id = one
      uuid per CLI run, created_at `clock_timestamp()`). The reason must carry the projector because the existing delivery audit rows do not (`0022:309-315`,
-     `0022:475-481`, `0056:268-270`); idempotency check = NOT EXISTS a row with that job_id and reason LIKE `'projector_delivery_expired:<projector>:%'`.
+     `0022:475-481`, `0056:268-270`); idempotency check = NOT EXISTS a row with that job_id and `starts_with(reason, 'projector_delivery_expired:<projector>:')` (`starts_with`, not `LIKE`: the `_` a projector name may hold is a LIKE wildcard).
    - Invariant (AM5): a record is written only for an acked event, and an acked event is never claimed again (`0023:180`), so no expiry record is ever
      followed by a delivery.
+   - Execution: transaction 2 classifies ONCE (the single scan above) and writes with TWO set-based statements fed by that one result: `SELECT job_prepare_projector_delivery(id, $name) FROM unnest($ids::uuid[]) AS id`
+     for every candidate to prepare, and ONE `INSERT INTO job_audit_events ... SELECT ... FROM unnest(...)` for every expiry record. An event therefore lands in exactly one of them, and the
+     projector row lock a DD-134 disable waits for is held for three statements (the scan and the two writes), never one round trip per candidate.
 3. public_sessions only, after transaction 2: the canonical rebuild of the 4.7 (h) owner loop with existing functions, for EVERY tenant that has an outbox event
    (complete set: a public session always produced events; this also covers a tenant whose alias was rejected while the projector was off):
    `SELECT public_sessions_project_session(c, NULL) FROM public_sessions_tenant_candidates(t) AS c` (NULL event id = no audit row, `0061:28-31`). Older
-   public_sessions events are thus expired-with-record AND their state is rebuilt from canonical rows.
+   public_sessions events are thus expired-with-record AND their state is rebuilt from canonical rows. The tenant list is read once, then the rebuild is ONE
+   READ COMMITTED transaction per tenant, each opening with a plain read of `outbox_projectors.enabled` with NO row lock, so a DD-134 disable never waits for the
+   rebuild; a disable stops it with exit 2 `projector_disabled` at the first tenant after it, and the tenants already rebuilt stay committed.
 4. Output: one JSON summary line `{projector, changed, prepared, expired_age, expired_cap, rebuilt_sessions}`: the projector name, the changed flag and counts
    only (RO-L24-1 condition 3); the run's operation_id goes into the expiry records only (`job_audit_events.operation_id` is NOT NULL, `0022:133-142`) and is
    never printed. Re-running on an already enabled projector is allowed and idempotent (changed=false; a second run adds no row and no record): it is also the
@@ -313,7 +319,7 @@ the public_sessions state recomputed from canonical rows by 3.2 step 3; **N/A** 
 
 | Scenario | Event | web_realtime | zalo_dm | public_sessions |
 |---|---|---|---|---|
-| S1 enabled later through the CLI | E1 | DELIVERED (backfilled id-only hint; an open tab refetches) | DELIVERED (backfilled; first attempt within 30 min of the event; ended or changed sessions still refused, `0057:116-126`; retries: F1) | DELIVERED (backfilled recompute) and REBUILT |
+| S1 enabled later through the CLI | E1 | DELIVERED (backfilled id-only hint; an open tab refetches) | DELIVERED (backfilled; the bound caps the event's age when its row is PREPARED (AM2), DD-134's unchanged retries add their own time; ended or changed sessions still refused, `0057:116-126`; retries: F1) | DELIVERED (backfilled recompute) and REBUILT |
 | S1 | E2 | EXPIRED (a tab refetches on its next open, 2.4) | EXPIRED (no stale DM; precondition F2) | EXPIRED and REBUILT |
 | S1 | E3 (after the enable commit) | DELIVERED (phase 1 prepares: its set read follows the enable commit) | DELIVERED (same) | DELIVERED (same) |
 | S2 re-enabled through the CLI after a disable with pending rows | E1 (disable window) | DELIVERED (backfilled at the re-enable) | DELIVERED (backfilled at the re-enable) | DELIVERED and REBUILT |
