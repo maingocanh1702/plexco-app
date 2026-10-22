@@ -1,4 +1,5 @@
 import type { TFn } from "./i18n-client";
+import { stripInvisibleChars } from "./session-form-model";
 
 /** Mirrors the server check in api/onboarding/start (and tenant_provision). */
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -46,7 +47,8 @@ export type NewClubErrors = Partial<Record<"name" | "slug", string>>;
 
 export function validateNewClub(values: NewClubValues, t: TFn): NewClubErrors {
   const errors: NewClubErrors = {};
-  const name = values.name.trim();
+  // L27: strip first (the web mirror of the server list), then trim, as the server stores it.
+  const name = stripInvisibleChars(values.name).trim();
   if (name.length === 0) errors.name = t("Nhập tên câu lạc bộ.", "Enter a club name.");
   else if (name.length > MAX_NAME_CHARS) {
     errors.name = t(

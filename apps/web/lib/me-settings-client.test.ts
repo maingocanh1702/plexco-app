@@ -54,16 +54,19 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     ["x".repeat(121), "too_long"],
     ["\u{1F600}".repeat(121), "too_long"],
     ["a\tb", "invalid_chars"],
-    ["a\u200Bb", "invalid_chars"],
+    ["a\u200Bb", null],
     ["a\u202Eb", "invalid_chars"],
-    // N6: line breaks and blank-looking characters, same set as validateDisplayName / 0055.
+    // N6 + L27: line breaks and U+2800 keep the error. The invisible set is stripped first, so the
+    // fillers and marks raise none among visible text (R2) and read as empty alone (R3).
     ["Lan" + String.fromCodePoint(0x2028) + "Anh", "invalid_chars"],
     ["Lan" + String.fromCodePoint(0x2029) + "Anh", "invalid_chars"],
-    [String.fromCodePoint(0x3164), "invalid_chars"],
-    ["a" + String.fromCodePoint(0x115f, 0x1160, 0xffa0) + "b", "invalid_chars"],
+    [String.fromCodePoint(0x3164), "empty"],
+    ["a" + String.fromCodePoint(0x115f, 0x1160, 0xffa0) + "b", null],
     [String.fromCodePoint(0x2800), "invalid_chars"],
-    ["a" + String.fromCodePoint(0x34f) + "b", "invalid_chars"],
-    [String.fromCodePoint(0x17b4, 0x17b5), "invalid_chars"],
+    ["a" + String.fromCodePoint(0x34f) + "b", null],
+    [String.fromCodePoint(0x17b4, 0x17b5), "empty"],
+    [String.fromCodePoint(0x20, 0x200b, 0x20), "empty"], // R3: strip, then trim
+    ["a" + String.fromCodePoint(0x200b, 0x09) + "b", "invalid_chars"], // R4: a control is not masked
     [String.fromCodePoint(0x2028) + "Lan" + String.fromCodePoint(0x2029), null], // trimmed edges
     [String.fromCodePoint(0x2764, 0xfe0f) + " Lan", null], // variation selectors stay allowed
     // No visible code point (only variation selectors, unassigned default-ignorables, whitespace):
@@ -73,8 +76,12 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     [String.fromCodePoint(0x180b), "empty"],
     [String.fromCodePoint(0x2065, 0xfff0, 0xe0fff), "empty"],
     [String.fromCodePoint(0xfe0f, 0x20, 0xfe0f), "empty"],
-    [String.fromCodePoint(0xfe0f).repeat(121), "too_long"], // length is checked first
-    [String.fromCodePoint(0x2764, 0xfe0f), null], // emoji + VS16 alone
+    [String.fromCodePoint(0xfe0f).repeat(121), "empty"], // stripped first: nothing is left to count
+    ["x".repeat(120) + String.fromCodePoint(0x200b).repeat(5), null], // R2: length after the strip
+    // R5: U+200D and U+FE0F are in the strip set, so the server stores composed emoji split (the
+    // owner's rule applied as written, no exception); the form raises no error for them.
+    [String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), null], // ZWJ family
+    [String.fromCodePoint(0x2764, 0xfe0f), null], // VS16 heart, stored as U+2764 alone
     [String.fromCodePoint(0x845b, 0xe0100), null], // CJK ideograph + ideographic variation selector
     ["Nguyễn Thị Ánh".normalize("NFD"), null], // combining marks after their base letters
     [String.fromCodePoint(0xfe0f) + "Lan", null],

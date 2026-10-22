@@ -30,10 +30,11 @@ export type ClubNameProblem = "empty" | "too_long" | "invalid_chars";
  * Client mirror of the club-name rule in club-config-validation.ts (validatePatch), counted the
  * SAME way: trimmed, 1..120 UTF-16 code units (String.length, so most emoji count 2), no control
  * (Cc) or format (Cf) character. Not the display-name rule (me-settings-client.ts), which counts
- * code points and refuses more characters. Returns the first problem or null.
+ * code points and refuses more characters. The invisible set is stripped first (L27, as the server
+ * stores it), so a name that strips to nothing is "empty". Returns the first problem or null.
  */
 export function clubNameProblem(raw: string): ClubNameProblem | null {
-  const name = raw.trim();
+  const name = stripInvisibleChars(raw).trim();
   if (name.length < 1) return "empty";
   if (name.length > 120) return "too_long";
   return /[\p{Cc}\p{Cf}]/u.test(name) ? "invalid_chars" : null;

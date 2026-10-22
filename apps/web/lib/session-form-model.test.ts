@@ -460,7 +460,8 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
       } catch {
         serverHidden = true;
       }
-      if (hasHiddenChar(c) !== serverHidden) mismatches.push(cp);
+      // L27: validateDisplayName strips first, so the mirror is the same two steps in the same order.
+      if (hasHiddenChar(stripInvisibleChars(c)) !== serverHidden) mismatches.push(cp);
     }
     expect(mismatches).toEqual([]);
   });

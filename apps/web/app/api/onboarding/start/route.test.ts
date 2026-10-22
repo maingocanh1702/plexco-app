@@ -9,11 +9,13 @@ import {
 } from "../../../../lib/session-cookies";
 import { POST } from "./route";
 
-vi.mock("@plexco/db", () => ({
+vi.mock("@plexco/db", async (importOriginal) => ({
   createDb: vi.fn(() => ({ pool: {} })),
   resolveWebSession: vi.fn(),
   provisionTenant: vi.fn(),
   SlugTakenError: class SlugTakenError extends Error {},
+  // The real strip (the one TypeScript list): the route strips before it checks the name (L27).
+  stripInvisibleChars: (await importOriginal<typeof import("@plexco/db")>()).stripInvisibleChars,
 }));
 
 // Keep the REAL t() behaviour — the Vietnamese-message assertions below depend on it — but make the
@@ -221,6 +223,40 @@ describe("POST /api/onboarding/start — bounded body + name length (audit W-8)"
     const res120 = await POST(req({ slug: "club-a", name: "x".repeat(120) }));
     expect(res120.status).toBe(200);
     expect(provisionTenant).toHaveBeenCalledOnce();
+  });
+
+  // L27: the route strips first, then runs its existing checks on the stripped name.
+  it("stores the club name without invisible code points (R2)", async () => {
+    const name = "CLB " + String.fromCodePoint(0x200b) + "A";
+    expect((await POST(req({ slug: "club-a", name }))).status).toBe(200);
+    expect(vi.mocked(provisionTenant).mock.calls[0]?.[1]).toMatchObject({ name: "CLB A" });
+  });
+
+  it("answers the existing 400 for a club name with no visible character (R3)", async () => {
+    const name = String.fromCodePoint(0x20, 0x200b, 0x3164);
+    const res = await POST(req({ slug: "club-a", name }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatchObject({
+      code: "INVALID_BODY",
+      message: "Tên CLB hoặc slug không hợp lệ.",
+    });
+    expect(provisionTenant).not.toHaveBeenCalled();
+  });
+
+  // R5: U+200D and U+FE0F are in the strip set. The owner's rule applied as written, no
+  // exception: composed emoji are stored split.
+  it.each([
+    [
+      [0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467],
+      [0x1f468, 0x1f469, 0x1f467],
+    ], // ZWJ family
+    [[0x2764, 0xfe0f], [0x2764]], // VS16 heart
+  ])("stores a composed-emoji club name split (R5): %j -> %j", async (sent, stored) => {
+    const name = String.fromCodePoint(...sent);
+    expect((await POST(req({ slug: "club-a", name }))).status).toBe(200);
+    expect(vi.mocked(provisionTenant).mock.calls[0]?.[1]).toMatchObject({
+      name: String.fromCodePoint(...stored),
+    });
   });
 });
 
