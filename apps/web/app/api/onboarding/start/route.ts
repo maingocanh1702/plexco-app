@@ -1,5 +1,5 @@
 import { t } from "@plexco/core/i18n";
-import { provisionTenant, SlugTakenError, stripInvisibleChars } from "@plexco/db";
+import { checkTypedName, provisionTenant, SlugTakenError, stripInvisibleChars } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import { readBoundedBody } from "../../../../lib/read-bounded-body";
 import {
@@ -61,8 +61,8 @@ export async function POST(request: Request): Promise<Response> {
     return err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
   }
   const slug = body.slug.trim().toLowerCase();
-  // L27: strip first, as the server does: an invisible-only name fails the check below.
-  const name = stripInvisibleChars(body.name).trim();
+  // L27 strip first, then the L29 shared check: a refused name is "" and fails the 400 below.
+  const name = checkTypedName(stripInvisibleChars(body.name)) ?? "";
   const locale = body.locale === undefined ? undefined : String(body.locale);
   if (locale !== undefined && locale !== "vi" && locale !== "en") {
     return err("INVALID_BODY", t("Ngôn ngữ không hỗ trợ.", "Unsupported locale."), 400);
