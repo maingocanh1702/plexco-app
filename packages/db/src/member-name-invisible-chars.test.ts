@@ -20,6 +20,7 @@ import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 import { withTenant } from "./tenant.js";
+import { checkTypedName, normalizeExternalName } from "./text-safety.js";
 import { resolveZaloIdentity } from "./zalo-ingress.js";
 
 let ctx: RlsTestContext;
@@ -1855,4 +1856,97 @@ describe("L29-C2 the cleanup fails closed and names ids and counts only", () => 
       });
     }
   });
+});
+
+// L29-AG1 (unit U5c): public.member_name_apply_rule and its TypeScript twins agree on every Unicode
+// scalar value in both modes (mode false = checkTypedName, mode true = normalizeExternalName, NULL =
+// null), each scalar alone, at an edge and inside visible text: one linear scan on each side, no
+// RegExp built from data (C11b). Excluded by name: U+0000, which PostgreSQL text cannot hold (D1e),
+// and the surrogates U+D800..U+DFFF, which are not scalar values. The transfer is shrunk as C11a
+// says: PostgreSQL returns each position's row count and only the rows where either result differs
+// from the input, so a row it leaves out has both results equal to the input. EXECUTE is owner-only,
+// so the query runs as the superuser, as L29-F's calls do.
+describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", () => {
+  /** Every Unicode scalar value: 0x110000 code points minus the 0x800 surrogates, 1,112,064. */
+  const SCALARS = 0x110000 - 0x800;
+  /** The three values of each scalar c; the SQL VALUES list builds the same ones as p = 1, 2, 3. */
+  const POSITIONS = [
+    { at: "alone", wrap: (c: string) => c },
+    { at: "edge", wrap: (c: string) => `a${c}` },
+    { at: "inside", wrap: (c: string) => `a${c}b` },
+  ] as const;
+  type Pair = readonly [modeFalse: string | null, modeTrue: string | null];
+  type Row = {
+    p: number;
+    total: number;
+    diffs: [n: number, modeFalse: string | null, modeTrue: string | null][];
+  };
+  const show = (s: string | null) => JSON.stringify(cps(s));
+
+  it("L29-AG1 every scalar but U+0000 at all three positions: mode false equals checkTypedName, mode true equals normalizeExternalName", async () => {
+    const client = await ctx.superuserDb.pool.connect();
+    // Sent here, before the TypeScript scan below, so PostgreSQL and Node scan at the same time.
+    const pending = client
+      .query<Row>(
+        `SELECT p, count(*)::int AS total,
+                coalesce(json_agg(json_build_array(n, r0, r1))
+                           FILTER (WHERE r0 IS DISTINCT FROM v OR r1 IS DISTINCT FROM v), '[]') AS diffs
+           FROM (SELECT x.p, n, x.v,
+                        public.member_name_apply_rule(x.v, false) AS r0,
+                        public.member_name_apply_rule(x.v, true) AS r1
+                   FROM generate_series(1, 1114111) AS n -- from U+0001: no U+0000 (D1e)
+                  CROSS JOIN LATERAL (VALUES (1, chr(n)), (2, 'a' || chr(n)), (3, 'a' || chr(n) || 'b')) AS x(p, v)
+                  WHERE n NOT BETWEEN 55296 AND 57343) AS s -- no surrogates U+D800..U+DFFF
+          GROUP BY p
+          ORDER BY p`,
+      )
+      .finally(() => client.release());
+    const ts = POSITIONS.map(({ wrap }) => {
+      const diffs = new Map<number, Pair>();
+      let total = 0;
+      // From U+0001 (no U+0000), the surrogates skipped: the same scalars as the SQL scan.
+      for (let n = 1; n <= 0x10ffff; n += 1) {
+        if (n >= 0xd800 && n <= 0xdfff) continue;
+        const v = wrap(String.fromCodePoint(n));
+        const pair: Pair = [checkTypedName(v), normalizeExternalName(v)];
+        total += 1;
+        if (pair[0] !== v || pair[1] !== v) diffs.set(n, pair);
+      }
+      return { total, diffs };
+    });
+    const sql = new Map((await pending).rows.map((r) => [r.p, r] as const));
+    const first: string[] = [];
+    const counts = POSITIONS.map(({ at, wrap }, i) => {
+      const mine = ts[i]!;
+      const theirs = sql.get(i + 1);
+      const theirDiffs = new Map<number, Pair>();
+      for (const [n, r0, r1] of theirs?.diffs ?? []) theirDiffs.set(n, [r0, r1]);
+      let modeFalse = 0;
+      let modeTrue = 0;
+      for (const n of new Set([...mine.diffs.keys(), ...theirDiffs.keys()])) {
+        const v = wrap(String.fromCodePoint(n));
+        const same: Pair = [v, v];
+        const [want0, want1] = mine.diffs.get(n) ?? same;
+        const [got0, got1] = theirDiffs.get(n) ?? same;
+        if (got0 !== want0) modeFalse += 1;
+        if (got1 !== want1) modeTrue += 1;
+        if ((got0 !== want0 || got1 !== want1) && first.length < 20) {
+          first.push(
+            `${at} U+${hex(n)}: sql ${show(got0)} ${show(got1)}, ts ${show(want0)} ${show(want1)}`,
+          );
+        }
+      }
+      return { at, sqlRows: theirs?.total ?? 0, tsRows: mine.total, modeFalse, modeTrue };
+    });
+    expect({ counts, first }).toEqual({
+      counts: POSITIONS.map(({ at }) => ({
+        at,
+        sqlRows: SCALARS - 1,
+        tsRows: SCALARS - 1,
+        modeFalse: 0,
+        modeTrue: 0,
+      })),
+      first: [],
+    });
+  }, 300_000);
 });
