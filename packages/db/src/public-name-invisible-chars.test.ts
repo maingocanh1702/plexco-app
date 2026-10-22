@@ -6,6 +6,10 @@
  *   MG-*    the one-time cleanup (D5-D8), read from 0068 between its two L23-CLEANUP marker lines and
  *           run again inside a transaction that is always rolled back, on a fixture of each class.
  *   D11     the emoji consequence of the owner rule at the SQL layer: stated, no exception.
+ *   PS-ACL  the helper's catalog contract (D9): attributes, owned like its SECURITY DEFINER caller,
+ *           EXECUTE for that owner only.
+ *   PS-OWNER-REPAIR  0068's block between its two L23-OWNER marker lines gives a helper whose owner
+ *           drifted the definer's owner back, run inside a transaction that is always rolled back.
  * Inputs are built from code points (String.fromCodePoint), never pasted.
  */
 import { randomUUID } from "node:crypto";
@@ -21,22 +25,43 @@ let ctx: RlsTestContext;
 const ch = (...codePoints: number[]) => String.fromCodePoint(...codePoints);
 const cps = (s: string) => [...s].map((c) => c.codePointAt(0)!);
 
-/** 0068's cleanup DO block: the text between its two marker lines, each present exactly once. */
-function cleanupBlock(): string {
+/** A 0068 DO block: the text between its two L23-<name> marker lines, each present exactly once. */
+function markedBlock(name: "CLEANUP" | "OWNER"): string {
   const text = readFileSync(
     fileURLToPath(new URL("../migrations/0068_public_name_invisible_chars.sql", import.meta.url)),
     "utf8",
   );
-  const begin = "\n-- L23-CLEANUP-BEGIN\n";
-  const end = "\n-- L23-CLEANUP-END";
+  const begin = `\n-- L23-${name}-BEGIN\n`;
+  const end = `\n-- L23-${name}-END`;
   const from = text.indexOf(begin);
   const to = text.indexOf(end);
   if (from < 0 || to < from || text.includes(begin, from + 1) || text.includes(end, to + 1)) {
-    throw new Error("0068: expected one L23-CLEANUP-BEGIN line, then one L23-CLEANUP-END line");
+    throw new Error(`0068: expected one L23-${name}-BEGIN line, then one L23-${name}-END line`);
   }
   return text.slice(from + begin.length, to);
 }
-const CLEANUP = cleanupBlock();
+const CLEANUP = markedBlock("CLEANUP");
+const OWNER_REPAIR = markedBlock("OWNER");
+
+const HELPER = `'public.public_name_strip_invisible(text)'::regprocedure`;
+const DEFINER = `'public.tenant_public_alias_set(uuid, uuid, text)'::regprocedure`;
+
+/** The helper's owner and ACL against its one SECURITY DEFINER caller; a NULL ACL reads as the default (PUBLIC). */
+async function helperOwnership(c: pg.ClientBase): Promise<Row> {
+  const { rows } = await c.query<Row>(
+    `SELECT pg_get_userbyid(h.proowner)::text AS owner,
+            h.proowner = d.proowner AS same_owner,
+            ARRAY(SELECT a.privilege_type
+                    FROM aclexplode(coalesce(h.proacl, acldefault('f', h.proowner))) a
+                   WHERE a.grantee = h.proowner) AS owner_privileges,
+            ARRAY(SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END
+                    FROM aclexplode(coalesce(h.proacl, acldefault('f', h.proowner))) a
+                   WHERE a.grantee <> h.proowner) AS other_grantees
+       FROM pg_proc h, pg_proc d
+      WHERE h.oid = ${HELPER} AND d.oid = ${DEFINER}`,
+  );
+  return rows[0]!;
+}
 
 // Stored values as they could exist at the base: R1-5 allowed variation selectors and unassigned
 // default-ignorables; U+200B stands for a legacy or direct write.
@@ -191,6 +216,65 @@ describe("D11 at the SQL layer: U+200D and U+FE0F are stripped inside emoji too 
     );
     expect(cps(rows[0]!.out)).toEqual(left);
     expect(cps(stripInvisibleChars(ch(...input)))).toEqual(left); // the TypeScript layer agrees
+  });
+});
+
+describe("PS-ACL (D9): the helper's catalog contract", () => {
+  it("LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE, SECURITY INVOKER, search_path=pg_catalog; owned like its definer caller, not by job_definer; EXECUTE for that owner only", async () => {
+    const { rows } = await ctx.owner.query<Row>(
+      `SELECT l.lanname::text AS language, h.provolatile AS volatility, h.proisstrict AS strict,
+              h.proparallel AS parallel, h.prosecdef AS security_definer, h.proconfig AS config,
+              pg_get_userbyid(h.proowner) <> 'job_definer' AS not_job_definer,
+              has_function_privilege('app', h.oid, 'EXECUTE') AS app,
+              has_function_privilege('app_worker', h.oid, 'EXECUTE') AS app_worker,
+              has_function_privilege('readonly', h.oid, 'EXECUTE') AS readonly,
+              has_function_privilege(d.proowner, h.oid, 'EXECUTE') AS definer_owner
+         FROM pg_proc h JOIN pg_language l ON l.oid = h.prolang, pg_proc d
+        WHERE h.oid = ${HELPER} AND d.oid = ${DEFINER}`,
+    );
+    expect(rows[0]).toEqual({
+      language: "sql",
+      volatility: "i",
+      strict: true,
+      parallel: "s",
+      security_definer: false,
+      config: ["search_path=pg_catalog"],
+      not_job_definer: true,
+      app: false,
+      app_worker: false,
+      readonly: false,
+      definer_owner: true,
+    });
+    // The owner's own EXECUTE entry: has_function_privilege alone is vacuous for a superuser owner.
+    expect(await helperOwnership(ctx.owner)).toMatchObject({
+      same_owner: true,
+      owner_privileges: ["EXECUTE"],
+      other_grantees: [],
+    });
+  });
+});
+
+describe("PS-OWNER-REPAIR: the 0068 owner block gives the helper its definer caller's owner", () => {
+  it("a helper owned by another role (readonly) gets the definer's owner back, its owner-only ACL moving with it; a second run changes nothing", async () => {
+    await rolledBack(async (c) => {
+      await c.query(`ALTER FUNCTION public.public_name_strip_invisible(text) OWNER TO readonly`);
+      expect(await helperOwnership(c)).toEqual({
+        owner: "readonly",
+        same_owner: false,
+        owner_privileges: ["EXECUTE"],
+        other_grantees: [],
+      });
+      await c.query(OWNER_REPAIR);
+      const repaired = await helperOwnership(c);
+      expect(repaired).toMatchObject({
+        same_owner: true,
+        owner_privileges: ["EXECUTE"],
+        other_grantees: [],
+      });
+      expect(repaired.owner).not.toBe("readonly");
+      await c.query(OWNER_REPAIR); // the normal case: owners already match
+      expect(await helperOwnership(c)).toEqual(repaired);
+    });
   });
 });
 

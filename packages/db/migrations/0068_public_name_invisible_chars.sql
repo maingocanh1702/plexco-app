@@ -40,8 +40,11 @@
 --   a value the strip would leave with no visible character stays unchanged, one NOTICE each (D7).
 --   fail closed on visibility (D8): a runner that row security applies to proceeds only on tables
 --     that hold no heap page; otherwise the file raises (apply it as the superuser migration role).
--- Privileges: the helper is owned by the migration role, which also owns tenant_public_alias_set
--- (0060 has no SET ROLE); EXECUTE is revoked from PUBLIC; no grant, no SET ROLE, no FORCE RLS change.
+-- Privileges: the helper takes its definer caller's owner: the block between the two L23 owner
+-- marker lines gives it the owner of tenant_public_alias_set (the 0060 runner, 0060 has no SET ROLE),
+-- a no-op when that role applies 0068, so the definer keeps EXECUTE on it even when 0068 is applied
+-- as the superuser (D8). EXECUTE is revoked from PUBLIC, app, app_worker and readonly; no grant, no
+-- SET ROLE, no FORCE RLS change.
 -- ============================================================================
 
 CREATE FUNCTION public.public_name_strip_invisible(p_text text)
@@ -163,6 +166,20 @@ BEGIN
   RETURN QUERY SELECT v_alias, 'pending'::text, true;
 END;
 $$;
+
+-- The helper takes the owner of its one SECURITY DEFINER caller, read from the catalog, so that
+-- definer can execute it whoever applies 0068. OWNER TO the current owner changes nothing (the
+-- normal case); a real change moves the owner-only ACL to the new owner. No grant, no SET ROLE.
+-- L23-OWNER-BEGIN
+DO $l23_owner$
+BEGIN
+  EXECUTE pg_catalog.format('ALTER FUNCTION public.public_name_strip_invisible(text) OWNER TO %I',
+    (SELECT pg_catalog.pg_get_userbyid(p.proowner)
+       FROM pg_catalog.pg_proc p
+      WHERE p.oid = 'public.tenant_public_alias_set(uuid, uuid, text)'::pg_catalog.regprocedure));
+END
+$l23_owner$;
+-- L23-OWNER-END
 
 -- The one-time cleanup (D5-D8). Self-contained and safe to run twice: a cleaned value is no longer
 -- a candidate; a value left unchanged (D7) is reported again and still not changed.
