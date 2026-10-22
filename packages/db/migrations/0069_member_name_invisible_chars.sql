@@ -705,3 +705,115 @@ BEGIN
     SELECT u.id, u.name, u.slug, u.timezone, u.locale FROM u;
 END;
 $$;
+
+-- The one-time cleanup (B6, readiness section 8; the 0068 L23-CLEANUP pattern). Self-contained and
+-- safe to run twice: a cleaned value is no longer a candidate; a value left unchanged is reported
+-- again and still not changed. Every NOTICE names a row id or a count, never the stored text.
+-- L27-CLEANUP-BEGIN
+DO $l27_cleanup$
+DECLARE
+  -- The 0060 trim and visible rule: a byte-equal copy of the 0068 cleanup constants (0068:191-197).
+  c_ws     CONSTANT text := E'\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
+  c_space  CONSTANT text := '[' || c_ws || ']';
+  c_visible CONSTANT text := '[^' || c_ws
+    || E'\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e'
+    || E'\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8'
+    || E'\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff'
+    || ']';
+  r             record;
+  v_new         text;
+  n_persons     integer := 0;
+  n_memberships integer := 0;
+  n_tenants     integer := 0;
+  n_sessions    integer := 0;
+  n_left        integer := 0;
+BEGIN
+  -- Never silently skip a row row security hides (the 0068 guard, over the four tables). Superuser
+  -- and BYPASSRLS runners (and an owner without FORCE RLS) see every row: row_security_active is
+  -- false. Otherwise the table must hold no heap page at all, else raise.
+  IF (row_security_active('public.persons') AND pg_relation_size('public.persons') > 0)
+     OR (row_security_active('public.memberships') AND pg_relation_size('public.memberships') > 0)
+     OR (row_security_active('public.tenants') AND pg_relation_size('public.tenants') > 0)
+     OR (row_security_active('public.sessions') AND pg_relation_size('public.sessions') > 0) THEN
+    RAISE EXCEPTION '0069 cleanup: row security applies to % and persons, memberships, tenants or sessions holds rows it may not see; apply 0069 as the superuser migration role',
+      current_user USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- persons.display_name, memberships.display_name, tenants.name: the strip, then the trim. A value
+  -- with no visible character after that stays as stored (for tenants.name this also keeps
+  -- tenants_name_len_chk satisfied).
+  FOR r IN
+    SELECT p.id, p.display_name AS v FROM public.persons p
+     WHERE p.display_name IS DISTINCT FROM public.public_name_strip_invisible(p.display_name)
+     ORDER BY p.id FOR UPDATE
+  LOOP
+    v_new := regexp_replace(public.public_name_strip_invisible(r.v),
+                            '^' || c_space || '+|' || c_space || '+$', '', 'g');
+    IF v_new ~ c_visible THEN
+      UPDATE public.persons SET display_name = v_new WHERE id = r.id;
+      n_persons := n_persons + 1;
+      RAISE NOTICE '0069 cleanup: person % display name stripped', r.id;
+    ELSE
+      n_left := n_left + 1;
+      RAISE NOTICE '0069 cleanup: person % display name left unchanged (no visible character after the strip)', r.id;
+    END IF;
+  END LOOP;
+
+  FOR r IN
+    SELECT m.id, m.display_name AS v FROM public.memberships m
+     WHERE m.display_name IS DISTINCT FROM public.public_name_strip_invisible(m.display_name)
+     ORDER BY m.id FOR UPDATE
+  LOOP
+    v_new := regexp_replace(public.public_name_strip_invisible(r.v),
+                            '^' || c_space || '+|' || c_space || '+$', '', 'g');
+    IF v_new ~ c_visible THEN
+      UPDATE public.memberships SET display_name = v_new WHERE id = r.id;
+      n_memberships := n_memberships + 1;
+      RAISE NOTICE '0069 cleanup: membership % display name stripped', r.id;
+    ELSE
+      n_left := n_left + 1;
+      RAISE NOTICE '0069 cleanup: membership % display name left unchanged (no visible character after the strip)', r.id;
+    END IF;
+  END LOOP;
+
+  FOR r IN
+    SELECT t.id, t.name AS v FROM public.tenants t
+     WHERE t.name IS DISTINCT FROM public.public_name_strip_invisible(t.name)
+     ORDER BY t.id FOR UPDATE
+  LOOP
+    v_new := regexp_replace(public.public_name_strip_invisible(r.v),
+                            '^' || c_space || '+|' || c_space || '+$', '', 'g');
+    IF v_new ~ c_visible THEN
+      UPDATE public.tenants SET name = v_new WHERE id = r.id;
+      n_tenants := n_tenants + 1;
+      RAISE NOTICE '0069 cleanup: tenant % name stripped', r.id;
+    ELSE
+      n_left := n_left + 1;
+      RAISE NOTICE '0069 cleanup: tenant % name left unchanged (no visible character after the strip)', r.id;
+    END IF;
+  END LOOP;
+
+  -- sessions.venue_address: the strip alone (its writers store it without a trim). The projector's
+  -- own path (its lock, fence and hide_exact_address mask) rewrites or removes the public row.
+  FOR r IN
+    SELECT s.id, s.venue_address AS v FROM public.sessions s
+     WHERE s.venue_address IS DISTINCT FROM public.public_name_strip_invisible(s.venue_address)
+     ORDER BY s.id FOR UPDATE
+  LOOP
+    v_new := public.public_name_strip_invisible(r.v);
+    IF v_new ~ c_visible THEN
+      UPDATE public.sessions SET venue_address = v_new WHERE id = r.id;
+      PERFORM public.public_sessions_project_session(r.id, NULL);
+      n_sessions := n_sessions + 1;
+      RAISE NOTICE '0069 cleanup: session % venue address stripped and re-projected', r.id;
+    ELSE
+      n_left := n_left + 1;
+      RAISE NOTICE '0069 cleanup: session % venue address left unchanged (no visible character after the strip)', r.id;
+    END IF;
+  END LOOP;
+
+  RAISE NOTICE '0069 cleanup: % person names, % membership names, % tenant names changed, % sessions changed and re-projected, % values left unchanged',
+    n_persons, n_memberships, n_tenants, n_sessions, n_left;
+END
+$l27_cleanup$;
+-- L27-CLEANUP-END
