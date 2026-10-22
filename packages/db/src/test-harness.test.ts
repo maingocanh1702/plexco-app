@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,7 +8,9 @@ import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireChatDefinerLock,
+  bootstrapJobDefiner,
   createRolePasswordLeaser,
+  MIGRATE_ADVISORY_LOCK_KEY,
   setupRlsTestContext,
   withAdvisoryLocks,
   withDefinerReadLock,
@@ -501,6 +503,68 @@ describe("setupRlsTestContext (HRN)", () => {
       await (await setupRlsTestContext("plexco_harness_teardown_check")).teardown();
       const sql = "SELECT 1 FROM pg_database WHERE datname = 'plexco_harness_teardown_check'";
       expect((await observer.query(sql)).rows).toEqual([]);
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
+});
+
+describe("withJobDefinerBootstrapLock (JDB)", () => {
+  // Advisory locks are database-local, so every JDB client works on this scratch database alone.
+  const JDB_DB = "plexco_harness_jdb_check";
+  /** NOLOGIN grantee for the runner-like GRANT/REVOKE writers of the serialization tests. */
+  const JDB_ROLE = "plexco_harness_jdb_grantee";
+  const jdbUrl = () => {
+    const u = new URL(taggedUrl().url);
+    u.pathname = `/${JDB_DB}`;
+    return u.toString();
+  };
+
+  beforeAll(async () => {
+    await observer.query(`DROP DATABASE IF EXISTS ${JDB_DB} WITH (FORCE)`);
+    await observer.query(`DROP ROLE IF EXISTS ${JDB_ROLE}`);
+    await observer.query(`CREATE ROLE ${JDB_ROLE} NOLOGIN`);
+    await observer.query(`CREATE DATABASE ${JDB_DB}`);
+  }, REAL_LOCK_TIMEOUT_MS);
+
+  afterAll(async () => {
+    // The database first: it holds the role's grants, which would block DROP ROLE.
+    await observer.query(`DROP DATABASE IF EXISTS ${JDB_DB} WITH (FORCE)`);
+    await observer.query(`DROP ROLE IF EXISTS ${JDB_ROLE}`);
+  }, REAL_LOCK_TIMEOUT_MS);
+
+  it("JDB-1: the key is migrate.ts's ADVISORY_LOCK_KEY, taken there with pg_advisory_lock($1)", () => {
+    const src = readFileSync(path.join(HERE, "migrate.ts"), "utf8");
+    const parsed = /^const ADVISORY_LOCK_KEY = (0x[0-9a-fA-F]+);/m.exec(src)?.[1];
+    expect(Number(parsed)).toBe(MIGRATE_ADVISORY_LOCK_KEY);
+    expect(src).toContain(`client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY])`);
+  });
+
+  it(
+    "JDB-3: a bootstrap whose SQL throws rejects with that error, its client usable and plxc free",
+    async () => {
+      const client = new pg.Client({ connectionString: jdbUrl() });
+      const other = new pg.Client({ connectionString: jdbUrl() });
+      try {
+        await client.connect();
+        await other.connect();
+        // 01 runs inside its own BEGIN, so a read-only default fails its first write with 25006
+        // while plxc is held: CREATE ROLE when job_definer is missing, else GRANT ROLE (01:159).
+        await client.query("SET default_transaction_read_only = on");
+        await expect(bootstrapJobDefiner(client)).rejects.toMatchObject({
+          code: "25006",
+          message: expect.stringMatching(
+            /^cannot execute (CREATE ROLE|GRANT ROLE|GRANT) in a read-only transaction$/,
+          ),
+        });
+        expect((await client.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
+        await client.query("RESET default_transaction_read_only");
+        const tryLock = "SELECT pg_try_advisory_lock($1) AS ok";
+        const { rows } = await other.query(tryLock, [MIGRATE_ADVISORY_LOCK_KEY]);
+        expect(rows).toEqual([{ ok: true }]);
+        await other.query("SELECT pg_advisory_unlock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+      } finally {
+        await Promise.all([client.end(), other.end()]);
+      }
     },
     REAL_LOCK_TIMEOUT_MS,
   );
