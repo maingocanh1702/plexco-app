@@ -25,8 +25,10 @@
  *   3. public_sessions only: the canonical rebuild (public_sessions_tenant_candidates +
  *      public_sessions_project_session) for every tenant that has an outbox event (D7): the tenant list is
  *      read once, then ONE transaction per tenant, each opening with a plain read of `enabled` (no row
- *      lock, so a DD-134 disable never waits for the rebuild). A disable stops it with projector_disabled;
- *      the tenants rebuilt before it stay committed.
+ *      lock, so a DD-134 disable never waits for the rebuild). A disable stops it at the NEXT tenant with
+ *      projector_disabled: the tenant in flight finishes, as an in-flight delivery does on the live path.
+ *      Step 2's rows and records and the tenants rebuilt before the stop stay committed; a re-run (which
+ *      enables again) completes the rebuild.
  * A re-run adds no row and no record; it is also the recovery after an enable with the raw function and
  * after an exit 1 that came once transaction 1 had committed (the projector is then enabled).
  *

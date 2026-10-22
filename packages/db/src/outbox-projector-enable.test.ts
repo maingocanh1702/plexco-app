@@ -467,10 +467,14 @@ function expectNoSecret(run: CliRun, ...texts: string[]): void {
 const isEnabled = async (name: string) =>
   (await one("SELECT enabled FROM outbox_projectors WHERE name = $1", [name])).enabled;
 
-/** The DD-134 disable on the superuser seat, for a caller that already holds the reader lock. */
-async function disableInsideLock(name: string): Promise<void> {
+/**
+ * The DD-134 disable on the superuser seat, for a caller that already holds the reader lock. With
+ * `lockTimeout` (e.g. "2s") a wait for any lock fails with 55P03 instead of blocking.
+ */
+async function disableInsideLock(name: string, lockTimeout?: string): Promise<void> {
   await ctx.owner.query("BEGIN");
   try {
+    if (lockTimeout) await ctx.owner.query(`SET LOCAL lock_timeout = '${lockTimeout}'`);
     await ctx.owner.query("SET LOCAL ROLE job_definer");
     await ctx.owner.query("SELECT outbox_projector_set_enabled($1, false)", [name]);
     await ctx.owner.query("COMMIT");
@@ -848,6 +852,90 @@ describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and print
     expect(await deliveries("public_sessions", [within, beyond])).toEqual(pending([within]));
     await expectRecords("public_sessions", [within, beyond], [[beyond, tenantId, "age"]]);
     expect(await isPublic(sessionId)).toBe(true); // not rewritten: no tenant transaction ran
+  }, 30_000);
+
+  it("EN-10 (rebuild, in flight): a disable that commits while a tenant's rebuild transaction is open does not wait for it (lock_timeout 2s); that tenant finishes, the next one stops with projector_disabled (exit 2); transaction 2's rows stay committed", async () => {
+    // EN-10 (rebuild)'s club, twice: public while the projector ran, alias rejected while off -> a stale row
+    const staleClub = async (tag: string, street: string) => {
+      const tenantId = String(
+        (
+          await one(
+            `INSERT INTO tenants (name, slug, public_alias, public_alias_status)
+             VALUES ($1, $2, $3, 'approved') RETURNING id`,
+            [`${tag} Club`, `${tag.toLowerCase()}-club`, `CLB ${tag}`],
+          )
+        ).id,
+      );
+      const sessionId = String(
+        (
+          await one(
+            `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address,
+               area, price_amount, slots_max, visibility, join_policy, status)
+             VALUES ($1, $2, now() + interval '1 day', now() + interval '26 hours', 'Asia/Ho_Chi_Minh',
+               $3, $4, 'Quan 7', 50000, 10, 'public', 'open', 'open')
+             RETURNING id`,
+            [tenantId, ctx.badmintonSportId, `${tag} Venue`, street],
+          )
+        ).id,
+      );
+      await worker("SELECT public_sessions_project_session($1, NULL)", [sessionId]);
+      await ctx.owner.query("UPDATE tenants SET public_alias_status = 'rejected' WHERE id = $1", [
+        tenantId,
+      ]);
+      const event = await seedOne("tenant", tenantId, "tenant.public_alias_rejected");
+      return { tenantId, sessionId, event };
+    };
+    const clubs = [
+      await staleClub("EN10F1", "4 Public Street"),
+      await staleClub("EN10F2", "5 Public Street"),
+    ];
+    const events = clubs.map((club) => club.event);
+    await drain(events); // acked with '{}' while off, not aged: inside the bound
+    const candidates = await rebuildCandidates();
+    for (const club of clubs) {
+      expect(await isPublic(club.sessionId)).toBe(true);
+      expect(candidates).toContain(club.sessionId); // a rebuild would remove the row (EN-9)
+    }
+
+    // The seam inside step 3: the first of the two clubs whose rebuild statement returned, before that
+    // tenant transaction's COMMIT. A rebuild that ever locked the projector row would make this disable
+    // fail with 55P03 after 2 s, and this test with it: a disable never waits for the rebuild.
+    const seat = await ownerSeat();
+    const send = seat.query.bind(seat) as (
+      sql: string,
+      params?: unknown[],
+    ) => Promise<pg.QueryResult>;
+    const fired: typeof clubs = [];
+    Object.assign(seat, {
+      query: async (sql: string, params?: unknown[]) => {
+        const result = await send(sql, params);
+        const club = clubs.find((c) => c.tenantId === params?.[0]);
+        if (club && fired.length === 0 && sql.includes("public_sessions_tenant_candidates")) {
+          fired.push(club);
+          await disableInsideLock("public_sessions", "2s");
+        }
+        return result;
+      },
+    });
+    try {
+      await expect(enable("public_sessions", seat)).rejects.toMatchObject({
+        name: "Refusal",
+        code: "projector_disabled",
+        message: expect.stringMatching(
+          /was disabled during the rebuild; \d+ of \d+ tenants rebuilt$/,
+        ),
+      });
+    } finally {
+      await seat.end();
+    }
+    expect(fired).toHaveLength(1);
+    const [inFlight] = fired;
+    const next = clubs.find((club) => club !== inFlight)!;
+    expect(await isEnabled("public_sessions")).toBe(false);
+    expect(await deliveries("public_sessions", events)).toEqual(pending(events));
+    await expectRecords("public_sessions", events, []);
+    expect(await isPublic(inFlight!.sessionId)).toBe(false); // the tenant in flight finished its rebuild
+    expect(await isPublic(next.sessionId)).toBe(true); // the next tenant stopped: never rebuilt
   }, 30_000);
 
   it("EN-15: the way forward after unacked_backlog: a worker cycle acks the old events with '{}', then the CLI succeeds and records each ':age'", async () => {
