@@ -1,0 +1,198 @@
+/**
+ * L27 unit U3a: the source-scan guard G1-G3 of
+ * docs/sessions/web-mvp-phase3-readiness-p3-strip-invisible-member-names.md (section 11, default B8).
+ * A writer the inventory missed keeps names unstripped, so these fail when a SQL writer of
+ * persons.display_name, memberships.display_name, tenants.name or sessions.venue_address appears
+ * without public_name_strip_invisible (G1: function bodies in the catalog; G2: bare statements and
+ * DO blocks of the migration files), or when a new trigger on the four tables could rewrite one
+ * unseen (G3). Each guard keeps a row that feeds a planted counter-example to the same matcher.
+ */
+import { readdirSync, readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+
+/** The guarded column of each table (tenants.name as a whole word: display_name never counts). */
+const COLUMN: Record<string, RegExp> = {
+  persons: /\bdisplay_name\b/,
+  memberships: /\bdisplay_name\b/,
+  tenants: /\bname\b/,
+  sessions: /\bvenue_address\b/,
+};
+/** An INSERT, UPDATE or MERGE on one of the four tables; the lookahead takes the rest up to `;`. */
+const WRITE =
+  /\b(?:insert\s+into|update|merge\s+into)\s+(?:only\s+)?(?:public\.)?(persons|memberships|tenants|sessions)\b(?=([^;]*))/g;
+const STRIP = "public_name_strip_invisible(";
+
+/** Lower-cased, with `--` and block comments blanked in place (offsets and line numbers kept). */
+const clean = (sql: string) =>
+  sql.toLowerCase().replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "));
+/** The tables whose guarded column a write statement of the text names, one entry per write. */
+const writes = (sql: string) =>
+  [...clean(sql).matchAll(WRITE)]
+    .filter(([, table, rest]) => COLUMN[table!]!.test(rest!))
+    .map(([, table]) => table!);
+
+/** Section 11's pinned SQL writers (G1) and triggers (G3), measured at the 0069 tail. */
+const WRITERS = [
+  "auth_login_google",
+  "channel_identity_detach",
+  "create_guest_membership",
+  "create_host_added_person",
+  "person_profile_update",
+  "tenant_profile_update",
+  "tenant_provision",
+  "zalo_identity_resolve",
+];
+const TRIGGERS = ["memberships.trg_memberships_chat_provision"];
+
+type Fn = { sig: string; name: string; src: string };
+/** G1 violations, each naming its function: unlisted writer, listed writer without the strip, stale entry. */
+function g1(fns: Fn[]): string[] {
+  const writers = fns.filter((f) => writes(f.src).length > 0);
+  return [
+    ...writers.flatMap((f) => {
+      const src = clean(f.src);
+      if (!WRITERS.includes(f.name))
+        return [`unlisted writer ${f.sig} (${writes(src).join(", ")})`];
+      // channel_identity_detach writes the literal NULL only (A3): exempt while its body still does.
+      const nullOnly =
+        f.name === "channel_identity_detach" && /values\s*\(\s*null\s*,\s*'active'\s*\)/.test(src);
+      return src.includes(STRIP) || nullOnly ? [] : [`listed writer without the strip ${f.sig}`];
+    }),
+    ...WRITERS.filter((w) => !writers.some((f) => f.name === w)).map((w) => `stale entry ${w}`),
+  ];
+}
+
+type Hit = { file: string; line: number; sql: string };
+// ponytail: a simple statement splitter (quotes and dollar tags kept whole, comments blanked first).
+// CREATE FUNCTION statements are skipped with their dollar-quoted bodies because G1 reads the same
+// bodies from pg_proc; DO bodies are scanned. Ceiling: `--` inside a string literal, E'' escapes,
+// quoted identifiers, dynamic EXECUTE, BEGIN ATOMIC bodies in a file; a real SQL parser if one bites.
+/** G2: the bare statements and DO blocks of one migration file that write a guarded column. */
+function g2(file: string, raw: string): Hit[] {
+  const text = clean(raw);
+  const tag = /\$(?:[a-z_][a-z0-9_]*)?\$/y;
+  const hits: Hit[] = [];
+  let from = 0;
+  for (let i = 0; i <= text.length; i++) {
+    tag.lastIndex = i;
+    const quote = text[i] === "'" ? "'" : text[i] === "$" ? tag.exec(text)?.[0] : undefined;
+    if (quote) {
+      const close = text.indexOf(quote, i + quote.length);
+      i = close < 0 ? text.length - 1 : close + quote.length - 1;
+    } else if (i === text.length || text[i] === ";") {
+      const sql = text.slice(from, i).trim();
+      const fn = /^create\s+(?:or\s+replace\s+)?(?:function|procedure)\b/.test(sql);
+      if (sql && !fn && writes(sql).length > 0) {
+        hits.push({ file, line: text.slice(0, text.indexOf(sql, from)).split("\n").length, sql });
+      }
+      from = i + 1;
+    }
+  }
+  return hits;
+}
+const g3 = (rows: string[]) => [
+  ...rows.filter((r) => !TRIGGERS.includes(r)).map((r) => `unlisted trigger ${r}`),
+  ...TRIGGERS.filter((t) => !rows.includes(t)).map((t) => `missing trigger ${t}`),
+];
+
+const migration = (file: string) =>
+  readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8");
+const CLEANUP = "0069_member_name_invisible_chars.sql";
+
+let ctx: RlsTestContext;
+let fns: Fn[];
+let triggers: string[];
+
+beforeAll(async () => {
+  ctx = await setupRlsTestContext("plexco_member_name_writer_guard");
+  const procs = await ctx.owner.query<Fn>(
+    `SELECT p.oid::regprocedure::text AS sig, p.proname AS name,
+            CASE WHEN p.prosqlbody IS NULL THEN p.prosrc ELSE pg_get_functiondef(p.oid) END AS src
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1`,
+  );
+  fns = procs.rows;
+  const trgs = await ctx.owner.query<{ trg: string }>(
+    `SELECT c.relname || '.' || t.tgname AS trg
+       FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE NOT t.tgisinternal AND n.nspname = 'public' AND c.relname = ANY($1) ORDER BY 1`,
+    [Object.keys(COLUMN)],
+  );
+  triggers = trgs.rows.map((r) => r.trg);
+});
+afterAll(async () => {
+  await ctx?.teardown();
+});
+
+describe("G1 catalog: every function that writes the four columns is pinned and strips", () => {
+  it("holds on the migrated catalog", () => {
+    expect(g1(fns), "G1 violations (by function)").toEqual([]);
+  });
+  it("fails on a planted unlisted writer, a listed writer without the strip, a stale entry", () => {
+    const listed = fns.find((f) => f.name === "tenant_profile_update")!;
+    const planted: Fn[] = [
+      ...fns.filter((f) => f !== listed && f.name !== "zalo_identity_resolve"),
+      { ...listed, src: "begin update tenants set name = btrim(p_name) where id = p_id; end" },
+      {
+        sig: "planted(text)",
+        name: "planted",
+        src: "insert into public.persons (display_name) values ($1)",
+      },
+      {
+        sig: "inert()",
+        name: "inert",
+        src: "-- update persons set display_name = 'x';\nselect display_name from persons for update; update persons set status = 'x';",
+      },
+    ];
+    expect(g1(planted).sort()).toEqual(
+      [
+        `listed writer without the strip ${listed.sig}`,
+        "stale entry zalo_identity_resolve",
+        "unlisted writer planted(text) (persons)",
+      ].sort(),
+    );
+  });
+});
+
+describe("G2 migrations: bare statements and DO blocks that write the four columns are pinned", () => {
+  it("holds on packages/db/migrations: only 0069's L27-CLEANUP block, and it calls the helper", () => {
+    const files = readdirSync(new URL("../migrations/", import.meta.url)).filter((f) =>
+      f.endsWith(".sql"),
+    );
+    const found = files.sort().flatMap((f) => g2(f, migration(f)));
+    const lines = migration(CLEANUP).split("\n");
+    const marker = (m: string) => lines.findIndex((l) => l.startsWith(`-- L27-CLEANUP-${m}`)) + 1;
+    const inCleanup = (h: Hit) =>
+      h.file === CLEANUP && h.line > marker("BEGIN") && h.line < marker("END");
+    const outside = found.filter((h) => !inCleanup(h)).map((h) => `${h.file}:${h.line}`);
+    expect(outside, "bare writers outside 0069's L27-CLEANUP block (file:line)").toEqual([]);
+    const cleanup = found.filter(inCleanup).map((h) => h.sql.includes(STRIP));
+    expect(cleanup, `${CLEANUP}:${marker("BEGIN")}: one cleanup block, calling the helper`).toEqual(
+      [true],
+    );
+  });
+  it("fails on a planted bare writer and DO block, past a function body, a comment and a grant", () => {
+    const planted = [
+      "create function f() returns void language plpgsql as $f$ begin update persons set display_name = 'x'; end $f$;",
+      "-- update tenants set name = 'a comment';",
+      "update public.tenants set name = 'y; still one statement';",
+      "do $$ begin update sessions set venue_address = null; end $$;",
+      "grant update (display_name) on memberships to app; insert into sessions (status) values ('draft');",
+    ].join("\n");
+    const at = g2("planted.sql", planted).map((h) => `${h.file}:${h.line}`);
+    expect(at).toEqual(["planted.sql:3", "planted.sql:4"]);
+  });
+});
+
+describe("G3 triggers: the non-internal triggers on the four tables are exactly the pinned set", () => {
+  it("holds on the migrated catalog", () => {
+    expect(g3(triggers), "G3 violations (by table.trigger)").toEqual([]);
+  });
+  it("fails on a planted trigger and on a missing one", () => {
+    expect(g3(["persons.trg_planted"])).toEqual([
+      "unlisted trigger persons.trg_planted",
+      "missing trigger memberships.trg_memberships_chat_provision",
+    ]);
+  });
+});
