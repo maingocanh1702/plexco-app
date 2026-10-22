@@ -9,7 +9,8 @@
  *   PS-ACL  the helper's catalog contract (D9): attributes, owned like its SECURITY DEFINER caller,
  *           EXECUTE for that owner only.
  *   PS-OWNER-REPAIR  0068's block between its two L23-OWNER marker lines gives a helper whose owner
- *           drifted the definer's owner back, run inside a transaction that is always rolled back.
+ *           drifted the definer's owner back, with both owners first moved off the runner (the
+ *           harness migrates as it queries), inside a transaction that is always rolled back.
  * Inputs are built from code points (String.fromCodePoint), never pasted.
  */
 import { randomUUID } from "node:crypto";
@@ -255,9 +256,26 @@ describe("PS-ACL (D9): the helper's catalog contract", () => {
 });
 
 describe("PS-OWNER-REPAIR: the 0068 owner block gives the helper its definer caller's owner", () => {
-  it("a helper owned by another role (readonly) gets the definer's owner back, its owner-only ACL moving with it; a second run changes nothing", async () => {
+  it("with the definer moved to app_worker and the helper to readonly, the block gives the helper app_worker (the definer's owner, not the runner), its owner-only ACL moving with it; a second run changes nothing", async () => {
     await rolledBack(async (c) => {
+      // The harness migrates and queries as one superuser, so the definer's owner is normally the
+      // runner and a block that took CURRENT_USER would pass unseen: move both owners off the runner.
+      await c.query(
+        `ALTER FUNCTION public.tenant_public_alias_set(uuid, uuid, text) OWNER TO app_worker`,
+      );
       await c.query(`ALTER FUNCTION public.public_name_strip_invisible(text) OWNER TO readonly`);
+      const { rows } = await c.query<Row>(
+        `SELECT pg_get_userbyid(d.proowner)::text AS definer_owner,
+                pg_get_userbyid(d.proowner) NOT IN (session_user, current_user) AS definer_not_runner,
+                pg_get_userbyid(h.proowner) NOT IN (session_user, current_user) AS helper_not_runner
+           FROM pg_proc h, pg_proc d
+          WHERE h.oid = ${HELPER} AND d.oid = ${DEFINER}`,
+      );
+      expect(rows[0]).toEqual({
+        definer_owner: "app_worker",
+        definer_not_runner: true,
+        helper_not_runner: true,
+      });
       expect(await helperOwnership(c)).toEqual({
         owner: "readonly",
         same_owner: false,
@@ -266,12 +284,12 @@ describe("PS-OWNER-REPAIR: the 0068 owner block gives the helper its definer cal
       });
       await c.query(OWNER_REPAIR);
       const repaired = await helperOwnership(c);
-      expect(repaired).toMatchObject({
+      expect(repaired).toEqual({
+        owner: "app_worker",
         same_owner: true,
         owner_privileges: ["EXECUTE"],
         other_grantees: [],
       });
-      expect(repaired.owner).not.toBe("readonly");
       await c.query(OWNER_REPAIR); // the normal case: owners already match
       expect(await helperOwnership(c)).toEqual(repaired);
     });
