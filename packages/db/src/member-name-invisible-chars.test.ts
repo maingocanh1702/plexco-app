@@ -89,8 +89,8 @@ interface Writer {
   name: string;
   /** R3: today's empty-value behaviour, refused with 22023 or stored as NULL. */
   empty: "refuse" | "null";
-  /** R4: a control, bidi, line-separator or U+2800 character is refused, or stored as sent (O1). */
-  r4: "refuse" | "keep";
+  /** R4: a control, bidi, line-separator or U+2800 character is refused, or removed (0070). */
+  r4: "refuse" | "remove";
   call: (input: string) => Promise<Outcome>;
 }
 
@@ -119,7 +119,7 @@ const WRITERS: Writer[] = [
   {
     name: "P2 create_host_added_person (roster-service.ts)",
     empty: "refuse",
-    r4: "keep",
+    r4: "refuse",
     call: async (input) => {
       const before = await personCount();
       let id: string;
@@ -139,7 +139,7 @@ const WRITERS: Writer[] = [
   {
     name: "P3 zalo_identity_resolve (zalo-ingress.ts resolveZaloIdentity)",
     empty: "null",
-    r4: "keep",
+    r4: "remove",
     call: async (input) => {
       const r = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
         resolveZaloIdentity(tx, {
@@ -160,7 +160,7 @@ const WRITERS: Writer[] = [
   {
     name: "P4 auth_login_google (apps/web/lib/oauth-transaction.ts)",
     empty: "null",
-    r4: "keep",
+    r4: "remove",
     call: async (input) => {
       const { rows } = await ctx.appPool.query<{ person_id: string; outcome: string }>(
         `SELECT account_id, person_id, outcome FROM auth_login_google($1, $2, $3, $4, $5, $6, $7)`,
@@ -199,7 +199,13 @@ const ROWS: Row[] = [
   },
   ...[0x07, 0x202e, 0x2028, 0x2800].map((cp): Row => {
     const value = mix("Lan", cp, "Nguyen");
-    return { row: `R4 U+${hex(cp)} among visible text`, cls: "R4", input: value, clean: value };
+    // 0070: the writers that accept R4 (mode true) remove the code point (readiness section 7).
+    return {
+      row: `R4 U+${hex(cp)} among visible text`,
+      cls: "R4",
+      input: value,
+      clean: "LanNguyen",
+    };
   }),
   // R5 (section 7): U+200D and U+FE0F are in the strip set, so composed emoji split. This is the
   // owner's rule (decision item 6) applied as written: no emoji exception.
@@ -235,9 +241,9 @@ describe("MN persons.display_name definers", () => {
 
 // MN rows R1-R5 for the membership and tenant definers 0069 re-creates (unit U2a2): M2
 // create_guest_membership, T1 tenant_provision and T2 tenant_profile_update, each called as role
-// `app` with the statement its TypeScript caller runs. All three keep R4 as sent: M2 copies the
-// source as it holds it, T1 accepts it (O1), and T2 refuses Cc and Cf only in its TypeScript
-// validator (club-config.ts, the U5 rows), never in the definer. R5 (section 7) for
+// `app` with the statement its TypeScript caller runs. Since 0070 (RO-L29-2, readiness section 7)
+// T1 and T2 refuse R4 with 22023 (mode false) and M2 removes the code point from the copy (mode
+// true), and M2 copies an R3 source as NULL, never '' (RO-L29-3 group 3). R5 (section 7) for
 // memberships.display_name and tenants.name: the ZWJ family and the VS16 heart lose U+200D and
 // U+FE0F. This is the owner's rule (decision item 6) applied as written: no emoji exception.
 describe("MN memberships.display_name and tenants.name definers", () => {
@@ -247,15 +253,17 @@ describe("MN memberships.display_name and tenants.name definers", () => {
   type Definer = {
     name: string;
     r3: (r: Row) => Outcome;
+    r4: Writer["r4"];
     call: (input: string | null) => Promise<Outcome>;
   };
-  /** `r3` is the definer's R3 verdict; every other row stores the row's `clean` value. */
+  /** `r3` is the definer's R3 verdict, `r4` as in WRITERS; every other row stores its `clean`. */
   const DEFINERS: Definer[] = [
     {
       name: "M2 create_guest_membership (session-join-service.ts mintGuestMembership)",
-      // The copy is the strip alone (no trim, no NULLIF), so R3 leaves what an empty source leaves
-      // today (its live body copies it as it is): the visible remainder, '' or the spaces.
-      r3: (r) => ({ stored: cps([...r.input].filter((c) => c === " ").join("")) }),
+      // Since 0070 the copy is mode true: an invisible-only or blank-only source is copied as NULL,
+      // never '' (RO-L29-3 group 3), and an R4 code point is removed (RO-L29-2).
+      r3: () => ({ stored: null }),
+      r4: "remove",
       call: async (input) => {
         // After 0069 an unstripped persons name exists only as a value the cleanup left (B6), so
         // ctx.owner seeds it, then resets it after the read (no stray value for the MG block).
@@ -279,6 +287,7 @@ describe("MN memberships.display_name and tenants.name definers", () => {
     {
       name: "T1 tenant_provision (auth.ts provisionTenant)",
       r3: () => ({ code: "22023", untouched: true }), // 'name required', as for an empty name today
+      r4: "refuse",
       call: async (input) => {
         const slug = `mn-${randomBytes(6).toString("hex")}`;
         const personId = await insertPerson(SEED);
@@ -299,6 +308,7 @@ describe("MN memberships.display_name and tenants.name definers", () => {
     {
       name: "T2 tenant_profile_update (club-config.ts updateClubConfig)",
       r3: () => ({ code: "22023", untouched: true }), // 'name must be 1..120 chars', as for ''
+      r4: "refuse",
       call: async (input) => {
         await ctx.owner.query(`UPDATE tenants SET name = $2 WHERE id = $1`, [ctx.tenantA, SEED]);
         try {
@@ -317,7 +327,10 @@ describe("MN memberships.display_name and tenants.name definers", () => {
   it.each(DEFINERS.flatMap((w) => ROWS.map((r) => ({ name: `${w.name}: ${r.row}`, w, r }))))(
     "$name",
     async ({ w, r }) => {
-      expect(await w.call(r.input)).toEqual(r.cls === "R3" ? w.r3(r) : { stored: cps(r.clean) });
+      let want: Outcome = { stored: cps(r.clean) };
+      if (r.cls === "R3") want = w.r3(r);
+      else if (r.cls === "R4" && w.r4 === "refuse") want = { code: "22023", untouched: true };
+      expect(await w.call(r.input)).toEqual(want);
     },
   );
   // The NULL rows (section 6 has none): the helper is STRICT (0068:54), so a NULL stays NULL. T2 with
@@ -334,22 +347,39 @@ describe("MN memberships.display_name and tenants.name definers", () => {
 
 // RC-BODY, RC-ACL and RC-OWNER (unit U2b, section 11): one row per definer 0069 re-creates. Every pin
 // is read off the definer's previous CREATE in the migration its row names; `subs` is the section 10
-// substitution table verbatim, as [today, 0069] pairs.
+// substitution table verbatim, as [today, 0069] pairs. `l29` (RO-L29-2) is the one more layer for
+// the six definers 0070 re-creates: its section B and C substitutions as [0069, 0070] pairs.
 const H = "public.public_name_strip_invisible";
 const HELPER_SIG = `${H}(text)`;
-type Recreated = { sig: string; file: string; searchPath: string; subs: [string, string][] };
+const L29_RULE = "public.member_name_apply_rule";
+type Recreated = {
+  sig: string;
+  file: string;
+  searchPath: string;
+  subs: [string, string][];
+  l29?: [string, string][];
+};
 const RECREATED: Recreated[] = [
   {
     sig: "public.auth_login_google(text, text, bytea, text, uuid, text, text)",
     file: "0017_oauth_transactions.sql",
     searchPath: "public, pg_temp",
     subs: [["NULLIF(trim(p_display_name), '')", `NULLIF(trim(${H}(p_display_name)), '')`]],
+    l29: [
+      [
+        `INSERT INTO persons(display_name) VALUES (NULLIF(trim(${H}(p_display_name)), ''))`,
+        `INSERT INTO persons(display_name) VALUES (${L29_RULE}(p_display_name, true))`,
+      ],
+    ],
   },
   {
     sig: "public.create_host_added_person(uuid, uuid, text)",
     file: "0051_host_add_person_definer.sql",
     searchPath: "pg_catalog, public, pg_temp",
     subs: [["v_name := btrim(p_display_name);", `v_name := btrim(${H}(p_display_name));`]],
+    l29: [
+      [`v_name := btrim(${H}(p_display_name));`, `v_name := ${L29_RULE}(p_display_name, false);`],
+    ],
   },
   {
     sig: "public.zalo_identity_resolve(uuid, uuid, text, text, bytea, text)",
@@ -359,6 +389,12 @@ const RECREATED: Recreated[] = [
       [
         "left(nullif(btrim(p_display_name), ''), 120)",
         `left(nullif(btrim(${H}(p_display_name)), ''), 120)`,
+      ],
+    ],
+    l29: [
+      [
+        `v_name text := left(nullif(btrim(${H}(p_display_name)), ''), 120);`,
+        `v_name text := left(${L29_RULE}(p_display_name, true), 120);`,
       ],
     ],
   },
@@ -373,6 +409,12 @@ const RECREATED: Recreated[] = [
     file: "0058_player_self_join.sql",
     searchPath: "pg_catalog, public, pg_temp",
     subs: [["SELECT p.display_name INTO v_name", `SELECT ${H}(p.display_name) INTO v_name`]],
+    l29: [
+      [
+        `SELECT ${H}(p.display_name) INTO v_name`,
+        `SELECT ${L29_RULE}(p.display_name, true) INTO v_name`,
+      ],
+    ],
   },
   {
     sig: "public.tenant_provision(text, text, text, text, uuid)",
@@ -382,12 +424,26 @@ const RECREATED: Recreated[] = [
       ["trim(coalesce(p_name, ''))", `trim(coalesce(${H}(p_name), ''))`],
       ["trim(p_name)", `trim(${H}(p_name))`],
     ],
+    l29: [
+      [
+        `IF trim(coalesce(${H}(p_name), '')) = '' THEN`,
+        `IF ${L29_RULE}(p_name, false) IS NULL THEN`,
+      ],
+      [`VALUES (trim(${H}(p_name)), p_slug,`, `VALUES (${L29_RULE}(p_name, false), p_slug,`],
+    ],
   },
   {
     sig: "public.tenant_profile_update(uuid, uuid, text, text, text)",
     file: "0052_tenant_profile_definers.sql",
     searchPath: "pg_catalog, public, pg_temp",
     subs: [["v_name text := btrim(p_name);", `v_name text := btrim(${H}(p_name));`]],
+    l29: [
+      [`v_name text := btrim(${H}(p_name));`, `v_name text := ${L29_RULE}(p_name, false);`],
+      [
+        "IF p_name IS NOT NULL AND (char_length(v_name) < 1 OR",
+        "IF p_name IS NOT NULL AND (v_name IS NULL OR char_length(v_name) < 1 OR",
+      ],
+    ],
   },
 ];
 const fnName = (w: Recreated) => w.sig.slice("public.".length, w.sig.indexOf("("));
@@ -449,6 +505,11 @@ describe("RC-BODY: each live body is its previous CREATE's with exactly the sect
     for (const [today, next] of w.subs) {
       expect(previous.split(today).length - 1, today).toBe(1); // tenant_provision: two pairs, once each
       want = want.split(today).join(next);
+    }
+    const body0069 = want; // L29's layer edits the 0069 body, so its once check runs against it
+    for (const [in0069, in0070] of w.l29 ?? []) {
+      expect(body0069.split(in0069).length - 1, in0069).toBe(1);
+      want = want.split(in0069).join(in0070);
     }
     const { rows } = await ctx.owner.query<{ src: string }>(
       `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
