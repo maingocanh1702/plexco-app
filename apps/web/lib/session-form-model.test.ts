@@ -1,4 +1,4 @@
-import { validateDisplayName } from "@plexco/db";
+import { stripInvisibleChars as serverStripInvisibleChars, validateDisplayName } from "@plexco/db";
 import { describe, expect, it } from "vitest";
 import {
   VENUE_ADDRESS_MAX,
@@ -6,6 +6,7 @@ import {
   buildUpdateBody,
   emptyFormValues,
   hasHiddenChar,
+  stripInvisibleChars,
   validateForm,
   valuesFromSession,
   type SessionFormValues,
@@ -342,10 +343,16 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
     venueAddress: "Địa chỉ không được chứa ký tự điều khiển hoặc ký tự ẩn.",
   };
 
-  it("W1: each of the 8 characters in an inner position flags exactly that field (en copy)", () => {
+  it("W1: each of the 8 characters in an inner position flags exactly that field (en copy), except U+200B in a public name", () => {
     for (const field of FIELDS) {
       for (const cp of C8) {
         const e = validateForm(base({ [field]: "Sân" + ch(cp) + "A" }), TZ, en);
+        // L23 strip-first (readiness D3): U+200B is a STRIP code point, so area and venueName are
+        // stripped before the check and no longer flag it; venueAddress keeps the old rule.
+        if (cp === 0x200b && field !== "venueAddress") {
+          expect(e).toEqual({});
+          continue;
+        }
         expect(Object.keys(e)).toEqual([field]);
         expect(e[field]).toBe(EN_COPY[field]);
       }
@@ -385,22 +392,34 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
     const initial = valuesFromSession(orig);
     expect(validateForm({ ...initial, area: "Q8" }, TZ, en, initial)).toEqual({});
     expect(buildUpdateBody({ ...initial, area: "Q8" }, orig)).toEqual({ area: "Q8" });
-    const edited = { ...initial, venueName: "Sân" + ch(0x200b) + "B" };
+    // Edited to another REFUSE value (bidi override): flagged on the field.
+    const edited = { ...initial, venueName: "Sân" + ch(0x202e) + "B" };
     expect(Object.keys(validateForm(edited, TZ, en, initial))).toEqual(["venueName"]);
+    // L23 strip-first (readiness D3): an edit whose only hidden code point is a STRIP one (U+200B)
+    // is the stripped value: no error, and it is what the form sends.
+    const stripped = { ...initial, venueName: "Sân" + ch(0x200b) + "B" };
+    expect(validateForm(stripped, TZ, en, initial)).toEqual({});
+    expect(buildUpdateBody(stripped, orig)).toEqual({ venueName: "SânB" });
   });
 
   it("W5b: a legacy value with edge spaces plus a hidden character is exempted AND not sent (same comparison)", () => {
     const legacyName = " Sân" + ch(0x202e) + "A ";
-    const legacyArea = "Quận" + ch(0x200b) + "1" + ch(0x00a0);
+    // L23: U+200B is stripped now, so the legacy area proves the exemption with a REFUSE code point.
+    const legacyArea = "Quận" + ch(0x202e) + "1" + ch(0x00a0);
     const orig: SessionDetailDto = { ...session, venueName: legacyName, area: legacyArea };
     const initial = valuesFromSession(orig);
     const form = { ...initial, venueAddress: "1 Nguyễn Văn Linh" };
     expect(validateForm(form, TZ, en, initial)).toEqual({});
     expect(buildUpdateBody(form, orig)).toEqual({ venueAddress: "1 Nguyễn Văn Linh" });
     expect(buildUpdateBody(initial, orig)).toBeNull();
-    // Edited to another hidden value: flagged on the field, and it would be sent.
-    const edited = { ...initial, venueName: " Sân" + ch(0x200b) + "B " };
+    // Edited to another REFUSE value: flagged on the field, and it would be sent.
+    const edited = { ...initial, venueName: " Sân" + ch(0x202e) + "B " };
     expect(Object.keys(validateForm(edited, TZ, en, initial))).toEqual(["venueName"]);
+    // L23 strip-first (readiness D3): an edit whose only hidden code point is a STRIP one (U+200B)
+    // is no error, and it is sent stripped and trimmed.
+    const stripped = { ...initial, venueName: " Sân" + ch(0x200b) + "B " };
+    expect(validateForm(stripped, TZ, en, initial)).toEqual({});
+    expect(buildUpdateBody(stripped, orig)).toEqual({ venueName: "SânB" });
   });
 
   it("lists the errors in form order: venue name, address, area", () => {
@@ -445,4 +464,151 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
     }
     expect(mismatches).toEqual([]);
   });
+});
+
+// L23 strip-first (DD-138 sign-off A.1; readiness D3, D4, D10, D11): the web mirror of text-safety.ts
+// stripInvisibleChars on the two public names of the session form, area and venue name. venueAddress
+// is not a public name and keeps its rule (W1 above). Characters are built from numbers: no invisible
+// character sits in this source.
+describe("L23: the session form strips invisible code points from area and venue name", () => {
+  const ch = (...cps: number[]) => String.fromCodePoint(...cps);
+  const units = (...codeUnits: number[]) => String.fromCharCode(...codeUnits);
+  const codePointsOf = (s: string | null | undefined) =>
+    Array.from(s ?? "", (c) => c.codePointAt(0));
+  const NAMES = ["area", "venueName"] as const;
+  const HIDDEN_EN = {
+    area: "The area cannot contain control or hidden characters.",
+    venueName: "The venue name cannot contain control or hidden characters.",
+  };
+  const AREA_NEEDED_EN = "A public session needs an area.";
+  const publicForm = (over: Partial<SessionFormValues> = {}) =>
+    base({ visibility: "public", slotsMax: "8", slotsUnlimited: false, area: "Quận 1", ...over });
+  // Edit mode: a stored session with plain area and venue name, and the form loaded from it.
+  const stored: SessionDetailDto = { ...session, venueName: "Sân A", area: "Q7" };
+  const loaded = valuesFromSession(stored);
+
+  it("SF-R1: a value with no STRIP or REFUSE code point is sent as typed (trimmed), no error", () => {
+    const vietnamese = "S" + ch(0xe2) + "n C" + ch(0x1ea7) + "u L" + ch(0xf4) + "ng";
+    for (const field of NAMES) {
+      for (const text of ["Quận 1", vietnamese, ch(0x1f3f8)]) {
+        expect(validateForm(base({ [field]: text }), TZ, en), field).toEqual({});
+        expect(buildCreateBody(base({ [field]: " " + text + " " }), TZ)[field], field).toBe(text);
+      }
+    }
+    expect(buildUpdateBody({ ...loaded, area: "Q8" }, stored)).toEqual({ area: "Q8" });
+    expect(buildUpdateBody({ ...loaded, venueName: "Sân B" }, stored)).toEqual({
+      venueName: "Sân B",
+    });
+  });
+
+  it("SF-R2: STRIP code points inside visible text are removed from what the form validates and sends", () => {
+    for (const field of NAMES) {
+      for (const cp of [0x200b, 0x00ad, 0x3164, 0xfe00, 0xe0001, 0x2065]) {
+        const form = base({ [field]: "Quan" + ch(cp) + " 1" });
+        expect(validateForm(form, TZ, en), field).toEqual({});
+        expect(buildCreateBody(form, TZ)[field], field).toBe("Quan 1");
+      }
+    }
+    // Edit mode sends the stripped value; a stripped value equal to the stored one is no change.
+    expect(buildUpdateBody({ ...loaded, area: "Q" + ch(0x200b) + "8" }, stored)).toEqual({
+      area: "Q8",
+    });
+    expect(buildUpdateBody({ ...loaded, venueName: ch(0xfe00) + "Sân B" }, stored)).toEqual({
+      venueName: "Sân B",
+    });
+    const noChange = { ...loaded, area: "Q7" + ch(0x200b), venueName: "Sân A" + ch(0xe0001) };
+    expect(buildUpdateBody(noChange, stored)).toBeNull();
+  });
+
+  it("SF-R3: a value of STRIP code points only (or with whitespace) behaves exactly as an empty one", () => {
+    const blanks = [
+      ch(0x200b, 0xfe0f, 0x3164, 0xe0001),
+      " " + ch(0x200d, 0xffa0) + " ",
+      units(0xdb40, 0x200b, 0xdd00), // the halves meet as U+E0100 once the ZWSP is gone
+    ];
+    for (const field of NAMES) {
+      const empty = base({ [field]: "" });
+      for (const blank of blanks) {
+        const form = base({ [field]: blank });
+        expect(validateForm(form, TZ, en), field).toEqual(validateForm(empty, TZ, en));
+        expect(buildCreateBody(form, TZ), field).toEqual(buildCreateBody(empty, TZ));
+        expect(buildCreateBody(form, TZ)[field], field).toBeUndefined();
+      }
+    }
+    // A public session still needs an area: the same message as for an empty one.
+    expect(validateForm(publicForm({ area: "" }), TZ, en).area).toBe(AREA_NEEDED_EN);
+    for (const blank of blanks) {
+      expect(validateForm(publicForm({ area: blank }), TZ, en).area).toBe(AREA_NEEDED_EN);
+    }
+    // Edit mode: it clears a stored value exactly as an empty field does.
+    expect(buildUpdateBody({ ...loaded, area: "" }, stored)).toEqual({ area: null });
+    expect(buildUpdateBody({ ...loaded, area: ch(0x200b) }, stored)).toEqual({ area: null });
+    expect(buildUpdateBody({ ...loaded, venueName: ch(0x200b) }, stored)).toEqual({
+      venueName: null,
+    });
+  });
+
+  it("SF-R4: the owner's rule as written splits composed emoji, with the exact code points (no exception)", () => {
+    for (const field of NAMES) {
+      const heart = base({ [field]: ch(0x2764, 0xfe0f) });
+      expect(validateForm(heart, TZ, en), field).toEqual({});
+      expect(codePointsOf(buildCreateBody(heart, TZ)[field]), field).toEqual([0x2764]);
+      const family = base({ [field]: ch(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467) });
+      expect(validateForm(family, TZ, en), field).toEqual({});
+      expect(codePointsOf(buildCreateBody(family, TZ)[field]), field).toEqual([
+        0x1f468, 0x1f469, 0x1f467,
+      ]);
+    }
+  });
+
+  it("SF-R5: a control, bidi, line-separator or U+2800 code point among visible text is refused as today", () => {
+    for (const field of NAMES) {
+      for (const cp of [0x202e, 0x0007, 0x2028, 0x2800]) {
+        const e = validateForm(base({ [field]: "Sân" + ch(cp) + "A" }), TZ, en);
+        expect(Object.keys(e), field).toEqual([field]);
+        expect(e[field], field).toBe(HIDDEN_EN[field]);
+      }
+      // A STRIP code point beside a REFUSE one: the strip leaves the REFUSE one, which still refuses.
+      const mixed = base({ [field]: "S" + ch(0x200b) + "an" + ch(0x202e) });
+      expect(validateForm(mixed, TZ, en)[field], field).toBe(HIDDEN_EN[field]);
+    }
+  });
+
+  it("SF-legacy: an untouched stored value that still holds STRIP code points is no error and not sent", () => {
+    // Compared stripped on both sides, like the REFUSE legacy rows of W5 and W5b.
+    const legacy: SessionDetailDto = {
+      ...session,
+      venueName: "Sân" + ch(0x200b) + "A",
+      area: "Q" + ch(0xfe0f) + "7",
+    };
+    const initial = valuesFromSession(legacy);
+    expect(validateForm(initial, TZ, en, initial)).toEqual({});
+    expect(buildUpdateBody(initial, legacy)).toBeNull();
+    expect(buildUpdateBody({ ...initial, venueName: "Sân B" }, legacy)).toEqual({
+      venueName: "Sân B",
+    });
+  });
+
+  it("SF-PIN: the mirror equals the server strip (from @plexco/db) over every scalar and the lone-surrogate cases", () => {
+    const mismatches: number[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const input = "a" + ch(cp) + "b";
+      if (stripInvisibleChars(input) !== serverStripInvisibleChars(input)) mismatches.push(cp);
+    }
+    expect(mismatches).toEqual([]);
+    // The lone-surrogate cases of packages/db/src/text-safety.test.ts: one call is final.
+    const lone = units(0xd800) + "a" + units(0xdc00);
+    const cases: [string, string][] = [
+      [units(0xdb40, 0x200b, 0xdd00), ""],
+      ["a" + units(0xdb40, 0xdb40, 0x200b, 0xdd00, 0xdd00) + "b", "ab"],
+      [units(0xd83d, 0x200b, 0xde00), ch(0x1f600)],
+      [lone, lone],
+      [units(0xd800, 0x200b), units(0xd800)],
+    ];
+    for (const [input, expected] of cases) {
+      expect(serverStripInvisibleChars(input)).toBe(expected);
+      expect(stripInvisibleChars(input)).toBe(expected);
+    }
+  }, 30_000);
 });
