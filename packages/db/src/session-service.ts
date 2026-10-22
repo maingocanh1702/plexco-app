@@ -114,21 +114,23 @@ const isValidDate = (value: unknown): value is Date =>
 const isInt4 = (value: unknown, min: number): boolean =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= INT4_MAX;
 /**
- * L23 D3, strip first: area and venue_name are publicly displayed names, so a string value loses every
- * STRIP code point (text-safety.ts) before ANY check reads it. The value that is validated, compared,
- * stored and evented is the stripped one; a stripped value equal to the stored one is no change. Every
- * other value, and a payload that is not a plain object, passes unchanged to the existing checks.
- * venue_address is not a public name and keeps today's rule.
+ * L23 D3 + L27, strip first: area and venue_name are publicly displayed names, venue_address is a
+ * member-facing address (owner item 6, 2026-10-22), so a string value loses every STRIP code point
+ * (text-safety.ts) before ANY check reads it. The value that is validated (the venue_address cap
+ * included), compared, stored and evented is the stripped one; a stripped value equal to the stored
+ * one is no change. venue_address keeps its no-trim rule. Every other value, and a payload that is
+ * not a plain object, passes unchanged to the existing checks.
  */
-function stripPublicNames<T extends { area?: string | null; venueName?: string | null }>(
-  input: T,
-): T {
+function stripPublicNames<
+  T extends { area?: string | null; venueName?: string | null; venueAddress?: string | null },
+>(input: T): T {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
-  const { area, venueName } = input;
+  const { area, venueName, venueAddress: address } = input;
   return {
     ...input,
     ...(typeof area === "string" ? { area: stripInvisibleChars(area) } : {}),
     ...(typeof venueName === "string" ? { venueName: stripInvisibleChars(venueName) } : {}),
+    ...(typeof address === "string" ? { venueAddress: stripInvisibleChars(address) } : {}),
   };
 }
 /**
