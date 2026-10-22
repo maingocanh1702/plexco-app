@@ -343,13 +343,13 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
     venueAddress: "Địa chỉ không được chứa ký tự điều khiển hoặc ký tự ẩn.",
   };
 
-  it("W1: each of the 8 characters in an inner position flags exactly that field (en copy), except U+200B in a public name", () => {
+  it("W1: each of the 8 characters in an inner position flags exactly that field (en copy), except U+200B (stripped)", () => {
     for (const field of FIELDS) {
       for (const cp of C8) {
         const e = validateForm(base({ [field]: "Sân" + ch(cp) + "A" }), TZ, en);
-        // L23 strip-first (readiness D3): U+200B is a STRIP code point, so area and venueName are
-        // stripped before the check and no longer flag it; venueAddress keeps the old rule.
-        if (cp === 0x200b && field !== "venueAddress") {
+        // L23/L27 strip-first (readiness D3, B9): U+200B is a STRIP code point, so every field is
+        // stripped before the check and no longer flags it.
+        if (cp === 0x200b) {
           expect(e).toEqual({});
           continue;
         }
@@ -429,10 +429,23 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
   });
 
   it("W6: an over-cap address with a hidden character shows only the cap message", () => {
-    const address = "đ".repeat(VENUE_ADDRESS_MAX) + ch(0x200b);
+    const address = "đ".repeat(VENUE_ADDRESS_MAX) + ch(0x202e);
     expect(address.length).toBe(VENUE_ADDRESS_MAX + 1);
     const e = validateForm(base({ venueAddress: address }), TZ, en);
     expect(e.venueAddress).toBe(`The address is at most ${VENUE_ADDRESS_MAX} characters.`);
+  });
+
+  it("W6b: the address is stripped first (L27): the cap counts what is sent; edit mode compares and sends the stripped value", () => {
+    // U+200B is stripped before the length is measured, so one extra U+200B is not over the cap.
+    const padded = "d".repeat(VENUE_ADDRESS_MAX) + ch(0x200b);
+    expect(validateForm(base({ venueAddress: padded }), TZ, en)).toEqual({});
+    const orig: SessionDetailDto = { ...session, venueAddress: "1 Le Loi" + ch(0x200b) };
+    const initial = valuesFromSession(orig);
+    expect(validateForm(initial, TZ, en, initial)).toEqual({});
+    expect(buildUpdateBody(initial, orig)).toBeNull();
+    const edit = (venueAddress: string) => buildUpdateBody({ ...initial, venueAddress }, orig);
+    expect(edit("2 Le Loi" + ch(0xfe0f))).toEqual({ venueAddress: "2 Le Loi" });
+    expect(edit(ch(0x200b) + ch(0x3164))).toEqual({ venueAddress: null });
   });
 
   it("a public session with a hidden-character area shows the hidden message, not the area-needed one", () => {
@@ -460,25 +473,28 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
       } catch {
         serverHidden = true;
       }
-      if (hasHiddenChar(c) !== serverHidden) mismatches.push(cp);
+      // L27: validateDisplayName strips first, so the mirror is the same two steps in the same order.
+      if (hasHiddenChar(stripInvisibleChars(c)) !== serverHidden) mismatches.push(cp);
     }
     expect(mismatches).toEqual([]);
-  });
+  }, 30_000);
 });
 
-// L23 strip-first (DD-138 sign-off A.1; readiness D3, D4, D10, D11): the web mirror of text-safety.ts
-// stripInvisibleChars on the two public names of the session form, area and venue name. venueAddress
-// is not a public name and keeps its rule (W1 above). Characters are built from numbers: no invisible
+// L23 strip-first (DD-138 sign-off A.1; readiness D3, D4, D10, D11) and L27 (B9): the web mirror of
+// text-safety.ts stripInvisibleChars on area, venue name and venue address. The SF-R rows run over
+// all three, so SF-R1..SF-R5 are the venue address rows R1-R5 (SF-R4: the owner's rule applied as
+// written, composed emoji are sent split). Characters are built from numbers: no invisible
 // character sits in this source.
-describe("L23: the session form strips invisible code points from area and venue name", () => {
+describe("L23, L27: the session form strips invisible code points from area, venue name and address", () => {
   const ch = (...cps: number[]) => String.fromCodePoint(...cps);
   const units = (...codeUnits: number[]) => String.fromCharCode(...codeUnits);
   const codePointsOf = (s: string | null | undefined) =>
     Array.from(s ?? "", (c) => c.codePointAt(0));
-  const NAMES = ["area", "venueName"] as const;
+  const NAMES = ["area", "venueName", "venueAddress"] as const;
   const HIDDEN_EN = {
     area: "The area cannot contain control or hidden characters.",
     venueName: "The venue name cannot contain control or hidden characters.",
+    venueAddress: "The address cannot contain control or hidden characters.",
   };
   const AREA_NEEDED_EN = "A public session needs an area.";
   const publicForm = (over: Partial<SessionFormValues> = {}) =>

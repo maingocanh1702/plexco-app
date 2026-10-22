@@ -1,14 +1,18 @@
 /**
  * Shared hidden-character predicate for player-visible free text, and the strip that runs before it
- * on every publicly displayed name (L23). Users:
+ * on every publicly displayed name (L23) and every member-facing name (L27). Users:
  *  - validateDisplayName (me-settings.ts) applies it to the TRIMMED display name; its SQL twin is
  *    0055 person_profile_update (c_reject / c_visible).
  *  - the public names strip first: session area and venue_name (session-service.ts) and the club
  *    public alias (public-alias.ts) run stripInvisibleChars, and every later step (their existing
  *    trim and checks, the stored value) sees the stripped value. Their SQL side is migration 0068:
  *    it re-creates tenant_public_alias_set with the same strip and cleans the stored names once.
- *  - venue_address applies hasHiddenChar to the RAW value in session-service.ts isOptionalText;
- *    sessions have no SQL twin (no DB CHECK).
+ *  - L27 (owner decision, item 6 of 2026-10-22) strips the four member-facing columns on every
+ *    writer too: persons.display_name, memberships.display_name, tenants.name and
+ *    sessions.venue_address. The TypeScript validators (session-service.ts for venue_address) and
+ *    the web mirrors strip first; the SQL writers call public_name_strip_invisible (migration
+ *    0069, which also cleans the stored values once). venue_address keeps its no-trim rule and
+ *    hasHiddenChar check on the stripped value; sessions have no SQL twin (no DB CHECK).
  * Do not fork the character class: a second copy drifts. The web keeps two client mirrors because
  * client code cannot import @plexco/db (FE-INV-3): apps/web/lib/me-settings-client.ts and
  * apps/web/lib/session-form-model.ts (pinned against this predicate over every code point by its

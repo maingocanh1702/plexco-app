@@ -14,6 +14,7 @@ import {
 } from "./me-settings.js";
 import { __resetAuthSecretCacheForTest } from "./secret-key-root.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import { stripInvisibleChars } from "./text-safety.js";
 
 /**
  * Real-Postgres tests for 0055 (lane M4): person_profile_read/update, account_linked_channels,
@@ -185,11 +186,16 @@ describe("person_profile_read / person_profile_update", () => {
     if (/^[\s\p{DI}]$/u.test(c)) INVISIBLE.push(cp);
   }
   const hiddenSet = new Set(HIDDEN);
+  // Since 0069 (L27) the part of HIDDEN inside the shared strip set (text-safety.ts, the one list) is
+  // stripped on write; the rest (other Cc / Cf, bidi controls, Zl, Zp, U+2800) stays refused.
+  const STRIPPED = HIDDEN.filter((cp) => stripInvisibleChars(ch(cp)) === "");
+  const REFUSED = HIDDEN.filter((cp) => stripInvisibleChars(ch(cp)) !== "");
   // Invisible yet not refused, so allowed after a visible character but never alone: inner
   // whitespace, every variation selector and every unassigned default-ignorable.
   const BLANK = INVISIBLE.filter((cp) => !hiddenSet.has(cp));
 
-  const CORPUS: [string, string, boolean][] = [
+  // [label, input, accepted, stored value when the strip changes the typed bytes (TS and SQL equal)]
+  const CORPUS: [string, string, boolean, string?][] = [
     ["plain", "Lan", true],
     ["vietnamese diacritics, NFC", VI.normalize("NFC"), true],
     ["vietnamese diacritics, NFD (combining marks are Mn, not Cf)", VI.normalize("NFD"), true],
@@ -206,33 +212,66 @@ describe("person_profile_read / person_profile_update", () => {
     ["NBSP inside is kept", "Lan" + ch(0xa0) + "Anh", true],
     ["ideographic space at the edges is trimmed", ch(0x3000) + "Lan" + ch(0x3000), true],
     ["tab + newline at the edges are trimmed", ch(0x09) + "Lan" + ch(0x0a), true],
-    ["BOM at the edge is trimmed (JS trim removes U+FEFF)", ch(0xfeff) + "Lan", true],
+    ["BOM at the edge is stripped (JS trim removes U+FEFF too)", ch(0xfeff) + "Lan", true, "Lan"],
     ["NEL at the edge: Cc, and JS trim keeps it", "Lan" + ch(0x85), false],
-    ["Mongolian vowel separator at the edge: Cf, no longer a space", ch(0x180e) + "Lan", false],
-    ["zero-width space at the edge: Cf, not trimmed", "Lan" + ch(0x200b), false],
+    [
+      "Mongolian vowel separator at the edge: Cf, stripped (no longer a space)",
+      ch(0x180e) + "Lan",
+      true,
+      "Lan",
+    ],
+    ["zero-width space at the edge: Cf, stripped (not trimmed)", "Lan" + ch(0x200b), true, "Lan"],
     ["NEL control inside (U+0085)", "a" + ch(0x85) + "b", false],
     ["tab control inside", "a" + ch(0x09) + "b", false],
     ["newline control inside", "a" + ch(0x0a) + "b", false],
     ["DEL inside", "a" + ch(0x7f) + "b", false],
-    ["zero-width space inside (Cf)", "a" + ch(0x200b) + "b", false],
-    ["bidi override inside (Cf)", "a" + ch(0x202e) + "b", false],
-    ["BOM inside (Cf)", "a" + ch(0xfeff) + "b", false],
-    ["soft hyphen inside (Cf)", "a" + ch(0xad) + "b", false],
-    ["Arabic pound mark above (Cf, U+0890)", "a" + ch(0x890) + "b", false],
-    ["Arabic disputed end of ayah (Cf, U+08E2)", "a" + ch(0x8e2) + "b", false],
-    ["tag char (Cf, astral)", "a" + ch(0xe0041) + "b", false],
-    ["ZWJ in emoji sequence is a format char", ch(0x1f468) + ch(0x200d) + ch(0x1f469), false],
+    ["zero-width space inside (Cf): stripped", "a" + ch(0x200b) + "b", true, "ab"],
+    ["bidi override inside (Cf, a bidi control: stays refused)", "a" + ch(0x202e) + "b", false],
+    ["BOM inside (Cf): stripped", "a" + ch(0xfeff) + "b", true, "ab"],
+    ["soft hyphen inside (Cf): stripped", "a" + ch(0xad) + "b", true, "ab"],
+    [
+      "Arabic pound mark above (Cf, U+0890, not in the strip set: stays refused)",
+      "a" + ch(0x890) + "b",
+      false,
+    ],
+    [
+      "Arabic disputed end of ayah (Cf, U+08E2, not in the strip set: stays refused)",
+      "a" + ch(0x8e2) + "b",
+      false,
+    ],
+    ["tag char (Cf, astral): stripped", "a" + ch(0xe0041) + "b", true, "ab"],
+    [
+      "ZWJ in emoji sequence is stripped, the sequence splits (R5)",
+      ch(0x1f468) + ch(0x200d) + ch(0x1f469),
+      true,
+      ch(0x1f468) + ch(0x1f469),
+    ],
     ["line separator inside (Zl): a line break in the name", "Lan" + ch(0x2028) + "Anh", false],
     ["paragraph separator inside (Zp)", "Lan" + ch(0x2029) + "Anh", false],
     ["line / paragraph separators at the edges are trimmed", ch(0x2028) + "Lan" + ch(0x2029), true],
     ["Hangul filler alone: looks empty", ch(0x3164), false],
-    ["Hangul fillers inside", "Lan" + ch(0x115f) + ch(0x1160) + ch(0xffa0) + "Anh", false],
+    [
+      "Hangul fillers inside: stripped",
+      "Lan" + ch(0x115f) + ch(0x1160) + ch(0xffa0) + "Anh",
+      true,
+      "LanAnh",
+    ],
     ["Braille pattern blank alone: looks empty", ch(0x2800).repeat(3), false],
     ["Braille pattern blank inside", "Lan" + ch(0x2800) + "Anh", false],
-    ["combining grapheme joiner (default-ignorable mark)", "a" + ch(0x34f) + "b", false],
+    [
+      "combining grapheme joiner (default-ignorable mark): stripped",
+      "a" + ch(0x34f) + "b",
+      true,
+      "ab",
+    ],
     ["Khmer inherent vowel (default-ignorable mark)", ch(0x17b4), false],
-    ["emoji + variation selector-16 is kept", ch(0x2764) + ch(0xfe0f) + " Lan", true],
-    ["Korean syllables are kept (only the fillers are refused)", "김민지", true],
+    [
+      "emoji + variation selector-16 is stripped: the heart loses its VS16",
+      ch(0x2764) + ch(0xfe0f) + " Lan",
+      true,
+      ch(0x2764) + " Lan",
+    ],
+    ["Korean syllables are kept (only the fillers are stripped)", "김민지", true],
     ["a non-blank Braille pattern is kept", "Lan " + ch(0x2801), true],
     // At least one visible code point: variation selectors, unassigned default-ignorables and
     // whitespace render as nothing, so a name of them alone would show blank.
@@ -241,14 +280,72 @@ describe("person_profile_read / person_profile_update", () => {
     ["Mongolian free variation selector alone", ch(0x180b), false],
     ["unassigned default-ignorables alone", ch(0x2065) + ch(0xfff0) + ch(0xe0fff), false],
     ["variation selectors around an inner space", ch(0xfe0f) + " " + ch(0xfe0f), false],
-    ["emoji + variation selector-16 alone is kept", ch(0x2764) + ch(0xfe0f), true],
-    ["CJK ideograph + ideographic variation selector is kept", ch(0x845b) + ch(0xe0100), true],
-    ["a variation selector before a visible character is kept", ch(0xfe0f) + "Lan", true],
+    [
+      "emoji + variation selector-16 alone is stripped to the heart",
+      ch(0x2764) + ch(0xfe0f),
+      true,
+      ch(0x2764),
+    ],
+    [
+      "CJK ideograph + ideographic variation selector is stripped to the ideograph",
+      ch(0x845b) + ch(0xe0100),
+      true,
+      ch(0x845b),
+    ],
+    [
+      "a variation selector before a visible character is stripped",
+      ch(0xfe0f) + "Lan",
+      true,
+      "Lan",
+    ],
     ["a lone combining mark draws a glyph, so it is visible", ch(0x301), true],
+    // L27 decision table (readiness section 6): R1 (a clean value) is the plain, diacritic and length
+    // rows at the top and R4 (a control, bidi control, Zl, Zp or U+2800 among visible text) is every
+    // row above that stays false: refused as before. The rows below add R2, R3, R5 and the B3 order.
+    // R2: a strip-set code point among visible text is stored stripped, by TS and by the definer.
+    ...[0x3164, 0xfe00, 0xe0001, 0x2065].map((cp): [string, string, boolean, string] => [
+      `R2: ${hex(cp)} among visible text is stripped`,
+      "a" + ch(cp) + "b",
+      true,
+      "ab",
+    ]),
+    // R3: nothing visible is left after the strip, so the value is refused like an empty one.
+    [
+      "R3: zero-width space + space + Hangul filler is invisible-only",
+      ch(0x200b) + " " + ch(0x3164),
+      false,
+    ],
+    // R5: the owner's rule applied as written, no exception: ZWJ is stripped, so a composed emoji
+    // splits into separate symbols (the PR body states this consequence for the owner).
+    [
+      "R5: a ZWJ family sequence splits into three emoji (owner rule, no exception)",
+      ch(0x1f468) + ch(0x200d) + ch(0x1f469) + ch(0x200d) + ch(0x1f467),
+      true,
+      ch(0x1f468) + ch(0x1f469) + ch(0x1f467),
+    ],
+    // B3: strip first, then trim, then every check on the stripped value (the length included).
+    [
+      "B3: strip first, then trim (the spaces behind the stripped edges go too)",
+      ch(0x200b) + " Lan " + ch(0x200b),
+      true,
+      "Lan",
+    ],
+    [
+      "B3: length is measured after the strip (120 + 5 zero-width spaces)",
+      "x".repeat(120) + ch(0x200b).repeat(5),
+      true,
+      "x".repeat(120),
+    ],
+    [
+      "B3: 121 + 1 zero-width space is still 121 after the strip",
+      "x".repeat(121) + ch(0x200b),
+      false,
+    ],
   ];
-  it.each(CORPUS)("validation parity TS/SQL: %s", async (_label, input, ok) => {
+  it.each(CORPUS)("validation parity TS/SQL: %s", async (_label, input, ok, stored) => {
     const ts = tsVerdict(input);
     expect(ts !== null).toBe(ok);
+    if (stored !== undefined) expect(ts).toBe(stored); // the strip changed the bytes: pin them
     const u = await webUser("seed");
     const sql = await sqlVerdict(u.accountId, input);
     if (ok) {
@@ -258,7 +355,7 @@ describe("person_profile_read / person_profile_update", () => {
     }
   });
 
-  it("every hidden code point the runtime knows is refused by TS AND by the definer (mid-name)", async () => {
+  it("every hidden code point the runtime knows is refused (stays) or stripped (strip set), by TS AND by the definer (mid-name)", async () => {
     // 65 Cc + 170 Cf (Unicode 17.0) + Zl + Zp + 7 default-ignorable non-selectors + U+2800
     expect(HIDDEN.length).toBeGreaterThanOrEqual(245);
     expect(HIDDEN).toEqual(
@@ -270,9 +367,17 @@ describe("person_profile_read / person_profile_update", () => {
     // Variation selectors are default-ignorable but stay allowed (emoji / ideographic variants).
     expect(HIDDEN).not.toContain(0xfe0f);
     expect(HIDDEN).not.toContain(0xe0100);
+    // Since 0069 (L27) HIDDEN splits in two: what stays refused (controls, the other Cf, bidi
+    // controls, Zl, Zp, U+2800) and what the shared strip set removes (default-ignorable, no bidi).
+    expect(REFUSED).toEqual(
+      expect.arrayContaining([0x0, 0x85, 0x890, 0x2028, 0x2029, 0x2800, 0x200e, 0x202e]),
+    );
+    expect(STRIPPED).toEqual(
+      expect.arrayContaining([0xad, 0x34f, 0x200b, 0x200d, 0x180e, 0xfeff, 0xe0001, 0xe007f]),
+    );
     const u = await webUser("seed");
     const wrong: string[] = [];
-    for (const cp of HIDDEN) {
+    for (const cp of REFUSED) {
       const input = "a" + ch(cp) + "b";
       if (tsVerdict(input) !== null) wrong.push(`TS accepts ${hex(cp)}`);
       // U+0000 never reaches the definer: Postgres refuses a NUL byte in a text parameter (22021).
@@ -284,6 +389,17 @@ describe("person_profile_read / person_profile_update", () => {
     }
     expect(wrong).toEqual([]);
     expect((await personRow(u.personId)).display_name).toBe("seed");
+    // The strip set is removed mid-name: TS and the definer both store "ab" (this one writes, so it
+    // runs after the seed check above).
+    for (const cp of STRIPPED) {
+      const input = "a" + ch(cp) + "b";
+      if (tsVerdict(input) !== "ab") wrong.push(`TS keeps ${hex(cp)}`);
+      const sql = await sqlVerdict(u.accountId, input);
+      if (!("stored" in sql) || sql.stored !== "ab") {
+        wrong.push(`SQL ${hex(cp)} -> ${JSON.stringify(sql)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
   });
 
   it("the definer trims exactly what String.prototype.trim removes, and agrees with TS mid-name", async () => {
@@ -312,7 +428,7 @@ describe("person_profile_read / person_profile_update", () => {
     expect(wrong).toEqual([]);
   });
 
-  it("a name needs one visible code point: blank ones alone are refused by TS AND the definer, kept after one", async () => {
+  it("a name needs one visible code point: blank ones alone are refused by TS AND the definer, stripped after one", async () => {
     // 17 Zs + 260 variation selectors + 3,769 unassigned default-ignorables (Unicode 16 and 17)
     expect(BLANK.length).toBeGreaterThanOrEqual(4046);
     expect(BLANK).toEqual(
@@ -342,14 +458,20 @@ describe("person_profile_read / person_profile_update", () => {
     for (const cp of BLANK.filter((c) => ch(c).trim() === "")) {
       await refused(`VS ${hex(cp)} VS`, ch(0xfe0f) + ch(cp) + ch(0xfe0f));
     }
-    // The rest in names of 119 code points: refused alone, stored as typed behind "a" (120 in all).
+    // The rest (variation selectors and unassigned default-ignorables, all in the strip set) in
+    // names of 119 code points: refused alone (nothing visible is left), and behind "a" TS and the
+    // definer both store just "a".
     const rest = BLANK.filter((c) => ch(c).trim() !== "");
     for (let i = 0; i < rest.length; i += 119) {
       const batch = rest.slice(i, i + 119);
       const span = `${hex(batch[0]!)}..${hex(batch[batch.length - 1]!)}`;
       const blank = batch.map(ch).join("");
       await refused(span, blank);
-      await kept(`a + ${span}`, "a" + blank);
+      if (tsVerdict("a" + blank) !== "a") wrong.push(`TS keeps a + ${span}`);
+      const stripped = await sqlVerdict(u.accountId, "a" + blank);
+      if (!("stored" in stripped) || stripped.stored !== "a") {
+        wrong.push(`SQL a + ${span} -> ${JSON.stringify(stripped)}`);
+      }
     }
     // The code point next to each run of whitespace / default-ignorables is visible unless refused:
     // alone it is a name on both sides, so no hand-typed 0055 range reaches past its run.

@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import { addPlayer } from "../../lib/roster-payments-api";
+import { stripInvisibleChars } from "../../lib/session-form-model";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { Button } from "../ui/button";
@@ -49,7 +50,8 @@ export function RosterAddPlayerForm({
   async function submit(event?: FormEvent) {
     event?.preventDefault();
     if (cmd.busy) return;
-    const displayName = name.trim();
+    // L27: strip invisible code points first; an invisible-only name is the empty-name error.
+    const displayName = stripInvisibleChars(name).trim();
     if (displayName.length === 0 || displayName.length > DISPLAY_NAME_MAX) {
       setInvalid(true);
       return;

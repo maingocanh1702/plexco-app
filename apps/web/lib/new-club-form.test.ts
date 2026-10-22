@@ -39,6 +39,19 @@ describe("validateNewClub", () => {
     expect(validateNewClub({ ...ok, name: "x".repeat(121) }, t).name).toBeTruthy();
     expect(validateNewClub({ ...ok, name: "x".repeat(120) }, t).name).toBeUndefined();
   });
+  // L27: strip first, as the server stores the stripped name. R2 and R5 raise no error, R3 is the
+  // existing empty error; R5: composed emoji are stored split (the owner's rule as written).
+  it.each([
+    ["CLB " + String.fromCodePoint(0x200b) + "Đống Đa", false],
+    ["x".repeat(120) + String.fromCodePoint(0x200b), false],
+    ["x".repeat(114) + String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), false], // R5 (owner's rule, emoji stored split): 120 UTF-16 units after the strip, 122 if the ZWJs stayed
+    ["x".repeat(119) + String.fromCodePoint(0x2764, 0xfe0f), false], // R5 (owner's rule, emoji stored split): 120 UTF-16 units after the strip, 121 if U+FE0F stayed
+    [String.fromCodePoint(0x20, 0x200b, 0x3164), true],
+  ])("name %j -> error %s", (name, hasError) => {
+    const error = validateNewClub({ ...ok, name }, t).name;
+    expect(Boolean(error)).toBe(hasError);
+    if (hasError) expect(error).toBe(t("Nhập tên câu lạc bộ.", "Enter a club name."));
+  });
   it("rejects bad slugs (leading dash, 1 char, uppercase digits ok after lowercasing)", () => {
     expect(validateNewClub({ ...ok, slug: "-abc" }, t).slug).toBeTruthy();
     expect(validateNewClub({ ...ok, slug: "a" }, t).slug).toBeTruthy();

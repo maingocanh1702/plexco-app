@@ -159,10 +159,9 @@ export function stripInvisibleChars(value: string): string {
 }
 
 /**
- * area and venue name as this form validates, sends and compares them (L23): STRIP code points
- * removed first, then the usual trim (textOrNull), blank = null. A value of invisible code points
- * only is therefore exactly an empty one (same message, same sent value). venueAddress is not a
- * public name and keeps textOrNull / textKey.
+ * area, venue name and venue address as this form validates, sends and compares them (L23, L27):
+ * STRIP code points removed first, then the usual trim (textOrNull), blank = null. A value of
+ * invisible code points only is therefore exactly an empty one (same message, same sent value).
  */
 const publicNameOrNull = (raw: string): string | null => textOrNull(stripInvisibleChars(raw));
 const publicNameKey = (raw: string | null | undefined): string | null =>
@@ -178,7 +177,7 @@ const publicNameKey = (raw: string | null | undefined): string | null =>
 function hasNewHiddenChar(
   raw: string,
   initialRaw: string | undefined,
-  key: (raw: string) => string | null = textOrNull,
+  key: (raw: string) => string | null = publicNameOrNull,
 ): boolean {
   const sent = key(raw);
   if (sent === null || !hasHiddenChar(sent)) return false;
@@ -186,7 +185,7 @@ function hasNewHiddenChar(
 }
 
 /**
- * The venue address (area and venue name use publicNameKey, which strips first) in the form this
+ * The venue address, stripped first like area and venue name (L27), in the form this
  * client sends and compares: trimmed, blank = null. The server does not trim: it stores the value
  * it receives as-is (session-service.ts), so a legacy value with surrounding spaces is stored raw
  * and only compares equal here after trimming.
@@ -194,7 +193,7 @@ function hasNewHiddenChar(
  * diff ALL compare in this form, so a field exempted as untouched is also never sent (a legacy value
  * with surrounding spaces would otherwise be exempted, sent trimmed and end in the generic INVALID_BODY).
  */
-const textKey = (raw: string | null | undefined): string | null => textOrNull(raw ?? "");
+const textKey = (raw: string | null | undefined): string | null => publicNameKey(raw);
 
 /**
  * `initial` (edit mode) lets the address check skip an address the host did not touch: a legacy
@@ -232,7 +231,7 @@ export function validateForm(
     );
   }
 
-  const address = v.venueAddress.trim();
+  const address = stripInvisibleChars(v.venueAddress).trim();
   if (
     address.length > VENUE_ADDRESS_MAX &&
     textKey(v.venueAddress) !== textKey(initial?.venueAddress)
@@ -313,7 +312,7 @@ export function buildCreateBody(
   };
   const area = publicNameOrNull(v.area);
   const venueName = publicNameOrNull(v.venueName);
-  const venueAddress = textOrNull(v.venueAddress);
+  const venueAddress = publicNameOrNull(v.venueAddress);
   if (area !== null) body.area = area;
   if (venueName !== null) body.venueName = venueName;
   if (venueAddress !== null) body.venueAddress = venueAddress;

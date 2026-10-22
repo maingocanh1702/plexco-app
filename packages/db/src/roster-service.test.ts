@@ -118,6 +118,51 @@ describe("addMemberToSession", () => {
     });
   });
 
+  // L27 (owner decision item 6): the host-added name is stripped of invisible code points first, so the
+  // person and the membership row hold the same value. Inputs are built from code points on purpose.
+  const cp = (...n: number[]) => String.fromCodePoint(...n);
+  it.each([
+    ["R1 clean", "Minh Anh", "Minh Anh"],
+    ["R2 ZWSP", `Mi${cp(0x200b)}nh`, "Minh"],
+    ["R2 soft hyphen", `Mi${cp(0xad)}nh`, "Minh"],
+    ["R2 hangul filler", `Mi${cp(0x3164)}nh`, "Minh"],
+    ["R2 VS1", `Mi${cp(0xfe00)}nh`, "Minh"],
+    ["R2 tag U+E0001", `Mi${cp(0xe0001)}nh`, "Minh"],
+    ["R2 reserved default-ignorable U+2065", `Mi${cp(0x2065)}nh`, "Minh"],
+    ["R4 bidi RLO kept as today (O1)", `Mi${cp(0x202e)}nh`, `Mi${cp(0x202e)}nh`],
+    // R5: the owner's rule applied as written, no emoji exception: ZWJ and VS16 are stripped, so the emoji split.
+    [
+      "R5 ZWJ family splits",
+      `Fam ${cp(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467)}`,
+      `Fam ${cp(0x1f468, 0x1f469, 0x1f467)}`,
+    ],
+    ["R5 VS16 heart becomes the text heart", `Love ${cp(0x2764, 0xfe0f)}`, `Love ${cp(0x2764)}`],
+  ])(
+    "host add %s: person and membership rows hold the stripped name",
+    async (_label, sent, stored) => {
+      const { tenantId, actor, sessionId } = await world();
+      const r = await add(tenantId, actor, sessionId, { displayName: sent });
+      const m = await fx.row(
+        `SELECT m.display_name, p.display_name AS person_name
+         FROM memberships m JOIN persons p ON p.id = m.person_id WHERE m.id = $1`,
+        [r.membershipId],
+      );
+      expect(m).toMatchObject({ display_name: stored, person_name: stored });
+    },
+  );
+
+  it.each([
+    ["ZWSP only", cp(0x200b)],
+    ["invisible mix with spaces", ` ${cp(0x200b, 0x3164, 0x2065)} `],
+  ])("host add R3 %s: refused as an empty name, nothing written", async (_label, sent) => {
+    const { tenantId, actor, sessionId } = await world();
+    const before = await fx.counts(tenantId);
+    expect(await codeOf(add(tenantId, actor, sessionId, { displayName: sent }))).toBe(
+      "INVALID_INPUT",
+    );
+    expect(await fx.counts(tenantId)).toEqual(before);
+  });
+
   it("a name NEVER resolves to an existing member (DD-85): same name twice makes two members", async () => {
     const { tenantId, actor, sessionId } = await world();
     await fx.seedMembership(tenantId, "Lan");

@@ -1,6 +1,7 @@
 import type { GENDER_VALUES } from "@plexco/core";
 
 import { apiFetch } from "./api-client";
+import { stripInvisibleChars } from "./session-form-model";
 
 /**
  * Typed browser wrappers for the account-scoped settings routes (FE-INV-3/6). DTOs mirror what
@@ -107,10 +108,11 @@ export type DisplayNameProblem = "empty" | "too_long" | "invalid_chars";
  * U+1160, U+3164, U+FFA0) or U+2800 BRAILLE PATTERN BLANK; and at least one visible code point, i.e.
  * one that is neither whitespace (`\s`) nor Default_Ignorable_Code_Point (`\p{DI}`: every variation
  * selector and unassigned default-ignorable). A name with none renders blank, so it reads as
- * "empty". Returns the first problem or null.
+ * "empty". The invisible set is stripped first (L27, as the server stores it), so every check
+ * sees the stripped value. Returns the first problem or null.
  */
 export function displayNameProblem(raw: string): DisplayNameProblem | null {
-  const name = raw.trim();
+  const name = stripInvisibleChars(raw).trim();
   const length = [...name].length;
   if (length < 1) return "empty";
   if (length > 120) return "too_long";

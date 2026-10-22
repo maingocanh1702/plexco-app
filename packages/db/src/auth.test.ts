@@ -881,6 +881,61 @@ describe("tenant_provision (BL-BIL-1)", () => {
     ).rejects.toThrow(SlugTakenError);
   });
 
+  // L27 (owner decision item 6): the club name is stripped of invisible code points before the SQL trim and
+  // the 'name required' check. Inputs are built from code points on purpose.
+  const cp = (...n: number[]) => String.fromCodePoint(...n);
+  let l27 = 2700;
+  it.each([
+    ["R1 clean", "WAO Club", "WAO Club"],
+    ["R2 ZWSP", `WAO${cp(0x200b)} Club`, "WAO Club"],
+    ["R2 soft hyphen", `WAO${cp(0xad)} Club`, "WAO Club"],
+    ["R2 hangul filler", `WAO${cp(0x3164)} Club`, "WAO Club"],
+    ["R2 VS1", `WAO${cp(0xfe00)} Club`, "WAO Club"],
+    ["R2 tag U+E0001", `WAO${cp(0xe0001)} Club`, "WAO Club"],
+    ["R2 reserved default-ignorable U+2065", `WAO${cp(0x2065)} Club`, "WAO Club"],
+    ["R4 bidi RLO kept as today (O1)", `WAO${cp(0x202e)} Club`, `WAO${cp(0x202e)} Club`],
+    // R5: the owner's rule applied as written, no emoji exception: ZWJ and VS16 are stripped, so the emoji split.
+    [
+      "R5 ZWJ family splits",
+      `WAO ${cp(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467)}`,
+      `WAO ${cp(0x1f468, 0x1f469, 0x1f467)}`,
+    ],
+    ["R5 VS16 heart becomes the text heart", `WAO ${cp(0x2764, 0xfe0f)}`, `WAO ${cp(0x2764)}`],
+  ])("provisionTenant %s: tenants.name holds the stripped name", async (_label, sent, stored) => {
+    const i = l27++;
+    const owner = await seedPersonAccount(ctx.owner, String(i));
+    const tenantId = await provisionTenant(ctx.appPool, {
+      slug: `l27-club-${i}`,
+      name: sent,
+      personId: owner.personId,
+    });
+    const { rows } = await ctx.owner.query(`SELECT name FROM tenants WHERE id = $1`, [tenantId]);
+    expect((rows[0] as { name: string }).name).toBe(stored);
+  });
+
+  it.each([
+    ["ZWSP only", cp(0x200b)],
+    ["invisible mix with spaces", ` ${cp(0x200b, 0x3164, 0x2065)} `],
+  ])(
+    "provisionTenant R3 %s: refused as an empty name (22023), no tenant created",
+    async (_label, sent) => {
+      const i = l27++;
+      const owner = await seedPersonAccount(ctx.owner, String(i));
+      await expect(
+        provisionTenant(ctx.appPool, {
+          slug: `l27-club-${i}`,
+          name: sent,
+          personId: owner.personId,
+        }),
+      ).rejects.toMatchObject({ code: "22023" });
+      const { rows } = await ctx.owner.query(
+        `SELECT count(*)::int AS n FROM tenants WHERE slug = $1`,
+        [`l27-club-${i}`],
+      );
+      expect((rows[0] as { n: number }).n).toBe(0);
+    },
+  );
+
   it("concurrent same-owner submissions both get the SAME tenant (no false 409)", async () => {
     const owner = await seedPersonAccount(ctx.owner, "1313");
     const [a, b] = await Promise.all([

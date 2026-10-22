@@ -37,10 +37,19 @@ describe("clubNameProblem (same count as club-config-validation.ts: UTF-16 units
     ["", "empty"],
     ["   ", "empty"],
     ["a" + ch(0x09) + "b", "invalid_chars"],
-    ["a" + ch(0x200b) + "b", "invalid_chars"],
+    // L27: the strip comes first (the server stores the stripped name): U+200B among visible text
+    // raises no error (R2), alone it is empty (R3), a control after it still refuses (R4).
+    ["a" + ch(0x200b) + "b", null],
+    [ch(0x200b) + ch(0x3164), "empty"],
+    ["x".repeat(120) + ch(0x200b).repeat(3), null], // length counts after the strip
+    ["a" + ch(0x200b) + ch(0x09) + "b", "invalid_chars"],
     ["a" + ch(0x202e) + "b", "invalid_chars"],
     // The club route refuses only Cc/Cf: the client mirrors it and refuses nothing more.
     ["a" + ch(0x2028) + "b", null],
+    // R5: U+200D and U+FE0F are stripped, so the server stores composed emoji split (the owner's
+    // rule applied as written, no exception); the form raises no error for them.
+    [ch(0x1f468) + ch(0x200d) + ch(0x1f469) + ch(0x200d) + ch(0x1f467), null], // ZWJ family
+    [ch(0x2764) + ch(0xfe0f), null], // VS16 heart
   ])("%j -> %s", (input, expected) => {
     expect(clubNameProblem(input)).toBe(expected);
   });

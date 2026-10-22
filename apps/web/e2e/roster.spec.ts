@@ -116,6 +116,17 @@ test.describe("add / remove", () => {
     expect(body(posts[0]!).displayName).toBe("Bình"); // trimmed
   });
 
+  test("L27: a name typed with U+200B inside is sent and shown without it", async ({ page }) => {
+    const mock = await open(page);
+    const name = "Quỳnh";
+    // Typed value = the name with U+200B inside, built from the code point (never pasted).
+    await add(page, `${name.slice(0, 2)}${String.fromCodePoint(0x200b)}${name.slice(2)}`);
+    await expect(page.getByRole("status").filter({ hasText: `Đã thêm ${name}` })).toBeVisible();
+    await expect(page.getByText(name, { exact: true })).toBeVisible();
+    const posts = mock.callsTo("POST", /\/players$/);
+    expect(body(posts[0]!).displayName).toBe(name); // stripped before it is sent
+  });
+
   test("an injected ALREADY_JOINED is explained and the next attempt is a NEW command", async ({
     page,
   }) => {

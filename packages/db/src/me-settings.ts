@@ -5,7 +5,7 @@ import {
   openPersonGender,
   type Gender,
 } from "./gender-crypto.js";
-import { hasHiddenChar, hasVisibleChar } from "./text-safety.js";
+import { hasHiddenChar, hasVisibleChar, stripInvisibleChars } from "./text-safety.js";
 
 /**
  * Signed-in user's own settings (lane M4): profile display name + linked channels + unlink, plus the
@@ -27,12 +27,14 @@ export class DisplayNameError extends Error {
 }
 
 /**
- * Same rule as 0055 person_profile_update: trimmed, 1..120 CODE POINTS, no hidden character
- * (hasHiddenChar), at least one visible one (hasVisibleChar), both from text-safety.ts. Returns the trimmed value or throws.
+ * Same rule as 0069 person_profile_update (L27): strip first (stripInvisibleChars, the one shared list
+ * in text-safety.ts), then trim, then 1..120 CODE POINTS measured on the stripped value, no hidden
+ * character (hasHiddenChar), at least one visible one (hasVisibleChar). Returns the stripped, trimmed
+ * value or throws: a value with nothing visible left after the strip is refused like an empty one.
  */
 export function validateDisplayName(raw: unknown): string {
   if (typeof raw !== "string") throw new DisplayNameError();
-  const name = raw.trim();
+  const name = stripInvisibleChars(raw).trim();
   const length = [...name].length;
   if (length < 1 || length > DISPLAY_NAME_MAX || hasHiddenChar(name) || !hasVisibleChar(name)) {
     throw new DisplayNameError();
