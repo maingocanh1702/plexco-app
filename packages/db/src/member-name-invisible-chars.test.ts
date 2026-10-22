@@ -18,11 +18,12 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { provisionTenant } from "./auth.js";
 import { ClubConfigError, validatePatch } from "./club-config-validation.js";
 import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
 import { RosterMoneyError } from "./roster-money-shared.js";
 import { addMemberToSession } from "./roster-service.js";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import { seedPersonAccount, setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 import { withTenant } from "./tenant.js";
 import { checkTypedName, normalizeExternalName } from "./text-safety.js";
 import { resolveZaloIdentity } from "./zalo-ingress.js";
@@ -2040,5 +2041,27 @@ describe("L29-TW P3 resolveZaloIdentity normalizes the Zalo name and never raise
     expect(r.created).toBe(true);
     expect(cps(r.displayName)).toEqual(cps(want));
     expect(cps(await nameOf(r.personId))).toEqual(cps(want));
+  });
+});
+
+describe("L29-TW T1 provisionTenant refuses with checkTypedName (auth.ts)", () => {
+  it.each([
+    ["Cc U+0001 inside", mix("WAO", 1, " Club"), null],
+    ["Bidi_Control U+202E inside", mix("WAO", 0x202e, " Club"), null],
+    ["U+2028 inside", mix("WAO", 0x2028, " Club"), null],
+    ["U+00A0 only", mix(0xa0), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+200B only", mix(0x200b), null],
+    ["U+0000 inside (the bind cell, was 22021)", mix("WAO", 0, " Club"), null],
+    ["ordinary WAO Club", "WAO Club", "WAO Club"],
+    ["edge U+0009 before and U+2028 after", mix(9, "WAO", 0x2028), "WAO"],
+  ])("T1 %s", async (_label, sent, want) => {
+    const slug = `l29-tw-t1-${randomBytes(4).toString("hex")}`;
+    const { personId } = await seedPersonAccount(ctx.owner, slug);
+    const made = provisionTenant(ctx.appPool, { slug, name: sent, personId });
+    await (want === null ? expect(made).rejects.toMatchObject({ code: "22023" }) : made);
+    const { rows } = await ctx.owner.query(`SELECT name FROM tenants WHERE slug = $1`, [slug]);
+    const stored = rows.map((r: { name: string }) => cps(r.name));
+    expect(stored).toEqual(want === null ? [] : [cps(want)]);
   });
 });
