@@ -1508,21 +1508,21 @@ describe("L29-RC P3, P4 and M2 keep their attributes and call member_name_apply_
 // are always rolled back, and a first run that absorbs what the blocks above left behind (the tenant
 // names that run keeps are re-reported by every later run: `carried`).
 
-/** The 0070 L29-CLEANUP block: the text between its two marker lines, each present exactly once. */
-function l29Cleanup(): string {
+/** A 0070 block: the text between its two L29-<name> marker lines, each present exactly once. */
+function l29Block(name: "OWNER-CHECK" | "CLEANUP"): string {
   const text = migration("0070_member_name_control_chars.sql");
-  const begin = "\n-- L29-CLEANUP-BEGIN\n";
-  const end = "\n-- L29-CLEANUP-END";
+  const begin = `\n-- L29-${name}-BEGIN\n`;
+  const end = `\n-- L29-${name}-END`;
   const from = text.indexOf(begin);
   const to = text.indexOf(end);
   if (from < 0 || to < from || text.includes(begin, from + 1) || text.includes(end, to + 1)) {
-    throw new Error("0070: expected one L29-CLEANUP-BEGIN line, then one L29-CLEANUP-END line");
+    throw new Error(`0070: expected one L29-${name}-BEGIN line, then one L29-${name}-END line`);
   }
   return text.slice(from + begin.length, to);
 }
 
 describe("L29-C the 0070 L29-CLEANUP block normalizes the four columns in mode true", () => {
-  const CLEANUP = l29Cleanup();
+  const CLEANUP = l29Block("CLEANUP");
   const COLS = [
     ["persons", "display_name", "person", "display name"],
     ["memberships", "display_name", "membership", "display name"],
@@ -1716,5 +1716,143 @@ describe("L29-C the 0070 L29-CLEANUP block normalizes the four columns in mode t
       // No NOTICE carries fixture text: none of its words, no code point outside printable ASCII.
       expect(notices.filter((n) => /L29|Mai|Lan|[^ -~]/.test(n))).toEqual([]);
     });
+  });
+});
+
+// L29-C1 and L29-C2 (unit U4b2, readiness sections 8 and 11): the exact text of the 0070
+// L29-OWNER-CHECK and L29-CLEANUP blocks, replayed as RC-OWNER and MG replay 0069's, in transactions
+// that are always rolled back.
+
+describe("L29-C1 an owner mismatch fails the migration", () => {
+  const OWNER_CHECK = l29Block("OWNER-CHECK");
+  // One row per function the block names: the rule, then P2, T1, T2, P3, P4 and M2.
+  const CELLS = [
+    { fn: "member_name_apply_rule", sig: `${L29_RULE}(text, boolean)` },
+    ...[
+      "create_host_added_person",
+      "tenant_provision",
+      "tenant_profile_update",
+      "zalo_identity_resolve",
+      "auth_login_google",
+      "create_guest_membership",
+    ].map((fn) => ({ fn, sig: RECREATED.find((w) => fnName(w) === fn)!.sig })),
+  ];
+  // ownership()'s read over the helper and these seven: what a rolled-back move leaves as it was.
+  const OWNERS = `SELECT p.oid::regprocedure::text AS fn, p.proowner::regrole::text AS owner, p.proacl::text AS acl
+       FROM pg_proc p WHERE p.oid = ANY($1::regprocedure[]) ORDER BY 1`;
+  const SIGS = [HELPER_SIG, ...CELLS.map((x) => x.sig)];
+  it.each(CELLS)(
+    "L29-C1 $fn: a no-op as applied; 42501 once its owner moves to readonly; rolled back, nothing changed",
+    async ({ fn, sig }) => {
+      const before = (await ctx.owner.query(OWNERS, [SIGS])).rows;
+      expect(before).toHaveLength(8);
+      await rolledBack(async (c) => {
+        await c.query(OWNER_CHECK);
+        expect((await c.query(OWNERS, [SIGS])).rows).toEqual(before);
+        await c.query(`ALTER FUNCTION ${sig} OWNER TO readonly`);
+        const err = await c.query(OWNER_CHECK).catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: "42501" });
+        // As RC-OWNER: the message ends with "<fn>(<arguments without ')'>) (owner readonly)", fn
+        // taken literally; plain string checks, no RegExp built from data.
+        const msg = (err as Error).message;
+        const head = `${fn}(`;
+        const tail = ") (owner readonly)";
+        expect(msg.startsWith("0070: not owned by "), msg).toBe(true);
+        expect(msg.endsWith(tail), msg).toBe(true);
+        const body = msg.slice(0, -tail.length);
+        const at = body.lastIndexOf(head);
+        expect(at, msg).toBeGreaterThanOrEqual(0);
+        expect(body.slice(at + head.length), msg).not.toContain(")");
+      });
+      expect((await ctx.owner.query(OWNERS, [SIGS])).rows).toEqual(before);
+    },
+  );
+});
+
+describe("L29-C2 the cleanup fails closed and names ids and counts only", () => {
+  const CLEANUP = l29Block("CLEANUP");
+
+  it("L29-C2a guards each of the four tables with its own row_security_active clause, before the first loop", () => {
+    const loop = CLEANUP.indexOf("FOR r IN");
+    const clause = (t: string) =>
+      `row_security_active('public.${t}') AND pg_relation_size('public.${t}') > 0`;
+    expect(loop).toBeGreaterThan(0);
+    expect(CLEANUP.split("row_security_active('").length - 1).toBe(4);
+    for (const t of ["persons", "memberships", "tenants", "sessions"]) {
+      expect(CLEANUP.slice(0, loop).split(clause(t)).length - 1, t).toBe(1);
+    }
+  });
+
+  it("L29-C2b as app (NOSUPERUSER NOBYPASSRLS) over a non-empty table it fails closed with 42501 and changes nothing", async () => {
+    await rolledBack(async (c) => {
+      // A club and a session the block would rewrite (a Bidi_Control, U+2029 and a Cc in each), seeded
+      // as L29-C seeds them, so sessions is non-empty here.
+      const mixed = mix("L29", 0x202e, " Mai", 0x2029, 0x7);
+      const club = (
+        await c.query<{ id: string }>(
+          `INSERT INTO tenants (name, slug, public_alias, public_alias_status) VALUES ($1, $2, 'L29 Alias', 'approved') RETURNING id`,
+          [mixed, `l29-${randomUUID()}`],
+        )
+      ).rows[0]!.id;
+      await c.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
+           price_amount, slots_max, visibility, join_policy, status, hide_exact_address)
+         VALUES ($1, $2, now() + interval '7 days', now() + interval '7 days 2 hours', 'Asia/Ho_Chi_Minh',
+           'San L29', $3, 'Quan 1', 50000, 10, 'public', 'open', 'open', false)`,
+        [club, ctx.badmintonSportId, mixed],
+      );
+      await c.query("SET LOCAL ROLE app");
+      expect(
+        (
+          await c.query(
+            `SELECT r.rolsuper, r.rolbypassrls, row_security_active('public.sessions') AS rls,
+                    pg_relation_size('public.sessions') > 0 AS nonempty
+               FROM pg_roles r WHERE r.rolname = current_user`,
+          )
+        ).rows[0],
+      ).toEqual({ rolsuper: false, rolbypassrls: false, rls: true, nonempty: true });
+      const notices: string[] = [];
+      const onNotice = (n: { message?: string | undefined }) => notices.push(n.message ?? "");
+      c.on("notice", onNotice);
+      try {
+        // The message pins the guard: the rule's owner-only EXECUTE would also be 42501.
+        await expect(c.query(CLEANUP)).rejects.toMatchObject({
+          code: "42501",
+          message:
+            "0070 cleanup: row security applies to app and persons, memberships, tenants or sessions holds rows it may not see; apply 0070 as the superuser migration role",
+        });
+      } finally {
+        c.off("notice", onNotice);
+      }
+      // No NOTICE: it raised before its first loop reached a row, and a failed DO block keeps nothing.
+      expect(notices).toEqual([]);
+    });
+  });
+
+  it("L29-C2c every RAISE NOTICE passes only r.id or an n_ counter, one per placeholder", () => {
+    const ALLOWED = ["r.id", "n_persons", "n_memberships", "n_tenants", "n_sessions", "n_left"];
+    // Six NOTICEs and the guard's EXCEPTION: no other RAISE level reports anything.
+    expect(CLEANUP.split("RAISE ").length - 1).toBe(7);
+    // RAISE NOTICE '<format>', <arguments>; the format holds no quote, so the next quote closes it.
+    const notices = CLEANUP.split("RAISE NOTICE ")
+      .slice(1)
+      .map((s) => {
+        const close = s.indexOf("'", 1);
+        const [lead, ...args] = s
+          .slice(close + 1, s.indexOf(";", close))
+          .split(",")
+          .map((a) => a.trim());
+        return { open: s.slice(0, 1), format: s.slice(1, close), lead, args };
+      });
+    expect(notices).toHaveLength(6);
+    for (const n of notices) {
+      const other = n.args.filter((a) => !ALLOWED.includes(a));
+      expect({ open: n.open, lead: n.lead, arity: n.args.length, other }, n.format).toEqual({
+        open: "'",
+        lead: "",
+        arity: n.format.split("%").length - 1,
+        other: [],
+      });
+    }
   });
 });
