@@ -1754,7 +1754,7 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 ---
 
-## DD-142 — Host Pro trễ invoice: hạ xuống Free, không suspended vì billing (B4) · ✅ Quyết định owner 2026-10-21 (ghi từ mục B4 của bản quyết định owner, đã xác nhận trong terminal của conductor; L19 chỉ ghi lại)
+## DD-142 — Host Pro trễ invoice: hạ xuống Free, không suspended vì billing (B4) · ✅ Quyết định owner 2026-10-21 (ghi từ mục B4 của bản quyết định owner, đã xác nhận trong terminal của conductor; L19 chỉ ghi lại) · 🔄 Bổ sung 2026-10-22 (mục 8: retention 1 tháng, chỉnh được; read-only hay hidden = default chờ owner ký)
 
 > Từ quyết định B4 của owner (2026-10-21), owner xác nhận trong terminal của conductor cùng ngày; L19 chỉ ghi lại. Không sửa spec Reviewed.
 
@@ -1770,10 +1770,25 @@ Cách đọc tiếng Việt (không thêm, không bớt; chỗ nào bản đọc
 - **Hệ quả.**
   - **Đảo / sửa.** Sửa DD-51 (`decisions.md:712`), quy tắc (2) (`:716`): sau grace 7 ngày, tenant Host Pro trả phí mà invoice trễ bị hạ xuống Free, không bị `suspended` vì billing. `suspended` giữ cho việc không phải billing (admin / abuse). `p3-m9-public-projector P-7` (`decisions.md:1809`) không đổi, đúng như B4 viết.
   - **Lane thực thi.** Không có lane: B4 là "a decision-record change plus backlog rows". Hàng backlog: `billing-late-host-pro-invoice-downgrade-to-free` (hành vi hạ xuống Free cho Host Pro trễ invoice) và `host-pro-late-invoice-retention-period-decision` (retention period và read-only hay hidden).
-  - **⬜ Mở.** Retention period ("to be decided later (1 to 3 months)") và hành vi của dữ liệu Pro-only trong thời gian đó (read-only hay hidden; "decided with it") chưa được quyết; hàng `host-pro-late-invoice-retention-period-decision`. Chưa có giá trị nào được chọn.
+  - **⬜ Mở.** Retention period ("to be decided later (1 to 3 months)") và hành vi của dữ liệu Pro-only trong thời gian đó (read-only hay hidden; "decided with it") nay đã thu hẹp theo bổ sung owner 2026-10-22 (mục 8; xem "Bổ sung 2026-10-22 (mục 8)" bên dưới): retention period đã được quyết (1 tháng, chỉnh được về sau, lưu thành MỘT giá trị config); read-only hay hidden là một default đang chờ owner ký, chưa phải quyết định của owner: "hidden from normal views, retained, restored on re-upgrade", "default applied, pending owner sign-off"; hàng `host-pro-late-invoice-retention-period-decision`.
   - **Spec follow-up** (không sửa ở đây; hàng `docs-sync-phase3-owner-decision-spec-follow-ups` đồng bộ; số dòng đo tại `3a97c7b`). (a) Dòng quy tắc invoice trễ → grace → `suspended` (16): `docs/product/BRD.md` (:271) · `docs/product/PRD.md` (:231) · `docs/product/TDD.md` (:108, :639, :836) · `docs/product/ROADMAP.md` (:639) · `docs/features/FE/feature_billing_lifecycle.md` (:282, :284, :292, :296) · `docs/features/BE/feature_billing_lifecycle_tech.md` (:19, :32, :347, :450, :455, :531). (b) Dòng gắn nhãn `suspended` là trạng thái billing (12): `docs/features/BE/feature_billing_lifecycle_tech.md` (:556, :562, :563) · `docs/features/FE/feature_home.md` (:75) · `docs/features/BE/feature_home_tech.md` (:98) · `docs/features/FE/feature_session_management.md` (:102, :865) · `docs/features/BE/feature_session_management_tech.md` (:259, :323, :670, :672, :1005).
   - **Trạng thái.** Chưa có gì được implement, bật hay live: billing không nằm trong MVP và entry này chỉ ghi quyết định. Bước P0 nào của owner cũng không bị đụng tới.
 - **Nguồn** (số dòng đo tại `3a97c7b`, trước khi PR này chèn dòng)**.** mục B4 của bản quyết định owner 2026-10-21 (nguyên văn ở trên) · `docs/standards/decisions.md:72`, `:712`, `:716`, `:1809` · các dòng spec ở Hệ quả; danh sách spec follow-up và tiêu chí chọn file: `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md` (bảng "Spec follow-ups per entry").
+
+### Bổ sung 2026-10-22 (mục 8)
+
+> Từ các quyết định của owner ngày 2026-10-22 (các câu trả lời cho mục 0 của bản tóm tắt P3-S15), do trợ lý của owner ghi lại và owner xác nhận trong chat lúc 10:47; L26 chỉ ghi lại.
+
+Nguyên văn của owner, mục 8 (tiếng Anh như owner viết; bản tiếng Anh này là bản có hiệu lực):
+
+> - Item 8 (B4, Pro-to-Free data retention): retention period = 1 MONTH, adjustable later (store it as one config value, not hard-coded). Read-only versus hidden for Pro-only data in that month: the owner did not answer; the conductor applies the default "hidden from normal views, retained, restored on re-upgrade" and marks it "default applied, pending owner sign-off". Billing is not in the MVP: this is the decision record plus the backlog row (C5) only.
+
+Cách đọc tiếng Việt (không thêm, không bớt; bản tiếng Anh có hiệu lực):
+
+- Retention period = 1 THÁNG, chỉnh được về sau, lưu thành MỘT giá trị config, không hard-code.
+- Read-only hay hidden cho dữ liệu Pro-only trong tháng đó: owner không trả lời; conductor áp default "hidden from normal views, retained, restored on re-upgrade" và đánh dấu "default applied, pending owner sign-off". Đây là default, không phải quyết định của owner.
+- Billing không nằm trong MVP, nên mục 8 chỉ là bản ghi quyết định cộng hàng backlog C5 (`host-pro-late-invoice-retention-period-decision`, cập nhật trong cùng PR).
+- Trạng thái: chưa có gì được implement, bật hay live.
 
 ---
 
