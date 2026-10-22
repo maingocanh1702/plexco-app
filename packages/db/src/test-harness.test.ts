@@ -518,6 +518,10 @@ describe("withJobDefinerBootstrapLock (JDB)", () => {
     u.pathname = `/${JDB_DB}`;
     return u.toString();
   };
+  /** Runner-like: rewrites 01:179's row (pg_namespace's `public`) inside one transaction. */
+  const RUNNER_LIKE_WRITE =
+    `BEGIN; GRANT USAGE ON SCHEMA public TO ${JDB_ROLE}; ` +
+    `REVOKE USAGE ON SCHEMA public FROM ${JDB_ROLE}; COMMIT`;
 
   beforeAll(async () => {
     await observer.query(`DROP DATABASE IF EXISTS ${JDB_DB} WITH (FORCE)`);
@@ -538,6 +542,41 @@ describe("withJobDefinerBootstrapLock (JDB)", () => {
     expect(Number(parsed)).toBe(MIGRATE_ADVISORY_LOCK_KEY);
     expect(src).toContain(`client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY])`);
   });
+
+  it(
+    "JDB-2: a bootstrap waits in pg_locks while the runner holds plxc, then resolves lock-free",
+    async () => {
+      const h = new pg.Client({ connectionString: jdbUrl() });
+      const b = new pg.Client({ connectionString: jdbUrl() });
+      try {
+        await h.connect();
+        await b.connect();
+        await h.query("SELECT pg_advisory_lock($1)", [MIGRATE_ADVISORY_LOCK_KEY]); // migrate.ts's SQL
+        const pid: number = (await b.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+        let settled = false;
+        const settle = () => {
+          settled = true;
+        };
+        const boot = bootstrapJobDefiner(b);
+        void boot.then(settle, settle);
+        const mine =
+          "SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND pid = $1";
+        // plxc as one bigint key: classid = its high 32 bits (0), objid = its low 32, objsubid = 1.
+        const waiting = `${mine} AND classid = 0 AND objid = 1886156899 AND objsubid = 1 AND NOT granted`;
+        await expect
+          .poll(async () => (await h.query(waiting, [pid])).rows[0].n, { timeout: 10_000 })
+          .toBe(1);
+        expect(settled).toBe(false);
+        await h.query(RUNNER_LIKE_WRITE);
+        await h.query("SELECT pg_advisory_unlock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+        await boot;
+        expect((await h.query(mine, [pid])).rows).toEqual([{ n: 0 }]);
+      } finally {
+        await Promise.all([h.end(), b.end()]);
+      }
+    },
+    REAL_LOCK_TIMEOUT_MS,
+  );
 
   it(
     "JDB-3: a bootstrap whose SQL throws rejects with that error, its client usable and plxc free",
@@ -568,4 +607,28 @@ describe("withJobDefinerBootstrapLock (JDB)", () => {
     },
     REAL_LOCK_TIMEOUT_MS,
   );
+
+  it("JDB-4: 20 rounds of a bootstrap racing a runner-like plxc writer all fulfil", async () => {
+    const h = new pg.Client({ connectionString: jdbUrl() });
+    const b = new pg.Client({ connectionString: jdbUrl() });
+    const runnerLike = async () => {
+      await h.query("SELECT pg_advisory_lock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+      try {
+        await h.query(RUNNER_LIKE_WRITE);
+      } finally {
+        await h.query("SELECT pg_advisory_unlock($1)", [MIGRATE_ADVISORY_LOCK_KEY]);
+      }
+    };
+    try {
+      await h.connect();
+      await b.connect();
+      const started = performance.now();
+      for (let round = 0; round < 20; round++) {
+        await Promise.all([bootstrapJobDefiner(b), runnerLike()]);
+      }
+      console.info(`JDB-4: 20 rounds in ${Math.round(performance.now() - started)} ms`);
+    } finally {
+      await Promise.all([h.end(), b.end()]);
+    }
+  });
 });
