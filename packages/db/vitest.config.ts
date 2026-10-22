@@ -1,25 +1,67 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+
+// The one list of the isolated test files, in run order (the projects below
+// are built from it).
+export const isolatedTestFiles = [
+  "src/migrate.test.ts",
+  "src/rls-invariants.test.ts",
+  "src/tenant-capability-authority.test.ts",
+  "src/identity-link-web.test.ts",
+  "src/identity-link-web-nobypass.test.ts",
+  "src/me-player-reads-nobypass.test.ts",
+  "src/public-alias-nobypass.test.ts",
+];
 
 export default defineConfig({
   test: {
-    // Test FILES may run in parallel workers. The two hazards that once forced
-    // serial execution are both closed:
-    // (1) each DB test file's setupRlsTestContext() DROPs/CREATEs its OWN
-    //     throwaway database (auth.test.ts / rls-invariants.test.ts /
-    //     waitlist-invariants.test.ts / migrate.test.ts each pass a distinct
-    //     dbName — see test-harness.ts), so no two files touch one database; and
-    // (2) the cluster-global runtime roles are now created race-safely by the
-    //     migration runner (packages/db/src/migrate.ts ensureRoleExists), which
-    //     CREATE ROLEs and swallows the "already exists" collision — so two
-    //     files' migrate() calls racing on one cluster no longer abort. (0000's
-    //     own check-then-act role block, which caused the race, is skipped once
-    //     the runner has ensured the roles.) Proven: migrate.test.ts BR-1 plus
-    //     ≥5 consecutive green full-suite runs under fileParallelism:true.
+    // Test FILES run in parallel workers against ONE Postgres cluster. Data is
+    // per file: each DB test file's setupRlsTestContext() creates its OWN
+    // throwaway database, and the migration runner creates the runtime roles
+    // race-safely (migrate.ts ensureRoleExists; BR-1 in migrate.test.ts). Roles
+    // and role memberships are NOT per file: they are cluster-global.
+    //
+    // Each file in isolatedTestFiles changes a shared role or membership for a
+    // while (a hide by RENAME, a temporary GRANT to app_worker, a membership
+    // hand-off to a non-superuser owner), which any other file checking that
+    // role by name or privilege would observe. So the "parallel" project
+    // (groupOrder 0) runs every other file first, then each isolated file runs
+    // alone as project "isolated-<k>" (groupOrder k). Inside one `vitest run`
+    // the groups run strictly in order (group k+1 starts once every file of
+    // group k has finished), and a red group never skips a later one: every
+    // file runs and the exit code covers all of them.
+    //
+    // CLI caveat: any --sequence.* flag resets groupOrder (the groups would
+    // then overlap), so the package test script passes none. With one group
+    // per isolated file, a CLI --fileParallelism cannot overlap them either.
+    //
+    // ponytail: the isolated files run one at a time, +26 s wall measured
+    // (migrate.test.ts alone about 45 s). Upgrade path: split migrate.test.ts's
+    // role-mutating describes into their own file so the rest of it rejoins
+    // the parallel phase.
     fileParallelism: true,
     // Tests WITHIN a file still run sequentially: the RLS suites share one ctx
     // and assert on ordered inserts, so intra-file concurrency stays off.
     sequence: { concurrent: false },
     testTimeout: 30_000,
     hookTimeout: 120_000,
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "parallel",
+          include: ["src/**/*.test.ts"],
+          exclude: [...configDefaults.exclude, ...isolatedTestFiles],
+          sequence: { groupOrder: 0 },
+        },
+      },
+      ...isolatedTestFiles.map((file, i) => ({
+        extends: true as const,
+        test: {
+          name: `isolated-${i + 1}`,
+          include: [file],
+          sequence: { groupOrder: i + 1 },
+        },
+      })),
+    ],
   },
 });
