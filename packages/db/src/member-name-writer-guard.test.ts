@@ -384,22 +384,64 @@ describe("L29-G1 migrations after 0069: every writer they define calls the rule"
   });
 });
 
+/** L29-G2 (L29 readiness sections 8 and 11): the bare writers G2 admits, each only between its own
+ * file's marker pair and only while it calls its admitting function: 0069's L27-CLEANUP block the
+ * helper, 0070's L29-CLEANUP block the rule (accepted through G1's strip-first pin on the rule,
+ * which is not restated here). A missing marker admits nothing. */
+const CLEANUP_L29 = "0070_member_name_control_chars.sql";
+const CLEANUPS: [file: string, tag: string, call: string][] = [
+  [CLEANUP, "L27-CLEANUP", STRIP],
+  [CLEANUP_L29, "L29-CLEANUP", RULE],
+];
+/** G2 over `sources`: the hits outside every marked block (file:line), and per block whether each
+ * of its hits calls the block's admitting function. */
+const admit = (sources: Record<string, string>) => {
+  const found = Object.keys(sources)
+    .sort()
+    .flatMap((f) => g2(f, sources[f]!));
+  const blocks = CLEANUPS.map(([file, tag, call]) => {
+    const lines = (sources[file] ?? "").split("\n");
+    const at = (m: string) => lines.findIndex((l) => l.startsWith(`-- ${tag}-${m}`)) + 1;
+    const inside = (h: Hit) => h.file === file && h.line > at("BEGIN") && h.line < at("END");
+    const hits = found.filter(inside);
+    return { hits, calls: hits.map((h) => h.sql.includes(call)) };
+  });
+  const admitted = blocks.flatMap((b) => b.hits);
+  return {
+    outside: found.filter((h) => !admitted.includes(h)).map((h) => `${h.file}:${h.line}`),
+    calls: blocks.map((b) => b.calls),
+  };
+};
+
 describe("G2 migrations: bare statements and DO blocks that write the four columns are pinned", () => {
-  it("holds on packages/db/migrations: only 0069's L27-CLEANUP block, and it calls the helper", () => {
+  it("holds on packages/db/migrations: only 0069's L27-CLEANUP and 0070's L29-CLEANUP blocks", () => {
     const files = readdirSync(new URL("../migrations/", import.meta.url)).filter((f) =>
       f.endsWith(".sql"),
     );
-    const found = files.sort().flatMap((f) => g2(f, migration(f)));
-    const lines = migration(CLEANUP).split("\n");
-    const marker = (m: string) => lines.findIndex((l) => l.startsWith(`-- L27-CLEANUP-${m}`)) + 1;
-    const inCleanup = (h: Hit) =>
-      h.file === CLEANUP && h.line > marker("BEGIN") && h.line < marker("END");
-    const outside = found.filter((h) => !inCleanup(h)).map((h) => `${h.file}:${h.line}`);
-    expect(outside, "bare writers outside 0069's L27-CLEANUP block (file:line)").toEqual([]);
-    const cleanup = found.filter(inCleanup).map((h) => h.sql.includes(STRIP));
-    expect(cleanup, `${CLEANUP}:${marker("BEGIN")}: one cleanup block, calling the helper`).toEqual(
-      [true],
-    );
+    const sources = Object.fromEntries(files.map((f) => [f, migration(f)] as const));
+    const { outside, calls } = admit(sources);
+    expect(outside, "bare writers outside the two cleanup blocks (file:line)").toEqual([]);
+    expect(calls, "0069's block calls the helper, 0070's the rule").toEqual([[true], [true]]);
+  });
+  it("fails on a DO block outside both marker pairs in a post-0069 file, or one without its call", () => {
+    const raw = migration(CLEANUP_L29);
+    const pair = { [CLEANUP]: migration(CLEANUP), [CLEANUP_L29]: raw };
+    const block = `do $p$ begin update persons set display_name = ${RULE}x, true); end $p$;`;
+    const after = { ...pair, [CLEANUP_L29]: `${raw}\n${block}\n` };
+    expect(admit(after), "after 0070's END marker").toEqual({
+      outside: [`${CLEANUP_L29}:${raw.split("\n").length + 1}`],
+      calls: [[true], [true]],
+    });
+    const copied = `-- L29-CLEANUP-BEGIN\n${block}\n-- L29-CLEANUP-END\n`;
+    expect(admit({ ...pair, "0071_planted.sql": copied }), "markers copied into 0071").toEqual({
+      outside: ["0071_planted.sql:2"],
+      calls: [[true], [true]],
+    });
+    const ruleless = { ...pair, [CLEANUP_L29]: raw.split(RULE).join("btrim(") };
+    expect(admit(ruleless), "0070's block calling btrim instead of the rule").toEqual({
+      outside: [],
+      calls: [[true], [false]],
+    });
   });
   it("fails on planted bare, DO, quoted and positional writers, past a function, a comment, a grant", () => {
     const planted = [
@@ -548,5 +590,71 @@ describe("G4 TS_WRITE: a raw SQL writer with a quoted schema and a quoted table"
     expect([...src.matchAll(TS_WRITE)].map((m) => (m[1] ?? m[2])!.toLowerCase())).toEqual([
       "persons",
     ]);
+  });
+});
+
+/** L29-G3 (L29 readiness section 11): a TypeScript write site of a guarded column outside the
+ * named M1 (roster-service.ts memberships) and V1/V2 (session-service.ts sessions) calls the
+ * shared rule of text-safety.ts, checkTypedName( (typed) or normalizeExternalName( (external);
+ * stripInvisibleChars( alone is L27's strip, not the rule. G4's TS_WRITE finds the sites. */
+const L29_NAMED = [
+  "packages/db/src/roster-service.ts memberships",
+  "packages/db/src/session-service.ts sessions",
+];
+const L29_RULE_CALL = /\b(?:checkTypedName|normalizeExternalName)\(/;
+/** The "file table" sites of G4's TS_WRITE whose file names the table's TS_KEY (G4's non-writer
+ * test), and every tenants site (tenants has no key: fail-closed). */
+const columnSites = (files: Record<string, string>) => [
+  ...new Set(
+    Object.entries(files).flatMap(([file, src]) =>
+      [...src.matchAll(TS_WRITE)]
+        .map((m) => (m[1] ?? m[2])!.toLowerCase())
+        .filter((table) => TS_KEY[table] === undefined || src.includes(TS_KEY[table]!))
+        .map((table) => `${file} ${table}`),
+    ),
+  ),
+];
+// ponytail: file-level presence like G4 (one call anywhere in a file passes all of its sites); the
+// TS validator rows prove the rule per writer.
+function l29g3(files: Record<string, string>, named = L29_NAMED): string[] {
+  const sites = columnSites(files);
+  return [
+    ...sites
+      .filter((s) => !named.includes(s) && !L29_RULE_CALL.test(files[s.split(" ")[0]!]!))
+      .map((s) => `write site without the rule ${s}`),
+    ...named.filter((n) => !sites.includes(n)).map((n) => `stale name ${n}`),
+  ];
+}
+
+describe("L29-G3 TypeScript: a guarded-column write site outside M1 and V1/V2 calls the rule", () => {
+  const files = Object.fromEntries(
+    TS_DIRS.flatMap(scan)
+      .filter((f) => !FIXTURES.has(f))
+      .map((f) => [f, readFileSync(new URL(f, ROOT), "utf8")] as const),
+  );
+  it("holds on the sources: the column write sites are exactly the named M1 and V1/V2", () => {
+    expect(columnSites(files).sort(), "the column write sites").toEqual(L29_NAMED);
+    expect(l29g3(files), "L29-G3 violations (by file table)").toEqual([]);
+  });
+  it("fails on planted rows: neither call, only the strip, a look-alike, tenants, a stale name", () => {
+    const planted = {
+      "u.ts": "await tx.insert(schema.persons).values({ displayName });",
+      "s.ts": "await tx.update(memberships).set({ displayName: stripInvisibleChars(v) });",
+      "l.ts": "await tx.update(persons).set({ displayName: xcheckTypedName(v) });",
+      "t.ts": "await db.query(`UPDATE tenants SET name = $1`);",
+      "k.ts": "await tx.update(sessions).set({ venueAddress: checkTypedName(v) });",
+      "e.ts": "await tx.insert(persons).values({ displayName: normalizeExternalName(n) });",
+      "n.ts": "await tx.update(sessions).set({ status });",
+      "m.ts": "await tx.update(memberships).set({ displayName: v });",
+    };
+    expect(l29g3(planted, ["m.ts memberships", "gone.ts sessions"]).sort()).toEqual(
+      [
+        "write site without the rule u.ts persons",
+        "write site without the rule s.ts memberships",
+        "write site without the rule l.ts persons",
+        "write site without the rule t.ts tenants",
+        "stale name gone.ts sessions",
+      ].sort(),
+    );
   });
 });
