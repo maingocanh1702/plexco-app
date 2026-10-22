@@ -519,12 +519,18 @@ describe("RC-OWNER: the 0069 owner check (B7) covers each of the seven", () => {
         await c.query(OWNER_CHECK);
         expect(await ownership(c)).toEqual(before);
         await c.query(`ALTER FUNCTION ${w.sig} OWNER TO readonly`);
-        await expect(c.query(OWNER_CHECK)).rejects.toMatchObject({
-          code: "42501",
-          message: expect.stringMatching(
-            new RegExp(`${fnName(w)}[(][^)]*[)] [(]owner readonly[)]$`),
-          ),
-        });
+        const err = await c.query(OWNER_CHECK).catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: "42501" });
+        // Ends with "<fnName>(<arguments without ')'>) (owner readonly)", fnName taken literally:
+        // plain string checks, no RegExp built from data (Semgrep detect-non-literal-regexp).
+        const msg = (err as Error).message;
+        const head = `${fnName(w)}(`;
+        const tail = ") (owner readonly)";
+        expect(msg.endsWith(tail), msg).toBe(true);
+        const body = msg.slice(0, -tail.length);
+        const at = body.lastIndexOf(head);
+        expect(at, msg).toBeGreaterThanOrEqual(0);
+        expect(body.slice(at + head.length), msg).not.toContain(")");
       });
       expect(await ownership(ctx.owner)).toEqual(before);
     },

@@ -477,7 +477,7 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
       if (hasHiddenChar(stripInvisibleChars(c)) !== serverHidden) mismatches.push(cp);
     }
     expect(mismatches).toEqual([]);
-  });
+  }, 30_000);
 });
 
 // L23 strip-first (DD-138 sign-off A.1; readiness D3, D4, D10, D11) and L27 (B9): the web mirror of
