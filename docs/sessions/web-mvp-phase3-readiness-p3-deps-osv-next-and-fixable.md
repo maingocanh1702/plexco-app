@@ -17,6 +17,8 @@
 > `docs/standards/decisions.md` or `docs/autopilot-backlog.md`.
 > Amendment 1 (section 8, 2026-10-22, orchestrator run 2): conductor decision D10 splits L25 into PR-A (next 15.5.28, the
 > 3.3 entry, this file) and PR-B (vite and the vitest family); section 8 wins over sections 1-7 where they conflict, for PR-A.
+> Amendment 2 (section 9, 2026-10-22, orchestrator run 3): the PR-B contract (vite 7.3.7 and the vitest family 4.1.12 on
+> base `e7322c1`, after PR-A #103 merged); section 9 wins over sections 1-8 where they conflict, for PR-B.
 
 ## 1. Verdict
 
@@ -474,3 +476,89 @@ bash "$N/scripts/lockfile-diff.sh" fb8ee675b49f9460ae8332950c82b40ec30610de <rev
   Verification 3.6 runs unchanged at the PR-A head.
 - B3 for PR-A (measured at `ab7354f`): 3 files outside the lockfile (this file included), 0 migrations, non-test +27 -1
   (`apps/web/package.json` +1 -1, `osv-scanner.toml` +26); `pnpm-lock.yaml` +41 -41 reported separately; caps 60/8/0 hold.
+
+## 9. Amendment 2 (2026-10-22, orchestrator run 3): the PR-B contract
+
+> Written by the session orchestrator (run 3, Opus 5.5 / max) before unit U2, on base
+> `e7322c11f7537b451c674a5f07ef5f67087f946f` (PR-A #103 merged). Sections 1-8 stay as written; where they conflict with
+> this section, this section wins for PR-B (the newer block). Evidence (untracked, in N as in the header):
+> `r3-window-1.txt`, `r3-family-facts.txt`, `r3-intended-set.txt`, `r3-lockfile-diff-selftest-prA.txt`,
+> `r3-osv-base-summary.txt`, `r3-osv-base.stderr`, and the U2 outputs named in the PR body.
+
+### 9.1 Measured window (A3)
+
+- Registry publish times (`pnpm view <name> time`, measured 2026-10-22 21:19 and 21:26 +07): vitest 4.1.12
+  `2026-10-15T14:51:24.991Z`, so under `minimumReleaseAge: 10080` it resolves from 2026-10-22T14:51:25Z (21:51:25 +07; 8.4
+  gives the same instant); the seven @vitest/* 4.1.12 between 14:40:03Z and 14:42:05Z the same day; vite 7.3.7
+  `2026-10-06T05:11:19.017Z` (resolvable since 2026-10-13).
+- 4.1.12 is the newest 4.x (dist-tag `V4`), and 7.3.7 is the only 7.x above 7.3.6 (vite 8 is a major: A7).
+- Unit U2 starts only after a dry install with the repository's supply-chain settings resolves vitest 4.1.12.
+  `minimumReleaseAge` stays 10080 and no `minimumReleaseAgeExclude` is added (owner supply-chain policy).
+
+### 9.2 Mechanism (supersedes 3.5's U2 and, for vitest only, L25-D3)
+
+- `"vitest": "^4.1.11"` -> `"^4.1.12"` in the four manifests that declare it: `apps/bot/package.json`,
+  `apps/web/package.json`, `packages/core/package.json` and `packages/db/package.json` (one line each). The reason is the
+  one of D-c for next (8.3): `pnpm update` re-resolves transitives (D-b), so a specifier edit plus a plain `pnpm install`
+  is the mechanism that moves only the family. 3.5's U2 draft (`pnpm -r update vitest@4.1.12 --no-save`) is withdrawn.
+- L25-D2 stands: root `package.json` `pnpm.overrides` gains `"vite@7": "^7.3.7"` after `"source-map-js@1": "^1.2.2"`.
+  The run-3 conductor handoff names the `overrides:` block of `pnpm-workspace.yaml` for this floor. That block is inert:
+  the non-empty `pnpm.overrides` map of root `package.json` replaces it wholesale, and the lockfile `overrides:` header
+  lists only that map's 8 keys (2.5; backlog row `pnpm-workspace-postcss-override-inert`). So the floor goes to the
+  effective location and `pnpm-workspace.yaml` stays byte-unchanged (A3, section 1 OUT_OF_SCOPE). Orchestrator decision
+  (Tier A, derived from 2.5 and L25-D2), stated in the PR body.
+- Then a plain `pnpm install` (never `pnpm update`), then `pnpm install --frozen-lockfile`.
+- Pre-authorized fallback (conductor decision under the owner's delegation, Tier B, reversible; not an owner signature):
+  if vite still resolves below 7.3.7 after the bump and the floor (vite is an auto-installed peer of vitest, 8.3), root
+  `package.json` `devDependencies` gains `"vite": "^7.3.7"`; vite is already in the tree, so no package is added. If the
+  fallback is used, the PR body says so and a dated line is added at the end of this section.
+- STOP with a ruling request on anything that adds or removes a package, changes a major version, or moves a package
+  outside the vite and vitest family.
+
+### 9.3 Intended set and the PR-B lockfile check (replaces 3.2's "final" line for PR-B)
+
+- The 4.1.12 family changes only its internal `@vitest/*` pins (and one optional-peer pin of vitest); vite 7.3.7 has the
+  same dependencies and peer dependencies as 7.3.6 (`r3-family-facts.txt`). So exactly these 9 names change version, one
+  version each (`packages:` 340 -> 340 keys), and no transitive package moves:
+
+```text
+vite
+vitest
+@vitest/expect
+@vitest/mocker
+@vitest/pretty-format
+@vitest/runner
+@vitest/snapshot
+@vitest/spy
+@vitest/utils
+```
+
+- Command (exit 0 = LOCKFILE_DIFF_OK; the overrides header diff is exactly `+ vite@7: ^7.3.7`):
+
+```text
+bash "$N/scripts/lockfile-diff.sh" e7322c11f7537b451c674a5f07ef5f67087f946f <rev|WT> "$N/r3-intended-set.txt" vite@7.3.6 vitest@4.1.11 @vitest/expect@4.1.11 @vitest/mocker@4.1.11 @vitest/pretty-format@4.1.11 @vitest/runner@4.1.11 @vitest/snapshot@4.1.11 @vitest/spy@4.1.11 @vitest/utils@4.1.11
+```
+
+- The script now also counts one-line snapshot keys (`'name@version': {}`) and lists the changed snapshot keys. On PR-A's
+  range it reads 10 removed and 10 added (`r3-lockfile-diff-selftest-prA.txt`); the run-2 copy read 9 and 9 because it
+  missed `'@next/env@15.5.25': {}` (run 2 review note 4).
+
+### 9.4 PR-B acceptance and what stays
+
+- Base scan (`r3-osv-base-summary.txt`; the L25-D8 image on a `git archive` export of the base): exactly the 7 ids of 8.4
+  (vite 7.3.6 x5, @vitest/mocker 4.1.11 x2), braces GHSA-vfj7-8cjw-p6xm filtered by the 3.3 entry, 340 packages.
+- A1: the final head's scan reports no finding (braces filtered). A2: vite 7.3.7, vitest and the 7 @vitest/* at 4.1.12,
+  the next family unchanged at 15.5.28. A3: 9.1, and `pnpm-workspace.yaml` byte-unchanged. A5: the 9.3 command.
+- A6: `git diff --stat e7322c1 -- '*package.json'` lists the four vitest manifests (one line each) and root
+  `package.json` (the floor key and its comma, plus the devDependency line and its comma only with the fallback); no
+  other range change. A7: vite stays on 7.x everywhere.
+- A11: `git diff --name-only e7322c1..HEAD` is those five manifests, `pnpm-lock.yaml` and this file. A13: no
+  `osv-scanner.toml` change in PR-B. A15 (the next loaders) is not re-run: next is unchanged since PR-A.
+- A4, A8-A10, A12 and A14 apply unchanged at the PR-B head. The web vitest watches for runner changes (timeouts, snapshot
+  formats); a failure caused by 4.1.12 that needs more than a patch-level adjustment is a ruling request.
+- Golden path when this section was written: `ifconfig -l` listed en7, en8 and en10 (21:27 +07), so it is NOT RUN unless
+  they are gone when the verification runs (checked again right before it); NOT RUN is never a pass.
+- B3 estimate: non-test code +6 -5 (four manifests +1 -1 each, root `package.json` +2 -1; +2 -1 more with the fallback);
+  6 of 8 files outside the lockfile (five manifests and this file); 0 migrations; `pnpm-lock.yaml` reported separately.
+- Review: one opus/max code review round (at most 3 in total) over the 9.3 list, the manifest and override lines, the
+  verification evidence and this section.
