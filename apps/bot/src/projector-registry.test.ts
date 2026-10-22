@@ -295,4 +295,255 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     await cycle(new Map([["reg_probe", delivered]]));
     expect(await deliveries(eventId)).toMatchObject([{ status: "delivered" }]);
   });
+
+  describe("boot sequence: flags default true, projectors off, then the owner CLI enables", () => {
+    // L24 U3 (readiness 6.3, BS-1..BS-7): the committed default "true", every real projector seeded
+    // disabled (0056), events acked with '{}', then `scripts/outbox-projector-enable.mjs enable`.
+    const REPO = path.join(HERE, "..", "..", "..");
+    const EXPIRED = "projector_delivery_expired";
+    const ALL_OFF = [
+      { name: "public_sessions", enabled: false },
+      { name: "web_realtime", enabled: false },
+      { name: "zalo_dm", enabled: false },
+    ];
+    const realProjectors = async () =>
+      (
+        await verify.query(
+          "SELECT name, enabled FROM outbox_projectors WHERE name = ANY($1::text[]) ORDER BY name",
+          [[...PROJECTORS.keys()]],
+        )
+      ).rows;
+
+    /**
+     * `node scripts/outbox-projector-enable.mjs <args>` as the runbook runs it (the pattern of
+     * packages/db/src/outbox-projector-enable.test.ts, copied): cwd = the repo root, the owner credential
+     * only in the child's DATABASE_URL_MIGRATION, under the reader lock.
+     */
+    const runEnableCli = (args: string[]) =>
+      withJobDefinerLock(base, async () => {
+        const env = { ...process.env, DATABASE_URL_MIGRATION: testUrl(base, { db: dbName }) };
+        const script = ["scripts/outbox-projector-enable.mjs", ...args];
+        try {
+          const { stdout, stderr } = await promisify(execFile)(process.execPath, script, {
+            cwd: REPO,
+            env,
+            timeout: 30_000,
+          });
+          return { code: 0, stdout, stderr };
+        } catch (error) {
+          const e = error as { code?: number; stdout?: string; stderr?: string };
+          return { code: e.code ?? -1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+        }
+      });
+
+    /** The CLI enables `projector` (exit 0); the test disables it again in its finally. */
+    async function enable(projector: string) {
+      const run = await runEnableCli(["enable", "--projector", projector]);
+      expect(run.code, run.stderr).toBe(0);
+    }
+
+    /** The expiry records the CLI wrote for `ids` (job_audit_events), any projector. */
+    const expiries = async (ids: string[]) =>
+      (
+        await verify.query(
+          "SELECT job_id, reason FROM job_audit_events WHERE starts_with(reason, $1) AND job_id = ANY($2::uuid[]) ORDER BY job_id, reason",
+          [`${EXPIRED}:`, ids],
+        )
+      ).rows;
+
+    /** Owner back-dating on the DB clock, past the 30-minute bound. */
+    const backdate = (ids: string[]) =>
+      verify.query(
+        "UPDATE outbox_events SET created_at = now() - interval '40 minutes' WHERE id = ANY($1::uuid[])",
+        [ids],
+      );
+
+    /** First boot step: every real projector off, so one cycle acks `ids` with '{}': no row, no record. */
+    async function ackedWhileOff(ids: string[], projectors: ReadonlyMap<string, DeliverFn>) {
+      expect(await realProjectors()).toEqual(ALL_OFF);
+      await cycle(projectors);
+      const acked = await verify.query(
+        "SELECT id FROM outbox_events WHERE id = ANY($1::uuid[]) AND acked_at IS NOT NULL",
+        [ids],
+      );
+      expect(acked.rowCount).toBe(ids.length);
+      for (const id of ids) expect(await deliveries(id)).toEqual([]);
+      expect(await expiries(ids)).toEqual([]);
+    }
+
+    /**
+     * zalo_dm through its real deliverer and the stub (the zalo-dm.test.ts fixture: the web tests'
+     * "k" x 32 key, a token only the stub sees, a club with an active bot and an open session).
+     * `promote()` adds an active player with a Zalo identity and its player.promoted event.
+     */
+    async function zaloBoot() {
+      const secrets = await import("@plexco/db/connector-crypto");
+      const { createZaloDmDeliver } = await import("./projectors/zalo-dm.js");
+      const { startZaloStub } = await import("./test-zalo-stub.js");
+      const stub = await startZaloStub();
+      const kms = { KMS_PROVIDER: process.env.KMS_PROVIDER, KMS_KEY_ID: process.env.KMS_KEY_ID };
+      vi.stubEnv("ENCRYPTION_KEY", Buffer.alloc(32, "k").toString("base64"));
+      vi.stubEnv("APP_BASE_URL", "https://app.test");
+      vi.stubEnv("ZALO_BOT_API_BASE", stub.base);
+      delete process.env.KMS_PROVIDER;
+      delete process.env.KMS_KEY_ID;
+      secrets.__resetAuthSecretCacheForTest();
+      const close = async () => {
+        await stub.close();
+        vi.unstubAllEnvs();
+        for (const [key, value] of Object.entries(kms))
+          if (value !== undefined) process.env[key] = value;
+        secrets.__resetAuthSecretCacheForTest();
+      };
+      const token = "654321:FIXTURE-worker-token";
+      const one = async (sql: string, params: unknown[]) =>
+        (await verify.query(sql, params)).rows[0]!;
+      try {
+        const tenant = await one(
+          "INSERT INTO tenants (name, slug, status, locale) VALUES ($1, $1, 'active', 'vi') RETURNING id",
+          [`boot-${randomUUID()}`],
+        );
+        const bot = await one(
+          `INSERT INTO zalo_bots (tenant_id, bot_token_enc, webhook_token, status, webhook_secret_enc, key_version)
+           VALUES ($1, 'unset', $2, 'active', '\\x01', $3) RETURNING id`,
+          [tenant.id, randomUUID(), secrets.connectorKeyVersion()],
+        );
+        const binding = { tenantId: String(tenant.id), botId: String(bot.id) };
+        const sealed = await secrets.encryptConnectorSecret(token, {
+          ...binding,
+          purpose: "bot_token" as const,
+        });
+        await verify.query("UPDATE zalo_bots SET bot_token_enc = $2 WHERE id = $1", [
+          bot.id,
+          secrets.blobToText(sealed.enc),
+        ]);
+        const session = await one(
+          `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status, venue_name, price_amount)
+           SELECT $1, id, now() + interval '1 day', now() + interval '1 day 2 hours', 'Asia/Ho_Chi_Minh', 'open',
+                  'Private Hall', 120000
+             FROM sports WHERE key = 'badminton' RETURNING id`,
+          [tenant.id],
+        );
+        const promote = async () => {
+          const chat = `chat-${randomUUID()}`;
+          const person = await one(
+            "INSERT INTO persons (display_name) VALUES ('Boot Sequence') RETURNING id",
+            [],
+          );
+          const membership = await one(
+            "INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id",
+            [tenant.id, person.id],
+          );
+          const { enc } = await secrets.encryptConnectorSecret(chat, {
+            ...binding,
+            purpose: "channel_user" as const,
+          });
+          await verify.query(
+            `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status, zalo_bot_id)
+             VALUES ($1, 'zalo', $2, $3, 'active', $4)`,
+            [person.id, enc, randomUUID(), bot.id],
+          );
+          const player = await one(
+            `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position, joined_at)
+             VALUES ($1, $2, $3, 'active', NULL, now() - interval '1 hour') RETURNING id`,
+            [tenant.id, session.id, membership.id],
+          );
+          const event = await one(
+            `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+             VALUES ($1, 'session', $2, (SELECT coalesce(max(sequence), 0) + 1 FROM outbox_events WHERE aggregate_id = $2),
+                     'player.promoted', $3)
+             RETURNING id`,
+            [
+              tenant.id,
+              session.id,
+              { session_id: session.id, player_id: player.id, amount_due: 95_000 },
+            ],
+          );
+          return { chat, event: String(event.id) };
+        };
+        const projectors = new Map<string, DeliverFn>([
+          ...PROJECTORS,
+          ["zalo_dm", createZaloDmDeliver({ db: workerPool })],
+        ]);
+        return { stub, token, projectors, promote, close };
+      } catch (error) {
+        await close();
+        throw error;
+      }
+    }
+
+    it('BS-1: the committed OUTBOX_DISPATCH_SCHEDULE_ENABLED is exactly "true" and the worker resolver turns dispatch on with every projector disabled', async () => {
+      const lines = readFileSync(path.join(REPO, ".env.example"), "utf8")
+        .split("\n")
+        .filter((line) => line.startsWith("OUTBOX_DISPATCH_SCHEDULE_ENABLED="));
+      expect(lines).toEqual(["OUTBOX_DISPATCH_SCHEDULE_ENABLED=true"]); // .env.example:91
+      const committed = lines[0]!.slice(lines[0]!.indexOf("=") + 1);
+      expect(committed).toBe("true");
+      const { resolveWorkerDispatchEnablement } = await import("./worker.js");
+      const { probeOutboxRegistry } = await import("./projector-registry.js");
+      await expect(
+        resolveWorkerDispatchEnablement(committed, PROJECTORS, () =>
+          probeOutboxRegistry(workerPool),
+        ),
+      ).resolves.toMatchObject({ enabled: true });
+      expect(await realProjectors()).toEqual(ALL_OFF);
+    });
+
+    it("BS-2 web_realtime: events acked '{}' while off are delivered after the CLI enables; a back-dated one is never delivered and gets one age record", async () => {
+      const webRealtime = await import("./projectors/web-realtime.js");
+      await webRealtime.setWebRealtimeDbForTests(workerPool);
+      try {
+        const ids: string[] = [];
+        for (let i = 0; i < 3; i++) ids.push(await insertEvent("session", "session.updated"));
+        const inBound = ids.slice(0, 2);
+        const aged = ids[2]!;
+        await ackedWhileOff(ids, PROJECTORS);
+        await backdate([aged]);
+        await enable("web_realtime");
+        await cycle(PROJECTORS);
+        for (const id of inBound)
+          expect(await deliveries(id)).toEqual([
+            { projector: "web_realtime", status: "delivered", attempts: 1, error_code: null },
+          ]);
+        expect(await deliveries(aged)).toEqual([]);
+        expect(await expiries(ids)).toEqual([
+          { job_id: aged, reason: `${EXPIRED}:web_realtime:age` },
+        ]);
+      } finally {
+        await webRealtime.setWebRealtimeDbForTests(null);
+        await asOwner("SELECT outbox_projector_set_enabled('web_realtime', false)", []);
+      }
+    }, 30_000);
+
+    it("BS-3 zalo_dm: promotion DMs acked '{}' while off reach the stub once each after the CLI enables; a back-dated one is never sent and gets one age record", async () => {
+      const zalo = await zaloBoot();
+      try {
+        const promoted = [await zalo.promote(), await zalo.promote(), await zalo.promote()];
+        const ids = promoted.map((p) => p.event);
+        const inBound = promoted.slice(0, 2);
+        const aged = promoted[2]!;
+        await ackedWhileOff(ids, zalo.projectors);
+        expect(zalo.stub.calls).toEqual([]);
+        await backdate([aged.event]);
+        await enable("zalo_dm");
+        await cycle(zalo.projectors);
+        await cycle(zalo.projectors); // a delivered row is never claimed again
+        expect(zalo.stub.calls.map((call) => call.chatId).sort()).toEqual(
+          inBound.map((p) => p.chat).sort(),
+        );
+        expect(zalo.stub.calls.every((call) => call.token === zalo.token)).toBe(true);
+        for (const p of inBound)
+          expect(await deliveries(p.event)).toEqual([
+            { projector: "zalo_dm", status: "delivered", attempts: 1, error_code: null },
+          ]);
+        expect(await deliveries(aged.event)).toEqual([]);
+        expect(await expiries(ids)).toEqual([
+          { job_id: aged.event, reason: `${EXPIRED}:zalo_dm:age` },
+        ]);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+  });
 });
