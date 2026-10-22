@@ -8,6 +8,7 @@ import {
   type ClubConfigPatch,
 } from "./club-config.js";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import { stripInvisibleChars } from "./text-safety.js";
 
 // Real-PG tests as role `app` (DATABASE_URL_TEST required; CI only). Covers authz by action class,
 // RLS isolation, idempotent replay, the validation matrix, single step row and settings upsert.
@@ -362,6 +363,94 @@ describe("updateClubConfig", () => {
       } finally {
         await ctx.owner.query(`UPDATE sports SET active = true WHERE key = $1`, [sportKey]);
       }
+    });
+  });
+
+  // L27 (readiness row T2, R1-R5): validatePatch strips the shared invisible set (text-safety.ts)
+  // from the club name FIRST, then trims, then runs every existing check on the stripped value
+  // (lengths count after the strip). The SQL tenant_profile_update stores Cc, Cf, U+2028 and U+2800
+  // as sent, so this validator is the only refusal of R4 for a club name. Inputs come from code
+  // points (never escapes or pasted invisible characters).
+  describe("club name strips invisible code points first (T2 R1-R5)", () => {
+    const cp = (...n: number[]) => String.fromCodePoint(...n);
+    const mid = (...n: number[]) => "a" + cp(...n) + "b"; // visible text around the code points
+    const family = cp(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467);
+    const row = async (text: string, params: unknown[] = []) =>
+      (await ctx.owner.query(text, params)).rows[0];
+    const storedName = async () =>
+      (await row(`SELECT name FROM tenants WHERE id = $1`, [ctx.tenantA])).name;
+    const commands = async () => (await row(`SELECT count(*)::int n FROM processed_commands`)).n;
+    const failure = (name: string) => update({ name }).catch((x: unknown) => x);
+
+    // R1 clean, R2 strip-set code points among visible text, R5 composed emoji: stored stripped.
+    const stored: [string, string, string][] = [
+      ["R1 clean value, trimmed", "  CLB R1  ", "CLB R1"],
+      ["R1 combining accent kept as sent", "Cafe" + cp(0x301), "Cafe" + cp(0x301)],
+      ["R2 U+200B (refused as Cf before)", mid(0x200b), "ab"],
+      ["R2 U+00AD soft hyphen", mid(0xad), "ab"],
+      ["R2 U+3164 Hangul filler", mid(0x3164), "ab"],
+      ["R2 U+FE00 variation selector", mid(0xfe00), "ab"],
+      ["R2 U+E0001 language tag", mid(0xe0001), "ab"],
+      ["R2 U+2065 unassigned default-ignorable", mid(0x2065), "ab"],
+      ["R2 strip first, then trim", cp(0x200b) + " a b " + cp(0x200b), "a b"],
+      // R5: the owner's rule applied as written (item 6, no emoji exception, readiness section 7):
+      // U+200D and U+FE0F are in the strip set, so composed emoji split.
+      ["R5 ZWJ family splits into three emoji", family, cp(0x1f468, 0x1f469, 0x1f467)],
+      ["R5 VS16 heart becomes the text heart", cp(0x2764, 0xfe0f), cp(0x2764)],
+    ];
+    it.each(stored)("%s", async (_label, input, expected) => {
+      const { club } = await update({ name: input });
+      expect(club.name).toBe(expected);
+      expect(await storedName()).toBe(expected);
+    });
+
+    it("lengths count after the strip (120 pass, 121 refused)", async () => {
+      const spread = (n: number) => Array.from({ length: n }, () => "x").join(cp(0x200b));
+      expect((await update({ name: spread(120) })).club.name).toBe("x".repeat(120));
+      expect(await storedName()).toBe("x".repeat(120));
+      await expectCode(update({ name: spread(121) }), "INVALID_INPUT");
+    });
+
+    // R3: invisible-only fails exactly where an empty name fails (same error), with zero mutation.
+    const invisibleOnly: [string, string][] = [
+      ["R3 U+200B alone", cp(0x200b)],
+      ["R3 only strip-set code points", cp(0x200b, 0xad, 0x3164, 0xfe0f, 0xe0001, 0x2065)],
+      ["R3 strip-set code points between spaces", " " + cp(0x200b) + " " + cp(0x3164) + " "],
+    ];
+    it.each(invisibleOnly)("%s: refused like an empty name", async (_label, name) => {
+      const before = await commands();
+      const blank = await failure("   ");
+      const e = await failure(name);
+      expect(e).toBeInstanceOf(ClubConfigError);
+      expect((e as ClubConfigError).code).toBe("INVALID_INPUT");
+      expect((e as ClubConfigError).message).toBe((blank as ClubConfigError).message);
+      expect(await commands()).toBe(before);
+    });
+
+    // R4: Cc and the Cf outside the strip set stay refused; each survives the strip unchanged.
+    const r4: [string, number][] = [
+      ["Cc U+0000 NUL", 0x0],
+      ["Cc U+0007 BEL", 0x7],
+      ["Cc U+007F DEL", 0x7f],
+      ["Cc U+0085 NEL", 0x85],
+      ["Cf U+0600 (not bidi)", 0x600],
+      ["Cf U+061C bidi", 0x61c],
+      ["Cf U+200E bidi", 0x200e],
+      ["Cf U+202E bidi override", 0x202e],
+      ["Cf U+2067 bidi isolate", 0x2067],
+    ];
+    it.each(r4)("R4 %s among visible text stays refused", async (_label, n) => {
+      const name = mid(n);
+      expect(stripInvisibleChars(name)).toBe(name);
+      const before = await commands();
+      await expectCode(update({ name }), "INVALID_INPUT");
+      expect(await commands()).toBe(before);
+    });
+
+    it("R4 survives the strip (zero-width space next to a bidi override)", async () => {
+      const before = await commands();
+      await expectCode(update({ name: mid(0x200b, 0x202e) }), "INVALID_INPUT");
+      expect(await commands()).toBe(before);
     });
   });
 });
