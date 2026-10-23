@@ -579,3 +579,190 @@ IMPLEMENTATION_ARTIFACTS: PASS
 FIRST_IMPLEMENTATION_STEP: section 10 U1 - create packages/db/migrations/0070_member_name_control_chars.sql section A (the threat-model header, the owner assertion, public.member_name_apply_rule with its attributes, REVOKE and COMMENT), apply it on a scratch DB under the lock, run L29-F1-F5 (the count and tail pins stay red until U4, G2 until U5), commit in the worktree
 REMAINING_BLOCKERS: none
 ```
+
+## 18. Amendment 1 (2026-10-23, orchestrator run 6): the L27 and L23 pins this lane edits (RO-L29-2 to RO-L29-6), the raised caps and the deviations
+
+> Drafted for run 6 (orchestrator, opus/max) at HEAD 1762495905e4bfcc1fc2e5b1646cfd2847663c24 (U8d); U9 appends it after U8c. Sections 1-17 stay as step 0 wrote them; where they conflict with this section, this section wins (the newer block). N = `status/P3-S16g-notes` (untracked). Evidence: `N/run2/u-l27-edits.md`, `N/run3/u5a-edits.md`, `N/run4/u5b-edits.md`, `N/run4/u7a-edits.md`, `N/run4/u7e1-edits.md`, `N/run5/u7c-edits.md` and the rulings `N/conductor-ruling-l29-1.md` to `N/conductor-ruling-l29-6.md`. This section changes no gate result and adds no gate block.
+
+### 18.1 Superseded statements
+
+- Section 11 says the L27 pins stay "not edited, green at every unit" and that "L27's G1-G4 stay". Both statements are superseded by RO-L29-2 and RO-L29-3 for exactly the pin groups of 18.2 and for nothing else. Cause (RO-L29-2): a conductor lapse in the lane block ("L23 and L27 pins unchanged", written without checking that RC-BODY compares live function bodies) plus a step-0 defect in section 11; not a writer fault.
+- Every other pin of section 11's list is outside these groups: a later edit of one needs its own ruling request (RO-L29-3 ruling 2: pins about the strip set, the emoji rule, the length limits, P1's constants, A-12, an L23 pin, RC-ACL or the OWNER tests stay a STOP). The report (:117) lists exactly these groups as the pins edited under the rulings up to U8d.
+
+### 18.2 The pin groups (one row per group)
+
+| # | Pin group | File | Commit | Before -> after, exact text | Ruling |
+|---|---|---|---|---|---|
+| 1 | RC-BODY: 6 cells (P2, T1, T2, P3, P4, M2; P1's cell unchanged) gain one `l29` substitution layer | `packages/db/src/member-name-invisible-chars.test.ts` | `b086c1f29ed17987c7f340106d9d6cfb69dcd491` | 18.3 block 1; every cell: `N/run2/u-l27-edits.md` :13-39 | RO-L29-2 |
+| 2 | MN rows `R4 U+<cp> among visible text`: 24 cells (P2, T1, T2 x 4 rows -> 22023 with the row untouched; P3, P4, M2 x 4 rows -> the code point removed) | same file | same commit | 18.3 block 2; every cell: `N/run2/u-l27-edits.md` :40-75 | RO-L29-2 |
+| 3 | M2 R3 cells: 2 cells ("R3 invisible-only", "R3 invisible-only with spaces") -> stored NULL | same file | same commit | 18.3 block 3; `N/run2/u-l27-edits.md` :76-85 | RO-L29-3 (group 3) |
+| 4a | TypeScript O1 pin, host add (`addMemberToSession`) | `packages/db/src/roster-service.test.ts` | `72bae66c8199968cc7684168356db09cc004db07` | 18.3 block 4a; `N/run4/u7a-edits.md` :5-28 | RO-L29-3 (group 4), corrected by RO-L29-4 (a) |
+| 4b | TypeScript O1 pin, `provisionTenant` | `packages/db/src/auth.test.ts` | `cc954fec317cd7c5c499a3217f3d2e885f94a57d` | 18.3 block 4b; `N/run4/u7e1-edits.md` :3-31 | RO-L29-3 (group 4), corrected by RO-L29-4 (a) |
+| 5a | Writer guard G1: the matcher `g1()` changes, no L27 assertion is edited; G1 cells 5 its / 7 cells -> 8 its / 22 cells | `packages/db/src/member-name-writer-guard.test.ts` | `15a1dbec3dd29633344ad38856796d211589aff2` | 18.3 block 5a; `N/run3/u5a-edits.md` :1-21, E3 :78, E4 :103 | RO-L29-3 (group 5) |
+| 5b | Writer guard G2 "holds on packages/db/migrations": both assertions edited | same file | `7f1fac7faadf54ddb39bff12c9e44f36a4b9a84b` | 18.3 block 5b; `N/run4/u5b-edits.md` :5-45 | RO-L29-3 (group 5) |
+| 6 | SS-R3 venueAddress: assertion (B) of the 2 cells (create, update) and the L27 comment at :85-86 | `packages/db/src/session-service.test.ts` | `10324c334e1e98ea92fcebdf067351f93feb31e8` | 18.3 block 6; `N/run5/u7c-edits.md` :26-46 | RO-L29-6 |
+| 6+ | TXT5 and TXT5b: `venue_address` `''` -> null (2 cells, not tagged [L23], from fb974ad) | same file | same commit | 18.3 block 6+; `N/run5/u7c-edits.md` :14-21 | RO-L29-5 (1) |
+
+### 18.3 Before -> after, copied from the edits files
+
+Block 1 (RC-BODY, 6 cells; two exact examples; the other four are `N/run2/u-l27-edits.md` :13-39):
+
+```text
+new L380-L382 (added, P2 create_host_added_person): l29: [[`v_name := btrim(${H}(p_display_name));`, `v_name := ${L29_RULE}(p_display_name, false);`]]
+new L394-L399 (added, P3 zalo_identity_resolve): l29: [[`v_name text := left(nullif(btrim(${H}(p_display_name)), ''), 120);`, `v_name text := left(${L29_RULE}(p_display_name, true), 120);`]]
+```
+
+Block 2 (MN R4 rows, 24 cells; two exact examples; the other cells are `N/run2/u-l27-edits.md` :40-75):
+
+```text
+old L122 (P2): r4: "keep",
+new L122 (P2): r4: "refuse",
+old L142 (P3): r4: "keep",
+new L142 (P3): r4: "remove",
+```
+
+Block 3 (M2 R3 cells, 2 cells):
+
+```text
+old L258: r3: (r) => ({ stored: cps([...r.input].filter((c) => c === " ").join("")) }),
+new L265: r3: () => ({ stored: null }),
+```
+
+Block 4a (roster-service.test.ts; the row is removed and one test is added, both exact):
+
+```ts
+    ["R4 bidi RLO kept as today (O1)", `Mi${cp(0x202e)}nh`, `Mi${cp(0x202e)}nh`],
+```
+
+```ts
+  it("host add R4 bidi RLO (L29, was kept as today O1): refused INVALID_INPUT, nothing written", async () => {
+    const { tenantId, actor, sessionId } = await world();
+    const before = await fx.counts(tenantId);
+    const sent = `Mi${cp(0x202e)}nh`;
+    expect(await codeOf(add(tenantId, actor, sessionId, { displayName: sent }))).toBe(
+      "INVALID_INPUT",
+    );
+    expect(await fx.counts(tenantId)).toEqual(before);
+  });
+```
+
+Block 4b (auth.test.ts; the row is removed and one test is added, both exact):
+
+```ts
+    ["R4 bidi RLO kept as today (O1)", `WAO${cp(0x202e)} Club`, `WAO${cp(0x202e)} Club`],
+```
+
+```ts
+  it("provisionTenant R4 bidi RLO (L29, was kept as today O1): refused 22023, no tenant created", async () => {
+    const i = l27++;
+    const owner = await seedPersonAccount(ctx.owner, String(i));
+    await expect(
+      provisionTenant(ctx.appPool, {
+        slug: `l27-club-${i}`,
+        name: `WAO${cp(0x202e)} Club`,
+        personId: owner.personId,
+      }),
+    ).rejects.toMatchObject({ code: "22023" });
+    const { rows } = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM tenants WHERE slug = $1`,
+      [`l27-club-${i}`],
+    );
+    expect((rows[0] as { n: number }).n).toBe(0);
+  });
+```
+
+Block 5a (G1; from `N/run3/u5a-edits.md` :1-21, no assertion edited):
+
+```text
+Edited L27 assertions: NONE. The five L27 G1 its (7 cells: 1 + 1 + 1 + 2 + 2) keep every
+assertion byte for byte. They were red x5 only because the matcher g1() did not accept the rule;
+the change is in the matcher (E3, E4), which now accepts a schema-qualified call to
+public.member_name_apply_rule( ONLY while every catalog definition of the rule reads its argument
+through public.public_name_strip_invisible(p_value) alone (strip before any other processing).
+Nothing is loosened or removed; G2, G3, G4, TS_DIRS and CLEANUP are untouched.
+
+G1 cells: before 5 its / 7 cells; after 8 its / 22 cells (new: the rule pin 2; a rule that does
+not strip first 6 planted bodies + no rule + a minimal positive control = 8; a look-alike rule,
+an unqualified rule call or another function 4 + a positive control = 5).
+L29-G1: 3 its / 11 cells (holds 2; fails 3; passes 1 + 1 + 2 x 2).
+```
+
+Block 5b (G2; both assertions, exact; from `N/run4/u5b-edits.md` :5-45):
+
+```text
+- Cell 1. Before: the G2 hits outside 0069's L27-CLEANUP block are []. After: the G2 hits outside 0069's L27-CLEANUP and 0070's L29-CLEANUP blocks are [], each block bound to its own file and its own marker pair (admit()).
+- Cell 2. Before: that block is one statement calling the helper, [true]. After: one statement each, 0069's calling the helper and 0070's the rule, [[true], [true]]; the rule is accepted through G1's strip-first pin (U5a), not restated.
+```
+
+```ts
+    expect(outside, "bare writers outside 0069's L27-CLEANUP block (file:line)").toEqual([]);
+    expect(cleanup, `${CLEANUP}:${marker("BEGIN")}: one cleanup block, calling the helper`).toEqual(
+      [true],
+    );
+```
+
+```ts
+    expect(outside, "bare writers outside the two cleanup blocks (file:line)").toEqual([]);
+    expect(calls, "0069's block calls the helper, 0070's the rule").toEqual([[true], [true]]);
+```
+
+Block 6 (SS-R3 venueAddress; assertion (A) of both cells is byte-unchanged):
+
+```text
+Create cell (describe.each(NAME_FIELDS) "L23 strip-first on create: $field"), assertion (B), line 332:
+- before: `expect(await nameOf(r.sessionId, column)).toBe(rest);`
+- after:  `expect(await nameOf(r.sessionId, column)).toBe(field === "venueAddress" ? null : rest);`
+
+Update cell (describe.each(NAME_FIELDS), updateSession), assertion (B), line 3292:
+- before: `expect(await nameOf(target.sessionId, column)).toBe(rest);`
+- after:  `expect(await nameOf(target.sessionId, column)).toBe(field === "venueAddress" ? null : rest);`
+
+L27 comment, lines 85-86 ("(no trim;" was false after D2b; line count unchanged):
+- before: `// L27 U5d: venue_address joins NAME_FIELDS, so it gets the same R1-R5 rows (no trim; the R5 emoji` / `// split is the owner's rule applied as written, no exception).`
+- after:  `// L27 U5d: venue_address joins NAME_FIELDS, so it gets the same R1-R5 rows (trimmed, NULL when` / `// empty per L29 D2b; the R5 emoji split is the owner's rule applied as written, no exception).`
+```
+
+Block 6+ (TXT5 and TXT5b; `git diff -U0` of `packages/db/src/session-service.test.ts`):
+
+```text
+    -    ).toEqual({ area: "", venue_name: "", venue_address: "" });
+    +    ).toEqual({ area: "", venue_name: "", venue_address: null });
+    -    ).toEqual({ area: "", venue_name: "", venue_address: "" });
+    +    ).toEqual({ area: "", venue_name: "", venue_address: null });
+```
+
+### 18.4 Caps as raised
+
+| Cap | Lane block | After RO-L29-1 | After RO-L29-3 | After RO-L29-5 |
+|---|---|---|---|---|
+| non-test lines | 900 | 1,000 | 1,000 | 1,000 |
+| test lines | 1,600 | 1,600 | 1,900 | 2,100 |
+| total lines (excluding docs) | 2,500 | 2,600 | 2,900 | 3,100 |
+| files | 30 | 30 | 30 | 30 |
+
+RO-L29-4 leaves every cap unchanged. Each cap is a ceiling, not a target. Tier B overrun entries (non-test above 900 with six definers re-created; test above 1,600) are in the report (RO-L29-1, RO-L29-3, RO-L29-5).
+
+B3 at 5ea9da5514e32b2511e5aab9a52769100c36453a (the last code commit before this amendment): TOTALS p3-name-writers-refuse-control-bidi at 5ea9da5: files=28 migrations=1 non-test=+893 -33 (comment-only 204, blank 59) test=+1920 -60 docs=+581 -0 total_changed=2906 (excl. docs); the PR body carries the numbers at the final head.
+
+### 18.5 The rulings, one line each
+
+- RO-L29-1: T1's route validator `apps/web/app/api/onboarding/start/route.ts` and ONE barrel export in `packages/db/src/index.ts` are in scope; the 0070 owner check must fail closed (42501) before any re-created definer can run; non-test cap 1,000 (total 2,600); out-of-scope residue goes to the PR body; DD-147 is L29's (DD-146 if a repo check rejects the gap); D1-D8 and N1-N4 stay "default applied, pending owner sign-off".
+- RO-L29-2: option A for RC-BODY and the MN R4 rows: exactly one more substitution layer, R4 expectations follow section 7 exactly, done once after U3, listed before and after, recorded here, in the report, in DD-147 and in the PR body.
+- RO-L29-3: option A for groups 3-5 under RO-L29-2's conditions (M2 R3 cells -> stored NULL; the two O1 tests -> an exact refusal with nothing written; G1 accepts `member_name_apply_rule(` only with the transitive strip-first pin); standing rule for later "kept as today" / "stored as typed" pins and re-created-body comparisons; test cap 1,900, total 2,900.
+- RO-L29-4: (a) the two TypeScript O1 pins assert the exact TypeScript outcome (the writer's existing refusal code or class, nothing written), the SQL 22023 backstop stays pinned by the L29-W1 cells; (b) the lane may reset `plexco_test` only, through its copy of reset-plexco-test.sh, inside the DB/e2e lock, each reset announced in the report; three deviations accepted (18.6).
+- RO-L29-5: the TXT5/TXT5b empty `venue_address` cells are edited under RO-L29-3 ruling 2 (a) after the blame, `git log -S` and decisions.md checks; test cap 2,100, total 3,100; the AG1 split is accepted; two nits (the club-config-validation.ts comment; L29-G3 checks per file) go to the fix round.
+- RO-L29-6: option A: edit only assertion (B) of the two SS-R3 cells, correct the L27 comment at :85-86, list it as the sixth group; a cell blamed to an [L23] commit whose failing subject is a column L23 did not cover is editable under the standing rule, while area, venue_name, a public name, the strip set and the emoji rule stay a STOP.
+
+### 18.6 Deviations
+
+- U3b ended at 252k because its in-flight run finished before the stop notice could land (RO-L29-3).
+- TaskStop is refused to orchestrators (owner mismatch): stops go by SendMessage (RO-L29-4; report :71).
+- prettier wrapped the `packages/db/src/index.ts` export into one statement of several lines where RO-L29-1 said one line (RO-L29-4).
+- The TypeScript writers keep their existing `stripInvisibleChars(` call because L27's G4 checks file-level presence and editing G4 is a STOP; the new check is added beside it (RO-L29-4).
+- AG1 was committed with a 300_000 budget for a measured 28 s (`dce9815bd4c16c71f9b8e97ec2ac66b0ff520653`); it is split into three tests, one per position (alone, edge, inside), about 9 s each with a 30_000 budget each (`56bf3fbe0a7f8db96c1c4b8f27a1cd49bacc7fb0`; measured 27,983 ms alone, 9,030 / 9,161 / 9,288 ms split; report :80; RO-L29-5).
+- Usage-limit pauses the report names: (1) the U4a writer ended by a usage limit (HTTP 429) mid-unit after its focused run at 02:11, nothing committed (report :58); the conductor resumed at 03:30 and run 3 started fresh at 03:32 (report :59); (2) run 5 ended on a usage limit (HTTP 429) at about 07:00 at 251k corrected with no hand-back; run 6 started at 08:31 and recorded U8d's result from disk (report :9, :106, :108).
+- plexco_test resets under RO-L29-4 (b): the report names one reset, planned right before the final-head db suite because a stale migration-text checksum is expected at migrate.test.ts:2952 (report :119, :126). No plexco_test reset happened before the final-head one (the report names none).
+
+final-head plexco_test reset: planned once, inside the DB/e2e lock, right before the final-head db suite (RO-L29-4 (b)); the PR body names it and its log.
+
+U8b/U8c pin edits: U8b none (no existing cell went red; N/run5/u8b-edits.md does not exist). U8c moved one existing cell, in apps/web/lib/club-settings-model.test.ts, describe "clubNameProblem (same count as club-config-validation.ts: UTF-16 units)", input "a" + U+2028 + "b" (a line separator inside a club name): before = expected null (accepted; the old own regex refused only Cc and Cf), after = expected "invalid_chars" (the web checkTypedName refuses U+2028; readiness section 7 row "T2 web clubNameProblem", D5b); its comment line moved with it: before = "The club route refuses only Cc/Cf: the client mirrors it and refuses nothing more.", after = "L29: U+2028 is refused like a control (the web checkTypedName); it was accepted before." No other existing cell changed (every other clubNameProblem row, the L23 public-alias tests and the strip, emoji and length pins are untouched).
