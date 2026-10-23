@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import { addPlayer } from "../../lib/roster-payments-api";
-import { stripInvisibleChars } from "../../lib/session-form-model";
+import { checkTypedName, stripInvisibleChars } from "../../lib/session-form-model";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { Button } from "../ui/button";
@@ -12,6 +12,18 @@ import { ApiErrorNotice } from "./api-error-notice";
 import styles from "./roster.module.css";
 
 export const DISPLAY_NAME_MAX = 100;
+
+/**
+ * Why the host-typed name cannot be sent, or null when it can. "length": nothing visible is left
+ * after the L27 strip and the trim, or it is longer than DISPLAY_NAME_MAX. "chars" (L29): the web
+ * twin checkTypedName refuses what is left (control, bidi, line or paragraph separator, blank-looking
+ * code points), as the server does. The value sent stays the strip-and-trim result.
+ */
+export function addPlayerNameProblem(raw: string): "length" | "chars" | null {
+  const name = stripInvisibleChars(raw).trim();
+  if (name.length === 0 || name.length > DISPLAY_NAME_MAX) return "length";
+  return checkTypedName(name) === null ? "chars" : null;
+}
 
 /**
  * Host-add by display name (DD-85: no member picker, a name is never resolved to a member). The
@@ -43,7 +55,7 @@ export function RosterAddPlayerForm({
   const t = useT();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [invalid, setInvalid] = useState(false);
+  const [problem, setProblem] = useState<ReturnType<typeof addPlayerNameProblem>>(null);
   const cmd = useRosterCommand(onReload);
   const locked = cmd.locked;
 
@@ -52,11 +64,13 @@ export function RosterAddPlayerForm({
     if (cmd.busy) return;
     // L27: strip invisible code points first; an invisible-only name is the empty-name error.
     const displayName = stripInvisibleChars(name).trim();
-    if (displayName.length === 0 || displayName.length > DISPLAY_NAME_MAX) {
-      setInvalid(true);
+    // L29: control, bidi, separator and blank-looking code points are refused, never stripped.
+    const nameProblem = addPlayerNameProblem(name);
+    if (nameProblem) {
+      setProblem(nameProblem);
       return;
     }
-    setInvalid(false);
+    setProblem(null);
     const result = await cmd.run((commandId) =>
       addPlayer(ctx, sessionId, { commandId, displayName }),
     );
@@ -111,12 +125,17 @@ export function RosterAddPlayerForm({
           "Adds a new person by name (1–100 characters). It is never matched to an existing member.",
         )}
         error={
-          invalid
+          problem === "length"
             ? t(
                 `Nhập tên từ 1 đến ${DISPLAY_NAME_MAX} ký tự.`,
                 `Enter a name of 1 to ${DISPLAY_NAME_MAX} characters.`,
               )
-            : null
+            : problem === "chars"
+              ? t(
+                  "Tên không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+                  "The name cannot contain control or hidden characters.",
+                )
+              : null
         }
         value={name}
         maxLength={DISPLAY_NAME_MAX}
