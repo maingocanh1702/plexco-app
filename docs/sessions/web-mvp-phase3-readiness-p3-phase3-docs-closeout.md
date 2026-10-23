@@ -107,6 +107,8 @@ Total about 710 of 900 lines (this file, about 190, included); 4 files of 12; 0 
 | R-F6 | L32 residual P3s | N17 lists the four items as PR #105's body lists them (:49); the review ids R1a-4, R1a-5, R2-2 and R2-3 are not mapped to items (no durable source maps them) |
 | R-F7 | L31 | N7, DD-148 section F and ledger item 9 state L31 as paused on an owner decision with DD-146 reserved; nothing from its unpushed readiness file and no unpushed SHA is recorded as a fact |
 
+2026-10-23, after step 0: conductor ruling RO-L30-1 replaced OR-2 (rows `db-test-definer-role-reads-outside-reader-lock-guard` and `db-test-privilege-assertions-vs-definer-membership-windows-flake` close as superseded by PR #105, with a reopen condition carried by `ci-definer-role-class-flake-retire-watch`) and OR-3 (`club-name-rule-unicode-separators` is hand-flipped as delivered by PR #106 and PR #101; `session-venue-address-error-field-contract` is unchanged), and accepted OR-1, OR-4 to OR-8 and R-F1 to R-F7 as the lane's defaults.
+
 ## 6. Verification the writers and the reviewer run (cite measured output through tail -40)
 
 | V | Check | Expected |
