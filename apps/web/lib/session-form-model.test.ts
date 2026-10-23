@@ -4,6 +4,9 @@ import {
   validateDisplayName,
 } from "@plexco/db";
 import { describe, expect, it } from "vitest";
+import { addPlayerNameProblem } from "../components/sessions/roster-add-player-form";
+import { clubNameProblem } from "./club-settings-model";
+import { validateNewClub, type NewClubValues } from "./new-club-form";
 import {
   VENUE_ADDRESS_MAX,
   buildCreateBody,
@@ -660,13 +663,24 @@ describe("L23, L27: the session form strips invisible code points from area, ven
     }
   }, 30_000);
 
-  // L29 U8d: the web checkTypedName agrees with the server rule over every scalar.
-  it("L29-AG2 the web checkTypedName equals @plexco/db checkTypedName over every scalar", () => {
+  // L29 U8d: the web checkTypedName agrees with the server rule over every scalar. L29 U8c: so do
+  // the three name mirrors that call it (clubNameProblem, validateNewClub, addPlayerNameProblem).
+  it("L29-AG2 the web checkTypedName equals @plexco/db checkTypedName over every scalar, and so do the three name mirrors", () => {
     const mismatches: number[] = [];
+    const clubValues: NewClubValues = { name: "", slug: "wao-club", timezone: TZ, locale: "en" };
     for (let cp = 0; cp <= 0x10ffff; cp++) {
       if (cp >= 0xd800 && cp <= 0xdfff) continue;
       for (const input of [ch(cp), "a" + ch(cp), "a" + ch(cp) + "b"]) {
-        if (checkTypedName(input) !== serverCheckTypedName(input)) {
+        // null = refused: each mirror must refuse exactly what the server rule refuses.
+        const server = serverCheckTypedName(input);
+        const refused = server === null;
+        clubValues.name = input;
+        if (
+          checkTypedName(input) !== server ||
+          (clubNameProblem(input) !== null) !== refused ||
+          (validateNewClub(clubValues, en).name !== undefined) !== refused ||
+          (addPlayerNameProblem(input) !== null) !== refused
+        ) {
           mismatches.push(cp);
           break;
         }
