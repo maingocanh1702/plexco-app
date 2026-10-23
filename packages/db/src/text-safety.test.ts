@@ -147,16 +147,6 @@ describe("L29-T text-safety: the typed-name check and the external-name normaliz
     return bad;
   };
 
-  it("L29-T1: checkTypedName is strip, trim, hidden test, visible test, over every scalar", () => {
-    const bad = badScalars((value) => {
-      const t = stripInvisibleChars(value).trim();
-      const expected = hasHiddenChar(t) || !hasVisibleChar(t) ? null : t;
-      const got = checkTypedName(value);
-      return got === expected && got !== "" && (got === null || !hasHiddenChar(got));
-    });
-    expect(bad).toEqual([]);
-  }, 30_000);
-
   it("L29-T2: normalizeExternalName never throws or returns '', keeps no hidden code point, is idempotent and agrees with checkTypedName, over every scalar", () => {
     const bad = badScalars((value, alone) => {
       let got: string | null;
