@@ -13,6 +13,7 @@ import { OPEN_CHARGES_CAP } from "./me-player-reads.js";
 import { pgErrorChainText, pgErrorHasCode } from "./pg-error.js";
 import { isUuid } from "./roster-money-shared.js";
 import { withTenant } from "./tenant.js";
+import { normalizeExternalName } from "./text-safety.js";
 
 /**
  * Zalo bot ingress persistence (web MVP lane M3a, migration 0053). Everything here is DB-only:
@@ -180,10 +181,12 @@ export async function resolveZaloIdentity(
     displayName: string | null;
   },
 ): Promise<ZaloIdentity> {
+  // Ingress normalizes and never raises; this drops U+0000, which PostgreSQL cannot bind (22021).
+  const name = p.displayName === null ? null : normalizeExternalName(p.displayName);
   const res = await tx.execute(
     sql`SELECT person_id, channel_identity_id, created, display_name, has_account
           FROM zalo_identity_resolve(${p.tenantId}::uuid, ${p.botId}::uuid, ${p.scopeHash},
-                                     ${p.userHash}, ${p.userIdEnc}, ${p.displayName})`,
+                                     ${p.userHash}, ${p.userIdEnc}, ${name})`,
   );
   const r = res.rows[0] as {
     person_id: string;

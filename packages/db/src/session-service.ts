@@ -19,7 +19,7 @@ import { effectiveByCharge } from "./roster-money-shared.js";
 // Call-time-only cycle (P-19), like roster-money-shared.ts's import of this module.
 import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy, sessionActiveRosterCount } from "./session-occupancy.js";
-import { hasHiddenChar, stripInvisibleChars } from "./text-safety.js";
+import { checkTypedName, hasHiddenChar, stripInvisibleChars } from "./text-safety.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -118,7 +118,7 @@ const isInt4 = (value: unknown, min: number): boolean =>
  * member-facing address (owner item 6, 2026-10-22), so a string value loses every STRIP code point
  * (text-safety.ts) before ANY check reads it. The value that is validated (the venue_address cap
  * included), compared, stored and evented is the stripped one; a stripped value equal to the stored
- * one is no change. venue_address keeps its no-trim rule. Every other value, and a payload that is
+ * one is no change. venue_address is trimmed, NULL if empty. Every other value, and a payload that is
  * not a plain object, passes unchanged to the existing checks.
  */
 function stripPublicNames<
@@ -130,7 +130,9 @@ function stripPublicNames<
     ...input,
     ...(typeof area === "string" ? { area: stripInvisibleChars(area) } : {}),
     ...(typeof venueName === "string" ? { venueName: stripInvisibleChars(venueName) } : {}),
-    ...(typeof address === "string" ? { venueAddress: stripInvisibleChars(address) } : {}),
+    ...(typeof address === "string"
+      ? { venueAddress: stripInvisibleChars(address).trim() || null }
+      : {}),
   };
 }
 /**
@@ -142,8 +144,11 @@ const isOptionalText = (value: unknown): boolean =>
   value === undefined || value === null || (typeof value === "string" && !hasHiddenChar(value));
 /** DD-128 OD-4a: venue_address is optional plain text capped at 200 characters (create AND update). */
 const VENUE_ADDRESS_MAX = 200;
+/** L29: a string must also pass checkTypedName (no refused code point, one visible character). */
 const isOptionalVenueAddress = (value: unknown): boolean =>
-  isOptionalText(value) && (typeof value !== "string" || value.length <= VENUE_ADDRESS_MAX);
+  isOptionalText(value) &&
+  (typeof value !== "string" ||
+    (value.length <= VENUE_ADDRESS_MAX && checkTypedName(value) !== null));
 const isEnum = (value: unknown, ...allowed: readonly string[]): boolean =>
   value === undefined || (typeof value === "string" && allowed.includes(value));
 const isValidTimezone = (tz: string): boolean => {

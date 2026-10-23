@@ -82,8 +82,8 @@ const TEXT_CASES = TEXT_FIELDS.flatMap((field) =>
 // selectors, two tag characters, the unassigned U+2065 and the unassigned U+E0FFF.
 const STRIP_SAMPLES = [0x200b, 0x00ad, 0x3164, 0xfe00, 0xfe0f, 0xe0001, 0xe0020, 0x2065, 0xe0fff];
 const REFUSE_SAMPLES = [0x0007, 0x202e, 0x2028, 0x2800]; // control, bidi, line separator, blank glyph
-// L27 U5d: venue_address joins NAME_FIELDS, so it gets the same R1-R5 rows (no trim; the R5 emoji
-// split is the owner's rule applied as written, no exception).
+// L27 U5d: venue_address joins NAME_FIELDS, so it gets the same R1-R5 rows (trimmed, NULL when
+// empty per L29 D2b; the R5 emoji split is the owner's rule applied as written, no exception).
 const NAME_FIELDS = [
   { field: "area", column: "area" },
   { field: "venueName", column: "venue_name" },
@@ -329,7 +329,7 @@ describe("createSession", () => {
         const control = await create(named(field, rest));
         const r = await create(named(field, ch(0x200b) + rest + ch(0xfe0f) + ch(0xe0fff)));
         expect(await nameOf(r.sessionId, column)).toBe(await nameOf(control.sessionId, column));
-        expect(await nameOf(r.sessionId, column)).toBe(rest);
+        expect(await nameOf(r.sessionId, column)).toBe(field === "venueAddress" ? null : rest);
       }
     });
 
@@ -387,7 +387,7 @@ describe("createSession", () => {
       await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
         empty.sessionId,
       ]),
-    ).toEqual({ area: "", venue_name: "", venue_address: "" });
+    ).toEqual({ area: "", venue_name: "", venue_address: null });
     expect(
       await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [
         nulled.sessionId,
@@ -3289,7 +3289,7 @@ describe("updateSession", () => {
         expect(await nameOf(target.sessionId, column)).toBe(
           await nameOf(control.sessionId, column),
         );
-        expect(await nameOf(target.sessionId, column)).toBe(rest);
+        expect(await nameOf(target.sessionId, column)).toBe(field === "venueAddress" ? null : rest);
       }
     });
 
@@ -3399,7 +3399,7 @@ describe("updateSession", () => {
     expect(emptied).toMatchObject({ replayed: false });
     expect(
       await row(`SELECT area, venue_name, venue_address FROM sessions WHERE id = $1`, [sessionId]),
-    ).toEqual({ area: "", venue_name: "", venue_address: "" });
+    ).toEqual({ area: "", venue_name: "", venue_address: null });
   });
 
   it("U9: idempotent no-op when the effective change-set is empty — no version bump, no event, wins a stale version", async () => {

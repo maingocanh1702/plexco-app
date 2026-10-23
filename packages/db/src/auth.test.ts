@@ -893,7 +893,6 @@ describe("tenant_provision (BL-BIL-1)", () => {
     ["R2 VS1", `WAO${cp(0xfe00)} Club`, "WAO Club"],
     ["R2 tag U+E0001", `WAO${cp(0xe0001)} Club`, "WAO Club"],
     ["R2 reserved default-ignorable U+2065", `WAO${cp(0x2065)} Club`, "WAO Club"],
-    ["R4 bidi RLO kept as today (O1)", `WAO${cp(0x202e)} Club`, `WAO${cp(0x202e)} Club`],
     // R5: the owner's rule applied as written, no emoji exception: ZWJ and VS16 are stripped, so the emoji split.
     [
       "R5 ZWJ family splits",
@@ -935,6 +934,23 @@ describe("tenant_provision (BL-BIL-1)", () => {
       expect((rows[0] as { n: number }).n).toBe(0);
     },
   );
+
+  it("provisionTenant R4 bidi RLO (L29, was kept as today O1): refused 22023, no tenant created", async () => {
+    const i = l27++;
+    const owner = await seedPersonAccount(ctx.owner, String(i));
+    await expect(
+      provisionTenant(ctx.appPool, {
+        slug: `l27-club-${i}`,
+        name: `WAO${cp(0x202e)} Club`,
+        personId: owner.personId,
+      }),
+    ).rejects.toMatchObject({ code: "22023" });
+    const { rows } = await ctx.owner.query(
+      `SELECT count(*)::int AS n FROM tenants WHERE slug = $1`,
+      [`l27-club-${i}`],
+    );
+    expect((rows[0] as { n: number }).n).toBe(0);
+  });
 
   it("concurrent same-owner submissions both get the SAME tenant (no false 409)", async () => {
     const owner = await seedPersonAccount(ctx.owner, "1313");
