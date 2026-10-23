@@ -6868,3 +6868,79 @@ merged_probe: null
 notes: |
   R1S NIT-1 (a nit, not a finding): the byte-pinned definer bodies keep unqualified built-ins. Qualifying them needs a migration at the next free number and re-pinned body comparisons (inferred from the byte pin).
   Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 229.
+
+## task: db-test-role-isolation-guard-residual-p3s
+title: Test DB: four residual P3s of the role-isolation guard of #105, each failing closed with a false red that names the file
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/role-hiding-isolation-guard.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Not taken by L32: (1) the comment stripper does not recognise regex literals; (2) per-file pin counts miss a move within one file; (3) a bare grant/revoke word before `;` in product code would read as a split role list (0 hits today); (4) the scanned-file floor leaves 24 files of margin (per-root floors are the upgrade path).
+  Source: PR #105 body, section "Review", line 49.
+
+## task: ci-definer-role-class-flake-retire-watch
+title: CI watch: retire the definer-role CLASS entries of the merge clerk's flake list once L31's and L30's CI runs show no class failure after #105
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [docs/autopilot-backlog.md]
+manifest: null
+merged_probe: null
+close_by: hand · evidence row: closes with the CI run ids of L31's and L30's PRs showing no class failure
+notes: |
+  Before #105, the class hit 2 of 10 runs of the CI db command (chat-catalog RO-L14-6, public-sessions-projector PSP-5b), forced reruns on #95's and #103's PR CI, and failed L27's local db run 1. #105 removes it by construction (20 of 20 green, twice). The flake list itself is a conductor artifact outside the repo. This row carries the REOPEN CONDITION of `db-test-definer-role-reads-outside-reader-lock-guard` and `db-test-privilege-assertions-vs-definer-membership-windows-flake`, both already closed as superseded by PR #105 (conductor ruling RO-L30-1): reopen both if a definer-role-by-name test failure (a CLASS entry of the flake list) recurs on main or on a PR's CI after 2026-10-22T22:17:49Z, the PR #105 merge.
+  Measured 2026-10-24 with `gh run list --workflow ci.yml`: on main, the CI runs created after the #105 merge are 39863898715 (head acdd861, the #105 merge commit itself, success) and 39972881100 (head 21b57f8, the #106 merge commit, success). On the PR #106 branch: run 39971227271 (head 47980f9, success) and run 39966008169 (head ea84d43, failure; only its L29-AG2 lines were read, the failing test there is L29-AG2 at 30,069 ms, see `ci-every-scalar-test-duration-watch`, and it is not called a class failure). CI runs of other branches after the merge were not listed.
+  Source: PR #105 body, section "Evidence", lines 35 and 38; PR #101 body, section "Verification", line 156.
+
+## task: ci-every-scalar-test-duration-watch
+title: CI watch: every-scalar unit tests (all scalars 0..0x10FFFF) run near their explicit 30 s budget on the runner; keep each split at about 3 s locally
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [apps/web/lib/session-form-model.test.ts, apps/web/lib/club-settings-model.test.ts, packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+close_by: hand · evidence row: closes when the CI durations of these tests have been re-checked on later runs and stay well inside the budget, or by an owner decision
+notes: |
+  Two CI-only reds in P3-S16: L27's W7 (RO-L27-1, second push 0b663ba: 5,762 ms on the runner against the 5,000 ms default, 2.6 s locally) and L29-AG2 at ea84d43, 30,069 ms of its 30_000 budget (RO-L29-8: split per position and per mirror, each at or below about 3 s locally). The comment above the split (apps/web/lib/session-form-model.test.ts:666-669 at 21b57f8) records the unsplit test at 30.07 s on the runner, 3.1x its 9.7 s local time.
+  Measured 2026-10-24 from the CI logs of the PR #106 branch (`gh run view <id> --log`): run 39966008169 (head ea84d43, failure): L29-AG1 'alone' 10,954 ms, 'edge' 12,896 ms, 'inside' 14,083 ms, and the unsplit L29-AG2 30,069 ms; run 39971227271 (head 47980f9, success, after the split): L29-AG1 'alone' 11,293 ms, 'edge' 11,889 ms, 'inside' 12,694 ms, and the 12 split L29-AG2 tests from 1,545 ms to 5,961 ms.
+  Every-scalar tests at 21b57f8: apps/web/lib/session-form-model.test.ts:473, :643 and :685 (L29-AG2); apps/web/lib/club-settings-model.test.ts:106; packages/db/src/member-name-invisible-chars.test.ts:1892 (L29-AG1).
+  Source: PR #106 body, section "4. Conductor rulings RO-L29-1 to RO-L29-8", line 69; PR #101 body, section "Verification", line 153; section "Commits", line 113.
+
+## task: p3-s16-lessons-c10-c12-tracked-home
+title: Docs: give the P3-S16 lessons C10-C12 a git-tracked home (kit record for a new script; CI-only every-scalar budget and no RegExp from data; split every-scalar tests to about 3 s)
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [test-chain, kit-integrity]
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · docs-only: lessons add no symbol
+notes: |
+  The conductor's common notes are not part of the repository (an untracked notes tree), so the lessons do not exist durably in the repo. The home is not chosen here (CLAUDE.md or a docs/standards file); fill scope when it is. Durable evidence: C10 = RO-L24-2 (kit:check AUDIT_FAILED "missing record (file exists, not classified)" for the new scripts/outbox-projector-enable.mjs: the repo's audit needs a record for every file under scripts/); C11 = RO-L27-1 (the W7 every-scalar test failed on CI, and the fix 0b663ba builds no RegExp from data); C12 = RO-L29-8 (split to about 3 s locally).
+  Source: PR #102 body, section "Authority", line 17; PR #101 body, section "Verification", line 153; section "Commits", line 113; PR #106 body, section "4. Conductor rulings RO-L29-1 to RO-L29-8", line 69.
+
+## task: projector-delivery-batch-lease-clock-consistency
+title: DB: `claim_projector_delivery_batch` stamps the lease with now() but the outbox claim with clock_timestamp(); use one clock
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [retry-liveness, schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  L24 readiness section 10, residual R3; the lane states it is harmless today. A fix re-creates the function in a migration at the next free number; the function is first defined in packages/db/migrations/0022_job_claim_lease_core.sql (a later re-creation was not checked here; fill scope at the base).
+  Source: PR #102 body, section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 81.
