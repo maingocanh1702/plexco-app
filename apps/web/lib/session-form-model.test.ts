@@ -665,27 +665,53 @@ describe("L23, L27: the session form strips invisible code points from area, ven
 
   // L29 U8d: the web checkTypedName agrees with the server rule over every scalar. L29 U8c: so do
   // the three name mirrors that call it (clubNameProblem, validateNewClub, addPlayerNameProblem).
-  it("L29-AG2 the web checkTypedName equals @plexco/db checkTypedName over every scalar, and so do the three name mirrors", () => {
-    const mismatches: number[] = [];
-    const clubValues: NewClubValues = { name: "", slug: "wao-club", timezone: TZ, locale: "en" };
-    for (let cp = 0; cp <= 0x10ffff; cp++) {
-      if (cp >= 0xd800 && cp <= 0xdfff) continue;
-      for (const input of [ch(cp), "a" + ch(cp), "a" + ch(cp) + "b"]) {
+  // Each position and each mirror has its own test within its own 30 s budget (C12: the single
+  // test ran 30.07 s on the CI runner, 3.1x its 9.7 s local time).
+  const AG2_POSITIONS = [
+    { at: "alone", build: (cp: number) => ch(cp) },
+    { at: "edge", build: (cp: number) => "a" + ch(cp) },
+    { at: "inside", build: (cp: number) => "a" + ch(cp) + "b" },
+  ] as const;
+  const AG2_MIRRORS = [
+    "checkTypedName",
+    "clubNameProblem",
+    "validateNewClub",
+    "addPlayerNameProblem",
+  ] as const;
+  const AG2_CASES = AG2_POSITIONS.flatMap((position) =>
+    AG2_MIRRORS.map((mirror) => ({ ...position, mirror })),
+  );
+  it.each(AG2_CASES)(
+    "L29-AG2 every scalar $at: the web $mirror agrees with @plexco/db checkTypedName",
+    ({ build, mirror }) => {
+      const mismatches: number[] = [];
+      const clubValues: NewClubValues = { name: "", slug: "wao-club", timezone: TZ, locale: "en" };
+      for (let cp = 0; cp <= 0x10ffff; cp++) {
+        if (cp >= 0xd800 && cp <= 0xdfff) continue;
+        const input = build(cp);
         // null = refused: each mirror must refuse exactly what the server rule refuses.
         const server = serverCheckTypedName(input);
         const refused = server === null;
-        clubValues.name = input;
-        if (
-          checkTypedName(input) !== server ||
-          (clubNameProblem(input) !== null) !== refused ||
-          (validateNewClub(clubValues, en).name !== undefined) !== refused ||
-          (addPlayerNameProblem(input) !== null) !== refused
-        ) {
-          mismatches.push(cp);
-          break;
+        let differs: boolean;
+        switch (mirror) {
+          case "checkTypedName":
+            differs = checkTypedName(input) !== server;
+            break;
+          case "clubNameProblem":
+            differs = (clubNameProblem(input) !== null) !== refused;
+            break;
+          case "validateNewClub":
+            clubValues.name = input;
+            differs = (validateNewClub(clubValues, en).name !== undefined) !== refused;
+            break;
+          case "addPlayerNameProblem":
+            differs = (addPlayerNameProblem(input) !== null) !== refused;
+            break;
         }
+        if (differs) mismatches.push(cp);
       }
-    }
-    expect(mismatches).toEqual([]);
-  }, 30_000);
+      expect(mismatches).toEqual([]);
+    },
+    30_000,
+  );
 });
