@@ -6592,6 +6592,8 @@ notes: |
   Phase 4 backlog row from the owner decisions of 2026-10-21: one docs lane that syncs the spec follow-ups. The follow-ups are the "Spec follow-up" subsection of the DD-138 entry and the "Spec follow-up" line of each of DD-139, DD-140, DD-141 and DD-142 in `docs/standards/decisions.md`; `scope` is the union of the Reviewed spec files they name (docs only), each listed here only after a file listing at the lane base confirmed it exists. The records lane L19 edits none of those specs; this row is the lane that does. The owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
   > "one docs lane to sync the DD-138 spec follow-ups"
   Left out on purpose: `docs/features/FE/feature_chat_fe.md`, which DD-138 labels Draft: a spec that is not Reviewed is not a Reviewed-spec follow-up (readiness record `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md`, row P1). No code, test, migration, workflow, env or config file belongs to this row. `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, the DD-138 "Spec follow-up" subsection and the "Spec follow-up" lines of DD-139, DD-140, DD-141 and DD-142 · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+  Update 2026-10-24 (lane L30 p3-phase3-docs-closeout, docs only): two more Reviewed-spec follow-ups of P3-S16 that their lanes did not edit; the line numbers below are at 21b57f8. (a) L27 O3: docs/features/BE/feature_user_settings_tech.md:212 still says hidden characters are refused for persons.display_name, while after #101 the 133 code points are stripped first (:457 and :458 are dated changelog rows, never rewritten). (b) L28: the /join rows of docs/features/BE/feature_zalo_channel_tech.md (:222, :224, :225) do not carry the known_zero R16 text yet. Both files are already in `scope` above.
+  Source: PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 189; PR #98 body, section "Spec follow-up (not edited)", line 55.
 
 ## task: host-pro-late-invoice-retention-period-decision
 title: Host Pro: owner decision of the retention period after a downgrade to Free, with read-only versus hidden Pro-only data (DD-142)
@@ -6646,3 +6648,136 @@ notes: |
   > B4. Amend DD-51: a paid Host Pro tenant whose invoice is late gets the 7-day grace, then is DOWNGRADED TO FREE, never suspended by billing. All data, including Pro-only data, is retained for a retention period to be decided later (1 to 3 months); behaviour of Pro-only data during retention (read-only vs hidden) is decided with it. Billing is not in the MVP, so this is a decision-record change plus backlog rows; keep `suspended` for non-billing (admin / abuse) use, P-7 (suspended or cancelled tenants never public) unchanged.
   Billing is not in the MVP (DD-132), so this row is built with the billing epic and depends on `feature-billing-lifecycle` (`docs/autopilot-backlog.md:845` at 2c7dfe7); until then DD-142 is a decision record plus these backlog rows. The retention period and the read-only versus hidden behaviour of Pro-only data are not decided: they belong to row `host-pro-late-invoice-retention-period-decision`. Not implemented and not started: `downgradeLateHostProTenantToFree` has 0 matches at the lane base, so the probe stays valid until a slice adds that symbol at that path. `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, DD-142 (and DD-132 for billing outside the MVP) · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
   Update 2026-10-22 (lane L26 p3-owner-decisions-2026-10-22): the sentence above that the retention period and the read-only versus hidden behaviour "are not decided" held on 2026-10-21; the retention behaviour of this row is now defined by the owner decisions of 2026-10-22 (DD-142 amendment "Bổ sung 2026-10-22 (mục 8)" in `docs/standards/decisions.md`): the retention period is 1 month, adjustable later and stored as one config value, and during that month Pro-only data follows the default "hidden from normal views, retained, restored on re-upgrade", which the conductor applied and which as a whole is pending owner sign-off (the owner did not answer read-only versus hidden, and row `host-pro-late-invoice-retention-period-decision` stays open until the owner signs or changes it), while billing is still not in the MVP (DD-132) and nothing here is implemented or started.
+
+## task: join-known-zero-person-equality-proof
+title: Zalo /join: prove the joining person is the account's person before a known_zero club renders R16 (hardening of owner item 5)
+status: idea
+risk: P1
+change_class: code
+depends_on: []
+invariants: [identity, transport-zalo]
+scope: [apps/web/lib/zalo/player-commands.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Conductor decision D7 (under the owner's delegation of 2026-10-22, not an owner signature): a row now, a lane once the identity-merge writer exists (DD-103); D7 records that `merge_tombstones` (packages/db/schema.ts:131 at 21b57f8) has no writer today. Owner-accepted residual (item 5): a person other than the account's (P-29) who owes nothing reads known_zero and gets R16. `ownClubPaymentStatus` is at apps/web/lib/zalo/player-commands.ts:190. Candidate dependency `chat-identity-merge-reparent-enablement`, not verified as the DD-103 writer.
+  Source: PR #98 body, section "Deviations and notes", line 95; section "Review", line 87.
+
+## task: public-card-hide-exact-address-real-stack-proof
+title: E2E (local only): prove B1's hide-exact-address option on the real public card, ON and OFF, with public_sessions enabled through the enable CLI
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [web-app, test-chain]
+scope: [apps/web/e2e/golden-path.spec.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Conductor decision D8 (under the owner's delegation of 2026-10-22, not an owner signature): the golden path keeps the public_sessions projector disabled by design (apps/web/e2e/golden-path.spec.ts:263, RC-0c), so no real-stack test renders the public card. With L24's CLI (scripts/outbox-projector-enable.mjs, public_sessions rebuild :25), a scratch smoke DB enables public_sessions; then the card is asserted with `hide_exact_address` (packages/db/schema.ts:636; projected venue NULL when ON, :1716) ON and OFF. Never in CI.
+  Source: repo apps/web/e2e/golden-path.spec.ts:263 and packages/db/schema.ts:636 at 21b57f8; PR #102 body, section "Summary", line 7.
+
+## task: member-names-visible-confusables-homoglyphs
+title: Names: visible confusables (homoglyphs) are not defended on member-facing or public names; owner policy question first, then a rule lane
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: [identity, schema]
+scope: [packages/db/src/text-safety.ts, packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+close_by: hand · owner decision: which confusable sets to refuse or fold is a policy choice; a code row follows the answer
+notes: |
+  L27 (#101) and L29 (#106) defend invisible, control and bidi code points only; both list visible confusables as not defended (L27 O2; L29 residue). This goes to the ledger as an owner question; nothing is decided here. The scope files exist at 21b57f8 (whether text-safety.ts is the rule's TypeScript home was not re-read); a SQL rule change adds one migration at the next free number.
+  Source: PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 188; PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 228.
+
+## task: tenant-repo-sessions-create-area-venue-strip
+title: DB: `tenantRepo.sessions.create` writes area and venue_name without the L23 strip (test-only callers today)
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [session-command]
+scope: [packages/db/src/tenant.ts]
+manifest: null
+merged_probe: null
+notes: |
+  L23 residue found by L27 (O4): the create path at packages/db/src/tenant.ts:123-140 (at 21b57f8: `create:` :123, `area: input.area ?? null` :135) stores the typed values. Only tests call it, so a later product caller would bypass the strip. Related existing row, not edited: `session-text-fields-control-char-validation`.
+  Source: PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 190.
+
+## task: owner-cli-pg-client-inside-try
+title: Owner CLIs: build `new pg.Client` inside `try` in scripts/outbox-projector-enable.mjs and scripts/outbox-dlq-replay.mjs, plus a runbook note on percent-encoding the password
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: [retry-liveness]
+scope: [scripts/outbox-projector-enable.mjs, scripts/outbox-dlq-replay.mjs, docs/runbooks/outbox-dispatch-enable-rollback.md]
+manifest: null
+merged_probe: null
+close_by: hand · a code move adds no slice-unique symbol; close with the merge SHA
+notes: |
+  Lane L24 security round-2 P3-3 (round-1 P3-2), not fixed: the client is built before `try` (at 21b57f8: enable :260 before `try` :261; dlq-replay :101), so an invalid owner URL throws outside the redaction path. No leak was measured (pg-connection-string masks the input). One follow-up covers both CLIs.
+  Source: PR #102 body, section "Review rounds (2 of at most 3)", line 57; section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 80.
+
+## task: braces-ghsa-vfj7-ignore-expiry-2026-12-21
+title: Deps: revisit at the expiry: look for a fixed release (braces GHSA-vfj7-8cjw-p6xm, osv-scanner.toml ignoreUntil 2026-12-21)
+status: idea
+risk: P1
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: [osv-scanner.toml, apps/web/package.json, pnpm-lock.yaml]
+manifest: null
+merged_probe: null
+close_by: hand · dependency-security: a bump or a renewed ignoreUntil adds no symbol
+notes: |
+  On or before 2026-12-21: look for a braces release that fixes GHSA-vfj7-8cjw-p6xm, and for an @next/eslint-plugin-next
+  release that drops micromatch/braces. If either exists, bump it and delete the osv-scanner.toml entry. If not, re-measure
+  the reachability (pnpm why -r --prod braces empty; the next/dist loaders of compiled/@vercel/nft under build/ only) and
+  renew ignoreUntil with a new reason, or escalate. Related: braces-ghsa-vfj7-no-fixed-version (#60).
+  source: lane L25 (P3-S16f), rule RO-L25-1 (i)
+  Source: PR #103 body, section "Readiness 3.3: the osv-scanner.toml entry and the backlog-row text (verbatim)", lines 168-175; section "Backlog (this PR does not edit `docs/autopilot-backlog.md`)", line 102.
+
+## task: zalo-dm-delivery-age-expiry
+title: Bot: expire a `zalo_dm` delivery older than the delivery age bound and give the backfill the same bound (lane L31, follow-up of L24)
+status: blocked
+risk: P2
+change_class: code
+depends_on: []
+invariants: [transport-zalo, retry-liveness]
+scope: [apps/bot/src/dispatcher.ts, scripts/outbox-projector-enable.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  Decided as follow-up lane L31 (conductor decision D5, under the owner's delegation of 2026-10-22, not an owner signature). Blocker: an owner decision on an auto-mode classifier denial (a worker's sandbox-off database test; conductor note A6, 2026-10-23). Branch feat/p3-zalo-dm-delivery-age-expiry exists locally only, at 1d21e7c885aedf5192257d005ee49a6b42d91df8 (step 0 fb3fe4d8f5cc408e4a12d84f64de6e34b7008d19; writer units 9cc66d523ba7002d846483a926305137d4c5ef27 and 1d21e7c); DD-146 stays reserved for it. Risk and scope are inferred from the commit subjects; the branch's readiness file is the authority. Set merged_probe when its PR opens.
+  Source: PR #102 body, section "Follow-up lane L31 (decided)", lines 23-26.
+
+## task: name-readers-null-name-one-fallback
+title: Web: the three name readers fall back differently for a NULL name ("(unnamed)", "Unnamed player", "Member"); choose one t(vi, en) fallback
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [i18n-surface, web-app]
+scope: [apps/web/lib/roster-rules.ts, apps/web/components/sessions/request-inbox.tsx, apps/web/components/chat/message-list.tsx]
+manifest: null
+merged_probe: null
+notes: |
+  Host roster, join-request inbox and chat author label all tolerate NULL (after #106, M2 copies NULL, never ''), so this is consistency, not safety. Scope measured by `git grep` of the three literals at 21b57f8: apps/web/lib/roster-rules.ts:41 ("(unnamed)"), apps/web/components/sessions/request-inbox.tsx:98 ("Unnamed player"), apps/web/components/chat/message-list.tsx:58 ("Member"). The reader inventory also holds L27 O8: the host-shell tenant-name source near `auth.ts:285` (packages/db/src/auth.ts:285 is `TenantWithProfile` at 21b57f8) is a reader, not a writer.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 225; PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 194.
+
+## task: club-create-sql-22023-maps-to-400
+title: Onboarding: a SQL 22023 refusal from `tenant_provision` (T1) that the TypeScript check missed would surface as HTTP 500; map it to 400
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [api-contract]
+scope: [apps/web/app/api/onboarding/start/route.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Today the route validator keeps the check, so a typed name gets 400 `INVALID_BODY`; only drift between the TypeScript and SQL rules would reach the 500. Same class, different route, not merged with it: `zalo-connect-bot-revoked-error-mapping` (where finishZaloConnect lets 22023 become a 500).
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 226; section "2. Writers and layers", line 37.
