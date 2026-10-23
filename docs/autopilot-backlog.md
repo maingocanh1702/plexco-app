@@ -6781,3 +6781,90 @@ merged_probe: null
 notes: |
   Today the route validator keeps the check, so a typed name gets 400 `INVALID_BODY`; only drift between the TypeScript and SQL rules would reach the 500. Same class, different route, not merged with it: `zalo-connect-bot-revoked-error-mapping` (where finishZaloConnect lets 22023 become a 500).
   Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 226; section "2. Writers and layers", line 37.
+
+## task: ci-node-unicode-version-vs-name-rule-sets
+title: CI: measure the runner Node's Unicode version against the name rule's explicit code point lists (commented as Unicode 17.0)
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [.github/workflows/ci.yml, packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+close_by: hand · a measurement may add no symbol; close with the CI run id that printed the version
+notes: |
+  RO-L29-1 (4): step 0 of L29 measured local Node v25.6.0 (Unicode 17.0, ICU 78.2). CI's Node (22) was not measured, and no test pins a Unicode-version count; the agreement tests only compare the sets with each other.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 227.
+
+## task: name-fields-one-visible-check-one-length-rule
+title: Names: one visible-character check and one length rule per name field (two DISPLAY_NAME_MAX values, mixed length units, three inline literals, no CHECK on persons.display_name)
+status: idea
+risk: P1
+change_class: code
+depends_on: []
+invariants: [shared-core, schema]
+scope: [packages/db/src/me-settings.ts, packages/db/src/roster-money-shared.ts, apps/web/lib/session-form-model.ts, apps/web/lib/club-settings-model.ts, apps/web/lib/me-settings-client.ts]
+manifest: null
+merged_probe: null
+notes: |
+  L27 O6: DISPLAY_NAME_MAX is 120 in me-settings.ts:20 and 100 in roster-money-shared.ts:58, with different length units per writer. O7: `auth_login_google` caps no length, and persons.display_name has no CHECK (a CHECK is a migration, hence P1). L29 R1C: session-form-model.ts:162 adds a third inline visible-character literal beside `publicAliasProblem` and `displayNameProblem`; the web, server and SQL layers count UTF-16 units, code points and characters respectively (roster-money-shared.ts:66-67, `tenants_name_len_chk`).
+  Source: PR #101 body, section "Owner questions and backlog candidates", lines 192-193; PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 232.
+
+## task: membership-display-name-follows-person-rename
+title: Names: `memberships.display_name` never follows a person rename (existing behaviour); decide whether it should
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [identity]
+scope: [packages/db/src/me-settings.ts]
+manifest: null
+merged_probe: null
+close_by: hand · product question first (a per-club name versus following the person); a code row follows the answer
+notes: |
+  L27 recorded this as existing behaviour (O5); #101 and #106 leave it unchanged. Whether a club-scoped name follows a rename is an owner question for the ledger, not decided here. Scope names the persons.display_name settings writer; the file exists at 21b57f8 but was not re-read.
+  Source: PR #101 body, section "Owner questions and backlog candidates", line 191.
+
+## task: member-name-rule-residual-precision
+title: Name rule residue (L29): blank-looking names still storable, an interior separator joins words, a trailing space after the 120 cut, a NULL-mapped tenants.name kept, AG1 tests the end edge only
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [identity, test-chain]
+scope: [packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  R1S: the visible test counts noncharacters, private-use, unassigned non-DI code points and a lone combining mark as visible (threat 3 residual). Mode true removes an interior separator without a space ("Lan" + U+2028 + "Nguyen" gives "LanNguyen"). P3's cut at 120 after normalization can leave a trailing space (pre-existing 0069 behaviour). NIT-2: a tenants.name that the rule maps to NULL stays unchanged (NOT NULL column, design D4; the NOTICE names the rows by id and the owner renames them). R2C: AG1 and AG2 test the end edge only; add the start edge. A rule change adds one migration; AG1's file was not re-measured.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", lines 229, 231 and 233.
+
+## task: name-strip-migrations-apply-with-writers-drained
+title: Deploy: apply the cleanup of migrations 0068, 0069 and 0070 with writers drained, or lock the four tables before the loops
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [schema]
+scope: [docs/standards/deployment-infra.md]
+manifest: null
+merged_probe: null
+close_by: hand · docs-only: a deploy-order note adds no symbol
+notes: |
+  Inferred from PostgreSQL READ COMMITTED, not run (as for 0068 and 0069): a transaction that began before 0070 commits can store an un-normalized value after the cleanup's snapshot. deployment-infra.md exists at 21b57f8 and is a candidate home only; the home is not decided here.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 230.
+
+## task: member-name-definers-qualify-builtins
+title: DB: qualify the built-ins kept unqualified in the byte-pinned definer bodies that 0070 re-creates (L29 security NIT-1)
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema]
+scope: [packages/db/src/member-name-writer-guard.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  R1S NIT-1 (a nit, not a finding): the byte-pinned definer bodies keep unqualified built-ins. Qualifying them needs a migration at the next free number and re-pinned body comparisons (inferred from the byte pin).
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 229.
