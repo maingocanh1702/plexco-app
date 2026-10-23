@@ -767,7 +767,7 @@ final-head plexco_test reset: planned once, inside the DB/e2e lock, right before
 
 U8b/U8c pin edits: U8b none (no existing cell went red; N/run5/u8b-edits.md does not exist). U8c moved one existing cell, in apps/web/lib/club-settings-model.test.ts, describe "clubNameProblem (same count as club-config-validation.ts: UTF-16 units)", input "a" + U+2028 + "b" (a line separator inside a club name): before = expected null (accepted; the old own regex refused only Cc and Cf), after = expected "invalid_chars" (the web checkTypedName refuses U+2028; readiness section 7 row "T2 web clubNameProblem", D5b); its comment line moved with it: before = "The club route refuses only Cc/Cf: the client mirrors it and refuses nothing more.", after = "L29: U+2028 is refused like a control (the web checkTypedName); it was accepted before." No other existing cell changed (every other clubNameProblem row, the L23 public-alias tests and the strip, emoji and length pins are untouched).
 
-### 18.1 Round-1 review fixes (orchestrator run 7, 2026-10-23)
+### 18.7 Round-1 review fixes (orchestrator run 7, 2026-10-23)
 
 - Round 1 (code reviewer R1C and security reviewer R1S, opus/max, reports in the lane notes): P1 0, P2 0; NITs 4 (code) and 2 (security).
 - Fixed, comment-only, every assertion byte-unchanged: the comment in club-config-validation.ts now names every code point class the shared check refuses (R1C NIT 1); the trailing comment on the publicAliasProblem U+2028 row of club-settings-model.test.ts, made false by U8c (conductor ruling RO-L29-7, a comment-only correction).
