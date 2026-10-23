@@ -555,6 +555,22 @@ A test run killed inside `migrate.test.ts`'s 0054 step-1 window leaves the real 
 `identity_definer_hidden_for_test` (maybe beside a scratch `identity_definer`); the next run of that
 file puts it back under the window's own locks (`healHiddenIdentityDefiner`, which also documents the
 manual repair for the one case it refuses).
+A window like that one changes a cluster-global role, and so does a temporary `GRANT` to `app_worker`
+or the membership hand-off of `setupNonSuperuserOwnerContext`. The test files that open any of them
+are the ones listed in the `isolatedTestFiles` constant of `packages/db/vitest.config.ts`: each runs
+alone, one at a time, after every other test file (project `parallel` first, then one `isolated-<k>`
+project per file, in `groupOrder`), so no other test file of the package can observe a hidden role, a
+temporary grant or a membership hand-off. `packages/db/src/role-hiding-isolation-guard.test.ts` fails
+when such a statement (a rename, drop, create or alter of a shared role, a `GRANT` or `REVOKE` of a
+shared-role membership, a call of a harness membership helper) appears in any other source file under
+`packages/` or `apps/` (support modules and production code included; the reviewed exceptions are the
+guard's `PINS`), and a
+new role-mutating test must be added to that constant; the guard fails in both directions, so a file
+that stops mutating a shared role must also leave it. A `--sequence.*` CLI flag resets `groupOrder`
+and lets the groups overlap again: keep it off the package `test` script (the guard pins its text) and
+off local runs. After a killed run, run `pnpm --filter @plexco/db exec vitest run src/migrate.test.ts`
+alone first: its heal puts a hidden `identity_definer` back, and in a full run that file starts only
+after the parallel phase.
 A local database that applied an earlier `0054` text fails the sha256 guard: run `pnpm db:bootstrap`,
 then `pnpm db:reset:test` for a `*_test` database; any other database (`db:reset:test` refuses it)
 must be dropped and recreated through the compose container (`docker compose -f
