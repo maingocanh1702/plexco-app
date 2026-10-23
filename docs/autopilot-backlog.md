@@ -6751,7 +6751,7 @@ scope: [apps/bot/src/dispatcher.ts, apps/bot/src/projectors/zalo-dm.ts, scripts/
 manifest: null
 merged_probe: null
 notes: |
-  Decided as follow-up lane L31 (conductor decision D5, under the owner's delegation of 2026-10-22, not an owner signature). Blocker: lane L31 is paused on an owner decision; it has no PR and its branch is not on origin, so nothing from that branch is recorded here as a fact; DD-146 stays reserved for it. Scope: the files PR #102's body names for this follow-up (line 25: the retries in `apps/bot/src/dispatcher.ts` and the check site `apps/bot/src/projectors/zalo-dm.ts` step 1) plus the enable CLI PR #102 added; re-measure risk and scope when L31's PR opens (its readiness file is the authority then). Set merged_probe when its PR opens.
+  Decided as follow-up lane L31 (conductor decision D5, under the owner's delegation of 2026-10-22, not an owner signature). Blocker: lane L31 is paused on an owner decision (a conductor note outside the repository, 2026-10-23); it has no PR and its branch is not on origin, so nothing from that branch is recorded here as a fact; DD-146 stays reserved for it. Scope: the files PR #102's body names for this follow-up (line 25: the retries in `apps/bot/src/dispatcher.ts` and the check site `apps/bot/src/projectors/zalo-dm.ts` step 1) plus the enable CLI PR #102 added; re-measure risk and scope when L31's PR opens (its readiness file is the authority then). Set merged_probe when its PR opens.
   Source: PR #102 body, section "Follow-up lane L31 (decided)", lines 23-26.
 
 ## task: name-readers-null-name-one-fallback
