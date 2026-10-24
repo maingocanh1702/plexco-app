@@ -804,6 +804,40 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       }
     }, 30_000);
 
+    /**
+     * PSD-4/PSD-5 (the DA-5 shape for a promotion): `event`'s row is pending at a disable, a
+     * disabled cycle sends nothing, the event is back-dated past the flat bound and `reEnable`
+     * runs: no row and no record added.
+     */
+    async function armReEnabled(
+      zalo: Awaited<ReturnType<typeof zaloBoot>>,
+      event: string,
+      reEnable: () => Promise<unknown>,
+    ) {
+      const pending = { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null };
+      await ackedWhileOff([event], zalo.projectors);
+      await enable("zalo_dm");
+      await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+      const calls = zalo.stub.calls.length;
+      await cycle(zalo.projectors);
+      expect(zalo.stub.calls).toHaveLength(calls);
+      expect(await deliveries(event)).toEqual([pending]);
+      await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
+      await reEnable();
+      expect(await deliveries(event)).toEqual([pending]);
+      expect(await expiries([event])).toEqual([]);
+    }
+    const RAW_ENABLE = "SELECT outbox_projector_set_enabled('zalo_dm', true)"; // PSD-5, as DA-6
+
+    /** PSD-6: the owner CLI's DLQ replay of `event`'s zalo_dm row, as DA-7 runs it. */
+    function promotionReplay(event: string) {
+      const args = ["replay", "--event", event, "--projector", "zalo_dm"];
+      return withJobDefinerLock(base, () => runCli(args, testUrl(base, { db: dbName })));
+    }
+    const DLQ_ONCE = new Map<string, DeliverFn>([
+      ["zalo_dm", async () => ({ result: "dlq", errorCode: "replay_terminal" })],
+    ]);
+
     // L34 W4b1 (PSD-1..PSD-3; PSD-4..PSD-6 add rows): the promotion twins of DA-4, DA-11 and DA-3.
     // A player.promoted DM is bounded by its session's start on the DB clock, not by the flat
     // bound: each path arms a promotion back-dated past the flat bound, and one cycle sends it while
@@ -814,6 +848,8 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       path: string;
       attempts: number;
       arm: (zalo: Awaited<ReturnType<typeof zaloBoot>>, event: string) => Promise<void>;
+      /** PSD-6: run on `event`'s terminal row after each of the cell's two cycles */
+      settled?: (event: string) => Promise<void>;
     }[] = [
       {
         id: "PSD-1",
@@ -851,6 +887,60 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           await enable("zalo_dm");
           expect(await deliveries(event)).toEqual([
             { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+          ]);
+        },
+      },
+      {
+        id: "PSD-4",
+        path: "CLI re-enable (DA-5: pending at a disable, back-dated, re-enabled by the CLI)",
+        attempts: 1,
+        arm: (zalo, event) => armReEnabled(zalo, event, () => enable("zalo_dm")),
+      },
+      {
+        id: "PSD-4b",
+        path: "CLI re-enable of a retry (DA-11b: failed once, back-dated and made due while off)",
+        attempts: 2,
+        arm: async (zalo, event) => {
+          await ackedWhileOff([event], zalo.projectors);
+          await enable("zalo_dm");
+          await cycle(RETRYING);
+          expect(await deliveries(event)).toEqual([FAILED_ONCE]);
+          await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+          await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
+          await verify.query(DUE, [event]);
+          const calls = zalo.stub.calls.length;
+          await cycle(zalo.projectors);
+          expect(zalo.stub.calls).toHaveLength(calls);
+          expect(await deliveries(event)).toEqual([FAILED_ONCE]);
+          await enable("zalo_dm");
+          expect(await deliveries(event)).toEqual([FAILED_ONCE]);
+          expect(await expiries([event])).toEqual([]);
+        },
+      },
+      {
+        id: "PSD-5",
+        path: "raw re-enable (DA-6: the PSD-4 row, a raw set_enabled on the owner seat, no CLI)",
+        attempts: 1,
+        arm: (zalo, event) => armReEnabled(zalo, event, () => asOwner(RAW_ENABLE, [])),
+      },
+      {
+        id: "PSD-6",
+        path: "DLQ replay (DA-7: dlq, back-dated, the owner CLI replays it; a 2nd replay exits 2)",
+        attempts: 1,
+        arm: async (zalo, event) => {
+          await ackedWhileOff([event], zalo.projectors);
+          await enable("zalo_dm");
+          await cycle(DLQ_ONCE);
+          expect(await deliveries(event)).toEqual([
+            { projector: "zalo_dm", status: "dlq", attempts: 1, error_code: "replay_terminal" },
+          ]);
+          await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
+          expect((await promotionReplay(event)).code).toBe(0);
+        },
+        settled: async (event) => {
+          expect((await promotionReplay(event)).code).toBe(2);
+          expect(await deliveries(event)).toEqual([
+            { projector: "zalo_dm", status: "delivered", attempts: 1, error_code: null },
           ]);
         },
       },
@@ -898,6 +988,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
             lines: [],
           });
           expect(await expiries([ahead.event])).toEqual([]);
+          await cell.settled?.(ahead.event);
 
           await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
           const started = await zalo.promote();
@@ -927,6 +1018,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           // moveStart("-1 minute") right before the cycle; the test's timeout caps the rest
           expect(seconds).toBeGreaterThanOrEqual(60);
           expect(seconds).toBeLessThanOrEqual(180);
+          await cell.settled?.(started.event);
         } finally {
           await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
           await zalo.close();
