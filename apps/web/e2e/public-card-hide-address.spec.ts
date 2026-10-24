@@ -241,5 +241,141 @@ test.describe.serial("public card: the exact address is hidden only when the hos
     });
   });
 
-  // U3b: anonymous visitor checks per case
+  test("an anonymous visitor sees the exact address only when the host did not hide it", async ({
+    browser,
+  }) => {
+    for (const c of CASES) {
+      expect(fixture.sessionIds[c.key], `test 1 prepared the ${c.key} session`).toMatch(UUID_RE);
+      await test.step(`case ${c.key}: hidden=${String(c.hidden)}`, async () => {
+        // Threat 3: a fresh context with no storageState, never the host's page or context. The
+        // web's only cookie writers are sign-in (SESSION_COOKIE), the OAuth start and /dev-login's
+        // plx_dev_login_csrf; none runs on /discover, so the jar stays empty for the whole visit.
+        const visitor = await browser.newContext({ baseURL: BASE });
+        try {
+          expect(await visitor.cookies(), "no cookie before the visit").toEqual([]);
+          // Every /api/discover* response this context receives: its text body and the request's
+          // Cookie header. A body that cannot be read is kept as null and fails the case below.
+          const captured: {
+            url: string;
+            status: number;
+            cookie: string | undefined;
+            body: string | null;
+          }[] = [];
+          const reads: Promise<void>[] = [];
+          visitor.on("response", (response) => {
+            const url = response.url();
+            if (!new URL(url).pathname.startsWith("/api/discover")) return;
+            const status = response.status();
+            reads.push(
+              (async () => {
+                try {
+                  const headers = await response.request().allHeaders();
+                  const body = await response.text();
+                  captured.push({ url, status, cookie: headers.cookie, body });
+                } catch {
+                  captured.push({ url, status, cookie: undefined, body: null });
+                }
+              })(),
+            );
+          });
+          const vpage = await visitor.newPage();
+
+          // The list: wait for the hydrated first load, then filter by the case's area, which the
+          // read model matches exactly (public-discovery-read.ts `area = $2`).
+          await vpage.goto("/discover");
+          await expect(vpage.locator('main[data-state="ready"]')).toBeVisible();
+          const filtered = vpage.waitForResponse((res) => {
+            const url = new URL(res.url());
+            return url.pathname === "/api/discover" && url.searchParams.get("area") === c.area;
+          });
+          await vpage.getByLabel("Khu vực", { exact: true }).fill(c.area);
+          await vpage.getByRole("button", { name: "Lọc", exact: true }).click();
+          const listRes = await filtered;
+          expect(listRes.status(), "the filtered list").toBe(200);
+          const list = (await listRes.json()) as { data?: { items?: Record<string, unknown>[] } };
+          const items = list.data?.items ?? [];
+          expect(items, `exactly one listing in ${c.area}`).toHaveLength(1);
+          const firstId = items[0]?.publicListingId;
+          const listingId = typeof firstId === "string" ? firstId : "";
+          expect(listingId, "the listing's public id").toMatch(UUID_RE);
+          const card = vpage.locator("main li");
+          await expect(card, "exactly one card").toHaveCount(1);
+          // Positive control (threat 2): the card rendered, with this case's area and the alias.
+          await expect(card.getByText(c.area, { exact: true })).toBeVisible();
+          await expect(card.getByText(ALIAS, { exact: true })).toBeVisible();
+          if (!c.hidden) {
+            await expect(card.getByText(c.venueName, { exact: true })).toBeVisible();
+            await expect(card.getByText(c.venueAddress, { exact: true })).toBeVisible();
+          }
+          const sources: [string, string][] = [
+            ["list innerText", await vpage.locator("body").innerText()],
+            ["list HTML", await vpage.content()],
+          ];
+
+          // The detail page: ListingSummary's h1 in the ready main, never the not-ready heading.
+          await vpage.goto(`/discover/${listingId}`);
+          const detail = vpage.locator('main[data-state="ready"]');
+          await expect(detail.locator("h1")).toBeVisible();
+          const notReady = vpage.getByRole("heading", { name: "Chi tiết kèo", exact: true });
+          await expect(notReady).toHaveCount(0);
+          await expect(detail.getByText(c.area, { exact: true })).toBeVisible();
+          await expect(detail.getByText(ALIAS, { exact: true })).toBeVisible();
+          if (!c.hidden) {
+            await expect(detail.getByText(c.venueName, { exact: true })).toBeVisible();
+            await expect(detail.getByText(c.venueAddress, { exact: true })).toBeVisible();
+          }
+          sources.push(
+            ["detail innerText", await vpage.locator("body").innerText()],
+            ["detail HTML", await vpage.content()],
+          );
+          const detailRes = await visitor.request.get(`/api/discover/${listingId}`);
+          expect(detailRes.status(), "GET /api/discover/<id> as the visitor").toBe(200);
+          const detailText = await detailRes.text();
+          sources.push(["detail JSON", detailText]);
+          const detailJson = JSON.parse(detailText) as {
+            data?: { listing?: Record<string, unknown> };
+          };
+          const listing = detailJson.data?.listing ?? {};
+          expect(listing.publicListingId, "the detail JSON is this listing").toBe(listingId);
+          expect(listing.area, "the detail JSON's area").toBe(c.area);
+
+          await Promise.all(reads);
+          await test.info().attach(`case ${c.key} /api/discover responses`, {
+            body: captured.map((e) => `${String(e.status)} ${e.url}`).join("\n"),
+            contentType: "text/plain",
+          });
+          await test.info().attach(`case ${c.key} detail JSON`, {
+            body: detailText,
+            contentType: "application/json",
+          });
+          // The listener saw the filtered list and the page's own detail read (no vacuous absence),
+          // read every body, and no request carried a cookie.
+          const urls = captured.map((e) => new URL(e.url));
+          expect(urls.some((u) => u.searchParams.get("area") === c.area)).toBe(true);
+          expect(urls.map((u) => u.pathname)).toContain(`/api/discover/${listingId}`);
+          expect(captured.filter((e) => e.body === null).map((e) => e.url)).toEqual([]);
+          for (const e of captured) expect(e.cookie, `${e.url} sent a cookie`).toBeUndefined();
+          sources.push(...captured.map((e): [string, string] => [e.url, e.body ?? ""]));
+
+          const leaks = sources.filter(([, text]) => text.includes(c.token)).map(([from]) => from);
+          if (c.hidden) {
+            expect(leaks, `the ${c.key} token reached the visitor`).toEqual([]);
+            expect(listing).not.toHaveProperty("venueName");
+            expect(listing).not.toHaveProperty("venueAddress");
+          } else {
+            expect(listing.venueName).toBe(c.venueName);
+            expect(listing.venueAddress).toBe(c.venueAddress);
+            expect(leaks.length, "control: the shown venue has the token").toBeGreaterThan(0);
+          }
+          expect(await visitor.cookies(), "no cookie after the visit").toEqual([]);
+          const keys = ["venueName", "venueAddress"].filter((key) => key in listing).join(",");
+          console.log(
+            `L35 case ${c.key}: hidden=${String(c.hidden)} control=ok token_absent=${String(leaks.length === 0)} keys=${keys}`,
+          );
+        } finally {
+          await visitor.close();
+        }
+      });
+    }
+  });
 });
