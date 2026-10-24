@@ -681,6 +681,8 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     // L31 S1 (security round 1 finding S1): DA-4..DA-8 reach the age check at attempts 0 only.
     // RETRYING fails a zalo_dm row once (failed, attempts 1, due 15 s later); DUE makes it due now
     // on the verify seat. Decision table P2 (a live retry) and P4 (a failed row resumed).
+    // Keep these, and every zalo_dm test that asserts stub.calls, above DA-8: its finally deletes
+    // its row, so a later CLI enable re-prepares that event.
     const RETRYING = new Map<string, DeliverFn>([
       ["zalo_dm", async () => ({ result: "retry", errorCode: "retry_transient" })],
     ]);
@@ -692,17 +694,34 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     };
     const DUE = "UPDATE projector_deliveries SET next_attempt_at = now() WHERE event_id = $1";
 
-    it("DA-11 zalo_dm: a live retry (the row failed once, attempts 1), its event back-dated past the bound and made due, expires at delivery (no send, delivered/noop_expired, attempts 2, one warning line)", async () => {
+    it("DA-11 zalo_dm: a live retry (the row failed once, attempts 1), its event back-dated past the bound and made due, expires at delivery (no send, delivered/noop_expired, attempts 2, one warning line); its fresh twin, failed in the same cycle, is delivered at its retry (sent, attempts 2)", async () => {
       const zalo = await zaloBoot();
       try {
-        const p = await zalo.promote();
-        await ackedWhileOff([p.event], zalo.projectors);
+        const stale = await zalo.promote();
+        const fresh = await zalo.promote();
+        await ackedWhileOff([stale.event, fresh.event], zalo.projectors);
         await enable("zalo_dm");
         await cycle(RETRYING);
-        expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
-        await backdate([p.event], ZALO_DM_MAX_AGE_MINUTES + 1);
-        await verify.query(DUE, [p.event]);
-        await expiredAtDelivery(zalo, p.event, 2);
+        for (const p of [stale, fresh]) expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
+        await backdate([stale.event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        await verify.query(DUE, [stale.event]);
+        // the twin's 15 s retry must not come due during the stale row's cycle
+        await verify.query(
+          "UPDATE projector_deliveries SET next_attempt_at = now() + interval '1 hour' WHERE event_id = $1",
+          [fresh.event],
+        );
+        await expiredAtDelivery(zalo, stale.event, 2);
+
+        await verify.query(DUE, [fresh.event]);
+        await cycle(zalo.projectors);
+        expect(zalo.stub.calls.map((call) => call.chatId)).toEqual([fresh.chat]);
+        const row = await verify.query(
+          "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
+          [fresh.event],
+        );
+        expect(row.rows).toEqual([
+          { status: "delivered", attempts: 2, provider_ref: "sent", error_code: null },
+        ]);
       } finally {
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
