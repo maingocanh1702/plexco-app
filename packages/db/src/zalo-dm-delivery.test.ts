@@ -537,6 +537,19 @@ describe("zalo_dm_promotion_seconds_to_start (0071, PSD-10; zalo_dm enabled; as 
     ).toEqual([{ seconds_to_start: null }]);
   });
 
+  it("PSD-10i: an infinite session start reads as no start (NULL), not an error", async () => {
+    const a = await club();
+    const e = await claimed(a, "player.promoted");
+    // '-infinity' passes sessions_time_chk (ends_at > starts_at); '+infinity' never can.
+    await q("UPDATE sessions SET starts_at = '-infinity' WHERE id = $1", [a.session]);
+    try {
+      expect(await toStart(e)).toEqual([{ seconds_to_start: null }]);
+    } finally {
+      // Restore a finite start so no later scan of sessions meets an infinite one.
+      await q("UPDATE sessions SET starts_at = now() WHERE id = $1", [a.session]);
+    }
+  });
+
   it("PSD-10f: every other zalo_dm event type on a live claim -> zero rows", async () => {
     const cells: [string, Row][] = [
       ["session.updated", { changed_fields: ["starts_at"] }],

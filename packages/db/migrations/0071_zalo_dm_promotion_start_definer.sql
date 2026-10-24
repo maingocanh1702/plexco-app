@@ -14,6 +14,7 @@
 -- parameter. A lost claim returns zero rows; a missing or foreign-tenant
 -- session returns NULL (the dispatcher expires it as "start unreadable", fail
 -- closed). date_part returns float8 (a JS number), never EXTRACT (numeric).
+-- An infinite starts_at returns NULL too (isfinite): PG 16 cannot subtract it.
 -- No write, no routing_audit row, no ciphertext.
 --
 -- A new event type in untilSessionStart (apps/bot/src/zalo-dm-delivery-age-bound.json)
@@ -38,7 +39,7 @@ LANGUAGE sql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
-  SELECT date_part('epoch', s.starts_at - clock_timestamp())
+  SELECT CASE WHEN isfinite(s.starts_at) THEN date_part('epoch', s.starts_at - clock_timestamp()) END
     FROM projector_deliveries pd
     JOIN outbox_events o ON o.id = pd.event_id
     JOIN outbox_projectors p ON p.name = pd.projector AND p.enabled
