@@ -6666,7 +6666,9 @@ notes: |
 
 ## task: public-card-hide-exact-address-real-stack-proof
 title: E2E (local only): prove B1's hide-exact-address option on the real public card, ON and OFF, with public_sessions enabled through the enable CLI
-status: in-flight
+status: merged
+merged: 2026-10-24 · PR #110 (L35), merge 3acbfd1755ec8f60b1b112d78d41a67af0abc93b (PR head 060df42b5a61981200e69c41186767687adbe11c) · `SCRATCH_DB_PATH` in `apps/web/e2e/public-card-hide-address.spec.ts` (`:30`, `:123`, `:215` at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512) · merged_probe unchanged (this flip changes only status, merged, note_merged)
+note_merged: 2026-10-24 L36: closed BY PROBE, by hand, measured at base ca1d2cae2e1d0b637d5419e6fc0b8671b615b512 (the PR #111 merge; first parent 3acbfd1755ec8f60b1b112d78d41a67af0abc93b, the PR #110 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `in-flight`. F1: the PR #110 body keeps the row in flight in the PR and flips it by hand after the merge (section "Decisions", D-r2-1, line 110). F2: PR #110 merged 2026-10-24T11:32:59Z (`gh pr view 110`); PR CI run 40089655598 (event pull_request, conclusion success, attempt 1); on 3acbfd1755ec8f60b1b112d78d41a67af0abc93b main CI run 40090352281 and Security run 40090352484 (event push, conclusion success, attempt 1). F3: the code-tree probe `git grep SCRATCH_DB_PATH` (docs excluded) = 3 lines in 1 file (`apps/web/e2e/public-card-hide-address.spec.ts`) at the base and at 3acbfd1755ec8f60b1b112d78d41a67af0abc93b, 0 at the pre-L35 base 54db28e6bc025ce729b65ed14cfd685949e20053 (control `GOLDEN_PATH_BASE_URL`: 2 files there). Decision record: DD-148 section A, D8 (conductor decision under the owner's delegation of 2026-10-22, not an owner signature), built now per DD-149 item 3 (accepted under the owner's delegation of 2026-10-24 (assistant review)). The authored `scope` stays as written.
 risk: P1
 change_class: test-infra
 depends_on: []
@@ -6989,9 +6991,107 @@ status: idea
 risk: P1
 change_class: schema-migration
 depends_on: []
-invariants: [transport-zalo, schema]
+invariants: [transport-zalo, schema, money-model]
 scope: []
 manifest: null
 merged_probe: null
 notes: |
   2026-10-24 (L34 review R2-F1): the waitlist-promotion DM now stays deliverable until the session's start (DD-146 amendment, DD-149 item 2), so its emit-time fee can be stale; read the live balance at delivery through 0057's definer in its own lane (money contract, Tier C)
+
+## task: public-card-proof-port-preflight-any-owner
+title: E2E proof runner (local only): make the port 3000 preflight of `public-card-hide-address-proof.sh` see a listener of any owner (a connect probe on 127.0.0.1 and ::1), not only the invoking user's
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [web-app, test-chain]
+scope: [apps/web/e2e/public-card-hide-address-proof.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512 (the file is unchanged since the PR #110 merge 3acbfd1755ec8f60b1b112d78d41a67af0abc93b): the comment at apps/web/e2e/public-card-hide-address-proof.sh:16 says "Fail closed, unknown means stop", but the check is `lsof -nP -iTCP:3000 -sTCP:LISTEN` (:21) and exit 1 with an empty stderr reads as free (:26); on macOS a non-root `lsof` does not list another user's processes and exits exactly so, so a server of root or another account on [::1]:3000 reads as free, and the clients' `http://localhost:3000` (:87) can resolve ::1 first, so the proof's writes could reach that server's database (unlikely on a single-user Mac). Minimal fix (round-3 reviewer): after :29, a connect probe that sees any owner and fails closed (no `nc` stops; `nc -z 127.0.0.1 3000` or `nc -z ::1 3000` succeeding is busy, exit 2); doc-only alternative: narrow the comment :14-18 to the invoking user's listeners. Reported in L35's round-3 review, not taken under the three-round cap; the row was added by lane L36 (2026-10-24).
+  Source: PR #110 body, section "Review (three rounds, the cap; independent reviewers)", line 99, item (a).
+
+## task: public-card-proof-no-drop-line-exception-complete
+title: Docs (local proof): name every stop before the trap of `public-card-hide-address-proof.sh` in the "no drop line" exception of runbook step 11 and of the runner's header comment
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [web-app, test-chain]
+scope: [docs/runbooks/local-mvp-smoke.md, apps/web/e2e/public-card-hide-address-proof.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512 (both files unchanged since 3acbfd1755ec8f60b1b112d78d41a67af0abc93b): docs/runbooks/local-mvp-smoke.md:206 and apps/web/e2e/public-card-hide-address-proof.sh:9-10 name only the preflight refusal (port 3000 busy, or `lsof` missing or failing; exit 2) as a run without the database listing and the drop line, but every stop before the trap (`trap cleanup EXIT INT TERM`, :68) prints no drop line: also the repo-root check (:12-13, exit 2), the password lookup (:46, exit 1) and the BEFORE listing (:50, exit 1). Harmless: nothing is created before the DROP and CREATE at :70-71, and runbook :207 reads any other output as not proven. Minimal fix (round-3 reviewer): widen both texts to every stop before the trap. Reported in L35's round-3 review, not taken under the three-round cap; the row was added by lane L36 (2026-10-24).
+  Source: PR #110 body, section "Review (three rounds, the cap; independent reviewers)", line 99, item (b).
+
+## task: local-smoke-step11-latest-result-depin
+title: Docs (local proof): runbook step 11's "latest measured result" line cites `dbaf348`, a run of an older runner; point it at the final evidence or drop the SHA pin
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [web-app, test-chain]
+scope: [docs/runbooks/local-mvp-smoke.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line number at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512 (unchanged since 3acbfd1755ec8f60b1b112d78d41a67af0abc93b): docs/runbooks/local-mvp-smoke.md:209 starts "Kết quả đo gần nhất: 2026-10-24, đo tại `dbaf348`: `3 passed (42.2s)`", but the runner changed after dbaf348 (both preflights came later) and the final runs are at the PR head 060df42b5a61981200e69c41186767687adbe11c, so a reader can take an older runner's run as the latest proof of the current script. Minimal fix (round-3 reviewer): point the line at the final head and its runs; better against drift: drop the SHA pin and refer to the evidence in the PR #110 body. Reported in L35's round-3 review, not taken under the three-round cap; the row was added by lane L36 (2026-10-24).
+  Source: PR #110 body, section "Review (three rounds, the cap; independent reviewers)", line 99, item (c).
+
+## task: zalo-dm-routable-event-types-one-list
+title: Bot and CLI: one source (or a drift test) for the four `zalo_dm`-routable event types that the dispatcher and the enable CLI each write out
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [transport-zalo, retry-liveness]
+scope: [apps/bot/src/dispatcher.ts, scripts/outbox-projector-enable.mjs, apps/bot/src/projector-registry.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512: the four types (`session.updated`, `session.cancelled`, `session.announcement_requested`, `player.promoted`) are written twice, as `ZALO_DM_ROUTABLE_EVENT_TYPES` at apps/bot/src/dispatcher.ts:72-77 ("the four types 0056 routes to zalo_dm (outbox_projector_routes_zalo_dm_chk)") and as `ZALO_DM_EVENT_TYPES` at scripts/outbox-projector-enable.mjs:66-71; each checks the JSON's `untilSessionStart` at load, and no test ties the two lists to each other or to 0056's check (PSD-11, apps/bot/src/projector-registry.test.ts:703, ties only `untilSessionStart`). Fix: one list read by both, or a drift test beside PSD-11. Reported in L34's round-1 review (R1-F3), not fixed in PR #111; the row was added by lane L36 (2026-10-24).
+  Source: PR #111 body, section "Reported P3s and observations, not fixed", line 35.
+
+## task: bot-zalo-dm-cycle-tests-isolation-and-cells
+title: Tests: keep each `zalo_dm` dispatch-cycle cell to its own rows on the shared test database, and add the cells L34's reviews found missing
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [transport-zalo, test-chain]
+scope: [apps/bot/src/projector-registry.test.ts, packages/db/src/zalo-dm-delivery.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512: a cycle claims `zalo_dm` rows one at a time in `event_id` order (apps/bot/src/dispatcher.ts:331-336, `claim_projector_delivery_batch($1, 1)`; `ORDER BY pd.event_id` at packages/db/migrations/0022_job_claim_lease_core.sql:349 and :374) whichever test file emitted them, so bot test files running in parallel on the shared database can claim each other's `zalo_dm` rows; this is true at the base and was true before L34's PSD-8 fix too. Observed in L34's last run: it cost PR #111 two red full bot-suite runs at `731f2c4`, because PSD-8's old stub answered the start read for any event, so a parallel file's older promotion row took the zero-row answer and the stale stop (dispatcher.ts:362-364) ended the pass before PSD-8's own row was claimed; commit `22d7009` then isolated only PSD-8 (apps/bot/src/projector-registry.test.ts:1209) by construction. Same cause: PSD-13 (:1500) leaves its event unacked and PSD-14 (:1533) drains it (R1-F4); PSD-8's `finally` deletes every claimed `zalo_dm` row, not only its own (R1b-F2). Missing cells: PSD-8 has one claimable row, so the stale stop's `break` (dispatcher.ts:364) changed to `continue` still passes (R1b-F1); PSD-10c (packages/db/src/zalo-dm-delivery.test.ts:507, the stale-claim cell) has no finished-delivery cell and no other-projector-token cell (R2-F3); PSD-8 lost its stub check (R2b-F3). Fix: scope every cycle cell's stub, claims and cleanup to its own event ids (or run the bot test files that drive a dispatch cycle one at a time; at the base they are apps/bot/src/dispatcher-outcome.test.ts, dispatcher.test.ts, outbox-wake.test.ts, projector-registry.test.ts, schedule.test.ts and projectors/public-sessions.test.ts, web-realtime.test.ts, zalo-dm.test.ts), then add the three cells. Reported in L34's reviews and its post-round fix, not fixed in PR #111; the row was added by lane L36 (2026-10-24).
+  Source: PR #111 body, section "Reported P3s and observations, not fixed", lines 36-40, and section "Post-round fix D1: fix applied after the final round, not re-reviewed (3-round cap)", line 70.
+
+## task: outbox-runbook-zalo-dm-expiry-wording
+title: Docs: three wording fixes in the `zalo_dm` expiry text of the outbox enable and rollback runbook (from L34's round-3 reviews)
+status: idea
+risk: P2
+change_class: docs
+depends_on: []
+invariants: [transport-zalo, retry-liveness]
+scope: [docs/runbooks/outbox-dispatch-enable-rollback.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512, docs/runbooks/outbox-dispatch-enable-rollback.md: (1) the `NULL` bullet at :85 names a missing session or another tenant's session as the causes but not an infinite `starts_at`, which the 0071 definer also reads as NULL (packages/db/migrations/0071_zalo_dm_promotion_start_definer.sql:17 and :42, `isfinite`) (R3b-F3); (2) the two new warning lines at :84 and :85 write `<id>`, the older lines `<event-uuid>` (:75, :131) (R3-F4); (3) the clause at :110 'riêng `player.promoted` không bao giờ nhận record `age`' does not say it is the `zalo_dm` exception, though the CLI applies the list only when `projector === "zalo_dm"` (scripts/outbox-projector-enable.mjs:173) (R3c-F1). Fix: one wording pass over those lines. Reported in L34's round-3 reviews, not fixed in PR #111; the row was added by lane L36 (2026-10-24).
+  Source: PR #111 body, section "Reported P3s and observations, not fixed", lines 41-43.
+
+## task: decisions-dd148-dd149-acceptance-labels
+title: Decision log: name the 2026-10-24 acceptance of DD-148 sections A-F in its summary cell and heading, and call DD-146 DF0-DF7 and DD-147 D1-D8/N1-N4 lane defaults in DD-149's context
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [review-integrity]
+scope: [docs/standards/decisions.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512, docs/standards/decisions.md: (1) the DD-148 summary row's status cell (:121) names the owner's 2026-10-24 acceptance for section F only ("mục F: L31 đã merge (#108), DF0-DF7 accepted under the owner's delegation of 2026-10-24 (assistant review), DD-149") and the DD-148 heading (:1791) names none, while DD-149 item 1 accepts every row of sections A-F and only :1796 says so, so a reader of the summary or the heading sees sections A-E as unchanged (R3-F3); (2) DD-149's "Bối cảnh" (:1777) calls DD-146 DF0-DF7 and DD-147 D1-D8 and N1-N4 "các default và ruling của conductor", though they are lane defaults (L31's and L29's) (R3-F5). Neither text states a false signature (every label stays "not an owner signature"), and lane L36 does not own decisions.md, so it did not edit them. Fix: one owner-facing wording pass over :121, :1791 and :1777, keeping every dated line and every quote. Reported in L34's round-3 docs review, not fixed in PR #111; the row was added by lane L36 (2026-10-24).
+  Source: PR #111 body, section "Reported P3s and observations, not fixed", line 41 (R3-F3, R3-F5).
