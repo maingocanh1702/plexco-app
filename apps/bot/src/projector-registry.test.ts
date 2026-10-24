@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
-import { migrate } from "@plexco/db";
+import { createDb, leaveSession, migrate } from "@plexco/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 // @ts-expect-error -- the owner enable CLI is an untyped .mjs; DA-10 reads its two bound exports
 import * as enableCli from "../../../scripts/outbox-projector-enable.mjs";
@@ -476,6 +476,62 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           );
           return { chat, event: String(event.id) };
         };
+        // L34 W4c2a: the product writes the promotion: the active L's real leaveSession promotes
+        // the waitlisted P (position 1; both joined 2 hours ago, like promote()) and emits P's one
+        // player.promoted after L's player.removed (0057 targets players joined before the event).
+        const producerPromote = async () => {
+          const chat = `chat-${randomUUID()}`;
+          const seat = async (status: string, position: number | null) => {
+            const person = await one(
+              "INSERT INTO persons (display_name) VALUES ('Boot Sequence') RETURNING id",
+              [],
+            );
+            const membership = await one(
+              "INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id",
+              [tenant.id, person.id],
+            );
+            const player = await one(
+              `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position, joined_at)
+               VALUES ($1, $2, $3, $4, $5, now() - interval '2 hours') RETURNING id`,
+              [tenant.id, session.id, membership.id, status, position],
+            );
+            return { person: person.id, membership: membership.id, player: player.id };
+          };
+          const leaver = await seat("active", null);
+          const waiter = await seat("waitlisted", 1);
+          const { enc } = await secrets.encryptConnectorSecret(chat, {
+            ...binding,
+            purpose: "channel_user" as const,
+          });
+          await verify.query(
+            `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status, zalo_bot_id)
+             VALUES ($1, 'zalo', $2, $3, 'active', $4)`,
+            [waiter.person, enc, randomUUID(), bot.id],
+          );
+          // leaveSession's authorizeTenantAction needs a trialing/active/past_due subscription
+          await verify.query(
+            `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
+             SELECT $1, 'free', 1, 'active', now(), now() + interval '30 days'
+             WHERE NOT EXISTS (SELECT 1 FROM subscriptions WHERE tenant_id = $1)`,
+            [tenant.id],
+          );
+          const writer = createDb(testUrl(base, { db: dbName }), { max: 1 });
+          try {
+            await leaveSession(writer.db, {
+              tenantId: String(tenant.id),
+              personId: String(leaver.person),
+              sessionId: String(session.id),
+              commandId: randomUUID(),
+            });
+          } finally {
+            await writer.close();
+          }
+          const event = await one(
+            "SELECT id FROM outbox_events WHERE type = 'player.promoted' AND payload->>'player_id' = $1",
+            [waiter.player],
+          );
+          return { chat, event: String(event.id), session: String(session.id), waiter };
+        };
         const update = async () => {
           const own = await one(
             `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status, venue_name, price_amount)
@@ -529,7 +585,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           ...PROJECTORS,
           ["zalo_dm", createZaloDmDeliver({ db: workerPool })],
         ]);
-        return { stub, token, projectors, promote, update, moveStart, close };
+        return { stub, token, projectors, promote, producerPromote, update, moveStart, close };
       } catch (error) {
         await close();
         throw error;
@@ -1389,5 +1445,37 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       },
       30_000,
     );
+    it("PSD-13 zalo_dm promotion (producer): an active player's real leaveSession promotes the waitlisted player and writes exactly one player.promoted row (aggregate session, the emit's payload keys, the promoted player's ids)", async () => {
+      const boot = await zaloBoot();
+      try {
+        const made = await boot.producerPromote();
+        const { rows } = await verify.query(
+          "SELECT id, type, aggregate_type, aggregate_id, payload FROM outbox_events WHERE type = 'player.promoted' AND payload->>'player_id' = $1",
+          [made.waiter.player],
+        );
+        expect(rows).toHaveLength(1);
+        const [row] = rows;
+        expect(String(row.id)).toBe(made.event);
+        expect(row.type).toBe("player.promoted");
+        expect(row.aggregate_type).toBe("session");
+        expect(row.aggregate_id).toBe(made.session);
+        expect(Object.keys(row.payload).sort()).toEqual([
+          "amount_due",
+          "charge_id",
+          "membership_id",
+          "player_id",
+          "session_id",
+        ]);
+        expect(row.payload.session_id).toBe(made.session);
+        expect(row.payload.player_id).toBe(made.waiter.player);
+        expect(row.payload.membership_id).toBe(made.waiter.membership);
+        const seated = await verify.query("SELECT status FROM players WHERE id = $1", [
+          made.waiter.player,
+        ]);
+        expect(seated.rows[0].status).toBe("active");
+      } finally {
+        await boot.close();
+      }
+    }, 30_000);
   });
 });
