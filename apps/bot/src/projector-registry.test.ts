@@ -13,12 +13,14 @@ import {
   MAX_DELIVERY_ATTEMPTS,
   RETRY_BASE_MS,
   ZALO_DM_MAX_AGE_MINUTES,
+  ZALO_DM_UNTIL_SESSION_START,
   runDispatchCycle,
   type ClaimedDeliveryJob,
   type DeliverFn,
 } from "./dispatcher.js";
 import { PROJECTORS } from "./projectors/index.js";
 import { deliverPublicSessions } from "./projectors/public-sessions.js";
+import { ZALO_DM_TEMPLATES } from "./projectors/zalo-dm-templates.js";
 import {
   ROLE_PW,
   bootstrapJobDefiner,
@@ -27,6 +29,7 @@ import {
   withJobDefinerLock,
   type TestRolePasswordLease,
 } from "./test-db.js";
+import zaloDmDeliveryAgeBound from "./zalo-dm-delivery-age-bound.json" with { type: "json" };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const delivered: DeliverFn = async () => ({ result: "delivered" });
@@ -641,6 +644,22 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       expect(ZALO_DM_MAX_AGE_MINUTES * 60).toBeGreaterThan(worstS);
     });
 
+    it("PSD-11: untilSessionStart is one list (the JSON, the dispatcher, the CLI), each entry is the template promoted, and it is exactly the set of event types the 0071 definer serves", async () => {
+      expect(zaloDmDeliveryAgeBound.untilSessionStart).toEqual(ZALO_DM_UNTIL_SESSION_START);
+      expect(enableCli.ZALO_DM_UNTIL_SESSION_START).toEqual(ZALO_DM_UNTIL_SESSION_START);
+      for (const type of ZALO_DM_UNTIL_SESSION_START)
+        expect(ZALO_DM_TEMPLATES.get(type), type).toBe("promoted");
+      const definer = await verify.query<{ prosrc: string }>(
+        "SELECT prosrc FROM pg_proc WHERE proname = 'zalo_dm_promotion_seconds_to_start'",
+      );
+      expect(definer.rows).toHaveLength(1);
+      // a literal pattern over the definer's body, never a RegExp built from the list under test
+      const served = new Set(
+        [...definer.rows[0]!.prosrc.matchAll(/o\.type = '([a-z_.]+)'/g)].map((match) => match[1]),
+      );
+      expect([...served].sort()).toEqual([...ZALO_DM_UNTIL_SESSION_START].sort());
+    });
+
     /**
      * L31 U4b (readiness 7.2 DA-4..DA-6, DD-146): one cycle with the real zalo_dm deliverer ends
      * `event`'s row as delivered/noop_expired without a send, and the only warning line is the
@@ -1101,6 +1120,54 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       }
     }, 30_000);
 
+    it("PSD-8 zalo_dm promotion: a failed session-start read rejects the cycle before deliver(); the claimed row stays claimed with its attempts unchanged, no completion and no warning line", async () => {
+      // the literal of dispatcher.ts zaloDmPromotionStart, matched by string equality
+      const START_SQL = "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)";
+      const startError = new Error("PSD-8: the session-start read failed");
+      const failing = {
+        query: (text: string, values?: unknown[]) =>
+          text === START_SQL ? Promise.reject(startError) : workerPool.query(text, values),
+      } as unknown as pg.Pool;
+      const deliver = vi.fn(delivered);
+      const zalo = await zaloBoot();
+      let event = "";
+      try {
+        event = (await zalo.promote()).event;
+        await ackedWhileOff([event], zalo.projectors);
+        await enable("zalo_dm");
+        expect(await deliveries(event)).toEqual([
+          { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+        ]);
+        const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        const outcome = await runDispatchCycle(failing, { projectors }).then(
+          () => "resolved",
+          (error: unknown) => error,
+        );
+        const lines = warn.mock.calls.map((args) => args.join(" "));
+        warn.mockRestore();
+        expect(outcome).toBe(startError);
+        expect(lines).toEqual([]);
+        // earlier tests' CLI runs may have prepared rows this cycle also claims (the U3b note
+        // below), so the no-deliver check names this event; the stub saw no send at all
+        expect(deliver.mock.calls.filter(([job]) => job.eventId === event)).toEqual([]);
+        expect(zalo.stub.calls).toEqual([]);
+        const row = await verify.query(
+          "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
+          [event],
+        );
+        expect(row.rows).toEqual([
+          { status: "claimed", attempts: 0, provider_ref: null, error_code: null },
+        ]);
+      } finally {
+        // its five-minute lease would outlive the test: no later zalo_dm cycle may reclaim it
+        if (event)
+          await verify.query("DELETE FROM projector_deliveries WHERE event_id = $1", [event]);
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
     // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
     // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
     const NAMES = ["web_realtime", "zalo_dm", "public_sessions"];
@@ -1262,6 +1329,29 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       },
       30_000,
     );
+
+    it("PSD-12 zalo_dm promotion (R-CLI): an unacked player.promoted back-dated past the flat bound -> the CLI exits 2 unacked_backlog and changes nothing; acked while off, the CLI prepares one pending row and records no age", async () => {
+      const zalo = await zaloBoot();
+      try {
+        const { event } = await zalo.promote();
+        await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        const refused = await runEnableCli(["enable", "--projector", "zalo_dm"]);
+        expect(refused.code).toBe(2);
+        expect(refused.stderr).toContain("unacked_backlog");
+        expect(await realProjectors()).toEqual(ALL_OFF);
+        expect(await deliveries(event)).toEqual([]);
+        expect(await expiries([event])).toEqual([]);
+        await ackedWhileOff([event], zalo.projectors);
+        await enable("zalo_dm");
+        expect(await deliveries(event)).toEqual([
+          { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+        ]);
+        expect(await expiries([event])).toEqual([]);
+      } finally {
+        await disable("zalo_dm");
+        await zalo.close();
+      }
+    }, 30_000);
 
     it.each(NAMES)(
       "BS-5 %s: a disable keeps the pending rows and a CLI re-enable resumes them (DD-134 unchanged), adding no row and no record for their events",
