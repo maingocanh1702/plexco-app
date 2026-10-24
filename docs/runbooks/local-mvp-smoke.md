@@ -1,14 +1,14 @@
 # Runbook: smoke test Web MVP trên máy local (golden path)
 
 > **Dành cho:** owner. Chạy thật trên Postgres local + `next dev`, đăng nhập bằng dev-login (không cần Google OAuth).
-> **Phạm vi:** CHỈ máy local, database riêng `plexco_smoke`. Không dùng cho staging/production.
-> **Cách chạy:** làm tuần tự các bước 1 → 8 (tay), rồi bước 9 (click path) hoặc bước 10 (tự động bằng Playwright).
+> **Phạm vi:** CHỈ máy local, database riêng `plexco_smoke`. Không dùng cho staging/production. Bước 11 dùng database riêng của nó, `plexco_l35_scratch`.
+> **Cách chạy:** làm tuần tự các bước 1 → 8 (tay), rồi bước 9 (click path) hoặc bước 10 (tự động bằng Playwright). Bước 11 (tuỳ chọn) chạy độc lập, chỉ cần bước 1.
 > Lệnh và định danh trong code giữ nguyên, copy-paste được. Chạy mọi lệnh từ **thư mục gốc repo** (trừ khi có ghi chú khác).
 > Cơ chế dev-login (điều kiện mở cổng, giới hạn đã biết): README, mục "Dev-login".
 
 ## Quy tắc an toàn (đọc trước)
 
-- Chỉ làm việc trên database `plexco_smoke`. **Không** `DROP`/`ALTER` bất kỳ database nào khác (`plexco`, `plexco_test`, ...).
+- Chỉ làm việc trên database `plexco_smoke`. **Không** `DROP`/`ALTER` bất kỳ database nào khác (`plexco`, `plexco_test`, ...). Ngoại lệ duy nhất: script bước 11 tự tạo rồi tự drop database riêng `plexco_l35_scratch` của chính nó.
 - **Không bao giờ** `docker compose down -v`: cờ `-v` xoá volume `plexco_pgdata`, mất toàn bộ database local.
 - `ALTER DATABASE ... plexco.dev_login = 'on'` chỉ chạy trên DB local chuyên dụng này, không bao giờ trên DB dùng chung.
 - Cổng 3000 phải trống (`lsof -iTCP:3000 -sTCP:LISTEN` không in gì). Nếu bận, đổi **cả hai** chỗ cho cùng một số cổng: `-p 3000` ở bước 7 và `GOLDEN_PATH_BASE_URL=http://localhost:3000` ở bước 10 (và địa chỉ ở bước 8). Bước 7 có `-p` tường minh nên Next báo lỗi `EADDRINUSE` thay vì tự chuyển sang 3001 trong khi trình duyệt và spec vẫn nhắm 3000.
