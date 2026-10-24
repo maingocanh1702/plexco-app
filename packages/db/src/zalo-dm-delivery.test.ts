@@ -453,3 +453,148 @@ describe("zalo_dm_delivery_targets / zalo_dm_record_recipient (zalo_dm enabled)"
     expect(rows.map((r) => r.channel_identity_id)).toEqual([promoted.identity]);
   });
 });
+
+// 0071 (lane L34, PSD-10): zalo_dm_promotion_seconds_to_start, the one read the dispatcher makes before
+// deliver() for a player.promoted zalo_dm row. Every definer call runs as app_worker (workerPool), the
+// runtime role; the time cells use the database clock only (club() and the UPDATE set starts_at with now()).
+describe("zalo_dm_promotion_seconds_to_start (0071, PSD-10; zalo_dm enabled; as app_worker)", () => {
+  const toStart = async (e: { event: string; token: string }) =>
+    (await worker("SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)", [e.event, e.token]))
+      .rows as Row[];
+  const claimState = async (e: { event: string; token: string }) => {
+    const d = await one(
+      "SELECT status, claim_token FROM projector_deliveries WHERE event_id = $1 AND projector = 'zalo_dm'",
+      [e.event],
+    );
+    return [d.status, d.claim_token];
+  };
+  beforeAll(async () => {
+    await setEnabled(true);
+  });
+
+  it("PSD-10a/b: a live claim reads the CURRENT start: future -> one float8 > 0; moved into the past -> one float8 <= 0", async () => {
+    expect((await worker("SELECT current_user AS u")).rows).toEqual([{ u: "app_worker" }]);
+    const a = await club();
+    const e = await claimed(a, "player.promoted", { player_id: await player(a, await member(a)) });
+    const ahead = await toStart(e);
+    expect(ahead).toHaveLength(1);
+    const v = ahead[0]!.seconds_to_start as number;
+    // club(): starts_at = now() + 1 day, so 85800 < v <= 86400 (600 s of slack); ends_at would read 93600.
+    expect([typeof v, Number.isFinite(v), v > 0, v > 85_800, v <= 86_400]).toEqual([
+      "number",
+      true,
+      true,
+      true,
+      true,
+    ]);
+    await q(
+      "UPDATE sessions SET starts_at = now() - interval '3 hours', ends_at = now() - interval '1 hour' WHERE id = $1",
+      [a.session],
+    );
+    const past = await toStart(e);
+    expect(past).toHaveLength(1);
+    const w = past[0]!.seconds_to_start as number;
+    // starts_at = now() - 3 hours, so -11400 < w <= -10800; ends_at (1 hour ago) would read about -3600.
+    expect([typeof w, Number.isFinite(w), w <= 0, w <= -10_800, w > -11_400]).toEqual([
+      "number",
+      true,
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  it("PSD-10c: a stale claim (wrong token, expired lease, zalo_dm disabled) -> zero rows", async () => {
+    const e = await claimed(await club(), "player.promoted");
+    expect(await claimState(e)).toEqual(["claimed", e.token]);
+    expect(await toStart({ ...e, token: randomUUID() })).toEqual([]);
+    expect(await toStart(e)).toHaveLength(1);
+    await q(
+      "UPDATE projector_deliveries SET lease_expires_at = now() - interval '1 minute' WHERE event_id = $1",
+      [e.event],
+    );
+    expect(await toStart(e)).toEqual([]);
+    const f = await claimed(await club(), "player.promoted");
+    expect(await toStart(f)).toHaveLength(1);
+    await setEnabled(false);
+    try {
+      expect(await toStart(f)).toEqual([]);
+    } finally {
+      await setEnabled(true);
+    }
+  });
+
+  it("PSD-10d/e: a foreign tenant's session or a missing session -> one row, NULL (start unreadable)", async () => {
+    const a = await club();
+    const b = await club();
+    // (d) the event row is a's while its aggregate_id names b's session: the tenant comes from the event row.
+    expect(await toStart(await claimed(b, "player.promoted", {}, a.tenant))).toEqual([
+      { seconds_to_start: null },
+    ]);
+    // (e) an aggregate_id with no session row.
+    expect(
+      await toStart(await claimed({ ...a, session: randomUUID() }, "player.promoted")),
+    ).toEqual([{ seconds_to_start: null }]);
+  });
+
+  it("PSD-10f: every other zalo_dm event type on a live claim -> zero rows", async () => {
+    const cells: [string, Row][] = [
+      ["session.updated", { changed_fields: ["starts_at"] }],
+      ["session.cancelled", { cancel_reason: "host" }],
+      ["session.announcement_requested", {}],
+    ];
+    for (const [type, payload] of cells) {
+      const e = await claimed(await club(), type, payload);
+      expect([type, ...(await claimState(e))]).toEqual([type, "claimed", e.token]);
+      expect([type, await toStart(e)]).toEqual([type, []]);
+    }
+  });
+
+  it("PSD-10g: read-only: no routing_audit row, the zalo ciphertext columns unchanged, seconds_to_start the only column", async () => {
+    const a = await club();
+    await player(a, await member(a));
+    const live = await claimed(a, "player.promoted");
+    const lost = await claimed({ ...a, session: randomUUID() }, "player.promoted");
+    const sealed = async () => [
+      await q("SELECT count(*)::int AS n FROM routing_audit"),
+      await q(
+        "SELECT id, bot_token_enc, webhook_secret_enc, key_version FROM zalo_bots ORDER BY id",
+      ),
+      await q("SELECT id, platform_user_id_enc FROM channel_identities ORDER BY id"),
+    ];
+    const before = await sealed();
+    const r = await worker("SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)", [
+      live.event,
+      live.token,
+    ]);
+    expect(r.fields.map((field) => field.name)).toEqual(["seconds_to_start"]);
+    expect(r.rows.map((row) => Object.keys(row))).toEqual([["seconds_to_start"]]);
+    expect(await toStart(lost)).toEqual([{ seconds_to_start: null }]);
+    expect(await toStart({ ...live, token: randomUUID() })).toEqual([]);
+    expect(await sealed()).toEqual(before);
+  });
+
+  it("PSD-10h: posture: job_definer, SECURITY DEFINER, pinned search_path, EXECUTE for app_worker only", async () => {
+    await withDefinerReadLock(BASE, async () => {
+      const fns = await q(
+        `SELECT pg_get_userbyid(p.proowner) AS owner, p.prosecdef, p.proconfig,
+                pg_get_function_identity_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result,
+                has_function_privilege('app_worker', p.oid, 'EXECUTE') AS w, has_function_privilege('app', p.oid, 'EXECUTE') AS a,
+                has_function_privilege('readonly', p.oid, 'EXECUTE') AS r
+           FROM pg_proc p WHERE p.proname = 'zalo_dm_promotion_seconds_to_start'`,
+      );
+      expect(fns).toHaveLength(1);
+      const f = fns[0]!;
+      expect([f.owner, f.prosecdef, f.proconfig, f.args, f.result, f.w, f.a, f.r]).toEqual([
+        "job_definer",
+        true,
+        ["search_path=public, pg_temp"],
+        "p_event_id uuid, p_claim_token uuid",
+        "TABLE(seconds_to_start double precision)",
+        true,
+        false,
+        false,
+      ]);
+    });
+  });
+});
