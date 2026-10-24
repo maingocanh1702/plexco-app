@@ -22,6 +22,9 @@
  *      one round trip per candidate. Prepared rows are delivered by the unchanged DD-134 path; a record is
  *      only ever written for an acked event, which is never claimed again, so no record is followed by a
  *      delivery.
+ *      L34 (readiness R-CLI): zalo_dm types listed in untilSessionStart of zalo-dm-delivery-age-bound.json
+ *      skip the age class (the dispatcher's session-start check decides at delivery); they are prepared
+ *      like in-window events under the same cap, and step 1's refusal still counts them.
  *   3. public_sessions only: the canonical rebuild (public_sessions_tenant_candidates +
  *      public_sessions_project_session) for every tenant that has an outbox event (D7): the tenant list is
  *      read once, then ONE transaction per tenant, each opening with a plain read of `enabled` (no row
@@ -59,6 +62,21 @@ export const ZALO_DM_MAX_AGE_MINUTES = zaloDmDeliveryAgeBound.maxAgeMinutes;
 if (!Number.isInteger(ZALO_DM_MAX_AGE_MINUTES) || ZALO_DM_MAX_AGE_MINUTES <= 0) {
   throw new Error("zalo-dm-delivery-age-bound.json: maxAgeMinutes must be a positive integer");
 }
+// The file's untilSessionStart (lane L34), checked as there: distinct zalo_dm event types, else throw.
+const ZALO_DM_EVENT_TYPES = [
+  "session.updated",
+  "session.cancelled",
+  "session.announcement_requested",
+  "player.promoted",
+];
+export const ZALO_DM_UNTIL_SESSION_START = zaloDmDeliveryAgeBound.untilSessionStart;
+if (
+  !Array.isArray(ZALO_DM_UNTIL_SESSION_START) ||
+  new Set(ZALO_DM_UNTIL_SESSION_START).size !== ZALO_DM_UNTIL_SESSION_START.length ||
+  !ZALO_DM_UNTIL_SESSION_START.every((type) => ZALO_DM_EVENT_TYPES.includes(type))
+) {
+  throw new Error("zalo-dm-delivery-age-bound.json: untilSessionStart must list distinct zalo_dm event types");
+}
 
 // D2 and D3 of the readiness file (Tier B defaults, pending owner sign-off).
 // A projector's age bound is used by the step-1 refusal and the step-2 window: it caps an event's age when
@@ -68,6 +86,9 @@ if (!Number.isInteger(ZALO_DM_MAX_AGE_MINUTES) || ZALO_DM_MAX_AGE_MINUTES <= 0) 
 // docs/sessions/web-mvp-phase3-readiness-p3-zalo-dm-delivery-age-expiry.md). Every other projector keeps
 // BACKFILL_MAX_AGE_MINUTES (30), of the order of DD-134's own retry stretch (8 attempts, waits of
 // 15 s x 2^(n-1) = 1905 s of backoff).
+// L34 (readiness R-CLI): zalo_dm types listed in untilSessionStart of the same file never take the step-2
+// age class (the dispatcher's session-start check decides at delivery); the step-1 refusal and the
+// BACKFILL_MAX_ROWS cap still apply to them.
 // BACKFILL_MAX_ROWS is the flood guard of threat 2 (readiness 6.2): at most this many ACKED in-window
 // events per projector per run, newest first; every other acked candidate gets an expiry record.
 export const BACKFILL_MAX_AGE_MINUTES = 30;
@@ -112,7 +133,7 @@ WITH bound AS MATERIALIZED (
 ), candidates AS (
   SELECT o.id, o.tenant_id, o.created_at,
          o.acked_at IS NULL AS unacked,
-         o.created_at >= bound.cutoff AS in_window
+         (o.created_at >= bound.cutoff OR o.type = ANY($5::text[])) AS in_window
     FROM outbox_events o CROSS JOIN bound
    WHERE ${ROUTED_TO_PROJECTOR}
      AND NOT EXISTS (SELECT 1 FROM projector_deliveries d WHERE d.event_id = o.id AND d.projector = $1)
@@ -149,6 +170,7 @@ async function inOwnerTransaction(client, work) {
 export async function enableProjector(client, projector) {
   // DF6 (lane L31): the CLI's first per-projector bound (see the bound comment at the top).
   const maxAgeMinutes = projector === "zalo_dm" ? ZALO_DM_MAX_AGE_MINUTES : BACKFILL_MAX_AGE_MINUTES;
+  const untilSessionStart = projector === "zalo_dm" ? ZALO_DM_UNTIL_SESSION_START : [];
   const changed = await inOwnerTransaction(client, async () => {
     const found = await client.query("SELECT 1 FROM outbox_projectors WHERE name = $1 FOR UPDATE", [projector]);
     if (found.rowCount === 0) throw new Refusal("projector_not_found", projector);
@@ -175,6 +197,7 @@ export async function enableProjector(client, projector) {
       maxAgeMinutes,
       BACKFILL_MAX_ROWS,
       prefix,
+      untilSessionStart,
     ]);
     const operationId = randomUUID(); // one per run: written into the records, never printed
     const out = { prepared: 0, expired_age: 0, expired_cap: 0 };

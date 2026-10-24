@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -17,12 +18,15 @@ import {
 import {
   ATTEMPTS_EXHAUSTED,
   ZALO_DM_MAX_AGE_MINUTES,
+  ZALO_DM_UNTIL_SESSION_START,
   completionArgs,
   isReadableEventTime,
   normalizeErrorCode,
   runDispatchCycle,
   zaloDmAgeVerdict,
   zaloDmDeliveryAge,
+  zaloDmPromotionStart,
+  zaloDmStartVerdict,
   type DeliverFn,
 } from "./dispatcher.js";
 
@@ -206,6 +210,73 @@ describe("DD-146 zalo_dm delivery age check (L31)", () => {
   );
 });
 
+describe("DD-146 amendment: player.promoted stays deliverable until the session start (L34)", () => {
+  const before = (secondsToStart: number) => ({
+    rule: "until_session_start",
+    expired: false,
+    secondsToStart,
+  });
+  const after = (secondsAgo: number | "unreadable") => ({
+    rule: "until_session_start",
+    expired: true,
+    secondsAgo,
+  });
+
+  it("PSD-7: zaloDmStartVerdict delivers only before the start and expires at it, after it and on every unreadable reading", () => {
+    expect(ZALO_DM_UNTIL_SESSION_START).toEqual(["player.promoted"]);
+    expect(zaloDmStartVerdict(1)).toEqual(before(1));
+    expect(zaloDmStartVerdict(0)).toEqual(after(0));
+    expect(zaloDmStartVerdict(-1)).toEqual(after(1));
+    // the record prints whole seconds rounded up: 0.4 s late is 1 s, 1.6 s late is 2 s
+    expect(zaloDmStartVerdict(-0.4)).toEqual(after(1));
+    expect(zaloDmStartVerdict(-1.6)).toEqual(after(2));
+    for (const raw of [null, undefined, "1", NaN, Infinity, -Infinity]) {
+      expect(zaloDmStartVerdict(raw), String(raw)).toEqual(after("unreadable"));
+    }
+  });
+
+  it("PSD-7: zaloDmPromotionStart sends the one 0071 read with the event id and claim token and maps its row", async () => {
+    const calls: unknown[][] = [];
+    let rows: unknown[] = [];
+    const db = {
+      query: async (...args: unknown[]) => {
+        calls.push(args);
+        return { rows };
+      },
+    };
+    const eventId = randomUUID();
+    const claimToken = randomUUID();
+    const read = () => zaloDmPromotionStart(db as unknown as pg.Pool, eventId, claimToken);
+
+    expect(await read()).toBeNull();
+    rows = [{ seconds_to_start: 5 }];
+    expect(await read()).toEqual(before(5));
+    rows = [{ seconds_to_start: null }];
+    expect(await read()).toEqual(after("unreadable"));
+    const sql = "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)";
+    expect(calls).toEqual([
+      [sql, [eventId, claimToken]],
+      [sql, [eventId, claimToken]],
+      [sql, [eventId, claimToken]],
+    ]);
+  });
+
+  it(
+    "PSD-9: as app_worker the 0071 read is allowed (EXECUTE) and returns null for an event with no live claim",
+    withTestContext(
+      () => setupDispatcherContext("plexco_jrd_dispatcher_psd9"),
+      async (ctx) => {
+        const who = await ctx.workerPool.query<{ u: string }>("SELECT current_user AS u");
+        expect(who.rows[0]!.u).toBe("app_worker");
+        // zero rows, not a permission error: random ids match no claimed zalo_dm delivery
+        await expect(
+          zaloDmPromotionStart(ctx.workerPool, randomUUID(), randomUUID()),
+        ).resolves.toBeNull();
+      },
+    ),
+  );
+});
+
 it(
   "cleans the dispatcher database and acquired clients when setup fails after CREATE",
   withTestContext(
@@ -267,7 +338,7 @@ describe("dispatcher.ts and the 0056 worker modules — shipped source (static)"
   ];
   it("JRD-5: the shipped modules issue ZERO SQL outside the granted definers, and touch no table", async () => {
     const allowed =
-      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|public_sessions_project_session|public_sessions_tenant_candidates|public_sessions_sweep_expired|claim_projector_delivery_batch|outbox_claimed_event|job_expire_stale_drafts|zalo_dm_delivery_targets|zalo_dm_record_recipient)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event|complete_projector_delivery|outbox_required_projectors|projector_is_enabled)\(|^SELECT pg_notify\('web_realtime', \$1\)$|^SELECT date_part\('epoch', clock_timestamp\(\) - \$1::timestamptz\) AS age_s$|^LISTEN outbox_wake$/;
+      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|public_sessions_project_session|public_sessions_tenant_candidates|public_sessions_sweep_expired|claim_projector_delivery_batch|outbox_claimed_event|job_expire_stale_drafts|zalo_dm_delivery_targets|zalo_dm_record_recipient|zalo_dm_promotion_seconds_to_start)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event|complete_projector_delivery|outbox_required_projectors|projector_is_enabled)\(|^SELECT pg_notify\('web_realtime', \$1\)$|^SELECT date_part\('epoch', clock_timestamp\(\) - \$1::timestamptz\) AS age_s$|^LISTEN outbox_wake$/;
     const tables = [
       "outbox_events",
       "projector_deliveries",

@@ -958,3 +958,111 @@ describe("EN-9..EN-15 the owner enable CLI rebuilds, refuses, recovers and print
     );
   }, 30_000);
 });
+
+/** The waitlist-promotion DM's type; the CLI prepares it for zalo_dm at any age (DD-146). */
+const PROMOTED = "player.promoted";
+
+/** The aggregate type of zalo_dm's one route for `type` (zalo_dm's routes name their type, 0056). */
+async function zaloAggregate(type: string): Promise<string> {
+  const r = await rows(
+    "SELECT aggregate_type FROM outbox_projector_routes WHERE projector = 'zalo_dm' AND event_type = $1",
+    [type],
+  );
+  expect(r).toHaveLength(1);
+  return String(r[0]!.aggregate_type);
+}
+
+/**
+ * EN-16..EN-19 need the seeded zalo_dm and web_realtime (the CLI keys its exemption on the
+ * projector's name), and the CLI scans the full history: each row first settles the projector with
+ * one enable and then the DD-134 rollback, so every earlier event holds a row or a record and the
+ * row's own run counts only the row's own events.
+ */
+async function settle(projector: string): Promise<void> {
+  await enable(projector);
+  expect(await setEnabled(projector, false)).toBe(true);
+}
+
+describe("EN-16..EN-19 the owner enable CLI and the waitlist-promotion DM: zalo_dm prepares player.promoted at any age, still under the cap and the unacked_backlog refusal", () => {
+  it("EN-16: zalo_dm: acked player.promoted 61 minutes and 7 days old -> one pending row each and no record; session.updated 61 minutes old -> one ':age' record and no row; a re-run is a no-op", async () => {
+    await settle("zalo_dm");
+    const promotion = await zaloAggregate(PROMOTED);
+    const p1 = await seedOne(promotion, ctx.tenantA, PROMOTED);
+    const p2 = await seedOne(promotion, ctx.tenantA, PROMOTED);
+    const u = await seedOne(await zaloAggregate("session.updated"), ctx.tenantA, "session.updated");
+    await age([p1, u], 61);
+    await age([p2], 7 * 24 * 60);
+    const all = [p1, p2, u];
+    await drain(all);
+    try {
+      expect(await enable("zalo_dm")).toEqual(summary("zalo_dm", { prepared: 2, expired_age: 1 }));
+      expect(await deliveries("zalo_dm", all)).toEqual(pending([p1, p2]));
+      await expectRecords("zalo_dm", all, [[u, ctx.tenantA, "age"]]);
+      expect(await enable("zalo_dm")).toEqual(summary("zalo_dm", { changed: false }));
+      expect(await deliveries("zalo_dm", all)).toEqual(pending([p1, p2]));
+      await expectRecords("zalo_dm", all, [[u, ctx.tenantA, "age"]]);
+    } finally {
+      await setEnabled("zalo_dm", false);
+    }
+  }, 30_000);
+
+  it("EN-17: zalo_dm: 200 acked in-window session.updated and one acked player.promoted 2 hours old -> the cap still binds the promotion, the oldest candidate: one ':cap' record and no row", async () => {
+    expect(BACKFILL_MAX_ROWS).toBe(200);
+    await settle("zalo_dm");
+    const updates = await seed(
+      await zaloAggregate("session.updated"),
+      200,
+      ctx.tenantA,
+      "session.updated",
+    );
+    const p = await seedOne(await zaloAggregate(PROMOTED), ctx.tenantA, PROMOTED);
+    await age([p], 120);
+    await drain([...updates, p]);
+    try {
+      expect(await enable("zalo_dm")).toEqual(
+        summary("zalo_dm", { prepared: 200, expired_cap: 1 }),
+      );
+      expect(await deliveries("zalo_dm", updates)).toEqual(pending(updates));
+      expect(await deliveries("zalo_dm", [p])).toEqual([]);
+      await expectRecords("zalo_dm", [...updates, p], [[p, ctx.tenantA, "cap"]]);
+    } finally {
+      await setEnabled("zalo_dm", false);
+    }
+  }, 60_000);
+
+  it("EN-18: zalo_dm: an unacked player.promoted 61 minutes old -> exit 2 unacked_backlog, nothing enabled or written; once a worker cycle acks it, the CLI enables: one pending row and no record", async () => {
+    await settle("zalo_dm");
+    const p = await seedOne(await zaloAggregate(PROMOTED), ctx.tenantA, PROMOTED);
+    await age([p], 61);
+    try {
+      const refused = await runCli(["enable", "--projector", "zalo_dm"]);
+      expect([refused.status, refused.stdout]).toEqual([2, ""]);
+      expect(refused.stderr).toMatch(/^refused: unacked_backlog: 1 routed events are unacked/);
+      expect(await isEnabled("zalo_dm")).toBe(false);
+      expect(await deliveries("zalo_dm", [p])).toEqual([]);
+      await expectRecords("zalo_dm", [p], []);
+      await drain([p]); // the cycle the runbook waits for: the projector is off, so the ack carries '{}'
+      const run = await runCli(["enable", "--projector", "zalo_dm"]);
+      expect(run.status, run.stderr).toBe(0);
+      expect(JSON.parse(run.stdout)).toStrictEqual(summary("zalo_dm", { prepared: 1 }));
+      expect(await deliveries("zalo_dm", [p])).toEqual(pending([p]));
+      await expectRecords("zalo_dm", [p], []);
+    } finally {
+      await setEnabled("zalo_dm", false);
+    }
+  }, 30_000);
+
+  it("EN-19: web_realtime: an acked player.promoted 40 minutes old -> one ':age' record and no row (web_realtime exempts no type)", async () => {
+    await settle("web_realtime");
+    const p = await seedOne(await zaloAggregate(PROMOTED), ctx.tenantA, PROMOTED);
+    await age([p], 40);
+    await drain([p]);
+    try {
+      expect(await enable("web_realtime")).toEqual(summary("web_realtime", { expired_age: 1 }));
+      expect(await deliveries("web_realtime", [p])).toEqual([]);
+      await expectRecords("web_realtime", [p], [[p, ctx.tenantA, "age"]]);
+    } finally {
+      await setEnabled("web_realtime", false);
+    }
+  }, 30_000);
+});

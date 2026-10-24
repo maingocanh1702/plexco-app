@@ -65,6 +65,29 @@ if (!Number.isInteger(ZALO_DM_MAX_AGE_MINUTES) || ZALO_DM_MAX_AGE_MINUTES <= 0) 
   throw new Error("zalo-dm-delivery-age-bound.json: maxAgeMinutes must be a positive integer");
 }
 
+/** DD-146 amendment (2026-10-24): the zalo_dm types deliverable until the session's start. */
+// A newly listed type needs a new branch in the 0071 definer, which is a migration.
+export const ZALO_DM_UNTIL_SESSION_START: readonly string[] =
+  zaloDmDeliveryAgeBound.untilSessionStart;
+const ZALO_DM_ROUTABLE_EVENT_TYPES: readonly unknown[] = [
+  "session.updated",
+  "session.cancelled",
+  "session.announcement_requested",
+  "player.promoted",
+]; // the four types 0056 routes to zalo_dm (outbox_projector_routes_zalo_dm_chk)
+const untilSessionStart: unknown = ZALO_DM_UNTIL_SESSION_START;
+if (
+  !Array.isArray(untilSessionStart) ||
+  !untilSessionStart.every(
+    (type: unknown, i: number, all: unknown[]) =>
+      ZALO_DM_ROUTABLE_EVENT_TYPES.includes(type) && all.indexOf(type) === i,
+  )
+) {
+  throw new Error(
+    "zalo-dm-delivery-age-bound.json: untilSessionStart must list distinct zalo_dm event types",
+  );
+}
+
 /** A Date the age query can take as $1; an Invalid Date there would make the query throw. */
 export function isReadableEventTime(value: unknown): value is Date {
   return value instanceof Date && Number.isFinite(value.getTime());
@@ -92,6 +115,10 @@ export function zaloDmAgeVerdict(raw: unknown): ZaloDmAgeVerdict {
  *   read propagates and leaves the row claimed, re-checked at its reclaim;
  * 5 dropping a live retry: the bound exceeds the measured live worst case, and `>` is strict;
  * 6 drift: one definition of the bound (zalo-dm-delivery-age-bound.json, also read by the CLI).
+ * 7 a promoted player never told (DD-146 amendment 2026-10-24): an untilSessionStart type skips
+ *   the age and reads its session's start under the live claim (0071, DATABASE clock); it
+ *   delivers while the start is ahead, expires at or after it or when it is unreadable (fail
+ *   closed); zero rows = the claim is gone = the stale-stop. One source: the same JSON.
  */
 export async function zaloDmDeliveryAge(
   db: pg.Pool,
@@ -103,6 +130,33 @@ export async function zaloDmDeliveryAge(
     [createdAt],
   );
   return zaloDmAgeVerdict(result.rows[0]?.age_s);
+}
+
+/** The until-session-start rule's verdict; `rule` tells its record from ZaloDmAgeVerdict's. */
+export type ZaloDmStartVerdict =
+  | { rule: "until_session_start"; expired: false; secondsToStart: number }
+  | { rule: "until_session_start"; expired: true; secondsAgo: number | "unreadable" };
+
+/** Seconds to the start: `> 0` delivers, `<= 0` expires; only a finite number is readable. */
+export function zaloDmStartVerdict(value: unknown): ZaloDmStartVerdict {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    return { rule: "until_session_start", expired: true, secondsAgo: "unreadable" };
+  if (value > 0) return { rule: "until_session_start", expired: false, secondsToStart: value };
+  return { rule: "until_session_start", expired: true, secondsAgo: Math.max(0, Math.ceil(-value)) };
+}
+
+/** The 0071 read under the live zalo_dm claim; null = zero rows (the claim was lost). */
+export async function zaloDmPromotionStart(
+  db: pg.Pool,
+  eventId: string,
+  claimToken: string,
+): Promise<ZaloDmStartVerdict | null> {
+  const result = await db.query<{ seconds_to_start: unknown }>(
+    "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)",
+    [eventId, claimToken],
+  );
+  const row = result.rows[0];
+  return row ? zaloDmStartVerdict(row.seconds_to_start) : null;
 }
 
 export interface DispatchCycleOptions {
@@ -300,8 +354,16 @@ export async function runDispatchCycle(
 
       // DD-146: an expired zalo_dm row ends as delivered/noop_expired without deliver(). Awaited
       // OUTSIDE the try: a clock-read error aborts the cycle, never a dlq deliver_threw.
-      const expiry =
-        job.projector === "zalo_dm" ? await zaloDmDeliveryAge(pool, job.event.createdAt) : null;
+      let expiry: ZaloDmAgeVerdict | ZaloDmStartVerdict | null = null;
+      if (job.projector === "zalo_dm") {
+        expiry = ZALO_DM_UNTIL_SESSION_START.includes(job.event.eventType)
+          ? await zaloDmPromotionStart(pool, job.eventId, job.claimToken)
+          : await zaloDmDeliveryAge(pool, job.event.createdAt);
+        if (!expiry) {
+          summary.leaseLostSkips += 1; // the start read found the claim gone: the stale-stop rule
+          break;
+        }
+      }
       let outcome: DeliveryOutcome;
       try {
         outcome = expiry?.expired
@@ -377,7 +439,15 @@ export async function runDispatchCycle(
       if (completeResult.rows[0]?.complete_projector_delivery === true) {
         summary.processedDeliveries += 1;
         // DD-146 record: ids, the projector and integers only; a stale completion logs nothing.
-        if (expiry?.expired) {
+        if (expiry?.expired && "rule" in expiry) {
+          const start =
+            expiry.secondsAgo === "unreadable"
+              ? "start unreadable"
+              : `session started ${expiry.secondsAgo}s ago`;
+          console.warn(
+            `[dispatcher] delivery expired: ${start}, rule ${expiry.rule} (event ${job.eventId}, projector ${job.projector})`,
+          );
+        } else if (expiry?.expired) {
           const bound = ZALO_DM_MAX_AGE_MINUTES * 60;
           const age =
             expiry.ageSeconds === "unreadable"
