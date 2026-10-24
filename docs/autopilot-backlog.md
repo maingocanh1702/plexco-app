@@ -6662,6 +6662,7 @@ merged_probe: null
 notes: |
   Conductor decision D7 (under the owner's delegation of 2026-10-22, not an owner signature): a row now, a lane once the identity-merge writer exists (DD-103); D7 records that `merge_tombstones` (packages/db/schema.ts:131 at 21b57f8) has no writer today. Owner-accepted residual (item 5, PR #98 body line 87): an account whose person differs from the joining person (P-29) and owes nothing in the club reads known_zero and gets R16. `ownClubPaymentStatus` is at apps/web/lib/zalo/player-commands.ts:190. Candidate dependency `chat-identity-merge-reparent-enablement`, not verified as the DD-103 writer.
   Source: PR #98 body, section "Deviations and notes", line 95; section "Review", line 87.
+  Update 2026-10-24 (L34, DD-149 mục 6): D7 stays a backlog row, waiting for the identity-merge writer (owner decisions of 2026-10-24, item 6; accepted under the owner's delegation of 2026-10-24 (assistant review)).
 
 ## task: public-card-hide-exact-address-real-stack-proof
 title: E2E (local only): prove B1's hide-exact-address option on the real public card, ON and OFF, with public_sessions enabled through the enable CLI
@@ -6739,6 +6740,7 @@ notes: |
   renew ignoreUntil with a new reason, or escalate. Related: braces-ghsa-vfj7-no-fixed-version (#60).
   source: lane L25 (P3-S16f), rule RO-L25-1 (i)
   Source: PR #103 body, section "Readiness 3.3: the osv-scanner.toml entry and the backlog-row text (verbatim)", lines 168-175; section "Backlog (this PR does not edit `docs/autopilot-backlog.md`)", line 102.
+  Update 2026-10-24 (L34, DD-149 mục 5): revisit before 2026-12-14 (the Phase 4 plan must include it); the ignore date 2026-12-21 stays unchanged (owner decisions of 2026-10-24, item 5; accepted under the owner's delegation of 2026-10-24 (assistant review)).
 
 ## task: zalo-dm-delivery-age-expiry
 title: Bot: expire a `zalo_dm` delivery older than the delivery age bound and give the backfill the same bound (lane L31, follow-up of L24)
