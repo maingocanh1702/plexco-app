@@ -595,7 +595,11 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
      * exact template: the event id, the projector and two integers, never a payload value, tenant,
      * recipient or amount. `deliveries()` selects no provider_ref, so the row is read directly.
      */
-    async function expiredAtDelivery(zalo: Awaited<ReturnType<typeof zaloBoot>>, event: string) {
+    async function expiredAtDelivery(
+      zalo: Awaited<ReturnType<typeof zaloBoot>>,
+      event: string,
+      attempts = 1,
+    ) {
       const bound = ZALO_DM_MAX_AGE_MINUTES * 60;
       const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       try {
@@ -606,7 +610,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           [event],
         );
         expect(row.rows).toEqual([
-          { status: "delivered", attempts: 1, provider_ref: "noop_expired", error_code: null },
+          { status: "delivered", attempts, provider_ref: "noop_expired", error_code: null },
         ]);
         const lines = warn.mock.calls.map((args) => args.join(" "));
         const age = Number(/ age (\d+)s /.exec(lines.join("\n"))?.[1]);
@@ -672,6 +676,61 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it("DA-6 zalo_dm: the DA-5 row re-enabled by a raw outbox_projector_set_enabled on the owner seat (no CLI) expires at delivery as in DA-4", async () => {
       const raw = "SELECT outbox_projector_set_enabled('zalo_dm', true)";
       await expiredAfterReEnable(() => asOwner(raw, []));
+    }, 30_000);
+
+    // L31 S1 (security round 1 finding S1): DA-4..DA-8 reach the age check at attempts 0 only.
+    // RETRYING fails a zalo_dm row once (failed, attempts 1, due 15 s later); DUE makes it due now
+    // on the verify seat. Decision table P2 (a live retry) and P4 (a failed row resumed).
+    const RETRYING = new Map<string, DeliverFn>([
+      ["zalo_dm", async () => ({ result: "retry", errorCode: "retry_transient" })],
+    ]);
+    const FAILED_ONCE = {
+      projector: "zalo_dm",
+      status: "failed",
+      attempts: 1,
+      error_code: "retry_transient",
+    };
+    const DUE = "UPDATE projector_deliveries SET next_attempt_at = now() WHERE event_id = $1";
+
+    it("DA-11 zalo_dm: a live retry (the row failed once, attempts 1), its event back-dated past the bound and made due, expires at delivery (no send, delivered/noop_expired, attempts 2, one warning line)", async () => {
+      const zalo = await zaloBoot();
+      try {
+        const p = await zalo.promote();
+        await ackedWhileOff([p.event], zalo.projectors);
+        await enable("zalo_dm");
+        await cycle(RETRYING);
+        expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
+        await backdate([p.event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        await verify.query(DUE, [p.event]);
+        await expiredAtDelivery(zalo, p.event, 2);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
+    it("DA-11b zalo_dm: the DA-11 failed row (attempts 1), back-dated past the bound and made due while disabled, is not claimed; a CLI re-enable adds no row and no record, then it expires at delivery with attempts 2 as in DA-11", async () => {
+      const zalo = await zaloBoot();
+      try {
+        const p = await zalo.promote();
+        await ackedWhileOff([p.event], zalo.projectors);
+        await enable("zalo_dm");
+        await cycle(RETRYING);
+        expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await backdate([p.event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        await verify.query(DUE, [p.event]);
+        await cycle(zalo.projectors);
+        expect(zalo.stub.calls).toEqual([]);
+        expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
+        await enable("zalo_dm");
+        expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
+        expect(await expiries([p.event])).toEqual([]);
+        await expiredAtDelivery(zalo, p.event, 2);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
     }, 30_000);
 
     // L31 U4c (readiness 7.2 DA-7, DA-8; decision table P6, P6b and row X).
