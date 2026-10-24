@@ -453,9 +453,11 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
              VALUES ($1, 'zalo', $2, $3, 'active', $4)`,
             [person.id, enc, randomUUID(), bot.id],
           );
+          // joined 2 hours ago, before any back-dated promotion (PSD-*: 61 minutes):
+          // zalo_dm_delivery_targets reads players with joined_at <= the event's created_at (0057)
           const player = await one(
             `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position, joined_at)
-             VALUES ($1, $2, $3, 'active', NULL, now() - interval '1 hour') RETURNING id`,
+             VALUES ($1, $2, $3, 'active', NULL, now() - interval '2 hours') RETURNING id`,
             [tenant.id, session.id, membership.id],
           );
           const event = await one(
@@ -511,11 +513,20 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           );
           return { chat, event: String(event.id) };
         };
+        /**
+         * Moves the session `promote()` uses to start at now() + `interval` on the DB clock (e.g.
+         * "-1 minute"), its length kept: ends_at moves by the same amount.
+         */
+        const moveStart = (interval: string) =>
+          verify.query(
+            "UPDATE sessions SET starts_at = now() + $2::interval, ends_at = now() + $2::interval + (ends_at - starts_at) WHERE id = $1",
+            [session.id, interval],
+          );
         const projectors = new Map<string, DeliverFn>([
           ...PROJECTORS,
           ["zalo_dm", createZaloDmDeliver({ db: workerPool })],
         ]);
-        return { stub, token, projectors, promote, update, close };
+        return { stub, token, projectors, promote, update, moveStart, close };
       } catch (error) {
         await close();
         throw error;
@@ -792,6 +803,135 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         await zalo.close();
       }
     }, 30_000);
+
+    // L34 W4b1 (PSD-1..PSD-3; PSD-4..PSD-6 add rows): the promotion twins of DA-4, DA-11 and DA-3.
+    // A player.promoted DM is bounded by its session's start on the DB clock, not by the flat
+    // bound: each path arms a promotion back-dated past the flat bound, and one cycle sends it while
+    // the start is a day ahead; after moveStart("-1 minute") the next one armed the same way is not
+    // sent. Above DA-8, like every zalo_dm test that asserts stub.calls.
+    const PROMOTION_PATHS: {
+      id: string;
+      path: string;
+      attempts: number;
+      arm: (zalo: Awaited<ReturnType<typeof zaloBoot>>, event: string) => Promise<void>;
+    }[] = [
+      {
+        id: "PSD-1",
+        path: "live first attempt (DA-4: the CLI prepares it fresh, then it is back-dated)",
+        attempts: 1,
+        arm: async (zalo, event) => {
+          await ackedWhileOff([event], zalo.projectors);
+          await enable("zalo_dm");
+          expect(await deliveries(event)).toEqual([
+            { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+          ]);
+          await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        },
+      },
+      {
+        id: "PSD-2",
+        path: "live retry (DA-11: failed once at attempts 1, back-dated, made due)",
+        attempts: 2,
+        arm: async (zalo, event) => {
+          await ackedWhileOff([event], zalo.projectors);
+          await enable("zalo_dm");
+          await cycle(RETRYING);
+          expect(await deliveries(event)).toEqual([FAILED_ONCE]);
+          await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
+          await verify.query(DUE, [event]);
+        },
+      },
+      {
+        id: "PSD-3",
+        path: "backfill (DA-3: back-dated while off, then the CLI prepares it, no age record)",
+        attempts: 1,
+        arm: async (zalo, event) => {
+          await ackedWhileOff([event], zalo.projectors);
+          await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
+          await enable("zalo_dm");
+          expect(await deliveries(event)).toEqual([
+            { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+          ]);
+        },
+      },
+    ];
+
+    /**
+     * One zalo_dm cycle with the real deliverer: the stub calls it added, `event`'s row (read
+     * directly: deliveries() selects no provider_ref) and every console.warn line it printed.
+     */
+    async function promotionCycle(zalo: Awaited<ReturnType<typeof zaloBoot>>, event: string) {
+      const before = zalo.stub.calls.length;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        await cycle(zalo.projectors);
+        const row = await verify.query(
+          "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
+          [event],
+        );
+        return {
+          sent: zalo.stub.calls.slice(before).map(({ chatId, token }) => ({ chatId, token })),
+          row: row.rows,
+          lines: warn.mock.calls.map((args) => args.join(" ")),
+        };
+      } finally {
+        warn.mockRestore();
+      }
+    }
+
+    for (const cell of PROMOTION_PATHS)
+      it(`${cell.id} zalo_dm promotion, ${cell.path}: back-dated past the flat bound, it is sent once while its session starts a day ahead (delivered/sent, attempts ${cell.attempts}, no record); with the start one minute past, the next one is not sent (delivered/noop_expired, attempts ${cell.attempts}, one session-started line)`, async () => {
+        const zalo = await zaloBoot();
+        try {
+          const ahead = await zalo.promote();
+          await cell.arm(zalo, ahead.event);
+          expect(await promotionCycle(zalo, ahead.event)).toEqual({
+            sent: [{ chatId: ahead.chat, token: zalo.token }],
+            row: [
+              {
+                status: "delivered",
+                attempts: cell.attempts,
+                provider_ref: "sent",
+                error_code: null,
+              },
+            ],
+            lines: [],
+          });
+          expect(await expiries([ahead.event])).toEqual([]);
+
+          await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+          const started = await zalo.promote();
+          await cell.arm(zalo, started.event);
+          expect(await expiries([started.event])).toEqual([]);
+          await zalo.moveStart("-1 minute");
+          const expired = await promotionCycle(zalo, started.event);
+          expect({ sent: expired.sent, row: expired.row }).toEqual({
+            sent: [],
+            row: [
+              {
+                status: "delivered",
+                attempts: cell.attempts,
+                provider_ref: "noop_expired",
+                error_code: null,
+              },
+            ],
+          });
+          expect(expired.lines).toHaveLength(1);
+          const line = expired.lines[0]!;
+          const head = "[dispatcher] delivery expired: session started ";
+          const tail = `s ago, rule until_session_start (event ${started.event}, projector zalo_dm)`;
+          expect(line.startsWith(head), line).toBe(true);
+          expect(line.endsWith(tail), line).toBe(true);
+          const seconds = Number(line.slice(head.length, line.length - tail.length));
+          expect(Number.isInteger(seconds), line).toBe(true);
+          // moveStart("-1 minute") right before the cycle; the test's timeout caps the rest
+          expect(seconds).toBeGreaterThanOrEqual(60);
+          expect(seconds).toBeLessThanOrEqual(180);
+        } finally {
+          await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+          await zalo.close();
+        }
+      }, 60_000);
 
     // L31 U4c (readiness 7.2 DA-7, DA-8; decision table P6, P6b and row X).
     it("DA-7 zalo_dm: a dlq row back-dated past the bound and replayed by the owner CLI (exit 0) expires at its next claim and is never re-sent; a second replay exits 2 delivery_not_in_dlq; its fresh twin is sent once", async () => {
