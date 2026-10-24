@@ -589,6 +589,91 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       expect(ZALO_DM_MAX_AGE_MINUTES * 60).toBeGreaterThan(worstS);
     });
 
+    /**
+     * L31 U4b (readiness 7.2 DA-4..DA-6, DD-146): one cycle with the real zalo_dm deliverer ends
+     * `event`'s row as delivered/noop_expired without a send, and the only warning line is the
+     * exact template: the event id, the projector and two integers, never a payload value, tenant,
+     * recipient or amount. `deliveries()` selects no provider_ref, so the row is read directly.
+     */
+    async function expiredAtDelivery(zalo: Awaited<ReturnType<typeof zaloBoot>>, event: string) {
+      const bound = ZALO_DM_MAX_AGE_MINUTES * 60;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      try {
+        await cycle(zalo.projectors);
+        expect(zalo.stub.calls).toEqual([]);
+        const row = await verify.query(
+          "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
+          [event],
+        );
+        expect(row.rows).toEqual([
+          { status: "delivered", attempts: 1, provider_ref: "noop_expired", error_code: null },
+        ]);
+        const lines = warn.mock.calls.map((args) => args.join(" "));
+        const age = Number(/ age (\d+)s /.exec(lines.join("\n"))?.[1]);
+        expect(lines).toEqual([
+          `[dispatcher] delivery expired: age ${age}s > bound ${bound}s (event ${event}, projector zalo_dm)`,
+        ]);
+        // back-dated by the bound plus one minute; the test's 30 s timeout caps the rest
+        expect(age).toBeGreaterThanOrEqual(bound + 60);
+        expect(age).toBeLessThan(bound + 60 + 30);
+      } finally {
+        warn.mockRestore();
+      }
+    }
+
+    it("DA-4 zalo_dm: a row the CLI prepared inside the bound, its event then back-dated past it, expires at delivery (no send, delivered/noop_expired, attempts 1, one warning line)", async () => {
+      const zalo = await zaloBoot();
+      try {
+        const p = await zalo.promote();
+        await ackedWhileOff([p.event], zalo.projectors);
+        await enable("zalo_dm");
+        expect(await deliveries(p.event)).toEqual([
+          { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+        ]);
+        await backdate([p.event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        await expiredAtDelivery(zalo, p.event);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
+    /**
+     * DA-5/DA-6: a zalo_dm row pending at a disable (the BS-5 shape), its event then back-dated past
+     * the bound and `reEnable` run: it adds no row and no expiry record, and the row expires at
+     * delivery as in DA-4.
+     */
+    async function expiredAfterReEnable(reEnable: () => Promise<unknown>) {
+      const zalo = await zaloBoot();
+      const pending = { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null };
+      try {
+        const p = await zalo.promote();
+        await ackedWhileOff([p.event], zalo.projectors);
+        await enable("zalo_dm");
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await cycle(zalo.projectors);
+        expect(zalo.stub.calls).toEqual([]);
+        expect(await deliveries(p.event)).toEqual([pending]);
+        await backdate([p.event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        await reEnable();
+        expect(await deliveries(p.event)).toEqual([pending]);
+        expect(await expiries([p.event])).toEqual([]);
+        await expiredAtDelivery(zalo, p.event);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }
+
+    it("DA-5 zalo_dm: a row pending at a disable (BS-5), its event back-dated past the bound, re-enabled by the CLI: no row and no record added, then it expires at delivery as in DA-4", async () => {
+      await expiredAfterReEnable(() => enable("zalo_dm"));
+    }, 30_000);
+
+    it("DA-6 zalo_dm: the DA-5 row re-enabled by a raw outbox_projector_set_enabled on the owner seat (no CLI) expires at delivery as in DA-4", async () => {
+      const raw = "SELECT outbox_projector_set_enabled('zalo_dm', true)";
+      await expiredAfterReEnable(() => asOwner(raw, []));
+    }, 30_000);
+
     // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
     // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
     const NAMES = ["web_realtime", "zalo_dm", "public_sessions"];
