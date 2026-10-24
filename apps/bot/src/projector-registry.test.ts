@@ -384,6 +384,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
      * zalo_dm through its real deliverer and the stub (the zalo-dm.test.ts fixture: the web tests'
      * "k" x 32 key, a token only the stub sees, a club with an active bot and an open session).
      * `promote()` adds an active player with a Zalo identity and its player.promoted event.
+     * `update()` adds its own session with one such player and its session.updated event.
      */
     async function zaloBoot() {
       const secrets = await import("@plexco/db/connector-crypto");
@@ -470,11 +471,51 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           );
           return { chat, event: String(event.id) };
         };
+        const update = async () => {
+          const own = await one(
+            `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, status, venue_name, price_amount)
+             SELECT $1, id, now() + interval '1 day', now() + interval '1 day 2 hours', 'Asia/Ho_Chi_Minh', 'open',
+                    'Private Hall', 120000
+               FROM sports WHERE key = 'badminton' RETURNING id`,
+            [tenant.id],
+          );
+          const chat = `chat-${randomUUID()}`;
+          const person = await one(
+            "INSERT INTO persons (display_name) VALUES ('Boot Sequence') RETURNING id",
+            [],
+          );
+          const membership = await one(
+            "INSERT INTO memberships (tenant_id, person_id, status) VALUES ($1, $2, 'active') RETURNING id",
+            [tenant.id, person.id],
+          );
+          const { enc } = await secrets.encryptConnectorSecret(chat, {
+            ...binding,
+            purpose: "channel_user" as const,
+          });
+          await verify.query(
+            `INSERT INTO channel_identities (person_id, platform, platform_user_id_enc, platform_user_lookup_hash, status, zalo_bot_id)
+             VALUES ($1, 'zalo', $2, $3, 'active', $4)`,
+            [person.id, enc, randomUUID(), bot.id],
+          );
+          await verify.query(
+            `INSERT INTO players (tenant_id, session_id, membership_id, status, waitlist_position, joined_at)
+             VALUES ($1, $2, $3, 'active', NULL, now() - interval '1 hour')`,
+            [tenant.id, own.id, membership.id],
+          );
+          const event = await one(
+            `INSERT INTO outbox_events (tenant_id, aggregate_type, aggregate_id, sequence, type, payload)
+             VALUES ($1, 'session', $2, (SELECT coalesce(max(sequence), 0) + 1 FROM outbox_events WHERE aggregate_id = $2),
+                     'session.updated', $3)
+             RETURNING id`,
+            [tenant.id, own.id, { session_id: own.id, changed_fields: ["price_amount"] }],
+          );
+          return { chat, event: String(event.id) };
+        };
         const projectors = new Map<string, DeliverFn>([
           ...PROJECTORS,
           ["zalo_dm", createZaloDmDeliver({ db: workerPool })],
         ]);
-        return { stub, token, projectors, promote, close };
+        return { stub, token, projectors, promote, update, close };
       } catch (error) {
         await close();
         throw error;
@@ -524,10 +565,10 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       }
     }, 30_000);
 
-    it("BS-3 zalo_dm: promotion DMs acked '{}' while off reach the stub once each after the CLI enables; a back-dated one is never sent and gets one age record", async () => {
+    it("BS-3 zalo_dm: promotion DMs acked '{}' while off reach the stub once each after the CLI enables; a back-dated session update DM is never sent and gets one age record", async () => {
       const zalo = await zaloBoot();
       try {
-        const promoted = [await zalo.promote(), await zalo.promote(), await zalo.promote()];
+        const promoted = [await zalo.promote(), await zalo.promote(), await zalo.update()];
         const ids = promoted.map((p) => p.event);
         const inBound = promoted.slice(0, 2);
         const aged = promoted[2]!;
@@ -558,7 +599,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it("DA-3 zalo_dm: an event back-dated 45 minutes and acked '{}' while off is prepared by the CLI (the shared bound, not L24's 30 minutes) and reaches the stub once", async () => {
       const zalo = await zaloBoot();
       try {
-        const p = await zalo.promote();
+        const p = await zalo.update();
         await ackedWhileOff([p.event], zalo.projectors);
         // 45 minutes: past L24's 30-minute bound (it expired then), inside the shared bound
         await backdate([p.event], 45);
@@ -628,7 +669,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it("DA-4 zalo_dm: a row the CLI prepared inside the bound, its event then back-dated past it, expires at delivery (no send, delivered/noop_expired, attempts 1, one warning line)", async () => {
       const zalo = await zaloBoot();
       try {
-        const p = await zalo.promote();
+        const p = await zalo.update();
         await ackedWhileOff([p.event], zalo.projectors);
         await enable("zalo_dm");
         expect(await deliveries(p.event)).toEqual([
@@ -651,7 +692,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       const zalo = await zaloBoot();
       const pending = { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null };
       try {
-        const p = await zalo.promote();
+        const p = await zalo.update();
         await ackedWhileOff([p.event], zalo.projectors);
         await enable("zalo_dm");
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
@@ -697,8 +738,8 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it("DA-11 zalo_dm: a live retry (the row failed once, attempts 1), its event back-dated past the bound and made due, expires at delivery (no send, delivered/noop_expired, attempts 2, one warning line); its fresh twin, failed in the same cycle, is delivered at its retry (sent, attempts 2)", async () => {
       const zalo = await zaloBoot();
       try {
-        const stale = await zalo.promote();
-        const fresh = await zalo.promote();
+        const stale = await zalo.update();
+        const fresh = await zalo.update();
         await ackedWhileOff([stale.event, fresh.event], zalo.projectors);
         await enable("zalo_dm");
         await cycle(RETRYING);
@@ -731,7 +772,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it("DA-11b zalo_dm: the DA-11 failed row (attempts 1), back-dated past the bound and made due while disabled, is not claimed; a CLI re-enable adds no row and no record, then it expires at delivery with attempts 2 as in DA-11", async () => {
       const zalo = await zaloBoot();
       try {
-        const p = await zalo.promote();
+        const p = await zalo.update();
         await ackedWhileOff([p.event], zalo.projectors);
         await enable("zalo_dm");
         await cycle(RETRYING);
@@ -760,8 +801,8 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         return withJobDefinerLock(base, () => runCli(args, testUrl(base, { db: dbName })));
       };
       try {
-        const stale = await zalo.promote();
-        const fresh = await zalo.promote();
+        const stale = await zalo.update();
+        const fresh = await zalo.update();
         await ackedWhileOff([stale.event, fresh.event], zalo.projectors);
         await enable("zalo_dm");
         await cycle(
@@ -807,7 +848,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       const zalo = await zaloBoot();
       let event = "";
       try {
-        event = (await zalo.promote()).event;
+        event = (await zalo.update()).event;
         await ackedWhileOff([event], zalo.projectors);
         await enable("zalo_dm");
         expect(await deliveries(event)).toEqual([
@@ -848,6 +889,11 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           [projector],
         )
       ).rows[0]!;
+    /** BS-5, BS-7: zalo_dm gets a flat-bound type (routeOf picks player.promoted for it). */
+    const flatBoundRouteOf = (projector: string) =>
+      projector === "zalo_dm"
+        ? Promise.resolve({ aggregate_type: "session", event_type: "session.updated" })
+        : routeOf(projector);
     async function cycleUntil(
       projectors: ReadonlyMap<string, DeliverFn>,
       done: () => Promise<boolean>,
@@ -962,7 +1008,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it.each(NAMES)(
       "BS-7 %s: an unacked routed event older than the bound -> the CLI exits 2 unacked_backlog and changes nothing; after a cycle acks it the CLI succeeds and records one age",
       async (projector) => {
-        const route = await routeOf(projector);
+        const route = await flatBoundRouteOf(projector);
         const id = await insertEvent(route.aggregate_type, route.event_type);
         await backdate([id], projector === "zalo_dm" ? ZALO_DM_MAX_AGE_MINUTES + 1 : 40);
         try {
@@ -988,7 +1034,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it.each(NAMES)(
       "BS-5 %s: a disable keeps the pending rows and a CLI re-enable resumes them (DD-134 unchanged), adding no row and no record for their events",
       async (projector) => {
-        const route = await routeOf(projector);
+        const route = await flatBoundRouteOf(projector);
         const ids = [
           await insertEvent(route.aggregate_type, route.event_type),
           await insertEvent(route.aggregate_type, route.event_type),
