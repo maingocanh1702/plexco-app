@@ -6666,17 +6666,19 @@ notes: |
 
 ## task: public-card-hide-exact-address-real-stack-proof
 title: E2E (local only): prove B1's hide-exact-address option on the real public card, ON and OFF, with public_sessions enabled through the enable CLI
-status: idea
-risk: P2
+status: in-flight
+risk: P1
 change_class: test-infra
 depends_on: []
 invariants: [web-app, test-chain]
-scope: [apps/web/e2e/golden-path.spec.ts]
+scope: [apps/web/e2e/public-card-hide-address.spec.ts, apps/web/e2e/public-card-hide-address.config.ts, apps/web/e2e/public-card-hide-address-proof.sh, apps/web/playwright.config.ts, docs/runbooks/local-mvp-smoke.md]
 manifest: null
-merged_probe: null
+merged_probe: apps/web/e2e/public-card-hide-address.spec.ts :: SCRATCH_DB_PATH
+_probe_note: `SCRATCH_DB_PATH` bare identifier, verified ABSENT on the base 54db28e (git grep: 0 files; control `GOLDEN_PATH_BASE_URL` present at the base, 7 files) and present only in apps/web/e2e/public-card-hide-address.spec.ts at dbaf348 (git grep: 1 file, 2 matches; same at d1f82c0).
 notes: |
   Conductor decision D8 (under the owner's delegation of 2026-10-22, not an owner signature): the golden path keeps the public_sessions projector disabled by design (apps/web/e2e/golden-path.spec.ts:263, RC-0c), so no real-stack test renders the public card. With L24's CLI (scripts/outbox-projector-enable.mjs, public_sessions rebuild :25), a scratch smoke DB enables public_sessions; then the card is asserted with `hide_exact_address` (packages/db/schema.ts:636; projected venue NULL when ON, :1716) ON and OFF. Never in CI.
   Source: repo apps/web/e2e/golden-path.spec.ts:263 and packages/db/schema.ts:636 at 21b57f8; PR #102 body, section "Summary", line 7.
+  2026-10-24 L35 (P3-S16l): built on branch test/p3-public-card-hide-address-real-stack-proof (not merged when written). Local proof run 1 at dbaf348 on the scratch DB plexco_l35_scratch (dropped at the end): 3 passed; ON hidden (the venue token absent from the visitor's DOM, HTML and every /api/discover* body, no venueName or venueAddress key), OFF and DEFAULT shown; enable CLI {"projector":"public_sessions","changed":true,"prepared":6,"expired_age":0,"expired_cap":0,"rebuilt_sessions":3}. Command and result: docs/runbooks/local-mvp-smoke.md step 11. No bug found; RC-0c and golden-path.spec.ts untouched.
 
 ## task: member-names-visible-confusables-homoglyphs
 title: Names: visible confusables (homoglyphs) are not defended on member-facing or public names; owner policy question first, then a rule lane
