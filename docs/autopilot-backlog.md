@@ -6742,14 +6742,16 @@ notes: |
 
 ## task: zalo-dm-delivery-age-expiry
 title: Bot: expire a `zalo_dm` delivery older than the delivery age bound and give the backfill the same bound (lane L31, follow-up of L24)
-status: blocked
+status: merged
+merged: 2026-10-24 · PR #108 (L31), merge 07165d659e291e38c1477437cfc946bbdc19f55e (PR head 1a760e6ebad7a6a7282c525cbadf8d2a00e89ecf) · `zaloDmDeliveryAge` at `apps/bot/src/dispatcher.ts:96`, its one guarded call `:304`; merged_probe set by this flip (it was `null`; this flip changes only status, merged, note_merged, merged_probe)
+note_merged: 2026-10-24 L33: closed BY PROBE, by hand, measured at base 07165d659e291e38c1477437cfc946bbdc19f55e (the row was `blocked` with `merged_probe: null`, so the reconcile had no probe to run). F1: the PR #108 body says the conductor flips this row in a small addendum after the merge (line 52, conductor decision D-r4-3). F2: the base is the PR #108 merge commit (first parent 4aafb28586e036508dc6f0bab19110abd5c1c353, second parent the PR head). F3: `git grep -c zaloDmDeliveryAge -- apps/bot/src/dispatcher.ts` = 4 at the base (declaration `:96`, call `:304`, bound import `zaloDmDeliveryAgeBound` `:8` and `:63`) and 0 at 4aafb28586e036508dc6f0bab19110abd5c1c353 and at L31's start base acdd8612b0e0c4b92023b77555dd9b637c277936. Decision record: DD-146 (conductor decision D5 under the owner's delegation of 2026-10-22, not an owner signature; DF0-DF7 default applied, pending owner sign-off). As merged, #108's code is `apps/bot/src/dispatcher.ts`, `apps/bot/src/zalo-dm-delivery-age-bound.json` and `scripts/outbox-projector-enable.mjs`; `apps/bot/src/projectors/zalo-dm.ts` is unchanged; the authored `scope` stays as written.
 risk: P2
 change_class: code
 depends_on: []
 invariants: [transport-zalo, retry-liveness]
 scope: [apps/bot/src/dispatcher.ts, apps/bot/src/projectors/zalo-dm.ts, scripts/outbox-projector-enable.mjs]
 manifest: null
-merged_probe: null
+merged_probe: apps/bot/src/dispatcher.ts :: zaloDmDeliveryAge
 notes: |
   Decided as follow-up lane L31 (conductor decision D5, under the owner's delegation of 2026-10-22, not an owner signature). Blocker: lane L31 is paused on an owner decision (a conductor note outside the repository, 2026-10-23); it has no PR and its branch is not on origin, so nothing from that branch is recorded here as a fact; DD-146 stays reserved for it. Scope: the files PR #102's body names for this follow-up (line 25: the retries in `apps/bot/src/dispatcher.ts` and the check site `apps/bot/src/projectors/zalo-dm.ts` step 1) plus the enable CLI PR #102 added; re-measure risk and scope when L31's PR opens (its readiness file is the authority then). Set merged_probe when its PR opens.
   Source: PR #102 body, section "Follow-up lane L31 (decided)", lines 23-26.
@@ -6885,7 +6887,9 @@ notes: |
 
 ## task: ci-definer-role-class-flake-retire-watch
 title: CI watch: retire the definer-role CLASS entries of the merge clerk's flake list once L31's and L30's CI runs show no class failure after #105
-status: idea
+status: merged
+merged: 2026-10-24 · closed by CI evidence (the row has no PR of its own): the CI runs of PR #107 (L30) and PR #108 (L31), on the PR and on the main push, all success at attempt 1 · merged_probe stays `null` (close_by hand; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-24 L33: closed BY HAND at base 07165d659e291e38c1477437cfc946bbdc19f55e, as `close_by` says. F1: PR #107 (head b4e2dd823a8989a7747327501014ca2792ce03c3): CI run 40029145358 (event pull_request, conclusion success, attempt 1, jobs verify and e2e-web success) and main push run 40030323498 (head 4aafb28586e036508dc6f0bab19110abd5c1c353, success, attempt 1). F2: PR #108 (head 1a760e6ebad7a6a7282c525cbadf8d2a00e89ecf): CI run 40056734780 (pull_request, success, attempt 1) and main push run 40057522117 (head 07165d659e291e38c1477437cfc946bbdc19f55e, success, attempt 1). F3: `gh run list --branch` lists exactly one CI run per PR branch, so no rerun and no class failure after the #105 merge (2026-10-22T22:17:49Z); measured with `gh run view` on 2026-10-24. The REOPEN CONDITION in the notes stays in force.
 risk: P2
 change_class: test-infra
 depends_on: []
