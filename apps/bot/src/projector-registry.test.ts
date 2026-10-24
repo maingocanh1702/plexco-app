@@ -1209,14 +1209,18 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       it(`PSD-8 zalo_dm promotion: a session-start read that ${read} stops the cycle before deliver(); the claimed row stays claimed with its attempts unchanged, no completion and no warning line`, async () => {
         // the literal of dispatcher.ts zaloDmPromotionStart, matched by string equality
         const START_SQL = "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)";
-        const failing = {
-          query: (text: string, values?: unknown[]) =>
-            text === START_SQL ? start() : workerPool.query(text, values),
-        } as unknown as pg.Pool;
         const deliver = vi.fn(delivered);
         const zalo = await zaloBoot();
         try {
           const event = (await zalo.promote()).event;
+          // the stub answers only THIS event's start read ($1 of zaloDmPromotionStart): another
+          // test's promotion row claimed first gets its real read, not the stale-stop break
+          const failing = {
+            query: (text: string, values?: unknown[]) => {
+              if (text === START_SQL && values?.[0] === event) return start();
+              return workerPool.query(text, values);
+            },
+          } as unknown as pg.Pool;
           await ackedWhileOff([event], zalo.projectors);
           await enable("zalo_dm");
           expect(await deliveries(event)).toEqual([
@@ -1224,14 +1228,34 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           ]);
           const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
           const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-          const outcome = await runDispatchCycle(failing, { projectors }).then(
-            (summary) => summary.leaseLostSkips,
-            (error: unknown) => error,
-          );
+          // a cycle's zalo_dm pass stops at 25 rows (fullBatch): cycle again only while the batch
+          // was full and this event's row is still pending (the drain rule), at most 20 cycles
+          let outcome: unknown = new Error("20 cycles never reached this event");
+          let skips = 0;
+          for (let cycles = 0; cycles < 20; cycles++) {
+            const result = await runDispatchCycle(failing, { projectors }).then(
+              (summary) => ({ summary }),
+              (error: unknown) => ({ error }),
+            );
+            if ("error" in result) {
+              outcome = result.error; // the cycle that reached this event rejected
+              break;
+            }
+            skips += result.summary.leaseLostSkips;
+            if ((await deliveries(event))[0]?.status !== "pending") {
+              outcome = skips;
+              break;
+            }
+            if (!result.summary.fullBatch) {
+              outcome = new Error("a cycle that was not full left this event pending");
+              break;
+            }
+          }
           const lines = warn.mock.calls.map((args) => args.join(" "));
           warn.mockRestore();
           expect(outcome).toBe(expected);
-          expect(lines).toEqual([]);
+          // other tests' rows may log expiries in these cycles: this pins the check to this event
+          expect(lines.filter((line) => line.includes(event))).toEqual([]);
           // earlier tests' CLI runs may have prepared rows this cycle also claims (the U3b note
           // below), so the no-deliver check names this event
           expect(deliver.mock.calls.filter(([job]) => job.eventId === event)).toEqual([]);
