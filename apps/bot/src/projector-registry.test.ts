@@ -674,6 +674,82 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       await expiredAfterReEnable(() => asOwner(raw, []));
     }, 30_000);
 
+    // L31 U4c (readiness 7.2 DA-7, DA-8; decision table P6, P6b and row X).
+    it("DA-7 zalo_dm: a dlq row back-dated past the bound and replayed by the owner CLI (exit 0) expires at its next claim and is never re-sent; a second replay exits 2 delivery_not_in_dlq; its fresh twin is sent once", async () => {
+      const zalo = await zaloBoot();
+      const replay = (event: string) => {
+        const args = ["replay", "--event", event, "--projector", "zalo_dm"];
+        return withJobDefinerLock(base, () => runCli(args, testUrl(base, { db: dbName })));
+      };
+      try {
+        const stale = await zalo.promote();
+        const fresh = await zalo.promote();
+        await ackedWhileOff([stale.event, fresh.event], zalo.projectors);
+        await enable("zalo_dm");
+        await cycle(
+          new Map([["zalo_dm", async () => ({ result: "dlq", errorCode: "replay_terminal" })]]),
+        );
+        for (const p of [stale, fresh])
+          expect(await deliveries(p.event)).toEqual([
+            { projector: "zalo_dm", status: "dlq", attempts: 1, error_code: "replay_terminal" },
+          ]);
+        await backdate([stale.event], ZALO_DM_MAX_AGE_MINUTES + 1);
+        expect((await replay(stale.event)).code).toBe(0);
+        await expiredAtDelivery(zalo, stale.event);
+        const again = await replay(stale.event);
+        expect(again.code).toBe(2);
+        expect(again.stderr).toContain("delivery_not_in_dlq: the delivery is delivered, not dlq");
+
+        expect((await replay(fresh.event)).code).toBe(0);
+        await cycle(zalo.projectors);
+        await cycle(zalo.projectors); // a delivered row is never claimed again
+        expect(zalo.stub.calls.map((call) => call.chatId)).toEqual([fresh.chat]);
+        const row = await verify.query(
+          "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
+          [fresh.event],
+        );
+        expect(row.rows).toEqual([
+          { status: "delivered", attempts: 1, provider_ref: "sent", error_code: null },
+        ]);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
+    it("DA-8 zalo_dm: a failed DB clock read rejects the cycle before deliver(); the claimed row stays claimed with its attempts unchanged", async () => {
+      // the literal of dispatcher.ts zaloDmDeliveryAge, matched by string equality (note C11)
+      const AGE_SQL = "SELECT date_part('epoch', clock_timestamp() - $1::timestamptz) AS age_s";
+      const clockError = new Error("DA-8: the DB clock read failed");
+      const failing = {
+        query: (text: string, values?: unknown[]) =>
+          text === AGE_SQL ? Promise.reject(clockError) : workerPool.query(text, values),
+      } as unknown as pg.Pool;
+      const deliver = vi.fn(delivered);
+      const zalo = await zaloBoot();
+      let event = "";
+      try {
+        event = (await zalo.promote()).event;
+        await ackedWhileOff([event], zalo.projectors);
+        await enable("zalo_dm");
+        expect(await deliveries(event)).toEqual([
+          { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+        ]);
+        const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
+        await expect(runDispatchCycle(failing, { projectors })).rejects.toBe(clockError);
+        expect(deliver).not.toHaveBeenCalled();
+        expect(await deliveries(event)).toEqual([
+          { projector: "zalo_dm", status: "claimed", attempts: 0, error_code: null },
+        ]);
+      } finally {
+        // its five-minute lease would outlive the test: no later zalo_dm cycle may reclaim it
+        if (event)
+          await verify.query("DELETE FROM projector_deliveries WHERE event_id = $1", [event]);
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
     // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
     // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
     const NAMES = ["web_realtime", "zalo_dm", "public_sessions"];
