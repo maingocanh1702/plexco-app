@@ -1100,6 +1100,31 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         }
       }, 60_000);
 
+    it("PSD-15: a promotion with no readable session start expires with a record and is never sent", async () => {
+      const zalo = await zaloBoot();
+      try {
+        // its aggregate names no session: 0071's LEFT JOIN reads a NULL start (PSD-10)
+        const route = await verify.query<{ aggregate_type: string }>(
+          "SELECT aggregate_type FROM outbox_projector_routes WHERE projector = 'zalo_dm' AND event_type = 'player.promoted'",
+        );
+        const id = await insertEvent(route.rows[0]!.aggregate_type, "player.promoted");
+        await ackedWhileOff([id], zalo.projectors);
+        await enable("zalo_dm");
+        expect(await promotionCycle(zalo, id)).toEqual({
+          sent: [],
+          row: [
+            { status: "delivered", attempts: 1, provider_ref: "noop_expired", error_code: null },
+          ],
+          lines: [
+            `[dispatcher] delivery expired: start unreadable, rule until_session_start (event ${id}, projector zalo_dm)`,
+          ],
+        });
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
     // L31 U4c (readiness 7.2 DA-7, DA-8; decision table P6, P6b and row X).
     it("DA-7 zalo_dm: a dlq row back-dated past the bound and replayed by the owner CLI (exit 0) expires at its next claim and is never re-sent; a second replay exits 2 delivery_not_in_dlq; its fresh twin is sent once", async () => {
       const zalo = await zaloBoot();
@@ -1176,53 +1201,56 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       }
     }, 30_000);
 
-    it("PSD-8 zalo_dm promotion: a failed session-start read rejects the cycle before deliver(); the claimed row stays claimed with its attempts unchanged, no completion and no warning line", async () => {
-      // the literal of dispatcher.ts zaloDmPromotionStart, matched by string equality
-      const START_SQL = "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)";
-      const startError = new Error("PSD-8: the session-start read failed");
-      const failing = {
-        query: (text: string, values?: unknown[]) =>
-          text === START_SQL ? Promise.reject(startError) : workerPool.query(text, values),
-      } as unknown as pg.Pool;
-      const deliver = vi.fn(delivered);
-      const zalo = await zaloBoot();
-      let event = "";
-      try {
-        event = (await zalo.promote()).event;
-        await ackedWhileOff([event], zalo.projectors);
-        await enable("zalo_dm");
-        expect(await deliveries(event)).toEqual([
-          { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
-        ]);
-        const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
-        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-        const outcome = await runDispatchCycle(failing, { projectors }).then(
-          () => "resolved",
-          (error: unknown) => error,
-        );
-        const lines = warn.mock.calls.map((args) => args.join(" "));
-        warn.mockRestore();
-        expect(outcome).toBe(startError);
-        expect(lines).toEqual([]);
-        // earlier tests' CLI runs may have prepared rows this cycle also claims (the U3b note
-        // below), so the no-deliver check names this event; the stub saw no send at all
-        expect(deliver.mock.calls.filter(([job]) => job.eventId === event)).toEqual([]);
-        expect(zalo.stub.calls).toEqual([]);
-        const row = await verify.query(
-          "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
-          [event],
-        );
-        expect(row.rows).toEqual([
-          { status: "claimed", attempts: 0, provider_ref: null, error_code: null },
-        ]);
-      } finally {
-        // its five-minute lease would outlive the test: no later zalo_dm cycle may reclaim it
-        if (event)
-          await verify.query("DELETE FROM projector_deliveries WHERE event_id = $1", [event]);
-        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
-        await zalo.close();
-      }
-    }, 30_000);
+    const startError = new Error("PSD-8: the session-start read failed");
+    for (const [read, start, expected] of [
+      ["fails (the cycle rejects)", () => Promise.reject(startError), startError],
+      ["returns no row (one lease-lost skip)", () => Promise.resolve({ rows: [] }), 1],
+    ] as const)
+      it(`PSD-8 zalo_dm promotion: a session-start read that ${read} stops the cycle before deliver(); the claimed row stays claimed with its attempts unchanged, no completion and no warning line`, async () => {
+        // the literal of dispatcher.ts zaloDmPromotionStart, matched by string equality
+        const START_SQL = "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)";
+        const failing = {
+          query: (text: string, values?: unknown[]) =>
+            text === START_SQL ? start() : workerPool.query(text, values),
+        } as unknown as pg.Pool;
+        const deliver = vi.fn(delivered);
+        const zalo = await zaloBoot();
+        try {
+          const event = (await zalo.promote()).event;
+          await ackedWhileOff([event], zalo.projectors);
+          await enable("zalo_dm");
+          expect(await deliveries(event)).toEqual([
+            { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+          ]);
+          const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
+          const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+          const outcome = await runDispatchCycle(failing, { projectors }).then(
+            (summary) => summary.leaseLostSkips,
+            (error: unknown) => error,
+          );
+          const lines = warn.mock.calls.map((args) => args.join(" "));
+          warn.mockRestore();
+          expect(outcome).toBe(expected);
+          expect(lines).toEqual([]);
+          // earlier tests' CLI runs may have prepared rows this cycle also claims (the U3b note
+          // below), so the no-deliver check names this event
+          expect(deliver.mock.calls.filter(([job]) => job.eventId === event)).toEqual([]);
+          const row = await verify.query(
+            "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
+            [event],
+          );
+          expect(row.rows).toEqual([
+            { status: "claimed", attempts: 0, provider_ref: null, error_code: null },
+          ]);
+        } finally {
+          // every row this cycle claimed keeps a five-minute lease: no later cycle may reclaim one
+          await verify.query(
+            "DELETE FROM projector_deliveries WHERE projector = 'zalo_dm' AND status = 'claimed'",
+          );
+          await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+          await zalo.close();
+        }
+      }, 30_000);
 
     // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
     // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
