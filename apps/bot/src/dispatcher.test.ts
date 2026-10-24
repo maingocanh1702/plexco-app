@@ -16,9 +16,13 @@ import {
 } from "./test-db.js";
 import {
   ATTEMPTS_EXHAUSTED,
+  ZALO_DM_MAX_AGE_MINUTES,
   completionArgs,
+  isReadableEventTime,
   normalizeErrorCode,
   runDispatchCycle,
+  zaloDmAgeVerdict,
+  zaloDmDeliveryAge,
   type DeliverFn,
 } from "./dispatcher.js";
 
@@ -134,6 +138,69 @@ async function seedOutboxEvent(client: pg.Client, tenantId: string): Promise<str
   return result.rows[0]!.id;
 }
 
+describe("DD-146 zalo_dm delivery age check (L31)", () => {
+  const unreadable = { expired: true, ageSeconds: "unreadable" };
+
+  it("DA-1: zaloDmAgeVerdict delivers inside and at the bound (strict >), expires past it, and expires every unreadable reading", () => {
+    expect(ZALO_DM_MAX_AGE_MINUTES).toBe(60);
+    expect(zaloDmAgeVerdict(3599)).toEqual({ expired: false, ageSeconds: 3599 });
+    expect(zaloDmAgeVerdict(3600)).toEqual({ expired: false, ageSeconds: 3600 });
+    expect(zaloDmAgeVerdict(3600.001)).toEqual({ expired: true, ageSeconds: 3600.001 });
+    for (const raw of [NaN, Infinity, -Infinity, "3700", null, undefined]) {
+      expect(zaloDmAgeVerdict(raw), String(raw)).toEqual(unreadable);
+    }
+    expect(isReadableEventTime(new Date())).toBe(true);
+    for (const value of [new Date("not a date"), new Date().toISOString(), Date.now(), null]) {
+      expect(isReadableEventTime(value), String(value)).toBe(false);
+    }
+  });
+
+  it("DA-1: zaloDmDeliveryAge issues no SQL for an unreadable time and exactly one DB-clock query otherwise", async () => {
+    const calls: unknown[][] = [];
+    let rows: unknown[] = [];
+    const db = {
+      query: async (...args: unknown[]) => {
+        calls.push(args);
+        return { rows };
+      },
+    };
+    const age = (createdAt: unknown) => zaloDmDeliveryAge(db as unknown as pg.Pool, createdAt);
+
+    expect(await age(new Date("not a date"))).toEqual(unreadable);
+    expect(await age(new Date().toISOString())).toEqual(unreadable);
+    expect(calls).toHaveLength(0);
+
+    const createdAt = new Date(Date.now() - 61 * 60_000);
+    rows = [{ age_s: 3601 }];
+    expect(await age(createdAt)).toEqual({ expired: true, ageSeconds: 3601 });
+    expect(calls).toEqual([
+      ["SELECT date_part('epoch', clock_timestamp() - $1::timestamptz) AS age_s", [createdAt]],
+    ]);
+    rows = [{ age_s: 3600 }];
+    expect(await age(createdAt)).toEqual({ expired: false, ageSeconds: 3600 });
+    rows = [];
+    expect(await age(createdAt)).toEqual(unreadable);
+    rows = [{ age_s: "3601" }];
+    expect(await age(createdAt)).toEqual(unreadable);
+    expect(calls).toHaveLength(4);
+  });
+
+  it(
+    "DA-1b: as app_worker the database returns the age as a JS number on its own clock (a string would expire every DM as unreadable)",
+    withTestContext(
+      () => setupDispatcherContext("plexco_jrd_dispatcher_da1b"),
+      async (ctx) => {
+        const createdAt = new Date(Date.now() - 10 * 60_000);
+        const verdict = await zaloDmDeliveryAge(ctx.workerPool, createdAt);
+        expect(verdict.expired).toBe(false);
+        expect(typeof verdict.ageSeconds).toBe("number");
+        expect(verdict.ageSeconds).toBeGreaterThanOrEqual(590);
+        expect(verdict.ageSeconds).toBeLessThanOrEqual(900);
+      },
+    ),
+  );
+});
+
 it(
   "cleans the dispatcher database and acquired clients when setup fails after CREATE",
   withTestContext(
@@ -195,7 +262,7 @@ describe("dispatcher.ts and the 0056 worker modules — shipped source (static)"
   ];
   it("JRD-5: the shipped modules issue ZERO SQL outside the granted definers, and touch no table", async () => {
     const allowed =
-      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|public_sessions_project_session|public_sessions_tenant_candidates|public_sessions_sweep_expired|claim_projector_delivery_batch|outbox_claimed_event|job_expire_stale_drafts|zalo_dm_delivery_targets|zalo_dm_record_recipient)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event|complete_projector_delivery|outbox_required_projectors|projector_is_enabled)\(|^SELECT pg_notify\('web_realtime', \$1\)$|^LISTEN outbox_wake$/;
+      /^SELECT (\*\s+FROM\s+)?(claim_outbox_batch|public_sessions_project_session|public_sessions_tenant_candidates|public_sessions_sweep_expired|claim_projector_delivery_batch|outbox_claimed_event|job_expire_stale_drafts|zalo_dm_delivery_targets|zalo_dm_record_recipient)\(|^SELECT (job_prepare_projector_delivery|ack_outbox_event|complete_projector_delivery|outbox_required_projectors|projector_is_enabled)\(|^SELECT pg_notify\('web_realtime', \$1\)$|^SELECT date_part\('epoch', clock_timestamp\(\) - \$1::timestamptz\) AS age_s$|^LISTEN outbox_wake$/;
     const tables = [
       "outbox_events",
       "projector_deliveries",
@@ -294,6 +361,37 @@ describe("runDispatchCycle", () => {
         expect(row.rows[0].claim_token).toBeNull();
         expect(row.rows[0].lease_expires_at).toBeNull();
         expect(row.rows[0].provider_ref).toBe("jrd-7-ref");
+      },
+    ),
+  );
+
+  it(
+    "DA-2: the DD-146 age check is zalo_dm only: an event past the bound for another projector is delivered once, as today",
+    withTestContext(
+      () => setupDispatcherContext("plexco_jrd_dispatcher_da2"),
+      async (ctx) => {
+        const tenantId = await seedTenant(ctx.verify);
+        const eventId = await seedOutboxEvent(ctx.verify, tenantId);
+        const backdated = await ctx.verify.query<{ past: boolean }>(
+          `UPDATE outbox_events SET created_at = now() - make_interval(mins => $2) WHERE id = $1
+           RETURNING created_at < now() - make_interval(mins => $3) AS past`,
+          [eventId, ZALO_DM_MAX_AGE_MINUTES + 5, ZALO_DM_MAX_AGE_MINUTES],
+        );
+        expect(backdated.rows[0]!.past).toBe(true); // non-vacuous: the event is past the bound
+
+        const outcome = { result: "delivered", providerRef: "da-2-ref" } as const;
+        const deliver = vi.fn(async () => outcome);
+        const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
+
+        expect(deliver).toHaveBeenCalledTimes(1);
+        expect(summary.processedDeliveries).toBe(1);
+        const row = await ctx.verify.query(
+          "SELECT status, attempts, provider_ref FROM projector_deliveries WHERE event_id=$1 AND projector=$2",
+          [eventId, TEST_PROJECTOR],
+        );
+        expect(row.rows[0].status).toBe("delivered");
+        expect(row.rows[0].attempts).toBe(1);
+        expect(row.rows[0].provider_ref).toBe("da-2-ref");
       },
     ),
   );
