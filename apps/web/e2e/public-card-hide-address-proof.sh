@@ -6,13 +6,25 @@
 #   bash apps/web/e2e/public-card-hide-address-proof.sh
 # It creates ONLY the scratch database plexco_l35_scratch and always drops it (trap on EXIT, INT and TERM),
 # printing the database listing before and after; it never touches plexco, plexco_smoke or plexco_test.
+# A preflight refusal (port 3000 busy, or lsof missing or failing; exit 2) stops before anything is created,
+# so it prints neither the database listing nor the drop line.
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 [ -f infra/docker-compose.yml ] || { echo "proof: repo root not found" >&2; exit 2; }
 # A listener on port 3000 in any address family (a server on [::1]:3000 gets the clients' localhost
 # first) would receive the proof's writes: refuse before the listing, the trap or any CREATE.
-if lsof -nP -iTCP:3000 -sTCP:LISTEN > /dev/null 2>&1; then
+# Fail closed, unknown means stop: no lsof stops here, and lsof exits 1 both when nothing matched and when
+# it failed, so exit 1 alone is not proof the port is free; only exit 1 with an empty stderr (captured
+# below, stdout discarded) reads as free.
+command -v lsof > /dev/null 2>&1 || { echo "proof: lsof not found; cannot prove port 3000 is free" >&2; exit 2; }
+LSOF_RC=0
+LSOF_ERR=$(lsof -nP -iTCP:3000 -sTCP:LISTEN 2>&1 > /dev/null) || LSOF_RC=$?
+if [ "$LSOF_RC" -eq 0 ]; then
   echo "proof: port 3000 is busy; stop the server listening on it first" >&2
+  exit 2
+fi
+if [ "$LSOF_RC" -ne 1 ] || [ -n "$LSOF_ERR" ]; then
+  echo "proof: lsof failed (exit $LSOF_RC); cannot prove port 3000 is free" >&2
   exit 2
 fi
 # The ONE database name, checked here, before the trap and before any CREATE or DROP; readonly from here on.

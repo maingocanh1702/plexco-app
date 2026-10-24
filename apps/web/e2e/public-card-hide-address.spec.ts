@@ -120,7 +120,7 @@ test.describe.serial("public card: the exact address is hidden only when the hos
       } catch {
         // unset or malformed: the empty path fails below, and the value itself is never printed
       }
-      expect(pathname, `${name} is the scratch DB`).toBe(SCRATCH_DB_PATH);
+      expect(pathname === SCRATCH_DB_PATH, `${name} is the scratch DB`).toBe(true);
     }
   });
 
