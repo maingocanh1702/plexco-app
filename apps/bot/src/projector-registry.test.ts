@@ -7,7 +7,16 @@ import { promisify } from "node:util";
 import pg from "pg";
 import { migrate } from "@plexco/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { runDispatchCycle, type ClaimedDeliveryJob, type DeliverFn } from "./dispatcher.js";
+// @ts-expect-error -- the owner enable CLI is an untyped .mjs; DA-10 reads its two bound exports
+import * as enableCli from "../../../scripts/outbox-projector-enable.mjs";
+import {
+  MAX_DELIVERY_ATTEMPTS,
+  RETRY_BASE_MS,
+  ZALO_DM_MAX_AGE_MINUTES,
+  runDispatchCycle,
+  type ClaimedDeliveryJob,
+  type DeliverFn,
+} from "./dispatcher.js";
 import { PROJECTORS } from "./projectors/index.js";
 import { deliverPublicSessions } from "./projectors/public-sessions.js";
 import {
@@ -351,11 +360,11 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         )
       ).rows;
 
-    /** Owner back-dating on the DB clock, past the 30-minute bound. */
-    const backdate = (ids: string[]) =>
+    /** Owner back-dating on the DB clock by `minutes` (default 40, past the 30-minute bound). */
+    const backdate = (ids: string[], minutes = 40) =>
       verify.query(
-        "UPDATE outbox_events SET created_at = now() - interval '40 minutes' WHERE id = ANY($1::uuid[])",
-        [ids],
+        "UPDATE outbox_events SET created_at = now() - make_interval(mins => $2::int) WHERE id = ANY($1::uuid[])",
+        [ids, minutes],
       );
 
     /** First boot step: every real projector off, so one cycle acks `ids` with '{}': no row, no record. */
@@ -524,7 +533,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         const aged = promoted[2]!;
         await ackedWhileOff(ids, zalo.projectors);
         expect(zalo.stub.calls).toEqual([]);
-        await backdate([aged.event]);
+        await backdate([aged.event], ZALO_DM_MAX_AGE_MINUTES + 1);
         await enable("zalo_dm");
         await cycle(zalo.projectors);
         await cycle(zalo.projectors); // a delivered row is never claimed again
@@ -545,6 +554,40 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         await zalo.close();
       }
     }, 30_000);
+
+    it("DA-3 zalo_dm: an event back-dated 45 minutes and acked '{}' while off is prepared by the CLI (the shared bound, not L24's 30 minutes) and reaches the stub once", async () => {
+      const zalo = await zaloBoot();
+      try {
+        const p = await zalo.promote();
+        await ackedWhileOff([p.event], zalo.projectors);
+        // 45 minutes: past L24's 30-minute bound (it expired then), inside the shared bound
+        await backdate([p.event], 45);
+        await enable("zalo_dm");
+        expect(await deliveries(p.event)).toMatchObject([{ projector: "zalo_dm", attempts: 0 }]);
+        expect(zalo.stub.calls).toEqual([]);
+        await cycle(zalo.projectors);
+        expect(zalo.stub.calls).toMatchObject([{ chatId: p.chat, token: zalo.token }]);
+        expect(await deliveries(p.event)).toEqual([
+          { projector: "zalo_dm", status: "delivered", attempts: 1, error_code: null },
+        ]);
+        expect(await expiries([p.event])).toEqual([]);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
+    it("DA-10: the enable CLI's zalo_dm bound is the dispatcher's constant, its default bound stays 30, and the bound exceeds the DD-134 live-path worst case", () => {
+      expect(enableCli).toMatchObject({ ZALO_DM_MAX_AGE_MINUTES, BACKFILL_MAX_AGE_MINUTES: 30 });
+      // The live-path worst case of step 0 (Q2): MAX_DELIVERY_ATTEMPTS x 60 s, plus
+      // (MAX_DELIVERY_ATTEMPTS - 1) x 120 s, plus the DD-134 backoff (RETRY_BASE_MS x 2^(n-1)).
+      let backoffS = 0;
+      for (let n = 1; n <= MAX_DELIVERY_ATTEMPTS - 1; n++)
+        backoffS += (RETRY_BASE_MS / 1000) * 2 ** (n - 1);
+      const worstS = MAX_DELIVERY_ATTEMPTS * 60 + (MAX_DELIVERY_ATTEMPTS - 1) * 120 + backoffS;
+      expect(worstS).toBe(3225); // a change of DD-134's values must revisit the bound
+      expect(ZALO_DM_MAX_AGE_MINUTES * 60).toBeGreaterThan(worstS);
+    });
 
     // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
     // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
@@ -682,7 +725,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       async (projector) => {
         const route = await routeOf(projector);
         const id = await insertEvent(route.aggregate_type, route.event_type);
-        await backdate([id]);
+        await backdate([id], projector === "zalo_dm" ? ZALO_DM_MAX_AGE_MINUTES + 1 : 40);
         try {
           const refused = await runEnableCli(["enable", "--projector", projector]);
           expect(refused.code).toBe(2);
