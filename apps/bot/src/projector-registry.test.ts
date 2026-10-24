@@ -1477,5 +1477,61 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         await boot.close();
       }
     }, 30_000);
+
+    it("PSD-14 zalo_dm promotion (producer, end to end): the real leaveSession's player.promoted, back-dated past the flat bound, is sent once to the promoted player's chat while its session starts a day ahead (delivered/sent, attempts 1, no record); a second one made the same way is not sent once the start is one minute past (delivered/noop_expired, attempts 1, one session-started line); the leavers' player.removed events get no delivery row", async () => {
+      const live = PROMOTION_PATHS.find((cell) => cell.id === "PSD-1")!;
+      const zalo = await zaloBoot();
+      try {
+        // PSD-13 runs no cycle: drain earlier cells' events first, so the stub counts only ours
+        await cycle(zalo.projectors);
+        await enable("zalo_dm");
+        await cycle(zalo.projectors);
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        const calls = zalo.stub.calls.length;
+        const made = await zalo.producerPromote();
+        await live.arm(zalo, made.event);
+        expect(await promotionCycle(zalo, made.event)).toEqual({
+          sent: [{ chatId: made.chat, token: zalo.token }],
+          row: [{ status: "delivered", attempts: 1, provider_ref: "sent", error_code: null }],
+          lines: [],
+        });
+        expect(await expiries([made.event])).toEqual([]);
+
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        const made2 = await zalo.producerPromote();
+        await live.arm(zalo, made2.event);
+        expect(await expiries([made2.event])).toEqual([]);
+        await zalo.moveStart("-1 minute");
+        const expired = await promotionCycle(zalo, made2.event);
+        expect({ sent: expired.sent, row: expired.row }).toEqual({
+          sent: [],
+          row: [
+            { status: "delivered", attempts: 1, provider_ref: "noop_expired", error_code: null },
+          ],
+        });
+        expect(expired.lines).toHaveLength(1);
+        const line = expired.lines[0]!;
+        const head = "[dispatcher] delivery expired: session started ";
+        const tail = `s ago, rule until_session_start (event ${made2.event}, projector zalo_dm)`;
+        expect(line.startsWith(head), line).toBe(true);
+        expect(line.endsWith(tail), line).toBe(true);
+        const seconds = Number(line.slice(head.length, line.length - tail.length));
+        expect(Number.isInteger(seconds), line).toBe(true);
+        expect(seconds).toBeGreaterThanOrEqual(60);
+        expect(seconds).toBeLessThanOrEqual(180);
+
+        // 0056's CHECK routes no player.removed to zalo_dm: the leavers' events get no row
+        const removed = await verify.query(
+          "SELECT id FROM outbox_events WHERE type = 'player.removed' AND aggregate_id = $1",
+          [made.session],
+        );
+        expect(removed.rows).toHaveLength(2);
+        for (const { id } of removed.rows) expect(await deliveries(String(id))).toEqual([]);
+        expect(zalo.stub.calls.slice(calls).map(({ chatId }) => chatId)).toEqual([made.chat]);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 90_000);
   });
 });
