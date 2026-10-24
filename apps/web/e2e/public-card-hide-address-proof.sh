@@ -9,6 +9,12 @@
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 [ -f infra/docker-compose.yml ] || { echo "proof: repo root not found" >&2; exit 2; }
+# A listener on port 3000 in any address family (a server on [::1]:3000 gets the clients' localhost
+# first) would receive the proof's writes: refuse before the listing, the trap or any CREATE.
+if lsof -nP -iTCP:3000 -sTCP:LISTEN > /dev/null 2>&1; then
+  echo "proof: port 3000 is busy; stop the server listening on it first" >&2
+  exit 2
+fi
 # The ONE database name, checked here, before the trap and before any CREATE or DROP; readonly from here on.
 readonly DB=plexco_l35_scratch
 [[ "$DB" =~ ^plexco_l35_scratch$ ]] || { echo "proof: refusing database name $DB" >&2; exit 2; }

@@ -110,6 +110,20 @@ const jsonLines = (output: string): unknown[] =>
     .map((line) => JSON.parse(line) as unknown);
 
 test.describe.serial("public card: the exact address is hidden only when the host chose so", () => {
+  // Test 1 writes through a web server that inherits this process env, and the config never
+  // reuses a server: before the first write, every database URL must name the scratch database.
+  test.beforeAll(() => {
+    for (const name of ["PUBLIC_CARD_PROOF_DB_URL", "DATABASE_URL", "DISCOVERY_DATABASE_URL"]) {
+      let pathname = "";
+      try {
+        pathname = new URL(process.env[name] ?? "").pathname;
+      } catch {
+        // unset or malformed: the empty path fails below, and the value itself is never printed
+      }
+      expect(pathname, `${name} is the scratch DB`).toBe(SCRATCH_DB_PATH);
+    }
+  });
+
   test("host prepares three public sessions", async ({ page }) => {
     for (const c of CASES) {
       const shownElsewhere = [
@@ -357,7 +371,10 @@ test.describe.serial("public card: the exact address is hidden only when the hos
           for (const e of captured) expect(e.cookie, `${e.url} sent a cookie`).toBeUndefined();
           sources.push(...captured.map((e): [string, string] => [e.url, e.body ?? ""]));
 
-          const leaks = sources.filter(([, text]) => text.includes(c.token)).map(([from]) => from);
+          // A leak is any copy of the token: verbatim, URL-encoded or plus-joined (as in a link).
+          const forms = [c.token, encodeURIComponent(c.token), c.token.split(" ").join("+")];
+          const hasToken = (text: string) => forms.some((form) => text.includes(form));
+          const leaks = sources.filter(([, text]) => hasToken(text)).map(([from]) => from);
           if (c.hidden) {
             expect(leaks, `the ${c.key} token reached the visitor`).toEqual([]);
             expect(listing).not.toHaveProperty("venueName");
