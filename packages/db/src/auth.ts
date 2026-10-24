@@ -8,7 +8,7 @@ import {
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
 import type pg from "pg";
-import { stripInvisibleChars } from "./text-safety.js";
+import { checkTypedName, stripInvisibleChars } from "./text-safety.js";
 
 /**
  * Auth/identity service — typed wrappers over the 0012 SECURITY DEFINER
@@ -202,8 +202,9 @@ export async function provisionTenant(
   try {
     const { rows } = await pool.query(`SELECT tenant_provision($1, $2, $3, $4, $5) AS id`, [
       input.slug,
-      // L27: strip invisible code points first; the SQL trim and 'name required' check run on the stripped value.
-      stripInvisibleChars(input.name),
+      // L27 strips invisible code points first; L29 checkTypedName (the shared typed-name rule) maps a refused
+      // name to '' so the definer raises its existing 22023 'name required' (no new error class; U+0000 too).
+      checkTypedName(stripInvisibleChars(input.name)) ?? "",
       input.timezone ?? null,
       input.locale ?? null,
       input.personId,

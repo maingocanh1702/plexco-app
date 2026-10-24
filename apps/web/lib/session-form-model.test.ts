@@ -1,9 +1,17 @@
-import { stripInvisibleChars as serverStripInvisibleChars, validateDisplayName } from "@plexco/db";
+import {
+  checkTypedName as serverCheckTypedName,
+  stripInvisibleChars as serverStripInvisibleChars,
+  validateDisplayName,
+} from "@plexco/db";
 import { describe, expect, it } from "vitest";
+import { addPlayerNameProblem } from "../components/sessions/roster-add-player-form";
+import { clubNameProblem } from "./club-settings-model";
+import { validateNewClub, type NewClubValues } from "./new-club-form";
 import {
   VENUE_ADDRESS_MAX,
   buildCreateBody,
   buildUpdateBody,
+  checkTypedName,
   emptyFormValues,
   hasHiddenChar,
   stripInvisibleChars,
@@ -478,6 +486,33 @@ describe("validateForm hidden characters in venueName, venueAddress and area", (
     }
     expect(mismatches).toEqual([]);
   }, 30_000);
+
+  // L29 V1/V2 web cells (validateForm unchanged by L29): the address is stripped, then trimmed.
+  const V_CELLS: [string, string, string | null, string | null][] = [
+    ["U+00A0 only", ch(0xa0), null, null],
+    ["U+3000 only", ch(0x3000), null, null],
+    ["U+2800 only", ch(0x2800), EN_COPY.venueAddress, null],
+    [
+      "U+0009 before and U+2028 after the address",
+      ch(0x9) + "12 Nguyen Trai" + ch(0x2028),
+      null,
+      "12 Nguyen Trai",
+    ],
+  ];
+
+  it.each(V_CELLS)("L29 V web cell: the address is %s", (_label, address, error, sent) => {
+    const values = base({ venueAddress: address });
+    expect(validateForm(values, TZ, en)).toEqual(error === null ? {} : { venueAddress: error });
+    if (error !== null) {
+      expect(validateForm(values, TZ, (v: string) => v)).toEqual({
+        venueAddress: VI_COPY.venueAddress,
+      });
+    } else if (sent === null) {
+      expect("venueAddress" in buildCreateBody(values, TZ)).toBe(false);
+    } else {
+      expect(buildCreateBody(values, TZ).venueAddress).toBe(sent);
+    }
+  });
 });
 
 // L23 strip-first (DD-138 sign-off A.1; readiness D3, D4, D10, D11) and L27 (B9): the web mirror of
@@ -627,4 +662,56 @@ describe("L23, L27: the session form strips invisible code points from area, ven
       expect(stripInvisibleChars(input)).toBe(expected);
     }
   }, 30_000);
+
+  // L29 U8d: the web checkTypedName agrees with the server rule over every scalar. L29 U8c: so do
+  // the three name mirrors that call it (clubNameProblem, validateNewClub, addPlayerNameProblem).
+  // Each position and each mirror has its own test within its own 30 s budget (C12: the single
+  // test ran 30.07 s on the CI runner, 3.1x its 9.7 s local time).
+  const AG2_POSITIONS = [
+    { at: "alone", build: (cp: number) => ch(cp) },
+    { at: "edge", build: (cp: number) => "a" + ch(cp) },
+    { at: "inside", build: (cp: number) => "a" + ch(cp) + "b" },
+  ] as const;
+  const AG2_MIRRORS = [
+    "checkTypedName",
+    "clubNameProblem",
+    "validateNewClub",
+    "addPlayerNameProblem",
+  ] as const;
+  const AG2_CASES = AG2_POSITIONS.flatMap((position) =>
+    AG2_MIRRORS.map((mirror) => ({ ...position, mirror })),
+  );
+  it.each(AG2_CASES)(
+    "L29-AG2 every scalar $at: the web $mirror agrees with @plexco/db checkTypedName",
+    ({ build, mirror }) => {
+      const mismatches: number[] = [];
+      const clubValues: NewClubValues = { name: "", slug: "wao-club", timezone: TZ, locale: "en" };
+      for (let cp = 0; cp <= 0x10ffff; cp++) {
+        if (cp >= 0xd800 && cp <= 0xdfff) continue;
+        const input = build(cp);
+        // null = refused: each mirror must refuse exactly what the server rule refuses.
+        const server = serverCheckTypedName(input);
+        const refused = server === null;
+        let differs: boolean;
+        switch (mirror) {
+          case "checkTypedName":
+            differs = checkTypedName(input) !== server;
+            break;
+          case "clubNameProblem":
+            differs = (clubNameProblem(input) !== null) !== refused;
+            break;
+          case "validateNewClub":
+            clubValues.name = input;
+            differs = (validateNewClub(clubValues, en).name !== undefined) !== refused;
+            break;
+          case "addPlayerNameProblem":
+            differs = (addPlayerNameProblem(input) !== null) !== refused;
+            break;
+        }
+        if (differs) mismatches.push(cp);
+      }
+      expect(mismatches).toEqual([]);
+    },
+    30_000,
+  );
 });

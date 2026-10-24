@@ -14,8 +14,10 @@ vi.mock("@plexco/db", async (importOriginal) => ({
   resolveWebSession: vi.fn(),
   provisionTenant: vi.fn(),
   SlugTakenError: class SlugTakenError extends Error {},
-  // The real strip (the one TypeScript list): the route strips before it checks the name (L27).
+  // The REAL strip and the REAL shared name check (a mocked rule would test nothing):
+  // the route strips (L27), then checks (L29).
   stripInvisibleChars: (await importOriginal<typeof import("@plexco/db")>()).stripInvisibleChars,
+  checkTypedName: (await importOriginal<typeof import("@plexco/db")>()).checkTypedName,
 }));
 
 // Keep the REAL t() behaviour — the Vietnamese-message assertions below depend on it — but make the
@@ -241,6 +243,35 @@ describe("POST /api/onboarding/start — bounded body + name length (audit W-8)"
       message: "Tên CLB hoặc slug không hợp lệ.",
     });
     expect(provisionTenant).not.toHaveBeenCalled();
+  });
+
+  // L29 (T1): the route strips (L27), then runs the shared typed-name check. One row per cell:
+  // null = refused (the SAME 400, provisionTenant not called); a string = stored exactly so.
+  // Inputs are code points: no raw control or bidi byte lives in this file.
+  const l29Cells: [string, number[], string | null][] = [
+    ["Cc U+0001 inside", [0x57, 0x01, 0x41, 0x4f], null],
+    ["Bidi_Control U+202E inside", [0x57, 0x202e, 0x41, 0x4f], null],
+    ["U+2028 inside", [0x57, 0x2028, 0x41, 0x4f], null],
+    ["U+00A0 only", [0xa0], null],
+    ["U+2800 only", [0x2800], null],
+    ["U+200B only", [0x200b], null],
+    ["U+0000 inside", [0x57, 0x00, 0x41, 0x4f], null],
+    ["ordinary WAO Club", [0x57, 0x41, 0x4f, 0x20, 0x43, 0x6c, 0x75, 0x62], "WAO Club"],
+    ["edge: U+0009 before and U+2028 after WAO", [0x09, 0x57, 0x41, 0x4f, 0x2028], "WAO"],
+  ];
+  it.each(l29Cells)("club name, shared check (L29 T1): %s", async (_cell, points, stored) => {
+    const res = await POST(req({ slug: "club-a", name: String.fromCodePoint(...points) }));
+    if (stored === null) {
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatchObject({
+        code: "INVALID_BODY",
+        message: "Tên CLB hoặc slug không hợp lệ.",
+      });
+      expect(provisionTenant).not.toHaveBeenCalled();
+    } else {
+      expect(res.status).toBe(200);
+      expect(vi.mocked(provisionTenant).mock.calls[0]?.[1]).toMatchObject({ name: stored });
+    }
   });
 
   // R5: U+200D and U+FE0F are in the strip set. The owner's rule applied as written, no

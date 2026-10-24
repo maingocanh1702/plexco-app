@@ -129,7 +129,6 @@ describe("addMemberToSession", () => {
     ["R2 VS1", `Mi${cp(0xfe00)}nh`, "Minh"],
     ["R2 tag U+E0001", `Mi${cp(0xe0001)}nh`, "Minh"],
     ["R2 reserved default-ignorable U+2065", `Mi${cp(0x2065)}nh`, "Minh"],
-    ["R4 bidi RLO kept as today (O1)", `Mi${cp(0x202e)}nh`, `Mi${cp(0x202e)}nh`],
     // R5: the owner's rule applied as written, no emoji exception: ZWJ and VS16 are stripped, so the emoji split.
     [
       "R5 ZWJ family splits",
@@ -157,6 +156,16 @@ describe("addMemberToSession", () => {
   ])("host add R3 %s: refused as an empty name, nothing written", async (_label, sent) => {
     const { tenantId, actor, sessionId } = await world();
     const before = await fx.counts(tenantId);
+    expect(await codeOf(add(tenantId, actor, sessionId, { displayName: sent }))).toBe(
+      "INVALID_INPUT",
+    );
+    expect(await fx.counts(tenantId)).toEqual(before);
+  });
+
+  it("host add R4 bidi RLO (L29, was kept as today O1): refused INVALID_INPUT, nothing written", async () => {
+    const { tenantId, actor, sessionId } = await world();
+    const before = await fx.counts(tenantId);
+    const sent = `Mi${cp(0x202e)}nh`;
     expect(await codeOf(add(tenantId, actor, sessionId, { displayName: sent }))).toBe(
       "INVALID_INPUT",
     );

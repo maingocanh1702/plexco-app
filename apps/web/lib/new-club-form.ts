@@ -1,5 +1,5 @@
 import type { TFn } from "./i18n-client";
-import { stripInvisibleChars } from "./session-form-model";
+import { checkTypedName, stripInvisibleChars } from "./session-form-model";
 
 /** Mirrors the server check in api/onboarding/start (and tenant_provision). */
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -54,6 +54,13 @@ export function validateNewClub(values: NewClubValues, t: TFn): NewClubErrors {
     errors.name = t(
       `Tên tối đa ${MAX_NAME_CHARS} ký tự.`,
       `Name can be at most ${MAX_NAME_CHARS} characters.`,
+    );
+  } else if (checkTypedName(name) === null) {
+    // L29: refuse what the server rule refuses (web twin of checkTypedName): a control, bidi or
+    // line-separator code point, or no visible character left after the strip and trim.
+    errors.name = t(
+      "Tên không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+      "The name cannot contain control or hidden characters.",
     );
   }
   if (!SLUG_RE.test(values.slug.trim().toLowerCase())) {

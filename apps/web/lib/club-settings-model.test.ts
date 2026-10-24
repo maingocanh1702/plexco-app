@@ -44,13 +44,37 @@ describe("clubNameProblem (same count as club-config-validation.ts: UTF-16 units
     ["x".repeat(120) + ch(0x200b).repeat(3), null], // length counts after the strip
     ["a" + ch(0x200b) + ch(0x09) + "b", "invalid_chars"],
     ["a" + ch(0x202e) + "b", "invalid_chars"],
-    // The club route refuses only Cc/Cf: the client mirrors it and refuses nothing more.
-    ["a" + ch(0x2028) + "b", null],
+    // L29: U+2028 is refused like a control (the web checkTypedName); it was accepted before.
+    ["a" + ch(0x2028) + "b", "invalid_chars"],
     // R5: U+200D and U+FE0F are stripped, so the server stores composed emoji split (the owner's
     // rule applied as written, no exception); the form raises no error for them.
     [ch(0x1f468) + ch(0x200d) + ch(0x1f469) + ch(0x200d) + ch(0x1f467), null], // ZWJ family
     [ch(0x2764) + ch(0xfe0f), null], // VS16 heart
   ])("%j -> %s", (input, expected) => {
+    expect(clubNameProblem(input)).toBe(expected);
+  });
+});
+
+// L29 U8c (readiness section 7, row T2 web clubNameProblem): after the strip, the trim and the
+// length checks the club name is held to the web checkTypedName, the server's typed-name rule.
+// One cell per class.
+const CLUB_NAME_CELLS: { name: string; input: string; expected: string | null }[] = [
+  { name: "Cc U+0001 inside", input: "a" + ch(0x01) + "b", expected: "invalid_chars" },
+  { name: "Bidi_Control U+202E inside", input: "a" + ch(0x202e) + "b", expected: "invalid_chars" },
+  { name: "U+0000 inside", input: "a" + ch(0x00) + "b", expected: "invalid_chars" },
+  { name: "U+2800 only (was accepted)", input: ch(0x2800), expected: "invalid_chars" },
+  { name: "U+00A0 only", input: ch(0x00a0), expected: "empty" },
+  { name: "U+200B only", input: ch(0x200b), expected: "empty" },
+  { name: "ordinary name", input: "WAO Club", expected: null },
+  {
+    name: "edge: U+0009 before, U+2028 after",
+    input: ch(0x09) + "WAO" + ch(0x2028),
+    expected: null,
+  },
+];
+
+describe("L29 clubNameProblem cells (T2 web mirror of the server typed-name rule)", () => {
+  it.each(CLUB_NAME_CELLS)("$name -> $expected", ({ input, expected }) => {
     expect(clubNameProblem(input)).toBe(expected);
   });
 });
@@ -73,7 +97,7 @@ describe("publicAliasProblem (A-24: M-1..M-3, the rule of validatePublicAlias)",
     // "ab" is accepted (both were invalid_chars before the strip).
     ["a" + ch(0x200b) + "b", null],
     ["a" + ch(0x07) + "b", "invalid_chars"],
-    ["a" + ch(0x2028) + "b", "invalid_chars"], // refused here, accepted in a club name
+    ["a" + ch(0x2028) + "b", "invalid_chars"], // refused here, and in a club name since L29
     ["a" + ch(0xad) + "b", null],
   ])("%j -> %s", (input, expected) => {
     expect(publicAliasProblem(input)).toBe(expected);

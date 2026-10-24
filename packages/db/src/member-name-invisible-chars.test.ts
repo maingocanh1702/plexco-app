@@ -18,8 +18,15 @@ import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
+import { provisionTenant } from "./auth.js";
+import { ClubConfigError, validatePatch } from "./club-config-validation.js";
+import { fixtures, nextCommandId } from "./roster-money-fixtures.js";
+import { RosterMoneyError } from "./roster-money-shared.js";
+import { addMemberToSession } from "./roster-service.js";
+import { createSession, updateSession } from "./session-service.js";
+import { seedPersonAccount, setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 import { withTenant } from "./tenant.js";
+import { checkTypedName, normalizeExternalName } from "./text-safety.js";
 import { resolveZaloIdentity } from "./zalo-ingress.js";
 
 let ctx: RlsTestContext;
@@ -89,8 +96,8 @@ interface Writer {
   name: string;
   /** R3: today's empty-value behaviour, refused with 22023 or stored as NULL. */
   empty: "refuse" | "null";
-  /** R4: a control, bidi, line-separator or U+2800 character is refused, or stored as sent (O1). */
-  r4: "refuse" | "keep";
+  /** R4: a control, bidi, line-separator or U+2800 character is refused, or removed (0070). */
+  r4: "refuse" | "remove";
   call: (input: string) => Promise<Outcome>;
 }
 
@@ -119,7 +126,7 @@ const WRITERS: Writer[] = [
   {
     name: "P2 create_host_added_person (roster-service.ts)",
     empty: "refuse",
-    r4: "keep",
+    r4: "refuse",
     call: async (input) => {
       const before = await personCount();
       let id: string;
@@ -139,7 +146,7 @@ const WRITERS: Writer[] = [
   {
     name: "P3 zalo_identity_resolve (zalo-ingress.ts resolveZaloIdentity)",
     empty: "null",
-    r4: "keep",
+    r4: "remove",
     call: async (input) => {
       const r = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
         resolveZaloIdentity(tx, {
@@ -160,7 +167,7 @@ const WRITERS: Writer[] = [
   {
     name: "P4 auth_login_google (apps/web/lib/oauth-transaction.ts)",
     empty: "null",
-    r4: "keep",
+    r4: "remove",
     call: async (input) => {
       const { rows } = await ctx.appPool.query<{ person_id: string; outcome: string }>(
         `SELECT account_id, person_id, outcome FROM auth_login_google($1, $2, $3, $4, $5, $6, $7)`,
@@ -199,7 +206,13 @@ const ROWS: Row[] = [
   },
   ...[0x07, 0x202e, 0x2028, 0x2800].map((cp): Row => {
     const value = mix("Lan", cp, "Nguyen");
-    return { row: `R4 U+${hex(cp)} among visible text`, cls: "R4", input: value, clean: value };
+    // 0070: the writers that accept R4 (mode true) remove the code point (readiness section 7).
+    return {
+      row: `R4 U+${hex(cp)} among visible text`,
+      cls: "R4",
+      input: value,
+      clean: "LanNguyen",
+    };
   }),
   // R5 (section 7): U+200D and U+FE0F are in the strip set, so composed emoji split. This is the
   // owner's rule (decision item 6) applied as written: no emoji exception.
@@ -235,9 +248,9 @@ describe("MN persons.display_name definers", () => {
 
 // MN rows R1-R5 for the membership and tenant definers 0069 re-creates (unit U2a2): M2
 // create_guest_membership, T1 tenant_provision and T2 tenant_profile_update, each called as role
-// `app` with the statement its TypeScript caller runs. All three keep R4 as sent: M2 copies the
-// source as it holds it, T1 accepts it (O1), and T2 refuses Cc and Cf only in its TypeScript
-// validator (club-config.ts, the U5 rows), never in the definer. R5 (section 7) for
+// `app` with the statement its TypeScript caller runs. Since 0070 (RO-L29-2, readiness section 7)
+// T1 and T2 refuse R4 with 22023 (mode false) and M2 removes the code point from the copy (mode
+// true), and M2 copies an R3 source as NULL, never '' (RO-L29-3 group 3). R5 (section 7) for
 // memberships.display_name and tenants.name: the ZWJ family and the VS16 heart lose U+200D and
 // U+FE0F. This is the owner's rule (decision item 6) applied as written: no emoji exception.
 describe("MN memberships.display_name and tenants.name definers", () => {
@@ -247,15 +260,17 @@ describe("MN memberships.display_name and tenants.name definers", () => {
   type Definer = {
     name: string;
     r3: (r: Row) => Outcome;
+    r4: Writer["r4"];
     call: (input: string | null) => Promise<Outcome>;
   };
-  /** `r3` is the definer's R3 verdict; every other row stores the row's `clean` value. */
+  /** `r3` is the definer's R3 verdict, `r4` as in WRITERS; every other row stores its `clean`. */
   const DEFINERS: Definer[] = [
     {
       name: "M2 create_guest_membership (session-join-service.ts mintGuestMembership)",
-      // The copy is the strip alone (no trim, no NULLIF), so R3 leaves what an empty source leaves
-      // today (its live body copies it as it is): the visible remainder, '' or the spaces.
-      r3: (r) => ({ stored: cps([...r.input].filter((c) => c === " ").join("")) }),
+      // Since 0070 the copy is mode true: an invisible-only or blank-only source is copied as NULL,
+      // never '' (RO-L29-3 group 3), and an R4 code point is removed (RO-L29-2).
+      r3: () => ({ stored: null }),
+      r4: "remove",
       call: async (input) => {
         // After 0069 an unstripped persons name exists only as a value the cleanup left (B6), so
         // ctx.owner seeds it, then resets it after the read (no stray value for the MG block).
@@ -279,6 +294,7 @@ describe("MN memberships.display_name and tenants.name definers", () => {
     {
       name: "T1 tenant_provision (auth.ts provisionTenant)",
       r3: () => ({ code: "22023", untouched: true }), // 'name required', as for an empty name today
+      r4: "refuse",
       call: async (input) => {
         const slug = `mn-${randomBytes(6).toString("hex")}`;
         const personId = await insertPerson(SEED);
@@ -299,6 +315,7 @@ describe("MN memberships.display_name and tenants.name definers", () => {
     {
       name: "T2 tenant_profile_update (club-config.ts updateClubConfig)",
       r3: () => ({ code: "22023", untouched: true }), // 'name must be 1..120 chars', as for ''
+      r4: "refuse",
       call: async (input) => {
         await ctx.owner.query(`UPDATE tenants SET name = $2 WHERE id = $1`, [ctx.tenantA, SEED]);
         try {
@@ -317,7 +334,10 @@ describe("MN memberships.display_name and tenants.name definers", () => {
   it.each(DEFINERS.flatMap((w) => ROWS.map((r) => ({ name: `${w.name}: ${r.row}`, w, r }))))(
     "$name",
     async ({ w, r }) => {
-      expect(await w.call(r.input)).toEqual(r.cls === "R3" ? w.r3(r) : { stored: cps(r.clean) });
+      let want: Outcome = { stored: cps(r.clean) };
+      if (r.cls === "R3") want = w.r3(r);
+      else if (r.cls === "R4" && w.r4 === "refuse") want = { code: "22023", untouched: true };
+      expect(await w.call(r.input)).toEqual(want);
     },
   );
   // The NULL rows (section 6 has none): the helper is STRICT (0068:54), so a NULL stays NULL. T2 with
@@ -334,22 +354,39 @@ describe("MN memberships.display_name and tenants.name definers", () => {
 
 // RC-BODY, RC-ACL and RC-OWNER (unit U2b, section 11): one row per definer 0069 re-creates. Every pin
 // is read off the definer's previous CREATE in the migration its row names; `subs` is the section 10
-// substitution table verbatim, as [today, 0069] pairs.
+// substitution table verbatim, as [today, 0069] pairs. `l29` (RO-L29-2) is the one more layer for
+// the six definers 0070 re-creates: its section B and C substitutions as [0069, 0070] pairs.
 const H = "public.public_name_strip_invisible";
 const HELPER_SIG = `${H}(text)`;
-type Recreated = { sig: string; file: string; searchPath: string; subs: [string, string][] };
+const L29_RULE = "public.member_name_apply_rule";
+type Recreated = {
+  sig: string;
+  file: string;
+  searchPath: string;
+  subs: [string, string][];
+  l29?: [string, string][];
+};
 const RECREATED: Recreated[] = [
   {
     sig: "public.auth_login_google(text, text, bytea, text, uuid, text, text)",
     file: "0017_oauth_transactions.sql",
     searchPath: "public, pg_temp",
     subs: [["NULLIF(trim(p_display_name), '')", `NULLIF(trim(${H}(p_display_name)), '')`]],
+    l29: [
+      [
+        `INSERT INTO persons(display_name) VALUES (NULLIF(trim(${H}(p_display_name)), ''))`,
+        `INSERT INTO persons(display_name) VALUES (${L29_RULE}(p_display_name, true))`,
+      ],
+    ],
   },
   {
     sig: "public.create_host_added_person(uuid, uuid, text)",
     file: "0051_host_add_person_definer.sql",
     searchPath: "pg_catalog, public, pg_temp",
     subs: [["v_name := btrim(p_display_name);", `v_name := btrim(${H}(p_display_name));`]],
+    l29: [
+      [`v_name := btrim(${H}(p_display_name));`, `v_name := ${L29_RULE}(p_display_name, false);`],
+    ],
   },
   {
     sig: "public.zalo_identity_resolve(uuid, uuid, text, text, bytea, text)",
@@ -359,6 +396,12 @@ const RECREATED: Recreated[] = [
       [
         "left(nullif(btrim(p_display_name), ''), 120)",
         `left(nullif(btrim(${H}(p_display_name)), ''), 120)`,
+      ],
+    ],
+    l29: [
+      [
+        `v_name text := left(nullif(btrim(${H}(p_display_name)), ''), 120);`,
+        `v_name text := left(${L29_RULE}(p_display_name, true), 120);`,
       ],
     ],
   },
@@ -373,6 +416,12 @@ const RECREATED: Recreated[] = [
     file: "0058_player_self_join.sql",
     searchPath: "pg_catalog, public, pg_temp",
     subs: [["SELECT p.display_name INTO v_name", `SELECT ${H}(p.display_name) INTO v_name`]],
+    l29: [
+      [
+        `SELECT ${H}(p.display_name) INTO v_name`,
+        `SELECT ${L29_RULE}(p.display_name, true) INTO v_name`,
+      ],
+    ],
   },
   {
     sig: "public.tenant_provision(text, text, text, text, uuid)",
@@ -382,12 +431,26 @@ const RECREATED: Recreated[] = [
       ["trim(coalesce(p_name, ''))", `trim(coalesce(${H}(p_name), ''))`],
       ["trim(p_name)", `trim(${H}(p_name))`],
     ],
+    l29: [
+      [
+        `IF trim(coalesce(${H}(p_name), '')) = '' THEN`,
+        `IF ${L29_RULE}(p_name, false) IS NULL THEN`,
+      ],
+      [`VALUES (trim(${H}(p_name)), p_slug,`, `VALUES (${L29_RULE}(p_name, false), p_slug,`],
+    ],
   },
   {
     sig: "public.tenant_profile_update(uuid, uuid, text, text, text)",
     file: "0052_tenant_profile_definers.sql",
     searchPath: "pg_catalog, public, pg_temp",
     subs: [["v_name text := btrim(p_name);", `v_name text := btrim(${H}(p_name));`]],
+    l29: [
+      [`v_name text := btrim(${H}(p_name));`, `v_name text := ${L29_RULE}(p_name, false);`],
+      [
+        "IF p_name IS NOT NULL AND (char_length(v_name) < 1 OR",
+        "IF p_name IS NOT NULL AND (v_name IS NULL OR char_length(v_name) < 1 OR",
+      ],
+    ],
   },
 ];
 const fnName = (w: Recreated) => w.sig.slice("public.".length, w.sig.indexOf("("));
@@ -449,6 +512,11 @@ describe("RC-BODY: each live body is its previous CREATE's with exactly the sect
     for (const [today, next] of w.subs) {
       expect(previous.split(today).length - 1, today).toBe(1); // tenant_provision: two pairs, once each
       want = want.split(today).join(next);
+    }
+    const body0069 = want; // L29's layer edits the 0069 body, so its once check runs against it
+    for (const [in0069, in0070] of w.l29 ?? []) {
+      expect(body0069.split(in0069).length - 1, in0069).toBe(1);
+      want = want.split(in0069).join(in0070);
     }
     const { rows } = await ctx.owner.query<{ src: string }>(
       `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
@@ -819,4 +887,1243 @@ describe("MG the 0069 L27-CLEANUP block", () => {
   });
 });
 
-// End of the RC and MG blocks: the last block of this file.
+// End of the L27 RC and MG blocks; the L29 blocks follow.
+
+// L29 (lane p3-name-writers-refuse-control-bidi, unit U1; readiness file sections 4, 5 and 11):
+// public.member_name_apply_rule of 0070 section A. EXECUTE is owner-only, so the rule runs as the
+// superuser; the catalog is read through ctx.owner as above.
+describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
+  const RULE = "public.member_name_apply_rule";
+  const RULE_SIG = `${RULE}(text, boolean)`;
+  const run = async <T extends pg.QueryResultRow>(text: string, values: unknown[] = []) =>
+    (await ctx.superuserDb.pool.query<T>(text, values)).rows;
+  const catalog = async (text: string, values: unknown[]) =>
+    (await ctx.owner.query<Record<string, unknown>>(text, values)).rows;
+
+  it("L29-F1 exists once, in public, a plpgsql function returning text", async () => {
+    expect(
+      await catalog(
+        `SELECT n.nspname AS schema, pg_get_function_identity_arguments(p.oid) AS args,
+                p.prorettype::regtype::text AS returns, p.proretset AS returns_set, l.lanname AS language
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           JOIN pg_language l ON l.oid = p.prolang
+          WHERE p.proname = 'member_name_apply_rule'`,
+        [],
+      ),
+    ).toEqual([
+      {
+        schema: "public",
+        args: "p_value text, p_external boolean",
+        returns: "text",
+        returns_set: false,
+        language: "plpgsql",
+      },
+    ]);
+  });
+
+  it("L29-F2 its attributes are the 0068 helper's: IMMUTABLE, STRICT, PARALLEL SAFE, INVOKER, pg_catalog", async () => {
+    const attrs = (sig: string) =>
+      catalog(
+        `SELECT provolatile AS volatility, proisstrict AS strict, proparallel AS parallel,
+                prosecdef AS security_definer, proconfig AS config
+           FROM pg_proc WHERE oid = $1::regprocedure`,
+        [sig],
+      );
+    const helper = await attrs(HELPER_SIG);
+    expect(helper).toEqual([
+      {
+        volatility: "i",
+        strict: true,
+        parallel: "s",
+        security_definer: false,
+        config: ["search_path=pg_catalog"],
+      },
+    ]);
+    expect(await attrs(RULE_SIG)).toEqual(helper);
+  });
+
+  it("L29-F3 its owner is the 0068 helper's owner", async () => {
+    expect(
+      await catalog(
+        `SELECT p.proowner = h.proowner AS helper_owner FROM pg_proc p, pg_proc h
+          WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure`,
+        [RULE_SIG, HELPER_SIG],
+      ),
+    ).toEqual([{ helper_owner: true }]);
+  });
+
+  it("L29-F4 no EXECUTE for PUBLIC, app, app_worker or readonly, and no grant at all", async () => {
+    expect(
+      await catalog(
+        `SELECT has_function_privilege('public', p.oid, 'EXECUTE') AS public_role,
+                has_function_privilege('app', p.oid, 'EXECUTE') AS app,
+                has_function_privilege('app_worker', p.oid, 'EXECUTE') AS app_worker,
+                has_function_privilege('readonly', p.oid, 'EXECUTE') AS readonly,
+                ARRAY(SELECT a.grantee::regrole::text FROM aclexplode(p.proacl) a
+                       WHERE a.grantee <> p.proowner) AS grantees
+           FROM pg_proc p WHERE p.oid = $1::regprocedure`,
+        [RULE_SIG],
+      ),
+    ).toEqual([
+      { public_role: false, app: false, app_worker: false, readonly: false, grantees: [] },
+    ]);
+  });
+
+  it("L29-F5 its R, V and T constants are byte-equal to person_profile_update's (A-12); no RAISE", async () => {
+    const end = "|| ']';";
+    const constants = async (sig: string) => {
+      const [row] = await catalog(`SELECT prosrc FROM pg_proc WHERE oid = $1::regprocedure`, [sig]);
+      const src = String(row!.prosrc);
+      const start = src.indexOf("  c_ws     CONSTANT");
+      const visible = src.indexOf("c_visible CONSTANT", start);
+      const stop = src.indexOf(end, visible);
+      expect(start >= 0 && visible > start && stop > visible, sig).toBe(true);
+      return { src, block: src.slice(start, stop + end.length) };
+    };
+    const rule = await constants(RULE_SIG);
+    expect(rule.block).toBe((await constants("public.person_profile_update(uuid, text)")).block);
+    expect(rule.src.toUpperCase()).not.toContain("RAISE");
+  });
+
+  const BIDI = [
+    0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  ];
+  /** [class, input, mode false (interactive), mode true (ingress and copy)]: section 4's order and edge rule. */
+  type Case = [label: string, input: string, interactive: string | null, ingress: string | null];
+  const CASES: Case[] = [
+    ["ordinary", "Ann Lee", "Ann Lee", "Ann Lee"],
+    [
+      "T at both edges (TAB, U+3000, NBSP, U+2029)",
+      mix(0x09, 0x3000, "Ann", 0xa0, 0x2029),
+      "Ann",
+      "Ann",
+    ],
+    ["Cc inside (U+0001)", mix("Ann", 0x01, "Lee"), null, "AnnLee"],
+    ["Cc inside (U+009F)", mix("Ann", 0x9f, "Lee"), null, "AnnLee"],
+    ["Cc that is also T, inside (TAB)", mix("Ann", 0x09, "Lee"), null, "AnnLee"],
+    ...BIDI.map((cp): Case => [
+      `Bidi_Control U+${hex(cp)} inside`,
+      mix("Ann", cp, "Lee"),
+      null,
+      "AnnLee",
+    ]),
+    ["U+2028 inside", mix("Ann", 0x2028, "Lee"), null, "AnnLee"],
+    ["U+2029 inside", mix("Ann", 0x2029, "Lee"), null, "AnnLee"],
+    [
+      "Zs inside is kept (NBSP)",
+      mix("Ann", 0xa0, "Lee"),
+      mix("Ann", 0xa0, "Lee"),
+      mix("Ann", 0xa0, "Lee"),
+    ],
+    ["Zs only (NBSP, U+3000, U+202F)", mix(0xa0, 0x3000, 0x202f), null, null],
+    ["U+2800 only", mix(0x2800), null, null],
+    ["U+2800 inside", mix("Ann", 0x2800, "Lee"), null, "AnnLee"],
+    ["bidi only", mix(0x202e, 0x2066), null, null],
+    ["invisible only (U+200B, U+2060, VS16)", mix(0x200b, 0x2060, 0xfe0f), null, null],
+    ["invisible inside is stripped (ZWJ)", mix("Ann", 0x200d, "Lee"), "AnnLee", "AnnLee"],
+    ["other R inside (Cf U+0600)", mix("Ann", 0x600, "Lee"), null, "AnnLee"],
+    ["other R inside (Cf U+110BD)", mix("Ann", 0x110bd, "Lee"), null, "AnnLee"],
+    ["T before a removed R is trimmed again (NBSP, U+202E)", mix("Ann", 0xa0, 0x202e), null, "Ann"],
+  ];
+  it.each(CASES)("L29-F5 %s", async (_label, input, interactive, ingress) => {
+    const [row] = await run<{ interactive: string | null; ingress: string | null }>(
+      `SELECT ${RULE}($1::text, false) AS interactive, ${RULE}($1::text, true) AS ingress`,
+      [input],
+    );
+    expect([cps(row!.interactive), cps(row!.ingress)]).toEqual([cps(interactive), cps(ingress)]);
+  });
+
+  it("L29-F5 STRICT: a NULL value or a NULL mode gives NULL", async () => {
+    expect(
+      await run(
+        `SELECT ${RULE}(NULL, false) AS a, ${RULE}(NULL, true) AS b, ${RULE}('Ann', NULL) AS c`,
+      ),
+    ).toEqual([{ a: null, b: null, c: null }]);
+  });
+
+  it("L29-F5 never raises: one value holding every scalar SQL text holds is refused by mode false; mode true gives a value both modes keep", async () => {
+    expect(
+      await run(
+        `WITH s AS MATERIALIZED (
+           SELECT string_agg(chr(g), '' ORDER BY g) AS v
+             FROM generate_series(1, 1114111) g WHERE g < 55296 OR g > 57343
+         ), r AS MATERIALIZED (SELECT ${RULE}(v, false) AS refused, ${RULE}(v, true) AS kept FROM s)
+         SELECT refused, kept IS NOT NULL AS visible, ${RULE}(kept, false) = kept AS interactive_keeps,
+                ${RULE}(kept, true) = kept AS ingress_keeps
+           FROM r`,
+      ),
+    ).toEqual([{ refused: null, visible: true, interactive_keeps: true, ingress_keeps: true }]);
+  }, 30_000);
+});
+
+// L29-W1 (unit U2, section 11): P2 create_host_added_person, T1 tenant_provision and T2
+// tenant_profile_update apply member_name_apply_rule's mode false (section 7's P2, T1 and T2 SQL rows).
+// A refused value raises 22023 with the writer's existing message and writes nothing; any other value
+// stores its strip-and-trim result. Each is called as role `app` with the raw value (WRITERS' P2 trims
+// first, as roster-service.ts does), so the definer's own edge rule decides the edge cells.
+describe("L29-W1 P2, T1 and T2 refuse control, bidi, separator, U+2800 and blank-only names (0070, mode false)", () => {
+  type Verdict =
+    { stored: number[] | null } | { code: string; message: string; untouched: boolean };
+  /** sqlstate's SQLSTATE, with the message of the pg error that carries it. */
+  const refusal = (error: unknown) => {
+    const code = sqlstate(error);
+    let e = error as { code?: unknown; message?: unknown; cause?: unknown };
+    while (e.code !== code) e = e.cause as typeof e;
+    return { code, message: String(e.message) };
+  };
+  const tenantName = async (id: string) =>
+    (await ctx.owner.query<{ name: string }>(`SELECT name FROM tenants WHERE id = $1`, [id]))
+      .rows[0]!.name;
+  type W1Writer = { id: string; message: string; call: (input: string | null) => Promise<Verdict> };
+  const W1: W1Writer[] = [
+    {
+      id: "P2",
+      message: "create_host_added_person: display name must be 1..100 characters",
+      call: async (input) => {
+        const before = await personCount();
+        let id: string;
+        try {
+          const res = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+            tx.execute(
+              sql`SELECT create_host_added_person(${ctx.tenantA}::uuid, ${host}::uuid, ${input}) AS id`,
+            ),
+          );
+          id = (res.rows[0] as { id: string }).id;
+        } catch (error) {
+          return { ...refusal(error), untouched: (await personCount()) === before };
+        }
+        return { stored: cps(await nameOf(id)) };
+      },
+    },
+    {
+      id: "T1",
+      message: "tenant_provision: name required",
+      call: async (input) => {
+        const slug = `mn-${randomBytes(6).toString("hex")}`;
+        const personId = await insertPerson(SEED);
+        let id: string;
+        try {
+          const { rows } = await ctx.appPool.query<{ id: string }>(
+            `SELECT tenant_provision($1, $2, $3, $4, $5) AS id`,
+            [slug, input, null, null, personId],
+          );
+          id = rows[0]!.id;
+        } catch (error) {
+          const { rows } = await ctx.owner.query(`SELECT 1 FROM tenants WHERE slug = $1`, [slug]);
+          return { ...refusal(error), untouched: rows.length === 0 };
+        }
+        return { stored: cps(await tenantName(id)) };
+      },
+    },
+    {
+      id: "T2",
+      message: "tenant_profile_update: name must be 1..120 chars",
+      call: async (input) => {
+        await ctx.owner.query(`UPDATE tenants SET name = $2 WHERE id = $1`, [ctx.tenantA, SEED]);
+        try {
+          await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+            tx.execute(
+              sql`SELECT id FROM tenant_profile_update(${ctx.tenantA}::uuid, ${host}::uuid, ${input}, ${null}, ${null})`,
+            ),
+          );
+        } catch (error) {
+          return { ...refusal(error), untouched: (await tenantName(ctx.tenantA)) === SEED };
+        }
+        return { stored: cps(await tenantName(ctx.tenantA)) };
+      },
+    },
+  ];
+  const byId = (id: string) => W1.find((w) => w.id === id)!;
+  const BIDI_CONTROL = [
+    0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  ];
+  /** Section 4's 16 Zs blanks: U+00A0, U+1680, U+2000-U+200A, U+202F, U+205F, U+3000. */
+  const ZS_BLANKS = [
+    0xa0,
+    0x1680,
+    ...Array.from({ length: 11 }, (_, i) => 0x2000 + i),
+    0x202f,
+    0x205f,
+    0x3000,
+  ];
+  /** [cell, input, the stored value, or null when the writer refuses]: section 7's P2, T1 and T2 rows. */
+  type Cell = [cell: string, input: string, stored: string | null];
+  const inside =
+    (cls: string) =>
+    (cp: number): Cell => [`${cls} U+${hex(cp)} inside`, mix("Lan", cp, "Nguyen"), null];
+  const CELLS: Cell[] = [
+    ...[0x01, 0x1f, 0x7f, 0x80, 0x9f].map(inside("Cc")),
+    ...BIDI_CONTROL.map(inside("Bidi_Control")),
+    ...[0x2028, 0x2029].map(inside("separator")),
+    ["blank-only: NBSP", mix(0xa0), null],
+    ["blank-only: U+3000", mix(0x3000), null],
+    ["blank-only: the 16 Zs blanks", mix(...ZS_BLANKS), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+2800 inside", mix("Lan", 0x2800, "Nguyen"), null],
+    ["invisible-only", mix(0x200b, 0x3164, 0xe0001), null],
+    ["ordinary", "Lan Nguyen", "Lan Nguyen"],
+    [
+      "ordinary: a Zs blank inside is kept (NBSP)",
+      mix("Lan", 0xa0, "Nguyen"),
+      mix("Lan", 0xa0, "Nguyen"),
+    ],
+    [
+      "ordinary: the strip-and-trim result (NBSP, U+200B, U+3000)",
+      mix(0xa0, "Lan", 0x200b, " Nguyen", 0x3000),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB at both edges is trimmed", mix(0x09, "Lan Nguyen", 0x09), "Lan Nguyen"],
+    [
+      "edge: U+2028 and U+2029 at the edges are trimmed",
+      mix(0x2028, "Lan Nguyen", 0x2029),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB inside is refused", mix("Lan", 0x09, "Nguyen"), null],
+  ];
+  it.each(
+    W1.flatMap((w) =>
+      CELLS.map(([cell, input, stored]) => ({ name: `${w.id}: ${cell}`, w, input, stored })),
+    ),
+  )("L29-W1 $name", async ({ w, input, stored }) => {
+    expect(await w.call(input)).toEqual(
+      stored === null
+        ? { code: "22023", message: w.message, untouched: true }
+        : { stored: cps(stored) },
+    );
+  });
+  it("L29-W1 T2: a NULL p_name keeps the stored name", async () => {
+    expect(await byId("T2").call(null)).toEqual({ stored: cps(SEED) });
+  });
+  it("L29-W1 T1 and T2 accept and refuse the same values (create versus set, threat 4)", async () => {
+    const verdict = (v: Verdict) => ("stored" in v ? v.stored : v.code);
+    for (const [cell, input] of CELLS) {
+      const created = await byId("T1").call(input);
+      const set = await byId("T2").call(input);
+      expect(verdict(created), cell).toEqual(verdict(set));
+    }
+  }, 30_000);
+});
+
+// L29-RC (units U2 and U3, section 11): each definer 0070 re-creates keeps its owner, prosecdef,
+// proconfig and ACL (the RC-ACL pattern above) and its body calls member_name_apply_rule( with the mode
+// of its class. This part pins the three interactive definers, mode false: P2, T1 and T2.
+describe("L29-RC P2, T1 and T2 keep their attributes and call member_name_apply_rule with mode false", () => {
+  const RULE_SIG = "public.member_name_apply_rule(text, boolean)";
+  const RC = [
+    { fn: "create_host_added_person", arg: "p_display_name", calls: 1 },
+    { fn: "tenant_provision", arg: "p_name", calls: 2 },
+    { fn: "tenant_profile_update", arg: "p_name", calls: 1 },
+  ].map((r) => ({ ...r, w: RECREATED.find((w) => fnName(w) === r.fn)! }));
+  it.each(RC)("L29-RC $fn", async ({ arg, calls, w }) => {
+    const { rows } = await ctx.owner.query<Record<string, unknown>>(
+      `SELECT p.prosecdef AS security_definer, p.proconfig AS config,
+              p.proowner = h.proowner AS helper_owner, p.proowner = r.proowner AS rule_owner,
+              p.proowner = anchor.proowner AS anchor_owner,
+              ARRAY(SELECT a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee = p.proowner) AS owner_privileges,
+              ARRAY(SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+                           || ':' || a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee <> p.proowner ORDER BY 1) AS grants,
+              p.prosrc AS src
+         FROM pg_proc p, pg_proc h, pg_proc r, pg_proc anchor
+        WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure AND r.oid = $3::regprocedure
+          AND anchor.oid = 'public.tenant_public_alias_set(uuid, uuid, text)'::regprocedure`,
+      [w.sig, HELPER_SIG, RULE_SIG],
+    );
+    const { src, ...attrs } = rows[0]!;
+    expect(attrs).toEqual({
+      security_definer: true,
+      config: [`search_path=${w.searchPath}`],
+      helper_owner: true,
+      rule_owner: true,
+      anchor_owner: true,
+      owner_privileges: ["EXECUTE"],
+      grants: ["app:EXECUTE"],
+    });
+    // Every call of the rule is the interactive one on the writer's own argument, and the L27 strip
+    // call it replaced is gone (one definition of the rule, threat 6).
+    const body = String(src);
+    expect({
+      calls: body.split("member_name_apply_rule(").length - 1,
+      interactive: body.split(`public.member_name_apply_rule(${arg}, false)`).length - 1,
+      strip: body.includes("public_name_strip_invisible("),
+    }).toEqual({ calls, interactive: calls, strip: false });
+  });
+});
+
+// L29-W2 and L29-I1-I3 (unit U3, section 11): P3 zalo_identity_resolve, P4 auth_login_google and
+// M2 create_guest_membership apply member_name_apply_rule's mode true (section 7's P3, P4 and M2 SQL
+// rows): the class is removed and the rest stored, NULL when no visible character is left, never ''.
+// Each SQL is called as role `app` with the raw value (no TypeScript normalizer in front), so the
+// definer's own rule decides every cell; P3 cuts to 120 after it. A name never fails an ingress
+// writer and never changes the identity it resolves (threat 5).
+describe("L29-W2 and L29-I1-I3 P3, P4 and M2 normalize control, bidi, separator, U+2800 and blank-only names and never raise (0070, mode true)", () => {
+  type Zalo = { person_id: string; created: boolean; display_name: string | null };
+  type Google = { account_id: string; person_id: string; outcome: string };
+  /** P3's SQL as resolveZaloIdentity calls it; the returned display_name is the stored one. */
+  const zalo = async (input: string | null, userHash = `user-${randomUUID()}`) => {
+    const res = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.execute(
+        sql`SELECT person_id, created, display_name
+              FROM zalo_identity_resolve(${ctx.tenantA}::uuid, ${bot}::uuid, 'scope-mn', ${userHash},
+                                         ${Buffer.from("enc", "utf8")}, ${input})`,
+      ),
+    );
+    const r = res.rows[0] as Zalo;
+    expect(cps(r.display_name)).toEqual(cps(await nameOf(r.person_id)));
+    return r;
+  };
+  /** P4 as WRITERS' P4 calls it; a caller may repeat the subject and the email lookup hash. */
+  const google = async (
+    input: string | null,
+    subject = `gsub-${randomBytes(16).toString("hex")}`,
+    email = `glk-${randomBytes(10).toString("hex")}`,
+  ) =>
+    (
+      await ctx.appPool.query<Google>(
+        `SELECT account_id, person_id, outcome FROM auth_login_google($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          subject,
+          email,
+          randomBytes(24),
+          "kv1",
+          randomUUID(),
+          input,
+          `req-mn-${randomBytes(4).toString("hex")}`,
+        ],
+      )
+    ).rows[0]!;
+  /** M2: the source seeded raw by ctx.owner and reset after the read, as the MN block's M2 does. */
+  const guest = async (input: string | null) => {
+    const personId = await insertPerson(input);
+    const res = await withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      tx.execute(
+        sql`SELECT create_guest_membership(${ctx.tenantA}::uuid, ${personId}::uuid) AS id`,
+      ),
+    );
+    const { rows } = await ctx.owner.query<{ display_name: string | null }>(
+      `SELECT display_name FROM memberships WHERE id = $1`,
+      [(res.rows[0] as { id: string }).id],
+    );
+    await ctx.owner.query(`UPDATE persons SET display_name = $2 WHERE id = $1`, [personId, SEED]);
+    return rows[0]!.display_name;
+  };
+  type W2Writer = { id: string; stored: (input: string | null) => Promise<string | null> };
+  const W2: W2Writer[] = [
+    {
+      id: "P3",
+      stored: async (input) => {
+        const r = await zalo(input);
+        expect(r.created).toBe(true); // a new Zalo user resolves whatever its name
+        return r.display_name;
+      },
+    },
+    {
+      id: "P4",
+      stored: async (input) => {
+        const r = await google(input);
+        expect(r.outcome).toBe("login_success"); // a new Google subject signs in whatever its name
+        return nameOf(r.person_id);
+      },
+    },
+    { id: "M2", stored: guest },
+  ];
+  const BIDI_CONTROL = [
+    0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  ];
+  /** Section 4's 16 Zs blanks: U+00A0, U+1680, U+2000-U+200A, U+202F, U+205F, U+3000. */
+  const ZS_BLANKS = [
+    0xa0,
+    0x1680,
+    ...Array.from({ length: 11 }, (_, i) => 0x2000 + i),
+    0x202f,
+    0x205f,
+    0x3000,
+  ];
+  /** [cell, input, the stored value, or null for NULL]: section 7's P3, P4 and M2 SQL rows. */
+  type Cell = [cell: string, input: string, stored: string | null];
+  const inside =
+    (cls: string) =>
+    (cp: number): Cell => [`${cls} U+${hex(cp)} inside`, mix("Lan", cp, "Nguyen"), "LanNguyen"];
+  const CELLS: Cell[] = [
+    ...[0x01, 0x1f, 0x7f, 0x80, 0x9f].map(inside("Cc")),
+    ...BIDI_CONTROL.map(inside("Bidi_Control")),
+    ...[0x2028, 0x2029].map(inside("separator")),
+    ["blank-only: NBSP", mix(0xa0), null],
+    ["blank-only: U+3000", mix(0x3000), null],
+    ["blank-only: the 16 Zs blanks", mix(...ZS_BLANKS), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+2800 inside is removed", mix("Lan", 0x2800, "Nguyen"), "LanNguyen"],
+    ["invisible-only", mix(0x200b, 0x3164, 0xe0001), null],
+    ["invisible-only with spaces", mix(" ", 0x200b, " ", 0xfeff, " "), null],
+    ["bidi-only (an override and an isolate)", mix(0x202e, 0x2066), null],
+    ["ordinary", "Lan Nguyen", "Lan Nguyen"],
+    [
+      "ordinary: a Zs blank inside is kept (NBSP)",
+      mix("Lan", 0xa0, "Nguyen"),
+      mix("Lan", 0xa0, "Nguyen"),
+    ],
+    [
+      "ordinary: the strip-and-trim result (NBSP, U+200B, U+3000)",
+      mix(0xa0, "Lan", 0x200b, " Nguyen", 0x3000),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB at both edges is trimmed", mix(0x09, "Lan Nguyen", 0x09), "Lan Nguyen"],
+    [
+      "edge: U+2028 and U+2029 at the edges are trimmed",
+      mix(0x2028, "Lan Nguyen", 0x2029),
+      "Lan Nguyen",
+    ],
+    ["edge: TAB inside is removed", mix("Lan", 0x09, "Nguyen"), "LanNguyen"],
+    [
+      "edge: a blank left before a removed bidi is trimmed (NBSP, U+202E)",
+      mix("Lan", 0xa0, 0x202e),
+      "Lan",
+    ],
+  ];
+  it.each(
+    W2.flatMap((w) =>
+      CELLS.map(([cell, input, stored]) => ({ name: `${w.id}: ${cell}`, w, input, stored })),
+    ),
+  )("L29-W2 $name", async ({ w, input, stored }) => {
+    expect(cps(await w.stored(input))).toEqual(cps(stored));
+  });
+  it("L29-W2 P3: the 120 cut applies after the normalization", async () => {
+    // Cut first, the override would take one of the 120 places and leave 119 a's.
+    const r = await zalo(mix(0x202e, "a".repeat(120), 0x202c, "b"));
+    expect(r.display_name).toBe("a".repeat(120));
+  });
+
+  // L29-I1: every Cc, Cf, Zl and Zp scalar SQL text can hold (no U+0000; a superset of section 4's
+  // R), alone and among visible text, then section 11's hostile names: each call completes, the P3
+  // user resolves (created) and the P4 subject signs in (login_success), and nothing stores ''.
+  it.each(["P3", "P4"])(
+    "L29-I1 %s never raises on a hostile name",
+    async (id) => {
+      const control = /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]$/u;
+      const every: number[] = [];
+      for (let cp = 1; cp <= 0x10ffff; cp++) {
+        if ((cp < 0xd800 || cp > 0xdfff) && control.test(String.fromCodePoint(cp))) every.push(cp);
+      }
+      const hostile = [
+        mix("Lan", ...every, "Nguyen"),
+        mix(...every),
+        mix(0x202e, "Lan Nguyen", 0x202c),
+        mix("Lan", 0x2028, "Nguyen"),
+        mix(...ZS_BLANKS, 0x2800),
+        mix(0x200b, 0x3164, 0xe0001),
+      ];
+      const w = W2.find((x) => x.id === id)!;
+      for (const input of hostile) {
+        expect(await w.stored(input)).not.toBe("");
+      }
+    },
+    30_000,
+  );
+
+  // L29-I2: the identity is decided by the provider ids alone, so a hostile name, first or second,
+  // gives what two clean names give: the same person (and account) and the same created or outcome pair.
+  const HOSTILE = mix(0x202e, "Lan", 0x2028, "Nguyen", 0x01);
+  it("L29-I2 P3: a hostile and a clean name resolve the same person, in either order", async () => {
+    const pair = async (first: string, second: string) => {
+      const userHash = `user-${randomUUID()}`;
+      const a = await zalo(first, userHash);
+      const b = await zalo(second, userHash);
+      return { created: [a.created, b.created], same: a.person_id === b.person_id };
+    };
+    const clean = await pair("Lan Nguyen", "Lan Nguyen");
+    expect(clean).toEqual({ created: [true, false], same: true });
+    expect(await pair(HOSTILE, "Lan Nguyen")).toEqual(clean);
+    expect(await pair("Lan Nguyen", HOSTILE)).toEqual(clean);
+  });
+  it("L29-I2 P4: a hostile and a clean name sign in to the same account and person, in either order", async () => {
+    const pair = async (first: string, second: string) => {
+      const subject = `gsub-${randomBytes(16).toString("hex")}`;
+      const email = `glk-${randomBytes(10).toString("hex")}`;
+      const a = await google(first, subject, email);
+      const b = await google(second, subject, email);
+      return {
+        outcomes: [a.outcome, b.outcome],
+        same: a.account_id === b.account_id && a.person_id === b.person_id,
+      };
+    };
+    const clean = await pair("Lan Nguyen", "Lan Nguyen");
+    expect(clean.same).toBe(true);
+    expect(await pair(HOSTILE, "Lan Nguyen")).toEqual(clean);
+    expect(await pair("Lan Nguyen", HOSTILE)).toEqual(clean);
+  });
+
+  // L29-I3: a NULL display name stays NULL (P3 and P4 ingress, M2's NULL source).
+  it.each(W2)("L29-I3 $id: a NULL display name stays NULL", async ({ stored }) => {
+    expect(await stored(null)).toBeNull();
+  });
+});
+
+// L29-RC part two (unit U3, section 11): the ingress and copy definers 0070 re-creates, mode true.
+// P3, P4 and M2 keep their owner, prosecdef, proconfig and ACL (the RC-ACL pattern above), and every
+// call of the rule is the ingress one on the writer's own argument (M2: the copied source column).
+describe("L29-RC P3, P4 and M2 keep their attributes and call member_name_apply_rule with mode true", () => {
+  const RULE_SIG = "public.member_name_apply_rule(text, boolean)";
+  const RC = [
+    { fn: "zalo_identity_resolve", arg: "p_display_name" },
+    { fn: "auth_login_google", arg: "p_display_name" },
+    { fn: "create_guest_membership", arg: "p.display_name" },
+  ].map((r) => ({ ...r, w: RECREATED.find((w) => fnName(w) === r.fn)! }));
+  it.each(RC)("L29-RC $fn", async ({ arg, w }) => {
+    const { rows } = await ctx.owner.query<Record<string, unknown>>(
+      `SELECT p.prosecdef AS security_definer, p.proconfig AS config,
+              p.proowner = h.proowner AS helper_owner, p.proowner = r.proowner AS rule_owner,
+              p.proowner = anchor.proowner AS anchor_owner,
+              ARRAY(SELECT a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee = p.proowner) AS owner_privileges,
+              ARRAY(SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END
+                           || ':' || a.privilege_type
+                      FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                     WHERE a.grantee <> p.proowner ORDER BY 1) AS grants,
+              p.prosrc AS src
+         FROM pg_proc p, pg_proc h, pg_proc r, pg_proc anchor
+        WHERE p.oid = $1::regprocedure AND h.oid = $2::regprocedure AND r.oid = $3::regprocedure
+          AND anchor.oid = 'public.tenant_public_alias_set(uuid, uuid, text)'::regprocedure`,
+      [w.sig, HELPER_SIG, RULE_SIG],
+    );
+    const { src, ...attrs } = rows[0]!;
+    expect(attrs).toEqual({
+      security_definer: true,
+      config: [`search_path=${w.searchPath}`],
+      helper_owner: true,
+      rule_owner: true,
+      anchor_owner: true,
+      owner_privileges: ["EXECUTE"],
+      grants: ["app:EXECUTE"],
+    });
+    // One call of the rule, the ingress one on the writer's own argument, and the L27 strip call it
+    // replaced is gone (one definition of the rule, threat 6).
+    const body = String(src);
+    expect({
+      calls: body.split("member_name_apply_rule(").length - 1,
+      ingress: body.split(`public.member_name_apply_rule(${arg}, true)`).length - 1,
+      strip: body.includes("public_name_strip_invisible("),
+    }).toEqual({ calls: 1, ingress: 1, strip: false });
+  });
+});
+
+// L29-C (unit U4a, readiness sections 8 and 11, D4): the exact text of the 0070 L29-CLEANUP block,
+// replayed as MG replays 0069's: fixture rows seeded through the privileged path, transactions that
+// are always rolled back, and a first run that absorbs what the blocks above left behind (the tenant
+// names that run keeps are re-reported by every later run: `carried`).
+
+/** A 0070 block: the text between its two L29-<name> marker lines, each present exactly once. */
+function l29Block(name: "OWNER-CHECK" | "CLEANUP"): string {
+  const text = migration("0070_member_name_control_chars.sql");
+  const begin = `\n-- L29-${name}-BEGIN\n`;
+  const end = `\n-- L29-${name}-END`;
+  const from = text.indexOf(begin);
+  const to = text.indexOf(end);
+  if (from < 0 || to < from || text.includes(begin, from + 1) || text.includes(end, to + 1)) {
+    throw new Error(`0070: expected one L29-${name}-BEGIN line, then one L29-${name}-END line`);
+  }
+  return text.slice(from + begin.length, to);
+}
+
+describe("L29-C the 0070 L29-CLEANUP block normalizes the four columns in mode true", () => {
+  const CLEANUP = l29Block("CLEANUP");
+  const COLS = [
+    ["persons", "display_name", "person", "display name"],
+    ["memberships", "display_name", "membership", "display name"],
+    ["tenants", "name", "tenant", "name"],
+    ["sessions", "venue_address", "session", "venue address"],
+  ] as const;
+  type Table = (typeof COLS)[number][0];
+  const KINDS = ["mixed", "blank", "invisible", "clean"] as const;
+  type Kind = (typeof KINDS)[number];
+  // mixed: a Bidi_Control, U+2029 and a Cc inside the text; blank: blank-looking code points, none
+  // of them default-ignorable; invisible: default-ignorable only, which the 0069 block keeps.
+  const VALUE: Record<Kind, string> = {
+    mixed: mix("L29", 0x202e, " Mai", 0x2029, 0x7),
+    blank: mix(0xa0, 0x2800, 0x3000),
+    invisible: mix(0x200b, 0x2060),
+    clean: "L29 Lan",
+  };
+  // What the block leaves: the rule's value, NULL when nothing visible is left, except tenants.name,
+  // which keeps such a value as stored (D4). A clean value is no candidate.
+  const stored = (table: Table, k: Kind) =>
+    k === "mixed" ? "L29 Mai" : k === "clean" || table === "tenants" ? VALUE[k] : null;
+  const changed = (noun: string, what: string, id: string) =>
+    `0070 cleanup: ${noun} ${id} ${what} normalized${noun === "session" ? " and re-projected" : ""}`;
+  const left = (id: string) =>
+    `0070 cleanup: tenant ${id} name left unchanged (no visible character after the rule)`;
+  const closing = (p: number, m: number, t: number, s: number, l: number) =>
+    `0070 cleanup: ${p} person names, ${m} membership names, ${t} tenant names changed, ${s} sessions changed and re-projected, ${l} tenant names left unchanged`;
+
+  /** Runs the block on c and returns the NOTICE messages it raised. */
+  async function run(c: pg.PoolClient): Promise<string[]> {
+    const notices: string[] = [];
+    const onNotice = (n: { message?: string | undefined }) => notices.push(n.message ?? "");
+    c.on("notice", onNotice);
+    try {
+      await c.query(CLEANUP);
+    } finally {
+      c.off("notice", onNotice);
+    }
+    return notices;
+  }
+
+  /** One club (clean name, approved alias) hosts a row of each kind per column, plus a hidden mixed
+   *  address (hide_exact_address ON); every session is projected (version 1). */
+  async function seed(c: pg.PoolClient) {
+    const carried = (await run(c)).filter((n) =>
+      n.endsWith("(no visible character after the rule)"),
+    );
+    const insert = async (statement: string, params: unknown[]) =>
+      (await c.query<{ id: string }>(`${statement} RETURNING id`, params)).rows[0]!.id;
+    const slug = () => `l29-${randomUUID()}`;
+    const club = await insert(
+      `INSERT INTO tenants (name, slug, public_alias, public_alias_status) VALUES ($1, $2, 'L29 Alias', 'approved')`,
+      [VALUE.clean, slug()],
+    );
+    const session = (address: string, hide: boolean) =>
+      insert(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
+           price_amount, slots_max, visibility, join_policy, status, hide_exact_address)
+         VALUES ($1, $2, now() + interval '7 days', now() + interval '7 days 2 hours', 'Asia/Ho_Chi_Minh',
+           'San L29', $3, 'Quan 1', 50000, 10, 'public', 'open', 'open', $4)`,
+        [club, ctx.badmintonSportId, address, hide],
+      );
+    const ids = { persons: {}, memberships: {}, tenants: {}, sessions: {} } as Record<
+      Table,
+      Record<Kind, string>
+    >;
+    for (const k of KINDS) {
+      ids.persons[k] = await insert(`INSERT INTO persons (display_name) VALUES ($1)`, [VALUE[k]]);
+      ids.memberships[k] = await insert(
+        `INSERT INTO memberships (tenant_id, person_id, display_name) VALUES ($1, $2, $3)`,
+        [club, ids.persons[k], VALUE[k]],
+      );
+      ids.tenants[k] =
+        k === "clean"
+          ? club
+          : await insert(`INSERT INTO tenants (name, slug) VALUES ($1, $2)`, [VALUE[k], slug()]);
+      ids.sessions[k] = await session(VALUE[k], false);
+    }
+    const hidden = await session(VALUE.mixed, true);
+    for (const id of [...Object.values(ids.sessions), hidden]) {
+      const { rows } = await c.query<{ d: string }>(
+        `SELECT public_sessions_project_session($1, NULL) AS d`,
+        [id],
+      );
+      expect(rows[0]!.d).toBe("upserted");
+    }
+    return { ids, hidden, carried };
+  }
+  type Fixture = Awaited<ReturnType<typeof seed>>;
+
+  /** id -> [ctid, stored value] of each fixture row (an UPDATE moves the ctid) and "public <id>" ->
+   *  [version, venue_address] of each session's public row. */
+  async function state(c: pg.PoolClient, f: Fixture): Promise<Record<string, unknown[]>> {
+    const out: Record<string, unknown[]> = {};
+    const sessions = [...Object.values(f.ids.sessions), f.hidden];
+    for (const [table, col] of COLS) {
+      const { rows } = await c.query<{ id: string; ctid: string; v: string | null }>(
+        `SELECT id, ctid::text AS ctid, ${col} AS v FROM ${table} WHERE id = ANY($1::uuid[])`,
+        [table === "sessions" ? sessions : Object.values(f.ids[table])],
+      );
+      for (const r of rows) out[r.id] = [r.ctid, r.v];
+    }
+    const { rows } = await c.query<{ id: string; version: number; v: string | null }>(
+      `SELECT id, public_projection_version::int AS version, venue_address AS v
+         FROM public_sessions WHERE id = ANY($1::uuid[])`,
+      [sessions],
+    );
+    for (const r of rows) out[`public ${r.id}`] = [r.version, r.v];
+    return out;
+  }
+
+  it("L29-C3 a second run rewrites no row, bumps no version and re-reports only the tenant names it keeps", async () => {
+    await rolledBack(async (c) => {
+      const f = await seed(c);
+      await run(c);
+      const before = await state(c, f);
+      const notices = await run(c);
+      expect(await state(c, f)).toEqual(before);
+      expect(notices.sort()).toEqual(
+        [
+          left(f.ids.tenants.blank),
+          left(f.ids.tenants.invisible),
+          ...f.carried,
+          closing(0, 0, 0, 0, 2 + f.carried.length),
+        ].sort(),
+      );
+    });
+  });
+
+  it("L29-C4 normalizes seeded values in all four columns (tenants.name per D4), re-projects each changed session, names rows by id only", async () => {
+    await rolledBack(async (c) => {
+      const f = await seed(c);
+      const before = await state(c, f);
+      const notices = await run(c);
+      const after = await state(c, f);
+      for (const [table] of COLS) {
+        for (const k of KINDS) {
+          const id = f.ids[table][k];
+          const v = stored(table, k);
+          const moved = after[id]![0] !== before[id]![0]; // every UPDATE moves the ctid
+          expect({ table, k, v: after[id]![1], moved }).toEqual({
+            table,
+            k,
+            v,
+            moved: v !== VALUE[k],
+          });
+        }
+      }
+      // Each changed visible address bumps its public row; the hidden one stays masked.
+      const pub = (id: string) => [before[`public ${id}`], after[`public ${id}`]];
+      const s = f.ids.sessions;
+      expect([pub(s.mixed), pub(s.blank), pub(s.invisible), pub(s.clean)]).toEqual([
+        [
+          [1, VALUE.mixed],
+          [2, "L29 Mai"],
+        ],
+        [
+          [1, VALUE.blank],
+          [2, null],
+        ],
+        [
+          [1, VALUE.invisible],
+          [2, null],
+        ],
+        [
+          [1, VALUE.clean],
+          [1, VALUE.clean],
+        ],
+      ]);
+      expect([after[f.hidden]![1], pub(f.hidden)]).toEqual([
+        "L29 Mai",
+        [
+          [1, null],
+          [1, null],
+        ],
+      ]);
+      expect(notices.sort()).toEqual(
+        [
+          ...COLS.flatMap(([table, , noun, what]) =>
+            KINDS.filter((k) => stored(table, k) !== VALUE[k]).map((k) =>
+              changed(noun, what, f.ids[table][k]),
+            ),
+          ),
+          changed("session", "venue address", f.hidden),
+          left(f.ids.tenants.blank),
+          left(f.ids.tenants.invisible),
+          ...f.carried,
+          closing(3, 3, 1, 4, 2 + f.carried.length),
+        ].sort(),
+      );
+      // No NOTICE carries fixture text: none of its words, no code point outside printable ASCII.
+      expect(notices.filter((n) => /L29|Mai|Lan|[^ -~]/.test(n))).toEqual([]);
+    });
+  });
+});
+
+// L29-C1 and L29-C2 (unit U4b2, readiness sections 8 and 11): the exact text of the 0070
+// L29-OWNER-CHECK and L29-CLEANUP blocks, replayed as RC-OWNER and MG replay 0069's, in transactions
+// that are always rolled back.
+
+describe("L29-C1 an owner mismatch fails the migration", () => {
+  const OWNER_CHECK = l29Block("OWNER-CHECK");
+  // One row per function the block names: the rule, then P2, T1, T2, P3, P4 and M2.
+  const CELLS = [
+    { fn: "member_name_apply_rule", sig: `${L29_RULE}(text, boolean)` },
+    ...[
+      "create_host_added_person",
+      "tenant_provision",
+      "tenant_profile_update",
+      "zalo_identity_resolve",
+      "auth_login_google",
+      "create_guest_membership",
+    ].map((fn) => ({ fn, sig: RECREATED.find((w) => fnName(w) === fn)!.sig })),
+  ];
+  // ownership()'s read over the helper and these seven: what a rolled-back move leaves as it was.
+  const OWNERS = `SELECT p.oid::regprocedure::text AS fn, p.proowner::regrole::text AS owner, p.proacl::text AS acl
+       FROM pg_proc p WHERE p.oid = ANY($1::regprocedure[]) ORDER BY 1`;
+  const SIGS = [HELPER_SIG, ...CELLS.map((x) => x.sig)];
+  it.each(CELLS)(
+    "L29-C1 $fn: a no-op as applied; 42501 once its owner moves to readonly; rolled back, nothing changed",
+    async ({ fn, sig }) => {
+      const before = (await ctx.owner.query(OWNERS, [SIGS])).rows;
+      expect(before).toHaveLength(8);
+      await rolledBack(async (c) => {
+        await c.query(OWNER_CHECK);
+        expect((await c.query(OWNERS, [SIGS])).rows).toEqual(before);
+        await c.query(`ALTER FUNCTION ${sig} OWNER TO readonly`);
+        const err = await c.query(OWNER_CHECK).catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: "42501" });
+        // As RC-OWNER: the message ends with "<fn>(<arguments without ')'>) (owner readonly)", fn
+        // taken literally; plain string checks, no RegExp built from data.
+        const msg = (err as Error).message;
+        const head = `${fn}(`;
+        const tail = ") (owner readonly)";
+        expect(msg.startsWith("0070: not owned by "), msg).toBe(true);
+        expect(msg.endsWith(tail), msg).toBe(true);
+        const body = msg.slice(0, -tail.length);
+        const at = body.lastIndexOf(head);
+        expect(at, msg).toBeGreaterThanOrEqual(0);
+        expect(body.slice(at + head.length), msg).not.toContain(")");
+      });
+      expect((await ctx.owner.query(OWNERS, [SIGS])).rows).toEqual(before);
+    },
+  );
+});
+
+describe("L29-C2 the cleanup fails closed and names ids and counts only", () => {
+  const CLEANUP = l29Block("CLEANUP");
+
+  it("L29-C2a guards each of the four tables with its own row_security_active clause, before the first loop", () => {
+    const loop = CLEANUP.indexOf("FOR r IN");
+    const clause = (t: string) =>
+      `row_security_active('public.${t}') AND pg_relation_size('public.${t}') > 0`;
+    expect(loop).toBeGreaterThan(0);
+    expect(CLEANUP.split("row_security_active('").length - 1).toBe(4);
+    for (const t of ["persons", "memberships", "tenants", "sessions"]) {
+      expect(CLEANUP.slice(0, loop).split(clause(t)).length - 1, t).toBe(1);
+    }
+  });
+
+  it("L29-C2b as app (NOSUPERUSER NOBYPASSRLS) over a non-empty table it fails closed with 42501 and changes nothing", async () => {
+    await rolledBack(async (c) => {
+      // A club and a session the block would rewrite (a Bidi_Control, U+2029 and a Cc in each), seeded
+      // as L29-C seeds them, so sessions is non-empty here.
+      const mixed = mix("L29", 0x202e, " Mai", 0x2029, 0x7);
+      const club = (
+        await c.query<{ id: string }>(
+          `INSERT INTO tenants (name, slug, public_alias, public_alias_status) VALUES ($1, $2, 'L29 Alias', 'approved') RETURNING id`,
+          [mixed, `l29-${randomUUID()}`],
+        )
+      ).rows[0]!.id;
+      await c.query(
+        `INSERT INTO sessions (tenant_id, sport_id, starts_at, ends_at, timezone, venue_name, venue_address, area,
+           price_amount, slots_max, visibility, join_policy, status, hide_exact_address)
+         VALUES ($1, $2, now() + interval '7 days', now() + interval '7 days 2 hours', 'Asia/Ho_Chi_Minh',
+           'San L29', $3, 'Quan 1', 50000, 10, 'public', 'open', 'open', false)`,
+        [club, ctx.badmintonSportId, mixed],
+      );
+      await c.query("SET LOCAL ROLE app");
+      expect(
+        (
+          await c.query(
+            `SELECT r.rolsuper, r.rolbypassrls, row_security_active('public.sessions') AS rls,
+                    pg_relation_size('public.sessions') > 0 AS nonempty
+               FROM pg_roles r WHERE r.rolname = current_user`,
+          )
+        ).rows[0],
+      ).toEqual({ rolsuper: false, rolbypassrls: false, rls: true, nonempty: true });
+      const notices: string[] = [];
+      const onNotice = (n: { message?: string | undefined }) => notices.push(n.message ?? "");
+      c.on("notice", onNotice);
+      try {
+        // The message pins the guard: the rule's owner-only EXECUTE would also be 42501.
+        await expect(c.query(CLEANUP)).rejects.toMatchObject({
+          code: "42501",
+          message:
+            "0070 cleanup: row security applies to app and persons, memberships, tenants or sessions holds rows it may not see; apply 0070 as the superuser migration role",
+        });
+      } finally {
+        c.off("notice", onNotice);
+      }
+      // No NOTICE: it raised before its first loop reached a row, and a failed DO block keeps nothing.
+      expect(notices).toEqual([]);
+    });
+  });
+
+  it("L29-C2c every RAISE NOTICE passes only r.id or an n_ counter, one per placeholder", () => {
+    const ALLOWED = ["r.id", "n_persons", "n_memberships", "n_tenants", "n_sessions", "n_left"];
+    // Six NOTICEs and the guard's EXCEPTION: no other RAISE level reports anything.
+    expect(CLEANUP.split("RAISE ").length - 1).toBe(7);
+    // RAISE NOTICE '<format>', <arguments>; the format holds no quote, so the next quote closes it.
+    const notices = CLEANUP.split("RAISE NOTICE ")
+      .slice(1)
+      .map((s) => {
+        const close = s.indexOf("'", 1);
+        const [lead, ...args] = s
+          .slice(close + 1, s.indexOf(";", close))
+          .split(",")
+          .map((a) => a.trim());
+        return { open: s.slice(0, 1), format: s.slice(1, close), lead, args };
+      });
+    expect(notices).toHaveLength(6);
+    for (const n of notices) {
+      const other = n.args.filter((a) => !ALLOWED.includes(a));
+      expect({ open: n.open, lead: n.lead, arity: n.args.length, other }, n.format).toEqual({
+        open: "'",
+        lead: "",
+        arity: n.format.split("%").length - 1,
+        other: [],
+      });
+    }
+  });
+});
+
+// L29-AG1 (unit U5c): public.member_name_apply_rule and its TypeScript twins agree on every Unicode
+// scalar value in both modes (mode false = checkTypedName, mode true = normalizeExternalName, NULL =
+// null), each scalar alone, at an edge and inside visible text: one linear scan on each side, no
+// RegExp built from data (C11b). Excluded by name: U+0000, which PostgreSQL text cannot hold (D1e),
+// and the surrogates U+D800..U+DFFF, which are not scalar values. The transfer is shrunk as C11a
+// says: PostgreSQL returns each position's row count and only the rows where either result differs
+// from the input, so a row it leaves out has both results equal to the input. EXECUTE is owner-only,
+// so the query runs as the superuser, as L29-F's calls do.
+describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", () => {
+  /** Every Unicode scalar value: 0x110000 code points minus the 0x800 surrogates, 1,112,064. */
+  const SCALARS = 0x110000 - 0x800;
+  /** The three values of each scalar c; the SQL VALUES list builds the same ones as p = 1, 2, 3. */
+  const POSITIONS = [
+    { at: "alone", wrap: (c: string) => c },
+    { at: "edge", wrap: (c: string) => `a${c}` },
+    { at: "inside", wrap: (c: string) => `a${c}b` },
+  ] as const;
+  type Pair = readonly [modeFalse: string | null, modeTrue: string | null];
+  type Row = {
+    total: number;
+    diffs: [n: number, modeFalse: string | null, modeTrue: string | null][];
+  };
+  const show = (s: string | null) => JSON.stringify(cps(s));
+
+  it.each(POSITIONS.map((pos, i) => ({ ...pos, p: i + 1 })))(
+    "L29-AG1 every scalar but U+0000 $at: mode false equals checkTypedName, mode true equals normalizeExternalName",
+    async ({ at, wrap, p }) => {
+      const client = await ctx.superuserDb.pool.connect();
+      // Sent here, before the TypeScript scan below, so PostgreSQL and Node scan at the same time.
+      const pending = client
+        .query<Row>(
+          `SELECT count(*)::int AS total,
+                  coalesce(json_agg(json_build_array(n, r0, r1))
+                             FILTER (WHERE r0 IS DISTINCT FROM v OR r1 IS DISTINCT FROM v), '[]') AS diffs
+             FROM (SELECT n, x.v,
+                          public.member_name_apply_rule(x.v, false) AS r0,
+                          public.member_name_apply_rule(x.v, true) AS r1
+                     FROM generate_series(1, 1114111) AS n -- from U+0001: no U+0000 (D1e)
+                    CROSS JOIN LATERAL (VALUES (CASE $1::int WHEN 1 THEN chr(n) WHEN 2 THEN 'a' || chr(n)
+                                                ELSE 'a' || chr(n) || 'b' END)) AS x(v)
+                    WHERE n NOT BETWEEN 55296 AND 57343) AS s -- no surrogates U+D800..U+DFFF`,
+          [p],
+        )
+        .finally(() => client.release());
+      const mine = new Map<number, Pair>();
+      let tsRows = 0;
+      // From U+0001 (no U+0000), the surrogates skipped: the same scalars as the SQL scan.
+      for (let n = 1; n <= 0x10ffff; n += 1) {
+        if (n >= 0xd800 && n <= 0xdfff) continue;
+        const v = wrap(String.fromCodePoint(n));
+        const pair: Pair = [checkTypedName(v), normalizeExternalName(v)];
+        tsRows += 1;
+        if (pair[0] !== v || pair[1] !== v) mine.set(n, pair);
+      }
+      const theirs = (await pending).rows[0]!;
+      const theirDiffs = new Map<number, Pair>();
+      for (const [n, r0, r1] of theirs.diffs) theirDiffs.set(n, [r0, r1]);
+      let modeFalse = 0;
+      let modeTrue = 0;
+      const first: string[] = [];
+      for (const n of new Set([...mine.keys(), ...theirDiffs.keys()])) {
+        const v = wrap(String.fromCodePoint(n));
+        const [want0, want1] = mine.get(n) ?? [v, v];
+        const [got0, got1] = theirDiffs.get(n) ?? [v, v];
+        if (got0 !== want0) modeFalse += 1;
+        if (got1 !== want1) modeTrue += 1;
+        if ((got0 !== want0 || got1 !== want1) && first.length < 20) {
+          first.push(
+            `${at} U+${hex(n)}: sql ${show(got0)} ${show(got1)}, ts ${show(want0)} ${show(want1)}`,
+          );
+        }
+      }
+      expect({ sqlRows: theirs.total, tsRows, modeFalse, modeTrue, first }).toEqual({
+        sqlRows: SCALARS - 1,
+        tsRows: SCALARS - 1,
+        modeFalse: 0,
+        modeTrue: 0,
+        first: [],
+      });
+    },
+    30_000,
+  );
+});
+
+describe("L29-TW P2/M1 addMemberToSession refuses with checkTypedName (roster-service.ts)", () => {
+  const fx = fixtures(() => ctx);
+  const world = { tenantId: "", actorPersonId: "", sessionId: "", source: "host_add" as const };
+  beforeAll(async () => {
+    world.tenantId = await fx.seedTenant();
+    world.actorPersonId = await fx.seedAdmin(world.tenantId, "owner");
+    world.sessionId = await fx.seedSession(world.tenantId, {});
+  }, 30_000);
+  const add = (member: { displayName: string }) =>
+    addMemberToSession(ctx.appDb.db, { ...world, commandId: nextCommandId(), member });
+  const seen = () =>
+    fx.row("SELECT (SELECT count(*) FROM persons) p, (SELECT count(*) FROM memberships) m");
+  it.each<[string, string, string | null]>([
+    ["Cc U+0001 inside", mix("Mi", 1, "nh"), null],
+    ["Bidi_Control U+202E inside", mix("Mi", 0x202e, "nh"), null],
+    ["U+2028 inside", mix("Mi", 0x2028, "nh"), null],
+    ["U+00A0 only", mix(0xa0), null],
+    ["U+3000 only", mix(0x3000), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+200B only", mix(0x200b), null],
+    ["U+0000 inside", mix("Mi", 0, "nh"), null],
+    ["ordinary Minh Anh", "Minh Anh", "Minh Anh"],
+    ["edge U+0009 before and U+2028 after", mix(9, "Minh", 0x2028), "Minh"],
+  ])("host add %s", async (_label, sent, stored) => {
+    const before = await seen();
+    const out = await add({ displayName: sent }).catch((e: unknown) => e);
+    if (stored === null) {
+      expect(out, "expected the host add to reject").toBeInstanceOf(RosterMoneyError);
+      expect((out as RosterMoneyError).code).toBe("INVALID_INPUT");
+      expect(await seen()).toEqual(before);
+      return;
+    }
+    const m = await fx.row(
+      `SELECT m.display_name, p.display_name AS person_name
+       FROM memberships m JOIN persons p ON p.id = m.person_id WHERE m.id = $1`,
+      [(out as { membershipId: string }).membershipId],
+    );
+    expect(m).toMatchObject({ display_name: stored, person_name: stored });
+  });
+});
+
+describe("L29-TW T2 validatePatch refuses with checkTypedName (club-config-validation.ts)", () => {
+  const run = (name: string) => {
+    try {
+      return validatePatch({ name }).name;
+    } catch (e) {
+      return e instanceof ClubConfigError ? e.code : e;
+    }
+  };
+  it.each([
+    ["Cc U+0001 inside", mix("WA", 1, "O"), "INVALID_INPUT"],
+    ["Bidi_Control U+202E inside", mix("WA", 0x202e, "O"), "INVALID_INPUT"],
+    ["U+2028 inside (was accepted)", mix("WA", 0x2028, "O"), "INVALID_INPUT"],
+    ["U+00A0 only", mix(0xa0), "INVALID_INPUT"],
+    ["U+2800 only (was accepted)", mix(0x2800), "INVALID_INPUT"],
+    ["U+200B only", mix(0x200b), "INVALID_INPUT"],
+    ["U+0000 inside", mix("WA", 0, "O"), "INVALID_INPUT"],
+    ["ordinary WAO Club", "WAO Club", "WAO Club"],
+    ["edge U+0009 before and U+2028 after", mix(9, "WAO", 0x2028), "WAO"],
+    ["121 characters", "a".repeat(121), "INVALID_INPUT"],
+  ])("T2 %s", (_label, sent, want) => expect(run(sent)).toBe(want));
+});
+
+// L29-TW (unit U7d, N2): P3's TS entry point; the shared normalizer runs before the SQL call.
+describe("L29-TW P3 resolveZaloIdentity normalizes the Zalo name and never raises (zalo-ingress.ts)", () => {
+  const resolve = (userHash: string, displayName: string | null) =>
+    withTenant(ctx.appDb.db, ctx.tenantA, (tx) =>
+      resolveZaloIdentity(tx, {
+        tenantId: ctx.tenantA,
+        botId: bot,
+        scopeHash: "scope-mn",
+        userHash,
+        userIdEnc: Buffer.from("enc", "utf8"),
+        displayName,
+      }),
+    );
+  it.each([
+    ["U+0000 inside (the bind cell, was 22021)", mix("Mi", 0, "nh"), "Minh"],
+    ["Cc U+0001 inside", mix("Mi", 1, "nh"), "Minh"],
+    ["Bidi_Control U+202E inside", mix("Mi", 0x202e, "nh"), "Minh"],
+    ["U+2028 inside", mix("Mi", 0x2028, "nh"), "Minh"],
+    ["U+00A0 only", mix(0xa0), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+200B only", mix(0x200b), null],
+    ["ordinary Minh Anh", "Minh Anh", "Minh Anh"],
+    ["edge U+0009 before and U+2028 after", mix(9, "Minh", 0x2028), "Minh"],
+  ])("P3 %s", async (_label, sent, want) => {
+    const u = `user-${randomUUID()}`;
+    const { personId, channelIdentityId } = await resolve(u, want); // clean first resolve
+    expect(await resolve(u, sent)).toMatchObject({ personId, channelIdentityId, created: false });
+    const r = await resolve(`user-${randomUUID()}`, sent); // creation stores the normalized name
+    expect(r.created).toBe(true);
+    expect(cps(r.displayName)).toEqual(cps(want));
+    expect(cps(await nameOf(r.personId))).toEqual(cps(want));
+  });
+});
+
+describe("L29-TW T1 provisionTenant refuses with checkTypedName (auth.ts)", () => {
+  it.each([
+    ["Cc U+0001 inside", mix("WAO", 1, " Club"), null],
+    ["Bidi_Control U+202E inside", mix("WAO", 0x202e, " Club"), null],
+    ["U+2028 inside", mix("WAO", 0x2028, " Club"), null],
+    ["U+00A0 only", mix(0xa0), null],
+    ["U+2800 only", mix(0x2800), null],
+    ["U+200B only", mix(0x200b), null],
+    ["U+0000 inside (the bind cell, was 22021)", mix("WAO", 0, " Club"), null],
+    ["ordinary WAO Club", "WAO Club", "WAO Club"],
+    ["edge U+0009 before and U+2028 after", mix(9, "WAO", 0x2028), "WAO"],
+  ])("T1 %s", async (_label, sent, want) => {
+    const slug = `l29-tw-t1-${randomBytes(4).toString("hex")}`;
+    const { personId } = await seedPersonAccount(ctx.owner, slug);
+    const made = provisionTenant(ctx.appPool, { slug, name: sent, personId });
+    await (want === null ? expect(made).rejects.toMatchObject({ code: "22023" }) : made);
+    const { rows } = await ctx.owner.query(`SELECT name FROM tenants WHERE slug = $1`, [slug]);
+    const stored = rows.map((r: { name: string }) => cps(r.name));
+    expect(stored).toEqual(want === null ? [] : [cps(want)]);
+  });
+});
+
+describe("L29-TW V1/V2 createSession and updateSession store venue_address by the shared check (session-service.ts)", () => {
+  const day = Date.now() + 7 * 24 * 60 * 60 * 1000;
+  const createV = (venueAddress: string | null) =>
+    createSession(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      commandId: randomUUID(),
+      input: {
+        sportId: ctx.badmintonSportId,
+        startsAt: new Date(day),
+        endsAt: new Date(day + 2 * 60 * 60 * 1000),
+        timezone: "Asia/Ho_Chi_Minh",
+        priceAmount: 120000,
+        venueAddress,
+      },
+    });
+  const countSessions = async () =>
+    ((await ctx.owner.query(`SELECT count(*)::int AS n FROM sessions`)).rows[0] as { n: number }).n;
+  const storedAddress = async (id: string) =>
+    (
+      (await ctx.owner.query(`SELECT venue_address FROM sessions WHERE id = $1`, [id])).rows[0] as {
+        venue_address: string | null;
+      }
+    ).venue_address;
+  // [label, sent, error code or null, stored value when no error]
+  it.each<[string, string, string | null, string | null]>([
+    ["Cc U+0001 inside", mix("12 Nguyen", 1, "Trai"), "INVALID_TEXT_FIELD", null],
+    ["Bidi_Control U+202E inside", mix("12 Nguyen", 0x202e, "Trai"), "INVALID_TEXT_FIELD", null],
+    ["U+2028 inside", mix("12 Nguyen", 0x2028, "Trai"), "INVALID_TEXT_FIELD", null],
+    ["U+2800 only", mix(0x2800), "INVALID_TEXT_FIELD", null],
+    ["U+00A0 only", mix(0xa0), null, null],
+    ["U+3000 only", mix(0x3000), null, null],
+    ["U+200B only", mix(0x200b), null, null],
+    ["empty string", "", null, null],
+    ["ordinary with outer spaces", " 12 Nguyen Trai ", null, "12 Nguyen Trai"],
+    [
+      "edge U+0009 before and U+2028 after",
+      mix(9, "12 Nguyen Trai", 0x2028),
+      null,
+      "12 Nguyen Trai",
+    ],
+  ])("V1 createSession %s", async (_label, sent, code, want) => {
+    const before = await countSessions();
+    const out = await createV(sent).catch((e: unknown) => e);
+    if (code !== null) {
+      expect((out as { code?: unknown }).code, "expected createSession to reject").toBe(code);
+      expect(await countSessions()).toBe(before);
+      return;
+    }
+    expect(await storedAddress((out as { sessionId: string }).sessionId)).toBe(want);
+  });
+  it("V2 updateSession stores a U+00A0-only venue_address as NULL", async () => {
+    const made = await createV("12 Nguyen Trai");
+    await updateSession(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      commandId: randomUUID(),
+      input: { sessionId: made.sessionId, expectedVersion: made.version, venueAddress: mix(0xa0) },
+    });
+    expect(await storedAddress(made.sessionId)).toBeNull();
+  });
+});

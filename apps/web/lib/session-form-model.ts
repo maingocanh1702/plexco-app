@@ -158,6 +158,17 @@ export function stripInvisibleChars(value: string): string {
   return kept.join("");
 }
 
+// Copy of VISIBLE_CHAR in packages/db/src/text-safety.ts (the visible-character test).
+const VISIBLE_CHAR = /[^\s\p{DI}]/u;
+
+/**
+ * Web twin of packages/db/src/text-safety.ts checkTypedName (L29-AG2 pins it over every scalar).
+ */
+export function checkTypedName(value: string): string | null {
+  const name = stripInvisibleChars(value).trim();
+  return hasHiddenChar(name) || !VISIBLE_CHAR.test(name) ? null : name;
+}
+
 /**
  * area, venue name and venue address as this form validates, sends and compares them (L23, L27):
  * STRIP code points removed first, then the usual trim (textOrNull), blank = null. A value of

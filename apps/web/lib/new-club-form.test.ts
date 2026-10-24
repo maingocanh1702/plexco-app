@@ -52,6 +52,31 @@ describe("validateNewClub", () => {
     expect(Boolean(error)).toBe(hasError);
     if (hasError) expect(error).toBe(t("Nhập tên câu lạc bộ.", "Enter a club name."));
   });
+  // L29 (T1): after the strip, trim, empty and length checks, a name the web twin checkTypedName
+  // refuses gets the settings form's pair; U+00A0 and U+200B alone stay the empty error.
+  // Every input is built from code points.
+  const cp = (...points: number[]) => String.fromCodePoint(...points);
+  const tVi = makeT("vi");
+  const emptyPair = ["Nhập tên câu lạc bộ.", "Enter a club name."] as const;
+  const hiddenPair = [
+    "Tên không được chứa ký tự điều khiển hoặc ký tự ẩn.",
+    "The name cannot contain control or hidden characters.",
+  ] as const;
+  it.each([
+    ["Cc U+0001 inside", "WAO" + cp(0x01) + "Club", hiddenPair],
+    ["Bidi_Control U+202E inside", "WAO" + cp(0x202e) + "Club", hiddenPair],
+    ["U+2028 inside", "WAO" + cp(0x2028) + "Club", hiddenPair],
+    ["U+2800 only", cp(0x2800), hiddenPair],
+    ["U+0000 inside", "WAO" + cp(0x00) + "Club", hiddenPair],
+    ["U+00A0 only", cp(0xa0), emptyPair],
+    ["U+200B only", cp(0x200b), emptyPair],
+    ["ordinary name", "WAO Club", undefined],
+    ["U+0009 before and U+2028 after, trimmed", cp(0x09) + "WAO" + cp(0x2028), undefined],
+  ])("name: %s", (_cell, name, pair) => {
+    const want = (tr: typeof t) => (pair ? tr(pair[0], pair[1]) : undefined);
+    expect(validateNewClub({ ...ok, name }, t).name).toBe(want(t));
+    expect(validateNewClub({ ...ok, name }, tVi).name).toBe(want(tVi));
+  });
   it("rejects bad slugs (leading dash, 1 char, uppercase digits ok after lowercasing)", () => {
     expect(validateNewClub({ ...ok, slug: "-abc" }, t).slug).toBeTruthy();
     expect(validateNewClub({ ...ok, slug: "a" }, t).slug).toBeTruthy();

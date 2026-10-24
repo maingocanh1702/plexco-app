@@ -21,7 +21,7 @@ import { closePendingJoinRequestOnExit } from "./join-request-service.js";
 import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy } from "./session-occupancy.js";
 import { withTenant } from "./tenant.js";
-import { stripInvisibleChars } from "./text-safety.js";
+import { checkTypedName, stripInvisibleChars } from "./text-safety.js";
 
 /**
  * Host roster commands. `addMemberToSession` is the canonical join choke-point (DD-41 name); its
@@ -111,19 +111,23 @@ async function resolveMembership(
   // L27: strip invisible code points first so the person and the membership row get the same value;
   // an invisible-only name then fails exactly like an empty one. Non-strings reach the guard below as-is.
   const name = typeof rawName === "string" ? stripInvisibleChars(rawName) : rawName;
-  if (!isBoundedText(name, 1, DISPLAY_NAME_MAX) || name.trim().length === 0) {
+  // L29: shared typed-name rule (checkTypedName; SQL twin member_name_apply_rule, mode false): a
+  // control, bidi or separator code point inside, or no visible character, refuses like an empty
+  // name; the person and the membership both store its strip-and-trim result.
+  const typed = isBoundedText(name, 1, DISPLAY_NAME_MAX) ? checkTypedName(name) : null;
+  if (typed === null) {
     return fail("INVALID_INPUT", `displayName must be 1..${DISPLAY_NAME_MAX} characters`);
   }
   // persons has no grant to app: the narrow 0051 definer mints it. A name never matches an
   // existing person (DD-85) and pay_code stays NULL (BL-PAY-3).
   const created = await tx.execute(
-    sql`SELECT create_host_added_person(${tenantId}::uuid, ${actor}::uuid, ${name.trim()}) AS id`,
+    sql`SELECT create_host_added_person(${tenantId}::uuid, ${actor}::uuid, ${typed}) AS id`,
   );
   const personId = (created.rows[0] as { id: string } | undefined)?.id;
   if (personId === undefined) throw new Error("create_host_added_person returned no row");
   const [row] = await tx
     .insert(memberships)
-    .values({ tenantId, personId, displayName: name.trim(), status: "active" })
+    .values({ tenantId, personId, displayName: typed, status: "active" })
     .returning({ id: memberships.id });
   return row!.id;
 }

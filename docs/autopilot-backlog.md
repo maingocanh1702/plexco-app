@@ -6121,7 +6121,9 @@ notes: |
 
 ## task: club-name-rule-unicode-separators
 title: Quy tắc tên CLB nhận ký tự Zl/Zp và ký tự trắng/filler
-status: idea
+status: merged
+merged: 2026-10-23 · PR #106 (L29), merge 21b57f844e78ee4142ed6053a6bf89fc90ef3c15, and PR #101 (L27), merge fb8ee675b49f9460ae8332950c82b40ec30610de · refused at `packages/db/src/club-config-validation.ts:63-68` and by migration `packages/db/migrations/0070_member_name_control_chars.sql`; merged_probe stays `null` (this flip changes only status, merged, note_merged)
+note_merged: 2026-10-23 L30: closed BY HAND by evidence, not by a probe (conductor ruling RO-L30-1; no PR body names this row; in `docs/` only `docs/sessions/2026-10-14-web-mvp-program-handoff-2.md:99` lists it, as open, this lane's own readiness file aside; its probe is `null` and it has no `close_by` field). The defect (a club name accepted U+2028/U+2029 and invisible filler or blank code points) is refused at both typed writers of `tenants.name`, T1 `tenant_provision` (club create) and T2 `tenant_profile_update` (club set) (PR #106 body lines 37-38), as measured at the base 21b57f844e78ee4142ed6053a6bf89fc90ef3c15: `packages/db/src/club-config-validation.ts:4` imports `checkTypedName, stripInvisibleChars` and `:65` strips first, then `:68` (per its comment at `:66-67`) refuses every remaining hidden code point (Cc, Cf incl. all Bidi_Control, U+2028/U+2029, U+2800) and a name with no visible character; PR #101 (L27) added the strip and PR #106 (L29) added the refusal and migration `packages/db/migrations/0070_member_name_control_chars.sql`. Tests that pin the club-name cells, as `git grep -n` finds them: SQL, `packages/db/src/member-name-invisible-chars.test.ts:1064` describe "L29-W1 P2, T1 and T2 refuse control, bidi, separator, U+2800 and blank-only names (0070, mode false)", `:1194` it "L29-W1 T2: a NULL p_name keeps the stored name" and `:1197` it "L29-W1 T1 and T2 accept and refuse the same values (create versus set, threat 4)"; TypeScript, `packages/db/src/member-name-invisible-chars.test.ts:1992` describe "L29-TW T2 validatePatch refuses with checkTypedName (club-config-validation.ts)" (U+2028 cell `:2003`), `:2048` describe "L29-TW T1 provisionTenant refuses with checkTypedName (auth.ts)" (U+2028 cell `:2052`) and `apps/web/app/api/onboarding/start/route.test.ts:262` it.each "club name, shared check (L29 T1): %s" (U+2028 cells `:254`, `:260`); web mirrors, T2 `apps/web/lib/club-settings-model.test.ts:76` describe "L29 clubNameProblem cells (T2 web mirror of the server typed-name rule)" (`:77` it.each "$name -> $expected", U+2028 cell `:70`) and T1 `apps/web/lib/new-club-form.test.ts:29` describe "validateNewClub" (U+2028 cells `:68`, `:74`).
 risk: P3
 change_class: code
 depends_on: []
@@ -6230,7 +6232,9 @@ notes: |
 
 ## task: osv-full-scan-red-on-main-2026-10
 title: OSV full dependency scan đỏ trên main: 9 advisory (1 Critical, 5 High, 3 Medium)
-status: idea
+status: merged
+merged: 2026-10-22 · PR #104 (PR-B), merge 07bbe3482afec629456c4497f21a60a6d2fcef30, after PR #103 (PR-A), merge e7322c11f7537b451c674a5f07ef5f67087f946f · at the base vite 7.3.7 (`pnpm-lock.yaml:16`, `:1850`) and vitest 4.1.12 (`:1890`); merged_probe stays `null` (this flip changes only status, merged, note_merged)
+note_merged: 2026-10-23 L30: closed BY HAND at base 21b57f844e78ee4142ed6053a6bf89fc90ef3c15 (this row has no `close_by` field). F1: the PR #104 body says to close this row by hand once the next `main` Security run reads clean, and the PR #103 body and `docs/sessions/web-mvp-phase3-readiness-p3-deps-osv-next-and-fixable.md:178-179`, `:397` say the same. F2: both merge commits are ancestors of the base (`git merge-base --is-ancestor` exit 0 for each). F3: Security runs on `main` after PR #104, read with `gh` on 2026-10-23 at L30 step 0: 39806062080 (07bbe34, success, job "OSV full dependency scan / osv-scan" success), 39863899845 (acdd861, workflow success), 39972881783 (21b57f8, success, job `osv-scan` success); the last red run was 39791133565 (e7322c1, after PR #103 only); the one advisory still ignored is braces GHSA-vfj7-8cjw-p6xm (`osv-scanner.toml:10-11`, until 2026-12-21; row `braces-ghsa-vfj7-no-fixed-version`), which has no fixed version.
 risk: P1
 change_class: dependency-security
 depends_on: []
@@ -6265,6 +6269,7 @@ notes: |
   Đường kéo vào: `@next/eslint-plugin-next@15.5.20` (root devDependency, pin chính xác) -> `fast-glob@3.3.1` (pin chính xác, cũng có trong plugin 15.5.27, 15.5.28, 16.0.0 và bản mới nhất 16.4.2) -> `micromatch@4.0.8` (npm latest, `^3.0.3`) -> `braces@3.0.3`; chỉ chạy lúc lint.
   Trigger mở lại: OSV thêm event `fixed` cho braces, hoặc một bản micromatch, fast-glob hay @next/eslint-plugin-next cùng major bỏ braces; khi đó chạy lại decision table của L1b, gồm cả điều kiện 7 ngày của `minimumReleaseAge`.
   source: L1b p3-osv-advisories step 0 · Security run 38851467389 (main c762c90)
+  2026-10-23 L30: status unchanged (no fixed braces release exists). RO-L25-1 in PR #103 replaced the L1b "no ignore in `osv-scanner.toml`" stance above with a dated ignore of GHSA-vfj7-8cjw-p6xm (`osv-scanner.toml:10-11`, `ignoreUntil = 2026-12-21`); the revisit row for that expiry is `braces-ghsa-vfj7-ignore-expiry-2026-12-21` (added by a later L30 unit); this row keeps the advisory record and its reopen trigger.
 
 ## task: offline-page-csp-nonce-missing
 title: Trang `/offline` prerender không mang nonce: bật `CSP_SCRIPT_NONCE_ENABLED=true` sẽ chặn mọi script của trang này
@@ -6436,7 +6441,9 @@ notes: |
 
 ## task: db-test-job-definer-bootstrap-tuple-concurrently-updated-flake
 title: Test DB: parallel suites can raise `tuple concurrently updated` in bootstrapJobDefiner; serialize the harness-side bootstrap window
-status: idea
+status: merged
+merged: 2026-10-22 · PR #99, merge 575c766047899966782194337f360b6c058ca4ce · `withJobDefinerBootstrapLock` at `packages/db/src/test-harness.ts:246`; merged_probe kept as authored (this flip changes only status, merged, note_merged)
+note_merged: 2026-10-23 L30: closed BY PROBE, by hand, measured at base 21b57f844e78ee4142ed6053a6bf89fc90ef3c15 (the reconcile `--check` reads only planned, ready and blocked rows, so it did not flip this `idea` row). F1: the PR #99 body names this row and says it closes later through its probe (line 12), and names `withJobDefinerBootstrapLock` as the row's probe identifier (line 7). F2: the merge commit is an ancestor of the base (`git merge-base --is-ancestor` exit 0). F3: `git grep -c withJobDefinerBootstrapLock -- packages/db/src/test-harness.ts` = 2 at the base (declaration `:246`, call `:265`) and 0 at the lane's start base e049c9269554d72c60b21b8c1ecc5329c5cbcf1d.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6450,7 +6457,10 @@ notes: |
 
 ## task: db-test-definer-role-reads-outside-reader-lock-guard
 title: Test DB: tests that name a definer role outside the definer lock helpers can fail while migrate.test.ts renames the role; audit every site and add a role-aware source-scan guard
-status: idea
+status: superseded
+superseded_by: PR #105 (L32, merge acdd8612b0e0c4b92023b77555dd9b637c277936, merged 2026-10-22T22:17:49Z)
+superseded_note: 2026-10-23 L30: decided by conductor ruling RO-L30-1 on 2026-10-23, not kept open. This row proposes a per-test discipline (audit every site that names a definer role, then add a role-aware source-scan guard); PR #105 removed the race class by construction instead: the seven role-mutating db test files run alone after the parallel phase (`packages/db/vitest.config.ts`, PR #105 body line 7) and its guard `packages/db/src/role-hiding-isolation-guard.test.ts` pins that only those files mutate shared roles (PR #105 body line 8), so no db test file can observe a hidden cluster role while another file holds one (PR #105 body line 5). Measured figures, each as its PR #105 body line carries it: hit rate on the base 2 red of 10 runs of `pnpm --filter @plexco/db test` (PR #105 body line 35); reproducer red 3 of 3 on the base and green 3 of 3 at each of 56d31b2, e37411a and the final head 3204820, 112 of 112 tests each, 0 observations (PR #105 body line 36); 20 of 20 consecutive green full db-suite runs at the final head 3204820, class failures 0 across all 22 final-head runs (PR #105 body line 38). The PR #105 body does not name this row, and its probe `findDefinerRoleReadsOutsideLock` is absent on main (`git grep -c` = 0 at the base 21b57f844e78ee4142ed6053a6bf89fc90ef3c15 and at e049c9269554d72c60b21b8c1ecc5329c5cbcf1d), so it closes as superseded, not by probe. REOPEN CONDITION: reopen if a definer-role-by-name test failure (a CLASS entry of the merge clerk's flake list) recurs on main or PR CI after 2026-10-22T22:17:49Z; the watch row `ci-definer-role-class-flake-retire-watch` (added by a later L30 unit) carries that trigger and the post-merge CI run ids.
+old_status: idea
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6464,7 +6474,10 @@ notes: |
 
 ## task: db-test-privilege-assertions-vs-definer-membership-windows-flake
 title: Test DB: migrate.test.ts windows that GRANT a definer role to app_worker can flip the `permission denied` assertions of chat-dm-safety-invariants.test.ts; read ACL entries (or hold the definer reader lock) there
-status: idea
+status: superseded
+superseded_by: PR #105 (L32, merge acdd8612b0e0c4b92023b77555dd9b637c277936, merged 2026-10-22T22:17:49Z)
+superseded_note: 2026-10-23 L30: decided by conductor ruling RO-L30-1 on 2026-10-23, not kept open. This row proposes a per-test fix (read ACL entries with `readRoleOwnAclPrivileges`, or hold the definer reader lock, in the `permission denied` assertions of `chat-dm-safety-invariants.test.ts`); PR #105 removed the race class by construction instead: the `migrate.test.ts` windows that GRANT a definer role to `app_worker` (W2, W4, W3g and W8, all in `isolated-1`, PR #105 body line 29) run alone after the parallel phase (`packages/db/vitest.config.ts`, PR #105 body line 7) and its guard `packages/db/src/role-hiding-isolation-guard.test.ts` pins that only the isolated files mutate shared roles (PR #105 body line 8), so no db test file can observe a temporary grant while another file holds one (PR #105 body line 5). Measured figures, each as its PR #105 body line carries it: hit rate on the base 2 red of 10 runs of `pnpm --filter @plexco/db test` (PR #105 body line 35); reproducer red 3 of 3 on the base and green 3 of 3 at each of 56d31b2, e37411a and the final head 3204820, 112 of 112 tests each, 0 observations (PR #105 body line 36); 20 of 20 consecutive green full db-suite runs at the final head 3204820, class failures 0 across all 22 final-head runs (PR #105 body line 38). The PR #105 body does not name this row, and its probe `readRoleOwnAclPrivileges` is absent on main (`git grep -c` = 0 at the base 21b57f844e78ee4142ed6053a6bf89fc90ef3c15 and at e049c9269554d72c60b21b8c1ecc5329c5cbcf1d), so it closes as superseded, not by probe. REOPEN CONDITION: reopen if a definer-role-by-name test failure (a CLASS entry of the merge clerk's flake list) recurs on main or PR CI after 2026-10-22T22:17:49Z; the watch row `ci-definer-role-class-flake-retire-watch` (added by a later L30 unit) carries that trigger and the post-merge CI run ids.
+old_status: idea
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6579,6 +6592,8 @@ notes: |
   Phase 4 backlog row from the owner decisions of 2026-10-21: one docs lane that syncs the spec follow-ups. The follow-ups are the "Spec follow-up" subsection of the DD-138 entry and the "Spec follow-up" line of each of DD-139, DD-140, DD-141 and DD-142 in `docs/standards/decisions.md`; `scope` is the union of the Reviewed spec files they name (docs only), each listed here only after a file listing at the lane base confirmed it exists. The records lane L19 edits none of those specs; this row is the lane that does. The owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
   > "one docs lane to sync the DD-138 spec follow-ups"
   Left out on purpose: `docs/features/FE/feature_chat_fe.md`, which DD-138 labels Draft: a spec that is not Reviewed is not a Reviewed-spec follow-up (readiness record `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md`, row P1). No code, test, migration, workflow, env or config file belongs to this row. `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, the DD-138 "Spec follow-up" subsection and the "Spec follow-up" lines of DD-139, DD-140, DD-141 and DD-142 · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+  Update 2026-10-24 (lane L30 p3-phase3-docs-closeout, docs only): two more Reviewed-spec follow-ups of P3-S16 that their lanes did not edit; the line numbers below are at 21b57f8. (a) L27 O3: docs/features/BE/feature_user_settings_tech.md:212 still says hidden characters are refused for persons.display_name, while after #101 the 133 code points are stripped first (:457 and :458 are dated changelog rows, never rewritten). (b) L28: the /join rows of docs/features/BE/feature_zalo_channel_tech.md (:222, :224, :225) do not carry the known_zero R16 text yet. Both files are already in `scope` above.
+  Source: PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 189; PR #98 body, section "Spec follow-up (not edited)", line 55.
 
 ## task: host-pro-late-invoice-retention-period-decision
 title: Host Pro: owner decision of the retention period after a downgrade to Free, with read-only versus hidden Pro-only data (DD-142)
@@ -6601,7 +6616,9 @@ notes: |
 
 ## task: deps-next-advisories-before-staging-deploy
 title: Deps: fix the `next` advisories GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p before any staging deploy (P0-gating; DD-138 `p3-osv-advisories D-8` signed as TEMPORARY only)
-status: idea
+status: merged
+merged: 2026-10-22 · PR #103 (PR-A), merge e7322c11f7537b451c674a5f07ef5f67087f946f · `next` `^15.5.28` at `apps/web/package.json:18`, resolved 15.5.28 at `pnpm-lock.yaml:1554`; merged_probe stays `null` (close_by hand; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-23 L30: closed BY HAND at base 21b57f844e78ee4142ed6053a6bf89fc90ef3c15, as `close_by` says. F1: the PR #103 body says to close this row by hand once the PR merges, and `docs/sessions/web-mvp-phase3-readiness-p3-deps-osv-next-and-fixable.md:178-179` and `:397` say the same. F2: the merge commit is an ancestor of the base (`git merge-base --is-ancestor` exit 0). F3: `apps/web/package.json:18` `"next": "^15.5.28"`; `pnpm-lock.yaml:96` importer specifier `^15.5.28` and `:1554` `next@15.5.28:`; `osv-scanner.toml:10-11` ignores only GHSA-vfj7-8cjw-p6xm (braces, until 2026-12-21) and the main Security runs after PR #104 read success (see row `osv-full-scan-red-on-main-2026-10`), so the scan reports neither `next` advisory.
 risk: P1
 change_class: dependency-security
 depends_on: []
@@ -6631,3 +6648,299 @@ notes: |
   > B4. Amend DD-51: a paid Host Pro tenant whose invoice is late gets the 7-day grace, then is DOWNGRADED TO FREE, never suspended by billing. All data, including Pro-only data, is retained for a retention period to be decided later (1 to 3 months); behaviour of Pro-only data during retention (read-only vs hidden) is decided with it. Billing is not in the MVP, so this is a decision-record change plus backlog rows; keep `suspended` for non-billing (admin / abuse) use, P-7 (suspended or cancelled tenants never public) unchanged.
   Billing is not in the MVP (DD-132), so this row is built with the billing epic and depends on `feature-billing-lifecycle` (`docs/autopilot-backlog.md:845` at 2c7dfe7); until then DD-142 is a decision record plus these backlog rows. The retention period and the read-only versus hidden behaviour of Pro-only data are not decided: they belong to row `host-pro-late-invoice-retention-period-decision`. Not implemented and not started: `downgradeLateHostProTenantToFree` has 0 matches at the lane base, so the probe stays valid until a slice adds that symbol at that path. `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, DD-142 (and DD-132 for billing outside the MVP) · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
   Update 2026-10-22 (lane L26 p3-owner-decisions-2026-10-22): the sentence above that the retention period and the read-only versus hidden behaviour "are not decided" held on 2026-10-21; the retention behaviour of this row is now defined by the owner decisions of 2026-10-22 (DD-142 amendment "Bổ sung 2026-10-22 (mục 8)" in `docs/standards/decisions.md`): the retention period is 1 month, adjustable later and stored as one config value, and during that month Pro-only data follows the default "hidden from normal views, retained, restored on re-upgrade", which the conductor applied and which as a whole is pending owner sign-off (the owner did not answer read-only versus hidden, and row `host-pro-late-invoice-retention-period-decision` stays open until the owner signs or changes it), while billing is still not in the MVP (DD-132) and nothing here is implemented or started.
+
+## task: join-known-zero-person-equality-proof
+title: Zalo /join: prove the joining person is the account's person before a known_zero club renders R16 (hardening of owner item 5)
+status: idea
+risk: P1
+change_class: code
+depends_on: []
+invariants: [identity, transport-zalo]
+scope: [apps/web/lib/zalo/player-commands.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Conductor decision D7 (under the owner's delegation of 2026-10-22, not an owner signature): a row now, a lane once the identity-merge writer exists (DD-103); D7 records that `merge_tombstones` (packages/db/schema.ts:131 at 21b57f8) has no writer today. Owner-accepted residual (item 5, PR #98 body line 87): an account whose person differs from the joining person (P-29) and owes nothing in the club reads known_zero and gets R16. `ownClubPaymentStatus` is at apps/web/lib/zalo/player-commands.ts:190. Candidate dependency `chat-identity-merge-reparent-enablement`, not verified as the DD-103 writer.
+  Source: PR #98 body, section "Deviations and notes", line 95; section "Review", line 87.
+
+## task: public-card-hide-exact-address-real-stack-proof
+title: E2E (local only): prove B1's hide-exact-address option on the real public card, ON and OFF, with public_sessions enabled through the enable CLI
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [web-app, test-chain]
+scope: [apps/web/e2e/golden-path.spec.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Conductor decision D8 (under the owner's delegation of 2026-10-22, not an owner signature): the golden path keeps the public_sessions projector disabled by design (apps/web/e2e/golden-path.spec.ts:263, RC-0c), so no real-stack test renders the public card. With L24's CLI (scripts/outbox-projector-enable.mjs, public_sessions rebuild :25), a scratch smoke DB enables public_sessions; then the card is asserted with `hide_exact_address` (packages/db/schema.ts:636; projected venue NULL when ON, :1716) ON and OFF. Never in CI.
+  Source: repo apps/web/e2e/golden-path.spec.ts:263 and packages/db/schema.ts:636 at 21b57f8; PR #102 body, section "Summary", line 7.
+
+## task: member-names-visible-confusables-homoglyphs
+title: Names: visible confusables (homoglyphs) are not defended on member-facing or public names; owner policy question first, then a rule lane
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: [identity, schema]
+scope: [packages/db/src/text-safety.ts, packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+close_by: hand · owner decision: which confusable sets to refuse or fold is a policy choice; a code row follows the answer
+notes: |
+  L27 (#101) and L29 (#106) defend invisible, control and bidi code points only; both list visible confusables as not defended (L27 O2; L29 residue). This goes to the ledger as an owner question; nothing is decided here. The scope files exist at 21b57f8 (whether text-safety.ts is the rule's TypeScript home was not re-read); a SQL rule change adds one migration at the next free number.
+  Source: PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 188; PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 228.
+
+## task: tenant-repo-sessions-create-area-venue-strip
+title: DB: `tenantRepo.sessions.create` writes area and venue_name without the L23 strip (test-only callers today)
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [session-command]
+scope: [packages/db/src/tenant.ts]
+manifest: null
+merged_probe: null
+notes: |
+  L23 residue found by L27 (O4): the create path at packages/db/src/tenant.ts:123-140 (at 21b57f8: `create:` :123, `area: input.area ?? null` :135) stores the typed values. Only tests call it, so a later product caller would bypass the strip. Related existing row, not edited: `session-text-fields-control-char-validation`.
+  Source: PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 190.
+
+## task: owner-cli-pg-client-inside-try
+title: Owner CLIs: build `new pg.Client` inside `try` in scripts/outbox-projector-enable.mjs and scripts/outbox-dlq-replay.mjs, plus a runbook note on percent-encoding the password
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: [retry-liveness]
+scope: [scripts/outbox-projector-enable.mjs, scripts/outbox-dlq-replay.mjs, docs/runbooks/outbox-dispatch-enable-rollback.md]
+manifest: null
+merged_probe: null
+close_by: hand · a code move adds no slice-unique symbol; close with the merge SHA
+notes: |
+  Lane L24 security round-2 P3-3 (round-1 P3-2), not fixed: the client is built before `try` (at 21b57f8: enable :260 before `try` :261; dlq-replay :101), so an invalid owner URL throws outside the redaction path. No leak was measured (pg-connection-string masks the input). One follow-up covers both CLIs.
+  Source: PR #102 body, section "Review rounds (2 of at most 3)", line 57; section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 80.
+
+## task: braces-ghsa-vfj7-ignore-expiry-2026-12-21
+title: Deps: revisit at the expiry: look for a fixed release (braces GHSA-vfj7-8cjw-p6xm, osv-scanner.toml ignoreUntil 2026-12-21)
+status: idea
+risk: P1
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: [osv-scanner.toml, apps/web/package.json, pnpm-lock.yaml]
+manifest: null
+merged_probe: null
+close_by: hand · dependency-security: a bump or a renewed ignoreUntil adds no symbol
+notes: |
+  On or before 2026-12-21: look for a braces release that fixes GHSA-vfj7-8cjw-p6xm, and for an @next/eslint-plugin-next
+  release that drops micromatch/braces. If either exists, bump it and delete the osv-scanner.toml entry. If not, re-measure
+  the reachability (pnpm why -r --prod braces empty; the next/dist loaders of compiled/@vercel/nft under build/ only) and
+  renew ignoreUntil with a new reason, or escalate. Related: braces-ghsa-vfj7-no-fixed-version (#60).
+  source: lane L25 (P3-S16f), rule RO-L25-1 (i)
+  Source: PR #103 body, section "Readiness 3.3: the osv-scanner.toml entry and the backlog-row text (verbatim)", lines 168-175; section "Backlog (this PR does not edit `docs/autopilot-backlog.md`)", line 102.
+
+## task: zalo-dm-delivery-age-expiry
+title: Bot: expire a `zalo_dm` delivery older than the delivery age bound and give the backfill the same bound (lane L31, follow-up of L24)
+status: blocked
+risk: P2
+change_class: code
+depends_on: []
+invariants: [transport-zalo, retry-liveness]
+scope: [apps/bot/src/dispatcher.ts, apps/bot/src/projectors/zalo-dm.ts, scripts/outbox-projector-enable.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  Decided as follow-up lane L31 (conductor decision D5, under the owner's delegation of 2026-10-22, not an owner signature). Blocker: lane L31 is paused on an owner decision (a conductor note outside the repository, 2026-10-23); it has no PR and its branch is not on origin, so nothing from that branch is recorded here as a fact; DD-146 stays reserved for it. Scope: the files PR #102's body names for this follow-up (line 25: the retries in `apps/bot/src/dispatcher.ts` and the check site `apps/bot/src/projectors/zalo-dm.ts` step 1) plus the enable CLI PR #102 added; re-measure risk and scope when L31's PR opens (its readiness file is the authority then). Set merged_probe when its PR opens.
+  Source: PR #102 body, section "Follow-up lane L31 (decided)", lines 23-26.
+
+## task: name-readers-null-name-one-fallback
+title: Web: the three name readers fall back differently for a NULL name ("(unnamed)", "Unnamed player", "Member"); choose one t(vi, en) fallback
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [i18n-surface, web-app]
+scope: [apps/web/lib/roster-rules.ts, apps/web/components/sessions/request-inbox.tsx, apps/web/components/chat/message-list.tsx]
+manifest: null
+merged_probe: null
+notes: |
+  Host roster, join-request inbox and chat author label all tolerate NULL (after #106, M2 copies NULL, never ''), so this is consistency, not safety. Scope measured by `git grep` of the three literals at 21b57f8: apps/web/lib/roster-rules.ts:41 ("(unnamed)"), apps/web/components/sessions/request-inbox.tsx:98 ("Unnamed player"), apps/web/components/chat/message-list.tsx:58 ("Member"). The reader inventory also holds L27 O8: the host-shell tenant-name source near `auth.ts:285` (packages/db/src/auth.ts:285 is `TenantWithProfile` at 21b57f8) is a reader, not a writer.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 225; PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 194.
+
+## task: club-create-sql-22023-maps-to-400
+title: Onboarding: a SQL 22023 refusal from `tenant_provision` (T1) that the TypeScript check missed would surface as HTTP 500; map it to 400
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [api-contract]
+scope: [apps/web/app/api/onboarding/start/route.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Today the route validator keeps the check, so a typed name gets 400 `INVALID_BODY`; only drift between the TypeScript and SQL rules would reach the 500. Same class, different route, not merged with it: `zalo-connect-bot-revoked-error-mapping` (where finishZaloConnect lets 22023 become a 500).
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 226; section "2. Writers and layers", line 37.
+
+## task: ci-node-unicode-version-vs-name-rule-sets
+title: CI: measure the runner Node's Unicode version against the name rule's explicit code point lists (commented as Unicode 17.0)
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [.github/workflows/ci.yml, packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+close_by: hand · a measurement may add no symbol; close with the CI run id that printed the version
+notes: |
+  RO-L29-1 (4): step 0 of L29 measured local Node v25.6.0 (Unicode 17.0, ICU 78.2). CI's Node (22) was not measured, and no test pins a Unicode-version count; the agreement tests only compare the sets with each other.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 227.
+
+## task: name-fields-one-visible-check-one-length-rule
+title: Names: one visible-character check and one length rule per name field (two DISPLAY_NAME_MAX values, mixed length units, three inline literals, no CHECK on persons.display_name)
+status: idea
+risk: P1
+change_class: code
+depends_on: []
+invariants: [shared-core, schema]
+scope: [packages/db/src/me-settings.ts, packages/db/src/roster-money-shared.ts, apps/web/lib/session-form-model.ts, apps/web/lib/club-settings-model.ts, apps/web/lib/me-settings-client.ts]
+manifest: null
+merged_probe: null
+notes: |
+  L27 O6: DISPLAY_NAME_MAX is 120 in me-settings.ts:20 and 100 in roster-money-shared.ts:58, with different length units per writer. O7: `auth_login_google` caps no length, and persons.display_name has no CHECK (a CHECK is a migration, hence P1). L29 R1C: session-form-model.ts:162 adds a third inline visible-character literal beside `publicAliasProblem` and `displayNameProblem`; the web, server and SQL layers count UTF-16 units, code points and characters respectively (roster-money-shared.ts:66-67, `tenants_name_len_chk`).
+  Source: PR #101 body, section "Owner questions and backlog candidates", lines 192-193; PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 232.
+
+## task: membership-display-name-follows-person-rename
+title: Names: `memberships.display_name` never follows a person rename (existing behaviour); decide whether it should
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [identity]
+scope: [packages/db/src/me-settings.ts]
+manifest: null
+merged_probe: null
+close_by: hand · product question first (a per-club name versus following the person); a code row follows the answer
+notes: |
+  L27 recorded this as existing behaviour (O5); #101 and #106 leave it unchanged. Whether a club-scoped name follows a rename is an owner question for the ledger, not decided here. Scope names the persons.display_name settings writer; the file exists at 21b57f8 but was not re-read.
+  Source: PR #101 body, section "Owner questions and backlog candidates", line 191.
+
+## task: member-name-rule-residual-precision
+title: Name rule residue (L29): blank-looking names still storable, an interior separator joins words, a trailing space after the 120 cut, a NULL-mapped tenants.name kept, AG1 tests the end edge only
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [identity, test-chain]
+scope: [packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  R1S: the visible test counts noncharacters, private-use, unassigned non-DI code points and a lone combining mark as visible (threat 3 residual). Mode true removes an interior separator without a space ("Lan" + U+2028 + "Nguyen" gives "LanNguyen"). P3's cut at 120 after normalization can leave a trailing space (pre-existing 0069 behaviour). NIT-2: a tenants.name that the rule maps to NULL stays unchanged (NOT NULL column, design D4; the NOTICE names the rows by id and the owner renames them). R2C: AG1 and AG2 test the end edge only; add the start edge. A rule change adds one migration; AG1's file was not re-measured.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", lines 229, 231 and 233.
+
+## task: name-strip-migrations-apply-with-writers-drained
+title: Deploy: apply the cleanup of migrations 0068, 0069 and 0070 with writers drained, or lock the four tables before the loops
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [schema]
+scope: [docs/standards/deployment-infra.md]
+manifest: null
+merged_probe: null
+close_by: hand · docs-only: a deploy-order note adds no symbol
+notes: |
+  Inferred from PostgreSQL READ COMMITTED, not run (as for 0068 and 0069): a transaction that began before 0070 commits can store an un-normalized value after the cleanup's snapshot. deployment-infra.md exists at 21b57f8 and is a candidate home only; the home is not decided here.
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 230.
+
+## task: member-name-definers-qualify-builtins
+title: DB: qualify the built-ins kept unqualified in the byte-pinned definer bodies that 0070 re-creates (L29 security NIT-1)
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema]
+scope: [packages/db/src/member-name-writer-guard.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  R1S NIT-1 (a nit, not a finding): the byte-pinned definer bodies keep unqualified built-ins. Qualifying them needs a migration at the next free number and re-pinned body comparisons (inferred from the byte pin).
+  Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 229.
+
+## task: db-test-role-isolation-guard-residual-p3s
+title: Test DB: four residual P3s of the role-isolation guard of #105, each failing closed with a false red that names the file
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/role-hiding-isolation-guard.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Not taken by L32: (1) the comment stripper does not recognise regex literals; (2) per-file pin counts miss a move within one file; (3) a bare grant/revoke word before `;` in product code would read as a split role list (0 hits today); (4) the scanned-file floor leaves 24 files of margin (per-root floors are the upgrade path).
+  Source: PR #105 body, section "Review", line 49.
+
+## task: ci-definer-role-class-flake-retire-watch
+title: CI watch: retire the definer-role CLASS entries of the merge clerk's flake list once L31's and L30's CI runs show no class failure after #105
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [docs/autopilot-backlog.md]
+manifest: null
+merged_probe: null
+close_by: hand · evidence row: closes with the CI run ids of L31's and L30's PRs showing no class failure
+notes: |
+  Before #105, the class hit 2 of 10 runs of the CI db command (chat-catalog RO-L14-6, public-sessions-projector PSP-5b), forced reruns on #95's and #103's PR CI, and failed L27's local db run 1. #105 removes it by construction (20 of 20 green, twice). The flake list itself is a conductor artifact outside the repo. This row carries the REOPEN CONDITION of `db-test-definer-role-reads-outside-reader-lock-guard` and `db-test-privilege-assertions-vs-definer-membership-windows-flake`, both already closed as superseded by PR #105 (conductor ruling RO-L30-1): reopen both if a definer-role-by-name test failure (a CLASS entry of the flake list) recurs on main or on a PR's CI after 2026-10-22T22:17:49Z, the PR #105 merge.
+  Measured 2026-10-24 with `gh run list --workflow ci.yml`: on main, the CI runs created after the #105 merge are 39863898715 (head acdd861, the #105 merge commit itself, success) and 39972881100 (head 21b57f8, the #106 merge commit, success). On the PR #106 branch: run 39971227271 (head 47980f9, success) and run 39966008169 (head ea84d43, failure; only its L29-AG1 and L29-AG2 lines were read, the failing test there is L29-AG2 at 30,069 ms, see `ci-every-scalar-test-duration-watch`, and it is not called a class failure). CI runs of other branches after the merge were not listed.
+  Source: PR #105 body, section "Evidence", lines 35 and 38; PR #101 body, section "Verification", line 156.
+
+## task: ci-every-scalar-test-duration-watch
+title: CI watch: every-scalar unit tests (all scalars 0..0x10FFFF) run near their explicit 30 s budget on the runner; keep each split at about 3 s locally
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [apps/web/lib/session-form-model.test.ts, apps/web/lib/club-settings-model.test.ts, packages/db/src/member-name-invisible-chars.test.ts]
+manifest: null
+merged_probe: null
+close_by: hand · evidence row: closes when the CI durations of these tests have been re-checked on later runs and stay well inside the budget, or by an owner decision
+notes: |
+  Two CI-only reds in P3-S16: L27's W7 (RO-L27-1: 5,762 ms on the runner at d685f86 against the 5,000 ms default; the second push 0b663ba gave it a 30 s budget, 2.6 s locally) and L29-AG2 at ea84d43, 30,069 ms of its 30_000 budget (RO-L29-8: split per position and per mirror, each at or below about 3 s locally). The comment above the split (apps/web/lib/session-form-model.test.ts:666-669 at 21b57f8) records the unsplit test at 30.07 s on the runner, 3.1x its 9.7 s local time.
+  Measured 2026-10-24 from the CI logs of the PR #106 branch (`gh run view <id> --log`): run 39966008169 (head ea84d43, failure): L29-AG1 'alone' 10,954 ms, 'edge' 12,896 ms, 'inside' 14,083 ms, and the unsplit L29-AG2 30,069 ms; run 39971227271 (head 47980f9, success, after the split): L29-AG1 'alone' 11,293 ms, 'edge' 11,889 ms, 'inside' 12,694 ms, and the 12 split L29-AG2 tests from 1,545 ms to 5,961 ms.
+  Every-scalar tests at 21b57f8: apps/web/lib/session-form-model.test.ts:473 (W7), :643 (SF-PIN) and :685 (L29-AG2); apps/web/lib/club-settings-model.test.ts:106; packages/db/src/member-name-invisible-chars.test.ts:1892 (L29-AG1).
+  Source: PR #106 body, section "4. Conductor rulings RO-L29-1 to RO-L29-8", line 69; PR #101 body, section "Verification", line 153; section "Commits", line 113.
+
+## task: p3-s16-lessons-c10-c12-tracked-home
+title: Docs: give the P3-S16 lessons C10-C12 a git-tracked home (kit record for a new script; CI-only every-scalar budget and no RegExp from data; split every-scalar tests to about 3 s)
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [test-chain, kit-integrity]
+scope: []
+manifest: null
+merged_probe: null
+close_by: hand · docs-only: lessons add no symbol
+notes: |
+  The conductor's common notes are not part of the repository (an untracked notes tree), so the lessons do not exist durably in the repo. The home is not chosen here (CLAUDE.md or a docs/standards file); fill scope when it is. Durable evidence: C10 = RO-L24-2 (kit:check AUDIT_FAILED "missing record (file exists, not classified)" for the new scripts/outbox-projector-enable.mjs: the repo's audit needs a record for every file under scripts/); C11 = RO-L27-1 (the W7 every-scalar test failed on CI, and the fix 0b663ba builds no RegExp from data); C12 = RO-L29-8 (split to about 3 s locally).
+  Source: PR #102 body, section "Authority", line 17; PR #101 body, section "Verification", line 153; section "Commits", line 113; PR #106 body, section "4. Conductor rulings RO-L29-1 to RO-L29-8", line 69.
+
+## task: projector-delivery-batch-lease-clock-consistency
+title: DB: `claim_projector_delivery_batch` stamps the lease with now() but the outbox claim with clock_timestamp(); use one clock
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [retry-liveness, schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  L24 readiness section 10, residual R3; the lane states it is harmless today. A fix re-creates the function in a migration at the next free number; the function is first defined in packages/db/migrations/0022_job_claim_lease_core.sql (a later re-creation was not checked here; fill scope at the base).
+  Source: PR #102 body, section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 81.

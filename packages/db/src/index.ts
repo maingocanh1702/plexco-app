@@ -277,8 +277,13 @@ export {
   type MyChannel,
   type MyProfile,
 } from "./me-settings.js";
-// Phase 3 L23: the invisible code points every public-name write path strips (DD-138 A.1).
-export { STRIP_CHAR_RANGES, stripInvisibleChars } from "./text-safety.js";
+// Phase 3 L23 and L29: the invisible-code-point strip (DD-138 A.1) and the name rules built on it.
+export {
+  checkTypedName,
+  normalizeExternalName,
+  STRIP_CHAR_RANGES,
+  stripInvisibleChars,
+} from "./text-safety.js";
 // Phase 3 L9: the signed-in player's own cross-club reads (0059 definers; L16c chat context, 0066).
 export {
   listMyClubs,
