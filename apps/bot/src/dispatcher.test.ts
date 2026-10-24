@@ -190,7 +190,12 @@ describe("DD-146 zalo_dm delivery age check (L31)", () => {
     withTestContext(
       () => setupDispatcherContext("plexco_jrd_dispatcher_da1b"),
       async (ctx) => {
-        const createdAt = new Date(Date.now() - 10 * 60_000);
+        // seeded on the database clock: the age is measured there, so a container clock that
+        // drifts from the host's (after a laptop sleep) cannot move it out of 590..900
+        const seeded = await ctx.workerPool.query<{ t: Date }>(
+          "SELECT clock_timestamp() - interval '10 minutes' AS t",
+        );
+        const createdAt = seeded.rows[0]!.t;
         const verdict = await zaloDmDeliveryAge(ctx.workerPool, createdAt);
         expect(verdict.expired).toBe(false);
         expect(typeof verdict.ageSeconds).toBe("number");
