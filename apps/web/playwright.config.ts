@@ -19,7 +19,7 @@ const PG_PORT = Number(process.env.E2E_PG_PORT ?? 3218);
 export default defineConfig({
   testDir: "./e2e",
   // Opt-in local specs with their own configs (real dev server + database): never run in CI.
-  testIgnore: ["**/golden-path.spec.ts"],
+  testIgnore: ["**/golden-path.spec.ts", "**/public-card-hide-address.spec.ts"],
   timeout: 30_000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

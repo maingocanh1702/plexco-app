@@ -1,14 +1,14 @@
 # Runbook: smoke test Web MVP trên máy local (golden path)
 
 > **Dành cho:** owner. Chạy thật trên Postgres local + `next dev`, đăng nhập bằng dev-login (không cần Google OAuth).
-> **Phạm vi:** CHỈ máy local, database riêng `plexco_smoke`. Không dùng cho staging/production.
-> **Cách chạy:** làm tuần tự các bước 1 → 8 (tay), rồi bước 9 (click path) hoặc bước 10 (tự động bằng Playwright).
+> **Phạm vi:** CHỈ máy local, database riêng `plexco_smoke`. Không dùng cho staging/production. Bước 11 dùng database riêng của nó, `plexco_l35_scratch`.
+> **Cách chạy:** làm tuần tự các bước 1 → 8 (tay), rồi bước 9 (click path) hoặc bước 10 (tự động bằng Playwright). Bước 11 (tuỳ chọn) chạy độc lập, chỉ cần bước 1.
 > Lệnh và định danh trong code giữ nguyên, copy-paste được. Chạy mọi lệnh từ **thư mục gốc repo** (trừ khi có ghi chú khác).
 > Cơ chế dev-login (điều kiện mở cổng, giới hạn đã biết): README, mục "Dev-login".
 
 ## Quy tắc an toàn (đọc trước)
 
-- Chỉ làm việc trên database `plexco_smoke`. **Không** `DROP`/`ALTER` bất kỳ database nào khác (`plexco`, `plexco_test`, ...).
+- Chỉ làm việc trên database `plexco_smoke`. **Không** `DROP`/`ALTER` bất kỳ database nào khác (`plexco`, `plexco_test`, ...). Ngoại lệ duy nhất: script bước 11 tự tạo rồi tự drop database riêng `plexco_l35_scratch` của chính nó.
 - **Không bao giờ** `docker compose down -v`: cờ `-v` xoá volume `plexco_pgdata`, mất toàn bộ database local.
 - `ALTER DATABASE ... plexco.dev_login = 'on'` chỉ chạy trên DB local chuyên dụng này, không bao giờ trên DB dùng chung.
 - Cổng 3000 phải trống (`lsof -iTCP:3000 -sTCP:LISTEN` không in gì). Nếu bận, đổi **cả hai** chỗ cho cùng một số cổng: `-p 3000` ở bước 7 và `GOLDEN_PATH_BASE_URL=http://localhost:3000` ở bước 10 (và địa chỉ ở bước 8). Bước 7 có `-p` tường minh nên Next báo lỗi `EADDRINUSE` thay vì tự chuyển sang 3001 trong khi trình duyệt và spec vẫn nhắm 3000.
@@ -191,6 +191,22 @@ GOLDEN_PATH_SCREENSHOT_DIR=/tmp/golden-path-shots GOLDEN_PATH_BASE_URL=http://lo
 - Spec **không chạy trong CI**: `apps/web/playwright.config.ts` loại nó bằng `testIgnore`, không workflow nào nhắc tới nó. Thiếu `GOLDEN_PATH_BASE_URL` thì nó tự skip.
 - Spec dùng config riêng và **không** tự bật web server (giống `dev-login-browser`): server bước 7 phải đang chạy.
 - Lỗi sản phẩm ở một bước: spec dừng tại bước đó (xem `test.step` trong log) và giữ trace `apps/web/test-results/`; mở bằng `pnpm --filter @plexco/web exec playwright show-trace <trace.zip>`.
+
+## 11. Chứng minh thẻ kèo công khai ẩn địa chỉ chính xác (chỉ local)
+
+Chứng minh: một khách không đăng nhập (browser context mới, không cookie) ở `/discover` và `/discover/<publicListingId>`, cùng mọi body của `/api/discover*`, không thấy tên địa điểm lẫn địa chỉ của kèo mà host đã tick "Ẩn địa chỉ chính xác đến khi xác nhận", và thấy cả hai ở kèo mà host tick rồi bỏ tick trên trang sửa, cũng như ở kèo mà host chưa từng chạm vào ô đó (mặc định D-4 = tắt của PR #96).
+Chạy từ thư mục gốc repo, khi Postgres đã lên (bước 1) và cổng 3000 trống:
+
+```bash
+bash apps/web/e2e/public-card-hide-address-proof.sh
+```
+
+- Không dùng bước 2-7 và không đụng `plexco_smoke`: script tự tạo database riêng `plexco_l35_scratch`, bootstrap các role definer, migrate, áp các password runtime của bước 5 (cùng các câu lệnh, đọc từ runbook này; role là cluster-wide nên bước này đặt lại đúng các giá trị bước 5 đã đặt), bật dev-login chỉ cho database đó, seed, rồi tự chạy `next dev -H 127.0.0.1 -p 3000` (`reuseExistingServer: false`, nên cổng 3000 bận thì lần chạy fail thay vì dùng lại server của bạn).
+- Script nối `DISCOVERY_DATABASE_URL` vào role `readonly` trên database đó nên `/api/discover` được phục vụ (xem ghi chú hàng 18 ở bước 10), và bật `public_sessions` **chỉ** trong database đó qua `scripts/outbox-projector-enable.mjs`, sau khi duyệt alias của CLB bằng `scripts/public-alias-moderate.mjs`. Khoá mã hoá random mỗi lần chạy, không bao giờ được ghi ra.
+- **Luôn dọn:** cuối lần chạy script luôn drop `plexco_l35_scratch` bằng `WITH (FORCE)`, kể cả khi lỗi hoặc Ctrl-C, và in danh sách database trước và sau cùng dòng `scratch database dropped: yes|no`; riêng khi preflight từ chối (cổng 3000 bận, hoặc thiếu `lsof` hay `lsof` lỗi; exit 2) thì script dừng trước khi tạo bất cứ thứ gì, nên không in cả danh sách database lẫn dòng drop; không đụng database nào khác. Một Postgres local dùng chung, nên không chạy song song với một bộ test DB hay một lần e2e khác. Không bao giờ `docker compose down -v`.
+- **Đọc kết quả:** PASS nghĩa là có đủ `3 passed`, ba dòng `L35 case on: hidden=true control=ok token_absent=true keys=`, `L35 case off: hidden=false control=ok token_absent=false keys=venueName,venueAddress` và `L35 case default: hidden=false control=ok token_absent=false keys=venueName,venueAddress`, dòng enable `[operator] outbox-projector-enable: {"projector":"public_sessions","changed":true,...}` và `scratch database dropped: yes`; kết quả nào khác đều là chưa chứng minh được.
+- Spec **không chạy trong CI**: `apps/web/playwright.config.ts` liệt kê spec trong `testIgnore`, không workflow nào nhắc tới runner này hay `apps/web/e2e/public-card-hide-address.config.ts`, và spec tự skip khi thiếu `PUBLIC_CARD_PROOF_BASE_URL`.
+- Kết quả đo gần nhất: 2026-10-24, đo tại `dbaf348`: `3 passed (42.2s)`, cả lần chạy 48 s, dòng enable `{"projector":"public_sessions","changed":true,"prepared":6,"expired_age":0,"expired_cap":0,"rebuilt_sessions":3}`, `scratch database dropped: yes`. Chỉ là một lần chạy local.
 
 ## Xử lý sự cố
 
