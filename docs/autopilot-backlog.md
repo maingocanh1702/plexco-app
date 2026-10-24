@@ -6982,3 +6982,16 @@ notes: |
   Line numbers at 07165d659e291e38c1477437cfc946bbdc19f55e: apps/bot/src/projectors/zalo-dm.ts:84 injects the wall clock as the default (`const { db, send = sendMessage, now = Date.now, open = openConnectorSecret } = deps;`), and the 120 s attempt budget (`const ATTEMPT_BUDGET_MS = 120_000;` at :29) is measured on it at :88 (`const started = now();`) and :192 (`const remaining = ATTEMPT_BUDGET_MS - (now() - started);`), so a backward wall-clock jump stretches the budget.
   The PR body's fix: `performance.now()` would make the 120 s exact under a backward clock jump. This is pre-existing code, recorded by L31's security reviews as an out-of-scope note and not lane work; the row was added by lane L33 (2026-10-24).
   Source: PR #108 body, section "Out-of-scope notes from the security reviews (pre-existing code, not lane work)", line 89.
+
+## task: zalo-dm-promotion-live-balance-at-delivery
+title: DB and bot: read the live balance at delivery for a late waitlist-promotion DM instead of the emit-time amount_due
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [transport-zalo, schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  2026-10-24 (L34 review R2-F1): the waitlist-promotion DM now stays deliverable until the session's start (DD-146 amendment, DD-149 item 2), so its emit-time fee can be stale; read the live balance at delivery through 0057's definer in its own lane (money contract, Tier C)

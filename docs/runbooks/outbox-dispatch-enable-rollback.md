@@ -89,10 +89,11 @@ Event hết hạn không bao giờ tới `deliver()`: không đọc target, khô
 
 Rủi ro còn lại của ngoại lệ (nói thẳng):
 
-- R1: promotion mà một lần chạy CLI trước ngoại lệ này đã ghi record `age` vẫn không được gửi; không có gì mở lại record đó. `zalo_dm` chưa từng được bật dùng thật; DB đang chạy thật (nếu có) chưa được đo.
+- R1: promotion mà một lần chạy CLI trước ngoại lệ này đã ghi record `age`, hoặc mà dispatcher trước L34 đã kết thúc `delivered`/`noop_expired`, vẫn không được gửi; không có gì mở lại record đó. `zalo_dm` chưa từng được bật dùng thật; DB đang chạy thật (nếu có) chưa được đo.
 - R2: promotion còn trước giờ bắt đầu nhưng xếp ngoài **200** event đã ack mới nhất của một lần chạy sẽ nhận record `cap`; thứ tự mới nhất trước đẩy event cũ nhất xuống cuối, và đó cũng là những event nhiều khả năng session đã bắt đầu.
 - R3: mỗi promotion đã chuẩn bị của một session đã bắt đầu tốn một lần claim và một lần đọc của function trên, rồi kết thúc `noop_expired` (không gửi).
 - R4: số `prepared` trong dòng JSON tóm tắt của CLI gồm cả các promotion có thể vẫn hết hạn lúc gửi.
+- R5: phí ghi trong DM promotion gửi muộn là `amount_due` trong payload lúc emit; khoản thanh toán hoặc điều chỉnh được ghi sau lúc emit không được phản ánh. Đọc số dư thực lúc gửi là một thay đổi 0057, làm trong lane riêng (backlog row `zalo-dm-promotion-live-balance-at-delivery`).
 - Cửa sổ gửi: giờ bắt đầu chỉ được kiểm ở đầu mỗi lần gửi, nên một DM có thể rời hệ thống tới 120 s (`ATTEMPT_BUDGET_MS`) sau giờ bắt đầu; không trừ lùi một khoảng đệm khỏi giờ bắt đầu vì như vậy thu hẹp cửa sổ owner đã chọn (tới giờ bắt đầu).
 - Event type mới: thêm một event type vào `untilSessionStart` cần thêm một nhánh trong function trên, tức một migration; sửa file JSON một mình không đủ.
 
