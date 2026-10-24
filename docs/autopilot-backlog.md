@@ -6948,3 +6948,33 @@ merged_probe: null
 notes: |
   L24 readiness section 10, residual R3; the lane states it is harmless today. A fix re-creates the function in a migration at the next free number; the function is first defined in packages/db/migrations/0022_job_claim_lease_core.sql (a later re-creation was not checked here; fill scope at the base).
   Source: PR #102 body, section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 81.
+
+## task: zalo-dm-send-deadline-into-deliver
+title: Bot: pass a send deadline into `zalo-dm.ts` `deliver()` so a send that starts inside the DD-146 bound cannot end up to 120 s after it
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [transport-zalo, retry-liveness]
+scope: [apps/bot/src/projectors/zalo-dm.ts, apps/bot/src/dispatcher.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 07165d659e291e38c1477437cfc946bbdc19f55e: the DD-146 age is checked once, before the send, at apps/bot/src/dispatcher.ts:304 (`job.projector === "zalo_dm" ? await zaloDmDeliveryAge(pool, job.event.createdAt) : null;`) and the send starts at :309 (`: await deliver(job);`). Inside `deliver()` the attempt budget is apps/bot/src/projectors/zalo-dm.ts:29 (`const ATTEMPT_BUDGET_MS = 120_000;`) and the send timeout is :207 (`await send(token, chatId, text, { timeoutMs: Math.min(sendTimeoutMs, remaining) });`), so a send that starts inside the DD-146 bound can end up to 120 s later, a window DD-146 accepts (docs/standards/decisions.md:1953 at the same base).
+  The PR body's fix: a send deadline passed into `zalo-dm.ts` `deliver()` would close the 120 s window. This is pre-existing code, recorded by L31's security reviews as an out-of-scope note and not lane work; the row was added by lane L33 (2026-10-24).
+  Source: PR #108 body, section "Out-of-scope notes from the security reviews (pre-existing code, not lane work)", line 88 and line 47.
+
+## task: zalo-dm-attempt-budget-monotonic-clock
+title: Bot: measure the `zalo_dm` attempt budget on a monotonic clock instead of the wall clock
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [transport-zalo, retry-liveness]
+scope: [apps/bot/src/projectors/zalo-dm.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 07165d659e291e38c1477437cfc946bbdc19f55e: apps/bot/src/projectors/zalo-dm.ts:84 injects the wall clock as the default (`const { db, send = sendMessage, now = Date.now, open = openConnectorSecret } = deps;`), and the 120 s attempt budget (`const ATTEMPT_BUDGET_MS = 120_000;` at :29) is measured on it at :88 (`const started = now();`) and :192 (`const remaining = ATTEMPT_BUDGET_MS - (now() - started);`), so a backward wall-clock jump stretches the budget.
+  The PR body's fix: `performance.now()` would make the 120 s exact under a backward clock jump. This is pre-existing code, recorded by L31's security reviews as an out-of-scope note and not lane work; the row was added by lane L33 (2026-10-24).
+  Source: PR #108 body, section "Out-of-scope notes from the security reviews (pre-existing code, not lane work)", line 89.
