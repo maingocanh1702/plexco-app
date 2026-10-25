@@ -9,7 +9,6 @@ import {
 import {
   seedPersonAccount,
   setupNonSuperuserOwnerContext,
-  withJobDefinerLock,
   type NonSuperuserOwnerContext,
 } from "./test-harness.js";
 
@@ -29,11 +28,7 @@ let su: pg.Client;
 
 beforeAll(async () => {
   ns = await setupNonSuperuserOwnerContext("plexco_me_player_reads_nobypass");
-  await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
-    await ns.bootstrapJobDefinerForOwner();
-    await ns.bootstrapChatDefinerForOwner();
-    await ns.runMigration();
-  });
+  await ns.bootstrapAndMigrateAsOwner();
   app = await ns.connectAsApp();
   const url = new URL(process.env.DATABASE_URL_TEST!);
   url.pathname = `/${ns.dbName}`;

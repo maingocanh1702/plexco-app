@@ -483,7 +483,8 @@ const CHAT_DEFINER_LOCK_KEY = 0x63686164; // "chad" — distinct from "jobd" (0x
 // "chad": the one-member SLOT of chat_definer and identity_definer, held by a hand-off until its
 // teardown. "chst": their STATE (0030/0054), shared in withDefinerReadLock and exclusive in each
 // breaker window (withChatDefinerLock, 0054 step 1 too). The reader locks never take chad; a
-// non-superuser hand-off takes it in its jobd reader hold and migrates under the slot, not chst.
+// non-superuser hand-off takes it BEFORE its jobd reader hold (bootstrapAndMigrateAsOwner) and
+// migrates under both, not under chst.
 const CHAT_DEFINER_STATE_LOCK_KEY = 0x63687374; // "chst"
 
 /** A chat_definer or identity_definer breaker window: the slot, then the state, both exclusive. */
@@ -818,10 +819,12 @@ export interface NonSuperuserOwnerContext {
   /** idempotent job_definer bootstrap (grants membership to ownerRole) — call before runMigration()
    *  for the happy path; withhold for JCL-2 (role absent). NOT internally lock-protected: both this
    *  AND the runMigration() call that follows it reference job_definer BY NAME (bootstrap/grant here;
-   *  the 0022 assertion + ownership transfers there), so the CALLER must wrap the whole
+   *  the 0022 assertion + ownership transfers there), so a direct CALLER must wrap the whole
    *  "bootstrapJobDefinerForOwner() then runMigration()" sequence in ONE withJobDefinerLock — wrapping
    *  each call separately leaves a gap between them, and locking inside both would nest a second
-   *  reader session in the caller's, which hangs once a breaker queues (see withAdvisoryLocks). */
+   *  reader session in the caller's, which hangs once a breaker queues (see withAdvisoryLocks). The
+   *  owner sequence's one entry point is bootstrapAndMigrateAsOwner: the chat slot first, then that
+   *  ONE hold. Never request the chat slot inside the hold (see bootstrapAndMigrateAsOwner). */
   bootstrapJobDefinerForOwner: () => Promise<void>;
   /** idempotent chat_definer bootstrap (grants membership to ownerRole) — call before runMigration()
    *  whenever the migration will reach 0030 (chat-dm-safety-authority-core) or later under a
@@ -836,6 +839,20 @@ export interface NonSuperuserOwnerContext {
    *  lock-held critical section, restored in teardown() the same way: every non-superuser run that
    *  reaches 0030 reaches 0054 too, and 03-identity-definer.sql has 02's one-member rule. */
   bootstrapChatDefinerForOwner: () => Promise<void>;
+  /** The owner bootstrap in its one safe order: the chat slot FIRST (bootstrapChatDefinerForOwner,
+   *  held until teardown()), then ONE withJobDefinerLock (shared) around
+   *  bootstrapJobDefinerForOwner() and then `body` if given, else runMigration(). Returns the
+   *  body's value, or runMigration()'s MigrateResult; errors propagate unchanged.
+   *  Total order: chat slot before jobd, so no caller holds jobd while it waits for the slot. The
+   *  reverse order closes a cycle that Postgres cannot see, since two of its edges run in
+   *  JavaScript: a slot holder's later jobd request queues behind a breaker, the breaker waits
+   *  on a jobd-first caller's hold, and that caller waits on the slot. Work that must stay
+   *  inside the jobd hold (a migration's own assertions) goes in `body`, which then calls
+   *  runMigration() itself and must not request the chat slot. */
+  bootstrapAndMigrateAsOwner: {
+    (): Promise<MigrateResult>;
+    <T>(body: () => Promise<T>): Promise<T>;
+  };
   /** run the real migration runner AS the non-superuser owner (never superuser) */
   runMigration: () => Promise<MigrateResult>;
   /** after runMigration(): lease ROLE_PW until teardown() (idempotent) for a caller's own client */
@@ -1020,6 +1037,23 @@ export async function setupNonSuperuserOwnerContext(
     return pool;
   };
 
+  const runMigration = () => migrate(ownerUrl);
+  // A hoisted function declaration does not see the !base narrowing above, so it takes this copy.
+  const lockBase: string = base;
+
+  // One owner bootstrap order (see the interface): the chat slot, then the jobd reader hold.
+  function bootstrapAndMigrateAsOwner(): Promise<MigrateResult>;
+  function bootstrapAndMigrateAsOwner<T>(body: () => Promise<T>): Promise<T>;
+  async function bootstrapAndMigrateAsOwner<T>(
+    body?: () => Promise<T>,
+  ): Promise<T | MigrateResult> {
+    await bootstrapChatDefinerForOwner();
+    return withJobDefinerLock(lockBase, async () => {
+      await bootstrapJobDefinerForOwner();
+      return body ? body() : runMigration();
+    });
+  }
+
   return {
     dbName,
     ownerRole,
@@ -1027,7 +1061,8 @@ export async function setupNonSuperuserOwnerContext(
     ownerPool,
     bootstrapJobDefinerForOwner,
     bootstrapChatDefinerForOwner,
-    runMigration: () => migrate(ownerUrl),
+    bootstrapAndMigrateAsOwner,
+    runMigration,
     useRuntimeRolePasswords,
     connectAsWorker,
     connectAsApp,
