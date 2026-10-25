@@ -17,11 +17,15 @@ const SKIP = new Set(["node_modules", "dist", ".next"]);
 const VITEST_DEFAULT = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 /** Every source file but a declaration file: a support module or a re-exported mutator that a parallel test calls is scanned too. */
 const SOURCE = /(?<!\.d)\.[cm]?[jt]sx?$/;
-/** Strings and template literals (kept) and comments (blanked, newlines kept). */
+/** Strings, template literals and regex literals (kept) and comments (blanked, newlines kept). A regex literal is a `/` after
+ * one of = ( [ , ; { : ! & | ? => or a keyword (so an ordinary division is not read as one) whose body opens no comment.
+ * ponytail: a division after an identifier spelled like a keyword (of, await, yield) or after a TypeScript non-null `!` is
+ * misread as a regex literal; the match is then kept, never blanked. A real tokenizer is the upgrade path. */
 const STRIP =
-  /"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\[\s\S]|[^\x60\\])*\x60|\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
-/** A membership keyword (group 1) or a role statement (group 2), then its region up to a semicolon or a backtick. */
-const STATEMENT = /\b(?:(GRANT|REVOKE)|(ALTER|CREATE|DROP)\s+(?:ROLE|USER|GROUP))\b([^;\x60]*)/gi;
+  /"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\[\s\S]|[^\x60\\])*\x60|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\/(?<=(?:[=([,;{:!&|?]|=>|(?<![\w$.])(?:return|typeof|case|void|yield|await|delete|throw|in|of|else|do))\s*\/)(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[a-z]*/g;
+/** A membership keyword (group 1) or a role statement (group 2), then its region (group 3) up to a semicolon (group 4 when it ends there) or a backtick. */
+const STATEMENT =
+  /\b(?:(GRANT|REVOKE)|(ALTER|CREATE|DROP)\s+(?:ROLE|USER|GROUP))\b([^;\x60]*)(?=(;)?)/gi;
 /** A role list, then TO or FROM: an object grant's ON breaks the list, so object grants stay out (row OBJ). */
 const MEMBERSHIP =
   /^\s+(?:(?:ADMIN|INHERIT|SET)\s+OPTION\s+FOR\s+)?(?:"[^"]*"|\$\{[^}]*\}|%[\d$*-]*[isl]|[\w$]+)(?:\s*,\s*(?:"[^"]*"|\$\{[^}]*\}|%[\d$*-]*[isl]|[\w$]+))*\s+(?:TO|FROM)\b/i;
@@ -89,9 +93,11 @@ const PINS: [string, string, number][] = [
 
 /** Every hit in one source: a statement's trimmed region or a mutator's name. */
 const scan = (source: string): string[] => {
-  const code = source.replace(STRIP, (m) => (m.startsWith("/") ? m.replace(/[^\n]+/g, " ") : m));
+  const code = source.replace(STRIP, (m) => (/^\/[/*]/.test(m) ? m.replace(/[^\n]+/g, " ") : m));
   const hits: string[] = [];
-  for (const [, membership, verb, region = ""] of code.matchAll(STATEMENT)) {
+  for (const [, membership, verb, region = "", semicolon] of code.matchAll(STATEMENT)) {
+    // A bare GRANT or REVOKE word before a semicolon is no statement; before a backtick or at the end it stays flagged.
+    if (membership && semicolon && !region.trim()) continue;
     const exempt = membership
       ? !MEMBERSHIP.test(region) && !SPLIT_LIST.test(region)
       : verb?.toUpperCase() === "ALTER" && DATABASE_SETTING.test(region);
@@ -119,6 +125,27 @@ describe("role-hiding isolation guard (L32)", () => {
     // A role list concatenated outside the literal cannot be read: flagged, not exempt as an object grant.
     const list = `" + "job_definer" + " TO app_worker")`;
     expect(scan(`await su.query("${"GR" + "ANT"} ${list};`)).toEqual([list]);
+  });
+
+  it("keeps a regex literal that holds a comment opener, so a later statement stays visible (P3-1a)", () => {
+    const region = "job_definer RENAME TO x";
+    const statement = ["ALTER", "ROLE", region].join(" ");
+    expect(scan(`const re = /[/*]/;\nawait su.query(\`${statement}\`);\n/* end */`)).toEqual([
+      region,
+    ]);
+  });
+
+  it("keeps a regex literal that holds a backtick, so a later comment is still blanked (P3-1b)", () => {
+    const statement = ["ALTER", "ROLE", "job_definer RENAME TO x"].join(" ");
+    expect(scan(`const re = /\x60/;\n// ${statement}\nconst s = \`ok\`;`)).toEqual([]);
+  });
+
+  it("skips a bare membership word before a semicolon, and only there (P3-3)", () => {
+    expect(scan("return gr" + "ant;")).toEqual([]);
+    // Before a backtick or at the end of the input it stays flagged, and so does a bare role statement before a semicolon.
+    expect(scan("\x60re" + "voke\x60")).toEqual([""]);
+    expect(scan("return gr" + "ant")).toEqual([""]);
+    expect(scan("DR" + "OP ROLE;")).toEqual([""]);
   });
 
   it("finds shared-role mutations only in the isolated test files", () => {
