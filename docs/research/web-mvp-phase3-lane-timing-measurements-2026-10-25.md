@@ -8,7 +8,7 @@ Status: bản ghi số đo làm đầu vào cho kế hoạch Phase 4 (lane L38).
 - Số theo PR: `gh pr list --repo maingocanh1702/plexco-app --state merged --limit 150 --json number,headRefName,title,createdAt,mergedAt,changedFiles,additions,deletions,files`, chạy 2026-10-25; giờ là UTC (hậu tố Z). Loại PR suy từ đường dẫn file: `docs-only` = mọi path dưới `docs/` hoặc là `*.md`; `code+migration` = có path dưới `packages/db/migrations/`; còn lại là `code`. Bảng từng PR tái tạo được bằng lệnh này nên file chỉ giữ tóm tắt.
 - Số từ hồ sơ chương trình ghi dạng `status/<file>:<dòng> (hồ sơ chương trình local, ngoài repo)`: các file đó nằm ngoài git, nên file này là bản lưu bền vững của các số đó. Nơi nào chỉ ghi `<file>:<dòng>` thì ý nghĩa như vậy. Giờ local là Asia/Saigon (+07) trừ khi ghi UTC.
 - "tính ở đây" = số do người đo tự tính từ số nguồn, kèm công thức; số không có nhãn là nguyên văn nguồn; "cận dưới" = chính nguồn nói đó là số thấp nhất.
-- Giờ merge dùng `mergedAt` của gh. Ở 4 lane đối chiếu được (L28, L18, L26, L30) hồ sơ local ghi giờ merge muộn hơn gh 5 đến 11 phút; ở L31 (#108) hai nguồn trùng nhau (hồ sơ local 10:14 tại `status/P3-S16-SUMMARY.md:39`, gh 10:14:57). Khi hai số khác nhau, mục 4 ghi cả hai.
+- Giờ merge dùng `mergedAt` của gh. Ở 4 lane đối chiếu được (L28, L18, L26, L30) hồ sơ local ghi giờ merge muộn hơn gh 5 đến 11 phút theo giây của gh (6 đến 12 theo phút ở bảng mục 4); ở L31 (#108) hai nguồn trùng nhau (hồ sơ local 10:14 tại `status/P3-S16-SUMMARY.md:39`, gh 10:14:57). Khi hai số khác nhau, mục 4 ghi cả hai.
 
 ## 2. PR #58-#113 (gh; trung vị và tổng tính ở đây)
 
@@ -33,7 +33,7 @@ Nguồn: `status/RUN-SUMMARY.md:229-253` (mục 7.1), `status/P3-S16-SUMMARY.md:
 - S1-S14: 66 run trên 19 hàng có run = 3.47 run mỗi hàng (tính ở đây). Từng hàng: S1 2 · S2 3 · S3 3 · S4 1 · S5 2 · S6 1 · S7 2 · P3-CI 0 · S8 3 · S9 9 (L11) · S10 4 · S11 5 (L14, 46 worker result) · S12 6 (L13a+L15) · S12a 2 · S12b 2 · S13 5 (L16) · S13a 5 (L13, 48 worker) · S13b 3 · S13c 2 · S14 6 (L17).
 - S15: L19 3 (#93) · L22 3 (#94) · L21 2 (#95) · L20 5 (#96) · L23 6 (#97) = 19 run cho 5 lane = 3.8 (tính ở đây). L17 có 6 run ở cả hai nguồn (S14 và S15): suy luận là cùng một lane nên chỉ tính một lần.
 - S16: L28 1 · L18 4 · L26 3 · L27 4 · L24 4 · L25 3 (hai PR) · L32 3 · L29 8 · L30 4 = 34 run cho 9 lane merge = 3.78 (tính ở đây); thêm L31 2 run lúc lane bị dừng, L34 5 run (`:95`), L35 ít nhất 3 run (`:86`).
-- Trần "6 run mỗi lane" chỉ là quy ước của conductor (`P3-S16-SUMMARY.md:191`): S9 dùng 9 (owner nâng trần từ 6 lên 9 lúc 2026-10-18 21:26), L29 dùng 8; dùng đủ 6: S12, S14, L23. Context đã hiệu chỉnh ở cuối các run có ghi số (`RUN-SUMMARY.md:245-252`, gồm cả run bị usage limit (429) giết): 202k đến 463k (tính ở đây).
+- Trần "6 run mỗi lane" chỉ là quy ước của conductor (`P3-S16-SUMMARY.md:191`): S9 dùng 9 (owner nâng trần từ 6 lên 9 lúc 2026-10-18 21:26), L29 dùng 8; dùng đủ 6: S12, S14, L23. Context ở cuối các run có ghi số: các hàng S12-S14 (`RUN-SUMMARY.md:245-252`, số đã hiệu chỉnh, gồm cả run bị usage limit (429) giết) là 202k đến 463k (tính ở đây); các hàng trước (`RUN-SUMMARY.md:233-244`) ghi 199k đến 596k (`RUN-SUMMARY.md:235`, `RUN-SUMMARY.md:241`: 473k và 596k là run bị 429 giết; 550k ở `RUN-SUMMARY.md:244` là ước lượng, `RUN-SUMMARY.md:289`).
 - Song song: wave A của S16 chạy 3 orchestrator cùng lúc (`status/CONDUCTOR-LOG.md:394`); L34 và L35 chạy cùng nhau ngày 10-24 (`P3-S16-carry-forward.md:86,95`).
 
 ## 4. Thời lượng spawn→merge đã ghi nhận (hồ sơ chương trình local, ngoài repo)
@@ -86,7 +86,7 @@ Nguồn #1-#6: `status/RUN-SUMMARY.md:257-265`; #7-#9: `status/P3-S15-SUMMARY.md
 
 | # | Khi (+07), lane | Chờ | Nội dung | Nguồn `status/<file>:<dòng>` |
 | --- | --- | --- | --- | --- |
-| 1 | 10-20 17:18, L16 run 3 | 48 phút (đến commit 18:06) | commit `apps/web/e2e/chat.spec.ts` bị từ chối; owner cho phép commit (7c6b07c) | `CONDUCTOR-LOG.md:319,321`, `RUN-SUMMARY.md:297` |
+| 1 | 10-20 17:18 (`CONDUCTOR-LOG.md:319`; `RUN-SUMMARY.md:297` ghi giờ từ chối 17:27), L16 run 3 | 39-48 phút (đến commit 18:06) | commit `apps/web/e2e/chat.spec.ts` bị từ chối; owner cho phép commit (7c6b07c) | `CONDUCTOR-LOG.md:319,321`, `RUN-SUMMARY.md:297` |
 | 2 | 10-21 22:40, L20 run 3 (RQ2) | 57 phút (đến 23:37) | nhãn "[Security Test Removal]"; owner chạy lệnh, commit ef01466 | `CONDUCTOR-LOG.md:373,376` |
 | 3 | 10-23 01:29, L32 run 2 | không ghi thời lượng | nhãn "[Interfere With Workloads]"; conductor trả lời, không cần owner | `CONDUCTOR-LOG.md:430`, `P3-S16-SUMMARY.md:171` |
 | 4 | 10-23 06:47, L31 run 2 | 24 giờ 47 phút (owner trả lời "A" lúc 10-24 07:34) | nhãn "Safety Bypass Flag"; L31 merge #108 lúc 10-24 10:14 | `CONDUCTOR-LOG.md:439,454`, `P3-S16-SUMMARY.md:39` |
