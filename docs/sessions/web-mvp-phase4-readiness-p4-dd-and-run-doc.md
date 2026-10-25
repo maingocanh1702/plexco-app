@@ -36,15 +36,15 @@
 | PF6 | 52 | no secret or Google OAuth provisioning | ADAPT (X8) | by pointer + PLAN §8 | DD-132; PLAN:164 |
 | PF7 | 52-53 | payments manual only; reversal owner-only | ADAPT (X8) | by pointer | DD-132 (D:3235-3237) |
 | PF8 | 53 | local-only | ADAPT (X8) | pointer PLAN §2 + §8 | PLAN:21; PLAN:164 |
-| RV1 | 54-56 | Codex waived; one independent Claude reviewer; findings with file:line; at most 3 rounds | ADAPT (X9) | + pre-push rounds count; area units of one role; committed content only; a rejected finding needs a Tier-B reason | DD-122 D4 (D:3407); P3-S16 practice |
+| RV1 | 54-56 | Codex waived; one independent Claude reviewer; findings with file:line; at most 3 rounds | ADAPT (X9) | + each finding also names the source that contradicts it; pre-push rounds count; area units of one role; committed content only; a rejected finding needs a Tier-B reason | DD-122 D4 (D:3407); P3-S16 practice |
 | RV2 | 56-57 | opus/max security reviewer for auth, permission, secret, money, external input | ADAPT (X9) | + public surface and SQL definers | DD-122 D4; P3-S16 practice |
 | RV3 | 57-58 | "fix applied after the final round, not re-reviewed (3-round cap)" | KEEP | - | R3:57 |
 | RV4 | 58 | PR body line "Codex waived by owner 2026-10-12; ..." | KEEP | - (X9: the conductor checks it) | DD-122 D4 |
 | MD1 | 59-61 | writer models by risk | KEEP | - | R3:59 |
-| MD2 | 61-62 | reviewer models by risk | KEEP | - | R3:61 |
-| MD3 | 62-63 | readiness reviewer = the lane code reviewer's model and effort | ADAPT (X6) | = the model and effort the lane block MODELS assigns (step 0 had KEEP) | conductor ruling RO-L58-1 (accepted deviation); R3:62 |
-| MD4 | 63-64 | orchestrators opus/max; clerk, verifier, summariser sonnet/high; never fable | ADAPT (X10) | source = the 2026-10-21 routing rule; + model passed explicitly, effort in the prompt; at most 2 live workers; one writer per worktree | owner routing rule 2026-10-21 |
-| S0a | 64 | the step-0 reviewer re-verifies live truth at the base | ADAPT (X10) | + the token rule's step-0 sentence verbatim (question list only, at most 60 tool calls) | owner token rule 2026-10-16 19:41 |
+| MD2 | 60-61 | reviewer models by risk | KEEP | - | R3:61 |
+| MD3 | 61-62 | readiness reviewer = the lane code reviewer's model and effort | ADAPT (X6) | = the model and effort the lane block MODELS assigns (step 0 had KEEP) | conductor ruling RO-L58-1 (accepted deviation); R3:62 |
+| MD4 | 62-63 | orchestrators opus/max; clerk, verifier, summariser sonnet/high; never fable | ADAPT (X10) | source = the 2026-10-21 routing rule (opus/max, never fable); + one fresh orchestrator per lane (PLAN:144); + model passed explicitly, effort in the prompt; at most 2 live workers; one writer per worktree (C1) | owner routing rule 2026-10-21; PLAN:144; Phase 4 common note C1 (conductor brief, outside the repo) |
+| S0a | 64 | the step-0 reviewer re-verifies live truth at the base | ADAPT (X10) | + "at the lane base" (R3: session base); + the token rule's step-0 sentence verbatim (question list only, at most 60 tool calls) | owner token rule 2026-10-16 19:41; PLAN:149 |
 | S0b | 65-66 | CODE_READY file; review:check:changed before the commit; first commit; then review:check | ADAPT | name web-mvp-phase4-readiness-<slug>.md; + machine classification, REVIEW_POLICY_VERSION, CLOSURE_MATRIX | CLAUDE.md readiness item 10 |
 | S0c | 67 | NOT_CODE_READY: commit nothing; an AWAIT item; other lanes continue | KEEP | - | R3:67 |
 | UP1 | 68 | defaults "default applied, pending owner sign-off"; never edit decisions.md | ADAPT (X1) | ruling (e) wording: readiness file + PR body; no consolidation lane promised; decisions.md only where FILE OWNERSHIP names the entry | conductor ruling RO-L58-1 (e); PLAN:38 |
