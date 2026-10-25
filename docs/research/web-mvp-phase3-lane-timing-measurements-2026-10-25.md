@@ -8,7 +8,7 @@ Status: bản ghi số đo làm đầu vào cho kế hoạch Phase 4 (lane L38).
 - Số theo PR: `gh pr list --repo maingocanh1702/plexco-app --state merged --limit 150 --json number,headRefName,title,createdAt,mergedAt,changedFiles,additions,deletions,files`, chạy 2026-10-25; giờ là UTC (hậu tố Z). Loại PR suy từ đường dẫn file: `docs-only` = mọi path dưới `docs/` hoặc là `*.md`; `code+migration` = có path dưới `packages/db/migrations/`; còn lại là `code`. Bảng từng PR tái tạo được bằng lệnh này nên file chỉ giữ tóm tắt.
 - Số từ hồ sơ chương trình ghi dạng `status/<file>:<dòng> (hồ sơ chương trình local, ngoài repo)`: các file đó nằm ngoài git, nên file này là bản lưu bền vững của các số đó. Nơi nào chỉ ghi `<file>:<dòng>` thì ý nghĩa như vậy. Giờ local là Asia/Saigon (+07) trừ khi ghi UTC.
 - "tính ở đây" = số do người đo tự tính từ số nguồn, kèm công thức; số không có nhãn là nguyên văn nguồn; "cận dưới" = chính nguồn nói đó là số thấp nhất.
-- Giờ merge dùng `mergedAt` của gh. Ở 3 lane đối chiếu được (L28, L18, L26) hồ sơ local ghi giờ merge muộn hơn gh 5 đến 11 phút; ở L31 (#108) hai nguồn trùng nhau (hồ sơ local 10:14 tại `status/P3-S16-SUMMARY.md:39`, gh 10:14:57). Khi hai số khác nhau, mục 4 ghi cả hai.
+- Giờ merge dùng `mergedAt` của gh. Ở 4 lane đối chiếu được (L28, L18, L26, L30) hồ sơ local ghi giờ merge muộn hơn gh 5 đến 11 phút; ở L31 (#108) hai nguồn trùng nhau (hồ sơ local 10:14 tại `status/P3-S16-SUMMARY.md:39`, gh 10:14:57). Khi hai số khác nhau, mục 4 ghi cả hai.
 
 ## 2. PR #58-#113 (gh; trung vị và tổng tính ở đây)
 
@@ -33,7 +33,7 @@ Nguồn: `status/RUN-SUMMARY.md:229-253` (mục 7.1), `status/P3-S16-SUMMARY.md:
 - S1-S14: 66 run trên 19 hàng có run = 3.47 run mỗi hàng (tính ở đây). Từng hàng: S1 2 · S2 3 · S3 3 · S4 1 · S5 2 · S6 1 · S7 2 · P3-CI 0 · S8 3 · S9 9 (L11) · S10 4 · S11 5 (L14, 46 worker result) · S12 6 (L13a+L15) · S12a 2 · S12b 2 · S13 5 (L16) · S13a 5 (L13, 48 worker) · S13b 3 · S13c 2 · S14 6 (L17).
 - S15: L19 3 (#93) · L22 3 (#94) · L21 2 (#95) · L20 5 (#96) · L23 6 (#97) = 19 run cho 5 lane = 3.8 (tính ở đây). L17 có 6 run ở cả hai nguồn (S14 và S15): suy luận là cùng một lane nên chỉ tính một lần.
 - S16: L28 1 · L18 4 · L26 3 · L27 4 · L24 4 · L25 3 (hai PR) · L32 3 · L29 8 · L30 4 = 34 run cho 9 lane merge = 3.78 (tính ở đây); thêm L31 2 run lúc lane bị dừng, L34 5 run (`:95`), L35 ít nhất 3 run (`:86`).
-- Trần "6 run mỗi lane" chỉ là quy ước của conductor (`P3-S16-SUMMARY.md:191`): S9 dùng 9 (owner nâng trần từ 6 lên 9 lúc 2026-10-18 21:26), L29 dùng 8; dùng đủ 6: S12, S14, L23. Orchestrator trả lại ở 311-384k context đã hiệu chỉnh (`RUN-SUMMARY.md:245-252`).
+- Trần "6 run mỗi lane" chỉ là quy ước của conductor (`P3-S16-SUMMARY.md:191`): S9 dùng 9 (owner nâng trần từ 6 lên 9 lúc 2026-10-18 21:26), L29 dùng 8; dùng đủ 6: S12, S14, L23. Context đã hiệu chỉnh ở cuối các run có ghi số (`RUN-SUMMARY.md:245-252`, gồm cả run bị usage limit (429) giết): 202k đến 463k (tính ở đây).
 - Song song: wave A của S16 chạy 3 orchestrator cùng lúc (`status/CONDUCTOR-LOG.md:394`); L34 và L35 chạy cùng nhau ngày 10-24 (`P3-S16-carry-forward.md:86,95`).
 
 ## 4. Thời lượng spawn→merge đã ghi nhận (hồ sơ chương trình local, ngoài repo)
@@ -45,7 +45,7 @@ Nguồn: `status/RUN-SUMMARY.md:229-253` (mục 7.1), `status/P3-S16-SUMMARY.md:
 | L28 (#98) | 10-22 11:02 | gh merge 11:44 | 42 phút (hồ sơ local ghi 11:51 = 49 phút) | 1 | `CONDUCTOR-LOG.md:394`, `P3-S16-SUMMARY.md:66-68` |
 | L18 (#99) | 10-22 11:02 | gh merge 14:01 | 2 giờ 59 phút (hồ sơ local ghi 14:07 = 3 giờ 5 phút) | 4 | như trên |
 | L26 (#100) | 10-22 11:02 | gh merge 14:31 | 3 giờ 29 phút (hồ sơ local ghi 14:43 = 3 giờ 41 phút) | 3 | như trên |
-| L30 (#107) | 10-23 21:59 | gh merge 10-24 04:56 | 6 giờ 57 phút | 4 | `CONDUCTOR-LOG.md:446` |
+| L30 (#107) | 10-23 21:59 | gh merge 10-24 04:56 | 6 giờ 57 phút (hồ sơ local ghi 05:03 = 7 giờ 4 phút, `P3-S16-SUMMARY.md:75`) | 4 | `CONDUCTOR-LOG.md:446` |
 
 - Các cửa sổ spawn→merge trên còn gồm usage limit #1 (11 phút) với L14 và #10 (khoảng 20 phút) với L18 và L26 (tính ở đây từ giờ ở mục 5); L28 và L30 không chứa lần dừng nào đã ghi nhận.
 - S16 từ lệnh của owner 10-22 10:56 (`CONDUCTOR-LOG.md:393`) đến merge #107 (gh): 42 giờ 0 phút cho 9 lane merge; trừ lần mất mạng 10 giờ 54 phút (mục 6) còn 31 giờ 6 phút (tính ở đây). Cùng cửa sổ có usage limit #10-#12 và mất đăng nhập 1.
