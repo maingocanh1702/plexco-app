@@ -49,7 +49,7 @@
 | S0c | 67 | NOT_CODE_READY: commit nothing; an AWAIT item; other lanes continue | KEEP | - | R3:67 |
 | UP1 | 68 | defaults "default applied, pending owner sign-off"; never edit decisions.md | ADAPT (X1) | ruling (e) wording: readiness file + PR body; no consolidation lane promised; decisions.md only where FILE OWNERSHIP names the entry | conductor ruling RO-L58-1 (e); PLAN:38 |
 | UP1x | 69 | L0 records signatures; L17 consolidates the defaults | DROP | - | Phase 3 lanes: DD-137 (D:3093), DD-138 (D:2290) |
-| BU1 | 70-71 | B3 about 300 LOC, 3 modules, at most 1 migration; exception at step 0 | ADAPT | + B3 measured after every writer; a crossing is a ruling request before the next writer; run caps per PLAN | docs/standards/review-code-readiness-gate.md:159; P3-S16 practice |
+| BU1 | 70-71 | B3 about 300 LOC, 3 modules, at most 1 migration; exception at step 0 | ADAPT | + B3 measured after every writer; a crossing is a ruling request before the next writer; run caps per PLAN | docs/standards/review-code-readiness-gate.md:159; PLAN:77 (run-cap ceiling); P3-S16 practice |
 | EN1 | 72-73 | dispatch only locally; "Committed defaults and .env.example stay false" | ADAPT (X7) | both lines replaced by PLAN:122 byte for byte (480 bytes) | owner 2026-10-26 Q8 (DD-150); DD-141 (D:2222); .env.example:91, :167 |
 | EV1 | 74 | one Postgres + one e2e port = one lock | ADAPT (X4) | + the lock and its runner named as conductor-side, outside the repo, the rule stated in the line | R3:74; P3-S16 practice |
 | EV1x | 74 | L1's parallel-run exception | DROP | - | R3:74 (Phase 3 lane L1) |
@@ -58,19 +58,19 @@
 | EV4 | 76-77 | `pnpm db:bootstrap` before 0054 on an older DB | KEEP | - | R3:76; package.json:25 |
 | EV5 | 77 | no host psql | KEEP | - | R3:77 |
 | EV6 | 77-79 | plexco_smoke key file; a lost key = recreate only plexco_smoke | KEEP | - | R3:77 |
-| EV7 | 79-80 | re-run the role password step after a full run | KEEP | - | R3:79; the app_worker clash is still listed (conductor flake list, outside the repo) |
-| EV8 | 80 | always NODE_ENV=test | KEEP | - | R3:80 |
+| EV7 | 78-79 | re-run the role password step after a full run | KEEP | - | R3:79; the app_worker clash is still listed (conductor flake list, outside the repo) |
+| EV8 | 79 | always NODE_ENV=test | KEEP | - | R3:79 |
 | EV9 | 80 | sandbox off for fetch, push, gh, worktree add, Docker, port binding | KEEP | - | R3:80 |
 | KF1 | 81 | rerun once; a second red is real | ADAPT (X3, X4) | the single known-flake list (status/conductor-scripts/clerk-flake-list.txt, outside the repo): one rerun of failed jobs per head for a listed flake; a second red or an unlisted red is real | R3:81; L18 (PR #99) |
 | KF1x | 81-82 | "tuple concurrently updated" | DROP | - | retired 2026-10-24: fixed by L18 (PR #99) |
 | GT1 | 83-84 | worktree path; clean tree; no index.lock | ADAPT | + created from the explicit base SHA, recorded in the report | R3:83; P3-S16 practice |
-| GT2 | 84-85 | writers commit and do not push | ADAPT | + one push of the final head; a second only for a real CI failure, labelled | R3:84; P3-S16 practice |
+| GT2 | 84-85 | writers commit and do not push | ADAPT | + one push of the final head; a second only for a real CI failure, labelled; CI runs once per push, through the pull_request event only | R3:84; .github/workflows/ci.yml:4-5; P3-S16 practice |
 | GT3 | 85 | no rebase of a pushed branch, no force-push, no push to main | KEEP | - | R3:85 |
 | GT4 | 85-86 | never merge or close PRs, delete branches, prune or remove worktrees | KEEP | - | R3:85 |
 | GT5 | 86-87 | catch-up by `git merge --no-ff`; a semantic conflict is reported | KEEP | - | R3:86 |
 | GT6 | 87 | conventional commits, no AI references | ADAPT | + PR bodies too, checked before the push | R3:87; P3-S16 practice |
-| GT7 | 87 | migrations append-only; next number measured at the base | ADAPT | tail 0071 at B; slots 0072 (L41) and 0073 (L46); an unplanned one = a slot ruling; one migration at a time against the test DB | PLAN:57, :62; DD-150 |
-| VF1 | 88-90 | VERIFY commands, output through tail -40 | ADAPT (X10) | + the token rule's output sentence verbatim; `pnpm kit:check` for a new scripts/ file; CI-only patterns; NOT RUN with a reason, never weakened | owner token rule 2026-10-16 19:41; package.json:11 |
+| GT7 | 87 | migrations append-only; next number measured at the base | ADAPT | tail 0071 at B; slots 0072 (L41) and 0073 (L46); an unplanned one = a slot ruling and a base that contains every earlier migration lane's merge; the migration-tail pin sites listed separately in the PR body; one migration at a time against the test DB | PLAN:57, :62, :148; DD-150; P3-S16 practice |
+| VF1 | 88-90 | VERIFY commands, output through tail -40 | ADAPT (X10) | + the token rule's output sentence verbatim; a red validator is a hard stop; `pnpm kit:check` for a new scripts/ file, its record in FILES IN SCOPE; CI-only patterns; NOT RUN with a reason, never weakened | owner token rule 2026-10-16 19:41; CLAUDE.md readiness item 10; package.json:11; Phase 4 common notes C6, C10, C11 and C12 (conductor brief, outside the repo) |
 | VF2 | 90 | golden path only locally | KEEP | - | apps/web/e2e/golden-path.config.ts |
 | CI1 | 91 | "verify" passed; other checks pass or skipping | ADAPT (X5, X9) | on a PR: verify, e2e-web, Semgrep CE and the OSV dependency diff pass, the OSV full scan skipped; on main the full scan runs and a red is real | CI 40226121313, Security 40226121651 (both on B) |
 | CI1x | 91 | the OSV full scan is ignored (red on main) | DROP | - | Security 40226121651 green on B; owner 2026-10-22 item 4 |
@@ -83,7 +83,7 @@
 | N4 | - | LEADS: a lead is a lead | NEW (X9) | open the file, quote the line, follow the file when it differs, report the difference | lane block L58 lead; L37 (PR #113) |
 | N5 | - | LANGUAGE | NEW (X2) | agent-facing English, owner-facing Vietnamese, every text block English; the check = the CLAUDE.md awk piped into grep -E under a UTF-8 locale with a passing control | CLAUDE.md:105, :133; conductor ruling RO-L58-1 (f) |
 | N6 | - | DOCS LANES | NEW (X9) | docs-lane rules (Phase 4 common note C17, conductor brief, outside the repo), e.g. ownership by named entry, dated lines kept, hand flips in the L37 form | L33 (PR #109), L36 (PR #112), L37 (PR #113) |
-| N7 | - | CONTEXT | NEW (X10, X4) | the token rule verbatim: stop at about 200k context or 80 tool calls, commit or record, a handoff in the conductor's notes (outside the repo), a FRESH worker, none past about 250k | owner token rule 2026-10-16 19:41; owner resume rule 2026-10-16 20:40 |
+| N7 | - | CONTEXT | NEW (X10, X4) | the token rule verbatim: stop at about 200k context or 80 tool calls, commit or record, a handoff in the conductor's notes (outside the repo), a FRESH worker, none past about 250k; + a LEAN brief per unit; an agent stopped by a 429, a network error or "Not logged in" does nothing and the conductor resumes it; the stop notice at about 185k and the hard stop before 240k; the agent id from the conductor's agent-status.sh (outside the repo), never written into the report before its spawn result returned; the orchestrator's hand-back at about 340k corrected context or 20 worker results | owner token rule 2026-10-16 19:41; owner resume rule 2026-10-16 20:40; Phase 4 common note C8 (conductor brief, outside the repo) |
 | N8 | - | TOOLS | NEW (X10) | the tool-hygiene rule verbatim (no bash -c or sh -c; scripts from files) + zsh -c, python -c, node -e, perl -e; the Bash tool is zsh | owner tool-hygiene rule 2026-10-16 20:46 |
 - **11 Verdict.** CODE_READY: every GOAL item of lane block L58 has an in-repo source (GOAL 1: items 2 and 4 W1 with the ruling readings of item 5; GOAL 2: items 2 and 4 W1; GOAL 3: items 4 W2, 4 W3 and 10; GOAL 4: item 3), no planned wording changes what a DD decides, every reading carries its label, and no question in scope is open.
 ```text
