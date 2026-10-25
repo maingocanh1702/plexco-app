@@ -746,26 +746,12 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       inherit: false,
     });
     try {
-      // codex round-05 [P1]: bootstrapChatDefinerForOwner now acquires and holds the chat lock
-      // itself, internally, through ctx.teardown() (see test-harness.ts's own comment) — nesting
-      // withChatDefinerLock here would deadlock (two different connections each waiting on the
-      // same session-scoped advisory lock the other holds). job_definer has no such internal hold
-      // (its own bootstrap never revokes an existing member), so withJobDefinerLock still wraps
-      // explicitly here.
-      //
-      // codex round-06 [P1] regression fix: round-05's own fix above narrowed withJobDefinerLock to
-      // wrap ONLY bootstrapJobDefinerForOwner(), releasing it before bootstrapChatDefinerForOwner()
-      // and runMigration() ran — but runMigration() reaches migration 0022, which ASSERTS (never
-      // creates) job_definer, so it still needs that lock's protection against a concurrent
-      // JCL-2/JCL-3 test hiding/corrupting job_definer. withJobDefinerLock (key 0x6a6f6264 "jobd")
-      // and the chat lock bootstrapChatDefinerForOwner acquires internally (key 0x63686164 "chad")
-      // are DIFFERENT advisory-lock keys, so wrapping the whole sequence in withJobDefinerLock does
-      // NOT reintroduce round-05's own deadlock — only nesting the SAME key twice deadlocks.
-      const res = await withJobDefinerLock(BASE!, async () => {
-        await ctx.bootstrapJobDefinerForOwner();
-        await ctx.bootstrapChatDefinerForOwner();
-        return ctx.runMigration();
-      });
+      // bootstrapAndMigrateAsOwner owns the lock order: it takes the chat slot first (held until
+      // ctx.teardown()), then ONE withJobDefinerLock hold around the job_definer bootstrap and
+      // runMigration(), which reaches 0022 (asserts job_definer) and so needs that hold against a
+      // concurrent JCL-2/JCL-3 hiding job_definer. Waiting for the chat slot while holding jobd
+      // could close a cycle with a slot holder whose jobd request queues behind a waiting breaker.
+      const res = await ctx.bootstrapAndMigrateAsOwner();
       expect(res.applied[res.applied.length - 1]).toBe("0071_zalo_dm_promotion_start_definer.sql");
 
       const worker = await ctx.connectAsWorker();
@@ -923,13 +909,9 @@ describe("0037 tenant_provision / tenant_ids_for_person self-scope under a NOBYP
     /** superuser connection to THIS test's database (ctx.superuser is on the base one) */
     let suDb: pg.Client | undefined;
     try {
-      // Same lock discipline as BR-6 above: withJobDefinerLock wraps the whole sequence because
-      // runMigration() reaches 0022 (asserts job_definer); the chat bootstrap holds its own key.
-      await withJobDefinerLock(BASE!, async () => {
-        await ctx.bootstrapJobDefinerForOwner();
-        await ctx.bootstrapChatDefinerForOwner();
-        return ctx.runMigration();
-      });
+      // Same order as BR-6 above: the chat slot first, then ONE jobd hold around the job_definer
+      // bootstrap and runMigration(), which reaches 0022 (asserts job_definer).
+      await ctx.bootstrapAndMigrateAsOwner();
 
       // Prove the owner really is what this test claims — otherwise the assertions below pass
       // vacuously (superuser-owned objects bypass RLS and the whole point is lost).
@@ -3366,8 +3348,8 @@ describe.each([
     { index: 0, phase: "pre-grant" },
     { index: 1, phase: "post-grant" },
   ])("$phase guard tolerates an unrelated role dropped after its snapshot", async ({ index }) => {
-    await withJobDefinerLock(BASE!, () =>
-      withChatDefinerLock(BASE!, () =>
+    await withChatDefinerLock(BASE!, () =>
+      withJobDefinerLock(BASE!, () =>
         hideRealChatDefiner(admin, async () => {
           await bootstrapChatDefiner(admin);
           const source = await readFile(sqlPath, "utf8");
@@ -4334,11 +4316,7 @@ describe("0039 definer search_path + tenant assert, link_codes DD-50 shape, ledg
     /** superuser connection to THIS test's database (ctx.superuser is on the base one) */
     let suDb: pg.Client | undefined;
     try {
-      await withJobDefinerLock(BASE!, async () => {
-        await ctx.bootstrapJobDefinerForOwner();
-        await ctx.bootstrapChatDefinerForOwner();
-        return ctx.runMigration();
-      });
+      await ctx.bootstrapAndMigrateAsOwner();
       await ctx.useRuntimeRolePasswords();
       appClient = await connect(url(ctx.dbName, "app", ROLE_PW.app));
       suDb = await connect(url(ctx.dbName));
@@ -4462,11 +4440,7 @@ describe("0044 session_guest_notes: allow_player_invite / invited_by_person_id /
     let appClient2: pg.Client | undefined;
     let suDb: pg.Client | undefined;
     try {
-      await withJobDefinerLock(BASE!, async () => {
-        await ctx.bootstrapJobDefinerForOwner();
-        await ctx.bootstrapChatDefinerForOwner();
-        return ctx.runMigration();
-      });
+      await ctx.bootstrapAndMigrateAsOwner();
       await ctx.useRuntimeRolePasswords();
       appClient = await connect(url(ctx.dbName, "app", ROLE_PW.app));
       suDb = await connect(url(ctx.dbName));
@@ -4674,9 +4648,7 @@ describe("0045 guest-note tenant context", () => {
     try {
       readdirImpl = async (dir) =>
         (await originalReaddir(dir)).filter((file) => file <= migrationFile);
-      await withJobDefinerLock(BASE!, async () => {
-        await ctx.bootstrapJobDefinerForOwner();
-        await ctx.bootstrapChatDefinerForOwner();
+      await ctx.bootstrapAndMigrateAsOwner(async () => {
         const first = await ctx.runMigration();
         expect(first.applied).toHaveLength(46);
         expect(first.applied.at(-1)).toBe(migrationFile);
@@ -4700,11 +4672,10 @@ describe("0045 guest-note tenant context", () => {
     try {
       readdirImpl = async (dir) =>
         (await originalDirectory(dir)).filter((file) => file <= migrationFile);
-      // Hold job outer/chat inner across both migration passes; reacquiring job while
-      // this fixture retains chat could deadlock another file waiting for chat.
-      await withJobDefinerLock(BASE!, async () => {
-        await ctx.bootstrapJobDefinerForOwner();
-        await ctx.bootstrapChatDefinerForOwner();
+      // bootstrapAndMigrateAsOwner takes the chat slot first, then ONE jobd hold across both
+      // migration passes below; reacquiring jobd inside it could queue behind a breaker that
+      // waits on this hold.
+      await ctx.bootstrapAndMigrateAsOwner(async () => {
         const originalReaddir = readdirImpl;
         try {
           readdirImpl = async (dir) =>
@@ -5099,9 +5070,7 @@ describe("0046 bounded rate-limit cleanup", () => {
         (await originalReaddir(dir)).filter((file) => file <= migrationFile);
       try {
         readdirImpl = through0046;
-        await withJobDefinerLock(BASE!, async () => {
-          await ctx.bootstrapJobDefinerForOwner();
-          await ctx.bootstrapChatDefinerForOwner();
+        await ctx.bootstrapAndMigrateAsOwner(async () => {
           expect(
             (
               await ctx.ownerPool.query(
