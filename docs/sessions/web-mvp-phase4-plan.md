@@ -8,15 +8,15 @@
 
 ## 1. Tóm tắt
 
-- Phase 4 làm phần owner đã gắn nhãn Phase 4, chỉ local: **C1** trang chia sẻ `/session/<slug>` (L39), **C2** player tự rời trên web (L40), **C3** phần chuẩn bị bảng mã lỗi Zalo với fake (L47; phần bot thật chờ token của owner), **C4** đồng bộ spec theo DD-138..DD-143 (L51, L52), các follow-up R1-5 của luật tên (L41-L43), và gia cố `zalo_dm`/outbox trước khi owner bật thật (L44-L46).
+- Phase 4 làm phần owner đã gắn nhãn Phase 4, chỉ local: **C1** trang chia sẻ `/session/<slug>` (L39), **C2** player tự rời trên web (L40), **C3** phần chuẩn bị bảng mã lỗi Zalo với fake (L47; phần bot thật chờ token của owner), **C4** đồng bộ spec theo các dòng "Spec follow-up" của DD-138 và DD-139..DD-142 (L51, L52), các follow-up R1-5 của luật tên (L41-L43), và gia cố `zalo_dm`/outbox trước khi owner bật thật (L44-L46).
 - Thêm: theo dõi advisory phụ thuộc có hạn (L54, trong cửa sổ 2026-12-01..2026-12-14, trước hạn xem lại `braces`), gia cố quyền và tiền (L48 kiểm lại quyền trong transaction, L49 giữ `commandId` qua reload), harness proof public (L50), dọn test DB (L55), docs vận hành (L53).
-- 17 lane chắc chắn (L39-L55) + 2 lane có điều kiện (L56, L57: chỉ chạy nếu owner chọn khác default ở Q2, Q3). Migration chắc chắn: 0072 (L41) rồi 0073 (L46); 0074/0075 chỉ khi lane có điều kiện chạy. Mỗi lane = một branch + một worktree + một writer = một PR, tối đa một migration.
+- 17 lane chắc chắn (L39-L55) = 16 lane chạy trong 6 sóng + L54 chạy một mình trong cửa sổ 2026-12-01..2026-12-14, ngoài 6 sóng (thêm 3-7 giờ, tính riêng); L56, L57 chỉ chạy nếu owner chọn khác default ở Q2, Q3 (mỗi lane thêm khoảng 7.7 giờ và một sóng). Migration chắc chắn: 0072 (L41) rồi 0073 (L46); 0074/0075 chỉ khi lane có điều kiện chạy. Mỗi lane = một branch + một worktree + một writer = một PR, tối đa một migration.
 - Ước lượng: 44-57 giờ chạy cho 16 lane trong 6 sóng, đã gồm usage limit (1.8-2.4 ngày nếu chạy liên tục); kiểm chéo theo nhịp P3-S16: 55-75 giờ lịch. L54 thêm 3-7 giờ trong tháng 12; mỗi lane có điều kiện thêm khoảng 7.7 giờ. Cách tính và nguồn ở §6; không hứa lịch.
-- **C5** và job Pro→Free: không thành lane (billing ngoài MVP, không có writer để gắn vào; bằng chứng ở §3); retention đã chốt 1 tháng, chỉnh được. Chỉ còn câu Q1.
+- **C5** và job Pro→Free: không thành lane; retention đã chốt 1 tháng, chỉnh được. Chỉ còn câu Q1. Mọi chỗ plan khác danh sách khởi điểm của prompt Phase 4, kèm nguồn: cuối §2.
 - Việc chỉ owner làm (§8): token bot Zalo thật + bật projector, người dùng thật, các điểm pháp lý, PR #50/DigitalOcean. Không lane nào làm hay phải chờ các việc đó.
-- 9 câu hỏi (§5); 3 default **USER-VISIBLE** (Q4, Q5, Q7).
-- **Đề xuất: duyệt kế hoạch như đã viết và trả lời Q1-Q9 theo default.**
-- **Điều kiện resume (nhị phân):** chỉ tin nhắn VIẾT "Phase 4 plan approved" của owner, kèm trả lời từng câu (ví dụ "Q1-Q9 default", hoặc override từng câu), mới khởi động Phase 4. Tin nhắn đó cho phép merge PR này nếu owner chưa merge; sau đó mới ghi DD cho các câu trả lời, viết RUN doc + lane prompt, và lane đầu tiên chỉ bắt đầu trên `main` đã chứa PR này. Merge PR này mà không có tin nhắn đó không ký gì, không khởi động gì.
+- 10 câu hỏi (§5); 4 default **USER-VISIBLE** (Q4, Q5, Q7, Q10).
+- **Đề xuất: duyệt kế hoạch như đã viết và trả lời Q1-Q10 theo default.**
+- **Điều kiện resume (nhị phân):** chỉ tin nhắn VIẾT "Phase 4 plan approved" của owner, kèm trả lời từng câu (ví dụ "Q1-Q10 default", hoặc override từng câu), mới khởi động Phase 4. Tin nhắn đó cho phép merge PR này nếu owner chưa merge; sau đó mới ghi DD cho các câu trả lời, viết RUN doc + lane prompt, và lane đầu tiên chỉ bắt đầu trên `main` đã chứa PR này. Merge PR này mà không có tin nhắn đó không ký gì, không khởi động gì.
 
 ## 2. Phạm vi, baseline và luật local-first
 
@@ -38,6 +38,16 @@
 - Nhãn nguồn: default của plan = "default applied, pending owner sign-off"; lựa chọn của owner ngày 2026-10-24 giữ nhãn "accepted under the owner's delegation of 2026-10-24 (assistant review)" (DD-149); DD-145 là bảng duy nhất owner ký từng dòng.
 - Số dòng `docs/standards/decisions.md` và `docs/autopilot-backlog.md` trong plan đo tại baseline; PR sau chèn dòng sẽ làm lệch.
 
+### Chỗ plan khác danh sách khởi điểm của prompt
+
+Danh sách khởi điểm là mục 1 và 2 trong prompt Phase 4 của owner. Mỗi chỗ plan làm khác, kèm nguồn:
+
+- **Job Pro→Free theo DD-142 và C5 không thành lane.** DD-142 ghi "Không có lane: B4 là 'a decision-record change plus backlog rows'" (`docs/standards/decisions.md:2198`); mục 8 của owner ngày 2026-10-22 ghi "Billing is not in the MVP: this is the decision record plus the backlog row (C5) only" (`docs/standards/decisions.md:2210`). Bảng có nhưng không có writer: `packages/db/schema.ts:1835-1853` (`subscriptions` có past_due, `subscription_invoices` có overdue); câu INSERT duy nhất vào `subscription_invoices` ngoài migration là một test (`packages/db/src/rls-invariants.test.ts:4028`). C5 chỉ còn câu Q1, đóng dòng quyết định.
+- **Retention là 1 tháng, chỉnh được bằng một giá trị config**, không phải "owner quyết 1-3 tháng sau" (mục 8 của owner ngày 2026-10-22, `docs/standards/decisions.md:2210`). Hook retention cũng không thành lane: chưa có giá trị config nào để gắn vào. Lệnh đo: `git grep -n -i -E 'downgrade|pro.to.free|late.invoice' -- apps packages .env.example ':!*.test.*' ':!packages/db/migrations/*'` ra 2 hit, cả hai là comment về race (`packages/db/src/capability.ts:173`, `packages/db/src/capability.ts:180`); `git grep -c -i retention -- .env.example` ra 0; các hit "retention" khác trong code là của bảng khác (ví dụ `packages/db/schema.ts:244`). Job sẽ chạy trên 0 hàng, còn một hằng config không ai gọi là dead code ⇒ thành Q1.
+- **Zalo:** prompt xếp "real Zalo bot token and deliverer" cho owner; deliverer đã có (`apps/bot/src/projectors/zalo-dm.ts:155`, `apps/bot/src/projectors/zalo-dm.ts:190`), nên việc chỉ owner làm là token bot thật + bật projector (§8 bước 1, 2); agent chỉ chuẩn bị bảng mã lỗi với fake (L47).
+- **Theo dõi advisory "định kỳ"** thành một lane có ngày, L54 (cửa sổ 2026-12-01..2026-12-14), cộng trigger `schedule:` hằng tuần của Q6 và luật mở lại lane (ghi chú L54 ở §3). DD-149 mục 5 yêu cầu xem lại `braces` trước 2026-12-14 (`docs/standards/decisions.md:1774`).
+- **C4 thành hai lane (L51, L52)** dù mục C ngày 2026-10-21 của owner ghi "one docs lane to sync the DD-138 spec follow-ups" (`docs/autopilot-backlog.md:6593`). Lý do: scope của dòng là 19 file ở hai vùng spec, 9 file BE tech và 10 file product, FE, UX (`docs/autopilot-backlog.md:6587`); tách theo vùng để mỗi lane chỉ đọc một vùng và hai lane chạy ở hai sóng khác nhau (sóng 1, sóng 2), mỗi lane trong trần 3 run của lane docs. Nhãn: default applied, pending owner sign-off.
+
 ## 3. Bảng lane
 
 | Lane | Dòng backlog | Phạm vi | File / vùng | Test nghiệm thu | Size (ước đoán) | Phụ thuộc | Migration | Run cap |
@@ -51,10 +61,10 @@
 | L45 p4-zalo-dm-routable-list-and-cycle-tests (P2) | `zalo-dm-routable-event-types-one-list`, `bot-zalo-dm-cycle-tests-isolation-and-cells`, `owner-cli-pg-client-inside-try`, `bot-queues-outbox-schedule-default-comment` | một danh sách event type route được, dùng chung cho dispatcher và CLI; cô lập cell test cycle; CLI owner mở client Postgres trong `try`; sửa comment default của lịch | `apps/bot/src/dispatcher.ts`, `scripts/outbox-projector-enable.mjs`, `apps/bot/src/projector-registry.test.ts`, `packages/db/src/zalo-dm-delivery.test.ts`, CLI replay (step 0 định vị), `apps/bot/src/queues.ts:12` | test drift: danh sách khớp CHECK của 0056; mỗi cell chỉ đụng event id của nó (chạy hai lần liền xanh); lỗi kết nối ⇒ client đóng, exit khác 0; comment khớp default true | ~230 LOC · 3 module | L44 | không | 4 |
 | L46 p4-outbox-lease-clock (P1) | `projector-delivery-batch-lease-clock-consistency` | lease của batch giao dùng một đồng hồ nhất quán (dư của review L24) | SQL definer của outbox (một migration); `apps/bot/src/dispatcher.ts` nếu step 0 thấy cần | lease không hết hạn sớm trong transaction dài; test migration; test dispatcher xanh | ~150 LOC · 2 module (step 0 đọc cả dòng) | L45; L41 (thứ tự số) | 0073 | 6 |
 | L47 p4-zalo-error-mapping-fakes (P2) | `zalo-outbound-error-mapping-real-bot-verification` (chỉ nửa fake, C3), `zalo-connect-bot-revoked-error-mapping` | ma trận lỗi Zalo chạy với server fake; mẫu evidence cho lần chạy bot thật của owner; bot bị thu hồi lúc connect ⇒ mã của Q5 | test client gửi của `apps/bot` (step 0 định vị), `apps/web/app/api/onboarding/zalo/connect/route.ts`, `packages/db/src/zalo-ingress.ts`, file evidence mới dưới docs/sessions/ | mỗi lớp 401, 429, 5xx, 4xx khác, 2xx `ok:false`, payload sai hoặc quá cỡ, timeout, lỗi mạng ⇒ kết quả đã định (retry, DLQ hay noop) với fake; route connect trả mã của Q5 | ~200 LOC · 3 module | L45 | không | 4 |
-| L48 p4-session-commands-authz-recheck (P1) | `session-commands-actor-recheck-under-lock` | kiểm lại quyền của actor trong transaction của mỗi lệnh session | `packages/db/src/session-service.ts` (lời gọi trong tx ở `packages/db/src/session-service.ts:511`) | actor mất quyền giữa lúc route kiểm và lúc lệnh khoá hàng ⇒ lệnh bị từ chối, không ghi gì; hoặc step 0 chứng minh mọi lệnh đã kiểm dưới khoá ⇒ đóng dòng bằng bằng chứng, không code | 0-200 LOC · 1 module | không | không | 6 |
-| L49 p4-web-command-id-persistence (P2, tiền) | `web-command-id-persistence-and-conflict-copy`, `web-api-client-timeout-and-refresh-notice-focus` | giữ `commandId` qua reload cho lệnh tiền đang chờ (trả một phần, thêm theo tên); timeout cho client API, focus cho thông báo | client API và form tiền của `apps/web` (step 0 định vị) | reload rồi gửi lại ⇒ server dedupe, không ghi tiền hai lần (e2e); client API hết giờ ⇒ thông báo t(vi, en) nhận focus; security round | ~200 LOC · 2 module | L40 | không | 6 |
+| L48 p4-session-commands-authz-recheck (P1) | `session-commands-actor-recheck-under-lock` | kiểm lại quyền của actor trong transaction của mỗi lệnh session | `packages/db/src/session-service.ts`, `apps/web/lib/session-command-route.ts` (scope của dòng, `docs/autopilot-backlog.md:5749`; ví dụ kiểm trong tx đã có: `authorizeTenantAction` ở `packages/db/src/session-service.ts:511`, là kiểm tenant, chưa phải kiểm actor) | actor mất quyền giữa lúc route kiểm và lúc lệnh khoá hàng ⇒ lệnh bị từ chối, không ghi gì; hoặc step 0 chứng minh mọi lệnh đã kiểm dưới khoá ⇒ đóng dòng bằng bằng chứng, không code | 0-200 LOC · 2 module | L42 (lane có thể sửa cùng file service; dòng ghi "serialize against any other lane touching session-service.ts", `docs/autopilot-backlog.md:5756`) | không | 6 |
+| L49 p4-web-command-id-persistence (P2, tiền) | `web-command-id-persistence-and-conflict-copy`, `web-api-client-timeout-and-refresh-notice-focus` | giữ `commandId` qua reload và Cancel cho lệnh tiền đang chờ (trả một phần, thêm theo tên); sửa copy t(vi, en) của `COMMAND_ID_CONFLICT`; timeout cho client API, focus cho thông báo | `apps/web/components/sessions/edit-session-view.tsx`, `apps/web/lib/session-command-route.ts`, `apps/web/lib/use-roster-command.ts` (scope của dòng, `docs/autopilot-backlog.md:6094`); client API (step 0 định vị) | reload hoặc Cancel rồi gửi lại ⇒ server dedupe, không ghi tiền hai lần (e2e); `COMMAND_ID_CONFLICT` hiện chuỗi t(vi, en) đã sửa; client API hết giờ ⇒ thông báo t(vi, en) nhận focus; security round | ~200 LOC · 2 module | L40, L48 (cùng `apps/web/lib/session-command-route.ts`) | không | 6 |
 | L50 p4-public-proof-harness (P2) | `public-card-proof-port-preflight-any-owner`, `public-card-proof-no-drop-line-exception-complete`, `local-smoke-step11-latest-result-depin` | harness proof public mà L35 dựng | `apps/web/e2e/public-card-hide-address-proof.sh`, `docs/runbooks/local-mvp-smoke.md` | script từ chối khi cổng bị giữ bởi tiến trình của bất kỳ user nào; danh sách ngoại lệ đủ; bước 11 của runbook trỏ kết quả đo mới nhất, không ghim số | ~55 dòng · 2 file | không | không | 4 |
-| L51 p4-docs-spec-sync-be (P2, docs) | `docs-sync-phase3-owner-decision-spec-follow-ups` (phần BE, C4), `docs-drift-sessions-fe-zalo-tech-readme-pins` | áp đúng các dòng "Spec follow-up" của DD-138..DD-143 vào spec BE | 9 file `docs/features/BE/feature_*_tech.md` mà dòng backlog liệt kê, ví dụ `docs/features/BE/feature_zalo_channel_tech.md:222`, `docs/features/BE/feature_user_settings_tech.md:212` | mỗi dòng follow-up có đúng một sửa tương ứng (checklist trong PR); `pnpm review:check` xanh; prettier | ~150 dòng · ~10 file | không | không | 3 |
+| L51 p4-docs-spec-sync-be (P2, docs) | `docs-sync-phase3-owner-decision-spec-follow-ups` (phần BE, C4), `docs-drift-sessions-fe-zalo-tech-readme-pins` | áp đúng các dòng "Spec follow-up" của DD-138 và DD-139..DD-142 vào spec BE (DD-143 không có, `docs/standards/decisions.md:2161`) | 9 file `docs/features/BE/feature_*_tech.md` mà dòng backlog liệt kê, ví dụ `docs/features/BE/feature_zalo_channel_tech.md:222`, `docs/features/BE/feature_user_settings_tech.md:212` | mỗi dòng follow-up có đúng một sửa tương ứng (checklist trong PR); `pnpm review:check` xanh; prettier | ~150 dòng · ~10 file | không | không | 3 |
 | L52 p4-docs-spec-sync-product-fe (P2, docs) | `docs-sync-phase3-owner-decision-spec-follow-ups` (phần product/FE, C4) | như L51 cho product, FE và UX sync | `docs/product/TDD.md:49`, `docs/product/BRD.md`, `docs/product/PRD.md`, `docs/product/ROADMAP.md`, 5 file `docs/features/FE/feature_*.md`, `docs/channels/web/ux-sync-design.md` | như L51 | ~120 dòng · 10 file | không | không | 3 |
 | L53 p4-docs-runbooks-start-here (P2, docs) | `start-here-docs-outbox-flag-and-enable-path`, `outbox-runbook-zalo-dm-expiry-wording`, `name-strip-migrations-apply-with-writers-drained` | docs vận hành: cờ outbox và đường bật, chữ về hạn của `zalo_dm`, áp migration strip khi writer đã dừng | `docs/00-start-here/DEV-ONBOARDING.md:77`, `docs/00-start-here/HANDOFF.md:31`, `docs/runbooks/outbox-dispatch-enable-rollback.md`, `docs/standards/deployment-infra.md` | câu chữ khớp code tại base của lane; `pnpm review:check` xanh | ~55 dòng · 4 file | L46 | không | 3 |
 | L54 p4-deps-advisory-watch (P1, deps) | `braces-ghsa-vfj7-ignore-expiry-2026-12-21`, `braces-ghsa-vfj7-no-fixed-version`, `pnpm-workspace-postcss-override-inert` | xem lại `braces` trước 2026-12-14; bỏ override postcss vô tác dụng; theo dõi định kỳ (ghi chú dưới bảng) | `osv-scanner.toml:11`, `apps/web/package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml:15`, workflow security nếu thêm trigger (Q6) | đo lại `pnpm why -r --prod braces`; OSV full scan xanh; ignore bị xoá (có bản vá) hoặc gia hạn với lý do đo lại (Q6); verify đủ (typecheck, lint, test, build, e2e) vì đụng lockfile | ~30 LOC · 3 file | cửa sổ 2026-12-01..2026-12-14, chạy một mình | không | 4 |
@@ -62,31 +72,32 @@
 | L56 p4-zalo-dm-promotion-live-balance (P1, tiền, CÓ ĐIỀU KIỆN) | `zalo-dm-promotion-live-balance-at-delivery` | chỉ khi Q2 = đọc số dư sống: DM nâng waitlist đọc số dư lúc giao qua definer của 0057 (Tier C, hợp đồng tiền) | dòng chưa có scope, step 0 scope; `packages/db/migrations/0057_zalo_delivery_targets_definer.sql`, `apps/bot/src/projectors/zalo-dm.ts` | DM giao muộn nêu số dư hiện tại; khoản đã trả không bị đòi lại; security round | ~150 LOC · 2-3 module | Q2; L46 | số kế tiếp sau L46 (dự kiến 0074) | 6 |
 | L57 p4-member-names-confusables (P1, CÓ ĐIỀU KIỆN) | `member-names-visible-confusables-homoglyphs` | chỉ khi Q3 chọn một luật: từ chối hoặc fold bộ ký tự dễ nhầm đã chọn, giữ nguyên dấu tiếng Việt | `packages/db/src/text-safety.ts`, `packages/db/src/member-name-invisible-chars.test.ts`, một migration luật SQL | test bộ ký tự đã chọn; tên tiếng Việt có dấu không đổi; security round | chưa ước được (tuỳ luật) | Q3; L42 | số kế tiếp (dự kiến 0075, hoặc 0074 nếu L56 không chạy) | 6 |
 
+- **Số lane:** 17 lane chắc chắn (L39-L55) = 16 lane chạy trong 6 sóng + L54 chạy một mình trong cửa sổ 2026-12-01..2026-12-14, ngoài 6 sóng (thêm 3-7 giờ, tính riêng); L56, L57 chỉ chạy nếu owner chọn khác default ở Q2, Q3 (mỗi lane thêm khoảng 7.7 giờ và một sóng).
 - **B3 mỗi lane:** khoảng 300 LOC, tối đa 3 module, tối đa 1 migration. Size là ước đoán: không dòng backlog nào có ước lượng; step 0 đo lại, lane vượt phải ghi ngoại lệ B3 ở step 0.
 - **Run cap** = số lần orchestrator chạy tối đa cho một lane: 3 cho docs, 4 cho code P2, 6 cho P1, migration, tiền hoặc public. Nguồn: §3 của file research (trung bình 3.47 đến 3.8 run mỗi lane ở Phase 3; 6 là trần quy ước; vượt 6 chỉ khi owner nâng trần).
-- **Thứ tự migration (giải xung đột hai nguồn):** hai dòng ghi chắc chắn cần migration: `docs/autopilot-backlog.md:6877` ("needs a migration at the next free number") và `docs/autopilot-backlog.md:6999` ("money contract, Tier C"). Dòng đầu không cần input của owner ⇒ L41 lấy 0072. Dòng sau là Tier C ⇒ thành câu Q2, lane L56 chỉ chạy khi owner chọn. Hai dòng còn lại chỉ cần migration nếu thêm CHECK hoặc đổi luật (`docs/autopilot-backlog.md:6819`, `docs/autopilot-backlog.md:6848`): Q4 (c) không thêm CHECK; nếu step 0 của L41 thấy phải đổi luật SQL thì thay đổi đó nằm trong chính file 0072. Thứ tự: L41 0072 → L46 0073 → L56 → L57; số thật đo lại tại base của từng lane (append-only).
+- **Thứ tự migration (giải xung đột hai nguồn):** ba dòng ghi chắc chắn cần migration: `docs/autopilot-backlog.md:6877` (L41 ⇒ 0072, "needs a migration at the next free number"), `docs/autopilot-backlog.md:6955` (L46 ⇒ 0073, "a migration at the next free number") và `docs/autopilot-backlog.md:6999` (Tier C ⇒ Q2, L56, "money contract, Tier C"). Hai dòng đầu không cần input của owner ⇒ L41 lấy 0072, L46 lấy 0073. Dòng thứ ba là Tier C ⇒ thành câu Q2, lane L56 chỉ chạy khi owner chọn. Hai dòng còn lại chỉ cần migration nếu thêm CHECK hoặc đổi luật (`docs/autopilot-backlog.md:6819`, `docs/autopilot-backlog.md:6848`): Q4 (c) không thêm CHECK; nếu step 0 của L41 thấy phải đổi luật SQL thì thay đổi đó nằm trong chính file 0072. Thứ tự: L41 0072 → L46 0073 → L56 → L57; số thật đo lại tại base của từng lane (append-only).
 - **L39:** trang chỉ có dữ liệu thật khi owner đã bật projector `public_sessions` (§8); lane test bằng scratch DB, theo cách L35 đã chứng minh tuỳ chọn ẩn địa chỉ.
-- **L40:** huỷ yêu cầu đang chờ duyệt: step 0 đo route rời có nhận trạng thái chờ duyệt không; nếu không, lane chỉ làm phần rời, phần huỷ thành dòng backlog mới, không viết API mới (default applied, pending owner sign-off).
+- **L40:** huỷ yêu cầu đang chờ duyệt: step 0 đo route rời có nhận trạng thái chờ duyệt không; nếu không, lane chỉ làm phần rời, phần huỷ thành dòng backlog mới, không viết API mới (default applied, pending owner sign-off; **USER-VISIBLE**, là câu Q10).
 - **L47:** phần bot thật của C3 cần token thật của owner (§8, §9), không xếp cho agent.
 - **L54, theo dõi định kỳ:** trigger `schedule:` hằng tuần cho OSV full scan nếu step 0 thấy workflow chưa có (Q6); một lane cùng khuôn L54 mở lại khi scan đỏ hoặc khi một ignore còn 14 ngày trở xuống.
-- **Không thành lane (hai mục trong danh sách khởi đầu của prompt):** job Pro→Free theo DD-142 và hook retention. Billing ngoài MVP (DD-132), và DD-142 tự ghi "Không có lane" (`docs/standards/decisions.md:2198`). Bảng có nhưng không có writer: `packages/db/schema.ts:1835-1853` (`subscriptions` có trạng thái past_due, `subscription_invoices` có overdue); câu INSERT duy nhất vào `subscription_invoices` ngoài migration là một test (`packages/db/src/rls-invariants.test.ts:4028`); grep giá trị config retention trong apps, packages và `.env.example` ra 0 kết quả. Retention đã là **1 tháng, chỉnh được bằng một giá trị config** (owner 2026-10-22 mục 8, ghi ở `docs/standards/decisions.md:2210`), không còn là "1-3 tháng, quyết sau". Job sẽ chạy trên 0 hàng, còn một hằng config không ai gọi là dead code ⇒ chuyển thành Q1.
+- **Không thành lane (hai mục trong danh sách khởi đầu của prompt):** job Pro→Free theo DD-142 và hook retention (billing ngoài MVP, DD-132); lý do và nguồn ở mục "Chỗ plan khác danh sách khởi điểm của prompt" cuối §2.
 - **D7 và `braces`:** `join-known-zero-person-equality-proof` chỉ xếp khi identity-merge writer tồn tại (DD-149); lần xem lại `braces` là L54 (hạn 2026-12-14; ignore hết hạn 2026-12-21 ở `osv-scanner.toml:11`). Cả hai là mốc ở §9.
 
 ## 4. Đồ thị phụ thuộc và song song
 
 ```text
-L39 <- (none)       L40 <- (none)       L44 <- (none)       L48 <- (none)
-L50 <- (none)       L51 <- (none)       L52 <- (none)       L55 <- (none)
-L41 <- L55 [0072]   L42 <- L41          L49 <- L40          L43 <- L42, L49
-L45 <- L44          L47 <- L45          L46 <- L45, L41 [0073, after 0072 merges]
+L39 <- (none)       L40 <- (none)       L44 <- (none)       L50 <- (none)
+L51 <- (none)       L52 <- (none)       L55 <- (none)
+L41 <- L55 [0072]   L42 <- L41          L48 <- L42          L49 <- L40, L48
+L43 <- L42, L49     L45 <- L44          L47 <- L45          L46 <- L45, L41 [0073, after 0072 merges]
 L53 <- L46          L54 <- window 2026-12-01..2026-12-14, runs alone (lockfile)
 L56 <- [Q2 = live balance], L46   (next free number, planned 0074)
 L57 <- [Q3 = a rule], L42         (next free number, planned 0075, or 0074 without L56)
 ```
 
-- **Bốn vùng tách file:** web (`apps/web`: L39, L40, L49, L43); DB luật tên và test (`packages/db`: L55, L41, L42; L48 một mình trên `packages/db/src/session-service.ts`); bot và outbox (`apps/bot`, `scripts`: L44, L45, L46, L47); docs và harness (L50-L53).
+- **Bốn vùng tách file:** web (`apps/web`: L39, L40, L49, L43); DB luật tên và test (`packages/db`: L55, L41, L42); L48 nối hai vùng (`packages/db/src/session-service.ts`, `apps/web/lib/session-command-route.ts`) nên chạy sau L42 và trước L49; bot và outbox (`apps/bot`, `scripts`: L44, L45, L46, L47); docs và harness (L50-L53).
 - **Song song:** tối đa 3 lane sống cùng lúc, mỗi lane ở một vùng khác (như đợt A của P3-S16, §3 của file research) và tối đa một lane có migration tại một thời điểm. Suite DB và e2e của các lane vẫn xếp hàng qua một khoá (một Postgres local, một cổng e2e).
-- **Sóng đề xuất:** sóng 1 L55 · L39 · L51; sóng 2 L41 · L40 · L52; sóng 3 L42 · L44 · L50; sóng 4 L48 · L45 · L49; sóng 5 L46 · L43; sóng 6 L47 · L53. Lane sóng sau bắt đầu ngay khi phụ thuộc của nó merge. L54 chạy trong cửa sổ của nó, một mình; L56, L57 chỉ sau câu trả lời Q2, Q3.
+- **Sóng đề xuất:** sóng 1 L55 · L39 · L51; sóng 2 L41 · L40 · L52; sóng 3 L42 · L44 · L50; sóng 4 L48 · L45; sóng 5 L46 · L49; sóng 6 L47 · L53 · L43. Lane sóng sau bắt đầu ngay khi phụ thuộc của nó merge. L54 chạy trong cửa sổ của nó, một mình; L56, L57 chỉ sau câu trả lời Q2, Q3.
 
 ## 5. Checklist câu hỏi cho owner
 
@@ -103,6 +114,7 @@ L57 <- [Q3 = a rule], L42         (next free number, planned 0075, or 0074 witho
 | Q7 | `GENDER_COLLECTION_ENABLED` khi có người dùng thật: giữ true ở local và đặt false ở môi trường người dùng thật đầu tiên cho tới khi các điểm pháp lý có câu trả lời? | Có: local giữ true (DD-141); môi trường thật đầu tiên đặt false, thành một dòng trong checklist P0 của owner (§8) | không lane nào; chỉ go-live của owner | **USER-VISIBLE**: ở môi trường đó ô giới tính và notice không hiện | DD-141; 8 câu hỏi pháp lý ở `docs/sessions/web-mvp-phase3-readiness-p3-flags-default-on.md:253` (suy luận: đây là "tám điểm pháp lý"; không file nào gọi tên như vậy) |
 | Q8 | Luật ENABLEMENT cho RUN doc Phase 4, thay câu cũ ở `docs/autopilot-templates/web-mvp-phase3-2026-10-16-RUN.md:73`? | Dùng nguyên văn khối dưới bảng | viết RUN doc Phase 4 | không | DD-141 |
 | Q9 | Phạm vi: C3 trong Phase 4 chỉ gồm nửa fake (L47) + mẫu evidence, lần chạy bot thật chờ token của owner; PR #50 và deploy staging/prod nằm ngoài Phase 4? | Có, cả hai | phạm vi L47; không lane nào chạm #50 | không | DD-04, DD-132, `zalo-outbound-error-mapping-real-bot-verification` |
+| Q10 | C2 (L40): nếu step 0 đo thấy route rời không nhận yêu cầu đang chờ duyệt, Phase 4 chỉ làm phần rời và để phần huỷ yêu cầu chờ duyệt thành một dòng backlog mới (không viết API mới)? | Có | phạm vi L40 (lane vẫn chạy) | **USER-VISIBLE**: trong trường hợp đó player chưa huỷ được yêu cầu đang chờ duyệt trên web | `web-player-leave-and-cancel` (C2), `apps/web/app/api/sessions/[id]/leave/route.ts` |
 
 Khối đề xuất cho Q8:
 
@@ -176,7 +188,7 @@ $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('we
 | Xem lại `braces` | ngày 2026-12-01; hạn chót 2026-12-14 | L54 (P4-S7): có bản vá ⇒ bump, xoá ignore; chưa có ⇒ default Q6 | ignore hết hạn 2026-12-21 (`osv-scanner.toml:11`); `braces-ghsa-vfj7-ignore-expiry-2026-12-21` |
 | D7 person equality | một PR đã merge trên `main` thêm writer merge identity (hiện chưa có) | khi đó mới xếp `join-known-zero-person-equality-proof`; trước đó không xếp gì | DD-149 |
 | Nửa bot thật của C3 | owner xong §8 bước 1 và 2 cho một CLB | owner chạy (hoặc giao chạy) ma trận lỗi với bot thật, dùng mẫu evidence của L47 | `zalo-outbound-error-mapping-real-bot-verification` |
-| RUN doc Phase 4 | tin nhắn "Phase 4 plan approved" (B1) | ghi DD cho Q1-Q9, rồi viết RUN doc + lane prompt; đầu vào: luật ENABLEMENT đã sửa (Q8) thay câu cũ ở `docs/autopilot-templates/web-mvp-phase3-2026-10-16-RUN.md:73` (DD-141 đã thay), §3, §4, §7 của plan này, tail migration đo lại | DD-141 |
+| RUN doc Phase 4 | tin nhắn "Phase 4 plan approved" (B1) | ghi DD cho Q1-Q10, rồi viết RUN doc + lane prompt; đầu vào: luật ENABLEMENT đã sửa (Q8) thay câu cũ ở `docs/autopilot-templates/web-mvp-phase3-2026-10-16-RUN.md:73` (DD-141 đã thay), §3, §4, §7 của plan này, tail migration đo lại | DD-141 |
 
 - Hai mốc đầu theo lựa chọn ngày 2026-10-24 (mục 5, 6), nhãn "accepted under the owner's delegation of 2026-10-24 (assistant review)" (DD-149).
 
@@ -194,18 +206,18 @@ $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('we
 
 ## 11. Readiness verdict (canonical)
 
-Closure matrix (gate §8, 12 hàng; chưa đạt vì Q1-Q9 còn mở):
+Closure matrix (gate §8, 12 hàng; chưa đạt vì Q1-Q10 còn mở):
 
 | # | Gate | Bằng chứng | Kết quả |
 | --- | --- | --- | --- |
 | 1 | Pin authority theo SHA | `7b31d1fe0f5e25c08d554cb191032596204fe2ed` + TARGET_FILES chính xác | PASS |
-| 2 | Quyết định trong scope đã chốt | Q1-Q9 còn mở (§5) | FAIL |
+| 2 | Quyết định trong scope đã chốt | Q1-Q10 còn mở (§5) | FAIL |
 | 3 | Scope IN/OUT và owner rõ | §2, §3, §8 | PASS |
 | 4 | Dependency phân loại đủ | §3, §4 (19 lane, 6 sóng) | PASS |
 | 5 | Live schema/code khớp doc | §2 đo tại baseline; mỗi lane đo lại ở step 0 | PASS |
 | 6 | Contract data/API/state/auth đủ | §3 chỉ có phạm vi và test; contract chi tiết ở RUN doc và step 0 | PARTIAL |
 | 7 | Fail-closed/idempotency/order | test fail-closed ở §3 (L39, L40, L48, L49); decision table ở step 0 | PARTIAL |
-| 8 | Open question trong scope = 0 | còn 9 (Q1-Q9) | FAIL |
+| 8 | Open question trong scope = 0 | còn 10 (Q1-Q10) | FAIL |
 | 9 | Acceptance matrix có expected result | cột test nghiệm thu ở §3; lệnh nghiệm thu chỉ có ở RUN doc (viết sau B1) | FAIL |
 | 10 | Migration/security/rollback pin | §3: 0072 → 0073 → 0074/0075, số đo lại tại base lane; security round ở §7 | PARTIAL |
 | 11 | First slice có hard dependency merged | L55, L39, L51 không phụ thuộc lane nào; chỉ chờ B1 | PASS |
@@ -221,7 +233,7 @@ TARGET_FILES:
   - docs/sessions/web-mvp-phase4-plan.md
   - docs/research/web-mvp-phase3-lane-timing-measurements-2026-10-25.md
 SLICE: web-mvp-phase4-plan
-IN_SCOPE: docs-only plan for Web MVP Phase 4, local-only: 17 lanes (L39-L55) plus 2 conditional lanes (L56, L57), 8 session rows, 9 owner questions (Q1-Q9), the wall-clock estimate, owner-only steps, conditional milestones
+IN_SCOPE: docs-only plan for Web MVP Phase 4, local-only: 17 lanes (L39-L55) plus 2 conditional lanes (L56, L57), 8 session rows, 10 owner questions (Q1-Q10), the wall-clock estimate, owner-only steps, conditional milestones
 OUT_OF_SCOPE: code, tests, migrations, the Phase 4 RUN doc and lane prompts, new DD entries, edits of decisions.md, Reviewed specs or docs/legal, PR #50, DigitalOcean, a real Zalo token, real users, bank/QR/payment, billing, every owner-only step
 G1_DECISION: FAIL
 G2_SPEC: PARTIAL
@@ -229,9 +241,9 @@ G3_DEPENDENCY: PASS
 G4_TEST: PARTIAL
 G5_SCOPE: PASS
 G6_EXTERNAL: ENABLEMENT_ONLY:zalo_bot_token_real,outbox_projector_enable,real_user_messaging
-HARD_DEPENDENCIES: none for plan authorization; owner approval and Q1-Q9 are the blockers below
+HARD_DEPENDENCIES: none for plan authorization; owner approval and Q1-Q10 are the blockers below
 PRIOR_SLICES: Web MVP Phase 3 (PRs #58 to #113) merged at AUTHORITY_SHA; PR #50 frozen owner-only
-OPEN_QUESTIONS_IN_SCOPE: 9
+OPEN_QUESTIONS_IN_SCOPE: 10
 ENABLEMENT_ONLY_GATES: zalo_bot_token_real, outbox_projector_enable, real_user_messaging
 LIVE_REPO_VERIFICATION: PASS
 CONTRACT_MATRIX: PARTIAL
@@ -243,13 +255,13 @@ FIRST_IMPLEMENTATION_STEP: BLOCKED until B1 resolves; then P4-S1 step 0 (per-lan
 REMAINING_BLOCKERS:
   - blocker: B1 owner approval of this plan
     owner: Ngoc-Anh
-    resolution: the owner writes "Phase 4 plan approved" with an answer or an override for each of Q1-Q9 (Q2 and Q3 also decide whether L56 and L57 run; this message also allows the merge of this PR; a merge alone signs nothing)
+    resolution: the owner writes "Phase 4 plan approved" with an answer or an override for each of Q1-Q10 (Q2 and Q3 also decide whether L56 and L57 run; this message also allows the merge of this PR; a merge alone signs nothing)
     next_review_trigger: the owner's written message "Phase 4 plan approved" and a main that contains this PR
-  - blocker: B2 the answers to Q1-Q9 are not yet recorded as DD entries
+  - blocker: B2 the answers to Q1-Q10 are not yet recorded as DD entries
     owner: Ngoc-Anh
     resolution: after B1, the first Phase 4 docs step records each answer as a DD entry in docs/standards/decisions.md on main
-    next_review_trigger: decisions.md on origin/main carries a DD entry for each answer to Q1-Q9
-NEXT_REVIEW_TRIGGER: the owner's written message "Phase 4 plan approved" with answers to Q1-Q9 and a main that contains this PR; then P4-S1 step 0 writes the per-lane CODE_READY or NOT_CODE_READY verdicts
+    next_review_trigger: decisions.md on origin/main carries a DD entry for each answer to Q1-Q10
+NEXT_REVIEW_TRIGGER: the owner's written message "Phase 4 plan approved" with answers to Q1-Q10 and a main that contains this PR; then P4-S1 step 0 writes the per-lane CODE_READY or NOT_CODE_READY verdicts
 ```
 
 ## Phụ lục A. Dòng backlog đã xét nhưng không đưa vào Phase 4
