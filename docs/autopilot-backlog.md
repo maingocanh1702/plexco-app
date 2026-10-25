@@ -7084,7 +7084,9 @@ notes: |
 
 ## task: decisions-dd148-dd149-acceptance-labels
 title: Decision log: name the 2026-10-24 acceptance of DD-148 sections A-F in its summary cell and heading, and call DD-146 DF0-DF7 and DD-147 D1-D8/N1-N4 lane defaults in DD-149's context
-status: idea
+status: merged
+merged: 2026-10-25 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p3-docs-flags-and-dd148-labels (L37); find it with `gh pr list --state merged --head docs/p3-docs-flags-and-dd148-labels` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (docs-only scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-25 L37: closed BY HAND in the lane's own PR, measured at base 8086f8e31bc4a05328cc9c974844cc9aa7b62e14 (the PR #112 merge; first parent ca1d2cae2e1d0b637d5419e6fc0b8671b615b512). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L37 (conductor decision D19 of P3-S16, under the owner's instruction of 2026-10-25 and the owner's delegation of 2026-10-22, not an owner signature) gives this fix and this flip to the lane. F2: the PR rewords the three spots the notes name, at the base's lines of docs/standards/decisions.md: :121 (the DD-148 summary-table status cell), :1791 (the DD-148 heading) and :1777 (DD-149's Bối cảnh paragraph); every dated line, every quote and every "KHÔNG phải chữ ký owner" phrase stays, the label "accepted under the owner's delegation of 2026-10-24 (assistant review)" is unchanged, of DD-145 to DD-149 only DD-145's table is owner-signed, and no DD decides anything new.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -7095,3 +7097,31 @@ merged_probe: null
 notes: |
   Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512, docs/standards/decisions.md: (1) the DD-148 summary row's status cell (:121) names the owner's 2026-10-24 acceptance for section F only ("mục F: L31 đã merge (#108), DF0-DF7 accepted under the owner's delegation of 2026-10-24 (assistant review), DD-149") and the DD-148 heading (:1791) names none, while DD-149 item 1 accepts every row of sections A-F and only :1796 says so, so a reader of the summary or the heading sees sections A-E as unchanged (R3-F3); (2) DD-149's "Bối cảnh" (:1777) calls DD-146 DF0-DF7 and DD-147 D1-D8 and N1-N4 "các default và ruling của conductor", though they are lane defaults (L31's and L29's) (R3-F5). Neither text states a false signature (every label stays "not an owner signature"), and lane L36 does not own decisions.md, so it did not edit them. Fix: one owner-facing wording pass over :121, :1791 and :1777, keeping every dated line and every quote. Reported in L34's round-3 docs review, not fixed in PR #111; the row was added by lane L36 (2026-10-24).
   Source: PR #111 body, section "Reported P3s and observations, not fixed", line 41 (R3-F3, R3-F5).
+
+## task: start-here-docs-outbox-flag-and-enable-path
+title: Docs: make the outbox claims of DEV-ONBOARDING.md and HANDOFF.md match the runbook (the owner CLI is the only enable path; the dispatch flag defaults to true since PR #94)
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: [transport-zalo]
+scope: [docs/00-start-here/DEV-ONBOARDING.md, docs/00-start-here/HANDOFF.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 8086f8e31bc4a05328cc9c974844cc9aa7b62e14: docs/00-start-here/DEV-ONBOARDING.md:77 names the raw setter `outbox_projector_set_enabled` as the enable path, while docs/runbooks/outbox-dispatch-enable-rollback.md:14 makes the owner CLI the only enable path (scripts/outbox-projector-enable.mjs:3-6: the only sanctioned enable step; the setter stays the rollback); docs/00-start-here/HANDOFF.md:31 says `OUTBOX_DISPATCH_SCHEDULE_ENABLED` is OFF and the projectors still run `productionStubDeliver`, while .env.example:91 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` (PR #94, owner decision B3, DD-141) and apps/bot/src/projectors/index.ts:21-25 maps public_sessions, web_realtime and zalo_dm to their real modules. The raw setter is not an equivalent path: runbook :14 says it only flips the flag and skips the backfill, while the CLI refuses to enable while a routed event is unacked and older than the bound (`unacked_backlog`, scripts/outbox-projector-enable.mjs:12-13) and then backfills, preparing acked events only within the bound and the newest BACKFILL_MAX_ROWS and writing one age or cap expiry record for every other acked one (:15-19). HANDOFF.md:31 sits in the dated block "LIVE TRUTH 2026-09-15 (v1.42)" (:23), whose newest-block claim is itself stale (:18, dated 19/09, sits above it), so the fix states the current truth where the file keeps it and does not rewrite the dated block. Outside lane L37's file ownership; the row was added by lane L37 (2026-10-25).
+  Source: docs/sessions/web-mvp-phase3-readiness-p3-docs-flags-and-dd148-labels.md, item 8 (F-1).
+
+## task: bot-queues-outbox-schedule-default-comment
+title: Bot: correct the stale "default false" comment on the outbox dispatch schedule flag in apps/bot/src/queues.ts (the committed default is true since PR #94)
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [transport-zalo, retry-liveness]
+scope: [apps/bot/src/queues.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 8086f8e31bc4a05328cc9c974844cc9aa7b62e14: the comment at apps/bot/src/queues.ts:12 says the schedule is gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED "(default false; the owner enables it", while .env.example:91 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` and infra/docker-compose.yml:133 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED: "true"` (PR #94, owner decision B3, DD-141 at docs/standards/decisions.md:128). Real delivery still waits on the projector registry (seeded disabled by migration 0056, :74 and :106; enabled only by the owner CLI scripts/outbox-projector-enable.mjs) and on the owner's P0 steps (.env.example:90). A comment-only change; lane L37 (docs only) found it at step 0 and does not edit code; the row was added by lane L37 (2026-10-25).
+  Source: docs/sessions/web-mvp-phase3-readiness-p3-docs-flags-and-dd148-labels.md, item 8 (F-2).
