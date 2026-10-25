@@ -210,6 +210,23 @@ const walk = (dir: string): string[] =>
     return SOURCE.test(d.name) ? [rel] : [];
   });
 const sourceFiles = () => [...walk("packages"), ...walk("apps")];
+/** Per-root floors (D4), one per first-level directory under packages/ and apps/: floor(0.9 x the count at the lane base,
+ * 36 / 411 / 22 / 108), minimum 1. A missing root counts 0 and fails; a new root is scanned but not required. */
+const ROOT_FLOORS: [string, number][] = [
+  ["apps/bot", 32],
+  ["apps/web", 369],
+  ["packages/core", 19],
+  ["packages/db", 97],
+];
+/** The scanned-file floors over a file list: each floor that the list falls under, naming its root. */
+const floorFailures = (files: string[]): string[] => [
+  // Measured 574 at e37411a (every source file under packages/ and apps/, this file included); a broken walk falls far below.
+  ...(files.length > 550 ? [] : [`total: ${files.length} files, floor 551`]),
+  ...ROOT_FLOORS.flatMap(([root, floor]) => {
+    const count = files.filter((file) => file.startsWith(`${root}/`)).length;
+    return count >= floor ? [] : [`${root}: ${count} files, floor ${floor}`];
+  }),
+];
 const readJson = <T>(path: string): T => JSON.parse(readFileSync(new URL(path, ROOT), "utf8")) as T;
 
 describe("role-hiding isolation guard (L32)", () => {
@@ -259,6 +276,11 @@ describe("role-hiding isolation guard (L32)", () => {
     expect(flagged[HARNESS]).toEqual([["elsewhere", moved]]);
   }, 30_000);
 
+  it("fails a root that falls under its floor while the total still passes (P3-4)", () => {
+    const files = sourceFiles().filter((file) => !file.startsWith("packages/core/"));
+    expect(floorFailures(files)).toEqual([expect.stringContaining("packages/core")]);
+  }, 30_000);
+
   it("finds shared-role mutations only in the isolated test files", () => {
     const files = sourceFiles();
     const { mismatched, flagged } = checkPins(repoHits(files));
@@ -266,8 +288,7 @@ describe("role-hiding isolation guard (L32)", () => {
     expect(mismatched).toEqual([]);
     expect(Object.entries(flagged).filter(([file]) => !isolated.includes(file))).toEqual([]);
     expect(Object.keys(flagged).sort()).toEqual(isolated);
-    // Measured 574 at e37411a (every source file under packages/ and apps/, this file included); a broken walk falls far below.
-    expect(files.length).toBeGreaterThan(550);
+    expect(floorFailures(files)).toEqual([]);
   }, 30_000);
 
   it("runs every package test file, each isolated file alone in a later group", () => {
