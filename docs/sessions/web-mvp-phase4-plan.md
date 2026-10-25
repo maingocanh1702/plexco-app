@@ -11,7 +11,7 @@
 - Phase 4 làm phần owner đã gắn nhãn Phase 4, chỉ local: **C1** trang chia sẻ `/session/<slug>` (L39), **C2** player tự rời trên web (L40), **C3** phần chuẩn bị bảng mã lỗi Zalo với fake (L47; phần bot thật chờ token của owner), **C4** đồng bộ spec theo các dòng "Spec follow-up" của DD-138 và DD-139..DD-142 (L51, L52), các follow-up R1-5 của luật tên (L41-L43), và gia cố `zalo_dm`/outbox trước khi owner bật thật (L44-L46).
 - Thêm: theo dõi advisory phụ thuộc có hạn (L54, trong cửa sổ 2026-12-01..2026-12-14, trước hạn xem lại `braces`), gia cố quyền và tiền (L48 kiểm lại quyền trong transaction, L49 giữ `commandId` qua reload), harness proof public (L50), dọn test DB (L55), docs vận hành (L53).
 - 17 lane chắc chắn (L39-L55) = 16 lane chạy trong 6 sóng + L54 chạy một mình trong cửa sổ 2026-12-01..2026-12-14, ngoài 6 sóng (thêm 3-7 giờ, tính riêng); L56, L57 chỉ chạy nếu owner chọn khác default ở Q2, Q3 (mỗi lane thêm khoảng 7.7 giờ và một sóng). Migration chắc chắn: 0072 (L41) rồi 0073 (L46); 0074/0075 chỉ khi lane có điều kiện chạy. Mỗi lane = một branch + một worktree + một writer = một PR, tối đa một migration.
-- Ước lượng: 44-57 giờ chạy cho 16 lane trong 6 sóng, đã gồm usage limit (1.8-2.4 ngày nếu chạy liên tục); kiểm chéo theo nhịp P3-S16: 55-75 giờ lịch. L54 thêm 3-7 giờ trong tháng 12; mỗi lane có điều kiện thêm khoảng 7.7 giờ. Cách tính và nguồn ở §6; không hứa lịch.
+- Ước lượng: 46-57 giờ chạy cho 16 lane trong 6 sóng, đã gồm usage limit (1.9-2.4 ngày nếu chạy liên tục); kiểm chéo theo nhịp P3-S16: 55-75 giờ lịch. L54 thêm 3-7 giờ trong tháng 12; mỗi lane có điều kiện thêm khoảng 7.7 giờ. Cách tính và nguồn ở §6; không hứa lịch.
 - **C5** và job Pro→Free: không thành lane; retention đã chốt 1 tháng, chỉnh được. Chỉ còn câu Q1. Mọi chỗ plan khác danh sách khởi điểm của prompt Phase 4, kèm nguồn: cuối §2.
 - Việc chỉ owner làm (§8): token bot Zalo thật + bật projector, người dùng thật, các điểm pháp lý, PR #50/DigitalOcean. Không lane nào làm hay phải chờ các việc đó.
 - 10 câu hỏi (§5); 4 default **USER-VISIBLE** (Q4, Q5, Q7, Q10).
@@ -128,16 +128,16 @@ Nguồn: `docs/research/web-mvp-phase3-lane-timing-measurements-2026-10-25.md` (
 
 | Loại lane (số đo Phase 3, §4) | Lane Phase 4 | Giờ mỗi lane |
 | --- | --- | --- |
-| Docs hoặc nhỏ: L28 42 phút (1 run), L26 3 giờ 29 (docs, 3 run) | L50, L51, L52, L53 | 0.7-3.5 |
-| Code P2 hoặc deps nhỏ: L18 2 giờ 59 (4 run), L30 6 giờ 57 (4 run) | L40, L42, L43, L44, L45, L47, L54, L55 | 3-7 |
+| Docs hoặc nhỏ: L28 42 phút (code, 3 file, 1 run), L26 3 giờ 29 (docs, 3 run), L30 6 giờ 57 (docs closeout, 4 run) | L50, L51, L52, L53 | 0.7-7 |
+| Code P2, test hoặc deps nhỏ (gồm L54: P1 vì lockfile, nhưng ước như deps nhỏ): L18 2 giờ 59 (test-only, 4 run); cận trên 7 giờ là giả định | L40, L42, L43, L44, L45, L47, L54, L55 | 3-7 |
 | P1, migration, tiền hoặc public: L14 7 giờ 42 (5 run); ngoại lệ L13 29 giờ 14, gồm 322 phút usage limit | L39, L41, L46, L48, L49; L56, L57 nếu chạy | khoảng 7.7 |
 
-- **Đường găng theo sóng (§4 của plan này):** mỗi sóng dài bằng lane dài nhất của nó. Sóng 1, 2, 4, 5 có lane loại nặng (7.7 giờ); sóng 3, 6 chỉ có lane P2 và docs (3-7 giờ). Cộng 4 × 7.7 + 2 × (3 đến 7) = **37-45 giờ chạy** cho 16 lane (L54 tính riêng).
-- **Usage limit (§5):** giả định của owner "khoảng một lần mỗi 5 giờ" ⇒ 7-9 lần; tần suất đo được trong cửa sổ nặng là một lần mỗi 7.3 giờ ⇒ 5-6 lần. Mỗi lần mất trung vị 80 phút (ngắn nhất 11, dài nhất 210) ⇒ thêm 6.7-12 giờ.
-- **Sự cố khác (§6):** 2 lần mất đăng nhập, mỗi lần khôi phục 5-9 phút (không đáng kể); 4 classifier AWAIT, hai lần đo được 48 và 57 phút, một lần 24 giờ 47 vì chờ owner (không đưa vào khoảng: phụ thuộc owner); một lần mất mạng 10 giờ 54 (không dự báo được).
-- **Tổng:** 37 + 6.7 ≈ **44 giờ** đến 45 + 12 = **57 giờ** (1.8-2.4 ngày nếu chạy liên tục). **Kiểm chéo:** P3-S16 merge 9 lane trong 31 giờ 6 phút (đã trừ lần mất mạng) đến 42 giờ (§4), tức 3.46-4.67 giờ lịch mỗi lane ⇒ 16 lane ≈ 55-75 giờ lịch; hai cách tính chồng nhau ở 55-57 giờ.
-- **Riêng:** L54 3-7 giờ trong cửa sổ 2026-12-01..2026-12-14; mỗi lane có điều kiện (L56, L57) thêm khoảng 7.7 giờ và một sóng.
-- **Orchestrator run:** Phase 3 trung bình 3.47-3.8 run mỗi lane (§3) ⇒ khoảng 59-65 run cho 17 lane; tổng run cap ở §3 của plan này là 75 (87 nếu L56, L57 chạy).
+- **Số lane:** 17 lane chắc chắn (L39-L55) = 16 lane chạy trong 6 sóng + L54 chạy một mình trong cửa sổ 2026-12-01..2026-12-14, ngoài 6 sóng (thêm 3-7 giờ, tính riêng); L56, L57 chỉ chạy nếu owner chọn khác default ở Q2, Q3 (mỗi lane thêm khoảng 7.7 giờ và một sóng).
+- **Đường găng theo sóng (§4 của plan này):** mỗi sóng dài bằng lane dài nhất của nó. Sóng 1, 2, 4, 5 có lane loại nặng (7.7 giờ: L39; L41; L48; L46 và L49); sóng 3, 6 chỉ có lane P2 và docs (3-7 giờ). Cộng 4 × 7.7 + 2 × (3 đến 7) = **37-45 giờ chạy** cho 16 lane trong 6 sóng.
+- **Usage limit (§5):** giả định của owner "khoảng một lần mỗi 5 giờ" ⇒ 7-9 lần. Mỗi lần trung vị 80 phút (ngắn nhất 11, dài nhất 210): 7-9 lần × 80 phút = 9.3-12 giờ. Tần suất đo được, một lần mỗi 7.3 giờ, là giờ lịch có cả đêm (§5) nên không dùng làm đầu thấp.
+- **Sự cố khác (§6):** 2 lần mất đăng nhập, mỗi lần khôi phục 5-9 phút (không đáng kể); 4 classifier AWAIT, ba lần chờ owner (48 phút, 57 phút, 24 giờ 47) và một lần conductor tự trả lời (không ghi thời lượng), không đưa vào khoảng vì phụ thuộc owner; một lần mất mạng 10 giờ 54 (không dự báo được).
+- **Tổng:** 37 + 9.3 ≈ **46 giờ** đến 45 + 12 = **57 giờ** (1.9-2.4 ngày nếu chạy liên tục). **Kiểm chéo:** P3-S16 merge 9 lane trong 31 giờ 6 phút (đã trừ lần mất mạng) đến 42 giờ (§4), tức 3.46-4.67 giờ lịch mỗi lane ⇒ 16 lane ≈ 55-75 giờ lịch; hai cách tính chồng nhau ở 55-57 giờ.
+- **Orchestrator run:** Phase 3 trung bình 3.47-3.8 run mỗi lane (§3) ⇒ khoảng 59-65 run cho 17 lane chắc chắn; tổng run cap ở §3 của plan này là 75 (87 nếu L56, L57 chạy).
 
 ## 7. Thiết kế thực thi
 
@@ -153,9 +153,9 @@ Nguồn: `docs/research/web-mvp-phase3-lane-timing-measurements-2026-10-25.md` (
 | P4-S1 | L55 (opus) · L39 (opus) · L51 (sonnet) | test DB · web public · docs BE | B1 xong và `main` chứa PR này | 4 · 6 · 3 |
 | P4-S2 | L41 (opus) · L40 (sonnet) · L52 (sonnet) | DB + migration 0072 · web · docs product/FE | L55 merge (cho L41) | 6 · 4 · 3 |
 | P4-S3 | L42 (opus) · L44 (opus) · L50 (sonnet) | DB luật tên · bot · harness | L41 merge (cho L42) | 4 · 4 · 4 |
-| P4-S4 | L48 (opus) · L45 (opus) · L49 (opus) | DB session-service · bot + scripts · web tiền | L44 merge (L45); L40 merge (L49) | 6 · 4 · 6 |
-| P4-S5 | L46 (opus) · L43 (opus) | outbox + migration 0073 · web | L45, L41 merge (L46); L42, L49 merge (L43) | 6 · 4 |
-| P4-S6 | L47 (opus) · L53 (sonnet) | bot + route connect · docs vận hành | L45 merge (L47); L46 merge (L53) | 4 · 3 |
+| P4-S4 | L48 (opus) · L45 (opus) | DB session-service + route web · bot + scripts | L42 merge (L48); L44 merge (L45) | 6 · 4 |
+| P4-S5 | L46 (opus) · L49 (opus) | outbox + migration 0073 · web tiền | L45, L41 merge (L46); L40, L48 merge (L49) | 6 · 6 |
+| P4-S6 | L47 (opus) · L53 (sonnet) · L43 (opus) | bot + route connect · docs vận hành · web | L45 merge (L47); L46 merge (L53); L42, L49 merge (L43) | 4 · 3 · 4 |
 | P4-S7 | L54 (opus), một mình | deps, lockfile | 2026-12-01; xong trước 2026-12-14 | 4 |
 | P4-S8 (có điều kiện) | L56 (opus) rồi L57 (opus), tuần tự | tiền + migration · luật tên + migration | Q2, Q3 khác default; L46 (L56), L42 (L57) | 6 · 6 |
 
@@ -165,7 +165,7 @@ Nguồn: `docs/research/web-mvp-phase3-lane-timing-measurements-2026-10-25.md` (
 
 Không lane nào làm hay phải chờ các bước dưới; agent chỉ bật projector trong test process hoặc scratch DB local (§2).
 
-1. **Token bot Zalo thật.** Ai: owner CLB, hoặc admin có grant `connector.secret_manage` (`apps/web/app/api/onboarding/zalo/connect/route.ts:23`). Ở đâu: Settings của CLB, thẻ kết nối Zalo (`apps/web/components/settings/club-settings-view.tsx:115`). Bước: dán token bot (1-200 ký tự) rồi gửi; server kiểm token bằng `getMe` (`apps/web/app/api/onboarding/zalo/connect/route.ts:129`), mã hoá token, đăng ký webhook (`apps/web/app/api/onboarding/zalo/connect/route.ts:169`), trạng thái thành `registered` hoặc `error`; phản hồi không chứa token. Cần một base URL mà Zalo gọi tới được. Deliverer đã có (`apps/bot/src/projectors/zalo-dm.ts:155`, `apps/bot/src/projectors/zalo-dm.ts:190`): việc của owner là token thật + bật projector `zalo_dm` ở bước 2, không phải viết deliverer. Cách tạo bot phía Zalo: không tìm thấy trong repo.
+1. **Token bot Zalo thật.** Ai: owner CLB, hoặc admin có grant `connector.secret_manage` (`apps/web/app/api/onboarding/zalo/connect/route.ts:23`). Ở đâu: Settings của CLB, thẻ kết nối Zalo (`apps/web/components/settings/club-settings-view.tsx:115`). Bước: dán token bot (1-200 ký tự) rồi gửi; server kiểm token bằng `getMe` (`apps/web/app/api/onboarding/zalo/connect/route.ts:129`), mã hoá token, đăng ký webhook (`apps/web/app/api/onboarding/zalo/connect/route.ts:169`), trạng thái thành `registered` hoặc `error`; phản hồi không chứa token. Cần một base URL mà Zalo gọi tới được. Deliverer đã có (`apps/bot/src/projectors/zalo-dm.ts:155`, `apps/bot/src/projectors/zalo-dm.ts:190`): việc của owner là token thật + bật projector `zalo_dm` ở bước 2, không phải viết deliverer. Cách tạo bot phía Zalo: owner tự tạo bot trong Zalo Bot Manager dưới tài khoản Zalo của mình (free ≤3 bot), lấy Bot Token rồi dán vào thẻ (`docs/product/PRD.md:96`).
 2. **Bật projector outbox và lịch**, đúng thứ tự `docs/runbooks/outbox-dispatch-enable-rollback.md`. Hai cờ đã true trong `.env.example` từ #94 (`.env.example:91`, `.env.example:167`); ba projector được seed tắt (§2). (a) Điều kiện (`docs/runbooks/outbox-dispatch-enable-rollback.md:22-31`): DB đã migrate (DB cũ: `pnpm db:bootstrap` bằng superuser trước 0054, rồi `pnpm --filter @plexco/db migrate`), `pnpm --filter @plexco/bot provision:queue` đã chạy, ba projector đều tắt. (b) Bật (`docs/runbooks/outbox-dispatch-enable-rollback.md:33-100`): chạy worker, đợi `SELECT outbox_dispatch_schedule_live()` trả t trong 30 giây, đợi số event `acked_at IS NULL` về 0, rồi bật TỪNG projector bằng CLI; không gọi thẳng `outbox_projector_set_enabled(<name>, true)`. (c) Rollback (`docs/runbooks/outbox-dispatch-enable-rollback.md:102-107`): tắt projector; delivery đang chờ được giữ.
 
 ```bash
@@ -196,7 +196,7 @@ $OWNER_SQL -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('we
 
 1. **Môi trường dùng chung:** một Postgres compose + một cổng e2e ⇒ một khoá; suite DB và e2e của 3 lane song song vẫn xếp hàng. Flake đã biết: rerun một lần, đỏ lần hai là thật.
 2. **Dừng ngoài ý muốn** (file research §5, §6): ít nhất 16 lần usage limit, 2 lần mất đăng nhập, 1 lần mất mạng. Giảm: cron HEARTBEAT tự tiếp tục; khôi phục từ disk; agent quá khoảng 250k context thay bằng agent mới.
-3. **Classifier AWAIT** (§6 của file research, lâu nhất 24 giờ 47): classifier của owner chỉ cho phép sẵn các lần đảo test đã ký; lệnh bị từ chối ⇒ file AWAIT với lệnh chính xác, không lách. Lane dọn test (L55) và lane luật tên (L41, L57) dễ chạm loại này.
+3. **Classifier AWAIT** (§6 của file research, lâu nhất 24 giờ 47): theo dòng "Rules" trong prompt Phase 4 của owner, classifier của owner chỉ cho phép sẵn các lần đảo test có chữ ký (signed test reversals); lệnh bị từ chối ⇒ file AWAIT với lệnh chính xác, không lách. Lane dọn test (L55) và lane luật tên (L41, L57) dễ chạm loại này. Giảm, không cần input của owner: prompt của mỗi lane liệt kê trước lệnh chính xác mà owner có thể phải chạy; lane tránh các loại lệnh đã bị từ chối ở Phase 3 (bốn sự kiện ở §6 của file research); một AWAIT chỉ dừng lane đó và lane phụ thuộc nó.
 4. **Lỗi chỉ có trên CI** (ghi chú build C11, C12 của chương trình; dòng `p3-s16-lessons-c10-c12-tracked-home`): test CPU lặp mọi scalar Unicode chạy chậm hơn nhiều trên CI (dòng `ci-every-scalar-test-duration-watch`) ⇒ giữ mỗi test ngắn ở local, tách theo vị trí, budget 30_000 tường minh; Semgrep chặn `new RegExp(variable)`. Áp cho L41, L42, L57.
 5. **Script mới dưới scripts/** (ghi chú C10) cần bản ghi trong `docs/standards/kit-pack-membership.json`, nếu không `pnpm -w test` đỏ ở `kit:check`; L45 chỉ sửa script có sẵn.
 6. **Thứ tự migration:** 0072, 0073 chắc chắn + hai số có điều kiện; append-only, số đo lại tại base của từng lane; lane merge lệch thứ tự đổi số tại base của nó.
