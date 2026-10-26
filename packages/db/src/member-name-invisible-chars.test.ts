@@ -457,6 +457,14 @@ const fnName = (w: Recreated) => w.sig.slice("public.".length, w.sig.indexOf("("
 const migration = (file: string) =>
   readFileSync(fileURLToPath(new URL(`../migrations/${file}`, import.meta.url)), "utf8");
 
+/** The CREATE at offset at: the header up to `AS $$`, and the body as prosrc holds it. */
+function cutCreate(text: string, at: number, missing: string): { header: string; body: string } {
+  const open = text.indexOf("\nAS $$\n", at);
+  const close = text.indexOf("\n$$;\n", open);
+  if (at < 0 || open < 0 || close < 0) throw new Error(missing);
+  return { header: text.slice(at, open + 1), body: text.slice(open + 6, close + 1) };
+}
+
 /** The definer's last CREATE in its migration: the header up to `AS $$`, and the body as prosrc holds it. */
 function previousCreate(w: Recreated): { header: string; body: string } {
   const text = migration(w.file);
@@ -464,10 +472,57 @@ function previousCreate(w: Recreated): { header: string; body: string } {
     text.lastIndexOf(`\nCREATE FUNCTION ${fnName(w)}(`),
     text.lastIndexOf(`\nCREATE OR REPLACE FUNCTION ${fnName(w)}(`),
   );
-  const open = text.indexOf("\nAS $$\n", at);
-  const close = text.indexOf("\n$$;\n", open);
-  if (at < 0 || open < 0 || close < 0) throw new Error(`${w.file}: no CREATE of ${fnName(w)}`);
-  return { header: text.slice(at, open + 1), body: text.slice(open + 6, close + 1) };
+  return cutCreate(text, at, `${w.file}: no CREATE of ${fnName(w)}`);
+}
+
+/** The last CREATE of name in file, spelled `name(` or `public.name(`: its body as prosrc holds it. */
+function lastCreateBody(file: string, name: string): string {
+  const text = migration(file);
+  const heads = ["\nCREATE FUNCTION ", "\nCREATE OR REPLACE FUNCTION "].flatMap((c) => [
+    `${c}${name}(`,
+    `${c}public.${name}(`,
+  ]);
+  const at = Math.max(...heads.map((h) => text.lastIndexOf(h)));
+  return cutCreate(text, at, `${file}: no CREATE of ${name}`).body;
+}
+
+const M0072 = migration("0072_member_name_definers_qualify_builtins.sql");
+/** 0072's CREATE lines, `CREATE [OR REPLACE] FUNCTION [public.]<name>(`, group 1 the name (a static regex literal). */
+const CREATES_0072 = [...M0072.matchAll(/^CREATE (?:OR REPLACE )?FUNCTION (?:public\.)?(\w+)\(/gm)];
+
+/** 0072's one CREATE line of name (either spelling; one asserted): its body as prosrc holds it. */
+function body0072(name: string): string {
+  const hits = CREATES_0072.filter((m) => m[1] === name);
+  if (hits.length !== 1)
+    throw new Error(`0072: ${hits.length} CREATE lines of ${name}, expected one`);
+  return cutCreate(M0072, M0072.indexOf(`\n${hits[0]![0]}`), `0072: no CREATE of ${name}`).body;
+}
+
+// The pg_catalog. prefixes 0072 adds to each body it re-creates, measured: 45 in all, none in any previous body.
+const INSERTS: Record<string, number> = {
+  public_name_strip_invisible: 1,
+  member_name_apply_rule: 3,
+  person_profile_update: 3,
+  create_host_added_person: 3,
+  tenant_provision: 6,
+  tenant_profile_update: 5,
+  zalo_identity_resolve: 2,
+  auth_login_google: 13,
+  create_guest_membership: 1,
+  tenant_public_alias_set: 8,
+};
+const stripCatalog = (s: string) => s.split("pg_catalog.").join("");
+const catalogPrefixes = (s: string) => s.split("pg_catalog.").length - 1;
+
+/** 0072's layer: next is previous plus exactly n pg_catalog. prefixes and nothing else; the failure, or null. */
+function layer0072(previous: string, next: string, n: number | undefined): string | null {
+  const before = catalogPrefixes(previous);
+  if (before !== 0) return `the previous body has ${before} pg_catalog. prefixes, not 0`;
+  if (stripCatalog(next) !== stripCatalog(previous))
+    return "the bodies differ beyond pg_catalog. prefixes";
+  const added = catalogPrefixes(next) - before;
+  if (added !== n) return `${added} pg_catalog. prefixes added, not ${String(n)}`;
+  return null;
 }
 
 /** A 0069 block: the text between its two L27-<name> marker lines, each present exactly once. */
@@ -505,7 +560,7 @@ async function ownership(c: pg.ClientBase): Promise<Record<string, unknown>[]> {
   return rows;
 }
 
-describe("RC-BODY: each live body is its previous CREATE's with exactly the section 10 substitution", () => {
+describe("RC-BODY: each live body is its previous CREATE's with exactly the section 10 substitution, then 0072's pg_catalog. prefixes", () => {
   it.each(RECREATED)("$sig from $file", async (w) => {
     const previous = previousCreate(w).body;
     let want = previous;
@@ -518,11 +573,67 @@ describe("RC-BODY: each live body is its previous CREATE's with exactly the sect
       expect(body0069.split(in0069).length - 1, in0069).toBe(1);
       want = want.split(in0069).join(in0070);
     }
+    // 0072's layer: the previous live body plus exactly INSERTS prefixes; prosrc is then pinned to 0072's body.
+    const next0072 = body0072(fnName(w));
+    expect(layer0072(want, next0072, INSERTS[fnName(w)]), fnName(w)).toBeNull();
+    want = next0072;
     const { rows } = await ctx.owner.query<{ src: string }>(
       `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
       [w.sig],
     );
     expect(rows[0]!.src).toBe(want);
+  });
+});
+
+describe("RC-BODY-0072: 0072 re-creates exactly the ten, each its previous body plus INSERTS pg_catalog. prefixes", () => {
+  it("RC-BODY-0072 INSERTS sums to 45 and names exactly 0072's ten CREATE OR REPLACE FUNCTION lines", () => {
+    expect(Object.values(INSERTS).reduce((a, b) => a + b, 0)).toBe(45);
+    expect(M0072.split("\nCREATE OR REPLACE FUNCTION ").length - 1).toBe(10);
+    // Any CREATE spelling counts here, so an eleventh function or a second CREATE of one fails too.
+    expect(CREATES_0072.map((m) => m[1] ?? "").sort()).toEqual(Object.keys(INSERTS).sort());
+  });
+
+  it("RC-BODY-0072 layer0072 passes the helper's real pair and names a planted missing prefix or extra character", () => {
+    const previous = lastCreateBody(
+      "0068_public_name_invisible_chars.sql",
+      "public_name_strip_invisible",
+    );
+    const next = body0072("public_name_strip_invisible");
+    const n = INSERTS.public_name_strip_invisible;
+    expect(layer0072(previous, next, n)).toBeNull();
+    // (i) the first prefix removed: equal once stripped, so only the count check can fail.
+    expect(layer0072(previous, next.replace("pg_catalog.", ""), n)).toBe(
+      "0 pg_catalog. prefixes added, not 1",
+    );
+    // (ii) one extra character with every prefix kept: only the strip equality can fail.
+    expect(layer0072(previous, next.replace("pg_catalog.", " pg_catalog."), n)).toBe(
+      "the bodies differ beyond pg_catalog. prefixes",
+    );
+  });
+
+  // The three RECREATED does not hold, each against its last CREATE before 0072 (0071 re-creates none of them).
+  it.each([
+    {
+      sig: "public.member_name_apply_rule(text,boolean)",
+      file: "0070_member_name_control_chars.sql",
+    },
+    {
+      sig: "public.public_name_strip_invisible(text)",
+      file: "0068_public_name_invisible_chars.sql",
+    },
+    {
+      sig: "public.tenant_public_alias_set(uuid,uuid,text)",
+      file: "0068_public_name_invisible_chars.sql",
+    },
+  ])("RC-BODY-0072 $sig from $file", async ({ sig, file }) => {
+    const name = sig.slice("public.".length, sig.indexOf("("));
+    const next = body0072(name);
+    expect(layer0072(lastCreateBody(file, name), next, INSERTS[name]), name).toBeNull();
+    const { rows } = await ctx.owner.query<{ src: string }>(
+      `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
+      [sig],
+    );
+    expect(rows[0]!.src).toBe(next);
   });
 });
 
@@ -1515,15 +1626,21 @@ describe("L29-RC P3, P4 and M2 keep their attributes and call member_name_apply_
 // are always rolled back, and a first run that absorbs what the blocks above left behind (the tenant
 // names that run keeps are re-reported by every later run: `carried`).
 
-/** A 0070 block: the text between its two L29-<name> marker lines, each present exactly once. */
-function l29Block(name: "OWNER-CHECK" | "CLEANUP"): string {
-  const text = migration("0070_member_name_control_chars.sql");
-  const begin = `\n-- L29-${name}-BEGIN\n`;
-  const end = `\n-- L29-${name}-END`;
+/** A block of file (default 0070, tag L29): the text between its two <tag>-<name> marker lines, each present once. */
+function l29Block(
+  name: "OWNER-CHECK" | "CLEANUP",
+  file = "0070_member_name_control_chars.sql",
+  tag = "L29",
+): string {
+  const text = migration(file);
+  const begin = `\n-- ${tag}-${name}-BEGIN\n`;
+  const end = `\n-- ${tag}-${name}-END`;
   const from = text.indexOf(begin);
   const to = text.indexOf(end);
   if (from < 0 || to < from || text.includes(begin, from + 1) || text.includes(end, to + 1)) {
-    throw new Error(`0070: expected one L29-${name}-BEGIN line, then one L29-${name}-END line`);
+    throw new Error(
+      `${file.slice(0, 4)}: expected one ${tag}-${name}-BEGIN line, then one ${tag}-${name}-END line`,
+    );
   }
   return text.slice(from + begin.length, to);
 }
@@ -1765,6 +1882,55 @@ describe("L29-C1 an owner mismatch fails the migration", () => {
         const head = `${fn}(`;
         const tail = ") (owner readonly)";
         expect(msg.startsWith("0070: not owned by "), msg).toBe(true);
+        expect(msg.endsWith(tail), msg).toBe(true);
+        const body = msg.slice(0, -tail.length);
+        const at = body.lastIndexOf(head);
+        expect(at, msg).toBeGreaterThanOrEqual(0);
+        expect(body.slice(at + head.length), msg).not.toContain(")");
+      });
+      expect((await ctx.owner.query(OWNERS, [SIGS])).rows).toEqual(before);
+    },
+  );
+});
+
+describe("L41-C1 an owner mismatch fails the 0072 migration", () => {
+  const OWNER_CHECK = l29Block(
+    "OWNER-CHECK",
+    "0072_member_name_definers_qualify_builtins.sql",
+    "L41",
+  );
+  // One row per function the block checks against the helper's owner: the rule, the seven, tenant_public_alias_set.
+  const CELLS = [
+    { fn: "member_name_apply_rule", sig: `${L29_RULE}(text, boolean)` },
+    ...RECREATED.map((w) => ({ fn: fnName(w), sig: w.sig })),
+    { fn: "tenant_public_alias_set", sig: "public.tenant_public_alias_set(uuid, uuid, text)" },
+  ];
+  // ownership()'s read over the helper and these nine: what a rolled-back move leaves as it was.
+  const OWNERS = `SELECT p.oid::regprocedure::text AS fn, p.proowner::regrole::text AS owner, p.proacl::text AS acl
+       FROM pg_proc p WHERE p.oid = ANY($1::regprocedure[]) ORDER BY 1`;
+  const SIGS = [HELPER_SIG, ...CELLS.map((x) => x.sig)];
+  it("L41-C1 the block names exactly the ten by regprocedure: the helper's anchor and the nine in its array", () => {
+    // Every quoted 'public.<name>(<arguments>)' literal in the block, by a static regex literal.
+    const named = [...OWNER_CHECK.matchAll(/'(public\.\w+\([^')]*\))'/g)].map((m) => m[1] ?? "");
+    expect(named.sort()).toEqual([...SIGS].sort());
+  });
+  it.each(CELLS)(
+    "L41-C1 $fn: a no-op as applied; 42501 once its owner moves to readonly; rolled back, nothing changed",
+    async ({ fn, sig }) => {
+      const before = (await ctx.owner.query(OWNERS, [SIGS])).rows;
+      expect(before).toHaveLength(10);
+      await rolledBack(async (c) => {
+        await c.query(OWNER_CHECK);
+        expect((await c.query(OWNERS, [SIGS])).rows).toEqual(before);
+        await c.query(`ALTER FUNCTION ${sig} OWNER TO readonly`);
+        const err = await c.query(OWNER_CHECK).catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: "42501" });
+        // As L29-C1: the message ends with "<fn>(<arguments without ')'>) (owner readonly)", fn
+        // taken literally; plain string checks, no RegExp built from data.
+        const msg = (err as Error).message;
+        const head = `${fn}(`;
+        const tail = ") (owner readonly)";
+        expect(msg.startsWith("0072: not owned by "), msg).toBe(true);
         expect(msg.endsWith(tail), msg).toBe(true);
         const body = msg.slice(0, -tail.length);
         const at = body.lastIndexOf(head);
