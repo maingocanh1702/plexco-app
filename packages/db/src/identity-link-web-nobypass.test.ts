@@ -3,11 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import pg from "pg";
 import { issueLinkCode } from "./identity.js";
 import { linkZaloToAccount } from "./identity-link-web.js";
-import {
-  setupNonSuperuserOwnerContext,
-  withJobDefinerLock,
-  type NonSuperuserOwnerContext,
-} from "./test-harness.js";
+import { setupNonSuperuserOwnerContext, type NonSuperuserOwnerContext } from "./test-harness.js";
 
 /**
  * 0054 under a NOSUPERUSER NOBYPASSRLS migration owner (the rest of the suite migrates as a
@@ -25,11 +21,7 @@ const keys = { lookupHmacKey: randomBytes(32) };
 
 beforeAll(async () => {
   ns = await setupNonSuperuserOwnerContext("plexco_link_web_nobypass");
-  await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
-    await ns.bootstrapJobDefinerForOwner();
-    await ns.bootstrapChatDefinerForOwner();
-    await ns.runMigration();
-  });
+  await ns.bootstrapAndMigrateAsOwner();
   app = await ns.connectAsApp();
   const url = new URL(process.env.DATABASE_URL_TEST!);
   url.pathname = `/${ns.dbName}`;

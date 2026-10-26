@@ -2111,15 +2111,13 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       // (chat-dm-safety-authority-core), which does ALTER FUNCTION ... OWNER TO chat_definer and
       // mechanically requires nsCtx's owner role to already be a member of chat_definer.
       //
-      // codex round-05 [P1]: bootstrapChatDefinerForOwner now acquires and holds the chat lock
-      // itself, internally, through nsCtx.teardown() (see test-harness.ts's own comment) — nesting
-      // withChatDefinerLock here would deadlock (two different connections each waiting on the
-      // same session-scoped advisory lock the other holds). job_definer has no such internal hold
-      // (its own bootstrap never revokes an existing member), so withJobDefinerLock still wraps
-      // this whole sequence explicitly.
-      await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
-        await nsCtx.bootstrapJobDefinerForOwner();
-        await nsCtx.bootstrapChatDefinerForOwner();
+      // bootstrapChatDefinerForOwner acquires and holds the chat slot itself, through
+      // nsCtx.teardown() (see test-harness.ts) — nesting withChatDefinerLock here would deadlock
+      // (two connections each waiting on the session-scoped advisory lock the other holds).
+      // job_definer has no such internal hold (its own bootstrap never revokes an existing
+      // member), so bootstrapAndMigrateAsOwner takes the chat slot first and then ONE
+      // withJobDefinerLock hold around this whole body: the migration and the checks below.
+      await nsCtx.bootstrapAndMigrateAsOwner(async () => {
         const res = await nsCtx.runMigration();
         expect(res.applied[res.applied.length - 1]).toBe(
           "0071_zalo_dm_promotion_start_definer.sql",

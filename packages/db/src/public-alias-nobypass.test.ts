@@ -1,11 +1,7 @@
 import { createHash } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  setupNonSuperuserOwnerContext,
-  withJobDefinerLock,
-  type NonSuperuserOwnerContext,
-} from "./test-harness.js";
+import { setupNonSuperuserOwnerContext, type NonSuperuserOwnerContext } from "./test-harness.js";
 
 /**
  * 0060 under a NOSUPERUSER NOBYPASSRLS migration owner (A-17). The main suite migrates as a
@@ -24,11 +20,7 @@ const PRIOR_GUC = "00000000-0000-0000-0000-000000000000";
 
 beforeAll(async () => {
   ns = await setupNonSuperuserOwnerContext("plexco_public_alias_nobypass");
-  await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
-    await ns.bootstrapJobDefinerForOwner();
-    await ns.bootstrapChatDefinerForOwner();
-    await ns.runMigration();
-  });
+  await ns.bootstrapAndMigrateAsOwner();
   app = await ns.connectAsApp();
   const url = new URL(process.env.DATABASE_URL_TEST!);
   url.pathname = `/${ns.dbName}`;
