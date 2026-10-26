@@ -1201,6 +1201,59 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       }
     }, 30_000);
 
+    it("L44-c2 zalo_dm age rule: deliver() receives the time to the 60-minute bound (DD-146) as deliveryDeadlineMs", async () => {
+      const deliver = vi.fn<DeliverFn>(delivered);
+      const zalo = await zaloBoot();
+      try {
+        const event = (await zalo.update()).event;
+        await ackedWhileOff([event], zalo.projectors);
+        await enable("zalo_dm");
+        const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
+        for (let i = 0; i < 20 && (await deliveries(event))[0]?.status === "pending"; i++)
+          await cycle(projectors);
+        // other tests' leftover zalo_dm rows may be claimed in the same cycles: find this event's job
+        const job = deliver.mock.calls.map(([j]) => j).find((j) => j.eventId === event);
+        expect(job).toBeDefined();
+        // a fresh event: 60 minutes less its DB-clock age, which this test's own 30 s bounds
+        expect(job!.deliveryDeadlineMs).toBeGreaterThan(3_600_000 - 30_000);
+        expect(job!.deliveryDeadlineMs).toBeLessThanOrEqual(3_600_000);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
+    it("L44-c2 zalo_dm player.promoted: deliver() receives the time to the session start as deliveryDeadlineMs (one rule per event)", async () => {
+      const deliver = vi.fn<DeliverFn>(delivered);
+      const zalo = await zaloBoot();
+      try {
+        const event = (await zalo.promote()).event;
+        await ackedWhileOff([event], zalo.projectors);
+        await enable("zalo_dm");
+        const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
+        for (let i = 0; i < 20 && (await deliveries(event))[0]?.status === "pending"; i++)
+          await cycle(projectors);
+        const job = deliver.mock.calls.map(([j]) => j).find((j) => j.eventId === event);
+        expect(job).toBeDefined();
+        // read after the drain: the deadline was taken earlier on the same clock, so it is this or up to 30 s more
+        const after = Number(
+          (
+            await verify.query<{ s: number }>(
+              "SELECT date_part('epoch', s.starts_at - clock_timestamp()) AS s FROM outbox_events e JOIN sessions s ON s.id = e.aggregate_id WHERE e.id = $1",
+              [event],
+            )
+          ).rows[0]!.s,
+        );
+        expect(job!.deliveryDeadlineMs).toBeGreaterThanOrEqual(after * 1000);
+        expect(job!.deliveryDeadlineMs).toBeLessThanOrEqual(after * 1000 + 30_000);
+        // the start rule, not the age rule: the session starts a day ahead, past the 60-minute bound
+        expect(job!.deliveryDeadlineMs).toBeGreaterThan(3_600_000);
+      } finally {
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
+
     const startError = new Error("PSD-8: the session-start read failed");
     for (const [read, start, expected] of [
       ["fails (the cycle rejects)", () => Promise.reject(startError), startError],
