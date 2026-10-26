@@ -212,8 +212,9 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
         }
         continue;
       }
-      const remaining = leftMs(); // re-measured: the decrypt took time, and no send outlives the cap
-      if (remaining <= 0) return retry(capCode);
+      // Re-measured after the decrypt, in whole ms: AbortSignal.timeout rejects a fraction.
+      const remaining = Math.floor(leftMs());
+      if (remaining <= 0) return retry(capCode); // under 1 ms left counts as none
       let terminalCode: string | null = null;
       try {
         await send(token, chatId, text, { timeoutMs: Math.min(sendTimeoutMs, remaining) });
