@@ -1,8 +1,10 @@
+import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { LangProvider } from "../../lib/i18n-client";
 import type { MySession } from "../../lib/me-player-api";
-import { MySessionsView } from "./my-sessions-view";
+import { SessionProvider } from "../../lib/use-session";
+import { MySessionsList, MySessionsView } from "./my-sessions-view";
 import type { PlayerState } from "./player-page";
 
 // ApiErrorNotice calls useRouter(), and no app router is mounted in a static render.
@@ -111,7 +113,7 @@ describe("MySessionsView", () => {
     expect(visible).not.toContain("Invalid");
   });
 
-  it("shows sport, club and area; no id and no control", () => {
+  it("shows sport, club and area; no club resolves, so no id, link or button (O-2)", () => {
     const html = render(ready([ACTIVE, { ...ACTIVE, sessionId: "s-2", sportKey: "curling" }]));
     const visible = text(html);
     expect(stateOf(html)).toBe("ready");
@@ -120,14 +122,55 @@ describe("MySessionsView", () => {
     expect(visible).toContain("Dev Club");
     expect(html).not.toContain("session-9d2f");
     expect(html).not.toContain("dev-club");
-    expect(html).not.toContain("<button"); // no leave or cancel control (O-2)
-  });
-
-  it("CE-6 rows carry no action: no link and no button inside a card", () => {
-    const cards =
-      render(ready([ACTIVE, { ...ACTIVE, sessionId: "s-2" }])).match(/<li\b.*?<\/li>/g) ?? [];
+    expect(html).not.toContain("<button"); // a static render runs no effect, so no club resolves
+    const cards = html.match(/<li\b.*?<\/li>/g) ?? [];
     expect(cards).toHaveLength(2);
     for (const card of cards) expect(card).not.toMatch(/<a\b|<button\b/);
+  });
+
+  const renderList = (over: Partial<ComponentProps<typeof MySessionsList>>, lang?: "vi" | "en") =>
+    renderToStaticMarkup(
+      <LangProvider lang={lang ?? "en"}>
+        <SessionProvider>
+          <MySessionsList
+            state={ready([ACTIVE])}
+            onRetry={() => {}}
+            tenants={new Map()}
+            left={false}
+            onLeft={() => {}}
+            {...over}
+          />
+        </SessionProvider>
+      </LangProvider>,
+    );
+
+  it("CE-6: only an active or waitlisted seat of a resolved club carries the leave button", () => {
+    const UUID = "5b0c2d4e-7a31-4f6b-9c8d-1e2f3a4b5c6d";
+    const sessions = [
+      {},
+      { myStatus: "waitlisted", waitlistPosition: 2 },
+      { myStatus: "pending" },
+      { myStatus: null },
+      { clubRef: "other-club" },
+    ].map((extra, i) => ({ ...ACTIVE, sessionId: `sx-${i}`, ...extra }) as MySession);
+    const html = renderList({ state: ready(sessions), tenants: new Map([["dev-club", UUID]]) });
+    const cards = html.match(/<li\b.*?<\/li>/g) ?? [];
+    const labels = (card: string) =>
+      (card.match(/<button\b.*?<\/button>/g) ?? []).map((b) => text(b).trim());
+    expect(cards.map(labels)).toEqual([["Leave session"], ["Leave session"], [], [], []]);
+    expect(cards.join("")).not.toMatch(/<a\b/);
+    for (const id of [UUID, ...sessions.map((s) => s.sessionId)]) expect(html).not.toContain(id);
+  });
+
+  it.each([
+    ["vi", "Bạn đã rời buổi này."],
+    ["en", "You left this session."],
+  ] as const)("left (%s): status line, even while reloading; none when not left", (lang, msg) => {
+    for (const state of [ready([ACTIVE]), { status: "loading" }] as State[]) {
+      const rendered = renderList({ state, left: true }, lang);
+      expect(/<p role="status"[^>]*>([^<]*)<\/p>/.exec(rendered)?.[1]).toBe(msg);
+      expect(renderList({ state }, lang)).not.toContain(msg);
+    }
   });
 
   it("the truncated note shows only when the service capped the list", () => {
