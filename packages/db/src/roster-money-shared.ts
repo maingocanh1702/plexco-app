@@ -55,7 +55,7 @@ export const fail = (code: RosterMoneyErrorCode, message: string): never => {
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const INT4_MAX = 2_147_483_647;
 export const NOTE_MAX = 200;
-export const DISPLAY_NAME_MAX = 100;
+export { DISPLAY_NAME_MAX } from "./text-safety.js";
 
 export const isPositiveInt4 = (v: unknown): v is number =>
   typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= INT4_MAX;

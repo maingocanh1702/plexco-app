@@ -1,6 +1,7 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { sessions } from "../schema.js";
 import type { Db, Tx } from "./client.js";
+import { stripInvisibleChars } from "./text-safety.js";
 
 /**
  * Tenant choke-point (HR1 / INV-1 / BL-TEN-1).
@@ -132,8 +133,10 @@ export function tenantRepo(db: Db, tenantId: string) {
               timezone: input.timezone,
               priceAmount: input.priceAmount ?? 0,
               slotsMax: input.slotsMax ?? null,
-              area: input.area ?? null,
-              venueName: input.venueName ?? null,
+              // Strip only, no trim: the public-name strip of SessionService (stripPublicNames).
+              area: typeof input.area === "string" ? stripInvisibleChars(input.area) : null,
+              venueName:
+                typeof input.venueName === "string" ? stripInvisibleChars(input.venueName) : null,
               visibility: input.visibility ?? "private",
               joinPolicy: input.joinPolicy ?? "open",
               status: input.status ?? "draft",

@@ -1,7 +1,10 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { validateDisplayName } from "./me-settings.js";
+import { DISPLAY_NAME_MAX as SETTINGS_NAME_MAX, validateDisplayName } from "./me-settings.js";
+import { DISPLAY_NAME_MAX as ROSTER_NAME_MAX } from "./roster-money-shared.js";
 import {
   checkTypedName,
+  DISPLAY_NAME_MAX,
   hasHiddenChar,
   hasVisibleChar,
   normalizeExternalName,
@@ -181,4 +184,24 @@ describe("L29-T text-safety: the typed-name check and the external-name normaliz
     const bad = badScalars((value) => validated(value) === checkTypedName(value));
     expect(bad).toEqual([]);
   }, 30_000);
+});
+
+describe("L42 one display-name cap", () => {
+  it("is 120, and me-settings and roster-money-shared export the same value", () => {
+    expect(DISPLAY_NAME_MAX).toBe(120);
+    expect(SETTINGS_NAME_MAX).toBe(DISPLAY_NAME_MAX);
+    expect(ROSTER_NAME_MAX).toBe(DISPLAY_NAME_MAX);
+  });
+
+  it("source guard: exactly one definition in packages/db/src, in text-safety.ts", () => {
+    const dir = new URL("./", import.meta.url);
+    const definitions = readdirSync(dir)
+      .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts"))
+      .flatMap((file) => {
+        const source = readFileSync(new URL(file, dir), "utf8");
+        // Every declaration counts, with or without a type annotation or a numeric initializer.
+        return (source.match(/\b(?:const|let|var)\s+DISPLAY_NAME_MAX\b/g) ?? []).map(() => file);
+      });
+    expect(definitions).toEqual(["text-safety.ts"]);
+  });
 });

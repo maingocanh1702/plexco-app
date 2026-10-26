@@ -5,7 +5,12 @@ import {
   openPersonGender,
   type Gender,
 } from "./gender-crypto.js";
-import { hasHiddenChar, hasVisibleChar, stripInvisibleChars } from "./text-safety.js";
+import {
+  DISPLAY_NAME_MAX,
+  hasHiddenChar,
+  hasVisibleChar,
+  stripInvisibleChars,
+} from "./text-safety.js";
 
 /**
  * Signed-in user's own settings (lane M4): profile display name + linked channels + unlink, plus the
@@ -17,11 +22,11 @@ import { hasHiddenChar, hasVisibleChar, stripInvisibleChars } from "./text-safet
  * first call minted (not "inactive": detach leaves the status as it was) and answers `invalid` (the
  * route maps it to 409), so no command id is stored.
  */
-export const DISPLAY_NAME_MAX = 120;
+export { DISPLAY_NAME_MAX };
 
 export class DisplayNameError extends Error {
   constructor() {
-    super("display name must be 1-120 printable characters");
+    super(`display name must be 1-${DISPLAY_NAME_MAX} printable characters`);
     this.name = "DisplayNameError";
   }
 }
