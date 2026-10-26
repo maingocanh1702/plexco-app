@@ -1,3 +1,4 @@
+import { apiFetch } from "./api-client";
 import {
   badResponse,
   num,
@@ -9,6 +10,7 @@ import {
   str,
   type Rec,
 } from "./discover-api";
+import { tenantQuery } from "./sessions-api";
 
 /**
  * Read client for the player's own pages (L12): my clubs, sessions, charges and join requests.
@@ -246,4 +248,22 @@ export async function getMyCharges(): Promise<MyCharges> {
     clubs: rows(data?.clubs, parseClubCharges),
     summary: parseSummary(data?.summary),
   };
+}
+
+const TIMEOUT_MS = 15_000;
+
+/** Leaves my seat (idempotent on commandId); a reply that is not a clean "left" fails closed. */
+export async function leaveMySession(
+  sessionId: string,
+  tenantId: string,
+  { commandId, csrfToken }: { commandId: string; csrfToken: string | null },
+): Promise<void> {
+  const data = rec(
+    await apiFetch<unknown>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/leave?${tenantQuery(tenantId)}`,
+      { method: "POST", json: { commandId }, csrfToken, signal: AbortSignal.timeout(TIMEOUT_MS) },
+    ),
+  );
+  const player = rec(data?.player);
+  if (player?.status !== "left" || typeof data?.replayed !== "boolean") throw badResponse();
 }
