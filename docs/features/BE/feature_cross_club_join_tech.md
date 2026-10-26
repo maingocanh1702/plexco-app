@@ -1,7 +1,7 @@
 # Feature: Cross-club Join & Approval — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.13 · 2026-08-10
+> **Version:** 2.14 · 2026-10-26
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_cross_club_join.md`  
@@ -83,8 +83,8 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | # | Category | Case | Xử lý |
 |---|----------|------|-------|
-| 1 | Concurrency | 2 first-entry players join last slot | Lock session row → first active+exactly-one-charge, second waitlisted without charge/venue |
-| 2 | Concurrency | Approve first-entry after capacity full | Mark request approved + create waitlisted player/position under same lock; no charge/venue |
+| 1 | Concurrency | 2 first-entry players join last slot | Lock session row → first active+exactly-one-charge, second waitlisted without charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139) |
+| 2 | Concurrency | Approve first-entry after capacity full | Mark request approved + create waitlisted player/position under same lock; no charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139) |
 | 3 | Concurrency | Approve after request expired | Safe conflict — terminal with reason "expired" |
 | 4 | Concurrency | Duplicate join command | Command dedup + UNIQUE active request index |
 | 5 | Security | Body contains arbitrary person_id | ❌ Reject — use authenticated session identity |
@@ -116,7 +116,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 ### Request/Response Examples
 
-> DTO minh hoạ shape theo contract đã pin (venue **chỉ** khi `active`; waitlisted chỉ area + position dương). Tên field cụ thể chốt ở build slice; mọi response dùng envelope chuẩn `{data,error,meta.requestId}`.
+> DTO minh hoạ shape theo contract đã pin (venue public theo mặc định, DD-139; khi `sessions.hide_exact_address` ON thì venue **chỉ** khi `active`, waitlisted chỉ area + position dương). Tên field cụ thể chốt ở build slice; mọi response dùng envelope chuẩn `{data,error,meta.requestId}`.
 
 **POST `/api/sessions/:id/join`** — body rỗng (identity từ authenticated session; server đọc `join_policy`; **không** nhận `person_id` hoặc policy từ client).
 
@@ -134,7 +134,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 }
 ```
 
-- `200` — waitlisted (full, area + position, không venue/charge):
+- `200` — waitlisted (full, area + position, không charge; venue chỉ ẩn khi `sessions.hide_exact_address` ON, DD-139):
 
 ```json
 {
@@ -209,11 +209,11 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 4. Still under session lock, lock any nonterminal DD-45 root **before** membership/player/financial locks. Then resolve/create guest membership idempotently only after guards. Existing left calls shared DD-49 disposition under later player/financial locks; unknown → `REJOIN_REQUIRES_REVIEW`
 5. Re-count active under lock and resolve outcome:
    a. no existing player + capacity available/unlimited → derive amount first; on success insert active player + exactly one charge atomically; on DD-39 failure abort this join tx (no player/charge/venue, new guest membership rollback)
-   b. no existing player + full → insert waitlisted player + tail position; no charge/venue
+   b. no existing player + full → insert waitlisted player + tail position; no charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139)
    c. valid DD-49 rejoin + capacity available/unlimited → active + carry-over or append refunded lifecycle; no duplicate charge row
-   d. valid DD-49 rejoin + full → waitlisted + tail; not-refunded retains historical aggregate, refunded writes no new lifecycle; no venue
+   d. valid DD-49 rejoin + full → waitlisted + tail; not-refunded retains historical aggregate, refunded writes no new lifecycle; venue hidden only when `sessions.hide_exact_address` is ON (DD-139)
 6. If the outcome observes/causes full capacity, resolve all nonterminal promotion roots in this same transaction; store processed command + outbox event
-7. COMMIT → active DTO includes venue; waitlisted DTO includes area + position only
+7. COMMIT → active DTO includes venue; waitlisted DTO includes area + position; venue hidden only when `sessions.hide_exact_address` is ON (DD-139)
 ```
 
 ### Approval Transaction
@@ -255,7 +255,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | # | Test | Input | Expected |
 |---|------|-------|----------|
 | 1 | Open first-entry join happy path | Public/open/capacity | Joined + exactly one charge created |
-| 2 | Open first-entry join full | No capacity | Waitlisted + positive position; no charge/venue |
+| 2 | Open first-entry join full | No capacity | Waitlisted + positive position; no charge; venue hidden only when `sessions.hide_exact_address` is ON (DD-139) |
 | 3 | Open join closed | Status=closed | `SESSION_NOT_JOINABLE` |
 | 4 | Open join private | Visibility=private | `SESSION_NOT_JOINABLE` |
 | 5 | Guest membership created | Non-member join | membership role=guest |
@@ -264,15 +264,15 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 | 8 | Approval request created | Approval policy | Request status=pending |
 | 9 | Duplicate request | Same person/session | Idempotent |
 | 10 | Approve first-entry happy path | Capacity available | Approved + joined + exactly one charge |
-| 11 | Approve first-entry full | No capacity at decision | Request approved + waitlisted player; no charge/venue |
+| 11 | Approve first-entry full | No capacity at decision | Request approved + waitlisted player; no charge; venue hidden only when `sessions.hide_exact_address` is ON (DD-139) |
 | 12 | Approve expired | Past expires_at | Safe conflict "expired" |
 | 13 | Reject happy path | Admin rejects | Status=rejected |
 | 14 | Cancel request | Player cancels | Status=cancelled |
 | 15 | Expire job | Expired requests | Batch mark expired |
 | 16 | Concurrent first-entry last-slot | 2 parallel joins | One active+exactly-one-charge, one waitlisted without charge |
 | 17 | Paid leave | Player with charge | Financial policy applied |
-| 18 | Venue hidden before active | Pending/rejected/approved-waitlisted DTO | No venue |
-| 19 | Venue revealed for active | Active DTO only | Venue present |
+| 18 | Venue hidden before active (`sessions.hide_exact_address` ON, DD-139) | Pending/rejected/approved-waitlisted DTO | No venue |
+| 19 | Venue revealed for active | Active DTO; with `sessions.hide_exact_address` OFF also pending/rejected/waitlisted DTOs (DD-139) | Venue present |
 | 20 | Cross-tenant admin spoof | Wrong tenant admin | 403 |
 | 21 | Duplicate active/waitlisted join | Existing player | Return current state idempotently; no rank/charge change |
 | 22 | Rejoin after left, not refunded | Existing `left` + paid obligation without refund reversal | Active/waitlisted per capacity; carry-over same obligation/allocation; waitlisted path creates no new charge/venue |
@@ -328,6 +328,7 @@ Existing tables used: `memberships` (guest status), `players`, `charges`. DD-45 
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.14 | **Sync DD-139 (quyết định owner 2026-10-21); docs-only.** :86, :87, :119, :137, :212, :214, :216, :258, :267, :274, :275: venue public theo mặc định (đảo DD-06 và L9 M-7); chỉ khi `sessions.hide_exact_address` ON mới giữ luật cũ (venue chỉ khi `active`, waitlisted chỉ area + position). |
 | 2026-08-10 | v2.13 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/join model. |
 | 2026-07-28 | v2.12 | Mirror DD-32 Option D: channel finalizer enters existing Join transaction with server-owned free/account-linked/settled disposition; direct/client proof rejected; add pay-now and cross-transport idempotency tests. No runtime. |
 | 2026-07-24 | v2.11c | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `migrations 0000–0018, tail = 0018` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Dated provenance `origin/main`@`22c23aa` giữ nguyên verbatim. Pre-existing dated changelog giữ verbatim. Không đổi contract. |

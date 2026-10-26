@@ -1,7 +1,7 @@
 # Feature: Marketplace Discovery & Public Projection — Backend Tech Spec
 
 > **Canonical phase:** P4.3  
-> **Version:** 2.8 · 2026-10-16
+> **Version:** 2.9 · 2026-10-26
 > **Status:** Reviewed  
 > **Implementation:** DB invariant `0024` đã land; `public_sessions` baseline có sẵn, nhưng projector/API/cache invalidation chưa build · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Product spec:** `../FE/feature_marketplace_discovery.md`  
@@ -115,9 +115,9 @@ CREATE INDEX idx_public_price ON public_sessions(price_amount);
 | `sport` | string | Sport key filter |
 | `area` | string | Area filter |
 | `start_after` / `start_before` | ISO datetime | Time window |
-| `skill` | string | Legacy compatibility filter only during DD-41 migration |
-| `level_min_rank` / `level_max_rank` | integer | DD-41 target range filter using DD-08 ranks |
-| `level_strict` | boolean | DD-41 target: distinguish hard gate from advisory range |
+| `skill` | string | Legacy compatibility filter only during DD-41 migration; MVP: rejected with `INVALID_FILTER` (DD-138 L10b P-9) |
+| `level_min_rank` / `level_max_rank` | integer | DD-41 target range filter using DD-08 ranks; MVP: rejected with `INVALID_FILTER` until the DD-41 columns have a source (DD-138 L10b P-1, P-9) |
+| `level_strict` | boolean | DD-41 target: distinguish hard gate from advisory range; MVP: rejected with `INVALID_FILTER` until the DD-41 columns have a source (DD-138 L10b P-1, P-9) |
 | `max_price` | integer | Price ceiling |
 | `available_only` | boolean | Only sessions with slots |
 | `cursor` | string | Opaque pagination cursor |
@@ -290,6 +290,7 @@ Periodic sweep: DELETE WHERE expires_at < now()
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.9 | **Sync DD-138 L10b P-1, P-9 (owner ký 2026-10-21); docs-only.** :118, :119, :120: MVP từ chối các bộ lọc này bằng `INVALID_FILTER` (:119 và :120 tới khi các cột DD-41 có nguồn). |
 | 2026-10-16 | v2.8 | **Sync DD-133 (D1, owner ký 2026-10-16) + route + schema drift; docs-only.** (1) Public chỉ `slots_open`: bỏ `confirmed_count` khỏi DDL, migration (b), DTO, projector, cache row và test #28; `host_display_name` đánh dấu legacy, không bao giờ ghi; `getSessionOccupancy()` = active + guest notes + live holds. (2) DTO key `publicId` → `publicListingId`; club alias = alias đã duyệt (L10a) thay cho `tenants.display_name` (cột không tồn tại). (3) Route: list = `GET /api/discover`; bỏ `/api/public/sessions`; detail route UNPINNED (L10b ghim, khoá `public_listing_id`). Personal-tenant alias chỉ đọc alias đã duyệt (không còn `owner membership.display_name`; DD-133). Vòng review 1: live holds ghi rõ = 0 tới khi có bảng hold. Vòng review 2: edge #13 và test #22 chỉ nhắc alias đã duyệt (L10a). Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.7 | **A-grade upgrade:** thêm Entry points table (5 entries); bump version. Không đổi contract/projection model. |
 | 2026-07-28 | v2.6 | Mirror DD-32: add target `confirmed_count`, change existing `slots_open` projector semantics to active + live holds through one `getSessionOccupancy()` read, keep hold count private, invalidate on player/hold events and keep final mutation independent of cached counts. Live migration/projector remain unbuilt. |

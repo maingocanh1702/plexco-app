@@ -1,7 +1,7 @@
 # Feature: In-app Chat (club-wide + 1-1 + Group) — Backend Tech Spec
 
 > **Canonical phase:** P4
-> **Version:** 0.28 · 2026-08-25
+> **Version:** 0.29 · 2026-10-26
 > **Status:** ✅ Reviewed contract — DD-38/DD-55/DD-86/DD-91/DD-92/DD-93/DD-94/DD-95 ratified; pending migration
 > **Implementation:** Not started — schema `chat_*` chưa vào canonical · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_inapp_chat.md` *(Reviewed)*
@@ -941,7 +941,7 @@ BEGIN
          target_person_id, target_assistant_key, render_label_snapshot
     FROM resolve_chat_mentions(p_channel, me, p_mentions);
   -- Transactional NOTIFY is delivered only after COMMIT; payload is opaque message id, never body/object/PII.
-  PERFORM pg_notify('chat_' || p_channel::text, out_msg.id::text);
+  PERFORM pg_notify('chat_realtime', out_msg.id::text);
   RETURN out_msg;
 END; $$;
 REVOKE ALL ON FUNCTION send_chat_message(uuid, text, text, uuid, jsonb) FROM PUBLIC;
@@ -1137,7 +1137,7 @@ Mechanism slices `1–47` own no HTTP route. Every `A*` adapter is bounded to se
 
 | Method | Path | Auth | Mô tả |
 |--------|------|------|-------|
-| GET | /api/chat/channels | Authenticated Person | Kênh của tôi (club của các tenant tôi là member + DM) |
+| GET | /api/chat/channels | Authenticated Person | Kênh của tôi (club của các tenant tôi là member + DM); response có thêm `viewer {canModerate, canPostRestricted}` (L15b D7, DD-138) |
 | GET | /api/chat/channels/:id/member-targets | Current club-channel readability | A6 lists active human `{targetRef,safeLabel}` only; opaque ref is requester+channel-bound and short-lived; no global/fuzzy search, raw UUID or PII |
 | GET | /api/chat/channels/:id/messages | Current channel readability | Lịch sử keyset `(createdAt,id)`; shared tombstone-safe renderer; không lộ revision/moderation detail |
 | GET | /api/chat/search | Authenticated Person | Required pre-beta search; `q` + optional opaque `channelRef`; current-readable/current-visible body only via canonical generated PostgreSQL `simple` vector and live authz |
@@ -1155,7 +1155,7 @@ Mechanism slices `1–47` own no HTTP route. Every `A*` adapter is bounded to se
 | POST | /api/chat/media/:id/finalize | Attachment owner | Verify object metadata; enqueue malware/moderation scan idempotently |
 | GET | /api/chat/media/:id/access | Authorized channel member | Re-authorize current membership/state; issue short-lived signed read only for `ready` object |
 | DELETE | /api/chat/media/:id | Attachment owner or authorized moderator | Apply deletion policy; tombstone references; revoke future signed access |
-| GET | /api/chat/subscribe | Authenticated | SSE — topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) |
+| GET | /api/chat/subscribe | Authenticated | SSE — một stream toàn tenant `GET /api/chat/subscribe?tenant=` (L15 D-13, DD-138); các topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) không ship |
 | POST | /api/chat/channels | `chat.channel.manage` | Create club channel + atomic auto-provision; server derives Assistant `true` for `all_members`, `false` for `admins_only`; actor-scoped idempotency key |
 | PATCH | /api/chat/channels/:id | `chat.channel.manage` | Update title/club-only metadata or Assistant setting on either post policy; accepting true requires current tenant-config/`assistant_ai_kb` entitlement/provider/privacy gates and consume re-checks them; no Announcements special case |
 | POST | /api/chat/channels/:id/default | `chat.channel.manage` | Serialized default swap; exactly-one invariant |
@@ -1298,7 +1298,7 @@ SSE re-authorizes before every event and on a heartbeat no slower than 30 second
 | Code | Error Code | Message | Trigger |
 |------|-----------|---------|---------|
 | 403 | `CHAT_FORBIDDEN` | Không có quyền trong kênh này | Not a member / wrong tenant |
-| 409 | `CHAT_DUP_MESSAGE` (200-safe) | — | Duplicate `client_msg_id` → trả message cũ |
+| 200 | `CHAT_DUP_MESSAGE` (200-safe) | — | Duplicate `client_msg_id` → trả id và metadata của bản gốc kèm `duplicate: true`, không trả body (L15 D-8, D-10; DD-138) |
 | 413 | `CHAT_MESSAGE_TOO_LARGE` | Tin nhắn quá dài | Over size cap |
 | 429 | `CHAT_RATE_LIMITED` | Gửi quá nhanh — thử lại | Anti-spam limit |
 | 403 | `CHAT_SAFETY_BLOCKED` | Không thể thực hiện thao tác | Blocked pair or open-DM safety gate unavailable; intentionally generic |
@@ -1630,6 +1630,7 @@ Catalog IDs are stable identifiers, not execution order. Runtime work follows ex
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v0.29 | **Sync DD-138 L14 V-5, L15 D-8 / D-10 / D-13, L15b D7 (owner ký 2026-10-21); docs-only.** :944: NOTIFY một channel `chat_realtime`; :1140: response `GET /api/chat/channels` thêm `viewer {canModerate, canPostRestricted}`; :1158: một stream SSE toàn tenant `GET /api/chat/subscribe?tenant=`; :1301: gửi trùng → 200 kèm id và metadata của bản gốc, `duplicate: true`, không trả body (thay 409). |
 | 2026-08-25 | v0.28 | **Đính chính live-baseline (docs-only, phiên reconcile 25/08 — không đổi contract):** (1) ghi chú tại DD-106 Q2 embed comment — điều kiện nhị phân "fence đã merge" ĐÃ ĐẠT (`0033` @ `9da3021`); Q2 vẫn ⬜, ba cột embed vẫn cấm thêm tới khi owner chốt. (2) blockquote migration-baseline §DDL: vế "chat_* chưa tồn tại, tail 0024" đã stale — chat root land `0030`–`0032`, tail hiện `0033`; vế 0 service/API/UI + one-owner split giữ nguyên. Blockquote gốc giữ verbatim làm ngữ cảnh. |
 | 2026-08-12 | v0.27 | **Share Session in Chat (Structured Embed):** Thêm embed columns vào `chat_messages`: `embed_type CHECK IN ('session')`, `embed_ref_id uuid`, `embed_snapshot jsonb` — tất cả all-NULL hoặc all-NOT-NULL (CHECK constraint). Body cho phép rỗng khi có embed (`CHECK length(body) > 0 OR embed_type IS NOT NULL`). Server resolve session, validate actor visibility, snapshot BL-DSC-1 whitelist fields vào JSONB tại insert time — client KHÔNG cung cấp snapshot. API send message nhận optional `embedType` + `embedRefId`. Thêm 6 BE edge cases (#27–32), 8 tests (#113–120), request/response examples. Extensible to `activity`, `tournament`, `club` sau. |
 | 2026-08-11 | v0.26 | **Group Chat expansion:** Thêm `kind='group'` (global + tenant-scoped, 3–50 members) với follow-guard (DD-47), multi-pin (max 5/channel với trigger guard), advanced poll/vote (Telegram-style: single/multi choice, anonymous, quiz, deadline, allow add options — với triggers cho single-choice guard, option limit, poll-closed guard), group admin management, group settings (mute, leave, custom nickname). Thêm 14 entry points mới, 5 tables (`chat_pinned_messages`, `chat_polls`, `chat_poll_options`, `chat_poll_votes`, `chat_member_nicknames`), 4 triggers + 4 functions, 25 tests mới (#88–#112). |
