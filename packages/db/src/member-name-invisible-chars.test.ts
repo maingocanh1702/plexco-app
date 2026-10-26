@@ -1406,6 +1406,22 @@ describe("L29-W1 P2, T1 and T2 refuse control, bidi, separator, U+2800 and blank
       expect(verdict(created), cell).toEqual(verdict(set));
     }
   }, 30_000);
+  // L42 P2: the 0073 cap counts code points; 100, 101 and 120 are stored whole, 121 is refused.
+  it.each<[cell: string, input: string, whole: boolean]>([
+    ["100 letters", "a".repeat(100), true],
+    ["101 letters", "a".repeat(101), true],
+    ["120 letters", "a".repeat(120), true],
+    ["120 astral letters (240 UTF-16 units)", String.fromCodePoint(0x1d400).repeat(120), true],
+    ["121 letters", "a".repeat(121), false],
+  ])(
+    "L42 P2: 100, 101 and 120 code points are stored whole, 121 is refused with the 1..120 message: %s",
+    async (_cell, input, whole) => {
+      const p2 = byId("P2");
+      expect(await p2.call(input)).toEqual(
+        whole ? { stored: cps(input) } : { code: "22023", message: p2.message, untouched: true },
+      );
+    },
+  );
 });
 
 // L29-RC (units U2 and U3, section 11): each definer 0070 re-creates keeps its owner, prosecdef,
@@ -1605,6 +1621,27 @@ describe("L29-W2 and L29-I1-I3 P3, P4 and M2 normalize control, bidi, separator,
       const r = await zalo(mix("a".repeat(119), cp, "b"));
       const stored = Array.from(r.display_name ?? "", (c) => c.codePointAt(0));
       expect([stored.length, stored[stored.length - 1]]).toEqual([120, cp]);
+    },
+  );
+  // L42 P4: 0073 cuts the normalized Google name to 120 code points; the new subject signs in.
+  it.each<Cell>([
+    ["120 letters are stored whole", "a".repeat(120), "a".repeat(120)],
+    ["121 letters keep 120", "a".repeat(121), "a".repeat(120)],
+    ["200 letters keep 120", "a".repeat(200), "a".repeat(120)],
+    [
+      "the cut applies after the normalization",
+      mix(0x202e, "a".repeat(120), 0x202c, "b"),
+      "a".repeat(120),
+    ],
+    [
+      "121 astral letters keep 120 (code points, not UTF-16 units)",
+      String.fromCodePoint(0x1d400).repeat(121),
+      String.fromCodePoint(0x1d400).repeat(120),
+    ],
+  ])(
+    "L42 P4: the Google path stores at most 120 code points and never raises: %s",
+    async (_cell, input, stored) => {
+      expect(cps(await W2.find((w) => w.id === "P4")!.stored(input))).toEqual(cps(stored));
     },
   );
 
@@ -2033,6 +2070,51 @@ describe("L41-C1 an owner mismatch fails the 0072 migration", () => {
         const head = `${fn}(`;
         const tail = ") (owner readonly)";
         expect(msg.startsWith("0072: not owned by "), msg).toBe(true);
+        expect(msg.endsWith(tail), msg).toBe(true);
+        const body = msg.slice(0, -tail.length);
+        const at = body.lastIndexOf(head);
+        expect(at, msg).toBeGreaterThanOrEqual(0);
+        expect(body.slice(at + head.length), msg).not.toContain(")");
+      });
+      expect((await ctx.owner.query(OWNERS, [SIGS])).rows).toEqual(before);
+    },
+  );
+});
+
+describe("L42-C1 an owner mismatch fails the 0073 migration", () => {
+  const OWNER_CHECK = l29Block("OWNER-CHECK", "0073_member_name_length_cap_120.sql", "L42");
+  // The two 0073 re-creates (EDITS_0073's keys), each checked against the helper's owner.
+  const TWO = RECREATED.filter((w) => fnName(w) in EDITS_0073);
+  const CELLS = TWO.map((w) => ({ fn: fnName(w), sig: w.sig }));
+  // L41-C1's read over the helper and the two: what a rolled-back move leaves as it was.
+  const OWNERS = `SELECT p.oid::regprocedure::text AS fn, p.proowner::regrole::text AS owner, p.proacl::text AS acl
+       FROM pg_proc p WHERE p.oid = ANY($1::regprocedure[]) ORDER BY 1`;
+  const SIGS = [HELPER_SIG, ...CELLS.map((x) => x.sig)];
+  it("L42-C1 the block names exactly the two by regprocedure, beside the helper's anchor, and nothing else of the L41 ten", () => {
+    // Every quoted 'public.<name>(<arguments>)' literal in the block, by a static regex literal.
+    const named = [...OWNER_CHECK.matchAll(/'(public\.\w+\([^')]*\))'/g)].map((m) => m[1] ?? "");
+    expect(named.sort()).toEqual([...SIGS].sort());
+    expect(CELLS.map((x) => x.fn).sort()).toEqual([
+      "auth_login_google",
+      "create_host_added_person",
+    ]);
+  });
+  it.each(CELLS)(
+    "L42-C1 $fn: a no-op as applied; 42501 with the 0073: prefix once its owner moves to readonly; rolled back, nothing changed",
+    async ({ fn, sig }) => {
+      const before = (await ctx.owner.query(OWNERS, [SIGS])).rows;
+      expect(before).toHaveLength(3);
+      await rolledBack(async (c) => {
+        await c.query(OWNER_CHECK);
+        expect((await c.query(OWNERS, [SIGS])).rows).toEqual(before);
+        await c.query(`ALTER FUNCTION ${sig} OWNER TO readonly`);
+        const err = await c.query(OWNER_CHECK).catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: "42501" });
+        // As L41-C1: plain string checks on the "<fn>(<arguments>) (owner readonly)" tail.
+        const msg = (err as Error).message;
+        const head = `${fn}(`;
+        const tail = ") (owner readonly)";
+        expect(msg.startsWith("0073: not owned by "), msg).toBe(true);
         expect(msg.endsWith(tail), msg).toBe(true);
         const body = msg.slice(0, -tail.length);
         const at = body.lastIndexOf(head);
