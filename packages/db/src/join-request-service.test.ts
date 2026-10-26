@@ -654,6 +654,7 @@ describe("join-request events and races (A-9, A-4)", () => {
         approve(tenantId, host, requestId),
         updateSession(ctx.appDb.db, {
           tenantId,
+          actorPersonId: host,
           commandId: nextCommandId(),
           input: { sessionId, slotsMax: to, expectedVersion: Number(v.version) },
         }),

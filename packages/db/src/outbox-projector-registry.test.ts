@@ -971,6 +971,7 @@ describe("A16-A22 stale-draft auto-expiry (job_expire_stale_drafts)", () => {
     expect(await expire()).toEqual({ cancelled: 1, anomalies: 0 });
     await cancelSession(ctx.appDb.db, {
       tenantId,
+      actorPersonId: ACTOR,
       commandId: randomUUID(),
       input: { sessionId: manual, expectedVersion: 1 },
     });
@@ -1101,6 +1102,7 @@ describe("A16-A22 stale-draft auto-expiry (job_expire_stale_drafts)", () => {
       let settled = false;
       const publish = publishSession(ctx.appDb.db, {
         tenantId: t,
+        actorPersonId: ACTOR,
         commandId: randomUUID(),
         input: { sessionId: raced },
       })

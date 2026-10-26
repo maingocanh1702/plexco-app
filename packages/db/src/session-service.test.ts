@@ -122,11 +122,17 @@ const input = (over: Partial<CreateSessionInputPayload> = {}): CreateSessionInpu
 
 // createSession as tenant A with a fresh (or explicit) commandId.
 const create = (over: Partial<CreateSessionInputPayload> = {}, commandId = cmdId()) =>
-  createSession(ctx.appDb.db, { tenantId: ctx.tenantA, commandId, input: input(over) });
+  createSession(ctx.appDb.db, {
+    tenantId: ctx.tenantA,
+    actorPersonId: ACTOR,
+    commandId,
+    input: input(over),
+  });
 // createSession with a deliberately malformed payload (bypasses the TS types).
 const createBad = (over: Record<string, unknown>) =>
   createSession(ctx.appDb.db, {
     tenantId: ctx.tenantA,
+    actorPersonId: ACTOR,
     commandId: cmdId(),
     input: { ...input(), ...over } as unknown as CreateSessionInputPayload,
   });
@@ -175,6 +181,7 @@ describe("createSession", () => {
     });
     const result = await createSession(ctx.appDb.db, {
       tenantId: ctx.tenantA,
+      actorPersonId: ACTOR,
       commandId,
       input: in0,
     });
@@ -271,6 +278,7 @@ describe("createSession", () => {
     const first = await create({ venueAddress: "12 Nguyễn Trãi" }, commandId);
     const replay = await createSession(ctx.appDb.db, {
       tenantId: ctx.tenantA,
+      actorPersonId: ACTOR,
       commandId,
       input: { ...input(), venueAddress: "x".repeat(500) } as unknown as CreateSessionInputPayload,
     });
@@ -482,6 +490,7 @@ describe("createSession", () => {
         () =>
           createSession(ctx.appDb.db, {
             tenantId: ctx.tenantA,
+            actorPersonId: ACTOR,
             commandId: cmdId(),
             input: badInput as unknown as CreateSessionInputPayload,
           }),
@@ -540,6 +549,7 @@ describe("createSession", () => {
       );
       pending = createSession(ctx.appDb.db, {
         tenantId: ctx.tenantA,
+        actorPersonId: ACTOR,
         commandId,
         input: input(),
       }).then(
@@ -624,10 +634,16 @@ describe("createSession", () => {
 
   it("SEC2: tenant comes from trusted context, never the payload", async () => {
     await expect(
-      createSession(ctx.appDb.db, { tenantId: "not-a-uuid", commandId: cmdId(), input: input() }),
+      createSession(ctx.appDb.db, {
+        tenantId: "not-a-uuid",
+        actorPersonId: ACTOR,
+        commandId: cmdId(),
+        input: input(),
+      }),
     ).rejects.toThrow(/UUID/);
     const created = await createSession(ctx.appDb.db, {
       tenantId: ctx.tenantA,
+      actorPersonId: ACTOR,
       commandId: cmdId(),
       input: { ...input(), tenant_id: ctx.tenantB } as unknown as CreateSessionInputPayload,
     });
@@ -729,7 +745,7 @@ describe("publishSession", () => {
   }
 
   const publish = (tenantId: string, input: PublishSessionInputPayload, commandId = cmdId()) =>
-    publishSession(ctx.appDb.db, { tenantId, commandId, input });
+    publishSession(ctx.appDb.db, { tenantId, actorPersonId: ACTOR, commandId, input });
 
   const outboxFor = (sessionId: string) =>
     rows(
@@ -843,6 +859,7 @@ describe("publishSession", () => {
     const seqStart = future();
     const created = await createSession(ctx.appDb.db, {
       tenantId,
+      actorPersonId: ACTOR,
       commandId: cmdId(),
       input: input({ startsAt: seqStart, endsAt: new Date(seqStart.getTime() + 2 * 3600 * 1000) }),
     });
@@ -1437,6 +1454,7 @@ describe("publishSession", () => {
     await expect(
       publishSession(ctx.appDb.db, {
         tenantId: "not-a-uuid",
+        actorPersonId: ACTOR,
         commandId: cmdId(),
         input: { sessionId: randomUUID() },
       }),
@@ -1457,6 +1475,7 @@ describe("publishSession", () => {
     for (const badInput of bad) {
       const err = await publishSession(ctx.appDb.db, {
         tenantId,
+        actorPersonId: ACTOR,
         commandId: cmdId(),
         input: badInput as unknown as PublishSessionInputPayload,
       }).catch((e: unknown) => e);
@@ -2331,7 +2350,7 @@ describe("updateSession", () => {
   }
 
   const update = (tenantId: string, input: UpdateSessionInputPayload, commandId = cmdId()) =>
-    updateSession(ctx.appDb.db, { tenantId, commandId, input });
+    updateSession(ctx.appDb.db, { tenantId, actorPersonId: ACTOR, commandId, input });
 
   const sessionState = (sessionId: string) =>
     row(
@@ -4214,7 +4233,7 @@ describe("closeSession (B1 of the split)", () => {
     ]);
 
   const close = (tenantId: string, input: CloseSessionInputPayload, commandId = cmdId()) =>
-    closeSession(ctx.appDb.db, { tenantId, commandId, input });
+    closeSession(ctx.appDb.db, { tenantId, actorPersonId: ACTOR, commandId, input });
 
   async function expectCloseReject(run: () => Promise<unknown>, code: string): Promise<void> {
     const err = await run().catch((e: unknown) => e);
@@ -4698,7 +4717,7 @@ describe("cancelSession (B2 of the split)", () => {
     ]);
 
   const cancel = (tenantId: string, input: CancelSessionInputPayload, commandId = cmdId()) =>
-    cancelSession(ctx.appDb.db, { tenantId, commandId, input });
+    cancelSession(ctx.appDb.db, { tenantId, actorPersonId: ACTOR, commandId, input });
 
   async function expectCancelReject(run: () => Promise<unknown>, code: string): Promise<void> {
     const err = await run().catch((e: unknown) => e);
@@ -5220,6 +5239,7 @@ describe("cancelSession (B2 of the split)", () => {
       );
       b = closeSession(ctx.appDb.db, {
         tenantId,
+        actorPersonId: ACTOR,
         commandId: cmdId(),
         input: { sessionId, expectedVersion: version },
       }).then(
