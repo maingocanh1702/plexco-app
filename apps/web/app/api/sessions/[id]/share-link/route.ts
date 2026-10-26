@@ -14,8 +14,6 @@ import { appDb, currentSession } from "../../../../../lib/session-cookies";
  * unvalidated: the wrapper fails a non-UUID closed as SESSION_NOT_FOUND, and its thrown errors map
  * through handleSessionCommand. The raw slug is returned once and never logged or put in an error.
  */
-const PRIVATE_NO_STORE = { headers: { "Cache-Control": "private, no-store" } };
-
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -35,16 +33,16 @@ export async function POST(
         commandId: context.commandId,
       });
       if (result.kind === "rotated") {
-        return ok({ shareLink: { path: `/session/${result.slug}` } }, PRIVATE_NO_STORE);
+        return ok({ shareLink: { path: `/session/${result.slug}` } });
       }
       if (result.kind === "replayed") {
-        return ok({ shareLink: null, replayed: true }, PRIVATE_NO_STORE);
+        return ok({ shareLink: null, replayed: true });
       }
       return err(
         "SESSION_NOT_OPEN",
         t(
-          "Kèo này chưa hiển thị công khai nên chưa tạo được liên kết chia sẻ.",
-          "This session is not publicly listed yet, so a share link cannot be created.",
+          "Kèo này không hiển thị công khai nên không tạo được liên kết chia sẻ.",
+          "This session is not publicly listed, so a share link cannot be created.",
         ),
         409,
       );

@@ -33,8 +33,8 @@ const SID = "33333333-3333-4333-8333-333333333333";
 const FOREIGN = "44444444-4444-4444-8444-444444444444";
 const CMD = "cmd-share-1";
 const SLUG = "Zx9kQ2mV7pLr4tWc8nYb3A";
-const NO_STORE = "private, no-store";
-const VI_NOT_OPEN = "Kèo này chưa hiển thị công khai nên chưa tạo được liên kết chia sẻ.";
+const NO_STORE = "no-store"; // the api-envelope default, the one source
+const VI_NOT_OPEN = "Kèo này không hiển thị công khai nên không tạo được liên kết chia sẻ.";
 const TRUSTED = { tenantId: TENANT, actorPersonId: "p", sessionId: SID, commandId: CMD };
 const HOSTILE = { tenantId: FOREIGN, actorPersonId: FOREIGN, sessionId: FOREIGN };
 const SIGNED_IN = { sessionId: "s", accountId: "a", personId: "p" } as never;
@@ -64,7 +64,7 @@ afterEach(() => {
   const logged = spies.flatMap((spy) => spy.mock.calls.flat().map((arg) => inspect(arg)));
   expect(logged.filter((line) => line.includes(SLUG))).toEqual([]); // H10: the bearer slug
 });
-it("rotated: 200 private no-store, shareLink keys pinned, one call with the trusted context (H5, H6)", async () => {
+it("rotated: 200 no-store, shareLink keys pinned, one call with the trusted context (H5, H6)", async () => {
   rotate.mockResolvedValue({ kind: "rotated", slug: SLUG });
   const { status, cache, data } = await post(SID, HOSTILE); // a hostile body steers nothing
   expect([status, cache, Object.keys(data ?? {})]).toEqual([200, NO_STORE, ["shareLink"]]);
@@ -72,7 +72,7 @@ it("rotated: 200 private no-store, shareLink keys pinned, one call with the trus
   expect((data?.shareLink as ShareLinkBody).path).toBe(`/session/${SLUG}`);
   expect(rotate.mock.calls).toEqual([[expect.anything(), TRUSTED]]);
 });
-it("replayed: 200 without a link, still private no-store (H9)", async () => {
+it("replayed: 200 without a link, still no-store (H9)", async () => {
   rotate.mockResolvedValue({ kind: "replayed" });
   const { status, cache, data } = await post();
   expect([status, cache, data]).toEqual([200, NO_STORE, { shareLink: null, replayed: true }]);

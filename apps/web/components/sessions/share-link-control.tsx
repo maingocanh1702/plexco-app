@@ -46,8 +46,9 @@ export function ShareLinkControl(props: { session: SessionDetailDto; ctx: Sessio
     setError(null);
     keeper.reset();
   }
+  // No Clipboard API (plain http): Copy does nothing; the read-only field still shows the link.
   const copy = (text: string) =>
-    navigator.clipboard.writeText(text).then(
+    navigator.clipboard?.writeText(text).then(
       () => setCopied(text),
       () => setCopied(null),
     );

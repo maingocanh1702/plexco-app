@@ -18,7 +18,7 @@ const SLUG = "Zq3_xY7-kP2mN8vB4cR6tW"; // 22 characters, the length of a minted 
 const LINK = `https://plexco.test/session/${SLUG}`;
 const WARN = "Tạo liên kết mới sẽ làm liên kết cũ của kèo này ngừng hoạt động ngay.";
 const REPLAY = "Liên kết đã được tạo nhưng không hiển thị được. Hãy tạo liên kết mới.";
-const NOT_LISTED = "Kèo này chưa hiển thị công khai nên chưa tạo được liên kết chia sẻ.";
+const NOT_LISTED = "Kèo này không hiển thị công khai nên không tạo được liên kết chia sẻ.";
 const REQ = { method: "POST", json: { commandId: expect.stringMatching(/./) }, csrfToken: "csrf" };
 const ctx = { tenantId: "t1", csrfToken: "csrf" };
 const [writeText, setItem] = [vi.fn().mockResolvedValue(undefined), vi.fn()];
@@ -77,4 +77,11 @@ it("6 cases 2-3 again: no storage write or console line carries the slug", async
   h.slots = [];
   await replayFlow();
   expect(JSON.stringify([setItem, ...logs].map((spy) => spy.mock.calls))).not.toContain(SLUG);
+});
+it("7 no Clipboard API (plain http): Copy is a no-op and the link stays shown", async () => {
+  await mint({ shareLink: { path: `/session/${SLUG}` } });
+  vi.stubGlobal("navigator", {});
+  await press("Sao chép"); // throws if the control calls writeText on a missing clipboard
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  expect([writeText.mock.calls.length, html().includes(`value="${LINK}"`)]).toEqual([0, true]);
 });

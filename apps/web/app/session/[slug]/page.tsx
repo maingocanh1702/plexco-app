@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { readDiscoveryListingByShareSlug } from "@plexco/db";
 import { t } from "@plexco/core/i18n";
 import { ListingSummary } from "../../../components/discover/listing-summary";
-import type { DiscoveryListing } from "../../../lib/discover-api";
+import { str, type DiscoveryListing } from "../../../lib/discover-api";
 import {
   discoveryPool,
   discoveryRateLimited,
@@ -38,12 +38,14 @@ export default async function PublicSessionSharePage({
       : await readDiscoveryListingByShareSlug(await discoveryPool(), slug);
   if (!row) notFound();
   // Client props land in the HTML: the DTO only, never the row; null for each key the DTO drops.
-  const listing = {
+  const dto = {
     title: null,
     venueName: null,
     venueAddress: null,
     ...toDiscoveryListingDto(row),
   } as DiscoveryListing;
+  // As parseListing (lib/discover-api.ts): an empty title is absent, so the sport label shows.
+  const listing: DiscoveryListing = { ...dto, title: str(dto.title) };
   return (
     <main>
       <ListingSummary listing={listing} as="h1" />
