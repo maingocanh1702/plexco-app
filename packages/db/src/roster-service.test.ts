@@ -388,7 +388,7 @@ describe("addMemberToSession", () => {
       {},
       { displayName: "   " },
       { displayName: "" },
-      { displayName: "x".repeat(101) },
+      { displayName: "x".repeat(121) },
       { displayName: "bad\u0000name" },
       null,
     ];
