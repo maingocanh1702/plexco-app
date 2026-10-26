@@ -714,4 +714,39 @@ describe("L23, L27: the session form strips invisible code points from area, ven
     },
     30_000,
   );
+  // The START edge c + "a" (lane L41, readiness section 6 (h)): one case per mirror, each within
+  // its own 30 s budget (C12).
+  it.each(AG2_MIRRORS)(
+    "L29-AG2 every scalar start: the web %s agrees with @plexco/db checkTypedName",
+    (mirror) => {
+      const mismatches: number[] = [];
+      const clubValues: NewClubValues = { name: "", slug: "wao-club", timezone: TZ, locale: "en" };
+      for (let cp = 0; cp <= 0x10ffff; cp++) {
+        if (cp >= 0xd800 && cp <= 0xdfff) continue;
+        const input = ch(cp) + "a";
+        // null = refused: each mirror must refuse exactly what the server rule refuses.
+        const server = serverCheckTypedName(input);
+        const refused = server === null;
+        let differs: boolean;
+        switch (mirror) {
+          case "checkTypedName":
+            differs = checkTypedName(input) !== server;
+            break;
+          case "clubNameProblem":
+            differs = (clubNameProblem(input) !== null) !== refused;
+            break;
+          case "validateNewClub":
+            clubValues.name = input;
+            differs = (validateNewClub(clubValues, en).name !== undefined) !== refused;
+            break;
+          case "addPlayerNameProblem":
+            differs = (addPlayerNameProblem(input) !== null) !== refused;
+            break;
+        }
+        if (differs) mismatches.push(cp);
+      }
+      expect(mismatches).toEqual([]);
+    },
+    30_000,
+  );
 });
