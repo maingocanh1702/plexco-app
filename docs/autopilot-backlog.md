@@ -5741,7 +5741,9 @@ notes: |
 
 ## task: session-commands-actor-recheck-under-lock
 title: Re-check the actor with authorize() INSIDE each session command's own transaction (invariant actor-recheck-under-lock)
-status: planned
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-session-commands-authz-recheck (L48); find it with `gh pr list --state merged --head feat/p4-session-commands-authz-recheck` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe unchanged: `git grep -n -w actorRecheckUnderLock <rev> -- packages/db/src/session-service.ts` prints 0 lines at the base d1154dbc5ad72ba084ff954f37876f2651970e7f and 8 at the lane's head; this flip changes only status, merged, note_merged
+note_merged: 2026-10-27 L48: closed BY HAND in the lane's own PR, measured at base d1154dbc5ad72ba084ff954f37876f2651970e7f (the PR #125 merge), so the row does not wait for the reconcile's post-merge flip. F1: lane block L48 (plan row L48 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane; its design, lock-order table, probe, threat model and tests are in docs/sessions/web-mvp-phase4-readiness-p4-session-commands-authz-recheck.md. F2: the six HOST commands (create, publish, announce, update, close, cancel) run `actorRecheckUnderLock` (authorize session.manage, the tenant_admins row FOR SHARE until commit) as the first statement of their own transaction, before the advisory lock and the commandId ledger read; a denial throws `SessionActorNotAuthorizedError`, which the web route maps to the existing FORBIDDEN 403. F3: the notes' "8 session commands" is narrowed by measurement: createGuestNote and deleteGuestNote consult no session.manage (an active player, or the note's author) and keep their association proof, as the notes' own third paragraph says; no migration.
 risk: P1
 change_class: manual-auth-feature
 depends_on: []
@@ -7330,3 +7332,49 @@ merged_probe: null
 notes: |
   Line numbers at 39c503d7b9fc353380a23752edd3c574ab08fb41 (the PR #119 merge): apps/web/e2e/public-share-page-proof.sh (lane L39) carries the two gaps lane L50 closed in apps/web/e2e/public-card-hide-address-proof.sh. (1) Its port preflight is lsof-only (`port_free`, :22-27, called at :28 for port 3000), so a listener of root or another account reads as free, while the clients use `SHARE_PROOF_BASE_URL=http://localhost:3000` (:87), which can resolve ::1 first. (2) Its header (:10-12) names only the preflight refusal as a stop that prints no drop line, but the repo-root check (:14-15), the name guard (:31), the password lookup (:45) and the BEFORE listing (:49) stop before the trap (:67) too. Fix: port L50's connect probe and stop list, or move the preflight into one helper both runners source; keep the name guard, the trap and what the proof asserts. Found by lane L50's step 0, outside its file ownership.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md, item 10 (O1, O2).
+
+## task: session-manage-action-key-single-constant
+title: One exported `session.manage` action key for packages/db: replace the six module-local literals with the constant lane L48 added
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [auth, session-command]
+scope: [packages/db/src/join-request-service.ts, packages/db/src/payment-manual.ts, packages/db/src/payment-reversal.ts, packages/db/src/public-session-share-link.ts, packages/db/src/roster-service.ts, packages/db/src/tenant-capability-authority.ts, packages/db/src/session-service.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at d1154dbc5ad72ba084ff954f37876f2651970e7f (lane L48). The action key `session.manage` is spelled as a module-local literal six times: join-request-service.ts:103 (`HOST_ACTIONS`) and :435 (an inline `authorize` argument), payment-manual.ts:260, payment-reversal.ts:66, public-session-share-link.ts:24 (`MANAGE`) and roster-service.ts:79; the SQL registry row is 0047_tenant_capability_authority_core.sql:77. Lane L48 added `SESSION_MANAGE_ACTION` to session-service.ts and the web route imports it, but the six sites were outside its file ownership.
+  Deliverable: one exported constant in a leaf module (tenant-capability-authority.ts is the natural home: it owns the action vocabulary and imports nothing from the command modules), session-service.ts re-exporting or importing it, and the six sites using it; a source test that `git grep` finds the literal only in that module and the SQL registry.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-session-commands-authz-recheck.md (lane L48), design D5 and D15 (1).
+
+## task: app-role-tenant-admins-dml-narrowing
+title: Narrow the `app` role's grant on tenant_admins to what the runtime uses (it holds INSERT, UPDATE, DELETE that no runtime code path writes)
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [auth, schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at d1154dbc5ad72ba084ff954f37876f2651970e7f (lane L48). 0009_rls_policies_grants.sql lists tenant_admins at :32 and grants every listed table `SELECT, INSERT, UPDATE, DELETE` to `app` at :57. Lane L48's step 0 found no runtime UPDATE or DELETE writer of tenant_admins (the only writer is the tenant_provision definer's INSERT for a new tenant), while the six host session commands now trust `tenant_admins.active` under a FOR SHARE lock: an `app`-level write path (a bug or an injection inside a tenant's RLS scope) could re-activate a revoked admin.
+  Deliverable: measure every `app` use of tenant_admins (reads through tenantRepo, the 0049 definer), then a migration that revokes the unused privileges, with a grant test; an owner decision if a revoke-admin feature is planned to run as `app`.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-session-commands-authz-recheck.md (lane L48), design D15 (2).
+
+## task: processed-command-key-cross-family-lock-order
+title: Lock order across command families that share the `processed-command:` advisory key: club-config can deadlock with a session command on a reused commandId (by code reading)
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [session-lock-ordering, session-command]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at d1154dbc5ad72ba084ff954f37876f2651970e7f (lane L48). The advisory key `hashtextextended('processed-command:' || tenant || ':' || commandId, 0)` is shared by design ("Command-type-independent key reservation, same as the session family", club-config.ts:76; the ledger's unique index processed_commands_tenant_cmd_uq is on (tenant_id, command_id), schema.ts:1517): session-service.ts (seven sites), club-config.ts:79, public-alias.ts:109 and zalo-ingress.ts:500.
+  Hazard, by code reading only (not probed): publish, announce, close and cancel hold tenants FOR SHARE (their tenant gate) when they wait for that key, while club-config takes the key (:79) and then `tenant_profile_update` (:121), which writes the tenants row; with one commandId reused across the two families in one tenant at the same moment, each waits for the other (40P01, one request fails). This predates lane L48 (its recheck adds only a tenant_admins FOR SHARE at the front) and needs a client that reuses a commandId across families.
+  Deliverable: a lock-order table of every family on that key plus a two-connection probe; then either a refusal of a cross-family reuse before any lock or a documented acceptance.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-session-commands-authz-recheck.md (lane L48), design D15 (3).
