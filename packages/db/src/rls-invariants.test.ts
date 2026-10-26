@@ -2649,6 +2649,26 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       expect((schemaCreate.rows[0] as { has_create: boolean }).has_create).toBe(false);
     });
   });
+
+  it("L41-SEC1 app, app_worker, readonly and PUBLIC cannot CREATE in schema public (operator resolution in the name definers relies on it)", async () => {
+    // 0072 leaves operators, casts and DECLARE types unqualified in the ten name functions; that
+    // is safe only while no untrusted role can create in public. The ACL row covers every role
+    // beyond these three, e.g. a PUBLIC CREATE kept from a database created on PG 14 or older.
+    const publicCreate = await ctx.owner.query(
+      `SELECT has_schema_privilege('app', 'public', 'CREATE') AS app,
+              has_schema_privilege('app_worker', 'public', 'CREATE') AS app_worker,
+              has_schema_privilege('readonly', 'public', 'CREATE') AS readonly,
+              EXISTS (SELECT 1 FROM pg_namespace n, aclexplode(n.nspacl) acl
+                       WHERE n.nspname = 'public' AND acl.grantee = 0
+                         AND acl.privilege_type = 'CREATE') AS public_create`,
+    );
+    expect(publicCreate.rows[0]).toEqual({
+      app: false,
+      app_worker: false,
+      readonly: false,
+      public_create: false,
+    });
+  });
 });
 
 /**
