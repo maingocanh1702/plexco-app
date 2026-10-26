@@ -56,6 +56,17 @@ let seq = 0;
 const cmdId = () => `cmd-${seq++}`;
 const t9 = new Date("2026-09-01T09:00:00Z");
 const t11 = new Date("2026-09-01T11:00:00Z");
+const ACTOR: string = randomUUID(); // an active web owner-admin of every tenant this file's commands use
+
+// Give ACTOR an active web owner-admin row in a tenant (the tenant-capability-authority.test.ts
+// admin() row): each host command re-checks `session.manage` for its actor first.
+async function makeActorAdmin(tenantId: string): Promise<void> {
+  await ctx.owner.query(
+    `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+     VALUES ($1, 'web', $2, 'owner', true)`,
+    [tenantId, ACTOR],
+  );
+}
 
 // Hidden-character vectors, built with fromCodePoint so no control or bidi character sits in this
 // source (a literal escape inside a tool call or a regex would put the rejected character here).
@@ -157,6 +168,11 @@ async function expectReject(run: () => Promise<unknown>, code: string): Promise<
 
 beforeAll(async () => {
   ctx = await setupRlsTestContext("plexco_session_service_v2_check");
+  await ctx.owner.query(`INSERT INTO persons (id, display_name) VALUES ($1, $2)`, [
+    ACTOR,
+    `p-actor-${randomUUID()}`,
+  ]);
+  await makeActorAdmin(ctx.tenantA);
   const r = await ctx.owner.query(
     `INSERT INTO sports (key, name, active) VALUES ('inactive-test-sport', 'Inactive', false) RETURNING id`,
   );
@@ -517,7 +533,12 @@ describe("createSession", () => {
     const commandId = cmdId();
     // Second call spells the SAME tenant uuid upper-case: without the ::uuid lock-key
     // canonicalization the two hash apart, both pass the read, and one hits a raw 23505.
-    const up = { tenantId: ctx.tenantA.toUpperCase(), commandId, input: input() };
+    const up = {
+      tenantId: ctx.tenantA.toUpperCase(),
+      actorPersonId: ACTOR,
+      commandId,
+      input: input(),
+    };
     const [a, b] = await Promise.all([create({}, commandId), createSession(ctx.appDb.db, up)]);
     expect(a.sessionId).toBe(b.sessionId);
     expect([a.replayed, b.replayed].sort()).toEqual([false, true]);
@@ -671,6 +692,7 @@ describe("publishSession", () => {
       [`Publish Test ${unique}`, `publish-test-${unique}`, tenantStatus],
     );
     const tenantId = (t.rows[0] as { id: string }).id;
+    await makeActorAdmin(tenantId);
     if (subStatus !== "missing") {
       await ctx.owner.query(
         `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
@@ -693,6 +715,7 @@ describe("publishSession", () => {
       [`Publish Elig ${unique}`, `publish-elig-${unique}`],
     );
     const tenantId = (t.rows[0] as { id: string }).id;
+    await makeActorAdmin(tenantId);
     await ctx.owner.query(
       `INSERT INTO subscriptions
          (tenant_id, plan_key, plan_version, status, period_start, period_end, grace_end)
@@ -1499,6 +1522,7 @@ describe("announceSession", () => {
       [`Announce Test ${unique}`, `announce-test-${unique}`, tenantStatus],
     );
     const tenantId = (t.rows[0] as { id: string }).id;
+    await makeActorAdmin(tenantId);
     if (subStatus !== "missing") {
       await ctx.owner.query(
         `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
@@ -1534,7 +1558,7 @@ describe("announceSession", () => {
   // schedule_enabled worker heartbeat AND an enabled zalo_dm projector. Ready by default here:
   // heartbeats through the app_worker seat (EXECUTE app_worker only), zalo_dm through the owner
   // path (no grant), counts through ctx.owner; restored in afterAll.
-  const HOST: string = randomUUID(); // the trusted requester: a verified web session's person id
+  const HOST: string = ACTOR; // the trusted requester: a verified web session's person id (an active web admin)
   const setZaloDm = (on: boolean) =>
     withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
       await ctx.owner.query("BEGIN");
@@ -1849,7 +1873,7 @@ describe("announceSession", () => {
 
   it("A-7 ready -> one event whose payload is exactly {session_id, channel, requested_by_person_id}: an id only, lowercased", async () => {
     const { tenantId, sessionId } = await openSession();
-    const requester = randomUUID();
+    const requester = ACTOR; // an active web admin: the announce re-checks its session.manage
     await announce(tenantId, { sessionId, channel: CH }, cmdId(), requester.toUpperCase());
     const events = await outboxFor(sessionId);
     expect(events).toHaveLength(1);
@@ -2272,6 +2296,7 @@ describe("updateSession", () => {
       [`Update Test ${unique}`, `update-test-${unique}`, tenantStatus],
     );
     const tenantId = (t.rows[0] as { id: string }).id;
+    await makeActorAdmin(tenantId);
     if (subStatus !== "missing") {
       await ctx.owner.query(
         `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
@@ -4108,6 +4133,7 @@ describe("closeSession (B1 of the split)", () => {
       [`CloseCancel ${unique}`, `close-cancel-${unique}`, tenantStatus],
     );
     const tenantId = (t.rows[0] as { id: string }).id;
+    await makeActorAdmin(tenantId);
     if (subStatus !== "missing") {
       await ctx.owner.query(
         `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
@@ -4595,6 +4621,7 @@ describe("cancelSession (B2 of the split)", () => {
       [`Cancel ${unique}`, `cancel-${unique}`, tenantStatus],
     );
     const tenantId = (t.rows[0] as { id: string }).id;
+    await makeActorAdmin(tenantId);
     if (subStatus !== "missing") {
       await ctx.owner.query(
         `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
