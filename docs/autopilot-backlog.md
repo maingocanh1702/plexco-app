@@ -6983,14 +6983,16 @@ notes: |
 
 ## task: zalo-dm-send-deadline-into-deliver
 title: Bot: pass a send deadline into `zalo-dm.ts` `deliver()` so a send that starts inside the DD-146 bound cannot end up to 120 s after it
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-dm-deadline-and-clock (L44); find it with `gh pr list --state merged --head feat/p4-zalo-dm-deadline-and-clock` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/bot/src/projectors/zalo-dm.ts :: deliveryDeadlineMs` (slice-unique: absent at the base db8230e762bd36d21599fe4bd7dbb4725dbc364a, present at the lane's head)
+note_merged: 2026-10-26 L44: closed BY HAND in the lane's own PR, measured at base db8230e762bd36d21599fe4bd7dbb4725dbc364a (the PR #124 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: the dispatcher passes the DD-146 bound into `deliver()` as the optional job field `deliveryDeadlineMs` (the helper `zaloDmDeliveryDeadlineMs` in apps/bot/src/dispatcher.ts: the age rule, or the session start for player.promoted); `deliver()` starts no send past it and clamps each send's timeoutMs to it, re-measured after the chat-id decrypt; a deadline ends as `retry` with `delivery_deadline_reached`. This narrows the in-flight window DD-146 accepted; it fixes no violation. Readiness: docs/sessions/web-mvp-phase4-readiness-p4-zalo-dm-deadline-and-clock.md.
 risk: P2
 change_class: code
 depends_on: []
 invariants: [transport-zalo, retry-liveness]
 scope: [apps/bot/src/projectors/zalo-dm.ts, apps/bot/src/dispatcher.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/bot/src/projectors/zalo-dm.ts :: deliveryDeadlineMs
 notes: |
   Line numbers at 07165d659e291e38c1477437cfc946bbdc19f55e: the DD-146 age is checked once, before the send, at apps/bot/src/dispatcher.ts:304 (`job.projector === "zalo_dm" ? await zaloDmDeliveryAge(pool, job.event.createdAt) : null;`) and the send starts at :309 (`: await deliver(job);`). Inside `deliver()` the attempt budget is apps/bot/src/projectors/zalo-dm.ts:29 (`const ATTEMPT_BUDGET_MS = 120_000;`) and the send timeout is :207 (`await send(token, chatId, text, { timeoutMs: Math.min(sendTimeoutMs, remaining) });`), so a send that starts inside the DD-146 bound can end up to 120 s later, a window DD-146 accepts (docs/standards/decisions.md:1953 at the same base).
   The PR body's fix: a send deadline passed into `zalo-dm.ts` `deliver()` would close the 120 s window. This is pre-existing code, recorded by L31's security reviews as an out-of-scope note and not lane work; the row was added by lane L33 (2026-10-24).
@@ -6998,14 +7000,16 @@ notes: |
 
 ## task: zalo-dm-attempt-budget-monotonic-clock
 title: Bot: measure the `zalo_dm` attempt budget on a monotonic clock instead of the wall clock
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-dm-deadline-and-clock (L44); find it with `gh pr list --state merged --head feat/p4-zalo-dm-deadline-and-clock` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/bot/src/projectors/zalo-dm.ts :: monotonicNowMs` (slice-unique: absent at the base db8230e762bd36d21599fe4bd7dbb4725dbc364a, present at the lane's head)
+note_merged: 2026-10-26 L44: closed BY HAND in the lane's own PR, measured at base db8230e762bd36d21599fe4bd7dbb4725dbc364a (the PR #124 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: `monotonicNowMs` (`performance.now()`) is the default clock of `createZaloDmDeliver` in apps/bot/src/projectors/zalo-dm.ts, so the 120 s attempt budget and the delivery deadline are measured on a monotonic clock; the dispatcher's wall clock (the retry schedule) is unchanged. Readiness: docs/sessions/web-mvp-phase4-readiness-p4-zalo-dm-deadline-and-clock.md.
 risk: P2
 change_class: code
 depends_on: []
 invariants: [transport-zalo, retry-liveness]
 scope: [apps/bot/src/projectors/zalo-dm.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/bot/src/projectors/zalo-dm.ts :: monotonicNowMs
 notes: |
   Line numbers at 07165d659e291e38c1477437cfc946bbdc19f55e: apps/bot/src/projectors/zalo-dm.ts:84 injects the wall clock as the default (`const { db, send = sendMessage, now = Date.now, open = openConnectorSecret } = deps;`), and the 120 s attempt budget (`const ATTEMPT_BUDGET_MS = 120_000;` at :29) is measured on it at :88 (`const started = now();`) and :192 (`const remaining = ATTEMPT_BUDGET_MS - (now() - started);`), so a backward wall-clock jump stretches the budget.
   The PR body's fix: `performance.now()` would make the 120 s exact under a backward clock jump. This is pre-existing code, recorded by L31's security reviews as an out-of-scope note and not lane work; the row was added by lane L33 (2026-10-24).
