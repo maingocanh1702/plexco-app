@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { LangProvider } from "../../lib/i18n-client";
 import type { MySession } from "../../lib/me-player-api";
+import { SessionProvider } from "../../lib/use-session";
 import { MySessionsList, MySessionsView } from "./my-sessions-view";
 import type { PlayerState } from "./player-page";
 
@@ -130,14 +131,16 @@ describe("MySessionsView", () => {
   const renderList = (over: Partial<ComponentProps<typeof MySessionsList>>, lang?: "vi" | "en") =>
     renderToStaticMarkup(
       <LangProvider lang={lang ?? "en"}>
-        <MySessionsList
-          state={ready([ACTIVE])}
-          onRetry={() => {}}
-          tenants={new Map()}
-          left={false}
-          onLeft={() => {}}
-          {...over}
-        />
+        <SessionProvider>
+          <MySessionsList
+            state={ready([ACTIVE])}
+            onRetry={() => {}}
+            tenants={new Map()}
+            left={false}
+            onLeft={() => {}}
+            {...over}
+          />
+        </SessionProvider>
       </LangProvider>,
     );
 

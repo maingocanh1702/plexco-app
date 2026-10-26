@@ -7,7 +7,7 @@ import { leaveMySession } from "../../lib/me-player-api";
 import { describePlayerError } from "../../lib/session-error-ui";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
-import { useSession } from "../../lib/use-session";
+import { useSessionContext } from "../../lib/use-session";
 import { ApiErrorNotice } from "../sessions/api-error-notice";
 import { Button } from "../ui/button";
 
@@ -62,14 +62,14 @@ export function PlayerLeaveSessionView(props: { phase: LeavePhase; online: boole
   );
 }
 
-/** One command id per intent through the shared keeper (JoinPanel's pattern): Retry replays it. */
+/** One command id per intent through the shared keeper (JoinPanel's pattern): kept once an attempt's outcome is uncertain, so Retry then replays it. */
 export function PlayerLeaveSessionButton(props: {
   sessionId: string;
   tenantId: string;
   onLeft: () => void;
   onReload: () => void;
 }) {
-  const { session } = useSession();
+  const { session } = useSessionContext(); // the /me frame's one session read for the whole list
   const keeper = useCommandId();
   const online = useOnlineStatus();
   const [phase, setPhase] = useState<LeavePhase>({ step: "idle" });

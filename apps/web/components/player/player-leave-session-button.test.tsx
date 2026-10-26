@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiClientError } from "../../lib/api-client";
 import { LangProvider, makeT } from "../../lib/i18n-client";
 import { describePlayerError } from "../../lib/session-error-ui";
+import { SessionProvider } from "../../lib/use-session";
 import {
   PlayerLeaveSessionButton,
   PlayerLeaveSessionView,
@@ -89,12 +90,14 @@ describe("PlayerLeaveSessionView", () => {
   it("the container draws the idle view only, never the session id or the tenant uuid", () => {
     const html = renderToStaticMarkup(
       <LangProvider lang="en">
-        <PlayerLeaveSessionButton
-          sessionId="session-4b7e"
-          tenantId="9c1d7a52-0e3b-4f68-8a21-5d6e7f809a1b"
-          onLeft={noop}
-          onReload={noop}
-        />
+        <SessionProvider>
+          <PlayerLeaveSessionButton
+            sessionId="session-4b7e"
+            tenantId="9c1d7a52-0e3b-4f68-8a21-5d6e7f809a1b"
+            onLeft={noop}
+            onReload={noop}
+          />
+        </SessionProvider>
       </LangProvider>,
     );
     expect(buttons(html).map(text)).toEqual(["Leave session"]);
