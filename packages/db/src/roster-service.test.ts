@@ -162,6 +162,43 @@ describe("addMemberToSession", () => {
     expect(await fx.counts(tenantId)).toEqual(before);
   });
 
+  // L42 (owner Q4 (b)): 101..120 code points (an astral letter counts one) pass TS and SQL whole.
+  it.each([
+    ["101 ascii", "a".repeat(101), 101],
+    ["120 ascii", "a".repeat(120), 120],
+    ["120 astral letters (240 UTF-16 units)", cp(0x1d400).repeat(120), 120],
+  ])(
+    "L42 host add %s: stored whole in the person and membership rows (cap 120 code points, TS and SQL agree)",
+    async (_label, sent, points) => {
+      const { tenantId, actor, sessionId } = await world();
+      const r = await add(tenantId, actor, sessionId, { displayName: sent });
+      const m = await fx.row(
+        `SELECT m.display_name, p.display_name AS person_name
+         FROM memberships m JOIN persons p ON p.id = m.person_id WHERE m.id = $1`,
+        [r.membershipId],
+      );
+      expect(m).toMatchObject({ display_name: sent, person_name: sent });
+      expect([...String(m.display_name)].length).toBe(points);
+    },
+  );
+
+  // L42: 121 code points, ASCII or astral: the TS check refuses with its message, nothing written.
+  it.each([
+    ["121 ascii", "a".repeat(121)],
+    ["121 astral letters", cp(0x1d400).repeat(121)],
+  ])(
+    "L42 host add %s: refused INVALID_INPUT with the 1..120 message, nothing written",
+    async (_label, sent) => {
+      const { tenantId, actor, sessionId } = await world();
+      const before = await fx.counts(tenantId);
+      await expect(add(tenantId, actor, sessionId, { displayName: sent })).rejects.toMatchObject({
+        code: "INVALID_INPUT",
+        message: "displayName must be 1..120 characters",
+      });
+      expect(await fx.counts(tenantId)).toEqual(before);
+    },
+  );
+
   it("host add R4 bidi RLO (L29, was kept as today O1): refused INVALID_INPUT, nothing written", async () => {
     const { tenantId, actor, sessionId } = await world();
     const before = await fx.counts(tenantId);
