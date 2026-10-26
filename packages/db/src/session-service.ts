@@ -19,6 +19,7 @@ import { effectiveByCharge } from "./roster-money-shared.js";
 // Call-time-only cycle (P-19), like roster-money-shared.ts's import of this module.
 import { promoteFromWaitlist } from "./session-join-service.js";
 import { getSessionOccupancy, sessionActiveRosterCount } from "./session-occupancy.js";
+import { authorize } from "./tenant-capability-authority.js";
 import { checkTypedName, hasHiddenChar, stripInvisibleChars } from "./text-safety.js";
 import { withTenant } from "./tenant.js";
 
@@ -59,6 +60,46 @@ export class SessionCommandError extends Error {
   }
 }
 
+/** The tenant action the route gate and the six host commands check; 0047 lists it as `preset`. */
+export const SESSION_MANAGE_ACTION = "session.manage" as const;
+
+/**
+ * Raised when the actor lost `session.manage` between the route gate and the command's own
+ * transaction. One class for all six host commands (create, publish, announce, update, close,
+ * cancel); the web route maps it to FORBIDDEN (403). The message carries no ids or names.
+ */
+export class SessionActorNotAuthorizedError extends Error {
+  readonly code: "FORBIDDEN";
+  constructor() {
+    super("actor is not permitted to manage sessions in this tenant");
+    this.name = "SessionActorNotAuthorizedError";
+    this.code = "FORBIDDEN";
+  }
+}
+
+/**
+ * Invariant `actor-recheck-under-lock`: the FIRST statement of each host command's transaction,
+ * before the advisory lock, the commandId ledger read, the tenant gate and every row lock.
+ * authorize() takes the actor's tenant_admins row FOR SHARE (the 0049 definer) until commit, so a
+ * revoke cannot commit while the command runs; and because it precedes the ledger read, a revoked
+ * actor replaying a committed commandId gets the refusal, never the stored result. No try/catch:
+ * whatever authorize() throws propagates unchanged (an infrastructure error stays a 5xx, never a
+ * 403 and never an allow).
+ */
+async function actorRecheckUnderLock(
+  tx: Tx,
+  params: { tenantId: string; actorPersonId: string },
+): Promise<void> {
+  const decision = await authorize(tx, {
+    tenantId: params.tenantId,
+    action: SESSION_MANAGE_ACTION,
+    actorPersonId: params.actorPersonId,
+  });
+  if (!decision.allowed) {
+    throw new SessionActorNotAuthorizedError();
+  }
+}
+
 const fail = (code: SessionCommandErrorCode, message: string): never => {
   throw new SessionCommandError(code, message);
 };
@@ -87,6 +128,8 @@ export interface CreateSessionInputPayload {
 export interface CreateSessionParams {
   tenantId: string; // trusted routing context, asserted as a UUID by withTenant
   commandId: string; // idempotency key from trusted context (edge #3 dedup)
+  /** Trusted: the person the route gate checked, re-checked under lock. */
+  actorPersonId: string;
   input: CreateSessionInputPayload;
 }
 
@@ -267,9 +310,10 @@ export async function createSession(
   db: Db,
   params: CreateSessionParams,
 ): Promise<CreateSessionResult> {
-  const { tenantId, commandId } = params;
+  const { tenantId, commandId, actorPersonId } = params;
   const input = stripPublicNames(params.input);
   return withTenant(db, tenantId, async (tx) => {
+    await actorRecheckUnderLock(tx, { tenantId, actorPersonId });
     // Reserve the command key GLOBALLY (command-type-INDEPENDENT) to match the
     // processed_commands (tenant_id, command_id) uniqueness: a concurrent command of ANY type
     // with the same id serializes here and dedups ("one wins, one dedup" — sync-engine #2)
@@ -453,6 +497,8 @@ export interface PublishSessionInputPayload {
 export interface PublishSessionParams {
   tenantId: string; // trusted routing context, asserted as a UUID by withTenant
   commandId: string; // idempotency key from trusted context
+  /** Trusted: the person the route gate checked, re-checked under lock. */
+  actorPersonId: string;
   input: PublishSessionInputPayload;
 }
 
@@ -494,8 +540,9 @@ export async function publishSession(
   db: Db,
   params: PublishSessionParams,
 ): Promise<PublishSessionResult> {
-  const { tenantId, commandId, input } = params;
+  const { tenantId, commandId, actorPersonId, input } = params;
   return withTenant(db, tenantId, async (tx) => {
+    await actorRecheckUnderLock(tx, { tenantId, actorPersonId });
     // Billing suspension — FAIL-FAST, BEFORE dedup and state lookup (§4 step 1:
     // "AuthZ re-checked trên MỌI publish call (kể cả replay/no-op — authz đứng
     // TRƯỚC dedup + state lookup) ... authz thắng no-op"). A suspended tenant must
@@ -888,6 +935,7 @@ export async function announceSession(
   }
   const requestedByPersonId = params.requestedByPersonId.toLowerCase();
   return withTenant(db, tenantId, async (tx) => {
+    await actorRecheckUnderLock(tx, { tenantId, actorPersonId: requestedByPersonId });
     // Billing suspension — FAIL-FAST, BEFORE dedup and state lookup, mirroring publish:
     // announce_session is ❌ under suspension (DD-110), so a suspended tenant must get
     // TENANT_SUSPENDED even on a replay/no-op. authorizeTenantAction takes locking reads
@@ -1161,6 +1209,8 @@ export interface UpdateSessionInputPayload {
 export interface UpdateSessionParams {
   tenantId: string; // trusted routing context, asserted as a UUID by withTenant
   commandId: string; // idempotency key from trusted context
+  /** Trusted: the person the route gate checked, re-checked under lock. */
+  actorPersonId: string;
   input: UpdateSessionInputPayload;
 }
 
@@ -1236,9 +1286,10 @@ export async function updateSession(
   db: Db,
   params: UpdateSessionParams,
 ): Promise<UpdateSessionResult> {
-  const { tenantId, commandId } = params;
+  const { tenantId, commandId, actorPersonId } = params;
   const input = stripPublicNames(params.input);
   return withTenant(db, tenantId, async (tx) => {
+    await actorRecheckUnderLock(tx, { tenantId, actorPersonId });
     // Validate the payload shape UP FRONT (typed error, never a raw TypeError):
     // `input` is untrusted user payload (only tenantId/commandId are trusted). A
     // bad sessionId fails closed as SESSION_NOT_FOUND (never revealing existence).
@@ -1888,6 +1939,8 @@ export interface CloseSessionInputPayload {
 export interface CloseSessionParams {
   tenantId: string; // trusted routing context, asserted as a UUID by withTenant
   commandId: string; // idempotency key from trusted context
+  /** Trusted: the person the route gate checked, re-checked under lock. */
+  actorPersonId: string;
   input: CloseSessionInputPayload;
 }
 
@@ -1938,20 +1991,23 @@ function isStoredCloseResult(value: unknown): value is StoredCloseResult {
  * closing a session whose start has passed is the normal completion (unlike cancel's edge #31
  * past-guard on `open`), and NO active-roster gate (a fully paid roster closes; edge #48).
  *
- * LOCK ORDER (one global order, shared with every roster/money writer): tenant authorization reads
- * (tenants/subscriptions FOR SHARE; the writers' capability grants FOR SHARE) → per-command advisory
- * lock → sessions FOR UPDATE (+ status re-check) → players FOR UPDATE → charges FOR UPDATE (UUID
- * order) → payment_allocations FOR UPDATE. close/cancel stop at the session row and only READ the
- * charges and the ledger: addMemberToSession, removePlayerFromSession, markPaid and
- * reversePaymentAllocation all take the session row FOR UPDATE before touching a charge or the
- * ledger, so they serialize behind a close/cancel and then re-read its committed status.
+ * LOCK ORDER (one global order, shared with every roster/money writer): actor/capability reads
+ * first (tenant_admins FOR SHARE through actorRecheckUnderLock; a capability grant FOR SHARE for
+ * owner-grantable actions) → tenant authorization reads (tenants/subscriptions FOR SHARE) →
+ * per-command advisory lock → sessions FOR UPDATE (+ status re-check) → players FOR UPDATE →
+ * charges FOR UPDATE (UUID order) → payment_allocations FOR UPDATE. close/cancel stop at the
+ * session row and only READ the charges and the ledger: addMemberToSession,
+ * removePlayerFromSession, markPaid and reversePaymentAllocation all take the session row FOR
+ * UPDATE before touching a charge or the ledger, so they serialize behind a close/cancel and then
+ * re-read its committed status.
  */
 export async function closeSession(
   db: Db,
   params: CloseSessionParams,
 ): Promise<CloseSessionResult> {
-  const { tenantId, commandId, input } = params;
+  const { tenantId, commandId, actorPersonId, input } = params;
   return withTenant(db, tenantId, async (tx) => {
+    await actorRecheckUnderLock(tx, { tenantId, actorPersonId });
     // Suspension gate (DD-110 D2): close_session is an obligation-termination class — authorize-
     // TenantAction allows active/past_due AND a `suspended` tenant OR subscription, but DENIES a
     // `cancelled`/missing subscription or a `cancelled`/anomalous tenant, so the `!allowed` branch is
@@ -2149,6 +2205,8 @@ export interface CancelSessionInputPayload {
 export interface CancelSessionParams {
   tenantId: string; // trusted routing context, asserted as a UUID by withTenant
   commandId: string; // idempotency key from trusted context
+  /** Trusted: the person the route gate checked, re-checked under lock. */
+  actorPersonId: string;
   input: CancelSessionInputPayload;
 }
 
@@ -2246,7 +2304,7 @@ export async function cancelSession(
   db: Db,
   params: CancelSessionParams,
 ): Promise<CancelSessionResult> {
-  const { tenantId, commandId, input } = params;
+  const { tenantId, commandId, actorPersonId, input } = params;
   // A draft-anomaly refusal must COMMIT its audit event and only THEN throw — so the callback returns
   // a discriminated union (a normal result, or an anomaly-refusal sentinel) and the throw happens
   // after withTenant has committed (see the function tail). Every other refusal still throws inside
@@ -2255,6 +2313,7 @@ export async function cancelSession(
     db,
     tenantId,
     async (tx): Promise<CancelSessionResult | { anomalyRefusal: true }> => {
+      await actorRecheckUnderLock(tx, { tenantId, actorPersonId });
       // Suspension gate (DD-110 D2): cancel_session is an obligation-termination class — authorize-
       // TenantAction allows active/past_due AND a `suspended` tenant OR subscription, but DENIES a
       // `cancelled`/missing subscription or a `cancelled`/anomalous tenant, so the `!allowed` branch is
