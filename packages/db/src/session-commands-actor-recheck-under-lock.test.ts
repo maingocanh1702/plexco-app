@@ -89,14 +89,13 @@ async function seedSession(
   return { sessionId: r.id, version: r.version };
 }
 
-// Revoke ACTOR's admin row, committed through ctx.owner: the only revoke shape
-// (tenant-capability-authority.test.ts, `UPDATE tenant_admins SET active = false`).
+// Revoke ACTOR's admin row: the only revoke shape (tenant-capability-authority.test.ts,
+// `UPDATE tenant_admins SET active = false`). revoke() commits it through ctx.owner; the lock
+// tests run it on a dedicated connection that they commit (or not) themselves.
+const REVOKE = `UPDATE tenant_admins SET active = false
+  WHERE tenant_id = $1 AND platform_user_lookup_hash = $2`;
 async function revoke(tenantId: string): Promise<void> {
-  const r = await ctx.owner.query(
-    `UPDATE tenant_admins SET active = false
-      WHERE tenant_id = $1 AND platform_user_lookup_hash = $2`,
-    [tenantId, ACTOR],
-  );
+  const r = await ctx.owner.query(REVOKE, [tenantId, ACTOR]);
   expect(r.rowCount).toBe(1);
 }
 
@@ -363,10 +362,6 @@ describe("L48-f: announce records the authorized actor as the requester", () => 
   }, 30_000);
 });
 
-// revoke()'s statement, run on a dedicated connection that the test commits (or not) itself.
-const REVOKE = `UPDATE tenant_admins SET active = false
-  WHERE tenant_id = $1 AND platform_user_lookup_hash = $2`;
-
 // A dedicated superuser connection (SST CONC2: superuserDb.pool hands out fresh connections, and
 // superuser may LOCK TABLE), and its backend pid.
 const connect = () => ctx.superuserDb.pool.connect();
@@ -513,17 +508,12 @@ function recheckIsFirst(source: string, fn: string): string | null {
   const opener = body.indexOf("async (tx");
   const open = opener < 0 ? -1 : body.indexOf("=> {", opener);
   if (open < 0) return `${fn}: no transaction callback`;
-  let at = open + "=> {".length; // the offset in body of the line read next
-  for (const line of body.slice(at).split("\n")) {
+  for (const line of body.slice(open + "=> {".length).split("\n")) {
     const code = line.trim();
-    if (code !== "" && code.indexOf("//") !== 0) {
-      if (code.indexOf(RECHECK) !== 0)
-        return `${fn}: the callback's first statement is not the recheck`;
-      return body.slice(opener, at).indexOf("tx.") < 0
+    if (code !== "" && code.indexOf("//") !== 0)
+      return code.indexOf(RECHECK) === 0
         ? null
-        : `${fn}: a tx. call precedes the recheck`;
-    }
-    at += line.length + 1;
+        : `${fn}: the callback's first statement is not the recheck`;
   }
   return `${fn}: the callback has no statement`;
 }
