@@ -127,7 +127,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build web (stamps the service worker version, then next build)
-        # next/font/google downloads Sora + Inter here (network required), so this is the one
+        # next/font/google downloads Be Vietnam Pro + Inter here (network required), so this is the one
         # step that must run on a runner with internet access.
         env:
           DATABASE_URL: postgres://app:unused@127.0.0.1:1/none

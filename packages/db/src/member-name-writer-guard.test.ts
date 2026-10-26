@@ -658,3 +658,142 @@ describe("L29-G3 TypeScript: a guarded-column write site outside M1 and V1/V2 ca
     );
   });
 });
+
+/** The ten name functions of 0072, as oid::regprocedure::text prints them. */
+const L41_TEN = [
+  "public_name_strip_invisible(text)",
+  "member_name_apply_rule(text,boolean)",
+  "person_profile_update(uuid,text)",
+  "create_host_added_person(uuid,uuid,text)",
+  "tenant_provision(text,text,text,text,uuid)",
+  "tenant_profile_update(uuid,uuid,text,text,text)",
+  "zalo_identity_resolve(uuid,uuid,text,text,bytea,text)",
+  "auth_login_google(text,text,bytea,text,uuid,text,text)",
+  "create_guest_membership(uuid,uuid)",
+  "tenant_public_alias_set(uuid,uuid,text)",
+];
+/** Tokens before "(" that are not function calls: what the ten bodies need (measured at 0072) plus
+ * the parser's grammar forms. Never a function name (left, right, format, max, now stay flagged). */
+const NOT_A_CALL = new Set([
+  // Keywords the ten bodies place before a parenthesized list or subquery.
+  ..."and as conflict exists in values".split(" "),
+  // Expression forms the parser builds as nodes (coalesce, greatest/least, nullif): no lookup.
+  ..."coalesce greatest least nullif".split(" "),
+  // Forms the parser itself maps to pg_catalog (trim to btrim, ltrim or rtrim).
+  ..."extract normalize position trim".split(" "),
+  // Not here: substring and overlay (comma forms are plain calls); no type with a typmod in the ten.
+]);
+/** (a) Every unqualified token before "(" not in NOT_A_CALL, in order. Comments and E'' or ''
+ * literals are blanked and quoted identifiers unquoted in ONE pass, so a quote or "--" inside one
+ * cannot shift another (quoted, a NOT_A_CALL name is a plain call and reads as q_<name>); a ".."
+ * range becomes a space, so its dot is no qualifier; the boundary is a lookbehind, so a call right
+ * after "(" (coalesce(btrim(p))) is seen. */
+const unqualifiedCalls = (src: string) =>
+  [
+    ...src
+      .toLowerCase()
+      .replace(
+        /--[^\n]*|\/\*[\s\S]*?\*\/|(?<![\w$])e'(?:[^'\\]|\\[\s\S]|'')*'|'(?:[^']|'')*'|"((?:[^"]|"")*)"/g,
+        (_: string, id?: string) =>
+          id === undefined ? " " : NOT_A_CALL.has(id) ? `q_${id}` : id.split('""').join('"'),
+      )
+      .split("..")
+      .join(" ")
+      .replace(/\binsert\s+into\s+[a-z_][\w.$]*\s*\(/g, " ")
+      .matchAll(/(?<![\w.$])([a-z_][a-z0-9_$]*)\s*\(/g),
+  ]
+    .map((m) => m[1]!)
+    .filter((t) => !NOT_A_CALL.has(t));
+/** (b) A proconfig passes only when its search_path lists pg_temp last and pg_catalog first or not
+ * at all (absent, it is searched first implicitly); no config or no search_path fails closed. */
+const searchPathSafe = (config: string[] | null) => {
+  const path = config
+    ?.find((c) => c.startsWith("search_path="))
+    ?.slice("search_path=".length)
+    .split(",")
+    .map((s) => s.trim());
+  return (
+    !!path &&
+    path[path.length - 1] === "pg_temp" &&
+    (path[0] === "pg_catalog" || !path.includes("pg_catalog"))
+  );
+};
+
+/** L41-G1 (lane L41, 0072; scope default D2, pending owner sign-off: the ten by name, not every
+ * function of a later file): the ten name functions keep every built-in function call qualified and
+ * pg_temp last. Operators, casts and keyword forms are not function calls; PostgreSQL never
+ * searches pg_temp for functions or operators, so the remaining exposure is type and relation
+ * names, which the search_path order governs (b). Ceiling: a token scan, not a parser. Handled,
+ * as a closed list: `--` and non-nested block comments, '' and E'' literals, double-quoted names
+ * without a dot or a space, ".." ranges. Anything else is not handled, for example nested block
+ * comments, U&"..." names, a quoted name holding a dot or a space, any dollar-quoted string inside
+ * a body and dynamic SQL inside EXECUTE strings (the ten live bodies have none of these). */
+describe("L41-G1: the ten name functions qualify every built-in call and list pg_temp last", () => {
+  let ten: { sig: string; src: string; config: string[] | null }[];
+  beforeAll(async () => {
+    const res = await ctx.owner.query<{ sig: string; src: string; config: string[] | null }>(
+      `SELECT p.oid::regprocedure::text AS sig, p.prosrc AS src, p.proconfig AS config
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public' AND p.oid::regprocedure::text = ANY($1)`,
+      [L41_TEN],
+    );
+    ten = res.rows;
+  });
+  it("(a) finds no unqualified call in the ten live bodies", () => {
+    expect(ten.map((f) => f.sig).sort(), "exactly the ten").toEqual([...L41_TEN].sort());
+    expect(ten.flatMap((f) => unqualifiedCalls(f.src).map((t) => `${f.sig} ${t}`))).toEqual([]);
+  });
+  it("(a) flags planted unqualified calls, not qualified, commented, quoted or keyword forms", () => {
+    const zalo = ten.find((f) => f.sig.startsWith("zalo_identity_resolve("))!;
+    expect(unqualifiedCalls(zalo.src.replace("pg_catalog.", "")), "first prefix dropped").toEqual([
+      "left",
+    ]);
+    const flagged: [string, string][] = [
+      ["btrim(p)", "btrim"],
+      ["LEFT (p, 120)", "left"],
+      ['"btrim"(p)', "btrim"],
+      ["member_name_apply_rule(p, true)", "member_name_apply_rule"],
+      ["x_left(p)", "x_left"],
+      ["coalesce(btrim(p), '')", "btrim"],
+      ["'a--b' || btrim(p)", "btrim"],
+      ["E'it\\'s' || btrim(p) || 'x'", "btrim"],
+      ["FOR i IN 1..length(p) LOOP", "length"],
+      ['"position"(a, b)', "q_position"],
+      [`SELECT "it's", left(p, 1) || 'x'`, "left"],
+      ['SELECT "a--b", btrim(p)', "btrim"],
+    ];
+    expect(flagged.map(([sql]) => unqualifiedCalls(sql))).toEqual(flagged.map(([, t]) => [t]));
+    const passed = [
+      "pg_catalog.btrim(p)",
+      'pg_catalog."btrim"(p)',
+      "public.member_name_apply_rule(p, true)",
+      "-- btrim(p)",
+      "'btrim(p)'",
+      "coalesce(a, b)",
+      "insert into persons(display_name) values (x)",
+    ];
+    expect(passed.map(unqualifiedCalls)).toEqual(passed.map(() => []));
+  });
+  it("(b) lists pg_temp last and pg_catalog first or not at all in the ten live configs", () => {
+    expect(ten.length, "exactly the ten").toBe(L41_TEN.length);
+    const unsafe = ten.filter((f) => !searchPathSafe(f.config));
+    expect(unsafe.map((f) => `${f.sig} ${JSON.stringify(f.config)}`)).toEqual([]);
+  });
+  it("(b) fails planted search paths with pg_temp not last or pg_catalog not first", () => {
+    const bad = [
+      null,
+      ["work_mem=64kB"],
+      ["search_path=pg_catalog"],
+      ["search_path=pg_temp, pg_catalog"],
+      ["search_path=public, pg_catalog, pg_temp"],
+      ["search_path=pg_catalog, pg_temp, public"],
+    ];
+    expect(bad.map(searchPathSafe)).toEqual(bad.map(() => false));
+    const good = [
+      ["search_path=pg_catalog, pg_temp"],
+      ["search_path=public, pg_temp"],
+      ["search_path=pg_catalog, public, pg_temp"],
+    ];
+    expect(good.map(searchPathSafe)).toEqual(good.map(() => true));
+  });
+});

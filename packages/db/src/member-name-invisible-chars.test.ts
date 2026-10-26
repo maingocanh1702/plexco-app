@@ -457,6 +457,14 @@ const fnName = (w: Recreated) => w.sig.slice("public.".length, w.sig.indexOf("("
 const migration = (file: string) =>
   readFileSync(fileURLToPath(new URL(`../migrations/${file}`, import.meta.url)), "utf8");
 
+/** The CREATE at offset at: the header up to `AS $$`, and the body as prosrc holds it. */
+function cutCreate(text: string, at: number, missing: string): { header: string; body: string } {
+  const open = text.indexOf("\nAS $$\n", at);
+  const close = text.indexOf("\n$$;\n", open);
+  if (at < 0 || open < 0 || close < 0) throw new Error(missing);
+  return { header: text.slice(at, open + 1), body: text.slice(open + 6, close + 1) };
+}
+
 /** The definer's last CREATE in its migration: the header up to `AS $$`, and the body as prosrc holds it. */
 function previousCreate(w: Recreated): { header: string; body: string } {
   const text = migration(w.file);
@@ -464,10 +472,57 @@ function previousCreate(w: Recreated): { header: string; body: string } {
     text.lastIndexOf(`\nCREATE FUNCTION ${fnName(w)}(`),
     text.lastIndexOf(`\nCREATE OR REPLACE FUNCTION ${fnName(w)}(`),
   );
-  const open = text.indexOf("\nAS $$\n", at);
-  const close = text.indexOf("\n$$;\n", open);
-  if (at < 0 || open < 0 || close < 0) throw new Error(`${w.file}: no CREATE of ${fnName(w)}`);
-  return { header: text.slice(at, open + 1), body: text.slice(open + 6, close + 1) };
+  return cutCreate(text, at, `${w.file}: no CREATE of ${fnName(w)}`);
+}
+
+/** The last CREATE of name in file, spelled `name(` or `public.name(`: its body as prosrc holds it. */
+function lastCreateBody(file: string, name: string): string {
+  const text = migration(file);
+  const heads = ["\nCREATE FUNCTION ", "\nCREATE OR REPLACE FUNCTION "].flatMap((c) => [
+    `${c}${name}(`,
+    `${c}public.${name}(`,
+  ]);
+  const at = Math.max(...heads.map((h) => text.lastIndexOf(h)));
+  return cutCreate(text, at, `${file}: no CREATE of ${name}`).body;
+}
+
+const M0072 = migration("0072_member_name_definers_qualify_builtins.sql");
+/** 0072's CREATE lines, `CREATE [OR REPLACE] FUNCTION [public.]<name>(`, group 1 the name (a static regex literal). */
+const CREATES_0072 = [...M0072.matchAll(/^CREATE (?:OR REPLACE )?FUNCTION (?:public\.)?(\w+)\(/gm)];
+
+/** 0072's one CREATE line of name (either spelling; one asserted): its body as prosrc holds it. */
+function body0072(name: string): string {
+  const hits = CREATES_0072.filter((m) => m[1] === name);
+  if (hits.length !== 1)
+    throw new Error(`0072: ${hits.length} CREATE lines of ${name}, expected one`);
+  return cutCreate(M0072, M0072.indexOf(`\n${hits[0]![0]}`), `0072: no CREATE of ${name}`).body;
+}
+
+// The pg_catalog. prefixes 0072 adds to each body it re-creates, measured: 45 in all, none in any previous body.
+const INSERTS: Record<string, number> = {
+  public_name_strip_invisible: 1,
+  member_name_apply_rule: 3,
+  person_profile_update: 3,
+  create_host_added_person: 3,
+  tenant_provision: 6,
+  tenant_profile_update: 5,
+  zalo_identity_resolve: 2,
+  auth_login_google: 13,
+  create_guest_membership: 1,
+  tenant_public_alias_set: 8,
+};
+const stripCatalog = (s: string) => s.split("pg_catalog.").join("");
+const catalogPrefixes = (s: string) => s.split("pg_catalog.").length - 1;
+
+/** 0072's layer: next is previous plus exactly n pg_catalog. prefixes and nothing else; the failure, or null. */
+function layer0072(previous: string, next: string, n: number | undefined): string | null {
+  const before = catalogPrefixes(previous);
+  if (before !== 0) return `the previous body has ${before} pg_catalog. prefixes, not 0`;
+  if (stripCatalog(next) !== stripCatalog(previous))
+    return "the bodies differ beyond pg_catalog. prefixes";
+  const added = catalogPrefixes(next) - before;
+  if (added !== n) return `${added} pg_catalog. prefixes added, not ${String(n)}`;
+  return null;
 }
 
 /** A 0069 block: the text between its two L27-<name> marker lines, each present exactly once. */
@@ -505,7 +560,7 @@ async function ownership(c: pg.ClientBase): Promise<Record<string, unknown>[]> {
   return rows;
 }
 
-describe("RC-BODY: each live body is its previous CREATE's with exactly the section 10 substitution", () => {
+describe("RC-BODY: each live body is its previous CREATE's with exactly the section 10 substitution, then 0072's pg_catalog. prefixes", () => {
   it.each(RECREATED)("$sig from $file", async (w) => {
     const previous = previousCreate(w).body;
     let want = previous;
@@ -518,11 +573,67 @@ describe("RC-BODY: each live body is its previous CREATE's with exactly the sect
       expect(body0069.split(in0069).length - 1, in0069).toBe(1);
       want = want.split(in0069).join(in0070);
     }
+    // 0072's layer: the previous live body plus exactly INSERTS prefixes; prosrc is then pinned to 0072's body.
+    const next0072 = body0072(fnName(w));
+    expect(layer0072(want, next0072, INSERTS[fnName(w)]), fnName(w)).toBeNull();
+    want = next0072;
     const { rows } = await ctx.owner.query<{ src: string }>(
       `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
       [w.sig],
     );
     expect(rows[0]!.src).toBe(want);
+  });
+});
+
+describe("RC-BODY-0072: 0072 re-creates exactly the ten, each its previous body plus INSERTS pg_catalog. prefixes", () => {
+  it("RC-BODY-0072 INSERTS sums to 45 and names exactly 0072's ten CREATE OR REPLACE FUNCTION lines", () => {
+    expect(Object.values(INSERTS).reduce((a, b) => a + b, 0)).toBe(45);
+    expect(M0072.split("\nCREATE OR REPLACE FUNCTION ").length - 1).toBe(10);
+    // Any CREATE spelling counts here, so an eleventh function or a second CREATE of one fails too.
+    expect(CREATES_0072.map((m) => m[1] ?? "").sort()).toEqual(Object.keys(INSERTS).sort());
+  });
+
+  it("RC-BODY-0072 layer0072 passes the helper's real pair and names a planted missing prefix or extra character", () => {
+    const previous = lastCreateBody(
+      "0068_public_name_invisible_chars.sql",
+      "public_name_strip_invisible",
+    );
+    const next = body0072("public_name_strip_invisible");
+    const n = INSERTS.public_name_strip_invisible;
+    expect(layer0072(previous, next, n)).toBeNull();
+    // (i) the first prefix removed: equal once stripped, so only the count check can fail.
+    expect(layer0072(previous, next.replace("pg_catalog.", ""), n)).toBe(
+      "0 pg_catalog. prefixes added, not 1",
+    );
+    // (ii) one extra character with every prefix kept: only the strip equality can fail.
+    expect(layer0072(previous, next.replace("pg_catalog.", " pg_catalog."), n)).toBe(
+      "the bodies differ beyond pg_catalog. prefixes",
+    );
+  });
+
+  // The three RECREATED does not hold, each against its last CREATE before 0072 (0071 re-creates none of them).
+  it.each([
+    {
+      sig: "public.member_name_apply_rule(text,boolean)",
+      file: "0070_member_name_control_chars.sql",
+    },
+    {
+      sig: "public.public_name_strip_invisible(text)",
+      file: "0068_public_name_invisible_chars.sql",
+    },
+    {
+      sig: "public.tenant_public_alias_set(uuid,uuid,text)",
+      file: "0068_public_name_invisible_chars.sql",
+    },
+  ])("RC-BODY-0072 $sig from $file", async ({ sig, file }) => {
+    const name = sig.slice("public.".length, sig.indexOf("("));
+    const next = body0072(name);
+    expect(layer0072(lastCreateBody(file, name), next, INSERTS[name]), name).toBeNull();
+    const { rows } = await ctx.owner.query<{ src: string }>(
+      `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
+      [sig],
+    );
+    expect(rows[0]!.src).toBe(next);
   });
 });
 
@@ -921,7 +1032,7 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
     ]);
   });
 
-  it("L29-F2 its attributes are the 0068 helper's: IMMUTABLE, STRICT, PARALLEL SAFE, INVOKER, pg_catalog", async () => {
+  it("L29-F2 its attributes are the 0068 helper's: IMMUTABLE, STRICT, PARALLEL SAFE, INVOKER, pg_catalog, pg_temp", async () => {
     const attrs = (sig: string) =>
       catalog(
         `SELECT provolatile AS volatility, proisstrict AS strict, proparallel AS parallel,
@@ -936,7 +1047,7 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
         strict: true,
         parallel: "s",
         security_definer: false,
-        config: ["search_path=pg_catalog"],
+        config: ["search_path=pg_catalog, pg_temp"],
       },
     ]);
     expect(await attrs(RULE_SIG)).toEqual(helper);
@@ -1007,6 +1118,7 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
       null,
       "AnnLee",
     ]),
+    // (e) mode true joins the 8 interior separators, U+0020 and U+00A0 are not joined: known residual, pinned as current behaviour (member-name-rule-residual-precision).
     ["U+2028 inside", mix("Ann", 0x2028, "Lee"), null, "AnnLee"],
     ["U+2029 inside", mix("Ann", 0x2029, "Lee"), null, "AnnLee"],
     [
@@ -1024,6 +1136,20 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
     ["other R inside (Cf U+0600)", mix("Ann", 0x600, "Lee"), null, "AnnLee"],
     ["other R inside (Cf U+110BD)", mix("Ann", 0x110bd, "Lee"), null, "AnnLee"],
     ["T before a removed R is trimmed again (NBSP, U+202E)", mix("Ann", 0xa0, 0x202e), null, "Ann"],
+    ...(
+      [
+        ["a", 0xfdd0, "a noncharacter"],
+        ["a", 0xffff, "a noncharacter"],
+        ["b", 0xe000, "private use"],
+        ["c", 0x40000, "unassigned in every Unicode version so far"],
+        ["d", 0x301, "a lone combining mark"],
+      ] as const
+    ).map(([item, cp, what]): Case => [
+      `(${item}) U+${hex(cp)} (${what}) alone is kept: known residual, pinned as current behaviour (member-name-rule-residual-precision)`,
+      mix(cp),
+      mix(cp),
+      mix(cp),
+    ]),
   ];
   it.each(CASES)("L29-F5 %s", async (_label, input, interactive, ingress) => {
     const [row] = await run<{ interactive: string | null; ingress: string | null }>(
@@ -1395,6 +1521,14 @@ describe("L29-W2 and L29-I1-I3 P3, P4 and M2 normalize control, bidi, separator,
     const r = await zalo(mix(0x202e, "a".repeat(120), 0x202c, "b"));
     expect(r.display_name).toBe("a".repeat(120));
   });
+  it.each([0x20, 0x3000])(
+    "L29-W2 P3: the 120 cut leaves a trailing Zs (code point %d): known residual, pinned as current behaviour (member-name-rule-residual-precision (f))",
+    async (cp) => {
+      const r = await zalo(mix("a".repeat(119), cp, "b"));
+      const stored = Array.from(r.display_name ?? "", (c) => c.codePointAt(0));
+      expect([stored.length, stored[stored.length - 1]]).toEqual([120, cp]);
+    },
+  );
 
   // L29-I1: every Cc, Cf, Zl and Zp scalar SQL text can hold (no U+0000; a superset of section 4's
   // R), alone and among visible text, then section 11's hostile names: each call completes, the P3
@@ -1515,15 +1649,21 @@ describe("L29-RC P3, P4 and M2 keep their attributes and call member_name_apply_
 // are always rolled back, and a first run that absorbs what the blocks above left behind (the tenant
 // names that run keeps are re-reported by every later run: `carried`).
 
-/** A 0070 block: the text between its two L29-<name> marker lines, each present exactly once. */
-function l29Block(name: "OWNER-CHECK" | "CLEANUP"): string {
-  const text = migration("0070_member_name_control_chars.sql");
-  const begin = `\n-- L29-${name}-BEGIN\n`;
-  const end = `\n-- L29-${name}-END`;
+/** A block of file (default 0070, tag L29): the text between its two <tag>-<name> marker lines, each present once. */
+function l29Block(
+  name: "OWNER-CHECK" | "CLEANUP",
+  file = "0070_member_name_control_chars.sql",
+  tag = "L29",
+): string {
+  const text = migration(file);
+  const begin = `\n-- ${tag}-${name}-BEGIN\n`;
+  const end = `\n-- ${tag}-${name}-END`;
   const from = text.indexOf(begin);
   const to = text.indexOf(end);
   if (from < 0 || to < from || text.includes(begin, from + 1) || text.includes(end, to + 1)) {
-    throw new Error(`0070: expected one L29-${name}-BEGIN line, then one L29-${name}-END line`);
+    throw new Error(
+      `${file.slice(0, 4)}: expected one ${tag}-${name}-BEGIN line, then one ${tag}-${name}-END line`,
+    );
   }
   return text.slice(from + begin.length, to);
 }
@@ -1549,6 +1689,7 @@ describe("L29-C the 0070 L29-CLEANUP block normalizes the four columns in mode t
   };
   // What the block leaves: the rule's value, NULL when nothing visible is left, except tenants.name,
   // which keeps such a value as stored (D4). A clean value is no candidate.
+  // (g) a kept NULL-mapped tenants.name: known residual, pinned as current behaviour (member-name-rule-residual-precision).
   const stored = (table: Table, k: Kind) =>
     k === "mixed" ? "L29 Mai" : k === "clean" || table === "tenants" ? VALUE[k] : null;
   const changed = (noun: string, what: string, id: string) =>
@@ -1776,6 +1917,55 @@ describe("L29-C1 an owner mismatch fails the migration", () => {
   );
 });
 
+describe("L41-C1 an owner mismatch fails the 0072 migration", () => {
+  const OWNER_CHECK = l29Block(
+    "OWNER-CHECK",
+    "0072_member_name_definers_qualify_builtins.sql",
+    "L41",
+  );
+  // One row per function the block checks against the helper's owner: the rule, the seven, tenant_public_alias_set.
+  const CELLS = [
+    { fn: "member_name_apply_rule", sig: `${L29_RULE}(text, boolean)` },
+    ...RECREATED.map((w) => ({ fn: fnName(w), sig: w.sig })),
+    { fn: "tenant_public_alias_set", sig: "public.tenant_public_alias_set(uuid, uuid, text)" },
+  ];
+  // ownership()'s read over the helper and these nine: what a rolled-back move leaves as it was.
+  const OWNERS = `SELECT p.oid::regprocedure::text AS fn, p.proowner::regrole::text AS owner, p.proacl::text AS acl
+       FROM pg_proc p WHERE p.oid = ANY($1::regprocedure[]) ORDER BY 1`;
+  const SIGS = [HELPER_SIG, ...CELLS.map((x) => x.sig)];
+  it("L41-C1 the block names exactly the ten by regprocedure: the helper's anchor and the nine in its array", () => {
+    // Every quoted 'public.<name>(<arguments>)' literal in the block, by a static regex literal.
+    const named = [...OWNER_CHECK.matchAll(/'(public\.\w+\([^')]*\))'/g)].map((m) => m[1] ?? "");
+    expect(named.sort()).toEqual([...SIGS].sort());
+  });
+  it.each(CELLS)(
+    "L41-C1 $fn: a no-op as applied; 42501 once its owner moves to readonly; rolled back, nothing changed",
+    async ({ fn, sig }) => {
+      const before = (await ctx.owner.query(OWNERS, [SIGS])).rows;
+      expect(before).toHaveLength(10);
+      await rolledBack(async (c) => {
+        await c.query(OWNER_CHECK);
+        expect((await c.query(OWNERS, [SIGS])).rows).toEqual(before);
+        await c.query(`ALTER FUNCTION ${sig} OWNER TO readonly`);
+        const err = await c.query(OWNER_CHECK).catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: "42501" });
+        // As L29-C1: the message ends with "<fn>(<arguments without ')'>) (owner readonly)", fn
+        // taken literally; plain string checks, no RegExp built from data.
+        const msg = (err as Error).message;
+        const head = `${fn}(`;
+        const tail = ") (owner readonly)";
+        expect(msg.startsWith("0072: not owned by "), msg).toBe(true);
+        expect(msg.endsWith(tail), msg).toBe(true);
+        const body = msg.slice(0, -tail.length);
+        const at = body.lastIndexOf(head);
+        expect(at, msg).toBeGreaterThanOrEqual(0);
+        expect(body.slice(at + head.length), msg).not.toContain(")");
+      });
+      expect((await ctx.owner.query(OWNERS, [SIGS])).rows).toEqual(before);
+    },
+  );
+});
+
 describe("L29-C2 the cleanup fails closed and names ids and counts only", () => {
   const CLEANUP = l29Block("CLEANUP");
 
@@ -1866,21 +2056,37 @@ describe("L29-C2 the cleanup fails closed and names ids and counts only", () => 
 
 // L29-AG1 (unit U5c): public.member_name_apply_rule and its TypeScript twins agree on every Unicode
 // scalar value in both modes (mode false = checkTypedName, mode true = normalizeExternalName, NULL =
-// null), each scalar alone, at an edge and inside visible text: one linear scan on each side, no
-// RegExp built from data (C11b). Excluded by name: U+0000, which PostgreSQL text cannot hold (D1e),
-// and the surrogates U+D800..U+DFFF, which are not scalar values. The transfer is shrunk as C11a
-// says: PostgreSQL returns each position's row count and only the rows where either result differs
-// from the input, so a row it leaves out has both results equal to the input. EXECUTE is owner-only,
-// so the query runs as the superuser, as L29-F's calls do.
+// null), each scalar alone, at the end edge, inside visible text and, since lane L41 (readiness
+// section 6 (h)), at the start edge: one linear scan on each side, no RegExp built from data (C11b).
+// Excluded by name: U+0000, which PostgreSQL text cannot hold (D1e), and the surrogates
+// U+D800..U+DFFF, which are not scalar values. The transfer is shrunk as C11a says: PostgreSQL
+// returns each case's row count and only the rows where either result differs from the input, so a
+// row it leaves out has both results equal to the input. Sharded as C12 says (an every-scalar test
+// runs in at most about 3 s locally; CI runs it about 3x slower): each position scans 8 contiguous
+// ranges of 0x22000 code points, one case per range with its own 30 s budget, and one cheap test
+// proves the 8 ranges cover U+0001..U+10FFFF with no gap. EXECUTE is owner-only, so the query runs
+// as the superuser, as L29-F's calls do.
 describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", () => {
   /** Every Unicode scalar value: 0x110000 code points minus the 0x800 surrogates, 1,112,064. */
   const SCALARS = 0x110000 - 0x800;
-  /** The three values of each scalar c; the SQL VALUES list builds the same ones as p = 1, 2, 3. */
+  /** The four values of each scalar c; the SQL CASE builds the same ones as p = 1, 2, 3, 4. */
   const POSITIONS = [
     { at: "alone", wrap: (c: string) => c },
     { at: "edge", wrap: (c: string) => `a${c}` },
     { at: "inside", wrap: (c: string) => `a${c}b` },
+    { at: "start", wrap: (c: string) => `${c}a` },
   ] as const;
+  /**
+   * C12: shard k + 1 of 8 (k = 0..7) scans [k * 0x22000, (k + 1) * 0x22000 - 1], shard 1 from U+0001
+   * (no U+0000, D1e). want is its scalar count, from the bounds alone: its code points minus the
+   * surrogates U+D800..U+DFFF inside it.
+   */
+  const SHARDS = Array.from({ length: 8 }, (_, k) => {
+    const lo = k === 0 ? 1 : k * 0x22000;
+    const hi = (k + 1) * 0x22000 - 1;
+    const want = hi - lo + 1 - Math.max(0, Math.min(hi, 0xdfff) - Math.max(lo, 0xd800) + 1);
+    return { shard: k + 1, lo, hi, want };
+  });
   type Pair = readonly [modeFalse: string | null, modeTrue: string | null];
   type Row = {
     total: number;
@@ -1888,9 +2094,23 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
   };
   const show = (s: string | null) => JSON.stringify(cps(s));
 
-  it.each(POSITIONS.map((pos, i) => ({ ...pos, p: i + 1 })))(
-    "L29-AG1 every scalar but U+0000 $at: mode false equals checkTypedName, mode true equals normalizeExternalName",
-    async ({ at, wrap, p }) => {
+  it("L29-AG1 the 8 shards cover U+0001..U+10FFFF with no gap: every scalar but U+0000, once", () => {
+    // Shard k + 1 must start right after shard k ends; a gap would leave scalars unscanned.
+    const gaps = SHARDS.slice(1)
+      .filter((s, k) => s.lo !== SHARDS[k]!.hi + 1)
+      .map((s) => s.shard);
+    expect({
+      shards: SHARDS.length,
+      first: SHARDS[0]!.lo,
+      last: SHARDS[SHARDS.length - 1]!.hi,
+      gaps,
+      sum: SHARDS.reduce((sum, s) => sum + s.want, 0),
+    }).toEqual({ shards: 8, first: 1, last: 0x10ffff, gaps: [], sum: SCALARS - 1 });
+  });
+
+  it.each(POSITIONS.flatMap((pos, i) => SHARDS.map((s) => ({ ...pos, p: i + 1, ...s }))))(
+    "L29-AG1 every scalar but U+0000 $at shard $shard of 8: mode false equals checkTypedName, mode true equals normalizeExternalName",
+    async ({ at, wrap, p, lo, hi, want }) => {
       const client = await ctx.superuserDb.pool.connect();
       // Sent here, before the TypeScript scan below, so PostgreSQL and Node scan at the same time.
       const pending = client
@@ -1901,17 +2121,18 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
              FROM (SELECT n, x.v,
                           public.member_name_apply_rule(x.v, false) AS r0,
                           public.member_name_apply_rule(x.v, true) AS r1
-                     FROM generate_series(1, 1114111) AS n -- from U+0001: no U+0000 (D1e)
+                     FROM generate_series($2::int, $3::int) AS n -- the shard's [lo, hi]: no U+0000 (D1e)
                     CROSS JOIN LATERAL (VALUES (CASE $1::int WHEN 1 THEN chr(n) WHEN 2 THEN 'a' || chr(n)
+                                                WHEN 4 THEN chr(n) || 'a'
                                                 ELSE 'a' || chr(n) || 'b' END)) AS x(v)
                     WHERE n NOT BETWEEN 55296 AND 57343) AS s -- no surrogates U+D800..U+DFFF`,
-          [p],
+          [p, lo, hi],
         )
         .finally(() => client.release());
       const mine = new Map<number, Pair>();
       let tsRows = 0;
-      // From U+0001 (no U+0000), the surrogates skipped: the same scalars as the SQL scan.
-      for (let n = 1; n <= 0x10ffff; n += 1) {
+      // The shard's [lo, hi], the surrogates skipped: the same scalars as the SQL scan.
+      for (let n = lo; n <= hi; n += 1) {
         if (n >= 0xd800 && n <= 0xdfff) continue;
         const v = wrap(String.fromCodePoint(n));
         const pair: Pair = [checkTypedName(v), normalizeExternalName(v)];
@@ -1937,8 +2158,8 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
         }
       }
       expect({ sqlRows: theirs.total, tsRows, modeFalse, modeTrue, first }).toEqual({
-        sqlRows: SCALARS - 1,
-        tsRows: SCALARS - 1,
+        sqlRows: want,
+        tsRows: want,
         modeFalse: 0,
         modeTrue: 0,
         first: [],
@@ -2126,4 +2347,100 @@ describe("L29-TW V1/V2 createSession and updateSession store venue_address by th
     });
     expect(await storedAddress(made.sessionId)).toBeNull();
   });
+});
+
+describe("L41-PT: a pg_temp.text domain planted by the caller does not reach the name rule", () => {
+  // Class: a caller-planted pg_temp type shadowing pg_catalog.text inside the name rule (RO-L41-1 item 1).
+  // With search_path=pg_catalog alone the session's temp schema is searched first for type names, so the
+  // rule's DECLARE block raised 23514, also under a definer; 0072 lists pg_temp last. Every phase runs on a
+  // NEW backend: PL/pgSQL keeps one compiled body per backend, and a reused one replays an earlier compile.
+  const INPUT = "Lan Nguyen";
+  const PLANT = `CREATE DOMAIN pg_temp.text AS pg_catalog.text CHECK (VALUE IS NULL)`;
+  const RULE = "public.member_name_apply_rule(pg_catalog.text, boolean)";
+  const APPLY = `SELECT public.member_name_apply_rule($1, false) AS r_false,
+                        public.member_name_apply_rule($1, true) AS r_true`;
+  /** A new backend from `config` (never a pool's idle one), pushed to `open` for the caller's finally. */
+  const freshBackend = async (config: pg.ClientConfig, open: pg.Client[]) => {
+    const { default: pgRuntime } = await import("pg");
+    const client = new pgRuntime.Client(config);
+    open.push(client);
+    await client.connect();
+    const { rows } = await client.query<{ pid: number }>(`SELECT pg_backend_pid() AS pid`);
+    return { client, pid: rows[0]!.pid };
+  };
+  /** create_host_added_person as app on `client`, scoped the way withTenant scopes it; the stored name. */
+  const hostAdds = async (client: pg.Client): Promise<string | null> => {
+    await client.query("BEGIN");
+    let id: string;
+    try {
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      const { rows } = await client.query<{ id: string }>(
+        `SELECT create_host_added_person($1::uuid, $2::uuid, $3) AS id`,
+        [ctx.tenantA, host, INPUT],
+      );
+      id = rows[0]!.id;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+    await client.query("COMMIT");
+    return nameOf(id);
+  };
+
+  it("L41-PT A-C under the plant the writer and the rule return the unplanted result, each on a new backend", async () => {
+    const open: pg.Client[] = [];
+    try {
+      // A: a new app backend, no plant.
+      const a = await freshBackend(ctx.appPool.options, open);
+      const storedA = await hostAdds(a.client);
+      expect(storedA).toBe(INPUT);
+      // B: a new app backend plants the domain, then the same writer with the same input.
+      const b = await freshBackend(ctx.appPool.options, open);
+      await b.client.query(PLANT);
+      expect(await hostAdds(b.client)).toBe(storedA);
+      // C: a new superuser backend plants the domain and calls the owner-only rule directly.
+      const unplanted = await ctx.owner.query(APPLY, [INPUT]);
+      const c = await freshBackend(ctx.superuserDb.pool.options, open);
+      await c.client.query(PLANT);
+      expect((await c.client.query(APPLY, [INPUT])).rows).toEqual(unplanted.rows);
+      expect(new Set([a.pid, b.pid, c.pid]).size).toBe(3);
+    } finally {
+      await Promise.all(open.map((client) => client.end()));
+    }
+  }, 30_000);
+
+  it("L41-PT D with the base attribute (search_path=pg_catalog) the planted writer call raises 23514", async () => {
+    const open: pg.Client[] = [];
+    await ctx.owner.query(`ALTER FUNCTION ${RULE} SET search_path = pg_catalog`);
+    try {
+      const d = await freshBackend(ctx.appPool.options, open);
+      await d.client.query(PLANT);
+      expect(await hostAdds(d.client).then(() => "stored", sqlstate)).toBe("23514");
+    } finally {
+      await ctx.owner.query(`ALTER FUNCTION ${RULE} SET search_path = pg_catalog, pg_temp`);
+      await Promise.all(open.map((client) => client.end()));
+      const { rows } = await ctx.owner.query<{ config: string[] }>(
+        `SELECT proconfig AS config FROM pg_proc WHERE oid = $1::regprocedure`,
+        [RULE],
+      );
+      expect(rows).toEqual([{ config: ["search_path=pg_catalog, pg_temp"] }]);
+    }
+  }, 30_000);
+});
+
+// L41-UV (RO-L41-1 item 4): prints the runner's Node, Unicode and ICU versions to the CI log. Only a
+// Unicode version older than 17.0 fails here: TX-ALL and L29-AG1 stay the per-code-point check.
+it("L41-UV the runner reports its Unicode version, 17.0 or newer", () => {
+  const { node, unicode, icu } = process.versions;
+  console.info(`L41-UV runner node=${node} unicode=${unicode} icu=${icu}`);
+  // Major then minor as numbers, no RegExp; a missing or unparsable value fails (0 or NaN).
+  const [major = NaN, minor = 0] = (unicode ?? "").split(".").map(Number);
+  expect(major > 17 || (major === 17 && minor >= 0), `unicode=${unicode} is older than 17.0`).toBe(
+    true,
+  );
+  if (major > 17 || minor > 0) {
+    console.warn(
+      `L41-UV unicode=${unicode} is newer than 17.0; TX-ALL and L29-AG1 stay the per-code-point check`,
+    );
+  }
 });
