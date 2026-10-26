@@ -31,10 +31,13 @@ let tenantId = "";
 let host: Page; // the signed-in owner; every other context is anonymous
 let anon: BrowserContext;
 let first404 = "";
+let firstFlight = "";
 
-// D2 MEASURED: not measured yet (written without running): Cache-Control is Next's force-dynamic
-// header (D2's production form or the `next dev` form); Referrer-Policy is the global one of
-// next.config.mjs (the page's meta says no-referrer); there is no X-Robots-Tag header (D2).
+// D2 MEASURED (e2e runs 2 and 3, `next dev`): Cache-Control `no-store, must-revalidate`, the dev
+// form (the production form `private, no-cache, no-store, max-age=0, must-revalidate` is expected
+// from force-dynamic; backlog row web-public-share-page-404-production-measurement); Referrer-Policy
+// strict-origin-when-cross-origin (the global one of next.config.mjs; the page's meta says
+// no-referrer); no X-Robots-Tag header; meta robots `noindex, nofollow` (D2).
 function expectPinned(h: Record<string, string>) {
   expect(h["cache-control"]).toMatch(
     /^(private, no-cache, )?no-store, (max-age=0, )?must-revalidate$/,
@@ -75,15 +78,36 @@ async function visit(path: string) {
   return { status: res?.status() ?? 0, headers: res?.headers() ?? {}, html, href, origins };
 }
 
-/** A miss: a 404 with the pinned headers; cache-control and body (slug replaced) equal the first. */
+// Measured cause (e2e run 3): under `next dev` the misses differ per request only by three clock
+// values, the `?v=<ms>` asset query, the Flight time-origin row `:N<ms>` and the server-measured I/O
+// "start"/"end" in `:J` rows; Next 15.5.28's production bundles emit none of them (security review
+// round 1, S-1), so exactly those three are masked. A malformed slug returns before the DB
+// (page.test.tsx), so its dev Flight lacks the query's I/O rows: its markup is compared, not its Flight.
+const WELL_FORMED = /^\/session\/[A-Za-z0-9_-]{22}$/;
+const devClock = (s: string) => s.replace(/\?v=\d+/g, "?v=0");
+const markupOf = (html: string) => devClock(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, ""));
+const flightOf = (html: string) =>
+  devClock(
+    [...html.matchAll(/self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)/g)]
+      .map((m) => JSON.parse(m[1] ?? '""') as string)
+      .join(""),
+  )
+    .replace(/^([0-9a-f]*):N[\d.]+$/gm, "$1:N0")
+    .replace(/^[0-9a-f]*:J.*$/gm, (row) => row.replace(/"(start|end)":[\d.e+-]+/g, '"$1":0'));
+
+/** A miss: a 404 with the pinned headers and the first miss's markup; well-formed: its Flight too. */
 async function expect404(path: string) {
   const r = await visit(path);
   expect(r.status, "a miss is a 404").toBe(404);
   expectPinned(r.headers);
   const body = r.html.split(path.slice("/session/".length)).join("SLUG"); // the slug is in the RSC payload
-  const seen = `${r.headers["cache-control"]}\n${body}`;
-  first404 ||= seen;
-  expect(seen === first404, "404 cache-control and body equal the first 404 seen").toBe(true);
+  const markup = `${r.headers["cache-control"]}\n${markupOf(body)}`;
+  first404 ||= markup;
+  expect(markup === first404, "404 headers and markup equal the first miss's").toBe(true);
+  if (!WELL_FORMED.test(path)) return;
+  const flight = flightOf(body);
+  firstFlight ||= flight;
+  expect(flight === firstFlight, "404 Flight equals the first well-formed miss's").toBe(true);
 }
 
 async function createAndPublish(code: keyof typeof ids) {
