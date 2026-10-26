@@ -464,7 +464,7 @@ D6. The void condition: section 2.3 (not triggered at the base); SEC re-runs the
 | 4 | Dependencies classified | L42 merged (PR #124); every earlier lane merged (C20; the base is the merge of PR #125); shares only `docs/autopilot-backlog.md` | PASS |
 | 5 | Live schema and code match | sections 2-3 measured at the base; the probe on a scratch database migrated at the base (tail 0073) | PASS |
 | 6 | Data, API, state, auth contract | no schema, migration or HTTP contract change; the only behaviour change: an actor without `session.manage` at command time gets the existing FORBIDDEN 403 (D6, D10); an authorized actor is unchanged | PASS |
-| 7 | Fail-closed, idempotency, order | required parameter; the recheck before the advisory lock and the dedup (D4); rethrow stays a 5xx (D1, D11); `LOCK_ORDER: NO_CYCLE` and `PROBE: NO_CYCLE_CONFIRMED` | PASS |
+| 7 | Fail-closed, idempotency, order | required parameter; the recheck before the advisory lock and the dedup (D4); rethrow stays a 5xx (D1, D11); `LOCK_ORDER: NO_CYCLE` and `PROBE: NO_CYCLE_CONFIRMED` for P1 and P2a-P2d (section 3.4) | PASS |
 | 8 | Open questions in scope = 0 | section 11 | PASS |
 | 9 | Acceptance matrix with expected results | section 7 | PASS |
 | 10 | Migration, security, rollback | no migration; security round planned (opus/max); rollback = revert the PR (no data, schema or contract change) | PASS |
