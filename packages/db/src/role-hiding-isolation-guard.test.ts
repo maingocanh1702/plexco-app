@@ -20,7 +20,11 @@ const SOURCE = /(?<!\.d)\.[cm]?[jt]sx?$/;
 /** Strings, template literals and regex literals (kept) and comments (blanked, newlines kept). A regex literal is a `/` after
  * one of = ( [ , ; { : ! & | ? => or a keyword (so an ordinary division is not read as one) whose body opens no comment.
  * ponytail: a division after an identifier spelled like a keyword (of, await, yield) or after a TypeScript non-null `!` is
- * misread as a regex literal; the match is then kept, never blanked. A real tokenizer is the upgrade path. */
+ * misread as a regex literal; the match is then kept, never blanked, but it can swallow a quote, a backtick or the first `/`
+ * of a comment. The other way round, a real regex literal after a character outside that list (`)` in
+ * `if (ok) /[/*]/.test(s);`, or `}`) is read as a division, so a comment opener, a quote or a backtick inside it takes
+ * effect. Either way what follows can be blanked or shifted (after a backtick, the rest of the file) and a later role
+ * statement hidden. A real tokenizer is the upgrade path. */
 const STRIP =
   /"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\[\s\S]|[^\x60\\])*\x60|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\/(?<=(?:[=([,;{:!&|?]|=>|(?<![\w$.])(?:return|typeof|case|void|yield|await|delete|throw|in|of|else|do))\s*\/)(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[a-z]*/g;
 /** A membership keyword (group 1) or a role statement (group 2), then its region (group 3) up to a semicolon (group 4 when it ends there) or a backtick. */
@@ -211,7 +215,10 @@ const walk = (dir: string): string[] =>
   });
 const sourceFiles = () => [...walk("packages"), ...walk("apps")];
 /** Per-root floors (D4), one per first-level directory under packages/ and apps/: floor(0.9 x the count at the lane base,
- * 36 / 411 / 22 / 108), minimum 1. A missing root counts 0 and fails; a new root is scanned but not required. */
+ * 36 / 411 / 22 / 108), minimum 1. A missing root counts 0 and fails; a new root is scanned but not required.
+ * ponytail: a lost subtree no larger than its root's margin (count minus floor at the lane base: 4, 42, 3 and 11 files under
+ * apps/bot, apps/web, packages/core and packages/db) still passes every floor; per-directory floors or a pinned file list
+ * is the upgrade path. */
 const ROOT_FLOORS: [string, number][] = [
   ["apps/bot", 32],
   ["apps/web", 369],
@@ -277,7 +284,12 @@ describe("role-hiding isolation guard (L32)", () => {
   }, 30_000);
 
   it("fails a root that falls under its floor while the total still passes (P3-4)", () => {
-    const files = sourceFiles().filter((file) => !file.startsWith("packages/core/"));
+    // Re-root packages/core rather than drop it: the total stays live, and a root with no floor is counted but not required.
+    const files = sourceFiles().map((file) =>
+      file.startsWith("packages/core/")
+        ? `packages/no-floor-root/${file.slice("packages/core/".length)}`
+        : file,
+    );
     expect(floorFailures(files)).toEqual([expect.stringContaining("packages/core")]);
   }, 30_000);
 
