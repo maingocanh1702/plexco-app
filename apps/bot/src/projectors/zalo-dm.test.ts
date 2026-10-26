@@ -156,6 +156,21 @@ describe("zalo_dm projector before any DB call (Z-4, Z-10, Z-12)", () => {
   it("A31: an injected definer error is a retry, never a throw", async () => {
     await expect(go("session.cancelled", {})).resolves.toEqual(retry("targets_read_failed"));
   });
+
+  it.each([0, -1, Number.NaN])(
+    "L44-c1: deliveryDeadlineMs %s retries before the targets read, any decrypt or a send",
+    async (deliveryDeadlineMs) => {
+      noDb.query.mockClear();
+      const open = vi.fn(openConnectorSecret);
+      const send = vi.fn(sendMessage);
+      const capped = createZaloDmDeliver({ db: noDb as unknown as Queryable, open, send });
+      const j = { ...job("session.cancelled", {}), deliveryDeadlineMs };
+      await expect(capped(j)).resolves.toEqual(retry("delivery_deadline_reached"));
+      expect(noDb.query).not.toHaveBeenCalled();
+      expect(open).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
 });
 
 // --- DB fixture: a copy of setupDispatcherContext (dispatcher.test.ts), the #62 harness as is.
@@ -697,6 +712,91 @@ describe("zalo_dm projector against the 0057 definers and the stub (as app_worke
     }
     expect(chats(from)).toEqual(["chat-z15"]);
   });
+
+  /** One linked player; each chat-id decrypt costs 1 s on the injected clock. Returns the send timeouts. */
+  const sendTimeouts = async (deliveryDeadlineMs?: number) => {
+    const c = await club();
+    const [x] = await roster(c, 1);
+    let clock = 0;
+    const open: typeof openConnectorSecret = async (enc, binding) => {
+      const plain = await openConnectorSecret(enc, binding);
+      if (binding.purpose === "channel_user") clock += 1_000;
+      return plain;
+    };
+    const timeouts: (number | undefined)[] = [];
+    const send: typeof sendMessage = async (...args) => {
+      timeouts.push(args[3]?.timeoutMs);
+      await sendMessage(...args);
+    };
+    const j = await updated(c);
+    const from = stub.calls.length;
+    const timed = createZaloDmDeliver({ db: ctx.worker, send, open, now: () => clock });
+    const deadlined = deliveryDeadlineMs === undefined ? j : { ...j, deliveryDeadlineMs };
+    await expectOutcome(deadlined, delivered("sent"), timed);
+    expect(chats(from)).toEqual([x!.chat]);
+    return timeouts;
+  };
+
+  it("L44-a: the send timeout is the deadline time left after the chat-id decrypt", async () => {
+    const timeouts = await sendTimeouts(3_000);
+    expect(timeouts).toHaveLength(1);
+    expect(timeouts[0]).toBeGreaterThan(0);
+    expect(timeouts[0]).toBeLessThanOrEqual(2_000);
+  });
+
+  it("L44-a2: without a deadline the send timeout is the default 5 s send cap", async () => {
+    expect(await sendTimeouts()).toEqual([Math.min(5_000, 120_000 - 1_000)]);
+  });
+
+  it("L44-b: a deadline below the 120 s budget stops the remainder with its own retry code", async () => {
+    const c = await club();
+    const [x] = await roster(c, 2);
+    let clock = 0;
+    const send: typeof sendMessage = async (...args) => {
+      await sendMessage(...args);
+      clock = 5_001;
+    };
+    const j = await updated(c);
+    const from = stub.calls.length;
+    const budgeted = createZaloDmDeliver({ db: ctx.worker, send, now: () => clock });
+    const deadlined = { ...j, deliveryDeadlineMs: 5_000 };
+    await expectOutcome(deadlined, retry("delivery_deadline_reached"), budgeted);
+    expect(chats(from)).toEqual([x!.chat]);
+  });
+
+  it.each([
+    ["forward", 7_200_000],
+    ["backward", -7_200_000],
+  ] as const)(
+    "L44-d: a %s wall-clock jump mid-delivery moves neither the deadline nor the send cap",
+    async (_direction, jump) => {
+      const c = await club();
+      const [x, y] = await roster(c, 2);
+      const j = { ...(await updated(c)), deliveryDeadlineMs: 10_000 };
+      const timeouts: (number | undefined)[] = [];
+      const wall = Date.now;
+      let offset = 0;
+      const send: typeof sendMessage = async (...args) => {
+        timeouts.push(args[3]?.timeoutMs);
+        await sendMessage(...args);
+        offset = jump;
+      };
+      // Installed before createZaloDmDeliver: a default `now = Date.now` would capture the spy.
+      const spy = vi.spyOn(Date, "now").mockImplementation(() => wall.call(Date) + offset);
+      try {
+        const from = stub.calls.length;
+        const unclocked = createZaloDmDeliver({ db: ctx.worker, send, sendTimeoutMs: 60_000 });
+        await expectOutcome(j, delivered("sent"), unclocked);
+        expect(chats(from)).toEqual([x!.chat, y!.chat]);
+        expect(timeouts).toHaveLength(2);
+        expect(timeouts[1]).toBeGreaterThan(0);
+        expect(timeouts[1]).toBeLessThanOrEqual(10_000);
+      } finally {
+        spy.mockRestore();
+      }
+    },
+    30_000,
+  );
 
   it("A18: the bot token and chat ids never reach logs, audit details or stored codes", async () => {
     const stored = JSON.stringify([

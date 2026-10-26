@@ -32,6 +32,11 @@ export interface ClaimedDeliveryJob {
   attempts: number;
   /** The claimed event, read through this claim's token (0056 outbox_claimed_event). */
   event: ProjectorEvent;
+  /**
+   * zalo_dm only: ms from the dispatcher's DB-clock read to the DD-146 bound; deliver() anchors it
+   * at its own start on its monotonic clock. Absent = no deadline beyond the attempt budget.
+   */
+  deliveryDeadlineMs?: number;
 }
 
 /**
@@ -143,6 +148,15 @@ export function zaloDmStartVerdict(value: unknown): ZaloDmStartVerdict {
     return { rule: "until_session_start", expired: true, secondsAgo: "unreadable" };
   if (value > 0) return { rule: "until_session_start", expired: false, secondsToStart: value };
   return { rule: "until_session_start", expired: true, secondsAgo: Math.max(0, Math.ceil(-value)) };
+}
+
+/** The deliver() deadline: ms from a delivering verdict's DB-clock read to the bound it applied. */
+export function zaloDmDeliveryDeadlineMs(
+  verdict: Extract<ZaloDmAgeVerdict | ZaloDmStartVerdict, { expired: false }>,
+): number {
+  return "rule" in verdict
+    ? verdict.secondsToStart * 1000
+    : (ZALO_DM_MAX_AGE_MINUTES * 60 - verdict.ageSeconds) * 1000;
 }
 
 /** The 0071 read under the live zalo_dm claim; null = zero rows (the claim was lost). */
@@ -366,9 +380,12 @@ export async function runDispatchCycle(
       }
       let outcome: DeliveryOutcome;
       try {
+        // A live zalo_dm verdict also bounds the send: deliver() stops at the deadline it carries.
         outcome = expiry?.expired
           ? { result: "delivered", providerRef: "noop_expired" }
-          : await deliver(job);
+          : await deliver(
+              expiry ? { ...job, deliveryDeadlineMs: zaloDmDeliveryDeadlineMs(expiry) } : job,
+            );
       } catch {
         // deliver() is contracted to RETURN a DeliveryOutcome, not throw.
         // codex round-09 [P1]: an untyped throw is AMBIGUOUS — it can mean

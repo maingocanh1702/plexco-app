@@ -456,7 +456,7 @@ describe("runDispatchCycle", () => {
         expect(backdated.rows[0]!.past).toBe(true); // non-vacuous: the event is past the bound
 
         const outcome = { result: "delivered", providerRef: "da-2-ref" } as const;
-        const deliver = vi.fn(async () => outcome);
+        const deliver = vi.fn<DeliverFn>(async () => outcome);
         const summary = await runDispatchCycle(ctx.workerPool, { projectors: only(deliver) });
 
         expect(deliver).toHaveBeenCalledTimes(1);
@@ -468,6 +468,8 @@ describe("runDispatchCycle", () => {
         expect(row.rows[0].status).toBe("delivered");
         expect(row.rows[0].attempts).toBe(1);
         expect(row.rows[0].provider_ref).toBe("da-2-ref");
+        // L44-c3: a non-zalo_dm job is passed unchanged: no deadline key at all, not an undefined one
+        expect("deliveryDeadlineMs" in deliver.mock.calls[0]![0]).toBe(false);
       },
     ),
   );

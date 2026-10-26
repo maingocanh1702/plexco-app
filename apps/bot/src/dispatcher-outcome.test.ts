@@ -6,6 +6,7 @@ import {
   boundRawErrorCode,
   completionArgs,
   runDispatchCycle,
+  zaloDmDeliveryDeadlineMs,
   type DeliveryOutcome,
 } from "./dispatcher.js";
 
@@ -318,4 +319,20 @@ describe("runDispatchCycle malformed completion containment", () => {
       expect(fixture.completions).toHaveLength(at === "fallback" ? 2 : at === "completion" ? 1 : 0);
     },
   );
+});
+
+describe("zaloDmDeliveryDeadlineMs: the delivery time a live zalo_dm verdict leaves", () => {
+  it.each([
+    [0, 3_600_000],
+    [1800.5, 1_799_500],
+    [3600, 0],
+    [-5, 3_605_000],
+  ])("L44-c5: ageSeconds %s leaves %s ms", (ageSeconds, ms) => {
+    expect(zaloDmDeliveryDeadlineMs({ expired: false, ageSeconds })).toBe(ms);
+  });
+
+  it("L44-c5: until_session_start leaves the seconds to the start, in ms", () => {
+    const verdict = { rule: "until_session_start", expired: false, secondsToStart: 12.5 } as const;
+    expect(zaloDmDeliveryDeadlineMs(verdict)).toBe(12_500);
+  });
 });
