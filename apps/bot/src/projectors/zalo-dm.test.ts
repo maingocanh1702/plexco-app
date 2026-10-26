@@ -425,6 +425,12 @@ describe("zalo_dm projector against the 0057 definers and the stub (as app_worke
       [c.tenant],
     );
     const host = await player(c, "chat-i1-host", "none"); // the requester: linked, no roster row
+    // The real announceSession re-checks the host's session.manage: actor-recheck-under-lock.
+    await q(
+      `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+       VALUES ($1, 'web', $2, 'owner', true)`,
+      [c.tenant, host.person],
+    );
     await player(c, "chat-i1-player"); // a linked roster player, who must get nothing
     const base = process.env.DATABASE_URL_TEST!;
     // The producer as the web route runs it: the app role (RLS on), ROLE_PW.app under the lease.

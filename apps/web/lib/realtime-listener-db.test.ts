@@ -88,9 +88,11 @@ async function editAndNotify(
   tenantId: string,
   session: { id: string; version: number },
   venue: string,
+  actorPersonId: string,
 ) {
   await updateSession(ctx.appDb.db, {
     tenantId,
+    actorPersonId,
     commandId: randomUUID(),
     input: { sessionId: session.id, expectedVersion: session.version, venueName: venue },
   });
@@ -114,6 +116,9 @@ describe("realtime listener against a real database", () => {
   it("A7 + A8: tenant A's real event reaches A only, and nothing after A's admin row is revoked", async () => {
     const [tenantA, tenantB] = [await seedTenant(), await seedTenant()];
     const [adminA, adminB] = [await seedAdmin(tenantA), await seedAdmin(tenantB)];
+    // A separate active admin edits: the second edit runs after adminA's row is revoked, and the
+    // subject here is adminA's stream, not the editor's.
+    const editor = await seedAdmin(tenantA);
     const allow = { recheck: async () => true };
     const readerA = openRealtimeStream(realtimeListener(), adminA, allow)!.getReader();
     const readerB = openRealtimeStream(realtimeListener(), adminB, allow)!.getReader();
@@ -122,7 +127,7 @@ describe("realtime listener against a real database", () => {
       expect(await next(readerB)).toBe(": hb\n\n");
       const session = await seedSession(tenantA);
 
-      await editAndNotify(tenantA, session, "Court 2");
+      await editAndNotify(tenantA, session, "Court 2", editor.personId);
       const frame = await next(readerA);
       expect(frame).toMatch(/^data: \{.*\}\n\n$/);
       const pushed = JSON.parse(String(frame).slice(6)) as Record<string, unknown>;
@@ -135,7 +140,7 @@ describe("realtime listener against a real database", () => {
         `UPDATE tenant_admins SET active = false WHERE tenant_id = $1 AND platform_user_lookup_hash = $2`,
         [tenantA, adminA.personId],
       );
-      await editAndNotify(tenantA, session, "Court 3");
+      await editAndNotify(tenantA, session, "Court 3", editor.personId);
       expect(await next(readerA, 600)).toBe("timeout");
     } finally {
       await readerA.cancel();
