@@ -283,7 +283,7 @@ TARGET_FILES:
   - docs/standards/decisions.md (read only: DD-146 :2026-2056)
   - docs/sessions/web-mvp-phase4-plan.md (read only: section 3 row L44 :60, the authority)
 SLICE: p4-zalo-dm-deadline-and-clock
-IN_SCOPE: the DD-146 bound reaches zalo_dm deliver() as an optional relative job field set at the one dispatcher call site; no send starts or runs past it (the early check, the re-measure before each send, the clamped timeoutMs); the retry outcome delivery_deadline_reached; the attempt budget and the deadline on a monotonic clock (default performance.now, injectable); tests (a)-(e) in the three existing test files; the two backlog rows closed by hand
+IN_SCOPE: the DD-146 bound reaches zalo_dm deliver() as an optional relative job field set at the one dispatcher call site; no send starts or runs past it (the early check, the re-measure before each send, the clamped timeoutMs); the retry outcome delivery_deadline_reached; the attempt budget and the deadline on a monotonic clock (default performance.now, injectable); tests (a)-(e) in four existing test files (c2 and c4 in apps/bot/src/projector-registry.test.ts: section 10); the two backlog rows closed by hand
 OUT_OF_SCOPE: the 60-minute bound and its JSON; the 120 s budget; the retry schedule; the claim lease; the registry and the CLI that enables the projector; the dispatcher's wall clock; any table, column, migration, env var or dependency; another projector's behaviour; a DeliverFn signature change; the decrypt calls and the decrypt audit; PR #50
 G1_DECISION: PASS
 G2_SPEC: PASS
