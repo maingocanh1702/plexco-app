@@ -127,12 +127,12 @@ ZT = `apps/bot/src/projectors/zalo-dm.test.ts` (716 lines), DT = `apps/bot/src/d
 | 4 | zalo_dm player.promoted, the start read finds the claim gone | deliver() not called | unchanged: lease-lost skip, break |
 | 5 | zalo_dm, age verdict not expired | `(ZALO_DM_MAX_AGE_MINUTES * 60 - ageSeconds) * 1000` (0 or more) | deliver() with the deadline |
 | 6 | zalo_dm player.promoted, start verdict not expired | `secondsToStart * 1000` (above 0) | deliver() with the deadline |
-| 7 | in deliver(): field absent | the cap is ATTEMPT_BUDGET_MS | as today, measured on the monotonic clock |
+| 7 | in deliver(): field absent | the cap is ATTEMPT_BUDGET_MS | as today, measured on the monotonic clock; the budget is also checked once before the targets read (row 9) |
 | 8 | in deliver(): field present but not finite | counts as 0 (fail closed) | row 9 |
-| 9 | in deliver(): deadline left `<= 0` right before the targets read | | retry `delivery_deadline_reached`; no targets read, no decrypt, no send |
+| 9 | in deliver(): the binding cap's time left `<= 0` right before the targets read | | retry with the binding cap's code: `delivery_deadline_reached`, or `send_budget_exhausted` when the budget binds (reachable only after a stall of 120 s or more before step 3); no targets read, no decrypt, no send |
 | 10 | at a loop turn (before the chat-id decrypt): the binding cap's time left `<= 0` | | retry with the binding cap's code: `delivery_deadline_reached` when the deadline is below the budget, else `send_budget_exhausted` |
-| 11 | after the chat-id decrypt, right before the send: time left `<= 0` | | the same retry code; this send is not made |
-| 12 | right before the send: time left `> 0` | | send with `timeoutMs = Math.min(sendTimeoutMs, left)`, `left` re-measured after the decrypt |
+| 11 | after the chat-id decrypt, right before the send: time left in whole ms (`Math.floor`: `AbortSignal.timeout` throws ERR_OUT_OF_RANGE on a fraction, and the monotonic clock is fractional) `<= 0`, so under 1 ms counts as none | | the same retry code; this send is not made |
+| 12 | right before the send: whole-ms time left `> 0` | | send with `timeoutMs = Math.min(sendTimeoutMs, left)` (a whole number), `left` re-measured after the decrypt |
 
 The binding cap is the smaller of ATTEMPT_BUDGET_MS and the deadline: both run from the same `started`, so the smaller one always runs out first.
 
