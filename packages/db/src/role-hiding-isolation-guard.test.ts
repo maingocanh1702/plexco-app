@@ -217,8 +217,9 @@ const sourceFiles = () => [...walk("packages"), ...walk("apps")];
 /** Per-root floors (D4), one per first-level directory under packages/ and apps/: floor(0.9 x the count at the lane base,
  * 36 / 411 / 22 / 108), minimum 1. A missing root counts 0 and fails; a new root is scanned but not required.
  * ponytail: a lost subtree no larger than its root's margin (count minus floor at the lane base: 4, 42, 3 and 11 files under
- * apps/bot, apps/web, packages/core and packages/db) still passes every floor; per-directory floors or a pinned file list
- * is the upgrade path. */
+ * apps/bot, apps/web, packages/core and packages/db) still passes every per-root floor; for apps/web the kept single floor
+ * binds first (577 - 551 = 26 files at the lane base), so up to 26 lost web files pass every floor. Per-directory floors or
+ * a pinned file list is the upgrade path. */
 const ROOT_FLOORS: [string, number][] = [
   ["apps/bot", 32],
   ["apps/web", 369],
