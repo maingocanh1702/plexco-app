@@ -2293,3 +2293,82 @@ describe("L29-TW V1/V2 createSession and updateSession store venue_address by th
     expect(await storedAddress(made.sessionId)).toBeNull();
   });
 });
+
+describe("L41-PT: a pg_temp.text domain planted by the caller does not reach the name rule", () => {
+  // Class: a caller-planted pg_temp type shadowing pg_catalog.text inside the name rule (RO-L41-1 item 1).
+  // With search_path=pg_catalog alone the session's temp schema is searched first for type names, so the
+  // rule's DECLARE block raised 23514, also under a definer; 0072 lists pg_temp last. Every phase runs on a
+  // NEW backend: PL/pgSQL keeps one compiled body per backend, and a reused one replays an earlier compile.
+  const INPUT = "Lan Nguyen";
+  const PLANT = `CREATE DOMAIN pg_temp.text AS pg_catalog.text CHECK (VALUE IS NULL)`;
+  const RULE = "public.member_name_apply_rule(pg_catalog.text, boolean)";
+  const APPLY = `SELECT public.member_name_apply_rule($1, false) AS r_false,
+                        public.member_name_apply_rule($1, true) AS r_true`;
+  /** A new backend from `config` (never a pool's idle one), pushed to `open` for the caller's finally. */
+  const freshBackend = async (config: pg.ClientConfig, open: pg.Client[]) => {
+    const { default: pgRuntime } = await import("pg");
+    const client = new pgRuntime.Client(config);
+    open.push(client);
+    await client.connect();
+    const { rows } = await client.query<{ pid: number }>(`SELECT pg_backend_pid() AS pid`);
+    return { client, pid: rows[0]!.pid };
+  };
+  /** create_host_added_person as app on `client`, scoped the way withTenant scopes it; the stored name. */
+  const hostAdds = async (client: pg.Client): Promise<string | null> => {
+    await client.query("BEGIN");
+    let id: string;
+    try {
+      await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [ctx.tenantA]);
+      const { rows } = await client.query<{ id: string }>(
+        `SELECT create_host_added_person($1::uuid, $2::uuid, $3) AS id`,
+        [ctx.tenantA, host, INPUT],
+      );
+      id = rows[0]!.id;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+    await client.query("COMMIT");
+    return nameOf(id);
+  };
+
+  it("L41-PT A-C under the plant the writer and the rule return the unplanted result, each on a new backend", async () => {
+    const open: pg.Client[] = [];
+    try {
+      // A: a new app backend, no plant.
+      const a = await freshBackend(ctx.appPool.options, open);
+      const storedA = await hostAdds(a.client);
+      expect(storedA).toBe(INPUT);
+      // B: a new app backend plants the domain, then the same writer with the same input.
+      const b = await freshBackend(ctx.appPool.options, open);
+      await b.client.query(PLANT);
+      expect(await hostAdds(b.client)).toBe(storedA);
+      // C: a new superuser backend plants the domain and calls the owner-only rule directly.
+      const unplanted = await ctx.owner.query(APPLY, [INPUT]);
+      const c = await freshBackend(ctx.superuserDb.pool.options, open);
+      await c.client.query(PLANT);
+      expect((await c.client.query(APPLY, [INPUT])).rows).toEqual(unplanted.rows);
+      expect(new Set([a.pid, b.pid, c.pid]).size).toBe(3);
+    } finally {
+      await Promise.all(open.map((client) => client.end()));
+    }
+  }, 30_000);
+
+  it("L41-PT D with the base attribute (search_path=pg_catalog) the planted writer call raises 23514", async () => {
+    const open: pg.Client[] = [];
+    await ctx.owner.query(`ALTER FUNCTION ${RULE} SET search_path = pg_catalog`);
+    try {
+      const d = await freshBackend(ctx.appPool.options, open);
+      await d.client.query(PLANT);
+      expect(await hostAdds(d.client).then(() => "stored", sqlstate)).toBe("23514");
+    } finally {
+      await ctx.owner.query(`ALTER FUNCTION ${RULE} SET search_path = pg_catalog, pg_temp`);
+      await Promise.all(open.map((client) => client.end()));
+      const { rows } = await ctx.owner.query<{ config: string[] }>(
+        `SELECT proconfig AS config FROM pg_proc WHERE oid = $1::regprocedure`,
+        [RULE],
+      );
+      expect(rows).toEqual([{ config: ["search_path=pg_catalog, pg_temp"] }]);
+    }
+  }, 30_000);
+});
