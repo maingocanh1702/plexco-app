@@ -684,18 +684,21 @@ const NOT_A_CALL = new Set([
   // Not here: substring and overlay (comma forms are plain calls); no type with a typmod in the ten.
 ]);
 /** (a) Every unqualified token before "(" not in NOT_A_CALL, in order. Comments and E'' or ''
- * literals are blanked in ONE pass, so a quote in a comment or a "--" in a literal cannot shift the
- * other; the boundary is a lookbehind, so a call right after "(" (coalesce(btrim(p))) is seen. */
+ * literals are blanked and quoted identifiers unquoted in ONE pass, so a quote or "--" inside one
+ * cannot shift another (quoted, a NOT_A_CALL name is a plain call and reads as q_<name>); a ".."
+ * range becomes a space, so its dot is no qualifier; the boundary is a lookbehind, so a call right
+ * after "(" (coalesce(btrim(p))) is seen. */
 const unqualifiedCalls = (src: string) =>
   [
     ...src
       .toLowerCase()
       .replace(
-        /--[^\n]*|\/\*[\s\S]*?\*\/|(?<![\w$])e'(?:[^'\\]|\\[\s\S]|'')*'|'(?:[^']|'')*'/g,
-        " ",
+        /--[^\n]*|\/\*[\s\S]*?\*\/|(?<![\w$])e'(?:[^'\\]|\\[\s\S]|'')*'|'(?:[^']|'')*'|"((?:[^"]|"")*)"/g,
+        (_: string, id?: string) =>
+          id === undefined ? " " : NOT_A_CALL.has(id) ? `q_${id}` : id.split('""').join('"'),
       )
-      .split('"')
-      .join("")
+      .split("..")
+      .join(" ")
       .replace(/\binsert\s+into\s+[a-z_][\w.$]*\s*\(/g, " ")
       .matchAll(/(?<![\w.$])([a-z_][a-z0-9_$]*)\s*\(/g),
   ]
@@ -720,8 +723,9 @@ const searchPathSafe = (config: string[] | null) => {
  * function of a later file): the ten name functions keep every built-in function call qualified and
  * pg_temp last. Operators, casts and keyword forms are not function calls; PostgreSQL never
  * searches pg_temp for functions or operators, so the remaining exposure is type and relation
- * names, which the search_path order governs (b). Ceiling: a token scan, not a parser (a dollar
- * quote inside a body is not understood; the ten have none). */
+ * names, which the search_path order governs (b). Ceiling: a token scan, not a parser. Handled:
+ * comments, '' and E'' literals, quoted identifiers, ".." ranges. Not handled: dynamic SQL inside
+ * EXECUTE strings, a nested dollar-quoted body (the ten have neither). */
 describe("L41-G1: the ten name functions qualify every built-in call and list pg_temp last", () => {
   let ten: { sig: string; src: string; config: string[] | null }[];
   beforeAll(async () => {
@@ -751,10 +755,15 @@ describe("L41-G1: the ten name functions qualify every built-in call and list pg
       ["coalesce(btrim(p), '')", "btrim"],
       ["'a--b' || btrim(p)", "btrim"],
       ["E'it\\'s' || btrim(p) || 'x'", "btrim"],
+      ["FOR i IN 1..length(p) LOOP", "length"],
+      ['"position"(a, b)', "q_position"],
+      [`SELECT "it's", left(p, 1) || 'x'`, "left"],
+      ['SELECT "a--b", btrim(p)', "btrim"],
     ];
     expect(flagged.map(([sql]) => unqualifiedCalls(sql))).toEqual(flagged.map(([, t]) => [t]));
     const passed = [
       "pg_catalog.btrim(p)",
+      'pg_catalog."btrim"(p)',
       "public.member_name_apply_rule(p, true)",
       "-- btrim(p)",
       "'btrim(p)'",
@@ -771,6 +780,7 @@ describe("L41-G1: the ten name functions qualify every built-in call and list pg
   it("(b) fails planted search paths with pg_temp not last or pg_catalog not first", () => {
     const bad = [
       null,
+      ["work_mem=64kB"],
       ["search_path=pg_catalog"],
       ["search_path=pg_temp, pg_catalog"],
       ["search_path=public, pg_catalog, pg_temp"],
