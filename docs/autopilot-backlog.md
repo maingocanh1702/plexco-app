@@ -6586,7 +6586,9 @@ notes: |
 
 ## task: docs-sync-phase3-owner-decision-spec-follow-ups
 title: Docs: one lane to sync the Reviewed specs that DD-138 and DD-139..DD-142 name as spec follow-ups
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-spec-sync-product-fe (L52, the product, FE and UX half) after the PR of branch docs/p4-docs-spec-sync-be (L51, the BE half); find each with `gh pr list --state merged --head <branch>` (no PR number or merge SHA is written here)
+note_merged: 2026-10-26 L52: closed BY HAND in the lane's own PR, as close_by says, because both halves have landed: the BE half is the Tier A rows of the rows block of docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-be.md (:40-:366), the product, FE and UX half the Tier A rows of the rows block of docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-product-fe.md (:40-:225); the RR rows of both files are owner questions and stay open there (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L52 of the Phase 4 run gives the closing to the lane (its lead (4); conductor decision D28 of P3-S16 and ruling RO-L52-1, under the owner's delegation of 2026-10-22, not an owner signature; the owner's written approval of 2026-10-26 approves the plan whose row L52 this is).
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -7212,3 +7214,19 @@ notes: |
   Under `next dev` the share page's 404s differ per request by three dev-only clock values (the `?v=<ms>` asset query, the Flight time-origin row and the server-measured I/O timings), so lane L39's e2e masks exactly those three and compares the Flight of the four well-formed misses only. The security review of L39's round 1 (finding S-1, quoted in L39's PR body) found none of the three in Next 15.5.28's production bundles (no time-origin or I/O-info chunk writer in the production Flight server bundle; the `?v=` query is dev-only), so no existence oracle is expected in production; that is not measured.
   Deliverable: under `next build` + `next start`, every miss (never existed, rotated away, private, suspended tenant, malformed) is byte-equal after slug normalization and the chunk join, and the production Cache-Control form (`private, no-cache, no-store, max-age=0, must-revalidate` expected from force-dynamic) is measured on the 200 and the 404. It cannot run in L39's proof config (two `next dev` servers).
   Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, threat model T1 and T3 (lane L39).
+
+## task: docs-features-readme-fe-spec-version-pins
+title: Docs: docs/features/README.md pins the five FE specs of lane L52 at versions that are stale
+status: idea
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/features/README.md]
+manifest: null
+merged_probe: null
+close_by: hand · docs-reconcile: README version cells only, no symbol
+notes: |
+  docs/features/README.md pins `FE/feature_session_management.md` v2.17 (:75), `FE/feature_marketplace_discovery.md` v2.4 (:81), `FE/feature_cross_club_join.md` v2.11 (:82), `FE/feature_billing_lifecycle.md` v2.9 (:86) and `FE/feature_home.md` v0.13 (:144), lines at dfb87ea34d81b5984119ba058032ce283eb1a165, where the files' own version lines say 2.28, 2.8, 2.13, 2.10 and 0.15; lane L52 bumps them to 2.29, 2.9, 2.14, 2.11 and 0.16. README :10 already says the version column has stale cells and :16-:17 says how to measure the real version; lane L51's readiness file (item 8, review finding R4-9) found the BE cells of the same rows stale too.
+  Deliverable: re-pin these cells to the measured versions or de-pin the column; docs only. README is a lane-L51 file, so lane L52 did not edit it.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-product-fe.md, item 10 (lane L52).
