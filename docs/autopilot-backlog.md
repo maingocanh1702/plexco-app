@@ -6714,7 +6714,9 @@ notes: |
 
 ## task: tenant-repo-sessions-create-area-venue-strip
 title: DB: `tenantRepo.sessions.create` writes area and venue_name without the L23 strip (test-only callers today)
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-name-rules-db (L42); find it with `gh pr list --state merged --head feat/p4-name-rules-db` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · `tenantRepo.sessions.create` in `packages/db/src/tenant.ts` now strips `area` and `venueName` with `stripInvisibleChars` from `packages/db/src/text-safety.ts`, exactly as the session service does (a string is stripped and kept, null and undefined stay null); the regression test is in `packages/db/src/tenant.test.ts` · merged_probe stays `null` (the row carries no probe; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L42: closed BY HAND in the lane's own PR; the lane's base commit and step 0 are in docs/sessions/web-mvp-phase4-readiness-p4-name-rules-db.md (no SHA is written here). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. Lane block L42 of the Phase 4 run gives the row to the lane (the owner's written approval of 2026-10-26 approves the plan whose row L42 this is).
 risk: P2
 change_class: code
 depends_on: []
@@ -6835,6 +6837,7 @@ merged_probe: null
 notes: |
   L27 O6: DISPLAY_NAME_MAX is 120 in me-settings.ts:20 and 100 in roster-money-shared.ts:58, with different length units per writer. O7: `auth_login_google` caps no length, and persons.display_name has no CHECK (a CHECK is a migration, hence P1). L29 R1C: session-form-model.ts:162 adds a third inline visible-character literal beside `publicAliasProblem` and `displayNameProblem`; the web, server and SQL layers count UTF-16 units, code points and characters respectively (roster-money-shared.ts:66-67, `tenants_name_len_chk`).
   Source: PR #101 body, section "Owner questions and backlog candidates", lines 192-193; PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 232.
+  Update 2026-10-26 (lane L42 p4-name-rules-db): the DB half is done in the lane's PR (no PR number or SHA is written here). One `DISPLAY_NAME_MAX` (120, counted in code points) now lives in packages/db/src/text-safety.ts; me-settings.ts and roster-money-shared.ts import and re-export it, so the roster cap moves from 100 to 120 code points (the owner's Phase 4 answer Q4 (b)); a source guard in packages/db/src/text-safety.test.ts keeps one definition. Migration packages/db/migrations/0073_member_name_length_cap_120.sql gives `create_host_added_person` the cap 120 (message `display name must be 1..120 characters`) and `auth_login_google` a `pg_catalog.left(..., 120)` on the external display name it stores for a new person (O7; it truncates, never raises). Still open, so the row stays `idea`: the web half (the inline literals and the UTF-16 counting in apps/web/lib/session-form-model.ts, club-settings-model.ts and me-settings-client.ts, and the web roster form's own `DISPLAY_NAME_MAX = 100` in apps/web/components/sessions/roster-add-player-form.tsx:14 with `maxLength` at :141, which now refuses the 101 to 120 code points the server accepts) is lane L43's; packages/db/src/club-config-validation.ts:68 still counts UTF-16 units against a literal 120; no CHECK on persons.display_name in Phase 4 (Q4 (c)).
 
 ## task: membership-display-name-follows-person-rename
 title: Names: `memberships.display_name` never follows a person rename (existing behaviour); decide whether it should
