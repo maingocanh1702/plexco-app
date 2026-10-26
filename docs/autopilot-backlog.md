@@ -6587,7 +6587,9 @@ notes: |
 
 ## task: docs-sync-phase3-owner-decision-spec-follow-ups
 title: Docs: one lane to sync the Reviewed specs that DD-138 and DD-139..DD-142 name as spec follow-ups
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-spec-sync-product-fe (L52, the product, FE and UX half) after the PR of branch docs/p4-docs-spec-sync-be (L51, the BE half); find each with `gh pr list --state merged --head <branch>` (no PR number or merge SHA is written here)
+note_merged: 2026-10-26 L52: closed BY HAND in the lane's own PR, as close_by says, because both halves have landed: the BE half is the Tier A rows of the rows block of docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-be.md (:40-:366), the product, FE and UX half the Tier A rows of the rows block of docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-product-fe.md (:40-:252); the RR rows of both files are owner questions and stay open there (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L52 of the Phase 4 run gives the closing to the lane (its lead (4); conductor decision D28 of P3-S16 and ruling RO-L52-1, under the owner's delegation of 2026-10-22, not an owner signature; the owner's written approval of 2026-10-26 approves the plan whose row L52 this is).
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -7233,3 +7235,37 @@ merged_probe: null
 notes: |
   L41 proof (d) (one read-only catalog query on a scratch database migrated through 0072): of the 123 functions outside the lane's ten, 108 list pg_temp last and 15 set no search_path at all, all SECURITY INVOKER in `public`, so they resolve type and relation names through their caller's search_path: channel_identities_no_new_telegram(), chat_assert_dm_two(uuid), chat_bind_tenant(), chat_channels_identity_immutable(), chat_dm_member_insert_guard(), chat_dm_no_member_delete(), chat_dm_safety_config_touch_updated_at(), chat_dm_two_from_channel(), chat_dm_two_from_members(), chat_members_identity_immutable(), dm_safety_flags_enabled(boolean,boolean,boolean,boolean), forbid_allocation_mutation(), forbid_bank_txn_core_change(), forbid_job_audit_mutation(), forbid_tenant_capability_grant_audit_mutation(). Inside a SECURITY DEFINER they run under that definer's path (pg_temp last in all 102 definers measured); called directly they run as the caller's own role. The first question of the lane that takes this row is whether any of them is reachable with a path that does not put pg_temp last; a re-creation is a migration, and two of them, by their names, guard money tables (allocations, bank transactions; not re-read here).
   Source: docs/sessions/web-mvp-phase4-readiness-p4-name-definers-and-rule-tests.md section 14, proof (d) (lane L41).
+
+## task: docs-features-readme-fe-spec-version-pins
+title: Docs: docs/features/README.md pins the five FE specs of lane L52 at versions that are stale
+status: idea
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/features/README.md]
+manifest: null
+merged_probe: null
+close_by: hand · docs-reconcile: README version cells only, no symbol
+notes: |
+  docs/features/README.md pins `FE/feature_session_management.md` v2.17 (:75), `FE/feature_marketplace_discovery.md` v2.4 (:81), `FE/feature_cross_club_join.md` v2.11 (:82), `FE/feature_billing_lifecycle.md` v2.9 (:86) and `FE/feature_home.md` v0.13 (:144), lines at dfb87ea34d81b5984119ba058032ce283eb1a165, where the files' own version lines say 2.28, 2.8, 2.13, 2.10 and 0.15; lane L52 bumps them to 2.29, 2.9, 2.14, 2.11 and 0.16. README :10 already says the version column has stale cells and :16-:17 says how to measure the real version; the BE cells of the same index (:75, :81, :82, :84, :85, :86, :102, :103, :144) are lane L51's owner question R4-9 (docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-be.md :365); the README item (3) of `docs-drift-sessions-fe-zalo-tech-readme-pins` (the identity pin :77) was edited by lane L51.
+  Deliverable: one pass over every stale version pin of README (these five FE cells and the nine BE cells of R4-9): re-pin them to the measured versions or de-pin the column; docs only. README is a lane-L51 file, so lane L52 did not edit it.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-product-fe.md, item 10 (lane L52).
+
+## task: owner-questions-docs-spec-sync-dd138-dd142
+title: Owner questions: the spec follow-up lines that no signed decision names (L51: 51 owner-question rows; L52: 42)
+status: idea
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/standards/decisions.md]
+manifest: null
+merged_probe: null
+close_by: hand · owner decision: closes when the owner has answered every owner-question row of both lists below by decision records in docs/standards/decisions.md (an answer may be "keep the line as it is"); a later docs lane then applies the answers to the spec lines
+notes: |
+  Out-of-scope row of lane L52 (p4-docs-spec-sync-product-fe, docs only; conductor ruling RO-L52-3, under the owner's delegation of 2026-10-22, not an owner signature): the two docs-sync lanes L51 and L52 recorded every spec line that DD-138 and DD-139..DD-142 do not name, or name without the new wording, as an owner question (a row of class RR) and edited none of them; nothing else queues these questions once the row `docs-sync-phase3-owner-decision-spec-follow-ups` is closed.
+  Where the lists live: item 8 of docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-be.md (lane L51, 51 rows of class RR) and item 8 of docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-product-fe.md (lane L52, 42 rows of class RR), each listed by file and line; the rows themselves sit in each file's rows block, with that lane's base line numbers.
+  Each question carries its proposed wording (the row's new-text cell or the proposal in its reason). Batch them by decision family (the G ids each row cites: DD-138 and DD-139..DD-142) and by file.
+  The owner answers by a decision record in docs/standards/decisions.md, never by editing a Reviewed spec directly.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-product-fe.md, item 10 (lane L52), and review R1d round 1 Q1.

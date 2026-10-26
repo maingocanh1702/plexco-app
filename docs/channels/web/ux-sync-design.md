@@ -1,6 +1,6 @@
 # Web/App-first UX + Multi-surface Sync Design
 
-> Version: v0.5 · 2026-07-28
+> Version: v0.6 · 2026-10-26
 > Scope: UX architecture cho web/app khi Plexco có các bot surfaces phase-1: **Zalo + Facebook Messenger** (Telegram đã loại — DD-37).
 > Related docs: `README.md`, `design-brief.md`, `../../features/FE/feature_sync_engine.md`, `../../features/FE/feature_session_management.md`, `../../features/FE/feature_payment_reconcile.md`, `../../features/FE/feature_marketplace_discovery.md`, `../../features/FE/feature_player_view.md`, `../../standards/business-rules.md`
 >
@@ -231,7 +231,7 @@ Allowed fields:
 Never expose:
 
 - Tenant routing ID.
-- Exact venue before active player outcome (including approved-but-waitlisted).
+- Exact venue before active player outcome (including approved-but-waitlisted), only when `sessions.hide_exact_address` is ON; by default the venue is public (DD-139).
 - Roster.
 - Payment/debt status.
 - Bank account.
@@ -409,4 +409,5 @@ Web/app should be the main product, control plane and marketplace. Bots should b
 
 | Date | Version | Change |
 |---|---|---|
+| 2026-10-26 | v0.6 | Sync DD-139 (owner decision 2026-10-21); docs only, lane L52. :234: the venue is hidden from a player before the active outcome only when `sessions.hide_exact_address` is ON; by default the venue is public. The "Allowed fields" list (:222-:229) is an owner question, not edited. |
 | 2026-07-28 | v0.5 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; retain per-slice `CODE_READY`, no-runtime and UX-input-only boundaries. |
