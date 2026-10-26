@@ -1,7 +1,7 @@
 # Feature: Home — Personal Dashboard (PWA) — Backend Tech Spec
 
 > **Canonical phase:** S9 (cùng PWA shell) — DD-79 ✅  
-> **Version:** 0.6 · 2026-08-10
+> **Version:** 0.7 · 2026-10-26
 > **Status:** ✅ Reviewed contract theo DD-79; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_home.md`  
@@ -95,7 +95,7 @@ WHERE p.person_id = $1;
 | 8 | Concurrency | Charge settle giữa 2 section read trong cùng request | Chấp nhận eventual trong 1 response (read-only, không quyết định tiền); SSE đẩy bản mới |
 | 9 | Concurrency | 2 request Home song song cùng person | Vô hại — read-only, không side effect |
 | 10 | Cross-Feature | Person merge trong lúc session sống | Session/topic invalidate theo player_view edge #12; Home request sau merge trả data hợp nhất |
-| 11 | Cross-Feature | CLB suspended (billing) | Kèo person-self vẫn hiện; CTA theo billing rule — Home không thêm logic riêng |
+| 11 | Cross-Feature | CLB suspended (admin / abuse — DD-142: không suspended vì billing) | Kèo person-self vẫn hiện; CTA theo billing rule — Home không thêm logic riêng |
 | 12 | Infra | Một nguồn (marketplace/notification) timeout | Per-section timeout ngắn (đề xuất 2s) → section `null` + reason; không kéo sập aggregate |
 | 13 | Infra | SSE drop | Client tự re-subscribe; Home vẫn đúng qua refetch — SSE là enhancement, không phải nguồn đúng đắn |
 | 14 | Money/Data | Player View trả `SelfPaymentStatus.kind='unknown'` | Debt section `null`/unavailable + retry metadata; không coerce thành `totalDue: 0`, không fallback sang direct ledger query/cached amount |
@@ -294,6 +294,7 @@ Home composer **không** được triển khai `SUM(amount_due-amount_allocated)
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v0.7 | **Sync DD-142 (quyết định owner 2026-10-21); docs-only.** :98: `CLB suspended (billing)` → `suspended` chỉ cho admin / abuse (DD-142: không suspended vì billing). |
 | 2026-08-10 | v0.6 | **A-grade upgrade:** thêm Entry points table (5 entries); bump version. Không đổi composition-only boundary. |
 | 2026-08-08 | v0.5 | **Port Sporta UX decisions (BE):** (1) Streak count composition: read-only trên person-self session history, không bảng mới; đếm backward from today, streak=0 → FE ẩn chip. (2) Hero CTA gating: kèm `payAction` vào hero item nếu Player View expose nó (HOME-OQ-4); không tự tạo `payAction`. (3) DTO response thêm `streak` + `payAction` trong upcoming. (4) 6 unit tests mới (#22–27). Không đổi composition-only boundary DD-79; không migration/bảng mới. |
 | 2026-07-31 | v0.4 | Align Home with canonical dependent contracts: public suggested uses `slotsOpen`; hero CTA gated on `payAction` availability; person-self aggregate is `private, no-store`, with only public suggested cacheable. No runtime authorization. |
