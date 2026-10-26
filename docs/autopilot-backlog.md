@@ -6491,7 +6491,9 @@ notes: |
 
 ## task: db-test-link-code-ttl-upper-bound-host-clock-flake
 title: Test DB: the link-code TTL assertion compares a database-clock expiry with the host clock and no tolerance on the upper bound; read the remaining TTL on the database clock
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-db-test-hygiene (L55); find it with `gh pr list --state merged --head test/p4-db-test-hygiene` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · `remainingTtlMs` (this row's merged_probe) in `packages/db/src/identity-link-code.test.ts`: the link-code TTL assertions read the remaining TTL on the database clock through it; after the merge `git grep -n -w remainingTtlMs -- packages/db/src/identity-link-code.test.ts` finds it · merged_probe unchanged (this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L55: closed BY HAND in the lane's own PR; the lane's base commit and its step-0 analysis of the assertion are in docs/sessions/web-mvp-phase4-readiness-p4-db-test-hygiene.md (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`. F1: lane block L55 of the Phase 4 run gives the row to the lane (conductor decision D22 of P3-S16, under the owner's delegation of 2026-10-22, not an owner signature; the owner's written approval of 2026-10-26 approves the plan whose row L55 this is). F2: the helper `remainingTtlMs` is the row's deliverable (both operands on the database clock, so no host-clock comparison is left in the TTL assertions); the other mixed-clock test the notes name (`wrong.lockedUntil`, a 5 s margin) stays out of scope as the notes say.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6519,7 +6521,9 @@ notes: |
 
 ## task: db-test-nonsuperuser-owner-bootstrap-jobd-before-chat-slot-hold-and-wait
 title: Test DB: five non-superuser bootstrap sites take the jobd reader lock and then wait for the chat slot another test file keeps until teardown; fix the order at every site in one change, or let the harness own it
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-db-test-hygiene (L55); find it with `gh pr list --state merged --head test/p4-db-test-hygiene` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · `NonSuperuserOwnerContext.bootstrapAndMigrateAsOwner` (this row's merged_probe, in `packages/db/src/test-harness.ts`) at all 12 owner sites plus the `migrate.test.ts` chat-window flip; after the merge `git grep -n -E 'await [a-zA-Z]+\.bootstrapAndMigrateAsOwner\(' -- packages apps` lists the 12 calls · merged_probe unchanged (this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L55: closed BY HAND in the lane's own PR; the lane's base commit, its decision table (site, order, who holds jobd and the chat slot) and its choice between the row's two fixes are in docs/sessions/web-mvp-phase4-readiness-p4-db-test-hygiene.md (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`. F1: lane block L55 of the Phase 4 run gives the row to the lane (conductor decision D22 of P3-S16, under the owner's delegation of 2026-10-22, not an owner signature; the owner's written approval of 2026-10-26 approves the plan whose row L55 this is). F2: the row's second fix was taken, the harness owns the order: `bootstrapAndMigrateAsOwner` takes the chat slot first and then one jobd hold (the comment at its definition in `test-harness.ts` says so), so no caller picks the order, and all 12 owner sites move together in one change (measured at the lane's head: 12 calls, 7 in `migrate.test.ts` and 1 each in `rls-invariants.test.ts`, `tenant-capability-authority.test.ts`, `identity-link-web-nobypass.test.ts`, `me-player-reads-nobypass.test.ts` and `public-alias-nobypass.test.ts`). F3: proved by the parallel-load runs of the PR this row's notes name, repeated under the DB/e2e lock at the lane's head; the measured results (windows, N, commands) are in the lane PR's body (find it with the gh command above) and are not copied here.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6879,7 +6883,9 @@ notes: |
 
 ## task: db-test-role-isolation-guard-residual-p3s
 title: Test DB: four residual P3s of the role-isolation guard of #105, each failing closed with a false red that names the file
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-db-test-hygiene (L55); find it with `gh pr list --state merged --head test/p4-db-test-hygiene` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · the four residuals of the notes, each with a red-first test in `packages/db/src/role-hiding-isolation-guard.test.ts`: P3-1 regex literals in the comment stripper, P3-2 scope-keyed pins, P3-3 a bare grant or revoke word before `;`, P3-4 per-root scanned-file floors in place of the single floor · merged_probe stays `null` (the row carries no probe; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L55: closed BY HAND in the lane's own PR; the lane's base commit and its step-0 analysis of the four residuals are in docs/sessions/web-mvp-phase4-readiness-p4-db-test-hygiene.md (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L55 of the Phase 4 run gives the row to the lane (conductor decision D22 of P3-S16, under the owner's delegation of 2026-10-22, not an owner signature; the owner's written approval of 2026-10-26 approves the plan whose row L55 this is). F2: a fifth blind spot of the same guard, a GRANT or REVOKE verb held in a variable, was found at step 0; it is its own row at the end of this file, `db-test-role-isolation-guard-verb-held-in-variable-false-green`, and this row is not reopened for it.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7125,3 +7131,18 @@ merged_probe: null
 notes: |
   Line numbers at 8086f8e31bc4a05328cc9c974844cc9aa7b62e14: the comment at apps/bot/src/queues.ts:12 says the schedule is gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED "(default false; the owner enables it", while .env.example:91 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` and infra/docker-compose.yml:133 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED: "true"` (PR #94, owner decision B3, DD-141 at docs/standards/decisions.md:128). Real delivery still waits on the projector registry (seeded disabled by migration 0056, :74 and :106; enabled only by the owner CLI scripts/outbox-projector-enable.mjs) and on the owner's P0 steps (.env.example:90). A comment-only change; lane L37 (docs only) found it at step 0 and does not edit code; the row was added by lane L37 (2026-10-25).
   Source: docs/sessions/web-mvp-phase3-readiness-p3-docs-flags-and-dd148-labels.md, item 8 (F-2).
+
+## task: db-test-role-isolation-guard-verb-held-in-variable-false-green
+title: Test DB: the role-isolation guard cannot see a role-list statement whose GRANT or REVOKE verb is held in a variable (a false green); fail closed on it, with a test that is red on the seeded case
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [packages/db/src/role-hiding-isolation-guard.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  `packages/db/src/role-hiding-isolation-guard.test.ts` at the head of lane L55's branch (test/p4-db-test-hygiene) when this row was written: the `STATEMENT` pattern (`:27-28`) finds a role-list statement only through a GRANT, REVOKE, ALTER, CREATE or DROP keyword spelled in the statement text. In `const verb = up ? "GRANT" : "REVOKE";` it matches the quoted GRANT and reads the region up to the `;` (`" : "REVOKE"`), which holds no role list, so `scan()` marks it exempt as an object grant (`:187-189`: `membership ? !MEMBERSHIP.test(region) && !SPLIT_LIST.test(region) : ...`; `:190` flags only a region that is not exempt), and a template that starts with `${verb}` holds no keyword, so `STATEMENT` never matches it: a role-list statement built that way is invisible, a false green (the failure the lane's threat model names: a guard that passes while a role-hiding violation exists). Measured when written, as evidence about these queries and not a proof of absence: no code line does this today (`git grep -n -E 'verb = .*(GRANT|REVOKE)|\$\{verb\}'` over the lane's worktree finds only section 12 O1 of the readiness file, which quotes the example; a ternary or a for-of list of the two quoted verbs, and a template literal that starts with an interpolation and then a privilege word, find nothing under packages, apps or scripts), so this is a latent blind spot like P3-3 of the sibling row `db-test-role-isolation-guard-residual-p3s` (its notes say 0 hits today), not a live violation. The line numbers are as of that head; the symbols are the durable pointer.
+  Deliverable: make the guard flag a statement whose verb is not spelled in the statement text (a hit that names the file, never a silent pass), with a test that is red on a seeded fixture (a scratch copy, never a tracked file), for example `const verb = up ? "GRANT" : "REVOKE";` followed by a template `${verb} ${role} TO app`, and green on the repository (0 hits today); no existing assertion is weakened and no pin changes. Not the four residuals of the sibling row (regex literals, scope-keyed pins, a bare grant word before `;`, per-root floors), which lane L55 closed.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-db-test-hygiene.md, section 12, item O1 (lane L55 step 0; `:299-300` at the lane's head), found while closing `db-test-role-isolation-guard-residual-p3s`.
