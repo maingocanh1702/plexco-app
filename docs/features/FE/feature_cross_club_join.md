@@ -223,7 +223,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
-| 2026-10-26 | v2.14 | **Sync DD-139 (quyết định owner 2026-10-21); docs-only, lane L52.** Vế venue của hợp đồng join (DD-45): venue public theo mặc định, chỉ ẩn khi host bật `sessions.hide_exact_address` (mặc định OFF): :33, :48, :50, :56, :70, :139, :200. Các dòng :15, :64, :137, :196, :205, :206, :219 là câu hỏi owner, không sửa. |
+| 2026-10-26 | v2.14 | **Sync DD-139 (quyết định owner 2026-10-21); docs-only, lane L52.** Vế venue của hợp đồng join (DD-45): venue public theo mặc định, chỉ ẩn khi host bật `sessions.hide_exact_address` (mặc định OFF): :33, :48, :50, :56, :70, :139, :200. Các dòng :15, :51, :64, :137, :196, :205, :206, :219 là câu hỏi owner, không sửa. |
 | 2026-10-16 | v2.13 | **Sửa drift theo `packages/db/schema.ts` (docs-only, không đổi contract/domain model):** `memberships` không có `role` (guest = `status='guest'`) và unique là partial index `(tenant_id, person_id)` where status IN active,guest; trạng thái chờ duyệt là `join_requests.status='pending'` (enum của `players.status` là active/left/waitlisted); `sessions.venue` → `venue_name`/`venue_address`. Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.12 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v2.11 | Mirror DD-32 Option D: preserve CCJ as canonical join while requiring channel finalizer proof before active mutation; full/pending remain no-pay and generic web/direct join is unchanged. No runtime. |
