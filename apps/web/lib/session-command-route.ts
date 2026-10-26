@@ -2,6 +2,8 @@ import { isApiErrorCode, type ApiErrorCode, type ApiErrorDetails } from "@plexco
 import { runWithLang, t, type Lang } from "@plexco/core/i18n";
 import {
   RosterMoneyError,
+  SESSION_MANAGE_ACTION,
+  SessionActorNotAuthorizedError,
   SessionAnnounceAuthorizationError,
   SessionAnnounceError,
   SessionCancelAuthorizationError,
@@ -54,24 +56,30 @@ import { resolveTenantLang } from "./tenant-lang";
  * context mismatch or any denial yields 403; an infrastructure error is NOT mapped to 403 or to
  * allow, it propagates as a 5xx.
  *
- * WHAT IT EXPLICITLY DOES NOT DEFEND AGAINST. The decision here is made in a SEPARATE, already
- * committed transaction BEFORE the command opens its own. A role deactivation that commits in
- * between is not seen by the command: the in-command actor re-check under the command's own row
- * locks (the `actor-recheck-under-lock` invariant) is NOT implemented here -- it is the
- * backlog slice `session-commands-actor-recheck-under-lock`, which changes the commands'
- * signatures. Until then the window is one request long. Every domain rule -- status transitions,
- * version races, roster and money guards --
- * belongs to the command, under its own row locks. It does not defend against a compromised
- * session cookie, nor against a malicious tenant admin acting WITHIN their own tenant (that is
- * what the commands' fail-closed money guards and the outbox audit trail are for), nor against
- * anything below the transport: TLS, cookie flags and origin policy are owned elsewhere.
+ * THE GATE-TO-COMMAND WINDOW IS CLOSED FOR THE SIX HOST COMMANDS. The decision here is made in a
+ * SEPARATE, already committed transaction BEFORE the command opens its own, so a role
+ * deactivation committing in between would pass this gate. Create, update, publish, close, cancel
+ * and announce therefore re-check session.manage for the SAME person (`context.personId`, the
+ * cookie person this gate checked, never a body id) under that actor's tenant_admins row lock
+ * (the `actor-recheck-under-lock` invariant) and refuse with `SessionActorNotAuthorizedError`,
+ * which the mapper below answers as the generic 403 FORBIDDEN. The guest-note commands require no
+ * session.manage: they keep their own association proof (the opt-in branch below). Every domain
+ * rule -- status transitions, version races, roster and money guards -- belongs to the command,
+ * under its own row locks.
+ *
+ * WHAT IT EXPLICITLY DOES NOT DEFEND AGAINST. A compromised session cookie; a malicious tenant
+ * admin acting WITHIN their own authority (that is what the commands' fail-closed money guards
+ * and the outbox audit trail are for); anything below the transport: TLS, cookie flags and origin
+ * policy are owned elsewhere.
  *
  * WHEN THIS MODEL MUST BE REWRITTEN. If a session command becomes reachable by any principal that
  * is not a signed-in tenant member -- a bot transport, a webhook, a public link, a service token --
  * every sentence above is void, because all of it assumes `currentSession()` identified a person
- * and `authorize()` bounded it. Also void if a command starts MOVING money rather than
- * refusing when money is present: the guards behind `CANCEL_REQUIRES_REVIEW` and
- * `CLOSE_BLOCKED_OPEN_DEBT` are refusals, not settlement, and a settlement path needs its own model.
+ * and `authorize()` bounded it. Also void if a host route passes its command an actor id that is
+ * not `context.personId`: the in-command re-check would then prove some other person. Also void
+ * if a command starts MOVING money rather than refusing when money is present: the guards behind
+ * `CANCEL_REQUIRES_REVIEW` and `CLOSE_BLOCKED_OPEN_DEBT` are refusals, not settlement, and a
+ * settlement path needs its own model.
  *
  * `CLOSE_BLOCKED_OPEN_DEBT` is the one response carrying roster data (`error.details`: the players
  * who still owe, ids + display names only — DD-131 OD-1). It is reachable only through the gate
@@ -92,9 +100,6 @@ const ACTOR_LIMIT = { limit: 60, windowSeconds: 60 };
 
 /** The ONE vi/en pair for SESSION_NOT_FOUND, shared by command and read routes. */
 export const SESSION_NOT_FOUND_MESSAGE = ["Không tìm thấy kèo.", "Session not found."] as const;
-
-/** The capability every session command and session read requires (default preset, DD-56). */
-const SESSION_ACTION = "session.manage";
 
 /**
  * Canonical (lowercase) `?tenant=<uuid>`, or null when absent/malformed. Canonicalized ONCE
@@ -119,7 +124,7 @@ export function actorThrottled(accountId: string): Promise<boolean> {
  */
 export async function mayManageSessions(tenantId: string, personId: string): Promise<boolean> {
   const decision = await withTenant(appDb().db, tenantId, (tx) =>
-    authorize(tx, { tenantId, action: SESSION_ACTION, actorPersonId: personId }),
+    authorize(tx, { tenantId, action: SESSION_MANAGE_ACTION, actorPersonId: personId }),
   );
   return decision.allowed;
 }
@@ -226,6 +231,11 @@ export interface SessionCommandContext {
   body: Record<string, unknown>;
   /** Resolved from tenants.locale (DD-118). Carried so handleSessionCommand can wrap the handler. */
   lang: Lang;
+  /**
+   * The cookie session's person, whose session.manage the gate checked (never a body id). The six
+   * host commands re-check that same person under lock (actor-recheck-under-lock).
+   */
+  personId: string;
 }
 
 /** Returns an already-enveloped error Response, or the resolved trusted context. */
@@ -343,7 +353,7 @@ export async function resolveSessionCommandContext(
       return err("INVALID_BODY", t("Thiếu commandId.", "Missing commandId."), 400);
     }
 
-    return { tenantId, commandId, body, lang };
+    return { tenantId, commandId, body, lang, personId: session.personId };
   });
 }
 
@@ -756,6 +766,7 @@ export function mapSessionCommandError(error: unknown): Response | null {
     error instanceof SessionCloseError ||
     error instanceof SessionCancelError ||
     error instanceof SessionAnnounceError ||
+    error instanceof SessionActorNotAuthorizedError ||
     error instanceof SessionPublishAuthorizationError ||
     error instanceof SessionUpdateAuthorizationError ||
     error instanceof SessionCloseAuthorizationError ||

@@ -129,7 +129,7 @@ describe("POST /api/sessions", () => {
     await POST(req({ ...validBody, tenantId: "99999999-9999-4999-8999-999999999999" }));
     expect(createSession).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ tenantId: TENANT, commandId: "cmd_1" }),
+      expect.objectContaining({ tenantId: TENANT, commandId: "cmd_1", actorPersonId: "p" }),
     );
   });
 

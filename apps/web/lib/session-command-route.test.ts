@@ -1,4 +1,5 @@
 import {
+  SessionActorNotAuthorizedError,
   SessionAnnounceAuthorizationError,
   SessionAnnounceError,
   SessionCancelAuthorizationError,
@@ -938,6 +939,31 @@ describe("CRITERION 3 — Vietnamese stays the default on every unresolved path"
     // The column is notNull default 'vi', but notNull is not "one of two values" — parseLang is
     // what makes that true, and DD-118 pins the fallback.
     expect(await errorMessageFor("de")).toBe("Không tìm thấy kèo.");
+  });
+});
+
+/**
+ * (e) A host command whose in-command actor re-check refuses (actor-recheck-under-lock) answers
+ * the mapper's existing 403 FORBIDDEN with its existing copy, never the gate's text.
+ */
+describe("(e) in-command actor re-check denial", () => {
+  it("maps SessionActorNotAuthorizedError to 403 FORBIDDEN with the FORBIDDEN copy", async () => {
+    vi.mocked(createSession).mockRejectedValueOnce(new SessionActorNotAuthorizedError());
+    const response = await POST(
+      req({
+        commandId: "cmd_revoked",
+        sportId: "55555555-5555-4555-8555-555555555555",
+        startsAt: "2026-09-01T10:00:00.000Z",
+        endsAt: "2026-09-01T12:00:00.000Z",
+        timezone: "Asia/Ho_Chi_Minh",
+      }),
+    );
+    expect(response.status).toBe(403);
+    expect((await envelope(response)).error).toMatchObject({
+      code: "FORBIDDEN",
+      statusCode: 403,
+      message: "Bạn không có quyền thực hiện thao tác này.",
+    });
   });
 });
 

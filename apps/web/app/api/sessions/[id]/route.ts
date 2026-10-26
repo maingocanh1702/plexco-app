@@ -38,6 +38,7 @@ export async function PUT(
     const result = await updateSession(appDb().db, {
       tenantId: context.tenantId,
       commandId: context.commandId,
+      actorPersonId: context.personId,
       input: { sessionId: id, expectedVersion, ...fields },
     });
     return ok({

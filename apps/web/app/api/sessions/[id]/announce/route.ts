@@ -1,7 +1,7 @@
 import { announceSession, type AnnounceSessionInputPayload } from "@plexco/db";
 import { ok } from "../../../../../lib/api-envelope";
 import { handleSessionCommand } from "../../../../../lib/session-command-route";
-import { appDb, currentSession } from "../../../../../lib/session-cookies";
+import { appDb } from "../../../../../lib/session-cookies";
 
 /**
  * POST /api/sessions/:id/announce — asks for the one host DM announcing an open session (BE tech
@@ -25,14 +25,11 @@ export async function POST(
     request,
     { bucket: "session-announce", limit: 10 },
     async (context) => {
-      const session = await currentSession();
-      if (!session) throw new Error("session vanished between the entry gate and the command");
-
       const { id } = await params;
       const result = await announceSession(appDb().db, {
         tenantId: context.tenantId,
         commandId: context.commandId,
-        requestedByPersonId: session.personId,
+        requestedByPersonId: context.personId,
         input: {
           sessionId: id,
           channel: context.body.channel as AnnounceSessionInputPayload["channel"],

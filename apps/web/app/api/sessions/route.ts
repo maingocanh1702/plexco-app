@@ -29,6 +29,7 @@ export async function POST(request: Request): Promise<Response> {
     const result = await createSession(appDb().db, {
       tenantId: context.tenantId,
       commandId: context.commandId,
+      actorPersonId: context.personId,
       input: {
         ...fields,
         sportId: context.body.sportId,
