@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3 (Marketplace) · P4.5 (Global Search)  
 > **Track:** 🔍 Discovery, Marketplace & Search  
-> **Version:** 2.8 · 2026-10-16
+> **Version:** 2.9 · 2026-10-26
 > **Status:** Reviewed  
 > **Implementation:** Not started — `public_sessions` có sẵn và `0024` đã enforce public session phải finite-capacity; publish/projector/routes/UI vẫn chưa có · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status). *Tail migration hiện hành là `0029` (đo 06/08 tại `2cd52ce`), nhưng `0025`–`0029` không chạm marketplace: rename CHECK, definer read-only và DD-29 billing registry.*
 > **Prerequisites:** P2 session management · P4 sync/public projector  
@@ -31,7 +31,7 @@
 
 - Public serializer **chỉ** emit whitelist fields — không bao giờ expose internal routing/tenant ID.
 - Private/**draft** (chưa publish)/incomplete/closed/cancelled/past sessions **KHÔNG BAO GIỜ** xuất hiện.
-- Exact venue chỉ reveal khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
+- Venue public theo mặc định (DD-139); khi `sessions.hide_exact_address` ON thì exact venue chỉ reveal khi canonical player outcome là `active`; approved-but-waitlisted vẫn ẩn.
 - Public chỉ có `slots_open` (DD-133): occupied = `getSessionOccupancy()` = active players + guest notes + live holds (= 0 tới khi có bảng hold, DD-132/DD-135) (+ pending invites sau migration thêm chúng); `slots_open` = `slots_max IS NULL ? NULL : max(0, slots_max - occupied)`. `confirmed_count` = active players, tenant-private, không bao giờ public. `slots_open` là advisory projection; hold count không public và final confirm luôn recheck transactionally.
 - Messenger central mặc định global discovery; tenant Page mặc định local + “Khám phá tất cả”. Mỗi trang tối đa 8 business choices; Join CTA là opaque action, không raw routing ID.
 
@@ -474,7 +474,7 @@
 
 | Entity | Vai trò | Key constraints |
 |--------|---------|-----------------|
-| `public_sessions` | Materialized public read/projection table | Whitelist columns only; `id=session.id` + internal `session_id` reference **without FK by design** so public plane cannot cascade/query canonical tenant tables; auto-expire |
+| `public_sessions` | Materialized public read/projection table | Whitelist columns only; `public_listing_id` (opaque listing key, DD-133 (e)) + internal `session_id` reference **without FK by design** so public plane cannot cascade/query canonical tenant tables; auto-expire |
 | `sessions` | Canonical source | `visibility` enum, required discovery fields |
 | `search_index` | Full-text search index (denormalized) | Covers users, clubs, tournaments, sessions; refreshed on write via event/trigger; searchable columns: `display_name`, `title`, `sport_key`, `area` |
 | `persons` (search view) | User public profile projection | Only `display_name`, `avatar_url`, `sport_interests`, `public_club_count` — NO PII |
@@ -565,7 +565,7 @@
 
 | ID | Quyết định | Trạng thái |
 |---|---|---|
-| MKT-OQ-1 | BRD OD-6: public location granularity | ✅ Chốt (DD-06, clarified v1.60): **`area` only public; venue active-only** (approved-waitlisted no venue). |
+| MKT-OQ-1 | BRD OD-6: public location granularity | ✅ Chốt (DD-06, clarified v1.60): **venue public theo mặc định (DD-139 đảo DD-06); khi `sessions.hide_exact_address` ON: `area` only public, venue active-only** (approved-waitlisted no venue). |
 | MKT-OQ-2 | BRD OD-8: initial sport/skill taxonomy | ✅ Chốt (DD-08, 2026-07-13): 7 môn seed (badminton/pickleball/tennis/padel/volleyball/basketball/football, extensible qua `sports`) + level 5-bậc ordered rank. |
 | MKT-OQ-3 | Initial ranking: upcoming/area vs optional distance provider | ⬜ Chưa chốt |
 
@@ -573,6 +573,7 @@
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.9 | **Sync DD-139 (quyết định owner 2026-10-21) và DD-133 (e) (quyết định owner 2026-10-16); docs-only, lane L52.** DD-139: :34, :568: venue public theo mặc định; `sessions.hide_exact_address` ON khôi phục luật cũ. DD-133 (e): :477: id của listing là `public_listing_id` (opaque), không phải `session.id` (dòng spec follow-up L10b của DD-138). Các dòng :15, :69, :273, :500, :530 là câu hỏi owner, không sửa. |
 | 2026-10-16 | v2.8 | **Sync DD-133 (D1, owner ký 2026-10-16); docs-only.** Public card/detail/DTO chỉ còn `slots_open` từ `getSessionOccupancy()`: bỏ `N/M Going`, `confirmed_count`, host avatar và host name (không có cột whitelist public); `club_display_name` = alias đã duyệt (L10a); thêm `public_listing_id`. Sửa drift: `public_sessions.price` → `price_amount` (§Card, §Detail, bảng DTO). Wireframe và AC khớp. `N/M Going` ở bề mặt tenant-private (feature_session_management) giữ nguyên. Vòng review 1: live holds ghi rõ = 0 tới khi có bảng hold. Vòng review 2: mọi câu personal-tenant (AC, edge #13) chỉ nhắc alias đã duyệt (L10a); thiếu, chưa duyệt hoặc trống = không chiếu (edge #13: câu "không có alias đã duyệt" đã gọn lại, hết tự mâu thuẫn). Các dòng lịch sử giữ nguyên. |
 | 2026-08-12 | v2.7 | **SessionCard upgrade (Playo reference #2):** (1) **Urgency badge:** "Chỉ N chỗ!" (đỏ) khi `slots_open ≤ 3` — tăng conversion. (2) **Booking status badge:** `ĐÃ ĐĂNG KÝ`/`CHỜ`/`CHỜ DUYỆT` (right-aligned) khi authenticated player đã join — nhận ra kèo đã đăng ký trong marketplace. (3) **Skill level range:** hiện range "Người mới – Trung bình" với green chip pill + sport icon, thay single text. (4) **Time-of-day label:** "Sáng"/"Chiều"/"Tối"/"Đêm" thay time pill khi phù hợp. (5) **Session cover image:** optional hero image trên card, fallback sport gradient. Thêm 4 component tables mới (time-of-day mapping, urgency badge, booking status, cover image). 5 fields mới trong session card table. BL-DSC-1: `cover_image_url` là public moderated field. |
 | 2026-08-12 | v2.6 | **Unified SessionCard + Horizontal Date Selector (Playo-inspired):** (1) **Date selector:** thay date picker dropdown bằng horizontal scrollable date selector (14 ngày, today highlighted, session dot indicator, snap-to-item) phía trên sport chips. (2) **Session card redesign:** unified `SessionCard` variant `browse` với: time pill (green) + price pill + favorite icon (♡ placeholder phase-1) + host avatar (32px) + `N/M Going` count + sport icon + title + club/host display name + area + conditional distance (~X km, geolocation-gated) + skill level tag (legacy text, DD-41 sau) + slots status badge (`N chỗ`/`Đầy`). (3) **Filter bar:** remove date dropdown (chuyển lên date selector); giữ khu vực/giá/trình độ/slot. (4) **Loading skeleton:** thêm date selector shimmer. (5) 5 AC bullets mới. BL-DSC-1 whitelist giữ nguyên — `host_avatar_url` là public moderated field như `host_display_name`. Không đổi privacy contract. |
