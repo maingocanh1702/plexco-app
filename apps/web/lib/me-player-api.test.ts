@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
-import { getMyCharges, getMyClubs, getMyRequests, getMySessions } from "./me-player-api";
+import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
+import {
+  getMyCharges,
+  getMyClubs,
+  getMyRequests,
+  getMySessions,
+  leaveMySession,
+} from "./me-player-api";
 
 const AS_OF = "2026-10-19T03:00:00.000Z";
 const STARTS_AT = "2026-10-20T11:00:00.000Z";
@@ -292,5 +298,47 @@ describe("request timeout (P-15)", () => {
     expect(callOf(fn)[1].signal).toBe(clock.signal);
     clock.abort();
     await settled;
+  });
+});
+
+describe("leaveMySession", () => {
+  const ID = "sess/9d 2f";
+  const TENANT = "5b0c2d4e-7a31-4f6b-9c8d-1e2f3a4b5c6d";
+  const leave = () => leaveMySession(ID, TENANT, { commandId: "c-1", csrfToken: "tok" });
+
+  it.each([false, true])("POSTs path, command id, csrf token (replayed: %s)", async (replayed) => {
+    const fn = mockFetch({ player: { id: "p-1", status: "left" }, replayed });
+    await expect(leave()).resolves.toBeUndefined();
+    expect(fn).toHaveBeenCalledTimes(1);
+    const [path, init] = callOf(fn);
+    expect(path).toBe(
+      `/api/sessions/${encodeURIComponent(ID)}/leave?tenant=${encodeURIComponent(TENANT)}`,
+    );
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe('{"commandId":"c-1"}');
+    expect(new Headers(init.headers).get("x-csrf-token")).toBe("tok");
+  });
+
+  it.each([
+    ["a player that is not left", { player: { id: "p-1", status: "active" }, replayed: false }],
+    ["no replayed flag", { player: { id: "p-1", status: "left" } }],
+    ["no player", { replayed: false }],
+  ])("an odd 200 fails closed: %s", async (_case, data) => {
+    mockFetch(data);
+    await expect(leave()).rejects.toMatchObject({ code: CLIENT_BAD_RESPONSE });
+  });
+
+  it("surfaces the server refusal as an ApiClientError, a lost connection as CLIENT_NETWORK_ERROR", async () => {
+    const error = { code: "LEAVE_REQUIRES_HOST", message: "ask the host" };
+    const body = JSON.stringify({ data: null, error, meta: { requestId: "req_1" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(body, { status: 409 })),
+    );
+    const refused = await leave().catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ApiClientError);
+    expect(refused).toMatchObject({ code: "LEAVE_REQUIRES_HOST", statusCode: 409 });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
+    await expect(leave()).rejects.toMatchObject({ code: CLIENT_NETWORK_ERROR, statusCode: 0 });
   });
 });

@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P2 (chat CRUD) · P4 (web parity)  
 > **Track:** 📋 Session CRUD  
-> **Version:** 2.28 · 2026-10-16
+> **Version:** 2.29 · 2026-10-26
 > **Status:** Reviewed  
 > **Implementation:** DB substrate (`0014` waitlist, `0019` same-tenant integrity, `0024` public-capacity CHECK) + **SessionService đủ 6 command** (`packages/db/src/session-service.ts`: create · publish · announce · update · close · cancel) + **5 route** (`POST /api/sessions` · `/[id]` · `/[id]/publish` · `/[id]/close` · `/[id]/cancel`; `announce` gate DD-56 clause 1) đã merge (đo 2026-09-06 tại `30a3e90`, re-verified 2026-09-11 tại `6bfa905`); **chưa có**: route đọc (`GET /api/sessions`, `/[id]`), projector thật (stub `dlq`), auto-promote, auto-expiry, writer cho `players` (roster — invite/guest-note/approve/reject family) · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)
 > **Prerequisites:** P0–P1 foundation stable · P2 tenant routing/authz  
@@ -48,7 +48,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 - Session luôn gắn `tenant_id` — RLS choke-point.
 - Admission capacity không bao giờ bị vượt: một helper `getSessionOccupancy()` (DD-133 (a): active players + guest notes + live holds (= 0 tới khi có bảng hold, DD-132/DD-135), + pending invites sau migration thêm chúng); concurrent join/hold/capacity change đều lock session. Waitlisted và account-link-only intent không chiếm chỗ.
 - Giá thay đổi sau khi đã charge → bắt buộc preview + explicit policy.
-- Venue chi tiết (tên, SĐT, bản đồ) chỉ hiện khi canonical player outcome là `active`; pending và approved-but-waitlisted chỉ thấy area/position.
+- Venue (tên, địa chỉ) public theo mặc định (DD-139); khi `sessions.hide_exact_address` ON thì venue chi tiết (tên, SĐT, bản đồ) chỉ hiện khi canonical player outcome là `active`; pending và approved-but-waitlisted chỉ thấy area/position.
 - Messenger `/newsession` dùng một durable wizard owner ở pre-dispatch boundary; mỗi bước/final confirm re-check `session.manage`, tenant context và snapshot. Central/tenant Page chỉ là adapter/context surface, không chứa business rule riêng.
 
 ---
@@ -86,7 +86,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 3 | Concurrency | Giảm `slots_max` xuống dưới active roster | Reject `CAPACITY_BELOW_ROSTER`; không kick/evict hay mutation ngầm |
 | 4 | Concurrency | 2 first-entry players join đồng thời, chỉ còn 1 slot | Transaction lock — first-commit-wins; second vào `waitlisted` với position dương, không tạo charge/venue |
 | 5 | Financial | Price change sau khi đã có charges | Preview bắt buộc: existing charges giữ nguyên HOẶC adjustment entries — KHÔNG silent mutation |
-| 6 | Security | Venue details leak trước active outcome | Chỉ hiện area/queue position. Chi tiết chỉ sau khi `players.status='active'`; approved-but-waitlisted vẫn ẩn |
+| 6 | Security | Venue details leak trước active outcome (`sessions.hide_exact_address` ON, DD-139) | Chỉ hiện area/queue position. Chi tiết chỉ sau khi `players.status='active'`; approved-but-waitlisted vẫn ẩn |
 | 7 | Data Integrity | Visibility public thiếu discovery fields | Reject — required fields: sport, area, starts_at, slots_max (finite — public không được unlimited/`NULL`) |
 | 8 | Data Integrity | Visibility private → remove projection | Immediate remove từ public search |
 | 9 | Data Integrity | Recurrence qua DST boundary | Handle deterministically — dùng IANA timezone + occurrence idempotency key |
@@ -99,7 +99,7 @@ Cho phép host (TenantAdmin) tạo, sửa, thông báo, đóng và huỷ **sessi
 | 16 | State | Publish `draft` → `open` (idempotent) | `draft` → `open` flip status + một outbox event; re-publish session đã `open` = no-op success (dedup theo `commandId`, cùng pattern close/cancel). Status-only — `visibility` không đổi |
 | 17 | Data Integrity | Publish session public thiếu discovery fields | Reject `MISSING_DISCOVERY_FIELDS` — E#7 (sport, area, starts_at, finite `slots_max`) re-validate tại publish vì đây là transition bật public projection; zero mutation |
 | 18 | State | Publish session closed/cancelled/past | Reject `SESSION_NOT_OPEN` — chỉ `draft` (chưa qua giờ) → `open` hợp lệ; không mutation. Chỉ Host (`session.manage`) |
-| 19 | Security/Billing | Publish khi tenant billing-`suspended` | **Fail-closed block `TENANT_SUSPENDED`** (403, canonical tenant-routing code) — publish là action "publish new sessions" trong billing Suspended Action Matrix (`suspended` ❌; `active`/`past_due` ✅), **owned bởi `feature_billing_lifecycle`** (named dependency — status-authority định nghĩa ở billing, không ở đây). Existing sessions expire naturally |
+| 19 | Security/Billing | Publish khi tenant `suspended` (không phải billing: admin / abuse — DD-142) | **Fail-closed block `TENANT_SUSPENDED`** (403, canonical tenant-routing code) — publish là action "publish new sessions" trong billing Suspended Action Matrix (`suspended` ❌; `active`/`past_due` ✅), **owned bởi `feature_billing_lifecycle`** (named dependency — status-authority định nghĩa ở billing, không ở đây). Existing sessions expire naturally |
 | 20 | State | Discard `draft` → `cancelled` (host thủ công, hoặc auto-expiry khi quá giờ) | `CancelSession` mở rộng nhận nguồn `draft` ngoài `open`; hệ thống verify roster/charge dưới lock (thường rỗng theo thiết kế — anomaly xem edge #23) rồi mới xác nhận một chạm. Đúng một outbox event `session_cancelled`; cancel session đã `cancelled` (dù nguồn draft hay open) vẫn no-op idempotent (cùng pattern publish/close). Không có past-guard cho nguồn `draft` — hợp lệ bất kể `starts_at`; nguồn `open` giữ nguyên yêu cầu past-session cũ (edge #24, KHÔNG exempt). Chỉ Host (`session.manage`) cho nhánh thủ công |
 | 21 | Security/Concurrency | Discard draft với `expectedVersion` thiếu hoặc không khớp (session vừa publish/sửa) | Reject `STALE_VERSION` — version bắt buộc gửi trên nhánh mutate (không phải field tuỳ chọn), đóng race "click Huỷ nháp cũ cancel nhầm session vừa published" — không silent-cancel một session đã `open` ngoài ý host; zero mutation |
 | 22 | Resilience/Concurrency | Auto-expiry job chạy đồng thời (nhiều lượt cron chồng), xuyên nhiều tenant | `FOR UPDATE SKIP LOCKED` (cùng discipline Daily Lifecycle Job, `feature_billing_lifecycle_tech.md` §4) nên mỗi draft quá giờ transition đúng một lần, không double-cancel/double-event; lượt chạy chồng khác skip row đã khoá. Tenant isolation giữ nguyên (RLS fail-closed); cơ chế thực thi cross-tenant chính xác là build-slice detail, không đặc tả ở đây (BE §4) |
@@ -564,7 +564,7 @@ Thanh toán: {paidCount}/{totalCount} · {paidAmount}/{totalAmount}₫
 ├──────────────────────────────────────┤
 │ ┌────────────────────────────────┐   │
 │ │  📅 05/08/2026 · 18:00–20:00  │   │
-│ │  📍 Sân ABC, Q.Bình Thạnh     │   │  ← venue chỉ hiện nếu active
+│ │  📍 Sân ABC, Q.Bình Thạnh     │   │  ← venue public theo mặc định (DD-139); chỉ hiện nếu active khi `sessions.hide_exact_address` ON
 │ │     (or: 📍 Quận Bình Thạnh)  │   │  ← area only nếu waitlisted
 │ │  💰 75,000₫/người              │   │
 │ │  👥 6/8 người                  │   │
@@ -817,7 +817,7 @@ stateDiagram-v2
 | Leave session | ✅ (own) | ✅ (own) | ✅ (own) | ❌ |
 | Xem session detail (host) | ✅ | ❌ | ❌ | ❌ |
 | Xem session detail (player) | ✅ | ✅ (if joined/public) | ✅ (if joined/public) | Public page only |
-| Xem venue | ✅ | ✅ (if `active`) | ✅ (if `active`) | ❌ |
+| Xem venue | ✅ | ✅ (if `active` khi `sessions.hide_exact_address` ON; mặc định ✅, DD-139) | ✅ (if `active` khi `sessions.hide_exact_address` ON; mặc định ✅, DD-139) | ✅ mặc định (DD-139); ❌ khi `sessions.hide_exact_address` ON |
 
 ---
 
@@ -862,7 +862,7 @@ stateDiagram-v2
 - [ ] Re-publish session đã `open` = idempotent no-op success (dedup `commandId`); không outbox event trùng
 - [ ] Publish session public re-validate discovery completeness (E#7); thiếu → `MISSING_DISCOVERY_FIELDS`
 - [ ] Publish session closed/cancelled/past → `SESSION_NOT_OPEN`; chỉ Host (`session.manage`)
-- [ ] Publish khi tenant billing-`suspended` → fail-closed block `TENANT_SUSPENDED` (403, canonical tenant-routing code; billing Suspended Action Matrix, owned bởi `feature_billing_lifecycle`; status-authority là hard dependency, không resolve ở đây)
+- [ ] Publish khi tenant `suspended` (không phải billing: admin / abuse — DD-142) → fail-closed block `TENANT_SUSPENDED` (403, canonical tenant-routing code; billing Suspended Action Matrix, owned bởi `feature_billing_lifecycle`; status-authority là hard dependency, không resolve ở đây)
 - [ ] Publish có surface rõ trên **bot** (lệnh/callback "Đăng kèo" trên draft, single-action không wizard) và **web** (nút Publish trên draft detail + confirm); cùng `PublishSession` command; error states (`SESSION_NOT_OPEN`/`MISSING_DISCOVERY_FIELDS`/`STALE_VERSION`/suspended) hiển thị đúng (map BE §3)
 - [ ] Host discard `draft` chưa publish: `CancelSession` mở rộng nhận nguồn `draft`, verify roster/paid dưới lock (thường rỗng theo thiết kế — join chỉ mở tại publish), xác nhận một chạm khi rỗng, đúng một outbox event `session_cancelled` (`cancel_reason=manual`); áp dụng bất kể `starts_at` (không past-guard **cho nguồn `draft`**); chỉ Host (`session.manage`)
 - [ ] Huỷ session `open` đã quá giờ chơi vẫn bị reject như trước khi có slice này (edge #24) — no-past-guard của discard-draft KHÔNG mở rộng sang nguồn `open`; "huỷ open không đổi hành vi" là provable, không chỉ là lời khẳng định
@@ -912,6 +912,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.29 | **Sync DD-139 + DD-142 (quyết định owner 2026-10-21); docs-only, lane L52.** DD-139: venue public theo mặc định; tùy chọn `sessions.hide_exact_address` (mặc định OFF) khôi phục luật cũ (public chỉ thấy khu vực, venue chính xác chỉ cho người chơi `active`): :51, :89, :567, :820. DD-142: :102, :865: `suspended` không phải billing (admin / abuse). Các dòng :69, :87, :97, :109, :249, :420, :541-:543, :568, :603, :604, :605, :852 và SĐT, bản đồ ở :51 là câu hỏi owner, không sửa. |
 | 2026-10-16 | v2.28 | **Sync DD-133 (D1, owner ký 2026-10-16); docs-only.** Ba chỗ liệt kê công thức occupancy (admission capacity, UC #34, AC guest note) → con trỏ tới `getSessionOccupancy()`. Dòng `Going count` / `N/M Going` ở bề mặt tenant-private (session detail của host) GIỮ nguyên: `confirmed_count` là tenant-private, chỉ không được public. Vòng review 1: live holds ghi rõ = 0 tới khi có bảng hold; AC capacity trỏ `getSessionOccupancy()`. Các dòng lịch sử giữ nguyên. |
 | 2026-09-12 | v2.27 | **ap3-intake rescore reconciliation (Q2, `ap3/features/session-management/INTAKE.md` 2026-09-12 round):** SES-UC-17, edge #38 và AC checklist đều claim xoá guest note "trigger waitlist auto-promote" — shipped `deleteGuestNote` (`packages/db/src/session-service.ts:2818-2825`) deliberately no-ops this (no waitlist/join/leave code exists yet, D2 vẫn fully blocked). Cả 3 chỗ sửa lại: occupancy recompute + publish event có xảy ra, promotion thật thì chưa. Docs-only, mirror BE v2.29 cùng round. |
 | 2026-09-11 | v2.26 | **ap3-intake gap closure (9 owner answers, `ap3/features/session-management/INTAKE.md`):** (1) Implementation line cập nhật khớp BE:6 — SessionService 6 command + 5 route đã merge, đo `6bfa905`; (2) §1 thêm đoạn "Marketplace discovery / FLOW 13" — SES-UC-8 scope tới toggle+fence, projection thật deferred tới epic "public read model" (4 tiền đề DD-73/DD-41/occupancy-helper/DD-46, DD-114 D3); (3) §2 thêm 8 edge case mới #39–46: close transition (#39–41, từ live code `closeSession`), auto-close OWNER-CHECK chưa build (#42–44, từ DD-45/45a + auto-expiry pattern), mirror BE #44/#45 cho approve/reject pending (#45–46); (4) §3 thêm bảng 4-state cho Bot Session detail (trước đây chỉ có ở aggregate matrix); Bot Publish/Discard draft thêm dòng Loading/Empty tường minh; dọn 6 dòng mồ côi thành 2 section riêng (Join/Leave action, Publish/Discard control Web), xoá 3 dòng trùng lặp; (5) §7 SES-OQ-2 chốt DD-121 (this-and-future only); SES-OQ-10 mới (timezone validation, `INVALID_TIMEZONE`). |

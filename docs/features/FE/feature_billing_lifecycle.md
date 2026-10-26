@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P5  
 > **Track:** 💳 Host Billing  
-> **Version:** 2.10 · 2026-08-10
+> **Version:** 2.11 · 2026-10-26
 > **Status:** Reviewed  
 > **Implementation:** Not started — bảng `subscriptions`/`billing_*` có sẵn · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P2 tenant/authz · P3 durable payment ingestion · P3 notifications  
@@ -279,7 +279,7 @@ stateDiagram-v2
     trialing --> active: Payment received
     trialing --> active: Trial expired, no payment → downgrade free immediately
     active --> past_due: Period expired, no renewal (CHỈ plan trả phí)
-    past_due --> suspended: Grace period expired
+    past_due --> active: Grace period expired → downgrade free (DD-142, never suspended by billing)
     past_due --> active: Payment received
     suspended --> active: Payment received / manual override
     active --> suspended: ToS/abuse (mọi plan, kể cả free)
@@ -289,11 +289,11 @@ stateDiagram-v2
     cancelled --> [*]
 ```
 
-> **`free` (0đ):** vào thẳng `active` và ở đó vô thời hạn. Daily lifecycle job **bỏ qua plan 0đ** ở nhánh `period expired → past_due` và **không sinh invoice**. Free chỉ rời `active` khi (a) owner đổi lên plan trả phí, (b) owner cancel, hoặc (c) suspend do ToS/abuse — **không bao giờ** vì non-payment. Nhánh `trialing/past_due/suspended-vì-non-payment` chỉ áp dụng cho plan trả phí.
+> **`free` (0đ):** vào thẳng `active` và ở đó vô thời hạn. Daily lifecycle job **bỏ qua plan 0đ** ở nhánh `period expired → past_due` và **không sinh invoice**. Free chỉ rời `active` khi (a) owner đổi lên plan trả phí, (b) owner cancel, hoặc (c) suspend do ToS/abuse — **không bao giờ** vì non-payment. Nhánh `trialing/past_due` (rồi hạ xuống `free` khi hết grace, không bao giờ `suspended` vì billing — DD-142) chỉ áp dụng cho plan trả phí.
 
 > **Host Pro DD-51:** trial đúng 14 ngày, reminder khi còn 2 ngày; trial hết chưa trả → downgrade `free` ngay, không vào invoice grace. Grace 7 ngày chỉ áp invoice của kỳ trả phí đã active. Refund window tính duy nhất từ invoice `paid_at`; override không thay đổi refund window.
 
-> **⚠️ Diagram trên gộp hai trục vào một:** `suspended` thực chất sống trên **hai cột vật lý khác nhau** — `subscriptions.status` (non-payment, diagram này) và `tenants.status` (tenant-root hard override, abuse/ToS — chưa build write path, xem `../BE/feature_billing_lifecycle_tech.md` §3 Status Authority). `suspended --> active: Payment received / manual override` mô tả **chỉ recovery của trục `subscriptions`** — trả nợ hoặc `ApplyOverride` (cả hai đều billing-axis). Nó **KHÔNG** clear một tenant-root hard-suspend (ToS/abuse): trục đó cần một trust-safety un-suspend riêng (chưa xây) sở hữu cả set lẫn clear. Implementer đọc diagram này không được suy ra rằng trả tiền tự động gỡ suspend vì lạm dụng.
+> **⚠️ Diagram trên gộp hai trục vào một:** `suspended` thực chất sống trên **hai cột vật lý khác nhau** — `subscriptions.status` (không phải billing: admin / abuse — DD-142; diagram này) và `tenants.status` (tenant-root hard override, abuse/ToS — chưa build write path, xem `../BE/feature_billing_lifecycle_tech.md` §3 Status Authority). `suspended --> active: Payment received / manual override` mô tả **chỉ recovery của trục `subscriptions`** — trả nợ hoặc `ApplyOverride` (cả hai đều billing-axis). Nó **KHÔNG** clear một tenant-root hard-suspend (ToS/abuse): trục đó cần một trust-safety un-suspend riêng (chưa xây) sở hữu cả set lẫn clear. Implementer đọc diagram này không được suy ra rằng trả tiền tự động gỡ suspend vì lạm dụng.
 
 ---
 
@@ -347,6 +347,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.11 | **Sync DD-142 (quyết định owner 2026-10-21); docs-only, lane L52.** Host Pro trả phí mà invoice trễ: sau grace 7 ngày bị hạ xuống Free, không bao giờ `suspended` vì billing; `suspended` giữ cho việc không phải billing (admin / abuse). :282: cạnh state diagram khi hết grace đi về `active` kèm hạ xuống free (cùng mẫu với cạnh trial hết hạn); :292, :296: `suspended` không còn là trạng thái billing (hàng backlog `billing-late-host-pro-invoice-downgrade-to-free`); vế recovery của :296 (trích :284) chờ câu hỏi owner :284. Các dòng :71, :86, :93, :124, :205, :284, :307 là câu hỏi owner, không sửa. |
 | 2026-08-10 | v2.10 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-27 | v2.9 | Pin exact `assistant_ai_kb` và DD-91 no-LLM `/pay` boundary. Tách commercial entitlement `payment_reconcile_auto` khỏi operational availability; current authority chỉ `sepay\|apipay` cho rail Việt Nam, webhook→settle→notify chưa build, manual mark-paid vẫn global. Regional research vẫn là decision input, không tự chốt provider/market expansion hay claim runtime. |
 | 2026-07-24 | v2.8a | **FOUNDER-RATIFIED + Round-06 fix (`docs-billing-publish-suspension-authority`):** Owner ratified the status-authority fail-closed union as authored — inline "⏳ pending" note removed (this review/merge is the ratification). Reactivation screen copy reverted to cause-agnostic always-show-both (payment CTA **and** contact-support line) — the round-05 conditional had no data source to pick a branch (billing overview API only exposes `subscription.status`; `TENANT_SUSPENDED` is intentionally cause-agnostic). Full rationale at BE `feature_billing_lifecycle_tech.md` v2.8a. Docs-only. |
