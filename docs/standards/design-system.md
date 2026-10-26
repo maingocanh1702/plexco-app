@@ -1,12 +1,12 @@
 # Design System — Plexco
 
-> **Version:** 1.1 · 2026-08-07
+> **Version:** 1.2 · 2026-10-26
 > **Status:** ✅ Active design reference
 > **Nguồn:** Tổng hợp từ `design-tokens.md` v1.2, `theme-direction-2026-07.md` (DD-81), `token-needs-matrix.md`, `frontend-architecture.md`, `design-brief.md` v2.3, BRD v3.9n, 12 FE spec files.
 > **Audience:** Designer (build `.pen`), FE Developer (implement components)
 > **Quan hệ:** Document này tổng hợp và mở rộng — `design-tokens.md` vẫn là **value SoT** cho token giá trị. Design system không override token values.
 >
-> **Dual-track:** Document ghi cả **current active** (Indigo/Outfit) và **target** (Energetic Orange/Sora). Designer build `.pen` theo **target palette**. Code giữ current cho đến khi visual/WCAG gate đóng (DD-81 §5).
+> **Dual-track:** Document ghi cả **current active** (Indigo/Outfit) và **target** (Energetic Orange/Be Vietnam Pro). Designer build `.pen` theo **target palette**. Code giữ current cho đến khi visual/WCAG gate đóng (DD-81 §5).
 >
 > ⚠️ **Ba ràng buộc không được vẽ đè, dù component catalog dưới đây gợi ý gì:**
 > 1. **i18n (HARD RULE 5 / FE-INV-4):** mọi chuỗi user-facing đi qua `t(vi, en)` (`packages/core/src/i18n.ts`). Repo **không có key-based i18n** — không viết `t('some.key')`, và mọi copy trong catalog/wireframe phải có **cả bản vi và en**. Copy do server trả (message đã localize) thì FE không tự dịch.
@@ -35,7 +35,7 @@
 | Property | Current Active | Target (DD-81) | Gate |
 |----------|---------------|----------------|------|
 | **Primary** | Indigo `#5B4CF5` | Energetic Orange `#FF5A1F` | Visual/WCAG gate |
-| **Heading font** | Outfit | Sora | Visual gate |
+| **Heading font** | Outfit | Be Vietnam Pro | Visual gate |
 | **Body font** | Inter | Inter | ✅ (no change) |
 | **Accent** | Teal `#0EA5A5` | Amber `#FFB020` | Visual gate |
 | **On-primary** | White `#FFFFFF` | Dark `#22100A` (5.874:1 AA) | ✅ Verified |
@@ -323,7 +323,7 @@ Enum canonical có **5** giá trị — `auto | manual | cash | waiver | reversa
 
 ```css
 :root {
-  --font-heading: 'Sora', 'Outfit', var(--font-sans);
+  --font-heading: 'Be Vietnam Pro', 'Outfit', var(--font-sans);
   --font-sans: 'Inter', 'Roboto', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 }
@@ -333,10 +333,10 @@ Enum canonical có **5** giá trị — `auto | manual | cash | waiver | reversa
 <!-- Google Fonts Import -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 ```
 
-> ⚠️ Sora hỗ trợ Vietnamese glyphs — đã verify. Inter cũng full coverage.
+> ⚠️ Sora không có subset `vietnamese` nên heading dùng Be Vietnam Pro, face có subset tiếng Việt (DD-131 OD-7). Inter cũng full coverage.
 
 ### 4.2 Type Scale
 
@@ -345,11 +345,11 @@ Enum canonical có **5** giá trị — `auto | manual | cash | waiver | reversa
 | `--text-xs` | 12px / 0.75rem | Captions, badge labels | Inter | 400–500 |
 | `--text-sm` | 14px / 0.875rem | Secondary text, labels, table cells | Inter | 400–500 |
 | `--text-base` | 16px / 1rem | Body text, input values | Inter | 400 |
-| `--text-lg` | 18px / 1.125rem | Card titles, list headers | Sora | 500–600 |
-| `--text-xl` | 20px / 1.25rem | Section headers | Sora | 600 |
-| `--text-2xl` | 24px / 1.5rem | Page titles | Sora | 600–700 |
-| `--text-3xl` | 30px / 1.875rem | Hero headers | Sora | 700 |
-| `--text-4xl` | 36px / 2.25rem | Landing hero | Sora | 700 |
+| `--text-lg` | 18px / 1.125rem | Card titles, list headers | Be Vietnam Pro | 500–600 |
+| `--text-xl` | 20px / 1.25rem | Section headers | Be Vietnam Pro | 600 |
+| `--text-2xl` | 24px / 1.5rem | Page titles | Be Vietnam Pro | 600–700 |
+| `--text-3xl` | 30px / 1.875rem | Hero headers | Be Vietnam Pro | 700 |
+| `--text-4xl` | 36px / 2.25rem | Landing hero | Be Vietnam Pro | 700 |
 
 ### 4.3 Financial Typography
 
@@ -937,5 +937,6 @@ button, a, [role="button"], input, select, textarea {
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 26/10/2026 | 1.2 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** Heading font Sora → **Be Vietnam Pro** (Sora không có subset `vietnamese`) ở :9, :38, :326, :336, :339, :348-:352. |
 | 07/08/2026 | 1.1 | **Reconcile với 12 FE spec sau round 4 — v1.0 tổng hợp từ bản TRƯỚC round 3/4 nên hồi sinh 5 thứ đã bị gỡ khỏi spec, mỗi thứ là một ràng buộc an toàn chứ không phải chi tiết trình bày.** (1) `ServerPaymentWidget` "server-owned QR + bank info" → **không có component**; payment widget omit hoàn toàn tới khi owner contract Reviewed, FE không dựng QR/STK/pay_code. (2) `MergeReview` "0-debt pair → ✅ Merge" → gate là `hasFinancialHistory` server-owned, **chặn kể cả nợ = 0**; luật cũ cho gộp identity từng có lịch sử tiền chỉ vì số dư hiện tại tình cờ bằng 0 (HARD RULE 4). (3) `MessageBubble` variant `system` → gỡ; chưa producer nào được authorize ghi system message. (4) `SessionForm` "`impact_policy` selector" → gỡ; đổi giá khi đã có charges thì Save bị block, không tự invent enum. (5) `ConnectorCard` `disconnected` → gỡ; lifecycle canonical là `connecting\|registered\|active\|drift\|error\|revoked`, `insufficient_grant`/`expired_token` là overlay/reason chứ không phải status. **§3.6 Payment Source:** 4 token `cash/manual/auto/attested` → đủ **5** theo enum canonical `auto/manual/cash/waiver/reversal`; gỡ `--source-attested` vì attested transfer là mã lỗi `ATTESTED_TRANSFER_UNSUPPORTED` (chưa hỗ trợ), không phải nguồn tiền. **Header:** thêm 3 ràng buộc bắt buộc — i18n `t(vi, en)` (v1.0 không nhắc HARD RULE 5 lần nào), chỉ vẽ cái có owner contract, và fail-closed. Token values không đổi; `design-tokens.md` vẫn là value SoT. |
 | 07/08/2026 | 1.0 | Initial design system. 13 sections covering brand, tokens (foundation + usage layer), typography, 45+ component catalog, layout patterns, 4-state philosophy, motion, a11y, icons, responsive grid, spacing/elevation, z-index. Dual-track: current Indigo + target Orange (DD-81). Built from BRD v3.9n, 12 FE specs, design-tokens v1.2, theme-direction, frontend-architecture. |

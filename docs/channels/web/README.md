@@ -3,7 +3,7 @@
 > **Surface:** plexco.app (web dashboard + marketplace + player view + chat in-app)
 > **Deployable unit:** `apps/web`
 > **Tech stack:** Next.js App Router baseline · Route Handlers/API · SSE · vanilla CSS · Google Fonts
-> **Version:** v0.9 · 2026-10-15
+> **Version:** v0.10 · 2026-10-26
 > **Refs:** `../../product/TDD.md` v3.1i §3.9 · `../../features/FE/feature_web_auth_onboarding.md` · `../../features/FE/feature_sync_engine.md` · `../../features/FE/feature_marketplace_discovery.md` · `../../features/FE/feature_player_view.md` · `../../features/FE/feature_inapp_chat.md`
 
 > **Cập nhật 18/07:** Auth phase-1 = **Google OAuth + email/password** (DD-13 ✅) + link **Facebook** (DD-33 ✅; external approval evidence là enablement gate, capability chưa pass phải OFF + one-time `link_code` fallback) / **Zalo** (DD-14 ⬜). Kênh phase-1 = **web + Zalo + Facebook Messenger** (Telegram loại). Web còn là surface của chat in-app, settings/giá theo giới tính và mark-paid thủ công.
@@ -16,7 +16,7 @@
 > trước khi file được persist/track + owner nghiệm thu.
 >
 > **Cập nhật 28/07:** DD-57/58/59 đã ✅ chốt FE architecture, Pencil-only handoff pipeline và
-> `.md` token-value SoT. DD-81 chọn target Candidate C Energetic Orange + Sora/Inter, nhưng current
+> `.md` token-value SoT. DD-81 chọn target Candidate C Energetic Orange + Sora/Inter (heading nay là Be Vietnam Pro theo DD-131 OD-7), nhưng current
 > Indigo/Outfit giữ active và FE HOLD tới tracked owner-approved `design.pen` + visual/WCAG gate.
 >
 > **Cập nhật 06/08 — 12 FE design spec đã commit, FE VẪN HOLD.** `FE/feature_*_fe.md` (12 file) nay
@@ -164,7 +164,7 @@ Example:
 
 Quy tắc:
 - **Mọi color/spacing/typography = CSS variable** — không hardcode hex/rgba
-- **Google Fonts current:** Inter (body), Outfit (headings). **Target DD-81:** Sora headings + Inter body, chưa activate trước visual/WCAG gate.
+- **Google Fonts current:** Inter (body), Outfit (headings). **Target DD-81 + DD-131 OD-7:** Be Vietnam Pro headings + Inter body, chưa activate trước visual/WCAG gate.
 - **Dark mode:** support via `prefers-color-scheme` + manual toggle
 - **Responsive:** 375px / 768px / 1440px breakpoints
 - **Touch targets:** min 44x44px
@@ -318,6 +318,7 @@ Duplicate `commandId` returns previous semantic result. UI must not retry with a
 
 | Date | Version | Thay đổi |
 |------|---------|----------|
+| 2026-10-26 | v0.10 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** :19, :167: heading font nay là Be Vietnam Pro (Sora không có subset `vietnamese`). |
 | 2026-10-15 | v0.9 | §7: optional typed `error.details`, emitted only by `CLOSE_BLOCKED_OPEN_DEBT` (open-balance players, ids + display names; DD-131 OD-1, pending in PR #51); every other error body unchanged. |
 | 2026-07-28 | v0.7 | Reconcile primary plan v1.8 `PLAN_READY` at `90d292d`; retain per-slice `CODE_READY`, no-runtime, visual-authority and FE HOLD boundaries. |
 | 2026-07-28 | v0.6 | Mirror DD-57/58/59 active governance and DD-81 target C + Sora/Inter; preserve current tokens, Pencil authority gate, FE HOLD and no-runtime boundary. |

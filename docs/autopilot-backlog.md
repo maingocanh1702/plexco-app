@@ -6082,6 +6082,7 @@ notes: |
       font Sora — `docs/channels/web/theme-direction-2026-07.md` (8 dòng), `docs/standards/design-system.md` (10 dòng; ~`:38`, `:326`, `:336`, `:339`), `docs/channels/web/README.md` (3), `design-brief.md` (3), `designer-kickoff.md` (3), và comment `.github/workflows/ci.yml:126` ("downloads Sora + Inter");
       U+20AB — `docs/features/FE/feature_*.md` (nhiều nhất `feature_payment_reconcile.md` 30, `feature_player_view.md` 21, `feature_session_management.md` 12), `docs/channels/web/FE/feature_home_fe.md` (3) và vài wireframe khác. Spec Reviewed: sửa qua đường review docs, không sửa hồi tố lịch sử; `docs/standards/design-tokens.md` do PR #57 cập nhật (chỉ trích theo số PR; head của #57 còn có thể đổi).
   Cập nhật 2026-10-16 (đo lại tại `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a`; #57 merge `844a0a92d3e9cfbcc67d0197ea53f725998ba6ec`, #51 merge `3546f6b49bc32e82dbe12e5da636c62206c63b2e`): (3) `docs/features/README.md:77` pin identity FE v1.11 và BE v1.13, file hiện FE v1.12 và BE v1.19 (FE đã đo lần này). (5) font Sora: theme-direction 8, design-system 10, web README 3, design-brief 3, designer-kickoff 3, `.github/workflows/ci.yml` 1 (không đổi); ngoài scope hiện tại: `docs/channels/web/designer-docs-guide.md` 2 và `docs/channels/web/design-tokens.md` 2. U+20AB còn ở 21 file ngoài `docs/archive` (payment_reconcile 30, player_view 21, session_management 12, billing_lifecycle 6, marketplace_discovery 5, home 5, user_settings 4, inapp_chat 4, club_assistant 4, `channels/web/FE/feature_home_fe.md` 3, ...). (6) MỚI: `docs/features/BE/feature_zalo_channel_tech.md:154` vẫn ghi "pending in PR #51" trong khi #51 đã merge. Các mục (1), (2), (4) chưa đo lại ở lần này.
+  Update 2026-10-26 (lane L51 p4-docs-spec-sync-be, docs only): the L51 PR edits (line numbers before its edits) item (2) in docs/features/BE/feature_zalo_channel_tech.md :163, :182, :186-:189, :195 (DD-126 body shape, header, 403, webhook route; :150, :198 and :233 are owner questions), item (6) at :154 (the `(pending in PR #51)` pointer dropped), item (3) in docs/features/README.md:77 (identity FE v1.12, BE v1.19) and item (5) in four of its files (Sora to Be Vietnam Pro per DD-131 OD-7 in docs/standards/design-system.md, docs/channels/web/README.md, design-brief.md, designer-kickoff.md; 0 U+20AB there); open: item (1) (docs/channels/web/FE/feature_sessions_fe.md is a Draft FE spec), item (4) (BUILD-STATUS needs facts git cannot give), the theme-direction-2026-07.md supersession note (all three owner questions), the ci.yml:130 comment (lane L41) and the U+20AB remainder in the FE specs (lane L52); this row stays open (not flipped).
   source: đo trên origin/main 7fe5525 và origin/feat/mvp-local-polish (PR #57) · PR #47 (ghi chú DD-126) · PR #52 · PR #53
 
 ## task: web-command-id-persistence-and-conflict-copy
@@ -6537,7 +6538,9 @@ notes: |
 
 ## task: web-public-session-share-page
 title: Web: public share page at `/session/<slug>` (owner Phase 4 row, L12 P-2), the page Phase 3 chose not to build
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-web-share-page (L39); find it with `gh pr list --state merged --head feat/p4-web-share-page` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · `PublicSessionSharePage` (this row's merged_probe) in `apps/web/app/session/[slug]/page.tsx`: 1 match at the lane's head, 0 at its base
+note_merged: 2026-10-26 L39: closed BY HAND in the lane's own PR; the lane's design, threat model, files and tests are in docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`. The lane's three follow-up rows are at the end of this file: `public-share-page-header-level-referrer-and-robots`, `public-share-page-discovery-role-e2e` and `web-public-share-page-404-production-measurement`.
 risk: P2
 change_class: web-feature
 depends_on: []
@@ -6598,6 +6601,7 @@ notes: |
   Left out on purpose: `docs/features/FE/feature_chat_fe.md`, which DD-138 labels Draft: a spec that is not Reviewed is not a Reviewed-spec follow-up (readiness record `docs/sessions/web-mvp-phase3-readiness-p3-owner-decisions.md`, row P1). No code, test, migration, workflow, env or config file belongs to this row. `scope` and `invariants` of an `idea` row are estimates (header rule). source: `docs/standards/decisions.md`, the DD-138 "Spec follow-up" subsection and the "Spec follow-up" lines of DD-139, DD-140, DD-141 and DD-142 · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
   Update 2026-10-24 (lane L30 p3-phase3-docs-closeout, docs only): two more Reviewed-spec follow-ups of P3-S16 that their lanes did not edit; the line numbers below are at 21b57f8. (a) L27 O3: docs/features/BE/feature_user_settings_tech.md:212 still says hidden characters are refused for persons.display_name, while after #101 the 133 code points are stripped first (:457 and :458 are dated changelog rows, never rewritten). (b) L28: the /join rows of docs/features/BE/feature_zalo_channel_tech.md (:222, :224, :225) do not carry the known_zero R16 text yet. Both files are already in `scope` above.
   Source: PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 189; PR #98 body, section "Spec follow-up (not edited)", line 55.
+  Update 2026-10-26 (lane L51 p4-docs-spec-sync-be, docs only): the L51 PR edits (line numbers before its edits) the BE half: docs/features/BE/feature_billing_lifecycle_tech.md (9 lines), feature_home_tech.md (1), feature_session_management_tech.md (11), feature_cross_club_join_tech.md (11), feature_zalo_channel_tech.md (3 /join lines :222, :224, :225 with the DD-140 amount and the DD-143 R16 text), feature_inapp_chat_tech.md (4), feature_player_view_tech.md (3, plus one new rate-limit row), feature_marketplace_discovery_tech.md (3) and feature_user_settings_tech.md (4, incl. :212 strip first), each with a version bump and one new changelog row; the product/FE/UX half is lane L52's; the RR lines are owner questions listed in docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-be.md; this row stays open (not flipped).
 
 ## task: host-pro-late-invoice-retention-period-decision
 title: Host Pro: owner decision of the retention period after a downgrade to Free, with read-only versus hidden Pro-only data (DD-142)
@@ -7163,3 +7167,48 @@ notes: |
   `packages/db/src/role-hiding-isolation-guard.test.ts` at the head of lane L55's branch (test/p4-db-test-hygiene) when this row was written: the `STATEMENT` pattern (`:27-28`) finds a role-list statement only through a GRANT, REVOKE, ALTER, CREATE or DROP keyword spelled in the statement text. In `const verb = up ? "GRANT" : "REVOKE";` it matches the quoted GRANT and reads the region up to the `;` (`" : "REVOKE"`), which holds no role list, so `scan()` marks it exempt as an object grant (`:187-189`: `membership ? !MEMBERSHIP.test(region) && !SPLIT_LIST.test(region) : ...`; `:190` flags only a region that is not exempt), and a template that starts with `${verb}` holds no keyword, so `STATEMENT` never matches it: a role-list statement built that way is invisible, a false green (the failure the lane's threat model names: a guard that passes while a role-hiding violation exists). Measured when written, as evidence about these queries and not a proof of absence: no code line does this today (`git grep -n -E 'verb = .*(GRANT|REVOKE)|\$\{verb\}'` over the lane's worktree finds only section 12 O1 of the readiness file, which quotes the example; a ternary or a for-of list of the two quoted verbs, and a template literal that starts with an interpolation and then a privilege word, find nothing under packages, apps or scripts), so this is a latent blind spot like P3-3 of the sibling row `db-test-role-isolation-guard-residual-p3s` (its notes say 0 hits today), not a live violation. The line numbers are as of that head; the symbols are the durable pointer.
   Deliverable: make the guard flag a statement whose verb is not spelled in the statement text (a hit that names the file, never a silent pass), with a test that is red on a seeded fixture (a scratch copy, never a tracked file), for example `const verb = up ? "GRANT" : "REVOKE";` followed by a template `${verb} ${role} TO app`, and green on the repository (0 hits today); no existing assertion is weakened and no pin changes. Not the four residuals of the sibling row (regex literals, scope-keyed pins, a bare grant word before `;`, per-root floors), which lane L55 closed.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-db-test-hygiene.md, section 12, item O1 (lane L55 step 0; `:299-300` at the lane's head), found while closing `db-test-role-isolation-guard-residual-p3s`.
+
+## task: public-share-page-header-level-referrer-and-robots
+title: Web: header-level Referrer-Policy and X-Robots-Tag for the public share page `/session/<slug>` (today only its metas say no-referrer and noindex)
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/next.config.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  Measured by lane L39's e2e (runs 2 and 3, `next dev`): every `/session/<slug>` response carries the global Referrer-Policy `strict-origin-when-cross-origin` of `apps/web/next.config.mjs:55-64` (at base 2c6951c433a39336252ec573efa00160cc306d91) and no X-Robots-Tag header; only the page's metas say `no-referrer` and `noindex, nofollow` (the metadata of `apps/web/app/session/[slug]/page.tsx`). A client or crawler that ignores the metas gets neither.
+  Deliverable: one headers() entry for `/session/:slug` (Referrer-Policy `no-referrer`, X-Robots-Tag `noindex, nofollow`) with a test that pins both on the 200 and the 404. Not in L39: next.config.mjs is outside the lane's ownership (the conductor's ruling of 2026-10-26 for lane L39, decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, threat model T2 (lane L39).
+
+## task: public-share-page-discovery-role-e2e
+title: E2E: serve the public share page from a discovery-role process on the real stack, the case e4 lane L39 dropped
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [apps/web/e2e/public-share-page.config.ts, apps/web/next.config.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  Lane L39's e2e case e4 (the page served by a `PROCESS_ROLE=discovery` server) was dropped after the first e2e run: two `next dev` servers on one `apps/web/.next` broke the dev-login (Next 15.5 has no dev lock; the header comment of `apps/web/e2e/public-share-page.config.ts`, lines 3-8 at the lane's head). Today the anchored allowlist entry for `/session/<slug>` (GET and HEAD only) is pinned by the unit tests of `apps/web/lib/request-policy.test.ts` only.
+  Deliverable: a build directory per server (a `distDir` from an environment variable in next.config.mjs) and the e4 case: a live link answers 200 under the discovery role, and the host's share-link route stays unreachable there. Not in L39: next.config.mjs is outside the lane's ownership (the conductor's ruling of 2026-10-26 for lane L39, decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, D5 and D6 (lane L39).
+
+## task: web-public-share-page-404-production-measurement
+title: E2E: measure the public share page's 404s and Cache-Control under `next build` + `next start` (lane L39's proof runs `next dev` only)
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [apps/web/e2e/public-share-page-proof.sh, apps/web/e2e/public-share-page.config.ts, apps/web/e2e/public-share-page.proof.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Under `next dev` the share page's 404s differ per request by three dev-only clock values (the `?v=<ms>` asset query, the Flight time-origin row and the server-measured I/O timings), so lane L39's e2e masks exactly those three and compares the Flight of the four well-formed misses only. The security review of L39's round 1 (finding S-1, quoted in L39's PR body) found none of the three in Next 15.5.28's production bundles (no time-origin or I/O-info chunk writer in the production Flight server bundle; the `?v=` query is dev-only), so no existence oracle is expected in production; that is not measured.
+  Deliverable: under `next build` + `next start`, every miss (never existed, rotated away, private, suspended tenant, malformed) is byte-equal after slug normalization and the chunk join, and the production Cache-Control form (`private, no-cache, no-store, max-age=0, must-revalidate` expected from force-dynamic) is measured on the 200 and the 404. It cannot run in L39's proof config (two `next dev` servers).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, threat model T1 and T3 (lane L39).

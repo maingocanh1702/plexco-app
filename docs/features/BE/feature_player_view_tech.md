@@ -1,7 +1,7 @@
 # Feature: Player View (Person-self) — Backend Tech Spec
 
 > **Canonical phase:** P4.6  
-> **Version:** 2.11 · 2026-10-16
+> **Version:** 2.12 · 2026-10-26
 > **Status:** Reviewed  
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_player_view.md`  
@@ -209,9 +209,10 @@ LIMIT 20;
 | Endpoint | Limit | Scope |
 |----------|-------|-------|
 | `GET /api/player/dashboard` | 30/min | per user |
-| `GET /api/player/sessions` | 30/min | per user |
-| `GET /api/player/payments` | 20/min | per user |
-| `GET /api/player/clubs` | 20/min | per user |
+| `GET /api/me/sessions` | 30/min | per user |
+| `GET /api/me/charges` | 20/min | per user |
+| `GET /api/me/clubs` | 20/min | per user |
+| `GET /api/me/requests` | 30/min | per user |
 ---
 
 ## 4. Chi tiết triển khai
@@ -406,6 +407,7 @@ Bot conversation (Zalo/Messenger) → Verify conversation → Issue magic link
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.12 | **Sync DD-138 L9 M-12 (owner ký 2026-10-21); docs-only.** Bảng rate-limit: :212-:214 `/api/player/{sessions,payments,clubs}` → `/api/me/sessions`, `/api/me/charges`, `/api/me/clubs`; thêm hàng `GET /api/me/requests` (30/min). :278 và :287 giữ nguyên (M-11). |
 | 2026-10-16 | v2.11 | **Sửa drift query pattern theo `packages/db/schema.ts` (docs-only, không đổi contract person-self):** `players` không có `person_id` — person đi qua `players.membership_id` → `memberships.person_id`; `sessions.price` → `price_amount`; sport qua `sessions.sport_id` → `sports.key`; `tenants.display_name` → `tenants.name`; `charges` có `amount_due`/`amount_allocated`/`status` (không có `amount`, không có `currency`, tiền VND). Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.10 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/person-self model. |
 | 2026-08-07 | v2.9 | **DD-96 Part A:** thêm canonical cross-club `SelfPaymentSummary` + `getSelfPaymentSummary` vào §4 — đóng gap `feature_home_tech.md:166` (`SelfPaymentStatus` là per-club, Home bị cấm tự cộng). Pin **unknown-dominates** (một CLB `unknown` ⇒ cả summary `unknown`, cấm partial sum vì nó hiện số thấp hơn nợ thật), `clubCount` = số CLB có outstanding > 0, không `payAction` ở tầng aggregate. Thêm unit #29–34. Additive read-only: không bảng/migration/route mới, surface chốt ở build slice. Host receivable ("Chưa thu") **không** vào file này — DD-48 + DTO allowlist §4 `other charges ❌ NEVER`; xem DD-96 Part B. Không authorize runtime. |

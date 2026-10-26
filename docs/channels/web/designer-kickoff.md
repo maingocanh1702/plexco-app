@@ -15,7 +15,7 @@
 > một dòng trong `../../standards/decisions.md` trước, đừng sửa thẳng doc gate — để hai chỉ thị
 > trái nhau cùng sống là cách một phiên tự chạy chọn nhầm bên.
 
-> **Status:** ✅ Active governance; execution HOLD · **Version:** 0.9 · 2026-08-07
+> **Status:** ✅ Active governance; execution HOLD · **Version:** 0.10 · 2026-10-26
 > **Execution boundary:** kickoff/pipeline đã chốt nhưng không tự mở FE; exact screen chỉ bắt đầu sau Reviewed feature spec + tracked owner-approved node trong `design.pen`.
 > **Visual source:** ✅ **DD-81: Pencil; canonical path amended 25/07/2026** — root file `design.pen`. FE/design handoff vẫn HOLD tới khi file được persist/track + owner nghiệm thu; variables phải khớp SoT `../../standards/design-tokens.md` tại gate đó. `Plexco-DS-fable5.pen` superseded, không dùng.
 > **Authority:** DD-57/58/59 đã ✅ chốt (owner 2026-07-28); DD-60 API convention áp độc lập cho API docs mới/materially changed. Governance final không phải runtime proof.
@@ -45,7 +45,7 @@
 
 ## 1. Chốt trước khi bắt đầu (owner)
 
-- [x] **Target theme direction** — DD-81 chọn Candidate C Energetic Orange `#FF5A1F` + Sora/Inter. Current Indigo/Outfit chưa đổi; xem activation gates ở [`./theme-direction-2026-07.md`](./theme-direction-2026-07.md).
+- [x] **Target theme direction** — DD-81 chọn Candidate C Energetic Orange `#FF5A1F` + Sora/Inter (heading nay là Be Vietnam Pro theo DD-131 OD-7). Current Indigo/Outfit chưa đổi; xem activation gates ở [`./theme-direction-2026-07.md`](./theme-direction-2026-07.md).
 - [x] **Token value SoT = `design-tokens.md`** — benchmark chỉ là advisory evidence; `design.pen` variables phải match `.md` (DD-59).
 - [ ] **Route canonical = `README.md §2`** — nơi lệch với `design-brief §3` thì README thắng. *(đã note ở `design-brief §3`)*
 - [ ] **Visual authority = canonical `design.pen` được track + owner duyệt** — ghi exact node id; chưa pass thì không handoff/code.
@@ -88,7 +88,7 @@
 | 10 | Player | `/me` clubs + nợ tổng, `/me/*` | `feature_player_view.md` |
 | 11 | Chat | Chat in-app (club + DM) | `feature_inapp_chat.md` (DD-38) |
 | 12 | Settings | Hồ sơ + **giá theo giới tính** | `feature_user_settings.md` (DD-39) |
-| 13 | Home | Landing sau đăng nhập — personal dashboard (chips Còn nợ/Kèo tuần · hero next-session · suggested) | `feature_home.md` (DD-79 ✅) — dựng ĐẦU TIÊN để **confirm/tune target C + Sora/Inter** và kiểm light/dark/WCAG; không tự reopen hue |
+| 13 | Home | Landing sau đăng nhập — personal dashboard (chips Còn nợ/Kèo tuần · hero next-session · suggested) | `feature_home.md` (DD-79 ✅) — dựng ĐẦU TIÊN để **confirm/tune target C + Be Vietnam Pro/Inter** và kiểm light/dark/WCAG; không tự reopen hue |
 
 > ⚠️ **Không vẽ payment widget (QR/STK/pay_code) ở bất kỳ màn nào.** `feature_sessions_fe.md:264`:
 > `payAction` hiện chỉ là protected link cho **player self**, không cung cấp host aggregate/QR/bank
@@ -128,6 +128,7 @@ Với mỗi màn xong design: canonical `design.pen` path + exact node id → `h
 
 | Ngày | Version | Thay đổi |
 |------|---------|----------|
+| 26/10/2026 | 0.10 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** :48, :91: heading font Be Vietnam Pro thay Sora (Sora không có subset `vietnamese`). |
 | 07/08/2026 | 0.9 | **Gói tài liệu §0 bổ sung hai nguồn ra đời sau v0.8, và sửa một dòng §3B đã sai.** §0 thêm `design-system.md` (component catalog + usage token) và **`FE/feature_<name>_fe.md`** — 12 FE spec là tài liệu chi tiết nhất cho từng màn (wireframe, 4 state, bảng error mapping status→state, §6 `t(vi, en)` + field `UNPINNED — omit`), trước đây §0 chỉ trỏ Product spec nên designer đọc theo bảng sẽ bỏ sót đúng thứ cần nhất; thêm quy tắc **FE spec thắng Product spec** khi lệch. §3B dòng 5 bỏ "QR" và "mark-paid" khỏi `/dashboard/sessions/:id`: baseline chỉ 2 tab Roster + Chi tiết, roster không có payment column/action, tab Thanh toán omit hoàn toàn tới khi có Reviewed owner contract (`feature_sessions_fe.md:264` — `payAction` là protected link player-self, không được overload thành host QR/bank renderer). Thêm cảnh báo gom 4 thứ không được vẽ (payment widget, client-side running total, `impact_policy` selector, chat system message). Không đổi thứ tự ưu tiên 13 màn, không đổi gate DD-57/58/59/81. |
 | 28/07/2026 | 0.8 | Mirror immutable Chat authority and primary plan v1.8 `PLAN_READY`; retain exact-slice `CODE_READY` and tracked owner-approved `design.pen` gates. |
 | 28/07/2026 | 0.7 | **DD-57/58/59/81 ratification:** activate FE/pipeline/token governance; chọn target C + Sora/Inter; Pencil-only exact-node handoff; giữ execution HOLD tới tracked owner-approved `design.pen` + visual/WCAG gate. |

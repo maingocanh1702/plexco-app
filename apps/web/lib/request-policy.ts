@@ -12,7 +12,8 @@
  * handler or a DB connection is touched. The surface is /healthz (Fly http_check) and /discover*
  * (the public read model route, DD-12 — not built yet; reserved here so it needs no middleware
  * change to land), plus the three public read GETs /api/discover, /api/discover/<id> and
- * /api/discover/share/<slug>; the join POST and every /api/sessions path stay web-only. The
+ * /api/discover/share/<slug>, and the public share page /session/<slug> (L39); the join POST and
+ * every /api/sessions path stay web-only, the host's /api/sessions/<id>/share-link included. The
  * discovery process answers GET and HEAD only (security review s1 N-2): any other method, on any
  * path, allowlisted or not, gets the same 404 (requestAllowedForRole is the middleware's gate).
  *
@@ -34,6 +35,7 @@ export const DISCOVERY_PATH_ALLOWLIST: readonly RegExp[] = [
   /^\/api\/discover$/,
   /^\/api\/discover\/[^/]+$/,
   /^\/api\/discover\/share\/[^/]+$/,
+  /^\/session\/[^/]+$/,
 ];
 
 export function parseProcessRole(raw: string | undefined): ProcessRole {
