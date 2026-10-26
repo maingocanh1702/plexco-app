@@ -1,7 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 import { sql } from "drizzle-orm";
-import { ensureTenantContext, TenantContextMismatchError, tenantLocale } from "./tenant.js";
+import {
+  ensureTenantContext,
+  TenantContextMismatchError,
+  tenantLocale,
+  tenantRepo,
+} from "./tenant.js";
+import { stripInvisibleChars } from "./text-safety.js";
 
 /**
  * THE DIAGNOSTIC. v1 of this lane shipped a no-op and every gate it ran was green: lint,
@@ -211,5 +217,43 @@ describe("tenantRepo().sessions.create is a TEST-ONLY seam (audit D-15)", () => 
     walk(path.join(root, "packages", "db", "src"));
     // tenant.ts DEFINES it; nothing else may call it outside tests.
     expect(hits).toEqual(["packages/db/src/tenant.ts"]);
+  });
+});
+
+describe("tenantRepo().sessions.create strips area and venueName like SessionService (L42)", () => {
+  let ctx: RlsTestContext;
+  beforeAll(async () => {
+    ctx = await setupRlsTestContext("plexco_tenant_repo_session_strip");
+  });
+  afterAll(async () => {
+    await ctx?.teardown();
+  });
+
+  it("stores stripInvisibleChars of a pasted area and venue name, and keeps null as null", async () => {
+    // Built from numbers so the source stays ASCII: area "Qu<U+1EAD>n 1" with a U+200B inside,
+    // a venue with a leading U+FEFF and a U+202E + U+200B tail (the strip keeps U+202E, bidi).
+    const cps = (...codePoints: number[]): string => String.fromCodePoint(...codePoints);
+    const area = `Qu${cps(0x1ead)}n${cps(0x200b)} 1`;
+    const venueName = `${cps(0xfeff)}San Ky Hoa${cps(0x202e, 0x200b)}`;
+    expect(stripInvisibleChars(area)).not.toBe(area);
+    expect(stripInvisibleChars(venueName)).not.toBe(venueName);
+    const repo = tenantRepo(ctx.appDb.db, ctx.tenantA);
+    const create = (hour: number, names: { area?: string | null; venueName?: string | null }) =>
+      repo.sessions.create({
+        sportId: ctx.badmintonSportId,
+        startsAt: new Date(`2026-07-11T${hour}:00:00Z`),
+        endsAt: new Date(`2026-07-11T${hour + 2}:00:00Z`),
+        timezone: "Asia/Ho_Chi_Minh",
+        priceAmount: 110000,
+        status: "open",
+        ...names,
+      });
+    const pasted = await create(10, { area, venueName });
+    expect(await repo.sessions.getById(pasted.id)).toMatchObject({
+      area: stripInvisibleChars(area),
+      venueName: stripInvisibleChars(venueName),
+    });
+    const blank = await create(14, { area: null }); // venueName left undefined
+    expect(await repo.sessions.getById(blank.id)).toMatchObject({ area: null, venueName: null });
   });
 });

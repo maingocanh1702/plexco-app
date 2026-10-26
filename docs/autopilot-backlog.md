@@ -6714,7 +6714,9 @@ notes: |
 
 ## task: tenant-repo-sessions-create-area-venue-strip
 title: DB: `tenantRepo.sessions.create` writes area and venue_name without the L23 strip (test-only callers today)
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-name-rules-db (L42); find it with `gh pr list --state merged --head feat/p4-name-rules-db` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · `tenantRepo.sessions.create` in `packages/db/src/tenant.ts` now strips `area` and `venueName` with `stripInvisibleChars` from `packages/db/src/text-safety.ts`, exactly as the session service does (a string is stripped and kept, null and undefined stay null); the regression test is in `packages/db/src/tenant.test.ts` · merged_probe stays `null` (the row carries no probe; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L42: closed BY HAND in the lane's own PR; the lane's base commit and step 0 are in docs/sessions/web-mvp-phase4-readiness-p4-name-rules-db.md (no SHA is written here). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. Lane block L42 of the Phase 4 run gives the row to the lane (the owner's written approval of 2026-10-26 approves the plan whose row L42 this is).
 risk: P2
 change_class: code
 depends_on: []
@@ -6835,6 +6837,7 @@ merged_probe: null
 notes: |
   L27 O6: DISPLAY_NAME_MAX is 120 in me-settings.ts:20 and 100 in roster-money-shared.ts:58, with different length units per writer. O7: `auth_login_google` caps no length, and persons.display_name has no CHECK (a CHECK is a migration, hence P1). L29 R1C: session-form-model.ts:162 adds a third inline visible-character literal beside `publicAliasProblem` and `displayNameProblem`; the web, server and SQL layers count UTF-16 units, code points and characters respectively (roster-money-shared.ts:66-67, `tenants_name_len_chk`).
   Source: PR #101 body, section "Owner questions and backlog candidates", lines 192-193; PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 232.
+  Update 2026-10-26 (lane L42 p4-name-rules-db): the DB half is done in the lane's PR (no PR number or SHA is written here). One `DISPLAY_NAME_MAX` (120, counted in code points) now lives in packages/db/src/text-safety.ts; me-settings.ts and roster-money-shared.ts import and re-export it, so the roster cap moves from 100 to 120 code points (the owner's Phase 4 answer Q4 (b)); a source guard in packages/db/src/text-safety.test.ts keeps one definition. Migration packages/db/migrations/0073_member_name_length_cap_120.sql gives `create_host_added_person` the cap 120 (message `display name must be 1..120 characters`) and `auth_login_google` a `pg_catalog.left(..., 120)` on the external display name it stores for a new person (O7; it truncates, never raises). Still open, so the row stays `idea`: the web half (the inline literals and the UTF-16 counting in apps/web/lib/session-form-model.ts, club-settings-model.ts and me-settings-client.ts, and the web roster form's own `DISPLAY_NAME_MAX = 100` in apps/web/components/sessions/roster-add-player-form.tsx:14 with `maxLength` at :141, which now refuses the 101 to 120 code points the server accepts) is lane L43's; packages/db/src/club-config-validation.ts:68 still counts UTF-16 units against a literal 120; no CHECK on persons.display_name in Phase 4 (Q4 (c)).
 
 ## task: membership-display-name-follows-person-rename
 title: Names: `memberships.display_name` never follows a person rename (existing behaviour); decide whether it should
@@ -7023,7 +7026,9 @@ notes: |
 
 ## task: public-card-proof-port-preflight-any-owner
 title: E2E proof runner (local only): make the port 3000 preflight of `public-card-hide-address-proof.sh` see a listener of any owner (a connect probe on 127.0.0.1 and ::1), not only the invoking user's
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-public-proof-harness (L50); find it with `gh pr list --state merged --head test/p4-public-proof-harness` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L50: closed BY HAND in the lane's own PR, measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (the PR #118 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L50 (plan row L50 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane; its design, threat model and tests are in docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md. F2: apps/web/e2e/public-card-hide-address-proof.sh now runs a connect probe of 127.0.0.1 and ::1 port 3000 right after the lsof check: a connect stops with exit 2, only `Connection refused` reads as free, and no `nc` or any other result stops; the lane checked it with a PATH-shim test (a fake `lsof` that exits 1 with an empty stderr) that fails at the base and passes at the head.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7037,7 +7042,9 @@ notes: |
 
 ## task: public-card-proof-no-drop-line-exception-complete
 title: Docs (local proof): name every stop before the trap of `public-card-hide-address-proof.sh` in the "no drop line" exception of runbook step 11 and of the runner's header comment
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-public-proof-harness (L50); find it with `gh pr list --state merged --head test/p4-public-proof-harness` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L50: closed BY HAND in the lane's own PR, measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (the PR #118 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L50 (plan row L50 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane; its design, threat model and tests are in docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md. F2: the runner's header comment and runbook step 11 now name every stop before the trap: the repo-root check, the port 3000 preflight and the name guard (exit 2, before the database listing), the password lookup and the BEFORE listing (exit 1).
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7051,7 +7058,9 @@ notes: |
 
 ## task: local-smoke-step11-latest-result-depin
 title: Docs (local proof): runbook step 11's "latest measured result" line cites `dbaf348`, a run of an older runner; point it at the final evidence or drop the SHA pin
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-public-proof-harness (L50); find it with `gh pr list --state merged --head test/p4-public-proof-harness` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L50: closed BY HAND in the lane's own PR, measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (the PR #118 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L50 (plan row L50 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane; its design, threat model and tests are in docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md. F2: runbook step 11's latest-result line now carries no SHA and no measured number; it points at `git log --first-parent -1 --format=%s origin/main -- apps/web/e2e/public-card-hide-address-proof.sh`, the merge subject of the last PR that changed the script, whose body holds that run.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7303,3 +7312,17 @@ notes: |
   Measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (lane L40). A pending row of /me/sessions (the definer lists it only while the account has no live seat in that session, `packages/db/migrations/0067_session_venue_visibility.sql:131-141`) gets no control from lane L40 (the Phase 4 plan's Q10 default, DD-150): the leave route cannot serve it (a pending member gets 404 PLAYER_NOT_FOUND, a pending visitor 403 FORBIDDEN). The cancel needs no new API: `DELETE /api/join-requests/:id` exists (`apps/web/app/api/join-requests/[id]/route.ts:22`, doc `:10-16`): body `commandId`, the tenant as `?tenant=`, and its gate admits a live member of that club only (`:14-15`). The /me/requests read carries the request id (`MyJoinRequest.requestId`, `apps/web/lib/me-player-api.ts:45`), the /me/sessions row does not (`:29-42`).
   Deliverable: a cancel control for a pending request over that route, reusing L40's pattern (two-step confirm, the command-id keeper, a tenant id resolved fail-closed); the tenant id has the same gap as row `me-sessions-tenant-id-for-guest-leave` (the chat-context route answers for an active member only), so a guest or a visitor is served only after the owner's answer there; measure which page hosts the control and the visitor case when the slice is authored.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-web-player-leave.md (lane L40), design D2.
+
+## task: public-share-page-proof-port-preflight-and-stop-list
+title: E2E proof runner (local only): give `public-share-page-proof.sh` lane L50's connect probe on 127.0.0.1 and ::1 and its complete list of the stops before the trap
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [web-app, test-chain]
+scope: [apps/web/e2e/public-share-page-proof.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 39c503d7b9fc353380a23752edd3c574ab08fb41 (the PR #119 merge): apps/web/e2e/public-share-page-proof.sh (lane L39) carries the two gaps lane L50 closed in apps/web/e2e/public-card-hide-address-proof.sh. (1) Its port preflight is lsof-only (`port_free`, :22-27, called at :28 for port 3000), so a listener of root or another account reads as free, while the clients use `SHARE_PROOF_BASE_URL=http://localhost:3000` (:87), which can resolve ::1 first. (2) Its header (:10-12) names only the preflight refusal as a stop that prints no drop line, but the repo-root check (:14-15), the name guard (:31), the password lookup (:45) and the BEFORE listing (:49) stop before the trap (:67) too. Fix: port L50's connect probe and stop list, or move the preflight into one helper both runners source; keep the name guard, the trap and what the proof asserts. Found by lane L50's step 0, outside its file ownership.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md, item 10 (O1, O2).

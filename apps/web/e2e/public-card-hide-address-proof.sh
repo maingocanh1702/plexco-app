@@ -6,8 +6,10 @@
 #   bash apps/web/e2e/public-card-hide-address-proof.sh
 # It creates ONLY the scratch database plexco_l35_scratch and always drops it (trap on EXIT, INT and TERM),
 # printing the database listing before and after; it never touches plexco, plexco_smoke or plexco_test.
-# A preflight refusal (port 3000 busy, or lsof missing or failing; exit 2) stops before anything is created,
-# so it prints neither the database listing nor the drop line.
+# Every stop before the trap creates nothing and prints no drop line: the repo-root check, the port 3000
+# preflight (a listener lsof lists or a connect reaches on 127.0.0.1 or ::1, or lsof or nc missing or failing)
+# and the name guard exit 2 before the database listing; the password lookup and the BEFORE listing exit 1
+# (the "databases BEFORE:" header may already be printed). Only the trap prints the drop line.
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 [ -f infra/docker-compose.yml ] || { echo "proof: repo root not found" >&2; exit 2; }
@@ -15,7 +17,8 @@ cd "$(dirname "$0")/../../.." || exit 2
 # first) would receive the proof's writes: refuse before the listing, the trap or any CREATE.
 # Fail closed, unknown means stop: no lsof stops here, and lsof exits 1 both when nothing matched and when
 # it failed, so exit 1 alone is not proof the port is free; only exit 1 with an empty stderr (captured
-# below, stdout discarded) reads as free.
+# below, stdout discarded) reads as free. A non-root lsof lists only the invoking user's listeners (not those
+# of root or another account), so the connect probe after it covers every owner.
 command -v lsof > /dev/null 2>&1 || { echo "proof: lsof not found; cannot prove port 3000 is free" >&2; exit 2; }
 LSOF_RC=0
 LSOF_ERR=$(lsof -nP -iTCP:3000 -sTCP:LISTEN 2>&1 > /dev/null) || LSOF_RC=$?
@@ -27,6 +30,19 @@ if [ "$LSOF_RC" -ne 1 ] || [ -n "$LSOF_ERR" ]; then
   echo "proof: lsof failed (exit $LSOF_RC); cannot prove port 3000 is free" >&2
   exit 2
 fi
+# Connect probe of both addresses the clients' localhost can resolve to: a connect means busy; only
+# "Connection refused" reads as free (a sandboxed or failed connect exits like a refusal); no nc stops.
+command -v nc > /dev/null 2>&1 || { echo "proof: nc not found; cannot prove port 3000 is free" >&2; exit 2; }
+for ADDR in 127.0.0.1 ::1; do
+  if NC_OUT=$(nc -z -v -G 2 "$ADDR" 3000 2>&1); then
+    echo "proof: port 3000 is busy on $ADDR (a listener lsof did not list); stop it first" >&2
+    exit 2
+  fi
+  case "$NC_OUT" in
+    *"Connection refused"*) ;;
+    *) echo "proof: connect probe of $ADDR port 3000 failed; cannot prove port 3000 is free" >&2; exit 2 ;;
+  esac
+done
 # The ONE database name, checked here, before the trap and before any CREATE or DROP; readonly from here on.
 readonly DB=plexco_l35_scratch
 [[ "$DB" =~ ^plexco_l35_scratch$ ]] || { echo "proof: refusing database name $DB" >&2; exit 2; }
