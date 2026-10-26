@@ -1118,6 +1118,7 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
       null,
       "AnnLee",
     ]),
+    // (e) mode true joins the 8 interior separators, U+0020 and U+00A0 are not joined: known residual, pinned as current behaviour (member-name-rule-residual-precision).
     ["U+2028 inside", mix("Ann", 0x2028, "Lee"), null, "AnnLee"],
     ["U+2029 inside", mix("Ann", 0x2029, "Lee"), null, "AnnLee"],
     [
@@ -1135,6 +1136,20 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
     ["other R inside (Cf U+0600)", mix("Ann", 0x600, "Lee"), null, "AnnLee"],
     ["other R inside (Cf U+110BD)", mix("Ann", 0x110bd, "Lee"), null, "AnnLee"],
     ["T before a removed R is trimmed again (NBSP, U+202E)", mix("Ann", 0xa0, 0x202e), null, "Ann"],
+    ...(
+      [
+        ["a", 0xfdd0, "a noncharacter"],
+        ["a", 0xffff, "a noncharacter"],
+        ["b", 0xe000, "private use"],
+        ["c", 0x40000, "unassigned in every Unicode version so far"],
+        ["d", 0x301, "a lone combining mark"],
+      ] as const
+    ).map(([item, cp, what]): Case => [
+      `(${item}) U+${hex(cp)} (${what}) alone is kept: known residual, pinned as current behaviour (member-name-rule-residual-precision)`,
+      mix(cp),
+      mix(cp),
+      mix(cp),
+    ]),
   ];
   it.each(CASES)("L29-F5 %s", async (_label, input, interactive, ingress) => {
     const [row] = await run<{ interactive: string | null; ingress: string | null }>(
@@ -1506,6 +1521,14 @@ describe("L29-W2 and L29-I1-I3 P3, P4 and M2 normalize control, bidi, separator,
     const r = await zalo(mix(0x202e, "a".repeat(120), 0x202c, "b"));
     expect(r.display_name).toBe("a".repeat(120));
   });
+  it.each([0x20, 0x3000])(
+    "L29-W2 P3: the 120 cut leaves a trailing Zs (code point %d): known residual, pinned as current behaviour (member-name-rule-residual-precision (f))",
+    async (cp) => {
+      const r = await zalo(mix("a".repeat(119), cp, "b"));
+      const stored = Array.from(r.display_name ?? "", (c) => c.codePointAt(0));
+      expect([stored.length, stored[stored.length - 1]]).toEqual([120, cp]);
+    },
+  );
 
   // L29-I1: every Cc, Cf, Zl and Zp scalar SQL text can hold (no U+0000; a superset of section 4's
   // R), alone and among visible text, then section 11's hostile names: each call completes, the P3
@@ -1666,6 +1689,7 @@ describe("L29-C the 0070 L29-CLEANUP block normalizes the four columns in mode t
   };
   // What the block leaves: the rule's value, NULL when nothing visible is left, except tenants.name,
   // which keeps such a value as stored (D4). A clean value is no candidate.
+  // (g) a kept NULL-mapped tenants.name: known residual, pinned as current behaviour (member-name-rule-residual-precision).
   const stored = (table: Table, k: Kind) =>
     k === "mixed" ? "L29 Mai" : k === "clean" || table === "tenants" ? VALUE[k] : null;
   const changed = (noun: string, what: string, id: string) =>
@@ -2371,4 +2395,21 @@ describe("L41-PT: a pg_temp.text domain planted by the caller does not reach the
       expect(rows).toEqual([{ config: ["search_path=pg_catalog, pg_temp"] }]);
     }
   }, 30_000);
+});
+
+// L41-UV (RO-L41-1 item 4): prints the runner's Node, Unicode and ICU versions to the CI log. Only a
+// Unicode version older than 17.0 fails here: TX-ALL and L29-AG1 stay the per-code-point check.
+it("L41-UV the runner reports its Unicode version, 17.0 or newer", () => {
+  const { node, unicode, icu } = process.versions;
+  console.info(`L41-UV runner node=${node} unicode=${unicode} icu=${icu}`);
+  // Major then minor as numbers, no RegExp; a missing or unparsable value fails (0 or NaN).
+  const [major = NaN, minor = 0] = (unicode ?? "").split(".").map(Number);
+  expect(major > 17 || (major === 17 && minor >= 0), `unicode=${unicode} is older than 17.0`).toBe(
+    true,
+  );
+  if (major > 17 || minor > 0) {
+    console.warn(
+      `L41-UV unicode=${unicode} is newer than 17.0; TX-ALL and L29-AG1 stay the per-code-point check`,
+    );
+  }
 });
