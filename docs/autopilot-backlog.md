@@ -6555,14 +6555,16 @@ notes: |
 
 ## task: web-player-leave-and-cancel
 title: Web: player leave/cancel on web (owner Phase 4 row, L12 P-3), which Phase 3 left waiting for an API
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-web-player-leave (L40); find it with `gh pr list --state merged --head feat/p4-web-player-leave` (no PR number or merge SHA is written here because neither exists when this line is written) · `PlayerLeaveSessionButton` (this row's merged_probe) in `apps/web/components/player/player-leave-session-button.tsx`: 1 match at the lane's head, 0 at its base
+note_merged: 2026-10-26 L40: closed BY HAND in the lane's own PR and NOT fully served. The web leave control ships only where the club's tenant id resolves through the existing chat-context route, which answers for an ACTIVE member only (`packages/db/migrations/0066_account_club_chat_context.sql:78`); a guest, whom the public join creates for a person without a membership (`packages/db/migrations/0070_member_name_control_chars.sql:684-685`), sees no leave control, and a pending request has no cancel control. Decided by conductor ruling RO-L40-1 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature); the lane's design, threat model, files and tests are in docs/sessions/web-mvp-phase4-readiness-p4-web-player-leave.md (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`. The rest of the owner's row is in the two follow-up rows at the end of this file: `me-sessions-tenant-id-for-guest-leave` (an OWNER QUESTION, R2a or R2b) and `web-player-cancel-pending-request`.
 risk: P2
 change_class: web-feature
 depends_on: []
 invariants: [web-app]
-scope: [apps/web/app/me/sessions/page.tsx]
+scope: [apps/web/components/player/player-leave-session-button.tsx, apps/web/components/player/my-sessions-view.tsx, apps/web/lib/me-player-api.ts]
 manifest: null
-merged_probe: apps/web/app/me/sessions/page.tsx :: PlayerLeaveSessionButton
+merged_probe: apps/web/components/player/player-leave-session-button.tsx :: PlayerLeaveSessionButton
 notes: |
   Phase 4 backlog row from the owner decisions of 2026-10-21: a player can leave or cancel on the web. Phase 3 shipped no such control: the DD-138 row `p3-m9-player-web P-3` (`docs/standards/decisions.md:1953` at 2c7dfe7; the full row key is the stable reference, the line moves) records that only the public join panel (D-3) sends commands, with no leave, cancel or member-style join button, because there is one public join path and leave and cancel wait for an API (O-2) (L12 · #77). The owner listed it for the Phase 4 backlog; the owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
   > "player leave/cancel on web (L12 P-3)"
@@ -7212,3 +7214,35 @@ notes: |
   Under `next dev` the share page's 404s differ per request by three dev-only clock values (the `?v=<ms>` asset query, the Flight time-origin row and the server-measured I/O timings), so lane L39's e2e masks exactly those three and compares the Flight of the four well-formed misses only. The security review of L39's round 1 (finding S-1, quoted in L39's PR body) found none of the three in Next 15.5.28's production bundles (no time-origin or I/O-info chunk writer in the production Flight server bundle; the `?v=` query is dev-only), so no existence oracle is expected in production; that is not measured.
   Deliverable: under `next build` + `next start`, every miss (never existed, rotated away, private, suspended tenant, malformed) is byte-equal after slug normalization and the chunk join, and the production Cache-Control form (`private, no-cache, no-store, max-age=0, must-revalidate` expected from force-dynamic) is measured on the 200 and the 404. It cannot run in L39's proof config (two `next dev` servers).
   Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, threat model T1 and T3 (lane L39).
+
+## task: me-sessions-tenant-id-for-guest-leave
+title: Web: a guest cannot leave a session on the web, because no app-callable source gives a guest the club's tenant id (OWNER QUESTION: R2a or R2b; R2b recommended)
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [auth, schema, web-app]
+scope: [packages/db/migrations, apps/web/lib/me-player-api.ts, apps/web/components/player/my-sessions-view.tsx]
+manifest: null
+merged_probe: null
+close_by: hand · owner decision: the owner chooses R2a or R2b (or neither); a lane the owner names then builds the chosen option
+notes: |
+  Measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (lane L40). The leave route takes the tenant as `?tenant=` (`apps/web/app/api/sessions/[id]/leave/route.ts`, through `apps/web/lib/session-command-route.ts`), and the /me/sessions read carries no tenant id: `MySession` (`apps/web/lib/me-player-api.ts:29-42`) has `clubRef`, which the definer `account_my_sessions` fills with the slug (`packages/db/migrations/0067_session_venue_visibility.sql:105` `t.slug AS club_ref`), while it lists a guest's seats as well (`:113-114` `m.status IN ('active', 'guest')`). The one app-callable tenant source for a player, the chat-context route, answers for an ACTIVE member only (`packages/db/migrations/0066_account_club_chat_context.sql:78` `AND m.status = 'active';`), by the written threat-model choice at `:31-32`: "(3) a tenant uuid reaching a non-member, a guest or a former member: every non-active state is zero rows". The public join, the only web join UI, creates a guest membership for a person without one (`packages/db/migrations/0070_member_name_control_chars.sql:684-685`), so guests are the main web population, and lane L40 draws them no leave control (fail closed, never a guessed tenant).
+  OWNER QUESTION (needed before a slice is authored). R2a: a migration adds `tenant_id` to `account_my_sessions` and to the /me/sessions DTO; small, but it reverses the threat-model choice of 0066:31-32 for guests (a tenant uuid then reaches a guest's browser). R2b (recommended): a new server-derived route `POST /api/me/sessions/[sessionId]/leave` plus a definer that returns the tenant only for the caller's own live seat, guest or active, so no tenant uuid reaches the browser and 0066:31-32 holds; it adds an API surface and a definer, so it needs a migration slot beyond the two the approved Phase 4 plan reserves. Neither is decided: conductor ruling RO-L40-1 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature) put the question to the owner with R2b recommended.
+  What L40 leaves for reuse: the control `PlayerLeaveSessionButton` (`apps/web/components/player/player-leave-session-button.tsx`), its copy pairs and view tests, and the stub e2e `apps/web/e2e/me-sessions-leave.spec.ts`. Under R2a only the tenant source in `apps/web/components/player/my-sessions-view.tsx` changes (the row brings the tenant); under R2b the client call `leaveMySession` (`apps/web/lib/me-player-api.ts`) moves to the new path without `?tenant=` and the chat-context reads go away.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-player-leave.md (lane L40), design D1.
+
+## task: web-player-cancel-pending-request
+title: Web: a player cannot cancel a pending join request on the web (the rest of the owner's Phase 4 row L12 P-3; lane L40 shipped leave only)
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/me-player-api.ts, apps/web/components/player]
+manifest: null
+merged_probe: null
+notes: |
+  Measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (lane L40). A pending row of /me/sessions (the definer lists it only while the account has no live seat in that session, `packages/db/migrations/0067_session_venue_visibility.sql:131-141`) gets no control from lane L40 (the Phase 4 plan's Q10 default, DD-150): the leave route cannot serve it (a pending member gets 404 PLAYER_NOT_FOUND, a pending visitor 403 FORBIDDEN). The cancel needs no new API: `DELETE /api/join-requests/:id` exists (`apps/web/app/api/join-requests/[id]/route.ts:22`, doc `:10-16`): body `commandId`, the tenant as `?tenant=`, and its gate admits a live member of that club only (`:14-15`). The /me/requests read carries the request id (`MyJoinRequest.requestId`, `apps/web/lib/me-player-api.ts:45`), the /me/sessions row does not (`:29-42`).
+  Deliverable: a cancel control for a pending request over that route, reusing L40's pattern (two-step confirm, the command-id keeper, a tenant id resolved fail-closed); the tenant id has the same gap as row `me-sessions-tenant-id-for-guest-leave` (the chat-context route answers for an active member only), so a guest or a visitor is served only after the owner's answer there; measure which page hosts the control and the visitor case when the slice is authored.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-player-leave.md (lane L40), design D2.
