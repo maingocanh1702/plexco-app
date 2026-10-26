@@ -167,9 +167,8 @@ describe("MySessionsView", () => {
     ["en", "You left this session."],
   ] as const)("left (%s): status line, even while reloading; none when not left", (lang, msg) => {
     for (const state of [ready([ACTIVE]), { status: "loading" }] as State[]) {
-      expect(renderList({ state, left: true }, lang)).toMatch(
-        new RegExp(`<p role="status"[^>]*>${msg}</p>`),
-      );
+      const rendered = renderList({ state, left: true }, lang);
+      expect(/<p role="status"[^>]*>([^<]*)<\/p>/.exec(rendered)?.[1]).toBe(msg);
       expect(renderList({ state }, lang)).not.toContain(msg);
     }
   });

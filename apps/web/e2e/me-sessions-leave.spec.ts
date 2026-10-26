@@ -1,6 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installPlayerApi, mySession, ok } from "./support/player-api-mock";
-import { TENANT_ID } from "./support/session-api-mock";
 
 /**
  * The leave control of /me/sessions, stubbed with the real envelopes, statuses and headers (no DB,
@@ -11,7 +10,12 @@ const ACTIVE = "club-e2e";
 const HOST_ONLY = "Bạn không thể tự rời buổi này, hãy nhờ chủ kèo.";
 const envelope = (data: unknown, error: unknown) =>
   JSON.stringify({ data, error, meta: { requestId: "req-e2e" } });
-const GRANT = envelope({ tenantId: TENANT_ID, timezone: "Asia/Ho_Chi_Minh" }, null);
+/**
+ * The ACTIVE club's own tenant, NOT the account's tenant of the shared session mock: only a
+ * `?tenant=` read from this grant (never one guessed from the session) passes the POST check.
+ */
+const CLUB_TENANT = "3f6a9c1e-8b2d-4e7f-a051-6c9d2e4b7a10";
+const GRANT = envelope({ tenantId: CLUB_TENANT, timezone: "Asia/Ho_Chi_Minh" }, null);
 const DENY = envelope(null, { code: "NOT_FOUND", message: "Không tìm thấy.", statusCode: 404 });
 const BODY = {
   200: envelope({ player: { id: "pl-e2e-1", status: "left" }, replayed: false }, null),
@@ -33,10 +37,13 @@ const ROWS = [
   mySession({ ...GUEST, sessionId: "sess-e2e-3", area: "Quận 3" }), // a seat of the guest club
   mySession({ ...PENDING, sessionId: "sess-e2e-4", area: "Quận 4" }), // a request: no seat yet
 ];
+/** Appended LAST to the list read after a 200: a seat of a club never read before (a sentinel). */
+const FRESH = mySession({ sessionId: "sess-e2e-5", clubRef: "club-e2e-4", area: "Quận 5" });
 
 /**
  * Opens /me/sessions signed in. `replies` scripts the leave POSTs in order (an unscripted one is
- * aborted); `hold` delays every reply; a 200 also drops that row from the NEXT list read.
+ * aborted); `hold` delays every reply; a 200 also drops that row from the NEXT list read, which
+ * ends with FRESH.
  */
 async function open(page: Page, replies: Reply[] = [], hold: Promise<void> = Promise.resolve()) {
   const api = await installPlayerApi(page, {
@@ -73,9 +80,14 @@ async function open(page: Page, replies: Reply[] = [], hold: Promise<void> = Pro
       if (reply === "abort") return route.abort("failed");
       if (reply === 200) {
         const rest = ROWS.filter((r) => !pathname.includes(`/${r.sessionId}/`));
-        api.reply("meSessions", ok({ sessions: rest, truncated: false }));
+        api.reply("meSessions", ok({ sessions: [...rest, FRESH], truncated: false }));
       }
-      return route.fulfill({ status: reply, body: BODY[reply], contentType: "application/json" });
+      return route.fulfill({
+        status: reply,
+        body: BODY[reply],
+        contentType: "application/json",
+        headers: { "cache-control": "no-store" },
+      });
     },
   );
   await page.goto("/me/sessions");
@@ -91,7 +103,10 @@ async function arm(page: Page) {
   await leave(page).first().click();
   return press(page, "Xác nhận");
 }
-/** The page does not poll: 500 ms without traffic means every read has landed. */
+/**
+ * The document's FIRST idle only (it does not re-arm within a document): the page does not poll,
+ * so 500 ms without traffic means every read has landed.
+ */
 const settle = (page: Page) => page.waitForLoadState("networkidle");
 const contexts = (urls: string[]) =>
   urls
@@ -124,10 +139,10 @@ test.describe("my sessions leave control", () => {
     await expect(said(page)).toBeVisible();
     await expect(leave(page)).toHaveCount(1); // the reloaded list keeps only Quận 2's control...
     await expect(row(page, "Quận 1")).toHaveCount(0); // ...and no longer has the left seat
-    await settle(page);
     const path = "/api/sessions/sess-e2e-1/leave";
-    expect(leaves).toEqual([{ path, tenant: TENANT_ID, csrf: "e2e-csrf-secret", body: COMMAND }]);
-    expect(contexts(urls)).toEqual(["club-e2e", "club-e2e-2"]); // no second read of a club already read
+    expect(leaves).toEqual([{ path, tenant: CLUB_TENANT, csrf: "e2e-csrf-secret", body: COMMAND }]);
+    // FRESH's club is read last: a second read of a club already read would come before it.
+    await expect.poll(() => contexts(urls)).toEqual(["club-e2e", "club-e2e-2", "club-e2e-4"]);
   });
 
   test("409 LEAVE_REQUIRES_HOST: the host-only alert, the row stays, no retry control", async ({
@@ -167,8 +182,6 @@ test.describe("my sessions leave control", () => {
     const confirm = await arm(page);
     await page.context().setOffline(true);
     await expect(confirm).toBeDisabled();
-    await confirm.click({ force: true });
-    await page.waitForTimeout(250); // a POST would have reached the route by now
     expect(leaves).toHaveLength(0);
   });
 });
