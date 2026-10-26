@@ -221,7 +221,7 @@ describe("D11 at the SQL layer: U+200D and U+FE0F are stripped inside emoji too 
 });
 
 describe("PS-ACL (D9): the helper's catalog contract", () => {
-  it("LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE, SECURITY INVOKER, search_path=pg_catalog; owned like its definer caller, not by job_definer; EXECUTE for that owner only", async () => {
+  it("LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE, SECURITY INVOKER, search_path=pg_catalog, pg_temp; owned like its definer caller, not by job_definer; EXECUTE for that owner only", async () => {
     const { rows } = await ctx.owner.query<Row>(
       `SELECT l.lanname::text AS language, h.provolatile AS volatility, h.proisstrict AS strict,
               h.proparallel AS parallel, h.prosecdef AS security_definer, h.proconfig AS config,
@@ -239,7 +239,7 @@ describe("PS-ACL (D9): the helper's catalog contract", () => {
       strict: true,
       parallel: "s",
       security_definer: false,
-      config: ["search_path=pg_catalog"],
+      config: ["search_path=pg_catalog, pg_temp"],
       not_job_definer: true,
       app: false,
       app_worker: false,

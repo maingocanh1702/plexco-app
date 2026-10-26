@@ -921,7 +921,7 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
     ]);
   });
 
-  it("L29-F2 its attributes are the 0068 helper's: IMMUTABLE, STRICT, PARALLEL SAFE, INVOKER, pg_catalog", async () => {
+  it("L29-F2 its attributes are the 0068 helper's: IMMUTABLE, STRICT, PARALLEL SAFE, INVOKER, pg_catalog, pg_temp", async () => {
     const attrs = (sig: string) =>
       catalog(
         `SELECT provolatile AS volatility, proisstrict AS strict, proparallel AS parallel,
@@ -936,7 +936,7 @@ describe("L29-F public.member_name_apply_rule (0070 section A)", () => {
         strict: true,
         parallel: "s",
         security_definer: false,
-        config: ["search_path=pg_catalog"],
+        config: ["search_path=pg_catalog, pg_temp"],
       },
     ]);
     expect(await attrs(RULE_SIG)).toEqual(helper);
