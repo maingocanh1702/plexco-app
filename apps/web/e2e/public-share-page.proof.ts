@@ -103,7 +103,7 @@ async function expect404(path: string) {
   const body = r.html.split(path.slice("/session/".length)).join("SLUG"); // the slug is in the RSC payload
   const markup = `${r.headers["cache-control"]}\n${markupOf(body)}`;
   first404 ||= markup;
-  expect(markup === first404, "404 headers and markup equal the first miss's").toBe(true);
+  expect(markup === first404, "404 cache-control and markup equal the first miss's").toBe(true);
   if (!WELL_FORMED.test(path)) return;
   const flight = flightOf(body);
   firstFlight ||= flight;

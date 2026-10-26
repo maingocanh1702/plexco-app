@@ -45,7 +45,7 @@ async function mint(answer: unknown, rejected = false) {
 async function linkFlow() {
   await mint({ shareLink: { path: `/session/${SLUG}` } });
   expect(vi.mocked(apiFetch).mock.calls).toEqual([["/api/sessions/s1/share-link?tenant=t1", REQ]]);
-  // A literal pattern finds the read-only field (C11: no RegExp built from a value); then its value.
+  // A literal pattern finds the read-only field (Semgrep flags a RegExp built from a value); then its value.
   expect(html().match(/<input readOnly=""[^>]*>/)?.[0]).toContain(`value="${LINK}"`);
   expect(html()).toContain("Liên kết chỉ hiện một lần; hãy sao chép ngay.");
   await press("Sao chép");
@@ -84,5 +84,9 @@ it("7 no Clipboard API (plain http): Copy is a no-op and the link stays shown", 
   vi.stubGlobal("navigator", {});
   await press("Sao chép"); // throws if the control calls writeText on a missing clipboard
   vi.stubGlobal("navigator", { clipboard: { writeText } });
-  expect([writeText.mock.calls.length, html().includes(`value="${LINK}"`)]).toEqual([0, true]);
+  expect([
+    writeText.mock.calls.length,
+    html().includes(`value="${LINK}"`),
+    html().includes("Đã sao chép"),
+  ]).toEqual([0, true, false]);
 });

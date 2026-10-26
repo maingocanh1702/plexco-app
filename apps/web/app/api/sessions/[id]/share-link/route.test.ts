@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { inspect } from "node:util";
 import { authorize, RosterMoneyError, rotatePublicSessionShareLink } from "@plexco/db";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
+import { appDb, csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
 import { POST } from "./route";
 
 // Publish-precedent mocks: RosterMoneyError stays real (`...actual`); tenantLocale resolves "vi".
@@ -94,12 +94,24 @@ it("foreign, random and non-UUID ids pass through unchanged; each maps to 404 SE
   expect(new Set(errors).size).toBe(1);
   expect(rotate.mock.calls.map((call) => call[1].sessionId)).toEqual(ids);
 });
-it("FORBIDDEN maps to 403 and COMMAND_ID_CONFLICT to 409", async () => {
+it("FORBIDDEN and TENANT_SUSPENDED map to 403, COMMAND_ID_CONFLICT to 409", async () => {
   rotate.mockRejectedValueOnce(new RosterMoneyError("FORBIDDEN", "x"));
+  rotate.mockRejectedValueOnce(new RosterMoneyError("TENANT_SUSPENDED", "x"));
   rotate.mockRejectedValueOnce(new RosterMoneyError("COMMAND_ID_CONFLICT", "x"));
-  const [forbidden, conflict] = [await post(), await post()];
+  const [forbidden, suspended, conflict] = [await post(), await post(), await post()];
   expect([forbidden.status, forbidden.error?.code]).toEqual([403, "FORBIDDEN"]);
+  expect([suspended.status, suspended.error?.code]).toEqual([403, "TENANT_SUSPENDED"]);
   expect([conflict.status, conflict.error?.code]).toEqual([409, "COMMAND_ID_CONFLICT"]);
+});
+it("not_listed for an en tenant: the same 409 in English, so H7 can fail on the language path", async () => {
+  rotate.mockResolvedValue({ kind: "not_listed" });
+  const en = "This session is not publicly listed, so a share link cannot be created.";
+  const enDb = () => ({ db: { execute: async () => ({ rows: [{ locale: "en" }] }) } });
+  // For this test only: withImplementation restores the "vi" answer once the callback settles.
+  await vi.mocked(appDb).withImplementation(enDb as never, async () => {
+    const { status, error } = await post();
+    expect([status, error?.code, error?.message]).toEqual([409, "SESSION_NOT_OPEN", en]);
+  });
 });
 it("401 signed out (gate or the route's actor read), 403 without session.manage; wrapper never reached (H1, H3)", async () => {
   vi.mocked(currentSession).mockResolvedValueOnce(null);

@@ -98,3 +98,8 @@ it("(5) is rendered per request, never indexed and sends no Referer", () => {
   expect(metadata).toEqual({ robots: { index: false, follow: false }, referrer: "no-referrer" });
   expect(dynamic).toBe("force-dynamic");
 });
+it("(7) passes an empty title on as absent (null), so the sport label heads the card", async () => {
+  read.mockResolvedValue({ ...ROW, title: "" });
+  await run(SLUG);
+  expect(captured).toMatchObject([{ title: null }]);
+});
