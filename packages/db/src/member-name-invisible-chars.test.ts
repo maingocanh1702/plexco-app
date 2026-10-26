@@ -498,6 +498,43 @@ function body0072(name: string): string {
   return cutCreate(M0072, M0072.indexOf(`\n${hits[0]![0]}`), `0072: no CREATE of ${name}`).body;
 }
 
+const M0073 = migration("0073_member_name_length_cap_120.sql");
+/** 0073's CREATE lines: the same static regex literal as CREATES_0072, group 1 the name. */
+const CREATES_0073 = [...M0073.matchAll(/^CREATE (?:OR REPLACE )?FUNCTION (?:public\.)?(\w+)\(/gm)];
+
+/** 0073's one CREATE line of name (either spelling; one asserted): its body as prosrc holds it. */
+function body0073(name: string): string {
+  const hits = CREATES_0073.filter((m) => m[1] === name);
+  if (hits.length !== 1)
+    throw new Error(`0073: ${hits.length} CREATE lines of ${name}, expected one`);
+  return cutCreate(M0073, M0073.indexOf(`\n${hits[0]![0]}`), `0073: no CREATE of ${name}`).body;
+}
+
+// The literal edits 0073 makes to each re-created 0072 body, [old, new]; every other byte is 0072's.
+const EDITS_0073: Record<string, [string, string][]> = {
+  create_host_added_person: [
+    ["pg_catalog.char_length(v_name) > 100", "pg_catalog.char_length(v_name) > 120"],
+    ["1..100 characters", "1..120 characters"],
+  ],
+  auth_login_google: [
+    [
+      "VALUES (public.member_name_apply_rule(p_display_name, true))",
+      "VALUES (pg_catalog.left(public.member_name_apply_rule(p_display_name, true), 120))",
+    ],
+  ],
+};
+
+/** 0073's layer: next is previous with each old text, found once, swapped for its new text and nothing else; the failure, or null. */
+function layer0073(previous: string, next: string, edits: [string, string][]): string | null {
+  let want = previous;
+  for (const [from, to] of edits) {
+    const count = previous.split(from).length - 1;
+    if (count !== 1) return `"${from}" occurs ${count} times in the previous body, not once`;
+    want = want.split(from).join(to);
+  }
+  return want === next ? null : "the bodies differ beyond the named edits";
+}
+
 // The pg_catalog. prefixes 0072 adds to each body it re-creates, measured: 45 in all, none in any previous body.
 const INSERTS: Record<string, number> = {
   public_name_strip_invisible: 1,
@@ -577,6 +614,13 @@ describe("RC-BODY: each live body is its previous CREATE's with exactly the sect
     const next0072 = body0072(fnName(w));
     expect(layer0072(want, next0072, INSERTS[fnName(w)]), fnName(w)).toBeNull();
     want = next0072;
+    // 0073's layer, for its two: 0072's body with exactly EDITS_0073's edits; prosrc is pinned to 0073's body instead.
+    const edits = EDITS_0073[fnName(w)];
+    if (edits) {
+      const next0073 = body0073(fnName(w));
+      expect(layer0073(want, next0073, edits), fnName(w)).toBeNull();
+      want = next0073;
+    }
     const { rows } = await ctx.owner.query<{ src: string }>(
       `SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure`,
       [w.sig],
@@ -634,6 +678,40 @@ describe("RC-BODY-0072: 0072 re-creates exactly the ten, each its previous body 
       [sig],
     );
     expect(rows[0]!.src).toBe(next);
+  });
+});
+
+describe("RC-BODY-0073: 0073 re-creates exactly the two, each its 0072 body with exactly the named edits", () => {
+  it("RC-BODY-0073 EDITS_0073 names exactly 0073's two CREATE OR REPLACE FUNCTION lines", () => {
+    expect(M0073.split("\nCREATE OR REPLACE FUNCTION ").length - 1).toBe(2);
+    // Any CREATE spelling counts here, so a third function or a second CREATE of one fails too.
+    expect(CREATES_0073.map((m) => m[1] ?? "").sort()).toEqual(Object.keys(EDITS_0073).sort());
+  });
+
+  it.each(Object.entries(EDITS_0073))(
+    "RC-BODY-0073 %s is its 0072 body with exactly the named edits",
+    (name, edits) => {
+      expect(layer0073(body0072(name), body0073(name), edits)).toBeNull();
+    },
+  );
+
+  it("RC-BODY-0073 layer0073 names a planted dropped edit, extra character and edit already made", () => {
+    const previous = body0072("create_host_added_person");
+    const next = body0073("create_host_added_person");
+    const edits = EDITS_0073.create_host_added_person!;
+    // (i) the message edit dropped: the cap edit is found once, so only the final equality can fail.
+    expect(layer0073(previous, next, edits.slice(0, 1))).toBe(
+      "the bodies differ beyond the named edits",
+    );
+    // (ii) one extra character in next with both edits listed: only the final equality can fail.
+    const at = next.indexOf("120");
+    expect(layer0073(previous, `${next.slice(0, at)} ${next.slice(at)}`, edits)).toBe(
+      "the bodies differ beyond the named edits",
+    );
+    // (iii) the 0073 body given as previous: its cap text is gone, so the once check fails first.
+    expect(layer0073(next, next, edits)).toBe(
+      '"pg_catalog.char_length(v_name) > 100" occurs 0 times in the previous body, not once',
+    );
   });
 });
 
@@ -1204,7 +1282,7 @@ describe("L29-W1 P2, T1 and T2 refuse control, bidi, separator, U+2800 and blank
   const W1: W1Writer[] = [
     {
       id: "P2",
-      message: "create_host_added_person: display name must be 1..100 characters",
+      message: "create_host_added_person: display name must be 1..120 characters",
       call: async (input) => {
         const before = await personCount();
         let id: string;
