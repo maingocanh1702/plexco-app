@@ -190,9 +190,9 @@ Each is "default applied, pending owner sign-off" (Tier B, reversible by editing
 | b | the deadline passes between recipient 1 and 2 (lead (4)(b)) | ZT | the A27 shape with two recipients, `deliveryDeadlineMs: 5_000`, the first send moves the clock to 5_001 | one chat; outcome `{ result: "retry", errorCode: "delivery_deadline_reached" }` |
 | b2 | the budget still binds when it is the smaller cap | ZT | A27 as is | `retry("send_budget_exhausted")`, unchanged |
 | c1 | an attempt with no time left reads and sends nothing (lead (4)(c)) | ZT, before-any-DB-call describe | `deliveryDeadlineMs` 0, -1 and NaN | `retry("delivery_deadline_reached")`; the db fake sees no query; no decrypt; no send |
-| c2 | the dispatcher passes the bound | DT, DD-146 blocks, real DB | a fresh zalo_dm row (age rule) and a player.promoted row (start rule), a deliver fake that records the job | the recorded `deliveryDeadlineMs` lies in (0, 3_600_000] and within a few seconds of `(3600 - age) * 1000`; for player.promoted within a few seconds of the seconds to start x 1000 (a bracket, never an exact value) |
+| c2 | the dispatcher passes the bound | `apps/bot/src/projector-registry.test.ts` (its zalo_dm cycle fixtures; DT has none), real DB | a fresh zalo_dm row (age rule) and a player.promoted row (start rule), a deliver fake that records the job | the recorded `deliveryDeadlineMs` lies in (0, 3_600_000] and within the test's own 30 s of `(3600 - age) * 1000`; for player.promoted within 30 s of the seconds to start x 1000 read after the cycle, and above 3_600_000 (a bracket, never an exact value) |
 | c3 | other projectors are untouched | DT | a non-zalo row | the fake gets the job without the field (`"deliveryDeadlineMs" in job` is false) |
-| c4 | an expired row never reaches deliver() | DT | the existing DA and PSD tests | unchanged: extend, do not duplicate |
+| c4 | an expired row never reaches deliver() | `apps/bot/src/projector-registry.test.ts` | the existing DA and PSD tests | unchanged: extend, do not duplicate |
 | c5 | the helper | OT, no DB | `zaloDmDeliveryDeadlineMs` for ageSeconds 0, 1800.5, 3600, -5 and secondsToStart 12.5 | 3_600_000, 1_799_500, 0, 3_605_000, 12_500 |
 | d | a system clock jump does not change the budget under the default `now` (lead (4)(d)) | ZT, real timers | no `now` injected; `vi.spyOn(Date, "now")` moved by +2 h, and in a second case by -2 h, between the first and the second send of a two-recipient delivery with `deliveryDeadlineMs: 10_000`; the spy restored in `finally` | both sends made; the second send's `timeoutMs` <= 10_000 (a backward jump does not stretch the deadline, a forward jump does not starve the budget) |
 | e | the bot cycle (lead (4)(e)) | all | `pnpm --filter @plexco/bot test` through the lane's lock wrapper | green; a failure only from the ACTIVE flake list gets one rerun |
@@ -216,7 +216,9 @@ Every loop test stays at most about 3 s locally with its own explicit `30_000` b
 Lane block: up to 120 non-test, 300 test, 420 total lines (docs excluded), 7 files, 0 migrations. Estimate: about 30-45 non-test lines (S0a: 25-40)
 and about 150-250 test lines in 6 files (zalo-dm.ts, dispatcher.ts, the three test files, docs/autopilot-backlog.md) plus this file; 0 migrations.
 RO-L44-1 (4): past the lane block's figures the lane continues with the design reason logged, up to 200 / 450 / 650 lines and 9 files; beyond that a
-ruling request before the next writer.
+ruling request before the next writer. Measured at the head (run 3): 8 files with this file (7 without). The design reason for the fourth test file: the c2
+tests sit in the EXISTING `apps/bot/src/projector-registry.test.ts`, whose zalo_dm cycle fixtures (`zaloBoot`, `update()`, `promote()`, DA-8's deliver
+fake) build the rows; `dispatcher.test.ts` has no zalo_dm cycle test, and a copy there would duplicate that fixture (default applied, pending owner sign-off).
 
 ## 11. THREAT MODEL
 
