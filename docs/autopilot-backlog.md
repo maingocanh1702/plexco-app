@@ -6601,7 +6601,9 @@ notes: |
 
 ## task: host-pro-late-invoice-retention-period-decision
 title: Host Pro: owner decision of the retention period after a downgrade to Free, with read-only versus hidden Pro-only data (DD-142)
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-dd-and-run-doc (L58); find it with `gh pr list --state merged --head docs/p4-dd-and-run-doc` (no PR number or merge SHA is written here)
+note_merged: 2026-10-26 L58: closed BY HAND in the lane's own PR, measured at base 2ff2fd736284d0004f23737967516049f8a9cc0a (the PR #114 merge), as close_by says: DD-150 records the owner's written decision of 2026-10-26 ("Phase 4 plan approved, Q1-Q10 default"), answer Q1: hidden from normal views, retained, restored on re-upgrade; the 1-month retention was decided on 2026-10-22 (DD-142's dated addendum of 2026-10-22, owner item 8); DD-142 gains a dated addendum of 2026-10-26 (DD-150); no code.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -7131,6 +7133,21 @@ merged_probe: null
 notes: |
   Line numbers at 8086f8e31bc4a05328cc9c974844cc9aa7b62e14: the comment at apps/bot/src/queues.ts:12 says the schedule is gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED "(default false; the owner enables it", while .env.example:91 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` and infra/docker-compose.yml:133 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED: "true"` (PR #94, owner decision B3, DD-141 at docs/standards/decisions.md:128). Real delivery still waits on the projector registry (seeded disabled by migration 0056, :74 and :106; enabled only by the owner CLI scripts/outbox-projector-enable.mjs) and on the owner's P0 steps (.env.example:90). A comment-only change; lane L37 (docs only) found it at step 0 and does not edit code; the row was added by lane L37 (2026-10-25).
   Source: docs/sessions/web-mvp-phase3-readiness-p3-docs-flags-and-dd148-labels.md, item 8 (F-2).
+
+## task: claude-md-language-check-grep-p-false-pass
+title: CLAUDE.md: the text-block language check pipes into `grep -P`, which macOS BSD grep rejects (exit 2, empty stdout), so the check reads as a pass while checking nothing
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [CLAUDE.md]
+manifest: null
+merged_probe: null
+close_by: hand · owner decision: CLAUDE.md is an owner-level instructions file, not a lane file; closes when the owner, or a lane the owner names, fixes the check
+notes: |
+  Line numbers at 2ff2fd736284d0004f23737967516049f8a9cc0a: CLAUDE.md:129-134 is the quick check before committing a file with a prompt block; :132 is the awk that prints the lines inside text fences and :133 is `  | grep -P '[àáảãạăâđèéẻêìíỉòóỏôơùúủưỳýỵ]'   # phải rỗng`. macOS /usr/bin/grep (BSD) rejects -P ("invalid option -- P", exit 2) with empty stdout, so "phải rỗng" (must be empty) holds while nothing was checked; it works only where grep accepts -P (the Claude Code zsh maps grep to an embedded ugrep). The class also misses Vietnamese letters, for example ẽ ẹ ĩ ị õ ọ ũ ụ ỷ ỹ, every tone-marked â/ă/ê/ô/ơ/ư letter (ấ, ề, ộ, ớ, ừ) and every capital letter. The fix belongs in CLAUDE.md (a grep that macOS has, or a script, with a non-zero exit only on a real match); lane L58 ran a script-file check instead.
+  Source: lane L58 (p4-dd-and-run-doc), docs/sessions/web-mvp-phase4-readiness-p4-dd-and-run-doc.md item 8.
 
 ## task: db-test-role-isolation-guard-verb-held-in-variable-false-green
 title: Test DB: the role-isolation guard cannot see a role-list statement whose GRANT or REVOKE verb is held in a variable (a false green); fail closed on it, with a test that is red on the seeded case
