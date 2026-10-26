@@ -45,7 +45,8 @@ async function mint(answer: unknown, rejected = false) {
 async function linkFlow() {
   await mint({ shareLink: { path: `/session/${SLUG}` } });
   expect(vi.mocked(apiFetch).mock.calls).toEqual([["/api/sessions/s1/share-link?tenant=t1", REQ]]);
-  expect(html()).toMatch(new RegExp(`<input readOnly=""[^>]* value="${LINK}"`));
+  // A literal pattern finds the read-only field (C11: no RegExp built from a value); then its value.
+  expect(html().match(/<input readOnly=""[^>]*>/)?.[0]).toContain(`value="${LINK}"`);
   expect(html()).toContain("Liên kết chỉ hiện một lần; hãy sao chép ngay.");
   await press("Sao chép");
   expect([writeText.mock.calls, html().includes("Đã sao chép")]).toEqual([[[LINK]], true]);
