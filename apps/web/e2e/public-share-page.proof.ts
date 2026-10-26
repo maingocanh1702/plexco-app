@@ -1,6 +1,7 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { localInput, paceSessionApi, signInAsPersona } from "./support/golden-path-helpers";
 import { COMPILE_TIMEOUT_MS } from "./support/golden-path-timeouts";
@@ -20,6 +21,7 @@ const DB_URL = process.env.SHARE_PROOF_DB_URL ?? ""; // the scratch superuser UR
 const ORIGIN = new URL(BASE ?? "http://localhost").origin;
 const pathOf = (url = "") => new URL(url).pathname;
 const WARN = "Tạo liên kết mới sẽ làm liên kết cũ của kèo này ngừng hoạt động ngay.";
+const ENABLE = ["scripts/outbox-projector-enable.mjs", "enable", "--projector", "public_sessions"];
 const run = Date.now().toString(36);
 // ASCII, unique per run and case; "Rieng <code>" is in a case's venue name and address ONLY.
 const s = (code: string, field: string) => `${field} ${code} ${run}`;
@@ -42,8 +44,15 @@ function expectPinned(h: Record<string, string>) {
   expect(h["content-type"]).toBe("text/html; charset=utf-8");
   expect(h["x-content-type-options"]).toBe("nosniff");
 }
-const meta = (html: string, name: string) =>
-  new RegExp(`<meta name="${name}" content="([^"]*)"`).exec(html)?.[1];
+/** A meta tag's content by a string scan (Semgrep CE blocks a RegExp built from data, C11). */
+const meta = (html: string, name: string) => {
+  const key = `<meta name="${name}" content="`;
+  const at = html.indexOf(key);
+  return at < 0 ? undefined : html.slice(at + key.length, html.indexOf('"', at + key.length));
+};
+/** The slice of pg the suspension needs: pg is a dependency of packages/db only, not of apps/web. */
+type PgClient = { connect(): Promise<void>; query(q: string, v: unknown[]): Promise<unknown> };
+type Pg = { Client: new (o: { connectionString: string }) => PgClient & { end(): Promise<void> } };
 const root = () => resolve(dirname(test.info().file), "../../.."); // the repo root
 /** One CLI or script with the scratch superuser URL (DATABASE_URL_MIGRATION); its JSON lines. */
 const operator = (args: string[], cwd = root()) => {
@@ -147,9 +156,7 @@ test.describe.serial("public share page: the link, its uniform 404 and the disco
     const mine = rows.filter((row) => row.tenantId === tenantId);
     expect(mine, "one pending alias for Dev Club").toHaveLength(1);
     operator([moderate, "approve", "--tenant", tenantId, "--sha256", mine[0]?.aliasSha256 ?? ""]);
-    const enable = "scripts/outbox-projector-enable.mjs";
-    const enabled = operator([enable, "enable", "--projector", "public_sessions"]);
-    expect(enabled[0]).toMatchObject({ changed: true, rebuilt_sessions: 2 });
+    expect(operator(ENABLE)[0]).toMatchObject({ changed: true, rebuilt_sessions: 2 });
   });
 
   test("e1: the OFF link opens anonymously with the pinned headers", async () => {
@@ -194,13 +201,18 @@ test.describe.serial("public share page: the link, its uniform 404 and the disco
     await host.getByRole("button", { name: "Chuyển về Riêng tư" }).click();
     await host.getByRole("button", { name: "Chuyển về Riêng tư" }).last().click(); // the dialog's
     await expect(host.getByText("Hiển thị: Riêng tư")).toBeVisible();
-    const status = async () => (await anon.request.get(paths.on)).status();
-    await expect.poll(status, { timeout: 60_000, intervals: [1_000, 3_000] }).toBe(404);
+    // No dispatcher runs in this proof: the enable CLI's re-run is the canonical rebuild
+    // (outbox-projector-enable.mjs:28-35); it re-projects the session the update made private.
+    expect(operator(ENABLE)[0]).toMatchObject({ changed: false });
     await expect404(paths.on);
+    expect((await anon.request.get(paths.off2)).status(), "live before the suspension").toBe(200);
     // Last: suspending the tenant ends the host's access. pg is a dependency of packages/db only.
     expect(pathOf(DB_URL), "SHARE_PROOF_DB_URL is the scratch DB").toBe(SCRATCH);
-    const update = `const c = new (require("pg").Client)({ connectionString: process.env.DATABASE_URL_MIGRATION }); c.connect().then(() => c.query("UPDATE tenants SET status = 'suspended' WHERE id = $1", [process.argv[1]])).then(() => c.end());`;
-    operator(["-e", update, tenantId], resolve(root(), "packages/db"));
+    const { Client } = createRequire(resolve(root(), "packages/db/package.json"))("pg") as Pg;
+    const db = new Client({ connectionString: DB_URL });
+    await db.connect();
+    const suspend = "UPDATE tenants SET status = 'suspended' WHERE id = $1";
+    await db.query(suspend, [tenantId]).finally(() => db.end());
     await expect404(paths.off2);
   });
 });
