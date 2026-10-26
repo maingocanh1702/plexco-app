@@ -6083,6 +6083,7 @@ notes: |
       U+20AB — `docs/features/FE/feature_*.md` (nhiều nhất `feature_payment_reconcile.md` 30, `feature_player_view.md` 21, `feature_session_management.md` 12), `docs/channels/web/FE/feature_home_fe.md` (3) và vài wireframe khác. Spec Reviewed: sửa qua đường review docs, không sửa hồi tố lịch sử; `docs/standards/design-tokens.md` do PR #57 cập nhật (chỉ trích theo số PR; head của #57 còn có thể đổi).
   Cập nhật 2026-10-16 (đo lại tại `c762c900e4ca55bc8ed2a84c0a86f7d0d7d7cf0a`; #57 merge `844a0a92d3e9cfbcc67d0197ea53f725998ba6ec`, #51 merge `3546f6b49bc32e82dbe12e5da636c62206c63b2e`): (3) `docs/features/README.md:77` pin identity FE v1.11 và BE v1.13, file hiện FE v1.12 và BE v1.19 (FE đã đo lần này). (5) font Sora: theme-direction 8, design-system 10, web README 3, design-brief 3, designer-kickoff 3, `.github/workflows/ci.yml` 1 (không đổi); ngoài scope hiện tại: `docs/channels/web/designer-docs-guide.md` 2 và `docs/channels/web/design-tokens.md` 2. U+20AB còn ở 21 file ngoài `docs/archive` (payment_reconcile 30, player_view 21, session_management 12, billing_lifecycle 6, marketplace_discovery 5, home 5, user_settings 4, inapp_chat 4, club_assistant 4, `channels/web/FE/feature_home_fe.md` 3, ...). (6) MỚI: `docs/features/BE/feature_zalo_channel_tech.md:154` vẫn ghi "pending in PR #51" trong khi #51 đã merge. Các mục (1), (2), (4) chưa đo lại ở lần này.
   Update 2026-10-26 (lane L51 p4-docs-spec-sync-be, docs only): the L51 PR edits (line numbers before its edits) item (2) in docs/features/BE/feature_zalo_channel_tech.md :163, :182, :186-:189, :195 (DD-126 body shape, header, 403, webhook route; :150, :198 and :233 are owner questions), item (6) at :154 (the `(pending in PR #51)` pointer dropped), item (3) in docs/features/README.md:77 (identity FE v1.12, BE v1.19) and item (5) in four of its files (Sora to Be Vietnam Pro per DD-131 OD-7 in docs/standards/design-system.md, docs/channels/web/README.md, design-brief.md, designer-kickoff.md; 0 U+20AB there); open: item (1) (docs/channels/web/FE/feature_sessions_fe.md is a Draft FE spec), item (4) (BUILD-STATUS needs facts git cannot give), the theme-direction-2026-07.md supersession note (all three owner questions), the ci.yml:130 comment (lane L41) and the U+20AB remainder in the FE specs (lane L52); this row stays open (not flipped).
+  Update 2026-10-26 (lane L41 p4-name-definers-and-rule-tests): item (5)'s `.github/workflows/ci.yml` part is done: the comment at `.github/workflows/ci.yml:130` (`:126` in item (5), measured on an older base) now names Be Vietnam Pro and Inter, the two fonts `apps/web/app/layout.tsx` imports; open: everything the L51 line above lists as open except that comment; this row stays open (not flipped).
   source: đo trên origin/main 7fe5525 và origin/feat/mvp-local-polish (PR #57) · PR #47 (ghi chú DD-126) · PR #52 · PR #53
 
 ## task: web-command-id-persistence-and-conflict-copy
@@ -6804,7 +6805,9 @@ notes: |
 
 ## task: ci-node-unicode-version-vs-name-rule-sets
 title: CI: measure the runner Node's Unicode version against the name rule's explicit code point lists (commented as Unicode 17.0)
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-name-definers-and-rule-tests (L41); find it with `gh pr list --state merged --head feat/p4-name-definers-and-rule-tests` (the conductor's merge log has the number; no PR number, merge SHA or CI run id is written here because none exists when this line is written) · the test L41-UV (`packages/db/src/member-name-invisible-chars.test.ts`) prints `L41-UV runner node=<version> unicode=<version> icu=<version>` in every CI run and fails when the runner's Unicode version is older than 17.0 or missing (a newer one warns and passes: TX-ALL and L29-AG1 stay the per-code-point check); the first measured CI value is recorded in the merge-log of the PR that landed it · merged_probe stays `null` (the row carries no probe; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L41: closed BY HAND in the lane's own PR, as its `close_by: hand` line asks; RO-L41-1 item 4 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature) sets the printing test and no workflow print step. Locally Node 25.6.0 printed unicode=17.0 icu=78.2 (vitest's default reporter shows the line). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -6848,7 +6851,9 @@ notes: |
 
 ## task: member-name-rule-residual-precision
 title: Name rule residue (L29): blank-looking names still storable, an interior separator joins words, a trailing space after the 120 cut, a NULL-mapped tenants.name kept, AG1 tests the end edge only
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-name-definers-and-rule-tests (L41); find it with `gh pr list --state merged --head feat/p4-name-definers-and-rule-tests` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · each item is pinned as current behaviour, with no rule change, in `packages/db/src/member-name-invisible-chars.test.ts`: L29-F5 rows U+FDD0 and U+FFFF (noncharacters), U+E000 (private use), U+40000 (unassigned) and U+0301 (a lone combining mark), each kept when alone; a comment at the interior-separator rows (mode true joins the 8 separators); `it.each([0x20, 0x3000])` for the trailing Zs the 120 cut leaves; a comment at the L29-C NULL-mapped tenants.name; the start edge `c + "a"` added to L29-AG1 (sharded by scalar range for the CI time budget) and to L29-AG2 (`apps/web/lib/session-form-model.test.ts`) · merged_probe stays `null` (the row carries no probe; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L41: closed BY HAND in the lane's own PR. Step 0 measured each item (counts only) and found no security defect, so the rule is unchanged: the noncharacters, private-use and unassigned code points render as a missing-glyph box, visible under the accepted test V (DD-147, accepted under the owner's delegation of 2026-10-24 (assistant review)); the lone combining mark and the trailing space are visual-confusion cases of the confusables family that DD-147 names as not defended and DD-150 Q3 keeps out; the separator join is DD-147's ingress rule by design; no writer can store a new NULL-mapped name. The measurements are in docs/sessions/web-mvp-phase4-readiness-p4-name-definers-and-rule-tests.md section 6. A change of the rule is a separate decision (DD-144, DD-147) with its own migration; each new test says "known residual, pinned as current behaviour" and names this row. The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`.
 risk: P2
 change_class: code
 depends_on: []
@@ -6877,7 +6882,9 @@ notes: |
 
 ## task: member-name-definers-qualify-builtins
 title: DB: qualify the built-ins kept unqualified in the byte-pinned definer bodies that 0070 re-creates (L29 security NIT-1)
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-name-definers-and-rule-tests (L41); find it with `gh pr list --state merged --head feat/p4-name-definers-and-rule-tests` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · migration `packages/db/migrations/0072_member_name_definers_qualify_builtins.sql` re-creates the ten name functions (the rule member_name_apply_rule, the strip helper public_name_strip_invisible and eight SECURITY DEFINER writers) with their 45 built-in calls qualified by `pg_catalog.` and every attribute restated; the byte pins (RC-BODY, RC-BODY-0072 in `packages/db/src/member-name-invisible-chars.test.ts`) and the writer guard L41-G1 (`packages/db/src/member-name-writer-guard.test.ts`) are re-pinned to the new bodies and fail on planted cases · merged_probe stays `null` (the row carries no probe; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L41: closed BY HAND in the lane's own PR; the lane's base commit, step 0 and the before/after proofs (the attributes of the ten, the 462-cell writer matrix, the pg_temp probe) are in docs/sessions/web-mvp-phase4-readiness-p4-name-definers-and-rule-tests.md (no SHA is written here). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. Lane block L41 of the Phase 4 run gives the row to the lane (the owner's written approval of 2026-10-26 approves the plan whose row L41 this is); RO-L41-1 item 1 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature) also lists pg_temp last in the search_path of the rule and the strip helper (the pg_temp class; regression test L41-PT).
 risk: P1
 change_class: schema-migration
 depends_on: []
@@ -7214,6 +7221,20 @@ notes: |
   Under `next dev` the share page's 404s differ per request by three dev-only clock values (the `?v=<ms>` asset query, the Flight time-origin row and the server-measured I/O timings), so lane L39's e2e masks exactly those three and compares the Flight of the four well-formed misses only. The security review of L39's round 1 (finding S-1, quoted in L39's PR body) found none of the three in Next 15.5.28's production bundles (no time-origin or I/O-info chunk writer in the production Flight server bundle; the `?v=` query is dev-only), so no existence oracle is expected in production; that is not measured.
   Deliverable: under `next build` + `next start`, every miss (never existed, rotated away, private, suspended tenant, malformed) is byte-equal after slug normalization and the chunk join, and the production Cache-Control form (`private, no-cache, no-store, max-age=0, must-revalidate` expected from force-dynamic) is measured on the 200 and the 404. It cannot run in L39's proof config (two `next dev` servers).
   Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, threat model T1 and T3 (lane L39).
+
+## task: db-function-search-path-pg-temp-sweep
+title: DB: give the 15 SECURITY INVOKER functions that set no search_path an explicit path with pg_temp last (the pg_temp class of lane L41)
+status: idea
+risk: P1
+change_class: schema-migration
+depends_on: []
+invariants: [schema]
+scope: [packages/db/migrations]
+manifest: null
+merged_probe: null
+notes: |
+  L41 proof (d) (one read-only catalog query on a scratch database migrated through 0072): of the 123 functions outside the lane's ten, 108 list pg_temp last and 15 set no search_path at all, all SECURITY INVOKER in `public`, so they resolve type and relation names through their caller's search_path: channel_identities_no_new_telegram(), chat_assert_dm_two(uuid), chat_bind_tenant(), chat_channels_identity_immutable(), chat_dm_member_insert_guard(), chat_dm_no_member_delete(), chat_dm_safety_config_touch_updated_at(), chat_dm_two_from_channel(), chat_dm_two_from_members(), chat_members_identity_immutable(), dm_safety_flags_enabled(boolean,boolean,boolean,boolean), forbid_allocation_mutation(), forbid_bank_txn_core_change(), forbid_job_audit_mutation(), forbid_tenant_capability_grant_audit_mutation(). Inside a SECURITY DEFINER they run under that definer's path (pg_temp last in all 102 definers measured); called directly they run as the caller's own role. The first question of the lane that takes this row is whether any of them is reachable with a path that does not put pg_temp last; a re-creation is a migration, and two of them, by their names, guard money tables (allocations, bank transactions; not re-read here).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-name-definers-and-rule-tests.md section 14, proof (d) (lane L41).
 
 ## task: me-sessions-tenant-id-for-guest-leave
 title: Web: a guest cannot leave a session on the web, because no app-callable source gives a guest the club's tenant id (OWNER QUESTION: R2a or R2b; R2b recommended)

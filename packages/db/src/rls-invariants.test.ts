@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(72); // 0000..0071 (0071 zalo dm promotion start definer, 0070 member name control chars, 0069 member name invisible chars, 0068 public name invisible chars,0067 session venue visibility, 0066 account club chat context, 0065 chat message author label, 0064 channel identity link gate, 0063 chat message commands, 0062 gender pricing, 0061 public sessions projector writer, 0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
+    expect(ctx.migrateResult.applied.length).toBe(73); // 0000..0072 (0072 member name definers qualify builtins, 0071 zalo dm promotion start definer, 0070 member name control chars, 0069 member name invisible chars, 0068 public name invisible chars,0067 session venue visibility, 0066 account club chat context, 0065 chat message author label, 0064 channel identity link gate, 0063 chat message commands, 0062 gender pricing, 0061 public sessions projector writer, 0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(72);
+    expect(second.skipped.length).toBe(73);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1838,12 +1838,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(72); // 0000..0071
+      expect(res.applied.length).toBe(73); // 0000..0072
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(72);
+        expect(rows.length).toBe(73);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2120,7 +2120,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       await nsCtx.bootstrapAndMigrateAsOwner(async () => {
         const res = await nsCtx.runMigration();
         expect(res.applied[res.applied.length - 1]).toBe(
-          "0071_zalo_dm_promotion_start_definer.sql",
+          "0072_member_name_definers_qualify_builtins.sql",
         );
 
         const { rows } = await nsCtx.ownerPool.query(
@@ -2647,6 +2647,26 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
         `SELECT has_schema_privilege('job_definer', 'public', 'CREATE') AS has_create`,
       );
       expect((schemaCreate.rows[0] as { has_create: boolean }).has_create).toBe(false);
+    });
+  });
+
+  it("L41-SEC1 app, app_worker, readonly and PUBLIC cannot CREATE in schema public (operator resolution in the name definers relies on it)", async () => {
+    // 0072 leaves operators, casts and DECLARE types unqualified in the ten name functions; that
+    // is safe only while no untrusted role can create in public. The ACL row covers every role
+    // beyond these three, e.g. a PUBLIC CREATE kept from a database created on PG 14 or older.
+    const publicCreate = await ctx.owner.query(
+      `SELECT has_schema_privilege('app', 'public', 'CREATE') AS app,
+              has_schema_privilege('app_worker', 'public', 'CREATE') AS app_worker,
+              has_schema_privilege('readonly', 'public', 'CREATE') AS readonly,
+              EXISTS (SELECT 1 FROM pg_namespace n, aclexplode(n.nspacl) acl
+                       WHERE n.nspname = 'public' AND acl.grantee = 0
+                         AND acl.privilege_type = 'CREATE') AS public_create`,
+    );
+    expect(publicCreate.rows[0]).toEqual({
+      app: false,
+      app_worker: false,
+      readonly: false,
+      public_create: false,
     });
   });
 });
@@ -4718,10 +4738,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (72) matches the actual migrations/ directory listing, and the tail is 0071", async () => {
+    it("UCC-8: MIGRATION_COUNT (73) matches the actual migrations/ directory listing, and the tail is 0072", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(72);
-      expect(files[files.length - 1]).toBe("0071_zalo_dm_promotion_start_definer.sql");
+      expect(files.length).toBe(73);
+      expect(files[files.length - 1]).toBe("0072_member_name_definers_qualify_builtins.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
