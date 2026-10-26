@@ -2,7 +2,7 @@
 
 > **Canonical phase:** S9 (cùng PWA shell; sau P4.6 player_view vì data từ đó) — DD-79 ✅  
 > **Track:** 🏠 Home Hub  
-> **Version:** 0.15 · 2026-08-12
+> **Version:** 0.16 · 2026-10-26
 > **Status:** ✅ **Reviewed contract theo DD-79** — composition-only; implementation pending S9. Primary plan v1.8 đã `PLAN_READY` tại `90d292d`, nhưng từng slice vẫn phải strict `CODE_READY`; không có Home/payment/chat runtime. Fork từ Sporta `feature_home.md` v2.5 + học từ design `app-design-opus-4.6.pen`.
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4 web auth · P4.6 player_view (data backbone) · P4.3 marketplace (suggested) · 🔔 notifications §A  
@@ -72,7 +72,7 @@ Home là **màn đầu tiên sau đăng nhập** trên PWA — personal dashboar
 | 8 | Cross-Feature | Charge được settle (webhook/mark-paid) khi đang xem | SSE cập nhật chip Còn nợ + payment dot |
 | 9 | Network | Mất kết nối | Banner offline; không render cached person-self chips/hero/upcoming. Chỉ public suggested cache có thể còn theo Marketplace policy |
 | 10 | Security | Token/session hết hạn | Refresh; fail → về login, không giữ data cá nhân trên màn |
-| 11 | Data | CLB bị suspended (billing) | Kèo CLB đó vẫn hiện person-self; CTA theo rule billing (không mở đường mới) |
+| 11 | Data | CLB bị suspended (admin / abuse — DD-142: không suspended vì billing) | Kèo CLB đó vẫn hiện person-self; CTA theo rule billing (không mở đường mới) |
 | 12 | UX | Danh sách CLB dài (>5) | Chips/list vẫn tổng hợp; không bắt user chọn tenant trước khi thấy Home |
 | 13 | Cross-Feature | Tab Feed khi DD-76 chưa clear | Registry gate = OFF — slot không render; KHÔNG tab trống/coming-soon; bật = đổi config, không sửa layout code |
 | 14 | Money/Data | Payment truth `unknown`/unavailable | Chip/CTA tiền hiện trạng thái unavailable + retry; không hiển thị 0, không tự sum ledger và không dùng cached amount như authority |
@@ -400,6 +400,7 @@ Phase-2 thêm 💰 Chưa thu (host, cross-club, DD-96 Part B): khi > 0 → đẩ
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v0.16 | **Sync DD-142 (quyết định owner 2026-10-21); docs-only, lane L52.** :75: `suspended` là việc không phải billing (admin / abuse); Host Pro trễ invoice bị hạ xuống Free sau grace, không bị `suspended` vì billing. |
 | 2026-08-12 | v0.15 | **SessionCard upgrade (Playo reference #2):** Hero card: thêm `cover_image_url` (optional bg), urgency badge ("Chỉ N chỗ!" đỏ khi ≤3 slots), skill level tag (green chip, range). Compact rows: thêm urgency badge + skill level. Tổng 5 fields mới (3 hero + 2 compact). Không đổi DD-79 composition-only boundary. |
 | 2026-08-12 | v0.14 | **Unified SessionCard — Hero + Compact update (Playo-inspired):** (1) **Hero card redesign:** thêm time pill (green) + price pill + host avatar (32px) + `N/M Going` count + venue (private) + sport icon. Giữ gradient/glow theme §7, countdown, CTA gating (HOME-OQ-4). Thêm hero card component table (11 fields). (2) **Compact upcoming rows redesign:** thêm time pill + price pill + going count. Thêm compact row component table (6 fields). Tất cả dùng unified `SessionCard` variant (`hero`, `compact`). 2 AC bullets update (hero + compact). Không đổi data boundary (composition-only DD-79) — fields lấy từ person-self contract có sẵn. |
 | 2026-08-10 | v0.13 | **Club tab → feature riêng:** Tách Club tab thành `feature_club.md` độc lập. Home chỉ cross-reference. Pin post và News/Announcement chuyển sang `feature_club.md`. |
