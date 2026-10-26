@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # Share page proof (lane L39): on the real stack an ANONYMOUS visitor opens /session/<slug> of a host-shared public
 # session (200 and the card; one uniform 404 for an unknown, rotated-away, private or suspended-tenant slug; the
-# hide-exact-address option ON, OFF and at the D-4 default), and the discovery role serves the same page. TEST-ONLY,
+# hide-exact-address option ON, OFF and at the D-4 default). TEST-ONLY,
 # never run in CI: no workflow names this file or e2e/public-share-page.config.ts. The one command, from the repo
 # root, under the session DB/e2e lock:
 #   bash apps/web/e2e/public-share-page-proof.sh
 # It creates ONLY the scratch database plexco_l39_scratch and always drops it (trap on EXIT, INT and TERM),
-# printing the database listing before and after; it never touches plexco, plexco_smoke or plexco_test. It needs two
-# free ports, 3000 (default role) and 3001 (PROCESS_ROLE=discovery), both started by that config. A preflight refusal
+# printing the database listing before and after; it never touches plexco, plexco_smoke or plexco_test. It needs
+# port 3000 free (that config starts the one server there). A preflight refusal
 # (a port busy, or lsof missing or failing; exit 2) stops before anything is created, so it prints neither the
 # database listing nor the drop line.
 set -u
 cd "$(dirname "$0")/../../.." || exit 2
 [ -f infra/docker-compose.yml ] || { echo "proof: repo root not found" >&2; exit 2; }
-# A listener on port 3000 or 3001 in any address family (a server on [::1]:3000 gets the clients' localhost
+# A listener on port 3000 in any address family (a server on [::1]:3000 gets the clients' localhost
 # first) would receive the proof's writes: refuse before the listing, the trap or any CREATE.
 # Fail closed, unknown means stop: no lsof stops here, and lsof exits 1 both when nothing matched and when
 # it failed, so exit 1 alone is not proof the port is free; only exit 1 with an empty stderr (captured
 # below, stdout discarded) reads as free.
-command -v lsof > /dev/null 2>&1 || { echo "proof: lsof not found; cannot prove ports 3000 and 3001 are free" >&2; exit 2; }
+command -v lsof > /dev/null 2>&1 || { echo "proof: lsof not found; cannot prove port 3000 is free" >&2; exit 2; }
 port_free() {
   local rc=0 err
   err=$(lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>&1 > /dev/null) || rc=$?
@@ -26,7 +26,6 @@ port_free() {
   if [ "$rc" -ne 1 ] || [ -n "$err" ]; then echo "proof: lsof failed (exit $rc); cannot prove port $1 is free" >&2; exit 2; fi
 }
 port_free 3000
-port_free 3001
 # The ONE database name, checked here, before the trap and before any CREATE or DROP; readonly from here on.
 readonly DB=plexco_l39_scratch
 [[ "$DB" =~ ^plexco_l39_scratch$ ]] || { echo "proof: refusing database name $DB" >&2; exit 2; }

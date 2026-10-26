@@ -7,7 +7,8 @@ import { localInput, paceSessionApi, signInAsPersona } from "./support/golden-pa
 import { COMPILE_TIMEOUT_MS } from "./support/golden-path-timeouts";
 
 /**
- * LOCAL-ONLY real-stack proof (lane L39; readiness D5, D6). Never run in CI: the name is outside
+ * LOCAL-ONLY real-stack proof (lane L39; readiness D5; D6's discovery-role case is not run: see the
+ * config). Never run in CI: the name is outside
  * Playwright's testMatch and it is skipped unless SHARE_PROOF_BASE_URL is set. A slug is a bearer
  * token: it never goes into a title, a console line or an assertion message.
  */
@@ -15,7 +16,6 @@ const BASE = process.env.SHARE_PROOF_BASE_URL;
 test.skip(!BASE, "local proof: run apps/web/e2e/public-share-page-proof.sh");
 test.use({ baseURL: BASE });
 
-const DISCOVERY = "http://127.0.0.1:3001"; // the discovery-role server of the config
 const SCRATCH = "/plexco_l39_scratch";
 const DB_URL = process.env.SHARE_PROOF_DB_URL ?? ""; // the scratch superuser URL, never printed
 const ORIGIN = new URL(BASE ?? "http://localhost").origin;
@@ -128,7 +128,7 @@ async function mintLink(code: keyof typeof ids) {
   return path;
 }
 
-test.describe.serial("public share page: the link, its uniform 404 and the discovery role", () => {
+test.describe.serial("public share page: the link and its uniform 404", () => {
   test("host prepares two public sessions and the club alias", async ({ browser }) => {
     for (const name of ["SHARE_PROOF_DB_URL", "DATABASE_URL", "DISCOVERY_DATABASE_URL"]) {
       expect(pathOf(process.env[name]), `${name} is the scratch DB`).toBe(SCRATCH);
@@ -180,15 +180,6 @@ test.describe.serial("public share page: the link, its uniform 404 and the disco
     expect(r.status).toBe(200);
     expect(r.html.includes(s("On", "Khu Chia Se")), "the area is shown").toBe(true);
     expect(r.html.includes(s("On", "Rieng")), "neither the venue name nor the address").toBe(false);
-  });
-
-  test("e4: the discovery role serves the page and 404s the host route", async () => {
-    const live = await anon.request.get(`${DISCOVERY}${paths.off1}`);
-    expect(live.status(), "the live slug on the discovery role").toBe(200);
-    expect((await live.text()).includes(s("Off", "San Rieng")), "card rendered").toBe(true);
-    const mint = await anon.request.post(`${DISCOVERY}/api/sessions/${ids.Off}/share-link`);
-    expect(mint.status(), "the host route is not served by the discovery role").toBe(404);
-    expect((await anon.request.get(`${DISCOVERY}/session/x/y`)).status()).toBe(404);
   });
 
   test("e2: unknown, malformed, rotated, private, suspended slugs: one 404", async () => {
