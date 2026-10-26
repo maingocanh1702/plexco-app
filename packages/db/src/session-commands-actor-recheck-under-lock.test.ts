@@ -1,4 +1,4 @@
-// L48 (p4-session-commands-authz-recheck), part 1: real-PG proof of the invariant
+// L48 (p4-session-commands-authz-recheck): real-PG proof of the invariant
 // `actor-recheck-under-lock`. Each of the six host session commands (create, publish, announce,
 // update, close, cancel) re-checks `session.manage` for its actor as the FIRST statement of its
 // transaction (session-service.ts actorRecheckUnderLock), before the commandId ledger read. So a
@@ -14,12 +14,18 @@
 //                   nothing; after the revoke the same replay is refused, nothing written
 //   RF (d)        = L48-d-<command> (authorized smoke) plus the existing suites
 //   RF (f)        = L48-f: the announce payload's requested_by_person_id is the actor
-//   RF (b), (c) and (g) = part 2 (L48-b1, L48-b2, L48-g), appended at the end of this file.
+//   RF (b)        = L48-b1: a revoke committed while publish waits on the actor's row lock (seen
+//                   through pg_blocking_pids) -> the same refusal, nothing written
+//   RF (c)        = L48-b2: publish parked after its recheck (the CONC2 barrier) holds the row: a
+//                   revoke under lock_timeout fails 55P03; released, publish commits normally
+//   RF (g)        = L48-g: source guard, each command's transaction callback opens with the
+//                   recheck; planted copies (the call cut, a tx. call before it) are reported
 //
 // Runs as the `app` role via the RLS harness on its own database (DATABASE_URL_TEST required).
 // The helpers are copied from session-service.test.ts (SST), not imported: they are module-local.
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   announceSession,
@@ -357,4 +363,207 @@ describe("L48-f: announce records the authorized actor as the requester", () => 
   }, 30_000);
 });
 
-// L48 part 2: tests (b) and (g) follow.
+// revoke()'s statement, run on a dedicated connection that the test commits (or not) itself.
+const REVOKE = `UPDATE tenant_admins SET active = false
+  WHERE tenant_id = $1 AND platform_user_lookup_hash = $2`;
+
+// A dedicated superuser connection (SST CONC2: superuserDb.pool hands out fresh connections, and
+// superuser may LOCK TABLE), and its backend pid.
+const connect = () => ctx.superuserDb.pool.connect();
+type Conn = Awaited<ReturnType<typeof connect>>;
+const pidOf = async (c: Conn) =>
+  ((await c.query("SELECT pg_backend_pid() AS pid")).rows[0] as { pid: number }).pid;
+
+// SST waitUntilSomeoneBlockedByHolder, returning the blocked backend's pid: a lock wait is seen
+// through pg_blocking_pids, never assumed after a fixed sleep.
+async function waitBlockedBy(holderPid: number): Promise<number> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const [hit] = await rows(
+      `SELECT pid FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid))`,
+      [holderPid],
+    );
+    if (hit) return hit.pid as number;
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+  throw new Error(`no backend became blocked by holder ${holderPid} within 5s`);
+}
+
+// COMMANDS' publish entry (it seeds a draft), the command both lock tests drive: its recheck is
+// its first statement and its outbox insert comes after it, which the L48-b2 barrier relies on.
+async function preparePublish(tenantId: string): Promise<Prepared> {
+  const publish = COMMANDS.find((c) => c.name === "publish");
+  if (!publish) throw new Error("COMMANDS has no publish entry");
+  return publish.prepare(tenantId);
+}
+
+describe("L48-b1: a revoke committed while the command waits on the actor's row is refused", () => {
+  it("L48-b1: the revoke holds the actor's row first, publish waits on it at its recheck, the revoke commits -> SessionActorNotAuthorizedError (FORBIDDEN), nothing written", async () => {
+    const tenantId = await seedTenant();
+    const { run } = await preparePublish(tenantId);
+    const holder = await connect(); // R
+    let pending: Promise<unknown> | undefined;
+    try {
+      await holder.query("BEGIN");
+      expect((await holder.query(REVOKE, [tenantId, ACTOR])).rowCount).toBe(1); // not committed
+      const holderPid = await pidOf(holder);
+      const before = await snapshot(tenantId);
+      pending = run(cmdId()).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      await waitBlockedBy(holderPid); // publish waits on the row lock R holds
+      await holder.query("COMMIT"); // the revoke lands while publish waits
+      const err = await pending;
+      pending = undefined;
+      // after the wait the definer re-reads ta.active and denies
+      expect(err).toBeInstanceOf(SessionActorNotAuthorizedError);
+      expect((err as SessionActorNotAuthorizedError).code).toBe("FORBIDDEN");
+      expect(await snapshot(tenantId)).toEqual(before);
+    } finally {
+      await holder.query("ROLLBACK").catch(() => undefined);
+      await pending;
+      holder.release();
+    }
+  }, 30_000);
+});
+
+describe("L48-b2: the command holds the actor's row from its recheck until it commits", () => {
+  it("L48-b2: publish parked after its recheck (CONC2 barrier) holds the row: a lock_timeout revoke fails 55P03, a plain revoke waits on publish; the barrier released, publish commits normally, then the revoke lands", async () => {
+    const tenantId = await seedTenant();
+    const { run, expected } = await preparePublish(tenantId);
+    const barrier = await connect(); // B
+    let r2: Conn | undefined;
+    let pending: Promise<unknown> | undefined;
+    let revoking: Promise<unknown> | undefined;
+    try {
+      await barrier.query("BEGIN");
+      await barrier.query("LOCK TABLE outbox_events IN ACCESS EXCLUSIVE MODE");
+      pending = run(cmdId()).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      // parked at its outbox insert, past its recheck: it holds the actor's row FOR SHARE
+      const cmdPid = await waitBlockedBy(await pidOf(barrier));
+
+      // (i) a revoke under lock_timeout cannot take the row
+      const r1 = await connect();
+      try {
+        await r1.query("BEGIN");
+        await r1.query("SET LOCAL lock_timeout = '300ms'");
+        const timedOut = await r1.query(REVOKE, [tenantId, ACTOR]).catch((e: unknown) => e);
+        expect((timedOut as { code?: unknown }).code).toBe("55P03");
+      } finally {
+        await r1.query("ROLLBACK").catch(() => undefined);
+        r1.release();
+      }
+
+      // (ii) a plain revoke waits on the command's backend
+      r2 = await connect();
+      await r2.query("BEGIN");
+      const r2Pid = await pidOf(r2);
+      revoking = r2.query(REVOKE, [tenantId, ACTOR]).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      expect(await waitBlockedBy(cmdPid)).toBe(r2Pid); // pg_blocking_pids(r2Pid) holds cmdPid
+
+      // (iii) the barrier released: publish commits normally, only then the revoke lands
+      await barrier.query("COMMIT");
+      expect(await pending).toMatchObject({ status: "open", replayed: false });
+      pending = undefined;
+      expect(((await revoking) as { rowCount?: unknown }).rowCount).toBe(1);
+      revoking = undefined;
+      await r2.query("COMMIT");
+    } finally {
+      // the barrier first: it frees publish, which frees the revoke, so nothing below waits forever
+      await barrier.query("ROLLBACK").catch(() => undefined);
+      await pending;
+      await revoking;
+      await r2?.query("ROLLBACK").catch(() => undefined);
+      r2?.release();
+      barrier.release();
+    }
+    expect(
+      await rows(
+        `SELECT active FROM tenant_admins WHERE tenant_id = $1 AND platform_user_lookup_hash = $2`,
+        [tenantId, ACTOR],
+      ),
+    ).toEqual([{ active: false }]);
+    expect(
+      await rows(`SELECT type FROM outbox_events WHERE aggregate_id = $1 AND type = $2`, [
+        expected.sessionId,
+        "session.published",
+      ]),
+    ).toHaveLength(1);
+  }, 30_000);
+});
+
+// L48-g checker: null when fn's transaction callback opens with the recheck, else the reason.
+// The body runs from fn's declaration to the next top-level export; the callback is the first
+// `async (tx` in it and its block opens at the first `=> {` after that. String scanning only
+// (indexOf, slice, split, trim), no RegExp.
+const RECHECK = "await actorRecheckUnderLock(tx, {";
+function recheckIsFirst(source: string, fn: string): string | null {
+  const start = source.indexOf(`export async function ${fn}(`);
+  if (start < 0) return `${fn}: not found`;
+  const end = source.indexOf("\nexport ", start);
+  const body = source.slice(start, end < 0 ? source.length : end);
+  const opener = body.indexOf("async (tx");
+  const open = opener < 0 ? -1 : body.indexOf("=> {", opener);
+  if (open < 0) return `${fn}: no transaction callback`;
+  let at = open + "=> {".length; // the offset in body of the line read next
+  for (const line of body.slice(at).split("\n")) {
+    const code = line.trim();
+    if (code !== "" && code.indexOf("//") !== 0) {
+      if (code.indexOf(RECHECK) !== 0)
+        return `${fn}: the callback's first statement is not the recheck`;
+      return body.slice(opener, at).indexOf("tx.") < 0
+        ? null
+        : `${fn}: a tx. call precedes the recheck`;
+    }
+    at += line.length + 1;
+  }
+  return `${fn}: the callback has no statement`;
+}
+
+// The [start, end) offsets of the line holding fn's first recheck call, for the planted copies.
+function recheckLine(source: string, fn: string): [number, number] {
+  const decl = source.indexOf(`export async function ${fn}(`);
+  const at = decl < 0 ? -1 : source.indexOf(RECHECK, decl);
+  if (at < 0) throw new Error(`${fn}: no recheck call to plant around`);
+  return [source.lastIndexOf("\n", at) + 1, source.indexOf("\n", at) + 1];
+}
+
+const HOST_COMMANDS = [
+  "createSession",
+  "publishSession",
+  "announceSession",
+  "updateSession",
+  "closeSession",
+  "cancelSession",
+];
+
+describe("L48-g: each host command's transaction callback opens with the recheck (source guard)", () => {
+  it("L48-g: session-service.ts passes for all six; a copy without cancel's recheck and a copy with a tx. call before publish's recheck are each reported, the other five still passing", () => {
+    const ss = readFileSync(new URL("./session-service.ts", import.meta.url), "utf8");
+    for (const fn of HOST_COMMANDS) expect(recheckIsFirst(ss, fn)).toBeNull();
+    const [cutFrom, cutTo] = recheckLine(ss, "cancelSession");
+    const [publishAt] = recheckLine(ss, "publishSession");
+    const planted: [string, string][] = [
+      ["cancelSession", ss.slice(0, cutFrom) + ss.slice(cutTo)], // the recheck line cut out
+      [
+        "publishSession", // a tx. statement inserted before the recheck line
+        ss.slice(0, publishAt) + "    await tx.execute(sql`select 1`);\n" + ss.slice(publishAt),
+      ],
+    ];
+    for (const [fn, copy] of planted) {
+      expect(recheckIsFirst(copy, fn)).toBe(
+        `${fn}: the callback's first statement is not the recheck`,
+      );
+      for (const other of HOST_COMMANDS)
+        if (other !== fn) expect(recheckIsFirst(copy, other)).toBeNull();
+    }
+  }, 30_000);
+});
