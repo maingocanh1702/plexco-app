@@ -99,6 +99,7 @@ describe("POST /api/sessions/:id/cancel", () => {
     expect(cancelSession).toHaveBeenCalledWith(expect.anything(), {
       tenantId: TENANT,
       commandId: "cmd_1",
+      actorPersonId: "p",
       input: { sessionId: SESSION_ID, expectedVersion: 2 },
     });
   });

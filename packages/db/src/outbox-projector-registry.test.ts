@@ -14,10 +14,15 @@ import { setupRlsTestContext, withJobDefinerLock, type RlsTestContext } from "./
 const DB_NAME = "plexco_outbox_projector_registry";
 const BASE = process.env.DATABASE_URL_TEST!;
 const HOUR = 3_600_000;
+const ACTOR: string = randomUUID(); // an active web owner-admin of every seedTenant() tenant
 let ctx: RlsTestContext;
 
 beforeAll(async () => {
   ctx = await setupRlsTestContext(DB_NAME);
+  await ctx.owner.query("INSERT INTO persons (id, display_name) VALUES ($1, $2)", [
+    ACTOR,
+    `p-actor-${randomUUID()}`,
+  ]);
 });
 afterAll(async () => {
   await ctx?.teardown();
@@ -893,6 +898,11 @@ describe("A16-A22 stale-draft auto-expiry (job_expire_stale_drafts)", () => {
       [`Expiry ${unique}`, `expiry-${unique}`],
     );
     await ctx.owner.query(
+      `INSERT INTO tenant_admins (tenant_id, platform, platform_user_lookup_hash, role, active)
+       VALUES ($1, 'web', $2, 'owner', true)`,
+      [t.id, ACTOR],
+    );
+    await ctx.owner.query(
       `INSERT INTO subscriptions (tenant_id, plan_key, plan_version, status, period_start, period_end)
        VALUES ($1, 'free', 1, 'active', now(), now() + interval '30 days')`,
       [t.id],
@@ -971,6 +981,7 @@ describe("A16-A22 stale-draft auto-expiry (job_expire_stale_drafts)", () => {
     expect(await expire()).toEqual({ cancelled: 1, anomalies: 0 });
     await cancelSession(ctx.appDb.db, {
       tenantId,
+      actorPersonId: ACTOR,
       commandId: randomUUID(),
       input: { sessionId: manual, expectedVersion: 1 },
     });
@@ -1101,6 +1112,7 @@ describe("A16-A22 stale-draft auto-expiry (job_expire_stale_drafts)", () => {
       let settled = false;
       const publish = publishSession(ctx.appDb.db, {
         tenantId: t,
+        actorPersonId: ACTOR,
         commandId: randomUUID(),
         input: { sessionId: raced },
       })

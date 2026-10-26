@@ -35,6 +35,7 @@ export async function POST(
     const result = await cancelSession(appDb().db, {
       tenantId: context.tenantId,
       commandId: context.commandId,
+      actorPersonId: context.personId,
       input: { sessionId: id, expectedVersion },
     });
     return ok({

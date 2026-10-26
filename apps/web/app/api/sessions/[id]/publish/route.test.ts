@@ -120,6 +120,7 @@ describe("POST /api/sessions/:id/publish", () => {
     expect(publishSession).toHaveBeenCalledWith(expect.anything(), {
       tenantId: TENANT,
       commandId: "cmd_1",
+      actorPersonId: "p",
       input: { sessionId: SESSION_ID, expectedVersion: 1 },
     });
   });

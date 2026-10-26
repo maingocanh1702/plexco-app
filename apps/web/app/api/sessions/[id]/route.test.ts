@@ -136,6 +136,7 @@ describe("PUT /api/sessions/:id", () => {
     expect(updateSession).toHaveBeenCalledWith(expect.anything(), {
       tenantId: TENANT,
       commandId: "cmd_1",
+      actorPersonId: "p",
       input: { sessionId: SESSION_ID, expectedVersion: 2, timezone: "Asia/Bangkok" },
     });
   });

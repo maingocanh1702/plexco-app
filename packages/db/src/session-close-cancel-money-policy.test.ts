@@ -106,12 +106,14 @@ const status = async (sessionId: string): Promise<string> =>
 const close = (w: World, expectedVersion: number, commandId = nextCommandId()) =>
   closeSession(ctx.appDb.db, {
     tenantId: w.tenantId,
+    actorPersonId: w.actor,
     commandId,
     input: { sessionId: w.sessionId, expectedVersion },
   });
 const cancel = (w: World, expectedVersion: number, commandId = nextCommandId()) =>
   cancelSession(ctx.appDb.db, {
     tenantId: w.tenantId,
+    actorPersonId: w.actor,
     commandId,
     input: { sessionId: w.sessionId, expectedVersion },
   });

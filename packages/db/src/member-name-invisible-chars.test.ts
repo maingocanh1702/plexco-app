@@ -2453,6 +2453,7 @@ describe("L29-TW V1/V2 createSession and updateSession store venue_address by th
   const createV = (venueAddress: string | null) =>
     createSession(ctx.appDb.db, {
       tenantId: ctx.tenantA,
+      actorPersonId: host,
       commandId: randomUUID(),
       input: {
         sportId: ctx.badmintonSportId,
@@ -2502,6 +2503,7 @@ describe("L29-TW V1/V2 createSession and updateSession store venue_address by th
     const made = await createV("12 Nguyen Trai");
     await updateSession(ctx.appDb.db, {
       tenantId: ctx.tenantA,
+      actorPersonId: host,
       commandId: randomUUID(),
       input: { sessionId: made.sessionId, expectedVersion: made.version, venueAddress: mix(0xa0) },
     });

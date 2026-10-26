@@ -164,6 +164,8 @@ export {
   closeSession,
   cancelSession,
   SessionCommandError,
+  SESSION_MANAGE_ACTION,
+  SessionActorNotAuthorizedError,
   SessionPublishError,
   SessionPublishAuthorizationError,
   SessionAnnounceError,
