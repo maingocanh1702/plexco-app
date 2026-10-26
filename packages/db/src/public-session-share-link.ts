@@ -7,9 +7,9 @@ import {
   isUuid,
   recordCommand,
   replayOrNull,
+  requireActor,
   requireCommandId,
 } from "./roster-money-shared.js";
-import { authorize } from "./tenant-capability-authority.js";
 import { withTenant } from "./tenant.js";
 
 /**
@@ -21,6 +21,7 @@ import { withTenant } from "./tenant.js";
 
 /** processed_commands.command_type, in the style of "MarkPaid" and "ReversePaymentAllocation". */
 const TYPE = "RotatePublicSessionShareLink";
+const MANAGE = ["session.manage"] as const;
 /** One answer for a non-UUID, missing or foreign session; never the definer's P0001 text. */
 const NOT_FOUND = "session not found in tenant context";
 
@@ -44,12 +45,10 @@ export async function rotatePublicSessionShareLink(
   const commandId = requireCommandId(params.commandId);
   try {
     return await withTenant<RotatePublicSessionShareLinkResult>(db, tenantId, async (tx) => {
-      // Order kept from requireActor (roster-money-shared.ts) and listPendingJoinRequests
-      // (join-request-service.ts): authorize inside this transaction, the tenant-scoped pre-read,
-      // then dedup, the mint and the ledger row.
-      const decision = await authorize(tx, { tenantId, action: "session.manage", actorPersonId });
-      if (!decision.allowed) return fail("FORBIDDEN", "actor is not authorized");
-      const actor = actorPersonId.toLowerCase();
+      // requireActor inside this transaction: session.manage, then the tenant status with the class
+      // publishSession uses (session-service.ts), so a suspended tenant is TENANT_SUSPENDED, not a
+      // not_listed 409; then the tenant-scoped pre-read, dedup, the mint and the ledger row.
+      const actor = await requireActor(tx, tenantId, actorPersonId, MANAGE, "publish_new_sessions");
       const [session] = await tx
         .select({ id: sessions.id })
         .from(sessions)
@@ -67,8 +66,8 @@ export async function rotatePublicSessionShareLink(
       return { kind: "rotated", slug };
     });
   } catch (error) {
-    // 55000: the public view does not list the session (private, ended, fenced or suspended
-    // tenant). Caught outside withTenant, so the transaction and its ledger row have rolled back
+    // 55000: the public view does not list the session (private, ended, fenced, or a tenant the
+    // view hides). Caught outside withTenant, so the transaction and its ledger row have rolled back
     // and a retry with the same commandId stays possible.
     if (pgErrorHasCode(error, "55000")) return { kind: "not_listed" };
     throw error;

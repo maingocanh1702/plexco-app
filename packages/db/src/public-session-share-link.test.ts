@@ -93,7 +93,7 @@ describe("rotatePublicSessionShareLink (L39 D4a/T5)", () => {
     }
     expect([...(await slugs(sid)), ...(await slugs(foreign))]).toEqual([]);
   });
-  it("private and suspended are not_listed; the ledger rolls back so a retry works", async () => {
+  it("private is not_listed and rolls back so a retry works; suspended is TENANT_SUSPENDED", async () => {
     const { t, host } = await stage();
     const priv = await fx.seedSession(t);
     const cmd = nextCommandId();
@@ -101,7 +101,11 @@ describe("rotatePublicSessionShareLink (L39 D4a/T5)", () => {
     expect([...(await ledger(cmd)), ...(await slugs(priv))]).toEqual([]);
     await mint(t, host, await listed(t, priv), cmd);
     const s = await club("suspended");
-    expect(await rotate(s, await fx.seedAdmin(s), await listed(s))).toEqual(NOT_LISTED);
+    const refused = nextCommandId();
+    expect(await answer(rotate(s, await fx.seedAdmin(s), await listed(s), refused))).toBe(
+      "TENANT_SUSPENDED: tenant is not permitted",
+    );
+    expect(await ledger(refused)).toEqual([]);
   });
   it("two concurrent rotates leave exactly one active link", async () => {
     const { t, host, sid } = await stage();
