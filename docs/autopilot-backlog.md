@@ -7019,7 +7019,9 @@ notes: |
 
 ## task: public-card-proof-port-preflight-any-owner
 title: E2E proof runner (local only): make the port 3000 preflight of `public-card-hide-address-proof.sh` see a listener of any owner (a connect probe on 127.0.0.1 and ::1), not only the invoking user's
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-public-proof-harness (L50); find it with `gh pr list --state merged --head test/p4-public-proof-harness` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L50: closed BY HAND in the lane's own PR, measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (the PR #118 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L50 (plan row L50 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane; its design, threat model and tests are in docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md. F2: apps/web/e2e/public-card-hide-address-proof.sh now runs a connect probe of 127.0.0.1 and ::1 port 3000 right after the lsof check: a connect stops with exit 2, only `Connection refused` reads as free, and no `nc` or any other result stops; the lane checked it with a PATH-shim test (a fake `lsof` that exits 1 with an empty stderr) that fails at the base and passes at the head.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7033,7 +7035,9 @@ notes: |
 
 ## task: public-card-proof-no-drop-line-exception-complete
 title: Docs (local proof): name every stop before the trap of `public-card-hide-address-proof.sh` in the "no drop line" exception of runbook step 11 and of the runner's header comment
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-public-proof-harness (L50); find it with `gh pr list --state merged --head test/p4-public-proof-harness` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L50: closed BY HAND in the lane's own PR, measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (the PR #118 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L50 (plan row L50 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane; its design, threat model and tests are in docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md. F2: the runner's header comment and runbook step 11 now name every stop before the trap: the repo-root check, the port 3000 preflight and the name guard (exit 2, before the database listing), the password lookup and the BEFORE listing (exit 1).
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7047,7 +7051,9 @@ notes: |
 
 ## task: local-smoke-step11-latest-result-depin
 title: Docs (local proof): runbook step 11's "latest measured result" line cites `dbaf348`, a run of an older runner; point it at the final evidence or drop the SHA pin
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch test/p4-public-proof-harness (L50); find it with `gh pr list --state merged --head test/p4-public-proof-harness` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-26 L50: closed BY HAND in the lane's own PR, measured at base dfb87ea34d81b5984119ba058032ce283eb1a165 (the PR #118 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L50 (plan row L50 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane; its design, threat model and tests are in docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md. F2: runbook step 11's latest-result line now carries no SHA and no measured number; it points at `git log --first-parent -1 --format=%s origin/main -- apps/web/e2e/public-card-hide-address-proof.sh`, the merge subject of the last PR that changed the script, whose body holds that run.
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7233,3 +7239,17 @@ merged_probe: null
 notes: |
   L41 proof (d) (one read-only catalog query on a scratch database migrated through 0072): of the 123 functions outside the lane's ten, 108 list pg_temp last and 15 set no search_path at all, all SECURITY INVOKER in `public`, so they resolve type and relation names through their caller's search_path: channel_identities_no_new_telegram(), chat_assert_dm_two(uuid), chat_bind_tenant(), chat_channels_identity_immutable(), chat_dm_member_insert_guard(), chat_dm_no_member_delete(), chat_dm_safety_config_touch_updated_at(), chat_dm_two_from_channel(), chat_dm_two_from_members(), chat_members_identity_immutable(), dm_safety_flags_enabled(boolean,boolean,boolean,boolean), forbid_allocation_mutation(), forbid_bank_txn_core_change(), forbid_job_audit_mutation(), forbid_tenant_capability_grant_audit_mutation(). Inside a SECURITY DEFINER they run under that definer's path (pg_temp last in all 102 definers measured); called directly they run as the caller's own role. The first question of the lane that takes this row is whether any of them is reachable with a path that does not put pg_temp last; a re-creation is a migration, and two of them, by their names, guard money tables (allocations, bank transactions; not re-read here).
   Source: docs/sessions/web-mvp-phase4-readiness-p4-name-definers-and-rule-tests.md section 14, proof (d) (lane L41).
+
+## task: public-share-page-proof-port-preflight-and-stop-list
+title: E2E proof runner (local only): give `public-share-page-proof.sh` lane L50's connect probe on 127.0.0.1 and ::1 and its complete list of the stops before the trap
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [web-app, test-chain]
+scope: [apps/web/e2e/public-share-page-proof.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 39c503d7b9fc353380a23752edd3c574ab08fb41 (the PR #119 merge): apps/web/e2e/public-share-page-proof.sh (lane L39) carries the two gaps lane L50 closed in apps/web/e2e/public-card-hide-address-proof.sh. (1) Its port preflight is lsof-only (`port_free`, :22-27, called at :28 for port 3000), so a listener of root or another account reads as free, while the clients use `SHARE_PROOF_BASE_URL=http://localhost:3000` (:87), which can resolve ::1 first. (2) Its header (:10-12) names only the preflight refusal as a stop that prints no drop line, but the repo-root check (:14-15), the name guard (:31), the password lookup (:45) and the BEFORE listing (:49) stop before the trap (:67) too. Fix: port L50's connect probe and stop list, or move the preflight into one helper both runners source; keep the name guard, the trap and what the proof asserts. Found by lane L50's step 0, outside its file ownership.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-public-proof-harness.md, item 10 (O1, O2).
