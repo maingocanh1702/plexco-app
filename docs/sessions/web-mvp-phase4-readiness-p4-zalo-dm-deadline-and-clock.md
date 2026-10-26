@@ -179,7 +179,7 @@ Each is "default applied, pending owner sign-off" (Tier B, reversible by editing
      retry, else Z:207 uses `Math.min(sendTimeoutMs, left)` (D4).
   5. Keep byte-identical: Z:121, the Z:136 query, Z:155, Z:196-198 (the decrypt lines); no new log line; no lease SQL.
   6. typecheck, lint, format:check and the three existing test files green (the bot suite through the lane's lock wrapper); commit.
-- W2 (opus/high, the next orchestrator run): the tests of section 8 in the three existing files.
+- W2 (opus/high, the next orchestrator run): the tests of section 8 in four existing test files (c2 in `apps/bot/src/projector-registry.test.ts`: section 10).
 
 ## 8. Acceptance matrix
 
@@ -271,6 +271,7 @@ TARGET_FILES:
   - apps/bot/src/projectors/zalo-dm.test.ts (edited)
   - apps/bot/src/dispatcher.test.ts (edited)
   - apps/bot/src/dispatcher-outcome.test.ts (edited)
+  - apps/bot/src/projector-registry.test.ts (edited)
   - docs/autopilot-backlog.md (edited)
   - apps/bot/src/zalo-dm-delivery-age-bound.json (read only: maxAgeMinutes 60, untilSessionStart player.promoted)
   - apps/bot/src/projectors/index.ts (read only: the PROJECTORS map)
