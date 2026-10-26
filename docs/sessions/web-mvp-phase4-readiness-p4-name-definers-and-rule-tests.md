@@ -309,24 +309,35 @@ its search_path, reachable inside a SECURITY DEFINER writer by any role holding 
 
 ## 14. Before/after attribute table
 
-BEFORE: the base catalog (scratch database at the base, one `pg_proc` row per function; prosrc as md5 prefix and length in characters). AFTER: to be
-filled by W1 from the same catalog query on a scratch database migrated with 0072. Expected: only the proconfig of the first two rows differs (to
-`search_path=pg_catalog, pg_temp`); prosrc differs only by the inserted `pg_catalog.` prefixes.
+BEFORE: the base catalog (scratch database at the base, one `pg_proc` row per function; prosrc as md5 prefix and length in characters). AFTER:
+the same catalog query on a scratch database migrated with 0072 (measured 2026-10-26). Result: only the proconfig of the first two rows differs (now
+`search_path=pg_catalog, pg_temp`); every prosrc grows by exactly 11 characters (`pg_catalog.`) per qualified call, 45 in all, and the generator
+asserts per function that the new body minus those prefixes equals the old one byte for byte; owner, ACL, SECURITY, volatility, STRICT, PARALLEL,
+LEAKPROOF, language and return type are equal in all ten rows. The before/after matrix (462 writer x class cells on the two scratch databases,
+every function executed) gave identical output; the pg_temp probe gave 23514 with the plant at the base and, after 0072, the same result with and
+without the plant.
 
 | Function | proconfig | prosecdef | provolatile | proisstrict | proparallel | proleakproof | proowner | proacl | prosrc | AFTER |
 |---|---|---|---|---|---|---|---|---|---|---|
-| member_name_apply_rule | `search_path=pg_catalog` | false | i | true | s | false | plexco | `{plexco=X/plexco}` | 874d896d, 1721 | to be filled by W1 |
-| public_name_strip_invisible | `search_path=pg_catalog` | false | i | true | s | false | plexco | `{plexco=X/plexco}` | 1b5656bb, 289 | to be filled by W1 |
-| person_profile_update | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | c6f72ea2, 2514 | to be filled by W1 |
-| create_host_added_person | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 422e1e03, 1209 | to be filled by W1 |
-| tenant_provision | `search_path=public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 26823dda, 3245 | to be filled by W1 |
-| tenant_profile_update | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | a6f427bb, 1899 | to be filled by W1 |
-| zalo_identity_resolve | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | d63dc1a2, 3219 | to be filled by W1 |
-| auth_login_google | `search_path=public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | d348c9b6, 8762 | to be filled by W1 |
-| create_guest_membership | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 0b898660, 2043 | to be filled by W1 |
-| tenant_public_alias_set | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 92f9d6cd, 3997 | to be filled by W1 |
+| member_name_apply_rule | `search_path=pg_catalog` | false | i | true | s | false | plexco | `{plexco=X/plexco}` | 874d896d, 1721 | `search_path=pg_catalog, pg_temp`; a73471c9, 1754 (+3 x 11); rest equal |
+| public_name_strip_invisible | `search_path=pg_catalog` | false | i | true | s | false | plexco | `{plexco=X/plexco}` | 1b5656bb, 289 | `search_path=pg_catalog, pg_temp`; a9852a80, 300 (+1 x 11); rest equal |
+| person_profile_update | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | c6f72ea2, 2514 | 8cb52c3d, 2547 (+3 x 11); rest equal |
+| create_host_added_person | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 422e1e03, 1209 | a4093838, 1242 (+3 x 11); rest equal |
+| tenant_provision | `search_path=public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 26823dda, 3245 | 58317f5b, 3311 (+6 x 11); rest equal |
+| tenant_profile_update | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | a6f427bb, 1899 | cf1a9be6, 1954 (+5 x 11); rest equal |
+| zalo_identity_resolve | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | d63dc1a2, 3219 | 6cfc65a5, 3241 (+2 x 11); rest equal |
+| auth_login_google | `search_path=public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | d348c9b6, 8762 | 0ffa0fdd, 8905 (+13 x 11); rest equal |
+| create_guest_membership | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 0b898660, 2043 | 14f8ddb3, 2054 (+1 x 11); rest equal |
+| tenant_public_alias_set | `search_path=pg_catalog, public, pg_temp` | true | v | false | u | false | plexco | `{plexco=X/plexco,app=X/plexco}` | 92f9d6cd, 3997 | 85b43b67, 4085 (+8 x 11); rest equal |
 
-Proof (d), other functions without pg_temp last: to be filled by W1 (count and names).
+Proof (d), other functions without pg_temp last (one read-only catalog query on the same AFTER database; every non-system schema; extension members
+and the ten excluded): 123 other functions; 108 list pg_temp last (102 definers, 6 invokers); 0 set a search_path without pg_temp last; 15 set no
+search_path at all, all SECURITY INVOKER, so they run under their caller's search_path: `channel_identities_no_new_telegram()`,
+`chat_assert_dm_two(uuid)`, `chat_bind_tenant()`, `chat_channels_identity_immutable()`, `chat_dm_member_insert_guard()`, `chat_dm_no_member_delete()`,
+`chat_dm_safety_config_touch_updated_at()`, `chat_dm_two_from_channel()`, `chat_dm_two_from_members()`, `chat_members_identity_immutable()`,
+`dm_safety_flags_enabled(boolean,boolean,boolean,boolean)`, `forbid_allocation_mutation()`, `forbid_bank_txn_core_change()`,
+`forbid_job_audit_mutation()`, `forbid_tenant_capability_grant_audit_mutation()` (all in `public`). Recorded for the out-of-scope backlog row
+`db-function-search-path-pg-temp-sweep`; nothing of it is changed by this lane.
 
 ## 15. OPEN
 
