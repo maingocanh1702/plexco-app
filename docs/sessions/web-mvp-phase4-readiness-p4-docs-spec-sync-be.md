@@ -1,0 +1,402 @@
+<!-- review-readiness: code-ready -->
+
+# Step-0 readiness: L51 p4-docs-spec-sync-be (session P4-S1c)
+
+- **1 Authority.** Agent-facing. B = 2c6951c433a39336252ec573efa00160cc306d91 = AUTHORITY_SHA, the merge of PR #116 (`git log -1` in the worktree); this file is the lane branch's first commit on top of B. The worktree had no commit and was fast-forwarded to B with `git merge --ff-only origin/main` from d94df98771f94c8cf3b2f69308ad5a05e5757cd0 (ruling RO-L51-1 item 2, "decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature"), and `git diff --stat d94df98 2c6951c -- docs/features docs/standards docs/channels` prints nothing (orchestrator measurement), so the spec and D lines the step-0 parts measured at d94df98 are cited as measured there and hold at B; only BL moved (lane L55 added 4 lines above the docs-sync row), so BL lines are cited at B. Paths: D = docs/standards/decisions.md, BL = docs/autopilot-backlog.md. Lane authority: the owner's written approval of 2026-10-26 (DD-150, "Phase 4 plan approved, Q1-Q10 default") of docs/sessions/web-mvp-phase4-plan.md, row L51, and the owner's 2026-10-21 text, section C: "one docs lane to sync the DD-138 spec follow-ups"; no Q1-Q10 answer touches the lane. Executing what a cited decision record names is Tier A; anything else is an owner question (item 8).
+- **2 Live truth (D at d94df98, unchanged at B; BL at B).** DD-142 heading D:2214, its "Spec follow-up" line D:2231; DD-141 D:2263 (follow-up D:2280: docs/product/TDD.md only, lane L52's); DD-140 D:2286 (D:2302); DD-139 D:2308 (D:2325); DD-138 D:2331, its subsection "### Spec follow-up (không sửa spec Reviewed nào)" D:2463-2491; DD-144 D:2169; DD-143 D:2190; G-X1 = D:2144 (DD-145's owner-signed table, row "D-1 của #96"). BL: `docs-drift-sessions-fe-zalo-tech-readme-pins` heading :6064, newest dated note :6084, `source:` :6085; `docs-sync-phase3-owner-decision-spec-follow-ups` heading :6584, `notes: |` :6595, newest dated note :6599, its `Source:` :6600. No file under docs/features/BE/ and not docs/features/README.md changed between 0a4e1b8 or 3a97c7b (where the records measured their lines) and d94df98 (orchestrator measurement).
+- **3 Scope and file ownership.** TARGET_FILES (16; each exists at B or is this file): the nine BE specs docs/features/BE/feature\_{billing_lifecycle, home, session_management, cross_club_join, zalo_channel, inapp_chat, player_view, marketplace_discovery, user_settings}\_tech.md; docs/features/README.md; docs/standards/design-system.md; docs/channels/web/README.md, design-brief.md and designer-kickoff.md; BL (the two dated update lines only); this file. Every edit is a Tier A E, I or D row of the block below, with one version E row and one new changelog I row per edited spec or design doc (BL has no version line); nothing else changes. The lane block's ownership also names docs/channels/web/FE/feature_sessions_fe.md, docs/standards/BUILD-STATUS.md and docs/channels/web/theme-direction-2026-07.md: not edited (RR rows RC-1, RC3-6, RC3-65; items 7 and 8). HALT on any touch outside TARGET_FILES or on any code, test, migration, workflow, script or secret-bearing file; no D edit; no dated line or dated changelog row rewritten; neither backlog row flipped.
+- **4 Split with L52 (Q3; part RE at d94df98).** L52 owns docs/product/BRD.md, PRD.md, TDD.md, ROADMAP.md, the five FE specs docs/features/FE/feature\_{billing_lifecycle, home, session_management, marketplace_discovery, cross_club_join}.md and docs/channels/web/ux-sync-design.md (10 files); L51 owns 17 files (item 3's 14 edited spec and design files plus the 3 not edited), 19 with BL and this file (B3 cap 20). Proof: both lists through `printf '%s\n' ... | sort -u` into two files, `comm -12` of them = 0 lines. No file is named by both halves: feature_zalo_channel_tech.md is named by both backlog rows, both mentions L51's (one lane, one writer unit); .github/workflows/ci.yml (drift item (5), the :130 comment) is lane L41's; ux-sync-design.md is L52's only (0 U+20AB, 0 Sora).
+- **5 Q5 audits (part RE at d94df98).** (a) `git grep -n -e 'readFileSync' -e 'docs/features'` over the migrate, api-contract, sessions route, authorization, capability, session-service and session-close-cancel-money-policy tests: 3 comment lines, 0 `readFileSync`; packages/core/src/api-contract.test.ts:109 pins lines 317-325 of feature_session_management_tech.md, so no writer inserts a line above its :325 (in-line substitutions and the changelog row near :1110 move nothing there). (b) `git grep -l -e 'modules.json' -- '*.ts' '*.mjs' '*.js' 'scripts/*' '.github/*' package.json`: only tools/progress.mjs and tools/render.mjs (local `pnpm progress`), which read BE spec paths, never text or version; L51 renames no file. (c) `pnpm review:check:changed` checks every added, copied, modified or renamed .md file against HEAD (staged or not) plus untracked .md under docs/; a file is a candidate only by a review, readiness or plan basename token or a `^REVIEW_VERDICT:` line (scripts/check-review-readiness.mjs:15, :591-594): the 15 other edited files are not candidates and pass, this file is (marker in its first 30 lines, verdict block); no cross-file dependency; run it BEFORE each commit, then the full `pnpm review:check`. (d) Reconcile baseline (sandbox, local origin/main): `scripts/autopilot-backlog-reconcile --check` rc 0, 2 `close_by REFUSED` (gates-that-fire-correctly-and-cannot-say-why, email-password-bundle-order-4: not L51's rows), 0 MALFORMED; `--audit` the same.
+- **6 Acceptance (V1-V7).** V1 `pnpm review:check:changed` before every commit, full `pnpm review:check` at the end: green. V2 `pnpm format:check`: green. V3 reconcile `--check` and `--audit` (sandbox off) at the head: no REFUSED or MALFORMED line beyond item 5 (d). V4 the consistency script on the final head: each edited line equals its row's new text, every dated changelog row byte-identical to B, each cited D line holds its quoted sentence. V5 `git diff --name-only` from B to the head lists only TARGET_FILES; the B3 measure after every writer within item 11's caps or ruled. V6 GitNexus detect_changes: docs only. V7 the reviewer units R1a, R1b, R1c check each Tier A row against its G sentence and find no added rule.
+- **7 Defaults** (each "default applied, pending owner sign-off"):
+  - DF1 Fail-closed edit rule: a line no cited record names, or whose new content no record states in words, is an RR row (an owner question carrying its proposed wording), never an edit (item 8).
+  - DF2 RQ-RA-1: rows RA-8, RA-9 and RA-14 are Tier A as a pointer only; their precondition and expected cells stay unchanged.
+  - DF3 The Draft FE spec docs/channels/web/FE/feature_sessions_fe.md is not edited (RC-1), so drift item (1) stays open as an owner question; drift item (4), docs/standards/BUILD-STATUS.md, is not edited either (RC3-6).
+  - DF4 The 24 rows-A E and I rows that name `sessions.hide_exact_address` / `hideExactAddress` also cite G-X1 = D:2144, which states the column and the API field in words, so they stay Tier A (orchestrator correction (a)).
+  - DF5 RC-8 (feature_zalo_channel_tech:182, the stale route `POST /webhook/zalo` to the shipped `POST /api/webhooks/zalo/:token`, header stated by G-RC3) is Tier A under lane block Q2 ("it fixes a stale route"); CB-10 names the example route (orchestrator correction (b)).
+  - DF6 CB1's other RR moves stand (content no cited record states): RC-2, RC-12a-j, RC-13, RD1-4, RC3-50 (orchestrator correction (c)); CB1 kept Tier A RC-5 (the code name is already on zalo :233 and in the shipped route) and RE-4 (it names shipped functions and a migration file; no entity, column or endpoint).
+  - DF7 Provenance labels in the new changelog rows: DD-139..DD-142 "quyết định owner 2026-10-21", DD-143 "quyết định owner 2026-10-22", DD-138 rows "owner ký 2026-10-21" (owner-signed rows of DD-138; none is a D:2346-2350 exception), DD-144, DD-147 and DD-131 their own heading labels (DD-131's own label contains "Owner ký"; "DD-131 OD-7" is the shorter option).
+  - DF8 The two BL lines are English, in the form "Update 2026-10-26 (lane L51 p4-docs-spec-sync-be, docs only): ...", although the drift row's earlier dated line :6084 is Vietnamese; they are Tier A under lane block L51's FILE OWNERSHIP and its Conductor lead (5) (conductor decision D25), not under a D sentence, so their G column is `-`.
+  - DF9 Step 0 ran in parts RA, RB, RC (with RC1, RC3), RD (with RD1, RD2) and RE, each at most 60 tool calls; CA composed rows-A, CB1 rows-B and CB2 this file.
+- **8 RR rows: owner questions, never applied** (each pinned "no edit in L51", default applied, pending owner sign-off; the proposed wording is the row's own new-text cell):
+  - RQ-RA-2, rows RA-16 (feature_billing_lifecycle_tech:423, text of RE-1), RA-17 (feature_session_management_tech:660, RE-3), RA-18 (:662), RA-19 (:795), RA-21 (:405, RE-2): the same "billing-suspended / non-payment" label as the lines D:2231 names, but D:2231 does not list these lines; for RA-16, DD-142 also does not say what case 2/2b/4 (incl. the missing-row fail-closed path) becomes.
+  - RB-18..RB-23 (feature_cross_club_join_tech:151, :278, :279; feature_session_management_tech:955, :969, :983): the same passage and the same stale venue claim, but D:2325 does not list them (RB classed them Tier A; the orchestrator's default is RR).
+  - RR-RB-1, row RB-24 (feature_session_management_tech:243): outside every cited passage and not in D:2325.
+  - RC-1 (docs/channels/web/FE/feature_sessions_fe.md, drift item (1), the `/dashboard/sessions` route): a Draft FE spec, which the lane never edits.
+  - RC-2 (feature_zalo_channel_tech:150, "Opaque `:token`") and RC-13 (:233): lines the drift row does not name, content no cited record states.
+  - RC-12a..RC-12j (feature_zalo_channel_tech:198): the 403 envelope and message are stated in no record (narrow option: the code name only); RC-14 (:233): the body no record states.
+  - RD1-4 (feature_inapp_chat_tech:1169): names `GET /api/chat/channels/:id/messages`, which no cited G quote states (narrow option: drop both endpoint locators); RD1-9 (the POST examples) and RD1-10 (the realtime topics block): file and line in their rows.
+  - RD-7 (`/api/player/dashboard`), RD-9 and RD-10 (feature_session_management_tech:427, :796, the enum), RD-15 (the discovery caching), RD-19 (feature_user_settings_tech:155): RR as part RD wrote them (reason in each row).
+  - RC3-6 (docs/standards/BUILD-STATUS.md, drift item (4)): needs facts git cannot give; RC3-45: U+20AB in FE specs (negative scope); RC3-50: the same :154 pointer as RC-4 with an overlapping old substring; RC3-61: the Indigo/Outfit claims; RC3-65: the docs/channels/web/theme-direction-2026-07.md note; RC3-1, RC3-2, RC3-38: RR as part RC3 wrote them (reason in each row).
+- **9 Lead corrections.** (1) Lane lead (2): DD-142's heading is D:2214 and its follow-up D:2231, not "about :2200"; DD-141, DD-140, DD-139 and DD-138's subsection are at D:2263/:2280, D:2286/:2302, D:2308/:2325 and D:2463-2491, not about :2239, :2261, :2284 and :2422 (3a97c7b). (2) Lane lead (1): the docs-sync row heading is BL:6584 at B (:6580 at d94df98); its 2026-10-24 update, cited as BL:6595 in rows-A's notes (d94df98), is BL:6599 at B. (3) Amendment item 3 put the docs-sync line above :6600, which is the `Source:` line of the 2026-10-24 update: it goes above :6601 (CB1; orchestrator correction (d)). (4) Lane lead (3): feature_user_settings_tech:212 states the rule as a constraint ("không có ký tự ẩn ở bất kỳ vị trí nào") and further says variation selectors stay allowed; both are stale after migration 0069 (strip first, then the existing checks on the stripped value), hence RE-4 and RE-5. (5) The 2026-10-24 BL note says "the 133 code points are stripped first"; 0069:23-25 strips Default_Ignorable_Code_Point minus Bidi_Control (4162 code points in 16 ranges), so the new text names the set and the helper, not a count. (6) RA's rows 17 and 21 are feature_session_management_tech:660 and :405 (RE); DD-139's BE list at D:2325 is exact but not exhaustive (RB-18..RB-24). (7) Drift item (5) names U+20AB files (docs/features/FE/\*, docs/channels/web/FE/feature_home_fe.md) that the row's `scope` line does not list; the scope's web design docs carry 0 U+20AB. (8) design-system's newest changelog row is :940 and zalo_channel_tech's :377; no D line contains `webhooks/zalo` or a chat messages route (CB1).
+- **10 Out of scope, reported (no edit; part RE at d94df98).** O-RE1: U+20AB in 15 docs/features/FE and 3 docs/channels/web/FE files, all outside L51's half (whether each is stale was not measured). O-RE2: Sora in docs/channels/web/design-tokens.md, designer-docs-guide.md and fe-spec-to-design-playbook.md, outside the drift row's scope. O-RE3: the line pin of item 5 (a), a code comment. The orchestrator decides whether any becomes one of the lane's at most 3 new backlog rows.
+- **11 B3.** Lane block caps: 300 docs lines added or changed, 20 files, 0 code lines, 0 migrations. The spec, design-doc and BL edits (Tier A rows, CB1's numstat estimate) are about +107 / -86 in 15 files, 16 with this file; 0 code lines, 0 migrations. This file adds its own lines (this frame plus one line per row of the block); if the 300-line cap counts this file, the lane diff crosses it at this commit, so the orchestrator measures with its b3-measure.sh after this commit and a crossing is a ruling request before the next writer (S1 BUDGET).
+- **12 Closure matrix (12 of 12).** 1 Authority snapshot pinned by SHA: PASS (AUTHORITY_SHA = B; every TARGET_FILES path exists at B or is this file). 2 Decisions in scope are final: PASS (DD-138's owner-signed rows, DD-139..DD-142, DD-143, DD-144, DD-147 and DD-145's table row G-X1; the lane's own choices are item 7 with their labels; no decision changes). 3 Scope IN/OUT and owner clear: PASS (item 3; docs only, 16 files). 4 Dependencies classified: PASS (none hard; L52 later on a disjoint file set, item 4; ci.yml is L41's; PR #50 is not one). 5 Live schema and code match the claims: PASS (items 1-2; every G and E row measured at d94df98, unchanged at B; BL at B; no schema or code claim; migrations untouched). 6 Data, API, state and auth contract complete: PASS (not applicable: spec text follows the cited records; no new entity, column, endpoint or rule). 7 Fail-closed, idempotency, order: PASS (unnamed lines are RR, never edits; dated rows untouched; changelog rows only added; one writer per spec family). 8 Open questions in scope = 0: PASS (every RR pinned "no edit in L51", item 8). 9 Acceptance matrix has expected results: PASS (item 6). 10 Migration, security and rollback pinned: PASS (no migration, secret or PII; no security round because docs only, a judgement void if any code, migration, workflow, script or secret-bearing file enters the diff; rollback = revert the docs PR). 11 First slice has hard dependency merged: PASS (none hard; B was origin/main at the fast-forward). 12 Implementation handoff ready: PASS (the Tier A rows carry exact old and new substrings at B).
+- **13 Verdict.** CODE_READY: every GOAL item of lane block L51 has its rows (GOAL 1: the Tier A E, I and D rows, each with its G sentence or its stale-route or version-pin reason; GOAL 2: the N rows already synced, absent, keep, dated or no line; GOAL 3: the two BL I rows; GOAL 4: item 3), every RR row is pinned as a default (no edit, owner question), so OPEN_QUESTIONS_IN_SCOPE is 0, and no planned edit adds an entity, column, endpoint or rule beyond what a cited record states in words.
+
+Rows format: each line of the block below is one row whose fields are separated by `¦` (a space on each side), of kind G, E, I, D or N; the Tier A E, I and D rows are the exact edits, RR rows are never applied, and the consistency script re-applies the Tier A rows to B and compares the result with the head.
+
+```edits
+G ¦ G-X1 ¦ 2144 ¦ Cột `sessions.hide_exact_address` boolean NOT NULL DEFAULT false
+G ¦ G-142-a ¦ 2222 ¦ gets the 7-day grace, then is DOWNGRADED TO FREE, never suspended by billing
+G ¦ G-142-b ¦ 2222 ¦ keep `suspended` for non-billing (admin / abuse) use
+G ¦ G-142-c ¦ 2228 ¦ sau grace 7 ngày, tenant Host Pro trả phí mà invoice trễ bị hạ xuống Free, không bị `suspended` vì billing
+G ¦ G-142-d ¦ 2228 ¦ `suspended` giữ cho việc không phải billing (admin / abuse)
+G ¦ G-142-e ¦ 2229 ¦ Hàng backlog: `billing-late-host-pro-invoice-downgrade-to-free` (hành vi hạ xuống Free cho Host Pro trễ invoice)
+G ¦ G-142-fa ¦ 2231 ¦ `docs/features/BE/feature_billing_lifecycle_tech.md` (:19, :32, :347, :450, :455, :531)
+G ¦ G-142-fb1 ¦ 2231 ¦ `docs/features/BE/feature_billing_lifecycle_tech.md` (:556, :562, :563)
+G ¦ G-142-fb2 ¦ 2231 ¦ `docs/features/BE/feature_home_tech.md` (:98)
+G ¦ G-142-fb3 ¦ 2231 ¦ `docs/features/BE/feature_session_management_tech.md` (:259, :323, :670, :672, :1005)
+G ¦ G-142-noj ¦ 2257 ¦ Phase 4 không xây job Pro→Free và không xây hook retention (PLAN §5, Q1)
+G ¦ G-139-B1 ¦ 2316 ¦ Venue is PUBLIC by default (reverses DD-06 and L9 M-7). Public cards, discover detail, player web and /me reads show venue name and address to everyone.
+G ¦ G-139-opt ¦ 2316 ¦ (default OFF): when ON, behaviour is the old DD-06 rule (public sees area only; exact venue only for players.status = 'active')
+G ¦ G-139-old ¦ 2323 ¦ Các chỗ khác trong decision log còn nhắc luật cũ (không sửa; DD-139 thắng cho việc hiện venue)
+G ¦ G-139-fu1 ¦ 2325 ¦ `docs/features/BE/feature_cross_club_join_tech.md` (:119, :123, :137, :216, :274, :275) · `docs/features/BE/feature_session_management_tech.md` (:491)
+G ¦ G-139-fu2 ¦ 2325 ¦ Chỉ vế venue của các dòng hợp đồng join (DD-45) (11): `docs/features/BE/feature_session_management_tech.md` (:10, :893, :957, :964) · `docs/features/BE/feature_cross_club_join_tech.md` (:86, :87, :212, :214, :258, :267)
+G ¦ G-045 ¦ 637 ¦ first-entry open join hoặc approval khi full → `waitlisted`, không chiếm capacity, không tạo charge/new-obligation và không lộ venue
+G ¦ G-140-B2 ¦ 2294 ¦ Show the amount owed in the Zalo /join confirmation (active outcome) and in the waitlist-promotion DM
+G ¦ G-140-wl ¦ 2294 ¦ Waitlisted and requested replies stay without an amount. No bank data, no QR (DD-132/DD-135 unchanged).
+G ¦ G-140-fu ¦ 2302 ¦ `docs/features/BE/feature_zalo_channel_tech.md` (:222), 1 dòng: câu trả lời của outcome Active.
+G ¦ G-143-5 ¦ 2198 ¦ when the club owes nothing (free session or fully paid) the /join confirmation shows R16
+G ¦ G-143-pay ¦ 2198 ¦ exactly as /pay does, instead of R17
+G ¦ G-143-keep ¦ 2205 ¦ R17 cho các trường hợp unknown hoặc unavailable
+G ¦ G-143-one ¦ 2205 ¦ dòng số tiền cho đúng MỘT khoản đã biết
+G ¦ G-P11 ¦ 2440 ¦ trả lời `/join` chỉ hiện trạng thái (active / waitlisted at N / requested), cùng chữ cho chỗ mới và chỗ đã có; không số tiền, không địa điểm
+G ¦ G-P11-amend ¦ 2370 ¦ `p3-m9-zalo-player-commands P-11`: **KÝ**, điều chỉnh bởi quyết định B2, tức DD-140
+G ¦ G-Z13 ¦ 2408 ¦ no venue, address, price, roster or name in any DM
+E ¦ RA-1 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 19 ¦ G-142-fa,G-142-a ¦ TierA ¦ suspended → cancelled ¦ (grace 7d) downgrade to Free (DD-142: never suspended by billing)
+E ¦ RA-2 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 32 ¦ G-142-fa,G-142-a ¦ TierA ¦ suspended → cancelled ¦ (grace 7d) downgrade to Free (DD-142: never suspended by billing)
+E ¦ RA-3 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 347 ¦ G-142-fa,G-142-c,G-142-d ¦ TierA ¦ Suspended Action Matrix trên. ¦ Suspended Action Matrix trên. DD-142: invoice trễ sau grace 7 ngày → hạ xuống Free, không bao giờ `suspended` vì billing; `suspended` giữ cho việc không phải billing (admin / abuse).
+E ¦ RA-4 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 450 ¦ G-142-fa,G-142-a,G-142-noj ¦ TierA ¦ grace_end: suspended ¦ grace_end: downgrade to Free (DD-142: never suspended by billing)
+E ¦ RA-5 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 455 ¦ G-142-fa,G-142-c ¦ TierA ¦ `period expired → past_due → suspended` ¦ `period expired → past_due → Free` (DD-142: hạ xuống Free, không `suspended` vì billing)
+E ¦ RA-6 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 531 ¦ G-142-fa,G-142-a ¦ TierA ¦ Past_due → suspended | Grace expired | suspended ¦ Past_due → Free (DD-142) | Grace expired | downgrade to Free; never `suspended` by billing
+E ¦ RA-7 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 556 ¦ G-142-fb1,G-142-b ¦ TierA ¦ subscription suspended (non-payment) ¦ subscription suspended (non-billing: admin / abuse — DD-142)
+E ¦ RA-8 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 562 ¦ G-142-fb1,G-142-a,G-142-e,G-142-noj ¦ TierA ¦ (competing writer, deny path) ¦ (competing writer, deny path) — DD-142: billing không còn suspend (hạ xuống Free); hàng backlog `billing-late-host-pro-invoice-downgrade-to-free`
+E ¦ RA-9 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 563 ¦ G-142-fb1,G-142-a,G-142-e,G-142-noj ¦ TierA ¦ (competing writer, job-deferred path) ¦ (competing writer, job-deferred path) — DD-142: billing không còn suspend (hạ xuống Free); hàng backlog `billing-late-host-pro-invoice-downgrade-to-free`
+E ¦ RA-10 ¦ docs/features/BE/feature_home_tech.md ¦ 98 ¦ G-142-fb2,G-142-d ¦ TierA ¦ CLB suspended (billing) ¦ CLB suspended (admin / abuse — DD-142: không suspended vì billing)
+E ¦ RA-11 ¦ docs/features/BE/feature_session_management_tech.md ¦ 259 ¦ G-142-fb3,G-142-d ¦ TierA ¦ Publish khi tenant billing-`suspended` ¦ Publish khi tenant `suspended` (không phải billing: admin / abuse — DD-142)
+E ¦ RA-12 ¦ docs/features/BE/feature_session_management_tech.md ¦ 323 ¦ G-142-fb3,G-142-d ¦ TierA ¦ khi tenant billing-suspended ¦ khi tenant `suspended` (admin / abuse — DD-142: không suspended vì billing)
+E ¦ RA-13 ¦ docs/features/BE/feature_session_management_tech.md ¦ 670 ¦ G-142-fb3,G-142-d ¦ TierA ¦ khi tenant billing-suspended, ¦ khi tenant `suspended` (admin / abuse — DD-142: không suspended vì billing),
+E ¦ RA-14 ¦ docs/features/BE/feature_session_management_tech.md ¦ 672 ¦ G-142-fb3,G-142-a,G-142-e,G-142-noj ¦ TierA ¦ (Daily Lifecycle Job `past_due→suspended`) ¦ (Daily Lifecycle Job `past_due→suspended` — DD-142: billing không còn suspend (hạ xuống Free); hàng backlog `billing-late-host-pro-invoice-downgrade-to-free`)
+E ¦ RA-15 ¦ docs/features/BE/feature_session_management_tech.md ¦ 1005 ¦ G-142-fb3,G-142-b ¦ TierA ¦ Publish while tenant billing-suspended ¦ Publish while tenant `suspended` (non-billing: admin / abuse — DD-142)
+E ¦ RA-16 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 423 ¦ G-142-c,G-142-d ¦ RR ¦ là non-payment billing. ¦ là non-payment billing (nay `suspended` chỉ còn cho admin / abuse — DD-142: không suspended vì billing).
+E ¦ RA-17 ¦ docs/features/BE/feature_session_management_tech.md ¦ 660 ¦ G-142-c,G-142-d ¦ RR ¦ khi tenant billing-suspended ¦ khi tenant `suspended` (admin / abuse — DD-142: không suspended vì billing)
+E ¦ RA-18 ¦ docs/features/BE/feature_session_management_tech.md ¦ 662 ¦ G-142-d ¦ RR ¦ hoặc tenant billing-suspended, ¦ hoặc tenant `suspended` (admin / abuse — DD-142),
+E ¦ RA-19 ¦ docs/features/BE/feature_session_management_tech.md ¦ 795 ¦ G-142-d ¦ RR ¦ khi tenant billing-suspended, qua ¦ khi tenant `suspended` (admin / abuse — DD-142), qua
+N ¦ RA-20 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 215 ¦ G-142-b ¦ synced ¦ - ¦ Already consistent with DD-142: free never goes through non-payment and is suspended only via ToS/abuse, so no edit.
+E ¦ RA-21 ¦ docs/features/BE/feature_session_management_tech.md ¦ 405 ¦ G-142-c,G-142-d ¦ RR ¦ tenant billing-`suspended` ¦ tenant `suspended` (admin / abuse — DD-142: không suspended vì billing)
+N ¦ RA-22 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 611 ¦ - ¦ dated ¦ - ¦ Dated changelog row (2026-07-24, v2.8c) that mentions the suspend gate: history, never rewritten.
+N ¦ RA-23 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 612 ¦ - ¦ dated ¦ - ¦ Dated changelog row (v2.8b) that mentions the suspend gate: history, never rewritten.
+N ¦ RA-24 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 614 ¦ - ¦ dated ¦ - ¦ Dated changelog row (v2.8) that mentions the suspend gate: history, never rewritten.
+N ¦ RA-25 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.19 · 2026-10-15"; changelog heading :595, header :597, newest row first at :599 (2026-10-15, v2.19): the next unit bumps :4 and adds one new row above :599.
+N ¦ RA-26 ¦ docs/features/BE/feature_home_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 0.6 · 2026-08-10"; changelog heading :293, header :295, newest row first at :297 (2026-08-10, v0.6): the next unit bumps :4 and adds one new row above :297.
+N ¦ RA-27 ¦ docs/features/BE/feature_session_management_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.37 · 2026-10-16"; changelog heading :1106, header :1108, newest row first at :1110 (2026-10-16, v2.37): ONE bump of :4 and ONE new row above :1110 cover both the DD-142 (RA) and the DD-139 (RB) edits.
+E ¦ RB-1 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 86 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ second waitlisted without charge/venue ¦ second waitlisted without charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139)
+E ¦ RB-2 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 87 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ no charge/venue ¦ no charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139)
+E ¦ RB-3 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 119 ¦ G-139-fu1,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ (venue **chỉ** khi `active`; waitlisted chỉ area + position dương) ¦ (venue public theo mặc định, DD-139; khi `sessions.hide_exact_address` ON thì venue **chỉ** khi `active`, waitlisted chỉ area + position dương)
+N ¦ RB-4 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 123 ¦ G-139-opt ¦ synced ¦ - ¦ An active seat sees the venue with the option ON or OFF (DD-139), so the active example's "venue revealed" stays true; the stale half of this example pair is :137 (RB-5).
+E ¦ RB-5 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 137 ¦ G-139-fu1,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ không venue/charge ¦ không charge; venue chỉ ẩn khi `sessions.hide_exact_address` ON, DD-139
+E ¦ RB-6 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 212 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ no charge/venue ¦ no charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139)
+E ¦ RB-7 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 214 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ ; no venue ¦ ; venue hidden only when `sessions.hide_exact_address` is ON (DD-139)
+E ¦ RB-8 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 216 ¦ G-139-fu1,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ waitlisted DTO includes area + position only ¦ waitlisted DTO includes area + position; venue hidden only when `sessions.hide_exact_address` is ON (DD-139)
+E ¦ RB-9 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 258 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ no charge/venue ¦ no charge; venue hidden only when `sessions.hide_exact_address` is ON (DD-139)
+E ¦ RB-10 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 267 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ no charge/venue ¦ no charge; venue hidden only when `sessions.hide_exact_address` is ON (DD-139)
+E ¦ RB-11 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 274 ¦ G-139-fu1,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ Venue hidden before active ¦ Venue hidden before active (`sessions.hide_exact_address` ON, DD-139)
+E ¦ RB-12 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 275 ¦ G-139-fu1,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ Active DTO only ¦ Active DTO; with `sessions.hide_exact_address` OFF also pending/rejected/waitlisted DTOs (DD-139)
+E ¦ RB-13a ¦ docs/features/BE/feature_session_management_tech.md ¦ 10 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ không tạo charge/new-obligation/venue; ¦ không tạo charge/new-obligation (venue chỉ ẩn khi `sessions.hide_exact_address` ON, DD-139);
+E ¦ RB-13b ¦ docs/features/BE/feature_session_management_tech.md ¦ 10 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ vẫn waitlisted/ẩn venue tới verified settlement ¦ vẫn waitlisted (venue chỉ ẩn khi `sessions.hide_exact_address` ON, DD-139) tới verified settlement
+E ¦ RB-14 ¦ docs/features/BE/feature_session_management_tech.md ¦ 491 ¦ G-139-fu1,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ chỉ `players.status='active'` mới thấy venue chi tiết ¦ venue public theo mặc định (DD-139); khi `sessions.hide_exact_address` ON thì chỉ `players.status='active'` mới thấy venue chi tiết
+E ¦ RB-15 ¦ docs/features/BE/feature_session_management_tech.md ¦ 893 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ leave player waitlisted and venue hidden, ¦ leave player waitlisted (venue hidden only when `sessions.hide_exact_address` is ON, DD-139),
+E ¦ RB-16 ¦ docs/features/BE/feature_session_management_tech.md ¦ 957 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ no charge/venue/capacity ¦ no charge/capacity; venue hidden only when `sessions.hide_exact_address` is ON (DD-139)
+E ¦ RB-17 ¦ docs/features/BE/feature_session_management_tech.md ¦ 964 ¦ G-139-fu2,G-045,G-139-old,G-139-B1,G-139-opt,G-X1 ¦ TierA ¦ candidate remains waitlisted/no venue/no charge; ¦ candidate remains waitlisted/no charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139);
+E ¦ RB-18 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 151 ¦ G-139-B1,G-139-opt,G-X1 ¦ RR ¦ không membership/player/charge/venue ¦ không membership/player/charge; venue chỉ ẩn khi `sessions.hide_exact_address` ON, DD-139
+E ¦ RB-19 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 278 ¦ G-045,G-139-B1,G-139-opt,G-X1 ¦ RR ¦ waitlisted path creates no new charge/venue ¦ waitlisted path creates no new charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139)
+E ¦ RB-20 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 279 ¦ G-045,G-139-B1,G-139-opt,G-X1 ¦ RR ¦ full→waitlisted/no new lifecycle/venue ¦ full→waitlisted/no new lifecycle (venue hidden only when `sessions.hide_exact_address` is ON, DD-139)
+E ¦ RB-21 ¦ docs/features/BE/feature_session_management_tech.md ¦ 955 ¦ G-139-B1,G-139-opt,G-X1 ¦ RR ¦ No venue/roster/financial data ¦ No roster/financial data; venue only while `sessions.hide_exact_address` is OFF (DD-139)
+E ¦ RB-22 ¦ docs/features/BE/feature_session_management_tech.md ¦ 969 ¦ G-045,G-139-B1,G-139-opt,G-X1 ¦ RR ¦ full→waitlisted with no new lifecycle/venue; ¦ full→waitlisted with no new lifecycle (venue hidden only when `sessions.hide_exact_address` is ON, DD-139);
+E ¦ RB-23 ¦ docs/features/BE/feature_session_management_tech.md ¦ 983 ¦ G-045,G-139-B1,G-139-opt,G-X1 ¦ RR ¦ no active/charge/venue ¦ no active/charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139)
+E ¦ RB-24 ¦ docs/features/BE/feature_session_management_tech.md ¦ 243 ¦ G-139-B1,G-139-opt,G-X1 ¦ RR ¦ Public endpoint exposes venue/roster ¦ Public endpoint exposes roster, or the venue while `sessions.hide_exact_address` is ON (DD-139)
+E ¦ RB-25 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 222 ¦ G-140-fu,G-140-B2,G-140-wl,G-143-5,G-143-pay,G-143-keep,G-143-one,G-P11-amend,G-Z13 ¦ TierA ¦ [session]! [venue]" ¦ [session]!" + one amount line: exactly ONE known charge → R1amount "Số tiền cần trả cho buổi này: [amount]"; club `known_zero` (free session or fully paid) → R16 "Bạn không có khoản nào cần trả." exactly as `/pay`; unknown/unavailable/absent → R17 (DD-140, DD-143); no venue, no bank data/QR
+N ¦ RB-26 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 223 ¦ G-140-wl ¦ synced ¦ - ¦ The Waitlisted reply carries no amount, no venue and no QR, which is what DD-140 keeps for waitlisted replies.
+E ¦ RB-27 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 224 ¦ G-P11,G-P11-amend,G-140-B2,G-140-wl,G-143-5,G-143-keep ¦ TierA ¦ idempotently ¦ idempotently, same text as a new seat (P-11): active → the Active row (amount line R1amount / R16 when `known_zero` / R17); waitlisted → the Waitlisted row, no amount
+E ¦ RB-28 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 225 ¦ G-140-B2,G-143-5,G-143-keep ¦ TierA ¦ host-review copy ¦ host-review copy; `active` → the Active row (amount line R1amount / R16 when `known_zero` / R17; DD-140, DD-143)
+N ¦ RB-29 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.13 · 2026-08-10"; changelog heading :327, header :329, newest row first at :331 (2026-08-10, v2.13): the next unit bumps :4 and adds one new row above :331.
+N ¦ RB-30 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.8 · 2026-08-10"; changelog heading :373, header :375, newest row first at :377 (2026-08-10, v2.8): ONE bump of :4 and ONE new row above :377, shared with any drift-item (2) edit of another part.
+G ¦ G-RE1 ¦ 2228 ¦ `suspended` giữ cho việc không phải billing (admin / abuse)
+G ¦ G-RE2 ¦ 2183 ¦ Mục 6 mở rộng strip sang đúng các tên owner liệt kê: `persons.display_name` (host roster, join-request inbox, chat author labels)
+G ¦ G-RE3 ¦ 1997 ¦ strip S (helper 0068 = Default_Ignorable trừ Bidi_Control) -> trim T (25 code point) -> từ chối giá trị có code point thuộc tập R hoặc không còn ký tự nhìn thấy V
+G ¦ G-RE4 ¦ 2006 ¦ quy tắc emoji (ZWJ và VS16 bị strip, không ngoại lệ: D4 của conductor)
+E ¦ RE-4 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 212 ¦ G-RE2,G-RE3 ¦ TierA ¦ `persons.display_name`: cắt đúng ¦ `persons.display_name`: strip trước các code point `Default_Ignorable_Code_Point` trừ Bidi_Control (helper `public_name_strip_invisible` của 0068, DD-144; `person_profile_update` tạo lại ở `0069_member_name_invisible_chars.sql`), rồi cắt đúng
+E ¦ RE-5 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 212 ¦ G-RE2,G-RE4 ¦ TierA ¦ variation selector vẫn được phép vì emoji và biến thể chữ Hán cần chúng, nhưng ¦ variation selector cũng bị strip (chúng thuộc `Default_Ignorable_Code_Point`; DD-147: ZWJ và VS16 bị strip, không ngoại lệ), và
+N ¦ RE-6 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 457 ¦ - ¦ dated ¦ - ¦ Dated changelog row (2026-10-15, v0.22, PR #52 after the final round): history, never rewritten.
+N ¦ RE-7 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 458 ¦ - ¦ dated ¦ - ¦ Dated changelog row (2026-10-15, v0.21, PR #52 review round 2): history, never rewritten.
+N ¦ RE-8 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 is "> **Version:** 0.22 · 2026-10-15" and the changelog (heading :453, header :455, separator :456) puts its newest row first at :457 (2026-10-15, v0.22; old rows v0.1-v0.3 sit at :477-:479), so the composer bumps :4 and adds one row above :457.
+N ¦ RE-9 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Only if RE-1 is ruled in (RA's TierA rows of this file need the same): version line :4 "> **Version:** 2.19 · 2026-10-15", changelog heading :595, newest row :599 (2026-10-15, v2.19).
+N ¦ RE-10 ¦ docs/features/BE/feature_session_management_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Only if RE-2 or RE-3 is ruled in (RA's TierA rows of this file need the same): version line :4 "> **Version:** 2.37 · 2026-10-16", changelog heading :1106, newest row :1110 (2026-10-16, v2.37).
+G ¦ G-RC1 ¦ 3289 ¦ ## DD-131 — Owner ký OD-0…OD-9 (14/10): đóng DD-123…DD-128 và DD-130
+G ¦ G-RC2 ¦ 3317 ¦ **OD-2 — DD-126 (Zalo ingress, PR #47). Ký shape:** body `{event_name:"message.text.received", message:{from.id,
+G ¦ G-RC3 ¦ 3318 ¦ from.display_name, chat.id, chat.chat_type, message_id (string), date (epoch ms), text}}`; header `X-Bot-Api-Secret-Token`
+G ¦ G-RC4 ¦ 3319 ¦ (so sánh timing-safe, sai ⇒ 403)
+G ¦ G-RC5 ¦ 3370 ¦ Shape đã ký được triển khai: `X-Bot-Api-Secret-Token` sai ⇒ 403
+N ¦ RC-1 ¦ docs/channels/web/FE/feature_sessions_fe.md ¦ 11 ¦ - ¦ RR ¦ - ¦ The file is a Draft FE design spec (":11 > **FE design status:** Draft") that the lane NEGATIVE SCOPE excludes, while the GOAL names drift item (1) (15 `/dashboard/sessions` on 13 lines, built route `apps/web/app/c/[tenantId]/sessions/`): recommended no edit in L51 and item (1) left open in the drift row's L51 update line.
+E ¦ RC-2 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 150 ¦ G-RC2,G-RC3,G-RC4 ¦ RR ¦ `/webhook/zalo` | Signed (Zalo webhook signature) ¦ `/api/webhooks/zalo/:token` | Opaque `:token` + header `X-Bot-Api-Secret-Token` (so sánh timing-safe, sai ⇒ 403; DD-126)
+N ¦ RC-3 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 152 ¦ G-RC2 ¦ synced ¦ - ¦ The M3a proposal note still reads "chờ owner ký" but :154 directly below records that the owner signed it (DD-126), so the pair is the spec's in-place record of proposal and signing and needs no edit.
+E ¦ RC-4 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 154 ¦ G-RC1 ¦ TierA ¦ DD-131 (pending in PR #51) ¦ DD-131
+E ¦ RC-5 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 163 ¦ G-RC4,G-RC5 ¦ TierA ¦ 400 | `WEBHOOK_SIGNATURE_INVALID` | — | Zalo signature mismatch ¦ 403 | `INVALID_WEBHOOK_SECRET` | — | Header `X-Bot-Api-Secret-Token` sai (OD-2/DD-126)
+N ¦ RC-6 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 164 ¦ - ¦ synced ¦ - ¦ `WEBHOOK_PAYLOAD_MALFORMED` 400 matches the shipped route (route.ts:98, status 400).
+N ¦ RC-7 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 165 ¦ - ¦ synced ¦ - ¦ `WEBHOOK_RATE_LIMITED` 429 matches the shipped route (route.ts:88 and :95).
+E ¦ RC-8 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 182 ¦ G-RC2,G-RC3 ¦ TierA ¦ `POST /webhook/zalo`** — signature hợp lệ ¦ `POST /api/webhooks/zalo/:token`** — header `X-Bot-Api-Secret-Token` hợp lệ
+D ¦ RC-9a ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦ -
+D ¦ RC-9b ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 187 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦ -
+D ¦ RC-9c ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 188 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦ -
+D ¦ RC-9d ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 189 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦ -
+I ¦ RC-9e ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦   "event_name": "message.text.received",
+I ¦ RC-9f ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦   "message": {
+I ¦ RC-9g ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦     "from": { "id": "zalo_user_id", "display_name": "zalo_display_name" },
+I ¦ RC-9h ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦     "chat": { "id": "zalo_chat_id", "chat_type": "zalo_chat_type" },
+I ¦ RC-9i ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦     "message_id": "zalo_message_id",
+I ¦ RC-9j ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦     "date": 1722000000000,
+I ¦ RC-9k ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦     "text": "1"
+I ¦ RC-9l ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 186 ¦ G-RC2,G-RC3 ¦ TierA ¦ - ¦   }
+N ¦ RC-10 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 193 ¦ - ¦ synced ¦ - ¦ "Response: `200 OK` (ACK)." still holds; OD-2's ack-then-async order is amended by DD-134 (d) (route.ts:40-41 comment) and is not this line's claim.
+E ¦ RC-11 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 195 ¦ G-RC4,G-RC5 ¦ TierA ¦ Signature sai: ¦ Header `X-Bot-Api-Secret-Token` sai (`403`):
+D ¦ RC-12a ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦ -
+I ¦ RC-12b ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦ {
+I ¦ RC-12c ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦   "data": null,
+I ¦ RC-12d ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦   "error": {
+I ¦ RC-12e ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦     "code": "INVALID_WEBHOOK_SECRET",
+I ¦ RC-12f ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦     "message": "Yêu cầu không hợp lệ.",
+I ¦ RC-12g ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦     "statusCode": 403
+I ¦ RC-12h ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦   },
+I ¦ RC-12i ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦   "meta": { "requestId": "req_<uuid>" }
+I ¦ RC-12j ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 198 ¦ G-RC5 ¦ RR ¦ - ¦ }
+E ¦ RC-13 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 233 ¦ G-RC4,G-RC5 ¦ RR ¦ pin ở `feature_connector_onboarding_tech.md` §3 (`401 INVALID_WEBHOOK_SECRET` ¦ theo OD-2/DD-126 (`403 INVALID_WEBHOOK_SECRET`
+E ¦ RC-14 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 233 ¦ - ¦ RR ¦ không trả nội dung ¦ trả envelope lỗi chuẩn (`err` của `apps/web/lib/api-envelope.ts`)
+N ¦ RC-15 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line ":4 > **Version:** 2.8 · 2026-08-10"; "### Changelog" :373, newest row :377 ("| 2026-08-10 | v2.8 |", newest first; :388-:389 hold v1.0/v2.0 out of order); part RB edits this file too, so one bump and one row cover both parts.
+E ¦ RC-16 ¦ docs/features/README.md ¦ 77 ¦ - ¦ TierA ¦ identity.md` v1.11 ¦ identity.md` v1.12
+E ¦ RC-17 ¦ docs/features/README.md ¦ 77 ¦ - ¦ TierA ¦ identity_tech.md` v1.13 ¦ identity_tech.md` v1.19
+N ¦ RC-18 ¦ docs/features/README.md ¦ 29 ¦ - ¦ TierA ¦ - ¦ Version line ":29 > **Version:** 2.67 · 2026-08-27 *(2.66 · 2026-08-25)*"; "## Changelog" :158, newest row :162 (v2.67, a one-cell version sync: the precedent that this edit gets its own row and a bump).
+G ¦ G-RC3-1 ¦ 3331 ¦ (b) **một** formatter VND dùng chung cho web: dấu chấm phân nghìn, theo sau là chữ thường **U+0111**
+G ¦ G-RC3-2 ¦ 3332 ¦ (`đ`), không dấu cách, không bao giờ U+20AB
+G ¦ G-RC3-3 ¦ 3349 ¦ Heading font **rời Sora** (không có subset `vietnamese`) sang một face **có**
+G ¦ G-RC3-4 ¦ 3350 ¦ subset tiếng Việt; đề xuất **Be Vietnam Pro**.
+G ¦ G-RC3-5 ¦ 3352 ¦ giá trị "Sora heading" trong DD-122 D1 + `design-tokens.md` được đổi theo khi mục này ship.
+G ¦ G-RC3-6 ¦ 3289 ¦ ## DD-131 — Owner ký OD-0
+N ¦ RC3-1 ¦ docs/standards/BUILD-STATUS.md ¦ 5 ¦ - ¦ RR ¦ - ¦ The header "live-truth refresh 2026-09-19 tại main@12f5191" is stale (134 merges since, tail 0071) but bringing it current needs a real test run, the Luật 4 counts, milestone statuses and the ROADMAP/HANDOFF mirror versions, which no git command gives; recommend leave to a re-pin lane.
+I ¦ RC3-2 ¦ docs/standards/BUILD-STATUS.md ¦ 8 ¦ - ¦ RR ¦ - ¦ > **⚠️ 2026-10-26 (L51, đo tại `d94df98`):** các block dưới chưa re-pin từ `12f5191` (19/09): `git rev-list --count --merges 12f5191..d94df98` = 134, migration tail `0071_zalo_dm_promotion_start_definer.sql`; mọi số trong các block dưới là lịch sử tới lần re-pin kế tiếp (ROADMAP + HANDOFF + BUILD-STATUS cùng lúc, chạy lại thật).
+N ¦ RC3-3 ¦ docs/standards/BUILD-STATUS.md ¦ 8 ¦ - ¦ dated ¦ - ¦ The 2026-09-19 LIVE TRUTH block (:8-:18) is a dated snapshot: history.
+N ¦ RC3-4 ¦ docs/standards/BUILD-STATUS.md ¦ 20 ¦ - ¦ dated ¦ - ¦ The 2026-09-15 LIVE TRUTH block is a dated snapshot: history.
+N ¦ RC3-5 ¦ docs/standards/BUILD-STATUS.md ¦ 86 ¦ - ¦ dated ¦ - ¦ The only M4 line ("FE: HOLD → PENDING theo lệnh owner 13/08 ... DD-81/M0.3/M4") sits in an older dated block: history.
+N ¦ RC3-6 ¦ docs/standards/BUILD-STATUS.md ¦ - ¦ - ¦ RR ¦ - ¦ No version / no changelog (a living doc of dated LIVE TRUTH blocks; grep version/changelog finds only body lines :55, :109, :116).
+E ¦ RC3-10 ¦ docs/standards/design-system.md ¦ 9 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ (Energetic Orange/Sora) ¦ (Energetic Orange/Be Vietnam Pro)
+E ¦ RC3-11 ¦ docs/standards/design-system.md ¦ 38 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ | Sora | ¦ | Be Vietnam Pro |
+E ¦ RC3-12 ¦ docs/standards/design-system.md ¦ 326 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ 'Sora', ¦ 'Be Vietnam Pro',
+E ¦ RC3-13 ¦ docs/standards/design-system.md ¦ 336 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ family=Sora: ¦ family=Be+Vietnam+Pro:
+E ¦ RC3-14 ¦ docs/standards/design-system.md ¦ 339 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ Sora hỗ trợ Vietnamese glyphs — đã verify. ¦ Sora không có subset `vietnamese` nên heading dùng Be Vietnam Pro, face có subset tiếng Việt (DD-131 OD-7).
+E ¦ RC3-15 ¦ docs/standards/design-system.md ¦ 348 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ | Sora | ¦ | Be Vietnam Pro |
+E ¦ RC3-16 ¦ docs/standards/design-system.md ¦ 349 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ | Sora | ¦ | Be Vietnam Pro |
+E ¦ RC3-17 ¦ docs/standards/design-system.md ¦ 350 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ | Sora | ¦ | Be Vietnam Pro |
+E ¦ RC3-18 ¦ docs/standards/design-system.md ¦ 351 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ | Sora | ¦ | Be Vietnam Pro |
+E ¦ RC3-19 ¦ docs/standards/design-system.md ¦ 352 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ | Sora | ¦ | Be Vietnam Pro |
+N ¦ RC3-61 ¦ docs/standards/design-system.md ¦ 9 ¦ - ¦ RR ¦ - ¦ The "current active (Indigo/Outfit)" claims here, at :38, README.md:167 and designer-kickoff.md:48 may be stale given apps/web/app/layout.tsx:2, but no record names them: leave, possibly an out-of-scope backlog row.
+E ¦ RC3-20 ¦ docs/channels/web/README.md ¦ 19 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ + Sora/Inter, ¦ + Sora/Inter (heading nay là Be Vietnam Pro theo DD-131 OD-7),
+E ¦ RC3-21 ¦ docs/channels/web/README.md ¦ 167 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ **Target DD-81:** Sora headings ¦ **Target DD-81 + DD-131 OD-7:** Be Vietnam Pro headings
+N ¦ RC3-22 ¦ docs/channels/web/README.md ¦ 323 ¦ - ¦ dated ¦ - ¦ Changelog row 2026-07-28 v0.6: history.
+N ¦ RC3-23 ¦ docs/channels/web/design-brief.md ¦ 10 ¦ - ¦ dated ¦ - ¦ Dated banner "Cập nhật DD-79/DD-81 (19/07/2026; current mirror 28/07)": history.
+E ¦ RC3-24 ¦ docs/channels/web/design-brief.md ¦ 515 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ **Target DD-81:** Sora headings ¦ **Target DD-81 + DD-131 OD-7:** Be Vietnam Pro headings
+N ¦ RC3-25 ¦ docs/channels/web/design-brief.md ¦ 614 ¦ - ¦ dated ¦ - ¦ Changelog row 28/07/2026 v2.2: history.
+E ¦ RC3-26 ¦ docs/channels/web/designer-kickoff.md ¦ 48 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ + Sora/Inter. ¦ + Sora/Inter (heading nay là Be Vietnam Pro theo DD-131 OD-7).
+E ¦ RC3-27 ¦ docs/channels/web/designer-kickoff.md ¦ 91 ¦ G-RC3-3,G-RC3-4 ¦ TierA ¦ Sora/Inter ¦ Be Vietnam Pro/Inter
+N ¦ RC3-28 ¦ docs/channels/web/designer-kickoff.md ¦ 133 ¦ - ¦ dated ¦ - ¦ Changelog row 28/07/2026 0.7: history.
+N ¦ RC3-30 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 5 ¦ G-RC3-3 ¦ dated ¦ - ¦ Purpose line of a dated record of the July DD-81 direction: history.
+N ¦ RC3-31 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 38 ¦ G-RC3-3 ¦ dated ¦ - ¦ Font proposal of the July direction: history.
+N ¦ RC3-32 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 40 ¦ G-RC3-3 ¦ dated ¦ - ¦ "Đã chọn (DD-81, owner 2026-07-28)": history.
+N ¦ RC3-33 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 63 ¦ G-RC3-3 ¦ dated ¦ - ¦ "Target direction (✅ DD-81, owner 2026-07-28)": history.
+N ¦ RC3-34 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 73 ¦ G-RC3-3 ¦ dated ¦ - ¦ A done checklist step of DD-81: history.
+N ¦ RC3-35 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 100 ¦ G-RC3-3 ¦ dated ¦ - ¦ Benchmark note of the July brief: history.
+N ¦ RC3-36 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 115 ¦ - ¦ dated ¦ - ¦ Changelog row 28/07/2026 0.8: history.
+N ¦ RC3-37 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 122 ¦ - ¦ dated ¦ - ¦ Changelog row 16/07/2026 0.1: history.
+I ¦ RC3-38 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 5 ¦ G-RC3-3,G-RC3-4 ¦ RR ¦ - ¦ > **⚠️ Cập nhật 2026-10-26 (DD-131 OD-7):** heading font của target này không còn là Sora: OD-7 chuyển heading sang **Be Vietnam Pro** (Sora không có subset `vietnamese`). Các dòng Sora bên dưới là lịch sử của DD-81.
+N ¦ RC3-40 ¦ docs/channels/web/theme-direction-2026-07.md ¦ - ¦ G-RC3-1,G-RC3-2 ¦ synced ¦ - ¦ 0 lines with U+20AB (character or literal) at B; the same query finds 30 in docs/features/FE/feature_payment_reconcile.md.
+N ¦ RC3-41 ¦ docs/standards/design-system.md ¦ - ¦ G-RC3-1,G-RC3-2 ¦ synced ¦ - ¦ 0 lines with U+20AB (character or literal) at B.
+N ¦ RC3-42 ¦ docs/channels/web/README.md ¦ - ¦ G-RC3-1,G-RC3-2 ¦ synced ¦ - ¦ 0 lines with U+20AB (character or literal) at B.
+N ¦ RC3-43 ¦ docs/channels/web/design-brief.md ¦ - ¦ G-RC3-1,G-RC3-2 ¦ synced ¦ - ¦ 0 lines with U+20AB (character or literal) at B.
+N ¦ RC3-44 ¦ docs/channels/web/designer-kickoff.md ¦ - ¦ G-RC3-1,G-RC3-2 ¦ synced ¦ - ¦ 0 lines with U+20AB (character or literal) at B.
+N ¦ RC3-45 ¦ docs/features/FE/feature_payment_reconcile.md ¦ - ¦ G-RC3-1,G-RC3-2 ¦ RR ¦ - ¦ The U+20AB remainder sits in FE specs (L52's: payment_reconcile 30, billing_lifecycle 6, home 5, marketplace_discovery 5, club_assistant 4, inapp_chat 4, ...) and in docs/channels/web/FE/* and docs/channels/zalo/README.md (neither lane): leave to L52 or a later lane.
+N ¦ RC3-46 ¦ .github/workflows/ci.yml ¦ 130 ¦ G-RC3-3 ¦ noline ¦ - ¦ "next/font/google downloads Sora + Inter" is lane L41's comment (the row says :126); L51 does not edit it.
+N ¦ RC3-50 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 154 ¦ G-RC3-6 ¦ RR ¦ - ¦ Same stale PR-status pointer as RC-4 (TierA: old `DD-131 (pending in PR #51)` -> `DD-131`), whose old substring overlaps this one: CB1 keeps RC-4 and turns this alternative wording `(PR #51 đã merge)` into a no-edit row.
+N ¦ RC3-60 ¦ docs/standards/design-system.md ¦ 3 ¦ - ¦ TierA ¦ - ¦ Version line :3 "> **Version:** 1.1 · 2026-08-07"; "## Changelog" :936, table header :938 "| Ngày | Version | Thay đổi |"; newest row :940 "| 07/08/2026 | 1.1 |" (CB1 measured it at B; rows newest first).
+N ¦ RC3-62 ¦ docs/channels/web/README.md ¦ 6 ¦ - ¦ TierA ¦ - ¦ Version line :6 "> **Version:** v0.9 · 2026-10-15"; newest changelog row :321 "| 2026-10-15 | v0.9 |" (rows newest first).
+N ¦ RC3-63 ¦ docs/channels/web/design-brief.md ¦ 3 ¦ - ¦ TierA ¦ - ¦ Version line :3 "> **Version:** 2.4 · 2026-08-07"; "## Changelog" :608; newest row :612 "| 07/08/2026 | v2.4 |".
+N ¦ RC3-64 ¦ docs/channels/web/designer-kickoff.md ¦ 18 ¦ - ¦ TierA ¦ - ¦ Version on the status line :18 "**Version:** 0.9 · 2026-08-07"; "## Changelog" :127; newest row :131 "| 07/08/2026 | 0.9 |".
+N ¦ RC3-65 ¦ docs/channels/web/theme-direction-2026-07.md ¦ 3 ¦ - ¦ RR ¦ - ¦ Version on the status line :3 "**Version:** 0.9 · 2026-07-28" (only if RC3-38 is ruled in); "## Changelog" :110, header :112; newest row :114 "| 28/07/2026 | 0.9 | Mirror primary plan" (rows newest first).
+N ¦ RC3-66 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.8 · 2026-08-10"; "### Changelog" :373 (under "## 6. Rollout Plan + Changelog" :353), table header :375 "| Date | Version | Thay đổi |"; newest row :377 "| 2026-08-10 | v2.8 |" (CB1 measured it at B).
+G ¦ G-RD1-1 ¦ 2345 ¦ "Quyết định cần mắt chủ": signed all rows EXCEPT:
+G ¦ G-RD1-2 ¦ 2348 ¦ p3-osv-advisories D-8 (`next` advisories untouched): signed as TEMPORARY only
+G ¦ G-RD1-3 ¦ 2351 ¦ 2. Every per-lane table: signed in full.
+G ¦ G-RD1-4 ¦ 2469 ¦ | `feature_inapp_chat_tech.md` :944 | Tên NOTIFY theo từng channel: `chat_` nối với id channel | Một channel NOTIFY duy nhất `chat_realtime` | L14 V-5 · #83 |
+G ¦ G-RD1-5 ¦ 2912 ¦ p3-m10-chat-core V-5 | NOTIFY channel `chat_realtime` (one database-wide name), payload = message id as text, once per effective change
+G ¦ G-RD1-6 ¦ 2470 ¦ | `feature_inapp_chat_tech.md` :1140 | Dòng route `GET /api/chat/channels`; không có `viewer` | Response có thêm `viewer {canModerate, canPostRestricted}` | L15b · #88 |
+G ¦ G-RD1-7 ¦ 3043 ¦ p3-m10-chat-viewer-capabilities D7 | `viewer` không phạm luật whitelist `feature_inapp_chat_tech.md:1169`; thêm `viewer` vào spec là follow-up
+G ¦ G-RD1-8 ¦ 2471 ¦ | `feature_inapp_chat_tech.md` :1158 | `GET /api/chat/subscribe`: SSE theo topic của từng channel (`tenant:<id>:chat:<channel>` cho club, `person:<id>:chat` cho DM) | Một stream SSE cho cả tenant | L15 D-13 · #86 |
+G ¦ G-RD1-9 ¦ 2982 ¦ p3-m10-chat-api-live D-13 | (amended) một stream toàn tenant `GET /api/chat/subscribe?tenant=`, khác tech:1158
+G ¦ G-RD1-10 ¦ 2472 ¦ | `feature_inapp_chat_tech.md` :1169 | Tên field bên dưới là whitelist DTO canonical; `authorLabel` không có ở :1203-1207 và :1239 | DTO có thêm `authorLabel` và `viewer` | L15a · #87; L15b · #88 |
+G ¦ G-RD1-11 ¦ 3030 ¦ p3-m10-chat-author-labels L-5 | `authorLabel: string \| null` chỉ trên `ChatLiveMessageDto`; DTO tombstone giữ bốn khoá
+G ¦ G-RD1-12 ¦ 2478 ¦ L15 D-8 (PR #86): gửi trùng tin trả `200 {duplicate:true}`; `feature_inapp_chat_tech.md` :1301 ghi 409.
+G ¦ G-RD1-13 ¦ 2977 ¦ p3-m10-chat-api-live D-8 | `CHAT_DUP_MESSAGE` → 200 kèm bản gốc và `duplicate: true`, thay cho 409 của tech:1301
+G ¦ G-RD1-14 ¦ 2479 ¦ L14 V-14 (PR #83): DD-86 ghi `assistant_enabled` true; code của lane đặt mặc định false.
+G ¦ G-RD1-15 ¦ 2490 ¦ Người phụ trách từng spec đồng bộ các mục này sau khi owner ký; entry này không sửa spec Reviewed nào.
+G ¦ G-RD1-16 ¦ 2979 ¦ p3-m10-chat-api-live D-10 | POST và PATCH trả id và metadata, không bao giờ trả body
+E ¦ RD1-1 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 944 ¦ G-RD1-4,G-RD1-5 ¦ TierA ¦ 'chat_' || p_channel::text ¦ 'chat_realtime'
+E ¦ RD1-2 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1140 ¦ G-RD1-6,G-RD1-7 ¦ TierA ¦ member + DM) ¦ member + DM); response có thêm `viewer {canModerate, canPostRestricted}` (L15b D7, DD-138)
+E ¦ RD1-3 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1158 ¦ G-RD1-8,G-RD1-9 ¦ TierA ¦ SSE — topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) ¦ SSE — một stream toàn tenant `GET /api/chat/subscribe?tenant=` (L15 D-13, DD-138); các topic `tenant:<id>:chat:<channel>` (club) / `person:<id>:chat` (dm) không ship
+E ¦ RD1-4 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1169 ¦ G-RD1-10,G-RD1-11,G-RD1-7 ¦ RR ¦ không đổi fingerprint nghiệp vụ. ¦ không đổi fingerprint nghiệp vụ. Đã ship thêm (DD-138): `authorLabel: string | null` chỉ trên `ChatLiveMessageDto` của `GET /api/chat/channels/:id/messages`, DTO tombstone giữ bốn khoá (L15a L-5); `viewer {canModerate, canPostRestricted}` trên response `GET /api/chat/channels` không phạm whitelist này (L15b D7).
+E ¦ RD1-5 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1301 ¦ G-RD1-12,G-RD1-13 ¦ TierA ¦ 409 ¦ 200
+E ¦ RD1-6 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1301 ¦ G-RD1-13,G-RD1-16 ¦ TierA ¦ trả message cũ ¦ trả id và metadata của bản gốc kèm `duplicate: true`, không trả body (L15 D-8, D-10; DD-138)
+N ¦ RD1-7 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1203 ¦ G-RD1-10,G-RD1-11 ¦ synced ¦ - ¦ F:1203-1207 are the POST `/api/chat/channels/:id/messages` 200 example (F:1171, F:1199) and L15a L-5 puts `authorLabel` only on `ChatLiveMessageDto` of the GET list (messages/route.ts:19-32), so its absence here is correct: the named drift is fixed at F:1169 (RD1-4), no edit here.
+N ¦ RD1-8 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1239 ¦ G-RD1-10,G-RD1-11 ¦ synced ¦ - ¦ F:1239 is the POST duplicate-reply example (F:1236), not a GET-list DTO, so `authorLabel` correctly stays absent (same reason as RD1-7): no edit for the named drift.
+N ¦ RD1-9 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1208 ¦ G-RD1-16,G-RD1-13 ¦ RR ¦ - ¦ Not named by the DD-138 subsection: the POST examples F:1199-1234 (`data.message` with `body` at F:1208) and F:1236-1240 (`data.message {id, channelId, authorType, createdAt}`) contradict signed L15 D-10 and the shipped reply `{id, createdAt, duplicate}` (messages/route.ts:54, :66-67); proposal: owner or conductor rules whether a later docs lane rewrites both examples to `{ "data": { "id": "…", "createdAt": "…", "duplicate": false } }` (true in the duplicate case) citing L15 D-8/D-10; L51 makes no edit.
+N ¦ RD1-10 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1289 ¦ G-RD1-9 ¦ RR ¦ - ¦ Not named by the record (it names F:1158 only): the `### Realtime Authorization` text block F:1288-1292 still lists the per-channel and per-person topics that L15 D-13 replaced (shipped: subscribe/route.ts:19, tenant stream only); proposal, applied only on a ruling: one note line above F:1288 "L15 D-13 (DD-138): đã ship một stream toàn tenant `GET /api/chat/subscribe?tenant=`; hai topic dưới đây không ship".
+N ¦ RD1-11 ¦ docs/standards/decisions.md ¦ - ¦ G-RD1-14 ¦ noline ¦ - ¦ The L14 V-14 bullet names DD-86 (a decision record the lane never edits) and no spec line, and `grep V-14` over the L14 table D:2905-2965 is empty (no per-lane row); F:108 and F:1159 describe the per-`post_policy` derivation of `assistant_enabled`, the record does not name them, and RD1 did not measure whether they relate to V-14: no edit.
+N ¦ RD1-12 ¦ docs/features/FE/feature_chat_fe.md ¦ - ¦ G-RD1-12 ¦ noline ¦ - ¦ D:2478 notes this FE spec still says 409, but it is Draft and an FE file (L52's half, negative scope): never edited by L51.
+N ¦ RD1-13 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line F:4 `> **Version:** 0.28 · 2026-08-25`; `### Changelog` F:1629, header F:1631, separator F:1632, newest row F:1633 (`| 2026-08-25 | v0.28 | ...`, newest first): the composer bumps F:4 and adds one new row between F:1632 and F:1633.
+G ¦ G-RD1 ¦ 2345 ¦ > 1. "Quyết định cần mắt chủ": signed all rows EXCEPT:
+G ¦ G-RD2 ¦ 2346 ¦ L9 M-7 (venue only when active): REJECTED, replaced by decision B1.
+G ¦ G-RD3 ¦ 2350 ¦ L11 U-15 and L3 D-14 (flags default false): superseded by decision B3.
+G ¦ G-RD4 ¦ 2351 ¦ > 2. Every per-lane table: signed in full.
+G ¦ G-RD5 ¦ 2352 ¦ 3. M-11 (L16c #90 chat-context returns tenantId to the caller's own ACTIVE membership): signed.
+G ¦ G-RD6 ¦ 2459 ¦ Spec không được sửa: hai dòng :278 và :287 giữ nguyên.
+G ¦ G-RD7 ¦ 2461 ¦ **Owner đã ký M-11 ngày 2026-10-21 (xem "Kết quả ký của owner (2026-10-21)").**
+G ¦ G-RD8 ¦ 2490 ¦ Người phụ trách từng spec đồng bộ các mục này sau khi owner ký; entry này không sửa spec Reviewed nào.
+G ¦ G-RD9 ¦ 2412 ¦ `INVALID_CHANNEL` (HTTP 400) for every channel value except the string `zalo`, `messenger` included; enforced in the command, zero writes
+G ¦ G-RD10 ¦ 2412 ¦ thu hẹp enum zalo và messenger của BE :342 cho MVP.
+G ¦ G-RD11 ¦ 2482 ¦ - L4b (PR #69): `feature_session_management_tech.md` :342 (enum `zalo`/`messenger`; code của lane chỉ nhận `zalo`).
+G ¦ G-RD12 ¦ 2707 ¦ per-account buckets: `me-clubs-read` 20 per 60 s, `me-sessions-read` 30 per 60 s, `me-charges-read` 20 per 60 s, `me-requests-read` 30 per 60 s
+G ¦ G-RD13 ¦ 2707 ¦ route thật là `/api/me/*` và `requests` không có dòng trong spec (PR OPEN 5).
+G ¦ G-RD14 ¦ 2480 ¦ - L9 (PR #70): `feature_player_view_tech.md` :207-214 liệt kê các path rate-limit `/api/player/*`; code của L9 là `/api/me/{clubs,sessions,charges,requests}`.
+G ¦ G-RD15 ¦ 2787 ¦ DD-41 keys emitted only when non-NULL (all NULL today); `level_*` filters => `INVALID_FILTER`
+G ¦ G-RD16 ¦ 2787 ¦ Chưa có nguồn cho các cột DD-41 nên chỉ phát khi khác NULL và từ chối bộ lọc `level_*` tới khi có nguồn.
+G ¦ G-RD17 ¦ 2793 ¦ `skill`, `level_*`, unknown or repeated params => `INVALID_FILTER`
+G ¦ G-RD18 ¦ 2481 ¦ :202-209 (caching; code của lane không có)
+G ¦ G-RD19 ¦ 2820 ¦ settings API extends GET / PATCH `/api/me/profile`; no `PUT /api/me/settings`
+G ¦ G-RD20 ¦ 2821 ¦ per-gender prices ride POST `/api/sessions` and PUT `/api/sessions/[id]`; no `PATCH /api/sessions/:id/pricing`
+G ¦ G-RD21 ¦ 2483 ¦ - L11 (PR #76): `feature_user_settings_tech.md` :153-154 :156 (các route đã bị `/api/me/profile` và `/api/sessions` thay thế; nguồn: L11 readiness :74, PR #76 body :241).
+G ¦ G-RD22 ¦ 2473 ¦ | `feature_player_view_tech.md` :278 | Wrapper `/api/me/charges` (`{clubRef, clubLabel, status}`) không chứa raw tenant ID |
+G ¦ G-RD23 ¦ 2474 ¦ | `feature_player_view_tech.md` :287 | Hàng lỗi: ref sai actor, hết hạn hoặc replay thì hiện generic invalid/reload picker; không fallback sang raw tenant id |
+G ¦ G-RD24 ¦ 2479 ¦ - L14 V-14 (PR #83): DD-86 ghi `assistant_enabled` true; code của lane đặt mặc định false.
+G ¦ G-RD25 ¦ 2484 ¦ (nguồn: các dòng readiness của L12; chưa mở dòng spec nào)
+G ¦ G-RD26 ¦ 2485 ¦ reminders/holds (chưa mở file spec).
+G ¦ G-RD27 ¦ 2486 ¦ - L10a (PR #71): tám spec vẫn nhắc `club_display_name` hoặc `alias` (L10a readiness :107-108 F-18, :368 O-3).
+G ¦ G-RD28 ¦ 2487 ¦ - L7 (PR #65): các spec Reviewed có nhắc `sessionOccupancy` cần đồng bộ tài liệu (L7 readiness :183; PR #65 body :142).
+G ¦ G-RD29 ¦ 2488 ¦ - L16 (PR #89): L16 bỏ qua các phần tử U1..U9 của Product spec Reviewed v0.21 (L16 readiness :363-371).
+G ¦ G-RD30 ¦ 2481 ¦ FE `feature_marketplace_discovery.md` :477 (id = `session.id`; code của lane dùng `public_listing_id`)
+G ¦ G-RD31 ¦ 2478 ¦ FE `feature_chat_fe.md` (Draft) vẫn ghi 409 `CHAT_DUP_MESSAGE` (nguồn: ghi chú của L16).
+N ¦ RD-1 ¦ docs/features/BE/feature_player_view_tech.md ¦ 278 ¦ G-RD5,G-RD6,G-RD7,G-RD22 ¦ keep ¦ - ¦ The owner-signed M-11 exception says this line stays unchanged: "Spec không được sửa: hai dòng :278 và :287 giữ nguyên." (D:2459).
+N ¦ RD-2 ¦ docs/features/BE/feature_player_view_tech.md ¦ 287 ¦ G-RD5,G-RD6,G-RD7,G-RD23 ¦ keep ¦ - ¦ The same M-11 exception (D:2459) keeps this error row unchanged.
+E ¦ RD-3 ¦ docs/features/BE/feature_player_view_tech.md ¦ 212 ¦ G-RD4,G-RD12,G-RD13,G-RD14 ¦ TierA ¦ `GET /api/player/sessions` ¦ `GET /api/me/sessions`
+E ¦ RD-4 ¦ docs/features/BE/feature_player_view_tech.md ¦ 213 ¦ G-RD4,G-RD12,G-RD13,G-RD14 ¦ TierA ¦ `GET /api/player/payments` ¦ `GET /api/me/charges`
+E ¦ RD-5 ¦ docs/features/BE/feature_player_view_tech.md ¦ 214 ¦ G-RD4,G-RD12,G-RD13,G-RD14 ¦ TierA ¦ `GET /api/player/clubs` ¦ `GET /api/me/clubs`
+I ¦ RD-6 ¦ docs/features/BE/feature_player_view_tech.md ¦ 215 ¦ G-RD4,G-RD12,G-RD13,G-RD14 ¦ TierA ¦ - ¦ | `GET /api/me/requests` | 30/min | per user |
+E ¦ RD-7 ¦ docs/features/BE/feature_player_view_tech.md ¦ 211 ¦ G-RD12,G-RD13,G-RD14 ¦ RR ¦ `GET /api/player/dashboard` ¦ `GET /api/player/dashboard` (không ship trong MVP — DD-138 L9 M-12)
+E ¦ RD-8 ¦ docs/features/BE/feature_session_management_tech.md ¦ 342 ¦ G-RD1,G-RD9,G-RD10,G-RD11 ¦ TierA ¦ (`zalo`/`messenger`, DD-37) ¦ (`zalo`/`messenger`, DD-37; MVP: mọi giá trị khác chuỗi `zalo` trả `INVALID_CHANNEL`, kể cả `messenger` — DD-138 L4b A-D4)
+N ¦ RD-9 ¦ docs/features/BE/feature_session_management_tech.md ¦ 427 ¦ G-RD9,G-RD10 ¦ RR ¦ - ¦ This line has the same `zalo`/`messenger` enum claim as :342, but A-D4 names only "BE :342"; proposal: the conductor rules whether RD-8's wording also applies here, otherwise no edit.
+N ¦ RD-10 ¦ docs/features/BE/feature_session_management_tech.md ¦ 796 ¦ G-RD9,G-RD10 ¦ RR ¦ - ¦ §4 Announce step 2 says "phase-1 = `zalo`/`messenger` (DD-37", the same claim, which A-D4 does not name; ruling as for RD-9, otherwise no edit.
+N ¦ RD-11 ¦ docs/features/BE/feature_session_management_tech.md ¦ 1124 ¦ - ¦ dated ¦ - ¦ A dated changelog row (2026-08-15, v2.23) that mentions the channel enum: history, never edited.
+E ¦ RD-12 ¦ docs/features/BE/feature_marketplace_discovery_tech.md ¦ 118 ¦ G-RD4,G-RD17 ¦ TierA ¦ only during DD-41 migration ¦ only during DD-41 migration; MVP: rejected with `INVALID_FILTER` (DD-138 L10b P-9)
+E ¦ RD-13 ¦ docs/features/BE/feature_marketplace_discovery_tech.md ¦ 119 ¦ G-RD4,G-RD15,G-RD16,G-RD17 ¦ TierA ¦ using DD-08 ranks ¦ using DD-08 ranks; MVP: rejected with `INVALID_FILTER` until the DD-41 columns have a source (DD-138 L10b P-1, P-9)
+E ¦ RD-14 ¦ docs/features/BE/feature_marketplace_discovery_tech.md ¦ 120 ¦ G-RD4,G-RD15,G-RD16,G-RD17 ¦ TierA ¦ from advisory range ¦ from advisory range; MVP: rejected with `INVALID_FILTER` until the DD-41 columns have a source (DD-138 L10b P-1, P-9)
+N ¦ RD-15 ¦ docs/features/BE/feature_marketplace_discovery_tech.md ¦ 202 ¦ G-RD18 ¦ RR ¦ - ¦ Caching Strategy :202-209: D:2481 records that the code has no cache (the detail route answers `no-store`, route.test.ts:96), but no signed row states a caching decision in words (grep -i 'cach' and 'no-store' over D:2783-2803 find none); no edit until the owner rules.
+E ¦ RD-16 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 153 ¦ G-RD4,G-RD19,G-RD21 ¦ TierA ¦ /api/me/settings ¦ /api/me/profile
+E ¦ RD-17 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 154 ¦ G-RD4,G-RD19,G-RD21 ¦ TierA ¦ | PUT | /api/me/settings | ¦ | PATCH | /api/me/profile |
+E ¦ RD-18 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 156 ¦ G-RD4,G-RD20,G-RD21 ¦ TierA ¦ | PATCH | /api/sessions/:id/pricing | ¦ | POST, PUT | /api/sessions, /api/sessions/:id |
+N ¦ RD-19 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 155 ¦ - ¦ RR ¦ - ¦ `PUT /api/me/username` has no shipped route (ls-files: no apps/web/app/api/me/username), but D:2483 names only :153-154 :156 and no signed row states it; a ruling is needed, no edit.
+N ¦ RD-20 ¦ docs/standards/decisions.md ¦ 2479 ¦ G-RD24 ¦ noline ¦ - ¦ L14 V-14 is an item of the DD-86 decision record (the `assistant_enabled` default), not a spec line, and L51 never edits a decision record.
+N ¦ RD-21 ¦ docs/standards/decisions.md ¦ 2484 ¦ G-RD25 ¦ noline ¦ - ¦ L12 opened no spec line (the share page and leave/cancel are Phase 4 code lanes), so L51 has nothing to sync.
+N ¦ RD-22 ¦ docs/standards/decisions.md ¦ 2485 ¦ G-RD26 ¦ noline ¦ - ¦ L13 opened no spec file; its five groups are readiness notes, not spec lines.
+N ¦ RD-23 ¦ docs/standards/decisions.md ¦ 2486 ¦ G-RD27 ¦ noline ¦ - ¦ "tám spec" names no file or line; at B the BE hits are feature_channel_booking_funnel_tech.md:232, feature_marketplace_discovery_tech.md:52 and :251, feature_tournament_tech.md:130 and feature_inapp_chat_tech.md:1100 (a token past the cut); a later lane looks at them.
+N ¦ RD-24 ¦ docs/standards/decisions.md ¦ 2487 ¦ G-RD28 ¦ noline ¦ - ¦ No spec line is named for `sessionOccupancy`; at B the grep hits in feature_session_management_tech.md are :12, :239, :251, :320, :1035 and :1091 (the token is past the 170-character cut); a later lane looks at them.
+N ¦ RD-25 ¦ docs/standards/decisions.md ¦ 2488 ¦ G-RD29 ¦ noline ¦ - ¦ U1..U9 belong to a Product spec, which is L52's half (docs/features/FE/*), not a BE spec of this lane.
+N ¦ RD-26 ¦ docs/features/FE/feature_marketplace_discovery.md ¦ 477 ¦ G-RD30 ¦ noline ¦ - ¦ This is an FE file of L52's half (docs/features/FE/*); L51 never edits it.
+N ¦ RD-27 ¦ docs/features/FE/feature_chat_fe.md ¦ - ¦ G-RD31 ¦ noline ¦ - ¦ A Draft FE spec (D:2478 "(Draft)"): Draft specs are never edited, and FE files are L52's.
+N ¦ RD-28 ¦ docs/features/BE/feature_player_view_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.11 · 2026-10-16"; "### Changelog" :405, header :407, newest row :409 "| 2026-10-16 | v2.11 |" (the new row goes directly above :409).
+N ¦ RD-29 ¦ docs/features/BE/feature_session_management_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.37 · 2026-10-16"; "### Changelog" :1106, header :1108, newest row :1110 "| 2026-10-16 | v2.37 |" (the new row goes directly above :1110).
+N ¦ RD-30 ¦ docs/features/BE/feature_marketplace_discovery_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 2.8 · 2026-10-16"; "### Changelog" :289, header :291, newest row :293 "| 2026-10-16 | v2.8 |" (the new row goes directly above :293).
+N ¦ RD-31 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 4 ¦ - ¦ TierA ¦ - ¦ Version line :4 "> **Version:** 0.22 · 2026-10-15"; "### Changelog" :453, header :455, newest row :457 "| 2026-10-15 | v0.22 |" (the new row goes directly above :457; :457 and :458 are dated rows).
+E ¦ CB-1 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 4 ¦ - ¦ TierA ¦ 2.19 · 2026-10-15 ¦ 2.20 · 2026-10-26
+I ¦ CB-2 ¦ docs/features/BE/feature_billing_lifecycle_tech.md ¦ 599 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v2.20 | **Sync DD-142 (quyết định owner 2026-10-21); docs-only.** Host Pro trả phí mà invoice trễ: sau grace 7 ngày bị hạ xuống Free, không bao giờ `suspended` vì billing; `suspended` giữ cho việc không phải billing (admin / abuse). :19, :32, :347, :450, :455, :531: luật late invoice → grace → Free; :556, :562, :563: nhãn `suspended` không còn là trạng thái billing (hàng backlog `billing-late-host-pro-invoice-downgrade-to-free`). Phase 4 không xây job Pro→Free. |
+E ¦ CB-3 ¦ docs/features/BE/feature_home_tech.md ¦ 4 ¦ - ¦ TierA ¦ 0.6 · 2026-08-10 ¦ 0.7 · 2026-10-26
+I ¦ CB-4 ¦ docs/features/BE/feature_home_tech.md ¦ 297 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v0.7 | **Sync DD-142 (quyết định owner 2026-10-21); docs-only.** :98: `CLB suspended (billing)` → `suspended` chỉ cho admin / abuse (DD-142: không suspended vì billing). |
+E ¦ CB-5 ¦ docs/features/BE/feature_session_management_tech.md ¦ 4 ¦ - ¦ TierA ¦ 2.37 · 2026-10-16 ¦ 2.38 · 2026-10-26
+I ¦ CB-6 ¦ docs/features/BE/feature_session_management_tech.md ¦ 1110 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v2.38 | **Sync DD-142, DD-139 (quyết định owner 2026-10-21) và DD-138 L4b A-D4 (owner ký 2026-10-21); docs-only.** DD-142 (:259, :323, :670, :672, :1005): tenant `suspended` chỉ còn cho admin / abuse, billing không suspend (hạ xuống Free). DD-139 (:10, :491, :893, :957, :964): venue public theo mặc định, chỉ ẩn khi `sessions.hide_exact_address` ON. A-D4 (:342): MVP chỉ nhận channel `zalo`, mọi giá trị khác trả `INVALID_CHANNEL`. |
+E ¦ CB-7 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 4 ¦ - ¦ TierA ¦ 2.13 · 2026-08-10 ¦ 2.14 · 2026-10-26
+I ¦ CB-8 ¦ docs/features/BE/feature_cross_club_join_tech.md ¦ 331 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v2.14 | **Sync DD-139 (quyết định owner 2026-10-21); docs-only.** :86, :87, :119, :137, :212, :214, :216, :258, :267, :274, :275: venue public theo mặc định (đảo DD-06 và L9 M-7); chỉ khi `sessions.hide_exact_address` ON mới giữ luật cũ (venue chỉ khi `active`, waitlisted chỉ area + position). |
+E ¦ CB-9 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 4 ¦ - ¦ TierA ¦ 2.8 · 2026-08-10 ¦ 2.9 · 2026-10-26
+I ¦ CB-10 ¦ docs/features/BE/feature_zalo_channel_tech.md ¦ 377 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v2.9 | **Sync DD-140 (quyết định owner 2026-10-21), DD-143 (quyết định owner 2026-10-22) và DD-131 OD-2 / DD-126 (Owner ký OD-0…OD-9 (14/10)); docs-only.** Bảng trả lời `/join`: outcome Active thêm dòng số tiền (đúng một khoản đã biết; R16 khi `known_zero`, như `/pay`; R17 khi unknown/unavailable), không venue, không bank/QR; chỗ đã có và host-review → active dùng cùng chữ. §3: ví dụ request body theo shape DD-126, hàng Error Codes 403 `INVALID_WEBHOOK_SECRET`, route ví dụ `POST /api/webhooks/zalo/:token`, nhãn ví dụ lỗi = header `X-Bot-Api-Secret-Token` sai (403), bỏ `(pending in PR #51)` ở ghi chú DD-126. |
+E ¦ CB-11 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 4 ¦ - ¦ TierA ¦ 0.28 · 2026-08-25 ¦ 0.29 · 2026-10-26
+I ¦ CB-12 ¦ docs/features/BE/feature_inapp_chat_tech.md ¦ 1633 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v0.29 | **Sync DD-138 L14 V-5, L15 D-8 / D-10 / D-13, L15b D7 (owner ký 2026-10-21); docs-only.** :944: NOTIFY một channel `chat_realtime`; :1140: response `GET /api/chat/channels` thêm `viewer {canModerate, canPostRestricted}`; :1158: một stream SSE toàn tenant `GET /api/chat/subscribe?tenant=`; :1301: gửi trùng → 200 kèm id và metadata của bản gốc, `duplicate: true`, không trả body (thay 409). |
+E ¦ CB-13 ¦ docs/features/BE/feature_player_view_tech.md ¦ 4 ¦ - ¦ TierA ¦ 2.11 · 2026-10-16 ¦ 2.12 · 2026-10-26
+I ¦ CB-14 ¦ docs/features/BE/feature_player_view_tech.md ¦ 409 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v2.12 | **Sync DD-138 L9 M-12 (owner ký 2026-10-21); docs-only.** Bảng rate-limit: :212-:214 `/api/player/{sessions,payments,clubs}` → `/api/me/sessions`, `/api/me/charges`, `/api/me/clubs`; thêm hàng `GET /api/me/requests` (30/min). :278 và :287 giữ nguyên (M-11). |
+E ¦ CB-15 ¦ docs/features/BE/feature_marketplace_discovery_tech.md ¦ 4 ¦ - ¦ TierA ¦ 2.8 · 2026-10-16 ¦ 2.9 · 2026-10-26
+I ¦ CB-16 ¦ docs/features/BE/feature_marketplace_discovery_tech.md ¦ 293 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v2.9 | **Sync DD-138 L10b P-1, P-9 (owner ký 2026-10-21); docs-only.** :118, :119, :120: MVP từ chối các bộ lọc này bằng `INVALID_FILTER` (:119 và :120 tới khi các cột DD-41 có nguồn). |
+E ¦ CB-17 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 4 ¦ - ¦ TierA ¦ 0.22 · 2026-10-15 ¦ 0.23 · 2026-10-26
+I ¦ CB-18 ¦ docs/features/BE/feature_user_settings_tech.md ¦ 457 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v0.23 | **Sync DD-144 (✅ Quyết định owner 2026-10-22), DD-147 (✅ Chốt, owner-delegated 2026-10-22; quyết định D3 của conductor, KHÔNG phải chữ ký owner) và DD-138 L11 U-16, U-17 (owner ký 2026-10-21); docs-only.** :212: tên `persons.display_name` được strip trước (helper 0068: `Default_Ignorable_Code_Point` trừ Bidi_Control, kể cả variation selector và ZWJ), rồi mới cắt khoảng trắng và kiểm như cũ; :153, :154, :156: route nay là `GET`/`PATCH /api/me/profile` và `POST /api/sessions`, `PUT /api/sessions/:id`. |
+E ¦ CB-19 ¦ docs/features/README.md ¦ 29 ¦ - ¦ TierA ¦ 2.67 · 2026-08-27 *(2.66 · 2026-08-25)* ¦ 2.68 · 2026-10-26 *(2.67 · 2026-08-27)*
+I ¦ CB-20 ¦ docs/features/README.md ¦ 162 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v2.68 | **Sync ô version Identity ở hàng :77 (mục (3) của hàng backlog `docs-drift-sessions-fe-zalo-tech-readme-pins`); docs-only.** Ô FE ghi `v1.11`, trên đĩa là `v1.12`; ô BE ghi `v1.13`, trên đĩa là `v1.19`. Chỉ sync **đúng hai ô** của hàng đó; không sync ô nào khác. |
+E ¦ CB-21 ¦ docs/standards/design-system.md ¦ 3 ¦ - ¦ TierA ¦ 1.1 · 2026-08-07 ¦ 1.2 · 2026-10-26
+I ¦ CB-22 ¦ docs/standards/design-system.md ¦ 940 ¦ - ¦ TierA ¦ - ¦ | 26/10/2026 | 1.2 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** Heading font Sora → **Be Vietnam Pro** (Sora không có subset `vietnamese`) ở :9, :38, :326, :336, :339, :348-:352. |
+E ¦ CB-23 ¦ docs/channels/web/README.md ¦ 6 ¦ - ¦ TierA ¦ v0.9 · 2026-10-15 ¦ v0.10 · 2026-10-26
+I ¦ CB-24 ¦ docs/channels/web/README.md ¦ 321 ¦ - ¦ TierA ¦ - ¦ | 2026-10-26 | v0.10 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** :19, :167: heading font nay là Be Vietnam Pro (Sora không có subset `vietnamese`). |
+E ¦ CB-25 ¦ docs/channels/web/design-brief.md ¦ 3 ¦ - ¦ TierA ¦ 2.4 · 2026-08-07 ¦ 2.5 · 2026-10-26
+I ¦ CB-26 ¦ docs/channels/web/design-brief.md ¦ 612 ¦ - ¦ TierA ¦ - ¦ | 26/10/2026 | v2.5 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** :515: target heading font Sora → Be Vietnam Pro (Sora không có subset `vietnamese`); banner :10 là lịch sử, không sửa. |
+E ¦ CB-27 ¦ docs/channels/web/designer-kickoff.md ¦ 18 ¦ - ¦ TierA ¦ 0.9 · 2026-08-07 ¦ 0.10 · 2026-10-26
+I ¦ CB-28 ¦ docs/channels/web/designer-kickoff.md ¦ 131 ¦ - ¦ TierA ¦ - ¦ | 26/10/2026 | 0.10 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** :48, :91: heading font Be Vietnam Pro thay Sora (Sora không có subset `vietnamese`). |
+I ¦ CB-29 ¦ docs/autopilot-backlog.md ¦ 6085 ¦ - ¦ TierA ¦ - ¦   Update 2026-10-26 (lane L51 p4-docs-spec-sync-be, docs only): at B 2c6951c the L51 PR edits item (2) in docs/features/BE/feature_zalo_channel_tech.md :154, :163, :186-:189, :195 (DD-126 body shape, header, 403; :150, :182, :198 and :233 are owner questions), item (3) in docs/features/README.md:77 (identity FE v1.12, BE v1.19) and the non-ci.yml part of item (5) (Sora to Be Vietnam Pro per DD-131 OD-7 in docs/standards/design-system.md, docs/channels/web/README.md, design-brief.md, designer-kickoff.md; 0 U+20AB there); open: item (1) (docs/channels/web/FE/feature_sessions_fe.md is a Draft FE spec), item (4) (BUILD-STATUS needs facts git cannot give), the theme-direction-2026-07.md supersession note (all three owner questions), the ci.yml:130 comment (lane L41) and the U+20AB remainder in the FE specs (lane L52); this row stays open (not flipped).
+I ¦ CB-30 ¦ docs/autopilot-backlog.md ¦ 6601 ¦ - ¦ TierA ¦ - ¦   Update 2026-10-26 (lane L51 p4-docs-spec-sync-be, docs only): at B 2c6951c the L51 PR edits the BE half: docs/features/BE/feature_billing_lifecycle_tech.md (9 lines), feature_home_tech.md (1), feature_session_management_tech.md (11), feature_cross_club_join_tech.md (11), feature_zalo_channel_tech.md (3 /join lines :222, :224, :225 with the DD-140 amount and the DD-143 R16 text), feature_inapp_chat_tech.md (4), feature_player_view_tech.md (4), feature_marketplace_discovery_tech.md (3) and feature_user_settings_tech.md (4, incl. :212 strip first), each with a version bump and one new changelog row; the product/FE/UX half is lane L52's; the RR lines are owner questions listed in docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-be.md; this row stays open (not flipped).
+N ¦ CB-31 ¦ docs/autopilot-backlog.md ¦ - ¦ - ¦ TierA ¦ - ¦ No version line and no changelog (a task backlog with dated notes per row), so no version or changelog row; CB-29 and CB-30 are governed by lane block L51 FILE OWNERSHIP and its Conductor lead (5) (decision D25), not by a decisions.md sentence.
+```
+
+```text
+REVIEW_POLICY_VERSION: 1.3
+REVIEW_VERDICT: CODE_READY
+REVIEWED_AT: 2026-10-26
+AUTHORITY_SHA: 2c6951c433a39336252ec573efa00160cc306d91
+BASE_BRANCH: main
+TARGET_FILES:
+  - docs/features/BE/feature_billing_lifecycle_tech.md
+  - docs/features/BE/feature_home_tech.md
+  - docs/features/BE/feature_session_management_tech.md
+  - docs/features/BE/feature_cross_club_join_tech.md
+  - docs/features/BE/feature_zalo_channel_tech.md
+  - docs/features/BE/feature_inapp_chat_tech.md
+  - docs/features/BE/feature_player_view_tech.md
+  - docs/features/BE/feature_marketplace_discovery_tech.md
+  - docs/features/BE/feature_user_settings_tech.md
+  - docs/features/README.md
+  - docs/standards/design-system.md
+  - docs/channels/web/README.md
+  - docs/channels/web/design-brief.md
+  - docs/channels/web/designer-kickoff.md
+  - docs/autopilot-backlog.md
+  - docs/sessions/web-mvp-phase4-readiness-p4-docs-spec-sync-be.md
+SLICE: p4-docs-spec-sync-be
+IN_SCOPE: docs-only lane L51: the Tier A E, I and D rows of the edits block in this file, applied to the nine BE specs, docs/features/README.md, docs/standards/design-system.md, docs/channels/web/README.md, docs/channels/web/design-brief.md and docs/channels/web/designer-kickoff.md (one version row and one new changelog row per edited file), plus two dated update lines in docs/autopilot-backlog.md (neither row flipped)
+OUT_OF_SCOPE: any code, test, migration, workflow, script, env or secret-bearing file; docs/standards/decisions.md; every product, FE and UX file of lane L52; the Draft FE spec docs/channels/web/FE/feature_sessions_fe.md, docs/standards/BUILD-STATUS.md and docs/channels/web/theme-direction-2026-07.md (owner questions, not edited); every RR row (owner questions, never applied); every dated line and dated changelog row; .github/workflows/ci.yml (lane L41); flipping either backlog row; PR 50
+G1_DECISION: PASS
+G2_SPEC: PASS
+G3_DEPENDENCY: PASS
+G4_TEST: PASS
+G5_SCOPE: PASS
+G6_EXTERNAL: PASS
+HARD_DEPENDENCIES: none (lane block DEPENDS ON: nothing hard, wave 1); AUTHORITY_SHA was origin/main at the fast-forward, the merge of PR 116
+PRIOR_SLICES: L58 p4-dd-and-run-doc (its readiness file at AUTHORITY_SHA is this file's frame); L30 p3-phase3-docs-closeout (the 2026-10-24 update of the docs-sync backlog row)
+OPEN_QUESTIONS_IN_SCOPE: 0
+ENABLEMENT_ONLY_GATES: none
+LIVE_REPO_VERIFICATION: PASS
+CONTRACT_MATRIX: PASS
+CLOSURE_MATRIX: PASS
+ACCEPTANCE_MATRIX: PASS
+SECURITY_AND_MIGRATION_GATE: PASS # docs only, no migration, no secret, no runtime change
+IMPLEMENTATION_ARTIFACTS: PASS
+FIRST_IMPLEMENTATION_STEP: writer units in the worktree, one spec family at a time, each applying only the Tier A E, I and D rows of its files from the block in this file, then the two docs/autopilot-backlog.md I rows; the consistency script after each writer
+REMAINING_BLOCKERS: none
+```
