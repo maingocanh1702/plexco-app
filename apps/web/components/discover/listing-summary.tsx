@@ -1,5 +1,6 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import type { DiscoveryListing } from "../../lib/discover-api";
 import { useLang, useT, type TFn } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
@@ -23,6 +24,9 @@ export function sportLabel(key: string, t: TFn): string {
   return pair ? t(pair[0], pair[1]) : t("Buổi chơi", "Session");
 }
 
+/** The viewer's time zone never changes while the page is open: nothing to subscribe to. */
+const subscribeNever = () => () => {};
+
 /**
  * The D-1 and D-2 fields of one listing and nothing else. Under DD-139 (owner decision B1) the
  * venue name and the full address render when the server sends them, which it does only while the
@@ -41,17 +45,18 @@ export function ListingSummary({
   const lang = useLang();
   const sport = sportLabel(listing.sportKey, t);
   // The discovery DTO has no time zone (O-4): times show in the viewer's zone, none is hardcoded.
+  // The server has none (null): its HTML and the hydration render omit the time line, and the
+  // client adds it right after. A missing zone shows no time, never a wrong one.
+  const zone = useSyncExternalStore(
+    subscribeNever,
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
+    () => null,
+  );
   const timesValid = [listing.startsAt, listing.endsAt].every(
     (iso) => !Number.isNaN(Date.parse(iso)),
   );
-  const when = timesValid
-    ? formatSessionRange(
-        listing.startsAt,
-        listing.endsAt,
-        Intl.DateTimeFormat().resolvedOptions().timeZone,
-        lang,
-      )
-    : null;
+  const when =
+    zone && timesValid ? formatSessionRange(listing.startsAt, listing.endsAt, zone, lang) : null;
   const hint =
     listing.joinPolicy === "open"
       ? t("Vào ngay", "Instant join")
