@@ -68,6 +68,13 @@ export const STRIP_CHAR_RANGES: readonly (readonly [first: number, last: number]
   [0xe0000, 0xe0fff],
 ];
 
+/**
+ * A person's display-name cap in code points of the stripped value (`[...name].length`, SQL
+ * `char_length`); TS twin of the SQL caps of create_host_added_person (migration 0073) and
+ * person_profile_update. The owner's answer Q4 (b) of the Phase 4 plan approval (2026-10-26).
+ */
+export const DISPLAY_NAME_MAX = 120;
+
 function isStripCodePoint(codePoint: number): boolean {
   return STRIP_CHAR_RANGES.some(([first, last]) => codePoint >= first && codePoint <= last);
 }
