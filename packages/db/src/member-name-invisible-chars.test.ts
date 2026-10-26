@@ -2056,21 +2056,37 @@ describe("L29-C2 the cleanup fails closed and names ids and counts only", () => 
 
 // L29-AG1 (unit U5c): public.member_name_apply_rule and its TypeScript twins agree on every Unicode
 // scalar value in both modes (mode false = checkTypedName, mode true = normalizeExternalName, NULL =
-// null), each scalar alone, at an edge and inside visible text: one linear scan on each side, no
-// RegExp built from data (C11b). Excluded by name: U+0000, which PostgreSQL text cannot hold (D1e),
-// and the surrogates U+D800..U+DFFF, which are not scalar values. The transfer is shrunk as C11a
-// says: PostgreSQL returns each position's row count and only the rows where either result differs
-// from the input, so a row it leaves out has both results equal to the input. EXECUTE is owner-only,
-// so the query runs as the superuser, as L29-F's calls do.
+// null), each scalar alone, at the end edge, inside visible text and, since lane L41 (readiness
+// section 6 (h)), at the start edge: one linear scan on each side, no RegExp built from data (C11b).
+// Excluded by name: U+0000, which PostgreSQL text cannot hold (D1e), and the surrogates
+// U+D800..U+DFFF, which are not scalar values. The transfer is shrunk as C11a says: PostgreSQL
+// returns each case's row count and only the rows where either result differs from the input, so a
+// row it leaves out has both results equal to the input. Sharded as C12 says (an every-scalar test
+// runs in at most about 3 s locally; CI runs it about 3x slower): each position scans 8 contiguous
+// ranges of 0x22000 code points, one case per range with its own 30 s budget, and one cheap test
+// proves the 8 ranges cover U+0001..U+10FFFF with no gap. EXECUTE is owner-only, so the query runs
+// as the superuser, as L29-F's calls do.
 describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", () => {
   /** Every Unicode scalar value: 0x110000 code points minus the 0x800 surrogates, 1,112,064. */
   const SCALARS = 0x110000 - 0x800;
-  /** The three values of each scalar c; the SQL VALUES list builds the same ones as p = 1, 2, 3. */
+  /** The four values of each scalar c; the SQL CASE builds the same ones as p = 1, 2, 3, 4. */
   const POSITIONS = [
     { at: "alone", wrap: (c: string) => c },
     { at: "edge", wrap: (c: string) => `a${c}` },
     { at: "inside", wrap: (c: string) => `a${c}b` },
+    { at: "start", wrap: (c: string) => `${c}a` },
   ] as const;
+  /**
+   * C12: shard k + 1 of 8 (k = 0..7) scans [k * 0x22000, (k + 1) * 0x22000 - 1], shard 1 from U+0001
+   * (no U+0000, D1e). want is its scalar count, from the bounds alone: its code points minus the
+   * surrogates U+D800..U+DFFF inside it.
+   */
+  const SHARDS = Array.from({ length: 8 }, (_, k) => {
+    const lo = k === 0 ? 1 : k * 0x22000;
+    const hi = (k + 1) * 0x22000 - 1;
+    const want = hi - lo + 1 - Math.max(0, Math.min(hi, 0xdfff) - Math.max(lo, 0xd800) + 1);
+    return { shard: k + 1, lo, hi, want };
+  });
   type Pair = readonly [modeFalse: string | null, modeTrue: string | null];
   type Row = {
     total: number;
@@ -2078,9 +2094,23 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
   };
   const show = (s: string | null) => JSON.stringify(cps(s));
 
-  it.each(POSITIONS.map((pos, i) => ({ ...pos, p: i + 1 })))(
-    "L29-AG1 every scalar but U+0000 $at: mode false equals checkTypedName, mode true equals normalizeExternalName",
-    async ({ at, wrap, p }) => {
+  it("L29-AG1 the 8 shards cover U+0001..U+10FFFF with no gap: every scalar but U+0000, once", () => {
+    // Shard k + 1 must start right after shard k ends; a gap would leave scalars unscanned.
+    const gaps = SHARDS.slice(1)
+      .filter((s, k) => s.lo !== SHARDS[k]!.hi + 1)
+      .map((s) => s.shard);
+    expect({
+      shards: SHARDS.length,
+      first: SHARDS[0]!.lo,
+      last: SHARDS[SHARDS.length - 1]!.hi,
+      gaps,
+      sum: SHARDS.reduce((sum, s) => sum + s.want, 0),
+    }).toEqual({ shards: 8, first: 1, last: 0x10ffff, gaps: [], sum: SCALARS - 1 });
+  });
+
+  it.each(POSITIONS.flatMap((pos, i) => SHARDS.map((s) => ({ ...pos, p: i + 1, ...s }))))(
+    "L29-AG1 every scalar but U+0000 $at shard $shard of 8: mode false equals checkTypedName, mode true equals normalizeExternalName",
+    async ({ at, wrap, p, lo, hi, want }) => {
       const client = await ctx.superuserDb.pool.connect();
       // Sent here, before the TypeScript scan below, so PostgreSQL and Node scan at the same time.
       const pending = client
@@ -2091,17 +2121,18 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
              FROM (SELECT n, x.v,
                           public.member_name_apply_rule(x.v, false) AS r0,
                           public.member_name_apply_rule(x.v, true) AS r1
-                     FROM generate_series(1, 1114111) AS n -- from U+0001: no U+0000 (D1e)
+                     FROM generate_series($2::int, $3::int) AS n -- the shard's [lo, hi]: no U+0000 (D1e)
                     CROSS JOIN LATERAL (VALUES (CASE $1::int WHEN 1 THEN chr(n) WHEN 2 THEN 'a' || chr(n)
+                                                WHEN 4 THEN chr(n) || 'a'
                                                 ELSE 'a' || chr(n) || 'b' END)) AS x(v)
                     WHERE n NOT BETWEEN 55296 AND 57343) AS s -- no surrogates U+D800..U+DFFF`,
-          [p],
+          [p, lo, hi],
         )
         .finally(() => client.release());
       const mine = new Map<number, Pair>();
       let tsRows = 0;
-      // From U+0001 (no U+0000), the surrogates skipped: the same scalars as the SQL scan.
-      for (let n = 1; n <= 0x10ffff; n += 1) {
+      // The shard's [lo, hi], the surrogates skipped: the same scalars as the SQL scan.
+      for (let n = lo; n <= hi; n += 1) {
         if (n >= 0xd800 && n <= 0xdfff) continue;
         const v = wrap(String.fromCodePoint(n));
         const pair: Pair = [checkTypedName(v), normalizeExternalName(v)];
@@ -2127,8 +2158,8 @@ describe("L29-AG1 member_name_apply_rule equals the TS rule over every scalar", 
         }
       }
       expect({ sqlRows: theirs.total, tsRows, modeFalse, modeTrue, first }).toEqual({
-        sqlRows: SCALARS - 1,
-        tsRows: SCALARS - 1,
+        sqlRows: want,
+        tsRows: want,
         modeFalse: 0,
         modeTrue: 0,
         first: [],
