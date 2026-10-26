@@ -2,7 +2,7 @@
 
 > **Canonical phase:** P4.3  
 > **Track:** 🤝 Cross-club Join  
-> **Version:** 2.13 · 2026-10-16
+> **Version:** 2.14 · 2026-10-26
 > **Status:** Reviewed  
 > **Implementation:** Not started — `join_requests` có sẵn từ `0006` · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Prerequisites:** P4.3 discovery · P3.5 identity · P2 session/slot transaction · P4 sync/notifications  
@@ -30,7 +30,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 - Public session ID route internally nhưng **KHÔNG grant** tenant data permission.
 - Player identity phải verified đủ để own person-self records — không accept arbitrary person ID.
 - Capacity checked **under lock** tại final join/approval — browse slot là advisory.
-- Open join và approval **first-entry** cùng dùng một capacity outcome: còn slot → active+charge+venue; full → waitlisted, không tạo charge/venue.
+- Open join và approval **first-entry** cùng dùng một capacity outcome: còn slot → active+charge+venue; full → waitlisted, không tạo charge (venue chỉ ẩn khi `sessions.hide_exact_address` ON, DD-139).
 - Paid player leave/cancel theo financial/refund policy — KHÔNG silent allocation deletion.
 - Player `left` rejoin theo DD-49: re-derive eligibility/ban/capacity + live aggregate. Active: chưa-refund carry-over, refunded append lifecycle idempotent. Full: waitlisted; chưa-refund giữ historical aggregate, refunded không append lifecycle mới tới activation. Unknown→`REJOIN_REQUIRES_REVIEW`.
 - Existing `active|waitlisted|pending` resolve trước restriction preflight và trả current outcome idempotently; DD-52 không auto-evict. Chỉ absent/`left` mới được tạo membership/request/player sau DD-41/DD-42/DD-52.
@@ -45,15 +45,15 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 
 | ID | Actor | Hành động | Kết quả |
 |---|---|---|---|
-| CCJ-UC-1 | Player | Open join (open policy), first-entry | Auth → recheck public/open/capacity → create guest membership → còn slot: active+exactly-one-charge+venue; full: waitlisted, no charge/venue |
+| CCJ-UC-1 | Player | Open join (open policy), first-entry | Auth → recheck public/open/capacity → create guest membership → còn slot: active+exactly-one-charge+venue; full: waitlisted, no charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139) |
 | CCJ-UC-2 | Player | Request approval (approval policy) | First-entry: pending only. Existing `left`: preflight live DD-49 disposition rồi create/keep request; **không persist financial proof**. Unknown: review/no request. Approve phải re-derive under lock |
-| CCJ-UC-3 | Host | Approve first-entry request | Recheck capacity → còn slot: active+exactly-one-charge+venue; full: approved+waitlisted, no charge/venue → notify player |
+| CCJ-UC-3 | Host | Approve first-entry request | Recheck capacity → còn slot: active+exactly-one-charge+venue; full: approved+waitlisted, no charge (venue hidden only when `sessions.hide_exact_address` is ON, DD-139) → notify player |
 | CCJ-UC-4 | Host | Reject request | Player notified — area only visible |
 | CCJ-UC-5 | System | Request expired (TTL) | Auto-reject — notify player |
 | CCJ-UC-6 | Player | Cancel pending request | Request cancelled; không đổi capacity. First-entry pending chưa có player; existing-`left` giữ nguyên player/aggregate lịch sử |
 | CCJ-UC-7 | Player | Leave after open join (unpaid) | Slot freed per session policy |
 | CCJ-UC-8 | Player | Leave after paid join | Financial/refund policy applied — audit trail |
-| CCJ-UC-9 | Host | Approve first-entry after capacity full | Request → `approved`; player → `waitlisted` có position, không charge/venue; notify player |
+| CCJ-UC-9 | Host | Approve first-entry after capacity full | Request → `approved`; player → `waitlisted` có position, không charge (venue chỉ ẩn khi `sessions.hide_exact_address` ON, DD-139); notify player |
 | CCJ-UC-10 | Host | Approve after request expired | Safe conflict — "Yêu cầu đã hết hạn" |
 | CCJ-UC-11 | Channel funnel finalizer | Gọi common join sau link/pay decision | Server-owned disposition only; active/waitlist/pending outcome canonical, không adapter-created player/charge |
 
@@ -67,7 +67,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 | 4 | Data Integrity | Duplicate join/request (same person/session) | Existing active/waitlisted trả current outcome idempotently; không duplicate player/charge/request |
 | 5 | Data Integrity | Host approve after request expired/full | Expired → safe conflict; full → approved+waitlisted dưới lock |
 | 6 | Security | Guest membership read tenant operational data | ❌ NEVER — person-self only (own roster, own charges) |
-| 7 | Security | Venue visible before active outcome | ❌ NEVER — area/position only cho pending/rejected/approved-waitlisted |
+| 7 | Security | Venue visible before active outcome (`sessions.hide_exact_address` ON, DD-139) | ❌ NEVER — area/position only cho pending/rejected/approved-waitlisted |
 | 8 | Financial | Paid player leave/cancel | Financial/refund policy — no silent allocation deletion |
 | 9 | Security | Rate-limit join/request/cancel abuse | Block after threshold — tenant ban auditable |
 | 10 | Data Integrity | Suspended tenant new stale offers | Existing public sessions OK per billing rule — no new offer extension |
@@ -136,7 +136,7 @@ Cho player chưa phải member có thể **join public session trực tiếp** (
 |-----------|-------------|---------|
 | Session info | `public_sessions` (whitelist) | Pre-join: no venue |
 | Join action | `players` INSERT + occupancy check | Transactional |
-| Post-join venue | `sessions.venue_name` / `venue_address` | Only if active |
+| Post-join venue | `sessions.venue_name` / `venue_address` | Only if active when `sessions.hide_exact_address` is ON (venue public by default, DD-139) |
 | Waitlist position | `players` WHERE waitlisted, ordered | |
 | Approval status | `join_requests.status = 'pending'` | Host approves (pending approval sống ở `join_requests`, không ở `players`) |
 
@@ -197,7 +197,7 @@ stateDiagram-v2
 - [ ] Approval request lifecycle (pending/approved/rejected/expired/cancelled) work
 - [ ] Concurrent final-slot joins KHÔNG over-fill (lock test)
 - [ ] Duplicate requests/commands idempotent
-- [ ] Venue chỉ lộ khi `players.status='active'`; approved-but-waitlisted vẫn ẩn
+- [ ] Venue public theo mặc định (DD-139); khi `sessions.hide_exact_address` ON thì venue chỉ lộ khi `players.status='active'`; approved-but-waitlisted vẫn ẩn
 - [ ] Guest KHÔNG read tenant-private data
 - [ ] Leave/cancel with financial history follows ledger policy
 - [ ] Host approval requires correct tenant role
@@ -223,6 +223,7 @@ stateDiagram-v2
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.14 | **Sync DD-139 (quyết định owner 2026-10-21); docs-only, lane L52.** Vế venue của hợp đồng join (DD-45): venue public theo mặc định, chỉ ẩn khi host bật `sessions.hide_exact_address` (mặc định OFF): :33, :48, :50, :56, :70, :139, :200. Các dòng :15, :64, :137, :196, :205, :206, :219 là câu hỏi owner, không sửa. |
 | 2026-10-16 | v2.13 | **Sửa drift theo `packages/db/schema.ts` (docs-only, không đổi contract/domain model):** `memberships` không có `role` (guest = `status='guest'`) và unique là partial index `(tenant_id, person_id)` where status IN active,guest; trạng thái chờ duyệt là `join_requests.status='pending'` (enum của `players.status` là active/left/waitlisted); `sessions.venue` → `venue_name`/`venue_address`. Các dòng lịch sử giữ nguyên. |
 | 2026-08-10 | v2.12 | **A-grade upgrade:** thêm Entry points table (6 entries); bump version. Không đổi contract/domain model. |
 | 2026-07-28 | v2.11 | Mirror DD-32 Option D: preserve CCJ as canonical join while requiring channel finalizer proof before active mutation; full/pending remain no-pay and generic web/direct join is unchanged. No runtime. |
