@@ -117,8 +117,27 @@ describe("pathAllowedForRole (audit W-10)", () => {
     }
   });
 
-  it("the allowlist is exactly five anchored patterns (a sixth entry is a decision, not a drift)", () => {
-    expect(DISCOVERY_PATH_ALLOWLIST).toHaveLength(5);
+  it("the allowlist is exactly six anchored patterns (RO-L39-1: the sixth is the share page /session/<slug>; a seventh entry is a decision, not a drift)", () => {
+    expect(DISCOVERY_PATH_ALLOWLIST).toHaveLength(6);
+  });
+
+  it("L39 D6: discovery serves GET and HEAD on the share page /session/<slug> only; the host share-link route stays web-only", () => {
+    const page = "/session/AbCdEfGhIjKlMnOpQrStUv";
+    const shareLink = "/api/sessions/00000000-0000-4000-8000-000000000001/share-link";
+    for (const m of ["GET", "HEAD"]) {
+      expect(requestAllowedForRole(m, page, "discovery"), m).toBe(true);
+    }
+    for (const m of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(requestAllowedForRole(m, page, "discovery"), m).toBe(false);
+    }
+    for (const p of ["/session", "/session/", "/session/x/y", shareLink]) {
+      expect(requestAllowedForRole("GET", p, "discovery"), p).toBe(false);
+    }
+    expect(requestAllowedForRole("POST", shareLink, "discovery")).toBe(false);
+    expect(requestAllowedForRole("POST", shareLink, "web")).toBe(true);
+    for (const role of ["web", "worker"] as const) {
+      expect(requestAllowedForRole("GET", page, role), role).toBe(true);
+    }
   });
 
   it("parseProcessRole fails closed to web (the surface-serving role) on junk, and recognises discovery/worker", () => {

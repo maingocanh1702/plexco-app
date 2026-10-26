@@ -80,7 +80,8 @@ describe("DiscoverListView", () => {
     expect(visible).toContain(formatVnd(60000));
     expect(visible).toContain("4 spots open");
     expect(visible).toContain("Instant join");
-    expect(visible).toMatch(/\d{2}:\d{2}.\d{2}:\d{2}/);
+    // A server render has no viewer time zone, so no time shows; the client render's time is pinned in listing-summary.test.tsx.
+    expect(visible).not.toMatch(/\d{2}:\d{2}.\d{2}:\d{2}/);
     expect(html).toContain(">Badminton</h2>"); // the untitled card is headed by its sport label
   });
 

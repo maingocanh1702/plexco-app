@@ -323,3 +323,4 @@ export {
   type DiscoveryListingTarget,
   type DiscoveryListPage,
 } from "./public-discovery-read.js";
+export { rotatePublicSessionShareLink } from "./public-session-share-link.js";

@@ -21,6 +21,7 @@ import { RequestInbox } from "./request-inbox";
 import { RosterTab } from "./roster-tab";
 import { SessionActionBar } from "./session-action-bar";
 import { SessionStatusBadge } from "./session-status-badge";
+import { ShareLinkControl } from "./share-link-control";
 import { VisibilityToggle } from "./visibility-toggle";
 import styles from "./session-detail-view.module.css";
 
@@ -222,7 +223,12 @@ export function SessionDetailView({
             {
               id: "details",
               label: t("Chi tiết", "Details"),
-              panel: <DetailsTab session={session} />,
+              panel: (
+                <>
+                  <DetailsTab session={session} />
+                  <ShareLinkControl session={session} ctx={ctx} />
+                </>
+              ),
             },
             {
               id: "requests",

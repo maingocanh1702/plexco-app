@@ -6538,7 +6538,9 @@ notes: |
 
 ## task: web-public-session-share-page
 title: Web: public share page at `/session/<slug>` (owner Phase 4 row, L12 P-2), the page Phase 3 chose not to build
-status: idea
+status: merged
+merged: 2026-10-26 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-web-share-page (L39); find it with `gh pr list --state merged --head feat/p4-web-share-page` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · `PublicSessionSharePage` (this row's merged_probe) in `apps/web/app/session/[slug]/page.tsx`: 1 match at the lane's head, 0 at its base
+note_merged: 2026-10-26 L39: closed BY HAND in the lane's own PR; the lane's design, threat model, files and tests are in docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md (no SHA is written here). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`. The lane's three follow-up rows are at the end of this file: `public-share-page-header-level-referrer-and-robots`, `public-share-page-discovery-role-e2e` and `web-public-share-page-404-production-measurement`.
 risk: P2
 change_class: web-feature
 depends_on: []
@@ -7165,3 +7167,48 @@ notes: |
   `packages/db/src/role-hiding-isolation-guard.test.ts` at the head of lane L55's branch (test/p4-db-test-hygiene) when this row was written: the `STATEMENT` pattern (`:27-28`) finds a role-list statement only through a GRANT, REVOKE, ALTER, CREATE or DROP keyword spelled in the statement text. In `const verb = up ? "GRANT" : "REVOKE";` it matches the quoted GRANT and reads the region up to the `;` (`" : "REVOKE"`), which holds no role list, so `scan()` marks it exempt as an object grant (`:187-189`: `membership ? !MEMBERSHIP.test(region) && !SPLIT_LIST.test(region) : ...`; `:190` flags only a region that is not exempt), and a template that starts with `${verb}` holds no keyword, so `STATEMENT` never matches it: a role-list statement built that way is invisible, a false green (the failure the lane's threat model names: a guard that passes while a role-hiding violation exists). Measured when written, as evidence about these queries and not a proof of absence: no code line does this today (`git grep -n -E 'verb = .*(GRANT|REVOKE)|\$\{verb\}'` over the lane's worktree finds only section 12 O1 of the readiness file, which quotes the example; a ternary or a for-of list of the two quoted verbs, and a template literal that starts with an interpolation and then a privilege word, find nothing under packages, apps or scripts), so this is a latent blind spot like P3-3 of the sibling row `db-test-role-isolation-guard-residual-p3s` (its notes say 0 hits today), not a live violation. The line numbers are as of that head; the symbols are the durable pointer.
   Deliverable: make the guard flag a statement whose verb is not spelled in the statement text (a hit that names the file, never a silent pass), with a test that is red on a seeded fixture (a scratch copy, never a tracked file), for example `const verb = up ? "GRANT" : "REVOKE";` followed by a template `${verb} ${role} TO app`, and green on the repository (0 hits today); no existing assertion is weakened and no pin changes. Not the four residuals of the sibling row (regex literals, scope-keyed pins, a bare grant word before `;`, per-root floors), which lane L55 closed.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-db-test-hygiene.md, section 12, item O1 (lane L55 step 0; `:299-300` at the lane's head), found while closing `db-test-role-isolation-guard-residual-p3s`.
+
+## task: public-share-page-header-level-referrer-and-robots
+title: Web: header-level Referrer-Policy and X-Robots-Tag for the public share page `/session/<slug>` (today only its metas say no-referrer and noindex)
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/next.config.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  Measured by lane L39's e2e (runs 2 and 3, `next dev`): every `/session/<slug>` response carries the global Referrer-Policy `strict-origin-when-cross-origin` of `apps/web/next.config.mjs:55-64` (at base 2c6951c433a39336252ec573efa00160cc306d91) and no X-Robots-Tag header; only the page's metas say `no-referrer` and `noindex, nofollow` (the metadata of `apps/web/app/session/[slug]/page.tsx`). A client or crawler that ignores the metas gets neither.
+  Deliverable: one headers() entry for `/session/:slug` (Referrer-Policy `no-referrer`, X-Robots-Tag `noindex, nofollow`) with a test that pins both on the 200 and the 404. Not in L39: next.config.mjs is outside the lane's ownership (the conductor's ruling of 2026-10-26 for lane L39, decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, threat model T2 (lane L39).
+
+## task: public-share-page-discovery-role-e2e
+title: E2E: serve the public share page from a discovery-role process on the real stack, the case e4 lane L39 dropped
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [apps/web/e2e/public-share-page.config.ts, apps/web/next.config.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  Lane L39's e2e case e4 (the page served by a `PROCESS_ROLE=discovery` server) was dropped after the first e2e run: two `next dev` servers on one `apps/web/.next` broke the dev-login (Next 15.5 has no dev lock; the header comment of `apps/web/e2e/public-share-page.config.ts`, lines 3-8 at the lane's head). Today the anchored allowlist entry for `/session/<slug>` (GET and HEAD only) is pinned by the unit tests of `apps/web/lib/request-policy.test.ts` only.
+  Deliverable: a build directory per server (a `distDir` from an environment variable in next.config.mjs) and the e4 case: a live link answers 200 under the discovery role, and the host's share-link route stays unreachable there. Not in L39: next.config.mjs is outside the lane's ownership (the conductor's ruling of 2026-10-26 for lane L39, decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, D5 and D6 (lane L39).
+
+## task: web-public-share-page-404-production-measurement
+title: E2E: measure the public share page's 404s and Cache-Control under `next build` + `next start` (lane L39's proof runs `next dev` only)
+status: idea
+risk: P2
+change_class: test-infra
+depends_on: []
+invariants: [test-chain]
+scope: [apps/web/e2e/public-share-page-proof.sh, apps/web/e2e/public-share-page.config.ts, apps/web/e2e/public-share-page.proof.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Under `next dev` the share page's 404s differ per request by three dev-only clock values (the `?v=<ms>` asset query, the Flight time-origin row and the server-measured I/O timings), so lane L39's e2e masks exactly those three and compares the Flight of the four well-formed misses only. The security review of L39's round 1 (finding S-1, quoted in L39's PR body) found none of the three in Next 15.5.28's production bundles (no time-origin or I/O-info chunk writer in the production Flight server bundle; the `?v=` query is dev-only), so no existence oracle is expected in production; that is not measured.
+  Deliverable: under `next build` + `next start`, every miss (never existed, rotated away, private, suspended tenant, malformed) is byte-equal after slug normalization and the chunk join, and the production Cache-Control form (`private, no-cache, no-store, max-age=0, must-revalidate` expected from force-dynamic) is measured on the 200 and the 404. It cannot run in L39's proof config (two `next dev` servers).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-web-share-page.md, threat model T1 and T3 (lane L39).
