@@ -314,8 +314,9 @@ the same catalog query on a scratch database migrated with 0072 (measured 2026-1
 `search_path=pg_catalog, pg_temp`); every prosrc grows by exactly 11 characters (`pg_catalog.`) per qualified call, 45 in all, and the generator
 asserts per function that the new body minus those prefixes equals the old one byte for byte; owner, ACL, SECURITY, volatility, STRICT, PARALLEL,
 LEAKPROOF, language and return type are equal in all ten rows. The before/after matrix (462 writer x class cells on the two scratch databases,
-every function executed) gave identical output; the pg_temp probe gave 23514 with the plant at the base and, after 0072, the same result with and
-without the plant.
+every function executed) gave identical output; the pg_temp probe gave 23514 with the plant at the base (and XX000, a cache lookup of the dropped
+domain's run-specific type OID, when the same backend called the rule again unplanted: the compiled body keeps the planted type, so the regression
+test uses a fresh connection per phase) and, after 0072, the same result with and without the plant.
 
 | Function | proconfig | prosecdef | provolatile | proisstrict | proparallel | proleakproof | proowner | proacl | prosrc | AFTER |
 |---|---|---|---|---|---|---|---|---|---|---|

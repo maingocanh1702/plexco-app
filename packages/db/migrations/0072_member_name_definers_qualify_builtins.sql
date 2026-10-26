@@ -5,13 +5,13 @@
 -- its schema, and the two owner-only helpers list pg_temp last. Specification: sections 5 and 14 of
 -- docs/sessions/web-mvp-phase4-readiness-p4-name-definers-and-rule-tests.md.
 --
--- WHAT: the ten are re-created from their newest definitions by a generator kept outside the
--- repository, which copies each block by its exact line range, byte for byte, in this order:
+-- WHAT: the ten are re-created from their newest definitions, each block copied byte for byte from
+-- its source CREATE, in this order:
 -- public_name_strip_invisible (0068), member_name_apply_rule (0070), person_profile_update (0069),
 -- create_host_added_person, tenant_provision, tenant_profile_update, zalo_identity_resolve,
--- auth_login_google, create_guest_membership (0070) and tenant_public_alias_set (0068). It makes
--- three edits and asserts them (the count per function, the total, and every block equal to its
--- source once the edits are reverted):
+-- auth_login_google, create_guest_membership (0070) and tenant_public_alias_set (0068), with three
+-- edits and no other (the RC-BODY tests of packages/db/src/member-name-invisible-chars.test.ts
+-- re-check every body: its source byte for byte once its pg_catalog. prefixes are removed):
 --   (1) pg_catalog. before each of the 45 unqualified built-in FUNCTION calls of the ten bodies
 --       (regexp_replace, char_length, btrim, length, left, current_setting, set_config, now,
 --       transaction_timestamp, pg_advisory_xact_lock, hashtextextended, max, jsonb_build_object),
@@ -22,7 +22,7 @@
 -- The eight definers keep their search_path: pg_catalog, public, pg_temp (six) and public, pg_temp
 -- (tenant_provision, auth_login_google). Operators, casts, DECLARE types and keyword forms (COALESCE,
 -- NULLIF, IN, CASE, ...) stay unqualified: OPERATOR(pg_catalog.op) takes the generic operator
--- precedence and could re-associate a byte-pinned expression; type names are covered by (2).
+-- precedence and could re-associate a byte-pinned expression; for type names all ten list pg_temp last.
 --
 -- WHY (THREAT MODEL): a search_path that does not list pg_temp searches the session's temporary
 -- schema FIRST for type and table names. The rule runs under its own search_path pg_catalog, so a
