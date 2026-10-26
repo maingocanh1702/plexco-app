@@ -1,7 +1,7 @@
 # Feature: Zalo Player Channel — Backend Tech Spec
 
 > **Canonical phase:** P4.7  
-> **Version:** 2.8 · 2026-08-10
+> **Version:** 2.9 · 2026-10-26
 > **Status:** Reviewed · reconciled to DD-15/DD-32/DD-45/DD-49/DD-67
 > **Implementation:** Not started · authority: `../../standards/BUILD-STATUS.md` (Doc status ≠ Implementation status)  
 > **Product spec:** `../FE/feature_zalo_channel.md`
@@ -151,7 +151,7 @@ WHERE zb.tenant_id = current_setting('app.tenant_id', true)::uuid;
 
 > **Đề xuất chương trình web-MVP M3a (chờ owner ký, cơ chế DD-122 D3 — chưa phải quyết định):** shape webhook được chốt là `POST /api/webhooks/zalo/:token` + header `X-Bot-Api-Secret-Token` (so sánh timing-safe với `zalo_bots.webhook_secret_enc` đã giải mã; xem `feature_connector_onboarding_tech.md` :289). Shape chữ ký OA (`POST /webhook/zalo`, "Zalo webhook signature") ở dòng trên bị **superseded**; dòng được giữ nguyên để không viết lại spec Reviewed. Implement: migration `0053_zalo_ingress.sql`, route `apps/web/app/api/webhooks/zalo/[token]/route.ts`.
 
-> **DD-126 — owner đã ký đề xuất trên ngày 2026-10-14 (OD-2, ghi vào ledger ở DD-131 (pending in PR #51)):** shape chốt: body `{event_name:"message.text.received", message:{from.id, from.display_name, chat.id, chat.chat_type, message_id (string), date (epoch ms), text}}`; header `X-Bot-Api-Secret-Token` (so sánh timing-safe, sai ⇒ 403); trả `{message:"Success"}` ngay rồi xử lý bất đồng bộ; bỏ qua chat `GROUP` (200, không tạo identity, không trả lời, không phát link code); envelope Bot API `{ok,result,description,error_code}`. Zalo **không có `update_id`**: khoá dedupe = `message.message_id` + `from.id` + `chat.id` (route chỉ lưu keyed HMAC của bộ ba, không lưu raw id — DD-67), giữ khoá **vĩnh viễn**. Connect bị một lần connect mới hơn thay thế trả mã riêng `409 CONNECT_SUPERSEDED`; `COMMAND_ID_CONFLICT` chỉ còn dành cho `commandId` đã thuộc command khác. MVP **không** có job retention cho `routing_audit`; các dòng backlog retention của DD-126 đã có trong `docs/autopilot-backlog.md` qua PR #51. **Còn lệch, chưa làm trong PR #47:** event DM được xử lý đồng bộ (sau khi lưu bền, trước khi ack) thay vì ack trước rồi xử lý bất đồng bộ; payload không phải DM (chat `GROUP`, `chat_type` khác `PRIVATE`, hoặc `chat.id` ≠ `from.id`) được ack mà **không lưu** gì. Lần giao lại cùng khoá dedupe chỉ được ack khi event đã `processed`/`ignored` hoặc đang xử lý; event `failed`, hoặc kẹt ở `received` quá 5 phút, được nhận lại bằng compare-and-set và xử lý lại ngay trong request (không có job nền). Receiver Zalo nay trả `403 INVALID_WEBHOOK_SECRET` (cùng mã, cùng body) cho mọi lần kiểm tra secret thất bại (thiếu header, sai, hoặc secret đã lưu không đọc được) theo OD-2 (2026-10-14); các hàng `401` ở §3 của `feature_connector_onboarding_tech.md` giữ nguyên cho SePay (ngoài phạm vi MVP, OD-0). Evidence: payment bot `src/zalo/zalo.ts`, `src/zalo/index.ts`, `src/db.ts` `zalo_seen_messages`; chatbot `bestminton-club-chatbot` `src/webhook/parser.js`, `src/zalo/webhook.js`.
+> **DD-126 — owner đã ký đề xuất trên ngày 2026-10-14 (OD-2, ghi vào ledger ở DD-131):** shape chốt: body `{event_name:"message.text.received", message:{from.id, from.display_name, chat.id, chat.chat_type, message_id (string), date (epoch ms), text}}`; header `X-Bot-Api-Secret-Token` (so sánh timing-safe, sai ⇒ 403); trả `{message:"Success"}` ngay rồi xử lý bất đồng bộ; bỏ qua chat `GROUP` (200, không tạo identity, không trả lời, không phát link code); envelope Bot API `{ok,result,description,error_code}`. Zalo **không có `update_id`**: khoá dedupe = `message.message_id` + `from.id` + `chat.id` (route chỉ lưu keyed HMAC của bộ ba, không lưu raw id — DD-67), giữ khoá **vĩnh viễn**. Connect bị một lần connect mới hơn thay thế trả mã riêng `409 CONNECT_SUPERSEDED`; `COMMAND_ID_CONFLICT` chỉ còn dành cho `commandId` đã thuộc command khác. MVP **không** có job retention cho `routing_audit`; các dòng backlog retention của DD-126 đã có trong `docs/autopilot-backlog.md` qua PR #51. **Còn lệch, chưa làm trong PR #47:** event DM được xử lý đồng bộ (sau khi lưu bền, trước khi ack) thay vì ack trước rồi xử lý bất đồng bộ; payload không phải DM (chat `GROUP`, `chat_type` khác `PRIVATE`, hoặc `chat.id` ≠ `from.id`) được ack mà **không lưu** gì. Lần giao lại cùng khoá dedupe chỉ được ack khi event đã `processed`/`ignored` hoặc đang xử lý; event `failed`, hoặc kẹt ở `received` quá 5 phút, được nhận lại bằng compare-and-set và xử lý lại ngay trong request (không có job nền). Receiver Zalo nay trả `403 INVALID_WEBHOOK_SECRET` (cùng mã, cùng body) cho mọi lần kiểm tra secret thất bại (thiếu header, sai, hoặc secret đã lưu không đọc được) theo OD-2 (2026-10-14); các hàng `401` ở §3 của `feature_connector_onboarding_tech.md` giữ nguyên cho SePay (ngoài phạm vi MVP, OD-0). Evidence: payment bot `src/zalo/zalo.ts`, `src/zalo/index.ts`, `src/db.ts` `zalo_seen_messages`; chatbot `bestminton-club-chatbot` `src/webhook/parser.js`, `src/zalo/webhook.js`.
 
 > Không có app-facing REST API — mọi interaction qua Zalo OA webhook + DM.
 
@@ -160,7 +160,7 @@ WHERE zb.tenant_id = current_setting('app.tenant_id', true)::uuid;
 | Code | Error Code | Message | Trigger |
 |------|-----------|---------|---------|
 | 200 | (ACK) | — | Valid webhook event processed |
-| 400 | `WEBHOOK_SIGNATURE_INVALID` | — | Zalo signature mismatch |
+| 403 | `INVALID_WEBHOOK_SECRET` | — | Header `X-Bot-Api-Secret-Token` sai (OD-2/DD-126) |
 | 400 | `WEBHOOK_PAYLOAD_MALFORMED` | — | Unparseable body |
 | 429 | `WEBHOOK_RATE_LIMITED` | — | Burst cap exceeded |
 
@@ -179,20 +179,24 @@ WHERE zb.tenant_id = current_setting('app.tenant_id', true)::uuid;
 
 > Webhook trả theo **Zalo provider contract**; DM response theo bảng Error Responses.
 
-**`POST /webhook/zalo`** — signature hợp lệ:
+**`POST /api/webhooks/zalo/:token`** — header `X-Bot-Api-Secret-Token` hợp lệ:
 
 ```json
 {
-  "event_name": "user_send_text",
-  "sender": { "id": "zalo_user_id" },
-  "message": { "text": "1" },
-  "timestamp": "1722000000000"
+  "event_name": "message.text.received",
+  "message": {
+    "from": { "id": "zalo_user_id", "display_name": "zalo_display_name" },
+    "chat": { "id": "zalo_chat_id", "chat_type": "zalo_chat_type" },
+    "message_id": "zalo_message_id",
+    "date": 1722000000000,
+    "text": "1"
+  }
 }
 ```
 
 Response: `200 OK` (ACK).
 
-**Signature sai:**
+**Header `X-Bot-Api-Secret-Token` sai (`403`):**
 
 ```json
 { "error": "WEBHOOK_SIGNATURE_INVALID" }
@@ -219,10 +223,10 @@ Response: `200 OK` (ACK).
 | Session detail | Time + public area + fee + confirmed count + slots |
 | Paid final gate | “1. Liên kết Plexco — giữ chỗ, trả sau”; “2. Thanh toán & giữ chỗ 15 phút” only when available |
 | Awaiting payment | Exact safe payment display + expiry; “đã trả” only polls |
-| Active | "✅ Đã tham gia [session]! [venue]" |
+| Active | "✅ Đã tham gia [session]!" + one amount line: exactly ONE known charge → R1amount "Số tiền cần trả cho buổi này: [amount]"; club `known_zero` (free session or fully paid) → R16 "Bạn không có khoản nào cần trả." exactly as `/pay`; unknown/unavailable/absent → R17 (DD-140, DD-143); no venue, no bank data/QR |
 | Waitlisted | "⏳ Bạn đang ở vị trí N" (không venue/QR) |
-| Existing active/waitlisted | Render current state idempotently |
-| Rejoin after `left` | Render shared result: `active`/`waitlisted`/`current`; only `REJOIN_REQUIRES_REVIEW` shows host-review copy |
+| Existing active/waitlisted | Render current state idempotently, same text as a new seat (P-11): active → the Active row (amount line R1amount / R16 when `known_zero` / R17); waitlisted → the Waitlisted row, no amount |
+| Rejoin after `left` | Render shared result: `active`/`waitlisted`/`current`; only `REJOIN_REQUIRES_REVIEW` shows host-review copy; `active` → the Active row (amount line R1amount / R16 when `known_zero` / R17; DD-140, DD-143) |
 | Unsupported | "Lệnh không được hỗ trợ" |
 
 ### Request/Response Examples
@@ -374,6 +378,7 @@ The adapter renders only the funnel's tagged outcomes. Link handoff consumes onc
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 2026-10-26 | v2.9 | **Sync DD-140 (quyết định owner 2026-10-21), DD-143 (quyết định owner 2026-10-22) và DD-131 OD-2 / DD-126 (Owner ký OD-0…OD-9 (14/10)); docs-only.** Bảng trả lời `/join`: outcome Active thêm dòng số tiền (đúng một khoản đã biết; R16 khi `known_zero`, như `/pay`; R17 khi unknown/unavailable), không venue, không bank/QR; chỗ đã có và host-review → active dùng cùng chữ. §3: ví dụ request body theo shape DD-126, hàng Error Codes 403 `INVALID_WEBHOOK_SECRET`, route ví dụ `POST /api/webhooks/zalo/:token`, nhãn ví dụ lỗi = header `X-Bot-Api-Secret-Token` sai (403), bỏ `(pending in PR #51)` ở ghi chú DD-126. |
 | 2026-08-10 | v2.8 | **A-grade upgrade:** thêm Entry points table (7 entries); bump version. Không đổi contract/adapter model. |
 | 2026-07-28 | v2.7 | Mirror DD-32 Option D: number selection becomes safe detail, second context enters shared link-or-pay funnel; add qualified Account link, verified-payment hold, provider fail-closed, race/fairness tests and thin-adapter boundary. No runtime claim. |
 | 2026-07-24 | v2.6b | **De-pin migration-tail** (docs-migration-tail-0018-to-0020-sweep): Live-schema boundary note hard-pinned `tail = 0018, migrations 0000–0018` + numbering guidance `(0018)` → non-pinned "verify tail hiện hành tại `packages/db/migrations/`, không hard-pin số" (live tail nay `0020`; `0019`/`0020` tenant-integrity FKs DD-68). Pre-existing dated changelog giữ verbatim. Không đổi contract. |
