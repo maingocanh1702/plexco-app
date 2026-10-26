@@ -25,7 +25,9 @@ import { withTenant } from "./tenant.js";
 
 /**
  * SessionService — CreateSession command (root of the Session BE vertical). Single
- * write path for a DRAFT session in one withTenant transaction: reserve the command
+ * write path for a DRAFT session in one withTenant transaction: the actor re-check
+ * (`actorRecheckUnderLock`, invariant actor-recheck-under-lock: session.manage; the
+ * actor's tenant_admins row FOR SHARE until commit) -> reserve the command
  * key (advisory xact lock) -> dedup -> validate the WHOLE input up front -> insert the
  * tenant-injected row -> one `session.created` outbox row (first producer) -> record
  * the result. FORCE RLS gives cross-tenant invisibility by construction. No suspension
@@ -423,7 +425,9 @@ export async function createSession(
  * PublishSession — the draft→open transition (feature_session_management_tech.md
  * §4 "Publish transition", edges #21–#24). Sibling of createSession, same single
  * write path in one withTenant transaction. Order is spec-pinned (§4 step 1):
- * billing suspension is checked FAIL-FAST FIRST — authz beats replay/no-op, so a
+ * the actor re-check (`actorRecheckUnderLock`, invariant actor-recheck-under-lock:
+ * session.manage; the actor's tenant_admins row FOR SHARE until commit) -> billing
+ * suspension is checked FAIL-FAST right after it — authz beats replay/no-op, so a
  * suspended tenant gets TENANT_SUSPENDED even on a replay or an already-open no-op
  * -> reserve the command key (advisory xact lock, command-type-INDEPENDENT to match
  * the shared processed_commands (tenant_id, command_id) uniqueness) -> dedup
@@ -807,7 +811,9 @@ export async function publishSession(
 /* ------------------------------------------------------------------------- *
  * AnnounceSession — request an announcement of an OPEN session to a linked channel
  * (feature_session_management_tech.md §3/§4 Events, SES-UC-3; contract acceptance AN1).
- * Sibling of publishSession, same single write path in one withTenant transaction: upfront
+ * Sibling of publishSession, same single write path in one withTenant transaction: the actor
+ * re-check on the requester (`actorRecheckUnderLock`, invariant actor-recheck-under-lock:
+ * session.manage; the requester's tenant_admins row FOR SHARE until commit) -> upfront
  * billing gate (announce_session, ❌ under suspension — authz beats replay) -> validate payload
  * -> reserve the command key (advisory xact lock) -> dedup (fail-closed on a foreign/corrupt/
  * other-request ledger row) -> lock the session row FOR UPDATE and read status -> require open
@@ -1094,7 +1100,9 @@ export async function announceSession(
  * UpdateSession — a partial field mutation of a draft or open session
  * (feature_session_management_tech.md SES-UC-4, edges #1/#2/#4/#5/#7/#11/#16/#26;
  * §3 error codes). Sibling of publishSession, same single write path in one
- * withTenant transaction: validate payload shape -> reserve the command key
+ * withTenant transaction: the actor re-check (`actorRecheckUnderLock`, invariant
+ * actor-recheck-under-lock: session.manage; the actor's tenant_admins row
+ * FOR SHARE until commit) -> validate payload shape -> reserve the command key
  * (advisory xact lock, command-type-INDEPENDENT) -> dedup (fail-closed on a
  * foreign/corrupt/other-request ledger row) -> validate the provided editable
  * fields -> lock the session row FOR UPDATE and read the current row -> reject a
@@ -1982,7 +1990,9 @@ function isStoredCloseResult(value: unknown): value is StoredCloseResult {
 /**
  * CloseSession — transition an `open` session to `closed`. Obligation-termination: allowed under
  * suspension on EITHER axis (DD-110 D2) but still DENIES a `cancelled`/missing tenant or subscription.
- * One withTenant transaction on the S2 pattern: upfront suspension gate →
+ * One withTenant transaction on the S2 pattern: the actor re-check
+ * (`actorRecheckUnderLock`, invariant actor-recheck-under-lock: session.manage; the actor's
+ * tenant_admins row FOR SHARE until commit) → upfront suspension gate →
  * validate → advisory command-key lock → dedup (commandId-only, DD-117 D5) → FOR UPDATE lock →
  * idempotent no-op (already closed) → transition guard (only `open`) → MANDATORY expectedVersion →
  * open-debt guard (DD-131 OD-1: any charge with an open balance → CLOSE_BLOCKED_OPEN_DEBT carrying
@@ -2272,7 +2282,9 @@ async function sessionHasAnyPlayer(tx: Tx, sessionId: string): Promise<boolean> 
 /**
  * CancelSession — transition a `draft` OR `open` session to `cancelled` (obligation-termination:
  * allowed under suspension on EITHER axis, DD-110 D2, but still denies a `cancelled`/missing tenant or
- * subscription). One withTenant transaction, S2 pattern — the same shape as closeSession: upfront
+ * subscription). One withTenant transaction, S2 pattern — the same shape as closeSession:
+ * the actor re-check (`actorRecheckUnderLock`, invariant actor-recheck-under-lock:
+ * session.manage; the actor's tenant_admins row FOR SHARE until commit) → upfront
  * suspension gate → validate → advisory command-key lock → commandId-only dedup (DD-117 D5) → FOR
  * UPDATE lock → idempotent no-op (already cancelled) → transition/past guards → MANDATORY
  * expectedVersion (isInt4 + match, AFTER the no-op) → paid/roster-impact fail-closed → mutate + version

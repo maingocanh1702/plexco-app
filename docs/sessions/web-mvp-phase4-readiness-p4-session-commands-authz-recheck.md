@@ -266,8 +266,9 @@ the only runtime spanning writers (W2, W3) take the admin row SH before tenants;
 - P2d (B first, W2's UPDATE tenants held, ROLLBACK): A's recheck passed with no wait (SH vs SH); `resolve_tenant_status_locked` waited
   until 1 ms after B's rollback; A committed (7.096 s).
 - After every case and at the end: one active actor row, no other backend in the database, deadlock counter 0; the only ERROR in the log is
-  the P1 55P03; no 40P01. `PROBE: NO_CYCLE_CONFIRMED`. Not covered (by design of the probe): placement B, W3, the owner_grantable grant
-  path, a COMMITTED revoke (test (b) covers the last). Drop: `### dropped l48_scratch_base`, the database count back from 9 to 8.
+  the P1 55P03; no 40P01. `PROBE: NO_CYCLE_CONFIRMED` for P1 and P2a-P2d. Not covered (by design of the probe): placement B, W3, the
+  owner_grantable grant path, a COMMITTED revoke (test (b) covers the last). Drop: `### dropped l48_scratch_base`, the database count back
+  from 9 to 8.
 
 ## 4. Lead corrections
 
