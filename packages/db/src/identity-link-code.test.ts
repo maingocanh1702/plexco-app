@@ -105,6 +105,19 @@ async function row(linkCodeId: string): Promise<Row> {
   return rows[0] as Row;
 }
 
+// Remaining TTL of an issued code in ONE database statement: expires_at and clock_timestamp()
+// are both the server's clock, so the host clock never enters the comparison.
+async function remainingTtlMs(linkCodeId: string): Promise<number> {
+  const { rows } = await ctx.owner.query(
+    `SELECT extract(epoch FROM expires_at - clock_timestamp())::float8 * 1000 AS ms
+       FROM link_codes WHERE id = $1`,
+    [linkCodeId],
+  );
+  // Fail closed: no row means a wrong code id, never "0 ms left".
+  if (rows.length !== 1) throw new Error(`remainingTtlMs: no link_codes row for ${linkCodeId}`);
+  return (rows[0] as { ms: number }).ms;
+}
+
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /**
@@ -258,12 +271,12 @@ describe("link_code_issue", () => {
     expect(first.sourcePersonId).toBe(person);
     expect(first.superseded).toBe(0);
     expect(first.code).toMatch(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}-[0-9A-Z]{2}$/);
-    expect(first.expiresAt.getTime() - Date.now()).toBeGreaterThan(
-      (LINK_CODE_TTL_SECONDS - 30) * 1000,
-    );
-    expect(first.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(
-      LINK_CODE_TTL_SECONDS * 1000,
-    );
+    // Remaining TTL on the database clock (one statement): the host clock cannot skew it.
+    const ttlMs = await remainingTtlMs(first.linkCodeId);
+    expect(ttlMs).toBeGreaterThan((LINK_CODE_TTL_SECONDS - 30) * 1000);
+    expect(ttlMs).toBeLessThanOrEqual(LINK_CODE_TTL_SECONDS * 1000);
+    // Clock-free: the expiry the function returned is the expiry that was stored.
+    expect(first.expiresAt).toEqual((await row(first.linkCodeId)).expires_at);
     expect((await row(first.linkCodeId)).max_attempts).toBe(LINK_CODE_MAX_ATTEMPTS);
 
     const second = await issueLinkCode(ctx.appPool, { accountId: account }, keys);

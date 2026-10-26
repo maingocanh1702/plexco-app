@@ -6,7 +6,6 @@ import { withTenant } from "./tenant.js";
 import {
   setupNonSuperuserOwnerContext,
   setupRlsTestContext,
-  withJobDefinerLock,
   type RlsTestContext,
 } from "./test-harness.js";
 
@@ -451,11 +450,7 @@ describe("authorize(): under a NOSUPERUSER NOBYPASSRLS migration owner (0037 D-2
   it("an owner is allowed and a stranger is denied when the definer's owner is subject to FORCE RLS", async () => {
     const nsCtx = await setupNonSuperuserOwnerContext("plexco_authorize_nonsuper");
     try {
-      await withJobDefinerLock(process.env.DATABASE_URL_TEST!, async () => {
-        await nsCtx.bootstrapJobDefinerForOwner();
-        await nsCtx.bootstrapChatDefinerForOwner();
-        await nsCtx.runMigration();
-      });
+      await nsCtx.bootstrapAndMigrateAsOwner();
       // The harness pool: leased app password, guarded for teardown's FORCE drop (57P01), ended there.
       const appPool = await nsCtx.connectAsApp();
 
