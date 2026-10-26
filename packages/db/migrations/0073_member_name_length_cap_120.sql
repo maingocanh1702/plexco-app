@@ -21,9 +21,11 @@
 --       unchanged, CREATE OR REPLACE keeps the owner and the ACL, and the owner check runs first;
 --   (2) body drift between this file, the byte pins and the live catalog;
 --   (3) a writer accepting a length another layer refuses (the roster TS cap moves to 120 in the
---       same lane);
+--       same lane), or a name another layer would strip or refuse: fail-closed on every path;
 --   (4) the external-name path raising instead of normalizing;
---   (5) an unbounded stored external name.
+--   (5) an unbounded stored external name;
+--   (6) a second definition of the cap drifting from the first (the TS one-definition guard in
+--       packages/db/src/text-safety.test.ts).
 -- Not defended: homoglyphs and confusables; stored production values nobody here can measure.
 --
 -- NOT CHANGED: every other byte of both bodies (each block is its 0072 block except the named
