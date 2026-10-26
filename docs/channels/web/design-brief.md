@@ -1,6 +1,6 @@
 # Plexco Web App — Design Brief cho Designer
 
-> **Version:** 2.4 · 2026-08-07
+> **Version:** 2.5 · 2026-10-26
 > **Tài liệu tham chiếu:** `../../product/BRD.md` v3.9n · `../../product/PRD.md` v2.8m · `../../product/TDD.md` **v3.1i** · `../../product/ROADMAP.md` **v3.4m** · `../../features/README.md` current · `../../standards/decisions.md` **v2.12 current mirror** · `../../proposals/in-app-chat-primary-player-surface-plan-2026-07-27.md` v1.8
 > **Vẽ màn theo:** `./FE/feature_<name>_fe.md` (12 FE spec — chi tiết nhất cho từng màn) · `../../standards/design-system.md` (component catalog) · `../../standards/design-tokens.md` (value SoT). Brief này cho **bối cảnh sản phẩm**; khi brief và FE spec lệch nhau thì **FE spec thắng**.
 > **Target audience:** Designer (UI/UX)
@@ -512,7 +512,7 @@ Step 4: Facebook Messenger + Readiness
 ### 5.2 Typography
 
 - **Current font family:** Inter (body), Outfit (heading), system-ui fallback
-- **Target DD-81:** Sora headings + Inter body, chỉ activate sau tracked owner-approved `design.pen` + visual/WCAG gate
+- **Target DD-81 + DD-131 OD-7:** Be Vietnam Pro headings + Inter body, chỉ activate sau tracked owner-approved `design.pen` + visual/WCAG gate
 - **Target primary contrast:** nếu activate `#FF5A1F`, normal text dùng dark `#22100A` (5.874:1); white chỉ 3.118:1 nên không đạt AA
 - **Heading:** Bold, letter-spacing tight
 - **Body:** Regular, 16px base, 1.5 line-height
@@ -609,6 +609,7 @@ Step 4: Facebook Messenger + Readiness
 
 | Date | Version | Thay đổi |
 |---|---|---|
+| 26/10/2026 | v2.5 | **Sync DD-131 OD-7 (Owner ký OD-0…OD-9 (14/10)); docs-only.** :515: target heading font Sora → Be Vietnam Pro (Sora không có subset `vietnamese`); banner :10 là lịch sử, không sửa. |
 | 07/08/2026 | v2.4 | **Refresh authority pin + surface DD-96 cho màn vẽ đầu tiên.** Version pin lệch: TDD v3.1h→**v3.1i**, ROADMAP v3.4l→**v3.4m**, decisions mirror v2.11→**v2.12**, `feature_home.md` v0.7→**v0.10**. Thêm dòng "vẽ màn theo" trỏ 12 FE spec + `design-system.md` + `design-tokens.md`, kèm quy tắc **FE spec thắng brief** khi lệch — brief này cho bối cảnh sản phẩm, không phải nguồn để vẽ pixel. Tóm 3 thay đổi Home kể từ v0.7 (v0.8 bỏ denominator ở suggested; v0.9 gỡ hero payment CTA + cấm cache person-self; v0.10 Empty chốt đúng 2 chip) vì Home là màn vẽ đầu tiên theo `designer-kickoff §3B`. Thêm **DD-96** (owner 07/08): chip "Còn nợ" là aggregate cross-club 3 trạng thái với **unknown-dominates** (cấm partial sum — nó hiện số thấp hơn nợ thật), chỉ `known_zero` mới vẽ 0, không pay CTA ở tầng aggregate; chip "Chưa thu" **không render dưới bất kỳ hình thức nào** tới khi 4 blocker B1–B4 đóng. Ghi rõ Home pair/FE chưa mirror DD-96 nên `decisions.md` thắng khi lệch. |
 | 28/07/2026 | v2.3 | Refresh current authority refs and mirror plan v1.8 `PLAN_READY` at `90d292d`; retain slice-local `CODE_READY`, no-runtime and design-authority HOLD boundaries. |
 | 28/07/2026 | v2.2 | Mirror DD-57/58/59 active governance and DD-81 target C + Sora/Inter; distinguish current Indigo/Outfit from gated target and pin dark on-primary contrast. |
