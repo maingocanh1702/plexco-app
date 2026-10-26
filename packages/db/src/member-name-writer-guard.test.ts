@@ -723,9 +723,11 @@ const searchPathSafe = (config: string[] | null) => {
  * function of a later file): the ten name functions keep every built-in function call qualified and
  * pg_temp last. Operators, casts and keyword forms are not function calls; PostgreSQL never
  * searches pg_temp for functions or operators, so the remaining exposure is type and relation
- * names, which the search_path order governs (b). Ceiling: a token scan, not a parser. Handled:
- * comments, '' and E'' literals, quoted identifiers, ".." ranges. Not handled: dynamic SQL inside
- * EXECUTE strings, a nested dollar-quoted body (the ten have neither). */
+ * names, which the search_path order governs (b). Ceiling: a token scan, not a parser. Handled,
+ * as a closed list: `--` and non-nested block comments, '' and E'' literals, double-quoted names
+ * without a dot or a space, ".." ranges. Anything else is not handled, for example nested block
+ * comments, U&"..." names, a quoted name holding a dot or a space, any dollar-quoted string inside
+ * a body and dynamic SQL inside EXECUTE strings (the ten live bodies have none of these). */
 describe("L41-G1: the ten name functions qualify every built-in call and list pg_temp last", () => {
   let ten: { sig: string; src: string; config: string[] | null }[];
   beforeAll(async () => {
