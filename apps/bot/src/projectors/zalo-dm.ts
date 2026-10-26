@@ -31,6 +31,8 @@ const SEND_TIMEOUT_MS = 5_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FALLBACK_TIME_ZONE = "Asia/Ho_Chi_Minh";
 const INT4_MAX = 2_147_483_647; // charges.amount_due is int4
+// Wall-clock jumps neither stretch nor starve the time left; arrow: Node checks the receiver.
+const monotonicNowMs = (): number => performance.now();
 
 const delivered = (providerRef: string): DeliveryOutcome => ({ result: "delivered", providerRef });
 const retry = (errorCode: string): DeliveryOutcome => ({ result: "retry", errorCode });
@@ -81,11 +83,19 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
-  const { db, send = sendMessage, now = Date.now, open = openConnectorSecret } = deps;
+  const { db, send = sendMessage, now = monotonicNowMs, open = openConnectorSecret } = deps;
   const sendTimeoutMs = deps.sendTimeoutMs ?? SEND_TIMEOUT_MS;
 
   return async (job) => {
     const started = now();
+    // DD-146: the dispatcher's time to the bound, counted from `started`; not finite = none left.
+    const deadline = job.deliveryDeadlineMs;
+    const deadlineMs = deadline === undefined ? Infinity : Number.isFinite(deadline) ? deadline : 0;
+    // Both caps run from `started`, so the smaller one binds, and its code says which it was.
+    const capMs = Math.min(ATTEMPT_BUDGET_MS, deadlineMs);
+    const capCode =
+      deadlineMs < ATTEMPT_BUDGET_MS ? "delivery_deadline_reached" : "send_budget_exhausted";
+    const leftMs = () => capMs - (now() - started);
     // 1. The event alone (Z-10, Z-12, Z-32): no DB call, no key material.
     const template = ZALO_DM_TEMPLATES.get(job.event.eventType);
     if (!template) return dlq("unexpected_event_type");
@@ -131,6 +141,7 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
     }
 
     // 3. Targets through the live claim (Z-18): zero rows = the claim is no longer ours.
+    if (leftMs() <= 0) return retry(capCode); // out of time: no read, no decrypt, no send
     let rows: TargetRow[];
     try {
       const result = await db.query("SELECT * FROM zalo_dm_delivery_targets($1, $2, $3)", [
@@ -185,12 +196,11 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
       }
     };
 
-    // 5. Sequential sends (Z-8, Z-14): re-check the registry and the budget before each one.
+    // 5. Sequential sends (Z-8, Z-14): re-check the registry and the time left before each one.
     for (const row of rows) {
       const enabled = await projectorIsEnabled(db, "zalo_dm").catch(() => false);
       if (!enabled) return retry("projector_disabled");
-      const remaining = ATTEMPT_BUDGET_MS - (now() - started);
-      if (remaining <= 0) return retry("send_budget_exhausted");
+      if (leftMs() <= 0) return retry(capCode); // spares the decrypt when no time is left
       let chatId: string;
       try {
         if (!Buffer.isBuffer(row.recipient_user_id_enc)) throw new Error("no recipient ciphertext");
@@ -202,6 +212,8 @@ export function createZaloDmDeliver(deps: ZaloDmDeps): DeliverFn {
         }
         continue;
       }
+      const remaining = leftMs(); // re-measured: the decrypt took time, and no send outlives the cap
+      if (remaining <= 0) return retry(capCode);
       let terminalCode: string | null = null;
       try {
         await send(token, chatId, text, { timeoutMs: Math.min(sendTimeoutMs, remaining) });
