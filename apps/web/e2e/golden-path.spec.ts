@@ -51,7 +51,7 @@ test("host golden path: club -> session -> publish -> collect (partial, reversal
   const venue = `San Smoke ${run}`;
   const address = `12 Duong Smoke ${run}, Quan 1`;
   const shot = screenshotter(page);
-  await paceSessionApi(page, 41); // 41 paced calls measured (8 warm-up + 33 flow), also across back-to-back runs
+  await paceSessionApi(page, 43); // 42 paced calls measured at this head (41 at the base) + 1, also across back-to-back runs
   let sessionUrl = "";
   let devTenantId = "";
 
@@ -272,7 +272,7 @@ test("player golden path: published session -> my sessions -> my charges", async
   const venue = `San Nguoi Choi ${run}`;
   const price = formatVnd(100000);
   const shot = screenshotter(page);
-  await paceSessionApi(page, 5); // 5 paced calls measured (create, 2 reads, publish, 1 read)
+  await paceSessionApi(page, 6); // 5 paced calls measured (create, 2 reads, publish, 1 read) + 1
   // Opens a /me page and returns its <main> once it left loading; an error or offline state fails here.
   const settled = async (path: string) => {
     await page.goto(path);
