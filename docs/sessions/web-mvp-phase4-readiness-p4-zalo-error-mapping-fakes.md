@@ -170,7 +170,7 @@ R = retry (DM:223), D = dlq (DM:224), T = recipient terminal (DM:225-232); rej(s
 | A-1 | begin throws ZaloConnectError BOT_REVOKED -> 400, code ZALO_TOKEN_INVALID, the body equal to the getMe-rejected body; the bot token absent from the body | RT |
 | A-2 | finish throws ZaloConnectError BOT_REVOKED -> the same 400 pair; the token absent | RT |
 | A-3 | a getMe `timeout` and a `network` failure still answer AUTH_UNAVAILABLE 503 | RT:131-139 (existing, green) |
-| A-4 | every other connect case unchanged (3.4 rows 3-8) | the existing RT cases, green |
+| A-4 | every other connect case unchanged (3.4 rows 3-8) | the existing RT cases, green (they mock I); row 3 at the database: IT:631-649 (a non-revoked 22023 rethrown raw) |
 | A-5 | real PG: `finishZaloConnect` with botA revoked -> ZaloConnectError BOT_REVOKED (not a raw 22023); no `onboarding_steps` and no `processed_commands` row for the commandId; the bot row unchanged (status revoked, token unchanged) | IT, after IT:566 |
 | A-6 | real PG: `beginZaloConnect` for the revoked bot -> ZaloConnectError BOT_REVOKED (the predicate refactor pinned) | IT, after IT:566 |
 | A-7 | no token in any error path: the BOT_REVOKED bodies (A-1, A-2) and the thrown errors (a fixed message, I:438-444) | RT, IT; R1a, SEC |
