@@ -176,7 +176,7 @@ R = retry (DM:223), D = dlq (DM:224), T = recipient terminal (DM:225-232); rej(s
 | A-7 | no token in any error path: the BOT_REVOKED bodies (A-1, A-2) and the thrown errors (a fixed message, I:438-444) | RT, IT; R1a, SEC |
 | A-8..A-22 | rows 1-15 of 2.6, one ID per row in order: the sender leg (the real `sendMessage` against the fake gives the Kind column, `classifyZaloError` the Verdict column) and the projector leg (the real deliver: R -> retry with the code, D -> dlq with the code, T -> the recipient recorded terminal with the code and the job `delivered("sent")`) | the two new files |
 | A-23 | the classes outside Z-6 and the unnamed classes (the notes under 2.6) pinned as shipped where the fake reaches them | the sender-leg file |
-| A-24 | the fake binds only 127.0.0.1 (port 0), is closed after each test, makes no external call and carries no real token (a fake token of the shape API:25 accepts) | both new files; SEC |
+| A-24 | the fake binds only 127.0.0.1 (port 0), is closed after each test (the sender matrix) / after the file (the projector matrix), makes no external call and carries no real token (a fake token of the shape API:25 accepts) | both new files; SEC |
 | A-25 | the timeout and stall rows use the real `AbortSignal.timeout` with a short `timeoutMs` (API:129-131, DM:66, 87), no fake timers | both new files |
 | A-26 | the template exists at the path BL:6580 names, one row per Z-6 class, with the redaction rule, and passes `pnpm review:check`; the rows as in 3.3 (one hand close with `merged_probe: isZaloBotRevokedError`, the blocked row not flipped, 4 new rows of one mechanism each, cap 5 per RO-L47-2; the two comment-only corrections in STATUS and CARD) | `pnpm review:check`; R1b |
 
