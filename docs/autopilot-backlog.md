@@ -7453,3 +7453,21 @@ notes: |
   The keeper is `useCommandId` (apps/web/lib/use-command-id.ts:117), which takes an optional `UncertainCommandIdStore`; the edit and new session forms use it at the lane's head, and the roster commands use the session store (apps/web/lib/use-roster-command.ts:20).
   Deliverable: each site on the keeper (or a written reason to keep the bare ref), with a view test that an edited body gets a new id and an unchanged retry keeps it.
   source: lane L49 (p4-web-command-id-persistence) out-of-scope finding
+
+## task: db-command-id-conflict-unusable-result-code
+title: DB: answer a command whose stored result has no usable shape with its own code instead of COMMAND_ID_CONFLICT, so a client can tell "another command owns this key" from "this intent committed but its result is unreadable"
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [session-command, money-model, api-contract]
+scope: [packages/db/src/roster-money-shared.ts, packages/db/src/session-service.ts]
+manifest: null
+merged_probe: COMMAND_ID_RESULT_UNUSABLE
+_probe_note: the proposed code name, absent at the lane's head (`git grep -n -w COMMAND_ID_RESULT_UNUSABLE` finds nothing); the authoring slice renames the probe if it picks another name.
+_readiness: NOT_CODE_READY — the new code's class (uncertain like a 5xx, or its own), its HTTP status, its copy and every client describer that must map it are not chosen.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed no file in scope). `replayOrNull` (packages/db/src/roster-money-shared.ts:119-142) answers COMMAND_ID_CONFLICT, message "command_id belongs to a different command, session or actor, or has no usable result" (:140), also when `isStored(prior.stored)` fails (:132): the SAME intent whose stored result no longer has the expected shape (a stored-shape change across a deploy, a corrupt row). Its callers inherit that answer: join-request-service.ts:220, payment-manual.ts:292, payment-reversal.ts:88, public-session-share-link.ts:57, roster-service.ts:147 and :391, session-join-service.ts:338 and :464. packages/db/src/session-service.ts carries its own copy of the clause at :355 (create), :633, :1026, :1359 (update), :2072, :2387, :2919 and :3133.
+  A client cannot tell that case from "another command owns this key", so lane L49 keeps a sticky key on any COMMAND_ID_CONFLICT and drops only its saved record (review R1a-1; apps/web/lib/use-command-id.ts, settle).
+  Deliverable: a distinct code for the unusable-result case at every site above (fail-closed: a client must read it as "may have committed"), the client describers mapping it, and a real-database test per site.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review R1a-1; conductor ruling RO-L49-7 item 2)
