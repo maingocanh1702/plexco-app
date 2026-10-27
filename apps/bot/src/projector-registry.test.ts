@@ -1373,13 +1373,19 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         const START_SQL = "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)";
         const deliver = vi.fn(delivered);
         const zalo = await zaloBoot();
+        const own: string[] = [];
         try {
           const event = (await zalo.promote()).event;
-          // the stub answers only THIS event's start read ($1 of zaloDmPromotionStart): another
-          // test's promotion row claimed first gets its real read, not the stale-stop break
+          own.push(event);
+          // only THIS event's start read ($1 of zaloDmPromotionStart) is stubbed and recorded: the
+          // plant and another test's promotion row claimed first get their real read
+          const startCalls: unknown[] = [];
           const failing = {
             query: (text: string, values?: unknown[]) => {
-              if (text === START_SQL && values?.[0] === event) return start();
+              if (text === START_SQL && values?.[0] === event) {
+                startCalls.push(values);
+                return start();
+              }
               return workerPool.query(text, values);
             },
           } as unknown as pg.Pool;
@@ -1388,12 +1394,14 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           expect(await deliveries(event)).toEqual([
             { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
           ]);
+          const plant = await plantForeignZaloDmRow(zalo);
+          own.push(plant.event);
           const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
           const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-          // a cycle's zalo_dm pass stops at 25 rows (fullBatch): cycle again only while the batch
-          // was full and this event's row is still pending (the drain rule), at most 20 cycles
+          // a cycle's zalo_dm pass may end before this event's row (at 25 rows, or at a stale stop
+          // on an earlier row): cycle again while that row is pending, at most 20 cycles. The
+          // outcome is the rejection or the leaseLostSkips of the cycle that claimed it, not a sum
           let outcome: unknown = new Error("20 cycles never reached this event");
-          let skips = 0;
           for (let cycles = 0; cycles < 20; cycles++) {
             const result = await runDispatchCycle(failing, { projectors }).then(
               (summary) => ({ summary }),
@@ -1403,19 +1411,21 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
               outcome = result.error; // the cycle that reached this event rejected
               break;
             }
-            skips += result.summary.leaseLostSkips;
             if ((await deliveries(event))[0]?.status !== "pending") {
-              outcome = skips;
-              break;
-            }
-            if (!result.summary.fullBatch) {
-              outcome = new Error("a cycle that was not full left this event pending");
+              outcome = result.summary.leaseLostSkips;
               break;
             }
           }
           const lines = warn.mock.calls.map((args) => args.join(" "));
           warn.mockRestore();
           expect(outcome).toBe(expected);
+          // one stubbed start read, this event's, with its claim token: a stub that also answered
+          // the plant's read fails here, before the row check
+          const token = await verify.query<{ claim_token: string | null }>(
+            "SELECT claim_token FROM projector_deliveries WHERE projector = 'zalo_dm' AND event_id = $1",
+            [event],
+          );
+          expect(startCalls).toEqual([[event, token.rows[0]?.claim_token]]);
           // other tests' rows may log expiries in these cycles: this pins the check to this event
           expect(lines.filter((line) => line.includes(event))).toEqual([]);
           // earlier tests' CLI runs may have prepared rows this cycle also claims (the U3b note
@@ -1428,15 +1438,99 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           expect(row.rows).toEqual([
             { status: "claimed", attempts: 0, provider_ref: null, error_code: null },
           ]);
+          await expectPlantClaimed(plant);
         } finally {
-          // every row this cycle claimed keeps a five-minute lease: no later cycle may reclaim one
-          await verify.query(
-            "DELETE FROM projector_deliveries WHERE projector = 'zalo_dm' AND status = 'claimed'",
-          );
+          // the claimed row's five-minute lease would outlive the test: no later zalo_dm cycle
+          // may reclaim it
+          await neutralize(own);
           await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
           await zalo.close();
         }
       }, 30_000);
+
+    it("PSD-8b zalo_dm promotion: a session-start read that returns no row ends the pass at that row (break, not continue); the next promotion row stays pending in that cycle and the next cycle delivers it", async () => {
+      // the stale-stop rule ends the PASS (break, not continue): the second own row stays pending
+      // in the stopping cycle, and the next cycle delivers it
+      // the literal of dispatcher.ts zaloDmPromotionStart, matched by string equality
+      const START_SQL = "SELECT * FROM zalo_dm_promotion_seconds_to_start($1, $2)";
+      const deliver = vi.fn(delivered);
+      const zalo = await zaloBoot();
+      const own: string[] = [];
+      try {
+        const a = (await zalo.promote()).event;
+        const b = (await zalo.promote()).event;
+        own.push(a, b);
+        // the pass claims ORDER BY event_id: `first` before `second`
+        const [first, second] = [a, b].sort() as [string, string];
+        const startCalls: unknown[] = [];
+        const stale = {
+          query: (text: string, values?: unknown[]) => {
+            if (text === START_SQL && values?.[0] === first) {
+              startCalls.push(values);
+              return Promise.resolve({ rows: [] });
+            }
+            return workerPool.query(text, values);
+          },
+        } as unknown as pg.Pool;
+        await ackedWhileOff([first, second], zalo.projectors);
+        await enable("zalo_dm");
+        for (const id of [first, second])
+          expect(await deliveries(id)).toEqual([
+            { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+          ]);
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
+        const projectors = new Map<string, DeliverFn>([["zalo_dm", deliver]]);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+        let stopped: Awaited<ReturnType<typeof runDispatchCycle>> | undefined;
+        for (let cycles = 0; cycles < 20 && !stopped; cycles++) {
+          const summary = await runDispatchCycle(stale, { projectors });
+          if ((await deliveries(first))[0]?.status !== "pending") stopped = summary;
+        }
+        const lines = warn.mock.calls.map((args) => args.join(" "));
+        warn.mockRestore();
+        const firstRow = await verify.query<{
+          status: string;
+          attempts: number;
+          provider_ref: string | null;
+          error_code: string | null;
+          claim_token: string | null;
+        }>(
+          "SELECT status, attempts, provider_ref, error_code, claim_token FROM projector_deliveries WHERE event_id = $1",
+          [first],
+        );
+        expect(firstRow.rows).toEqual([
+          {
+            status: "claimed",
+            attempts: 0,
+            provider_ref: null,
+            error_code: null,
+            claim_token: expect.any(String),
+          },
+        ]);
+        expect(await deliveries(second)).toEqual([
+          { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
+        ]);
+        expect(
+          deliver.mock.calls.filter(([job]) => job.eventId === first || job.eventId === second),
+        ).toEqual([]);
+        expect(startCalls).toEqual([[first, firstRow.rows[0]?.claim_token]]);
+        expect(stopped?.leaseLostSkips).toBe(1);
+        expect(ownLines(lines, [first, second])).toEqual([]);
+        await expectPlantClaimed(plant);
+        await runDispatchCycle(workerPool, { projectors });
+        expect(await deliveries(second)).toEqual([
+          { projector: "zalo_dm", status: "delivered", attempts: 1, error_code: null },
+        ]);
+        expect(deliver.mock.calls.filter(([job]) => job.eventId === second)).toHaveLength(1);
+      } finally {
+        // the claimed row's five-minute lease would outlive the test: no later zalo_dm cycle
+        // may reclaim it
+        await neutralize(own);
+        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
+        await zalo.close();
+      }
+    }, 30_000);
 
     // U3b (BS-4, the cap, BS-7 and BS-5 per projector). A cycle claims 25 rows (DEFAULT_BATCH_LIMIT)
     // and earlier tests' CLI runs may have prepared rows too, so a drain is a bounded loop.
