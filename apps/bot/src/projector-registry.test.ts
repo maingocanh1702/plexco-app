@@ -13,6 +13,7 @@ import {
   MAX_DELIVERY_ATTEMPTS,
   RETRY_BASE_MS,
   ZALO_DM_MAX_AGE_MINUTES,
+  ZALO_DM_ROUTABLE_EVENT_TYPES,
   ZALO_DM_UNTIL_SESSION_START,
   runDispatchCycle,
   type ClaimedDeliveryJob,
@@ -67,6 +68,41 @@ describe("scripts/outbox-dlq-replay.mjs (D-10)", () => {
     expect(down.code).toBe(1);
     expect(down.stdout + down.stderr).not.toContain("cli_secret_pw");
   });
+});
+
+describe("owner CLIs: an unparsable DATABASE_URL_MIGRATION fails closed (no database)", () => {
+  /**
+   * `node scripts/<script> <args>` from the repo root with the runner's env, only
+   * DATABASE_URL_MIGRATION overridden: `[bad` fails the URL parse, so nothing connects. The handler
+   * exits 1 with its `error: ` line; no stack (`at main`) and the credential in neither stream.
+   */
+  async function expectHandledFailure(script: string, args: string[]) {
+    const env = { ...process.env, DATABASE_URL_MIGRATION: "postgres://u:FakePw123@[bad" };
+    const run = promisify(execFile)(process.execPath, [`scripts/${script}`, ...args], {
+      cwd: path.join(HERE, "..", "..", ".."),
+      env,
+      timeout: 30_000,
+    });
+    // a run that resolves has no exit code, so the first expectation fails it
+    const { code, stdout, stderr } = (await run.catch((error: unknown) => error)) as {
+      code?: number;
+      stdout?: string;
+      stderr?: string;
+    };
+    expect(code).toBe(1);
+    expect(stdout).not.toContain("FakePw123");
+    expect(stderr).not.toContain("FakePw123");
+    expect(stderr).toContain("error: ");
+    expect(stderr).not.toContain("at main");
+  }
+
+  it("outbox-dlq-replay.mjs list exits 1 with the handler's error line, no stack and no credential", async () => {
+    await expectHandledFailure("outbox-dlq-replay.mjs", ["list"]);
+  }, 30_000);
+
+  it("outbox-projector-enable.mjs enable --projector zalo_dm exits 1 with the handler's error line, no stack and no credential", async () => {
+    await expectHandledFailure("outbox-projector-enable.mjs", ["enable", "--projector", "zalo_dm"]);
+  }, 30_000);
 });
 
 describe("projector modules (D-5, D-8, A24)", () => {
@@ -731,6 +767,22 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         [...definer.rows[0]!.prosrc.matchAll(/o\.type = '([a-z_.]+)'/g)].map((match) => match[1]),
       );
       expect([...served].sort()).toEqual([...ZALO_DM_UNTIL_SESSION_START].sort());
+    });
+
+    it("PSD-16: routableEventTypes is one list (the JSON, the dispatcher, the CLI) and it is exactly the event-type set of the live outbox_projector_routes_zalo_dm_chk", async () => {
+      const routable = zaloDmDeliveryAgeBound.routableEventTypes;
+      expect(ZALO_DM_ROUTABLE_EVENT_TYPES).toEqual(routable);
+      expect(enableCli.ZALO_DM_EVENT_TYPES).toEqual(routable);
+      const constraint = await verify.query<{ def: string }>(
+        "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'outbox_projector_routes_zalo_dm_chk'",
+      );
+      expect(constraint.rows).toHaveLength(1);
+      // only its ARRAY[...] part (the CHECK also quotes 'zalo_dm' and 'session'), read by literal
+      // patterns, never a RegExp built from the list under test
+      const arrays = [...constraint.rows[0]!.def.matchAll(/ARRAY\[([^\]]*)\]/g)];
+      expect(arrays).toHaveLength(1);
+      const allowed = new Set([...arrays[0]![1]!.matchAll(/'([^']*)'/g)].map((match) => match[1]));
+      expect([...allowed].sort()).toEqual([...routable].sort());
     });
 
     /**
