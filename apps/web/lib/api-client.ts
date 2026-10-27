@@ -69,13 +69,16 @@ export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promis
   if (verb !== "GET" && csrfToken) headers.set("x-csrf-token", csrfToken);
 
   // A read or a commandId command is safe to retry under the same id, so its timeout is uncertain.
-  // A mutation without a commandId gets no client deadline: a timeout would read as a definite
-  // failure while the server may still commit, and an edited retry would apply twice.
+  // Anything else gets no client deadline, as at the base: a mutation without a commandId, where a
+  // timeout would read as a definite failure while the server may still commit (an edited retry
+  // could apply twice), and a PATCH: a field update where the late first write could overwrite an
+  // edited save, whatever the commandId (PATCH /api/me/profile does not even store its commandId).
   const deadline =
     !rest.signal &&
     (verb === "GET" ||
       verb === "HEAD" ||
-      (typeof json === "object" &&
+      (verb !== "PATCH" &&
+        typeof json === "object" &&
         json !== null &&
         typeof (json as { commandId?: unknown }).commandId === "string"));
   const controller = deadline ? new AbortController() : null;

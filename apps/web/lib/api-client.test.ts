@@ -211,6 +211,8 @@ describe("apiFetch deadline", () => {
     for (const init of [
       { method: "HEAD" },
       { method: "POST", json: { commandId: "c1" }, csrfToken: "s" },
+      { method: "PUT", json: { commandId: "c2" }, csrfToken: "s" },
+      { method: "DELETE", json: { commandId: "c3" }, csrfToken: "s" },
     ]) {
       const call = apiFetch("/api/x", init).catch((e: unknown) => e);
       vi.advanceTimersByTime(API_TIMEOUT_MS);
@@ -218,7 +220,7 @@ describe("apiFetch deadline", () => {
     }
   });
 
-  it("SEC-2: a mutation without a commandId keeps the base behaviour: no deadline, no signal", async () => {
+  it("SEC-2: a mutation without a commandId, or a PATCH even with one, keeps the base behaviour: no deadline, no signal", async () => {
     const fn = stalledFetch();
     let settled = false;
     const settle = () => {
@@ -227,13 +229,15 @@ describe("apiFetch deadline", () => {
     for (const init of [
       { method: "POST", json: { slug: "a" } },
       { method: "POST" },
-      { method: "PATCH", json: { commandId: 1 } },
+      { method: "POST", json: { commandId: 1 } },
+      // R2s-2: a PATCH is a field update (PATCH /api/me/profile stores nothing under its commandId).
+      { method: "PATCH", json: { commandId: "c1" } },
     ]) {
       void apiFetch("/api/x", init).then(settle, settle);
     }
     await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
     expect(settled).toBe(false);
-    expect(fn).toHaveBeenCalledTimes(3);
+    expect(fn).toHaveBeenCalledTimes(4);
     for (const [, init] of fn.mock.calls) expect(init?.signal).toBeUndefined();
   });
 });

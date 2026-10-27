@@ -238,10 +238,13 @@ the design follows the file (section 4).
   copy `e2e/support/roster-api-mock.ts:96` (no assertion reads it: roster.spec.ts asserts the code only, :276), left as is.
 - **D7 Timeout.** AC gets `API_TIMEOUT_MS = 15_000` (the five existing 15_000 ms client timeouts, 2.4), applied ONLY when the caller passes
   no `signal` (merging a caller signal breaks the three non-owned tests of 2.4, and the roster and session commands pass none, 2.4) AND the
-  request is a GET or HEAD or its JSON body carries a string `commandId` (review SEC-2, RO-L49-9 item 2): only there is a timeout retried
-  safely. A mutation without a commandId keeps the base behaviour, no client deadline, because its timeout would read as a definite failure
-  while the server may still commit (`components/onboarding/new-club-form.tsx:75`: an edited slug would create a second club; backlog row
-  `web-non-dedup-mutation-timeout`).
+  request is a GET or HEAD or, other than a PATCH, its JSON body carries a string `commandId` (review SEC-2, RO-L49-9 item 2; review R2s-2):
+  only there is a timeout retried safely. A mutation without a commandId keeps the base behaviour, no client deadline, because its timeout
+  would read as a definite failure while the server may still commit (`components/onboarding/new-club-form.tsx:75`: an edited slug would
+  create a second club; backlog row `web-non-dedup-mutation-timeout`). A PATCH keeps the base behaviour too, whatever its commandId: it is a
+  field update, so after a timeout the late first write could overwrite an edited save (PATCH /api/me/profile validates its commandId but
+  stores nothing under it, `app/api/me/profile/route.ts:15-16`; a late gender write after an erasure); the club settings PATCH loses nothing
+  it had at the base.
   Mechanism: setTimeout + an AbortController of its own, cleared when the call settles, covering `response.json()` too (today outside the
   try, 2.4); a timeout is classified by that controller, never by the error name. A NEW code `CLIENT_TIMEOUT` (status 0) joins the constant
   block (AC:37-39) and the uncertain list of `isDefiniteFailure` (SEU:204), and gets a copy branch in `describeSessionError` next to :128
@@ -399,7 +402,7 @@ In every case the measured file wins and the design follows it.
 | 5 | Cap 50 records | unbounded (storage growth) |
 | 6 | `useSessionPersonId` (RO-L49-2 item 2) | a SessionProvider in `roster-tab.test.tsx` (a non-owned test edit); a tenant-only namespace (another person in the tab would restore an id and meet a 409) |
 | 7 | Opt-in `autoFocus` (RO-L49-2 item 3) | a default focus move across 25 mounts in 20 files (unreviewed behaviour change) |
-| 8 | Timeout 15_000 ms only without a caller signal, and only for a GET/HEAD or a JSON body with a `commandId` (SEC-2) | merging the signals (breaks three non-owned tests, 2.4); a deadline on every signal-less request (a POST without a commandId would read its timeout as definite, SEC-2) |
+| 8 | Timeout 15_000 ms only without a caller signal, and only for a GET/HEAD or a non-PATCH JSON body with a `commandId` (SEC-2, R2s-2) | merging the signals (breaks three non-owned tests, 2.4); a deadline on every signal-less request (a POST without a commandId would read its timeout as definite, SEC-2) |
 | 9 | `CLIENT_TIMEOUT` | CLIENT_NETWORK_ERROR (means offline in six places, 2.4) |
 | 10 | Scope: 4 persisted, 2 in-memory, preview excluded | persisting create/update and the preview (no money; no `replayed` forwarded; the preview is a read) |
 | 11 | The replayed notice via the success path | a new notice mount per screen (new mounts, new focus logic) |
@@ -499,8 +502,8 @@ The lane block's 7 threats, restated in substance from the design's threat-to-ro
 | 2 | a stale key re-sent with another body replays and silently drops it, or a deliberate second payment shares an id | rows 10, 5, 6; D2, D5 |
 | 3 | a key restored across person, tenant or time | rows 13, 14, 15; D1 |
 | 4 | a COMMAND_ID_CONFLICT loop | row 4 (the record is dropped, so a reload ends it; a sticky key repeats in the mount until Cancel or a reload, both refetch first: fail-closed, R1a-1); D3, D6 |
-| 5 | a timeout classified as definite (the key dropped while the server may have committed) | row 1; D7 (CLIENT_TIMEOUT is uncertain; a request that cannot dedupe gets no client deadline, review SEC-2), D8 |
-| 6 | PII or money data in browser storage | D1, D2: only an id, a hash and a time, no name or amount in clear; the shared-device limit (the add key hashes the typed name, unsalted; the records survive a sign-out in the same tab) is named under Not defended (review SEC2-1) |
+| 5 | a timeout classified as definite (the key dropped while the server may have committed) | row 1; D7 (CLIENT_TIMEOUT is uncertain; a request without a commandId and any PATCH get no client deadline, reviews SEC-2 and R2s-2), D8 |
+| 6 | PII or money data in browser storage | D1, D2: only ids, a hash and a time, no name, amount or reason in clear; the shared-device limit (the add key hashes the typed name and the reversal key the reason, unsalted; the records survive a sign-out in the same tab) is named under Not defended (reviews SEC2-1, R2s-1) |
 | 7 | storage that throws, is absent or full (private mode) | row 12 (degrade to today's in-memory behaviour; the command is never blocked) |
 
 Not defended (named): a page-level attacker (script injection, an extension) can read or write sessionStorage and craft hash collisions
@@ -509,8 +512,10 @@ scope and cited in section 2.1); a changed payload after an unresolved attempt t
 new intent under a new id (row 10, as today; the server has no content dedup, DD-117 D5); an identical retry past the 24 h TTL is a new
 command (row 15); a fresh tab has no records (row 11, as today); create and update keep their key in memory only (a reload loses it, as
 today; no money). A shared device (review SEC2-1, RO-L49-9 item 3, a documented limit): the records survive a deliberate sign-out in the
-same tab until their 24 h TTL, and a later user of that open tab with devtools can read them and recover a typed name from the add key's
-unsalted 53-bit hash by a dictionary (no name, amount or id in clear; the keys are scoped by tenant and person). Clearing at sign-out is
+same tab (the 24 h TTL only stops a restore: an expired record stays readable until the next save in that tab, a lookup of that key,
+or the tab closes), and a later user of that open tab with devtools can read them and recover a typed name from the add key's unsalted 53-bit hash, or
+a short reversal reason from the reversal key's, by a dictionary (no name, amount or reason in clear; the tenant, person and target ids and
+the command id are; the keys are scoped by tenant and person; review R2s-1). Clearing at sign-out is
 rejected: a sign-in again and an identical retry would mint a new id and could apply a payment twice (backlog row
 `web-command-id-records-shared-device`).
 
