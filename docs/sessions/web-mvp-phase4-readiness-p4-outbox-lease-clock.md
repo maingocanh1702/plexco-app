@@ -163,7 +163,7 @@ The conductor's leads were read at `db8230e762bd36d21599fe4bd7dbb4725dbc364a`; m
   1. Header (0074:1-34), comments only, ASCII only: the file name; lane L46, its authority (the owner's written approval of
      2026-10-26 of the Phase 4 plan, row L46) and the backlog row; `-- WHAT:` the one stamp edit and the generator; `-- WHY:` the short
      lease, the compares and the outbox twin fixed by 0023:189-194, and the two audit INSERTs, which keep the `job_audit_events`
-     `created_at` column default (D5; the 0023:167-170 precedent is a backlog row, not changed here); `-- THREAT MODEL:` the six
+     `created_at` column default (D5; the 0023:172 and :202 precedent is a backlog row, not changed here); `-- THREAT MODEL:` the six
      defended items and the not-defended line of section 9; `-- POSTURE:` the owner, the ACL, the bracket, one transaction per file,
      nothing else changes; `-- ROLLBACK:` a forward migration that restates 0022:322-397.
   2. `GRANT CREATE ON SCHEMA public TO job_definer;`
@@ -188,8 +188,9 @@ interval ''5 minutes'''))` equals the before `md5(prosrc)` `ddc6f09f0def69c98fbd
   so the live body equals the 0022 body except the edit.
 - The CREATE is unqualified, as 0022's is; the probe's overload count (1) must stay 1 (no second function in another schema).
 - Role mechanics: the temporary CREATE on public and the role switch both end inside the file; a migration role that lacks the
-  membership or the schema grant fails loudly at the first statement it cannot run (the GRANT or `SET ROLE job_definer`) and the whole
-  file rolls back (`migrate.ts:360`), never a partial apply.
+  membership fails loudly at `SET ROLE job_definer`; one that may not grant CREATE on public gets only a WARNING from the GRANT
+  (0074:35), and the loud failure comes at the CREATE OR REPLACE (0074:38, 42501); either way the whole file rolls back
+  (`migrate.ts:360`), never a partial apply.
 
 ## 4. Pinned defaults
 
@@ -219,7 +220,7 @@ Each is "default applied, pending owner sign-off" (Tier B, pre-approved by RO-L4
   describe holds the claim's contract; tests are a semantic map); a JS tolerance window (millisecond truncation plus a tolerance could
   let a short lease pass).
 - **D5 the two audit INSERTs unchanged.** GOAL (1): every other byte unchanged. Their `created_at` keeps the `job_audit_events` column
-  default (now()), while 0023:167-170 moved the outbox claim's audit rows to an explicit `clock_timestamp()` ("so an aged-transaction
+  default (now()), while 0023 moved the outbox claim's audit rows (the values at 0023:172 and :202, the reason in the comment at :167-170) to an explicit `clock_timestamp()` ("so an aged-transaction
   caller never gets a created_at timestamped before the outbox_events stamp it is auditing"). Recorded as ONE new out-of-scope backlog
   row, slug `projector-delivery-claim-audit-created-at-clock` (P2, `status: idea`; measured absent at the base). Rejected: changing them
   here (a second edit beyond the row's contract and the lane GOAL).
