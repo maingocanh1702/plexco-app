@@ -26,14 +26,14 @@ const club: ClubConfigDto = {
 const fmt = (n: number) => String(n);
 const ch = (cp: number) => String.fromCodePoint(cp);
 
-describe("clubNameProblem (same count as club-config-validation.ts: UTF-16 units)", () => {
+describe("clubNameProblem (same count as club-config-validation.ts: code points)", () => {
   it.each([
     ["CLB Cầu lông", null],
     ["x".repeat(120), null],
     ["x".repeat(121), "too_long"],
-    // An astral emoji is 2 UTF-16 units: 60 fit, 61 are 122 units and the route refuses them.
-    [ch(0x1f3f8).repeat(60), null],
-    [ch(0x1f3f8).repeat(61), "too_long"],
+    // An astral emoji counts one code point (it is two UTF-16 units): 120 fit, 121 are refused.
+    [ch(0x1f3f8).repeat(120), null],
+    [ch(0x1f3f8).repeat(121), "too_long"],
     ["", "empty"],
     ["   ", "empty"],
     ["a" + ch(0x09) + "b", "invalid_chars"],

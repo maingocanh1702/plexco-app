@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import type { ChatModerateInput } from "../../lib/chat-api";
 import { useLang, useT } from "../../lib/i18n-client";
+import { displayNameOf } from "../../lib/roster-rules";
 import { formatTimestamp } from "../../lib/session-time";
 import type { ChannelState, ChatListError } from "../../lib/use-chat";
 import { useTenantContext } from "../../lib/use-tenant-context";
@@ -55,7 +56,8 @@ export function MessageList({
       li?.querySelector<HTMLElement>(gone ? "button" : "[data-reply]")?.focus();
   }, [moderated, gone]);
   const kind = {
-    person: t("Thành viên", "Member"),
+    // a person author with no label (null or "", see sender) gets the one NULL-name fallback (DD-150 Q4 (a))
+    person: displayNameOf(null, t),
     assistant: t("Trợ lý", "Assistant"),
     system: t("Hệ thống", "System"),
   };

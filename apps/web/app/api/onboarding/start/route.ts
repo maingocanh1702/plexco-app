@@ -1,5 +1,11 @@
 import { t } from "@plexco/core/i18n";
-import { checkTypedName, provisionTenant, SlugTakenError, stripInvisibleChars } from "@plexco/db";
+import {
+  checkTypedName,
+  pgErrorHasCode,
+  provisionTenant,
+  SlugTakenError,
+  stripInvisibleChars,
+} from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import { readBoundedBody } from "../../../../lib/read-bounded-body";
 import {
@@ -10,6 +16,7 @@ import {
   rateLimited,
   SessionReauthRequiredError,
 } from "../../../../lib/session-cookies";
+import { CLUB_NAME_MAX } from "../../../../lib/session-form-model";
 
 /**
  * POST /api/onboarding/start — WAO-UC-2: create the tenant on the FREE plan
@@ -17,7 +24,10 @@ import {
  * slug for the same owner.
  */
 const MAX_START_BODY_BYTES = 4096;
-const MAX_TENANT_NAME_CHARS = 120;
+
+/** The one 400 for a club name or slug the route or tenant_provision refuses. */
+const invalidNameOrSlug = () =>
+  err("INVALID_BODY", t("Tên CLB hoặc slug không hợp lệ.", "Invalid club name or slug."), 400);
 
 export async function POST(request: Request): Promise<Response> {
   const session = await currentSession();
@@ -71,18 +81,15 @@ export async function POST(request: Request): Promise<Response> {
   if (timezone !== undefined && !isValidTimeZone(timezone)) {
     return err("INVALID_BODY", t("Múi giờ không hợp lệ.", "Invalid timezone."), 400);
   }
-  // MAX_TENANT_NAME_CHARS mirrors tenants_name_len_chk (0039): reject here with a 400 rather
-  // than let the CHECK surface as a 500 from tenant_provision.
+  // CLUB_NAME_MAX mirrors tenants_name_len_chk (0039), which counts char_length (code points):
+  // count the same unit so this 400 comes before the CHECK can surface from tenant_provision.
+  const nameCodePoints = [...name].length;
   if (
     !/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug) ||
-    name.length === 0 ||
-    name.length > MAX_TENANT_NAME_CHARS
+    nameCodePoints === 0 ||
+    nameCodePoints > CLUB_NAME_MAX
   ) {
-    return err(
-      "INVALID_BODY",
-      t("Tên CLB hoặc slug không hợp lệ.", "Invalid club name or slug."),
-      400,
-    );
+    return invalidNameOrSlug();
   }
 
   try {
@@ -106,6 +113,8 @@ export async function POST(request: Request): Promise<Response> {
     if (error instanceof SlugTakenError) {
       return err("SLUG_TAKEN", t("Slug đã được dùng bởi CLB khác.", "Slug is taken."), 409);
     }
+    // tenant_provision (0072) raises 22023 for a name or slug it refuses; all else re-throws (5xx).
+    if (pgErrorHasCode(error, "22023")) return invalidNameOrSlug();
     throw error;
   }
 }

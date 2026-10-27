@@ -6790,28 +6790,32 @@ notes: |
 
 ## task: name-readers-null-name-one-fallback
 title: Web: the three name readers fall back differently for a NULL name ("(unnamed)", "Unnamed player", "Member"); choose one t(vi, en) fallback
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-name-rules-web (L43); find it with `gh pr list --state merged --head feat/p4-name-rules-web` (no PR number or merge SHA is written here because none exists when this line is written)
+note_merged: 2026-10-27 L43: closed BY HAND in the lane's own PR, measured at base 4566effeef395e8c662fa62c760af504e5378a60 (the PR #129 merge). The three readers now use the ONE fallback `displayNameOf` (apps/web/lib/roster-rules.ts), t("(chưa đặt tên)", "(unnamed)"): the join-request inbox (request-inbox.tsx) drops "Người chơi chưa có tên"/"Unnamed player" and a chat person author with a null or empty label (message-list.tsx) drops "Thành viên"/"Member" (DD-150 Q4 (a); both label changes are defaults applied, pending the owner's sign-off, and listed in the PR body). Tests: request-inbox.test.tsx, message-list.test.tsx, e2e/player.spec.ts. The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`.
 risk: P2
 change_class: web-feature
 depends_on: []
 invariants: [i18n-surface, web-app]
 scope: [apps/web/lib/roster-rules.ts, apps/web/components/sessions/request-inbox.tsx, apps/web/components/chat/message-list.tsx]
 manifest: null
-merged_probe: null
+merged_probe: apps/web/lib/session-form-model.ts :: isBoundedName
 notes: |
   Host roster, join-request inbox and chat author label all tolerate NULL (after #106, M2 copies NULL, never ''), so this is consistency, not safety. Scope measured by `git grep` of the three literals at 21b57f8: apps/web/lib/roster-rules.ts:41 ("(unnamed)"), apps/web/components/sessions/request-inbox.tsx:98 ("Unnamed player"), apps/web/components/chat/message-list.tsx:58 ("Member"). The reader inventory also holds L27 O8: the host-shell tenant-name source near `auth.ts:285` (packages/db/src/auth.ts:285 is `TenantWithProfile` at 21b57f8) is a reader, not a writer.
   Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 225; PR #101 body, section "Owner questions and backlog candidates (out of scope, NOT edited by this lane)", line 194.
 
 ## task: club-create-sql-22023-maps-to-400
 title: Onboarding: a SQL 22023 refusal from `tenant_provision` (T1) that the TypeScript check missed would surface as HTTP 500; map it to 400
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-name-rules-web (L43); find it with `gh pr list --state merged --head feat/p4-name-rules-web` (no PR number or merge SHA is written here because none exists when this line is written)
+note_merged: 2026-10-27 L43: closed BY HAND in the lane's own PR, measured at base 4566effeef395e8c662fa62c760af504e5378a60 (the PR #129 merge). apps/web/app/api/onboarding/start/route.ts answers a SQL 22023 from `tenant_provision` (at the top level or under `.cause`, through `pgErrorHasCode`) with its existing 400 `INVALID_BODY` pair and no SQL text; every other error still re-throws (5xx); the name pre-check counts code points against the shared `CLUB_NAME_MAX` (the twin of `tenants_name_len_chk`, char_length). Tests: apps/web/app/api/onboarding/start/route.test.ts. The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`.
 risk: P2
 change_class: code
 depends_on: []
 invariants: [api-contract]
 scope: [apps/web/app/api/onboarding/start/route.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/web/app/api/onboarding/start/route.ts :: CLUB_NAME_MAX
 notes: |
   Today the route validator keeps the check, so a typed name gets 400 `INVALID_BODY`; only drift between the TypeScript and SQL rules would reach the 500. Same class, different route, not merged with it: `zalo-connect-bot-revoked-error-mapping` (where finishZaloConnect lets 22023 become a 500).
   Source: PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 226; section "2. Writers and layers", line 37.
@@ -6847,6 +6851,33 @@ notes: |
   L27 O6: DISPLAY_NAME_MAX is 120 in me-settings.ts:20 and 100 in roster-money-shared.ts:58, with different length units per writer. O7: `auth_login_google` caps no length, and persons.display_name has no CHECK (a CHECK is a migration, hence P1). L29 R1C: session-form-model.ts:162 adds a third inline visible-character literal beside `publicAliasProblem` and `displayNameProblem`; the web, server and SQL layers count UTF-16 units, code points and characters respectively (roster-money-shared.ts:66-67, `tenants_name_len_chk`).
   Source: PR #101 body, section "Owner questions and backlog candidates", lines 192-193; PR #106 body, section "9. Residue: backlog candidates for the closeout lane L30 (not fixed here)", line 232.
   Update 2026-10-26 (lane L42 p4-name-rules-db): the DB half is done in the lane's PR (no PR number or SHA is written here). One `DISPLAY_NAME_MAX` (120, counted in code points) now lives in packages/db/src/text-safety.ts; me-settings.ts and roster-money-shared.ts import and re-export it, so the roster cap moves from 100 to 120 code points (the owner's Phase 4 answer Q4 (b)); a source guard in packages/db/src/text-safety.test.ts keeps one definition. Migration packages/db/migrations/0073_member_name_length_cap_120.sql gives `create_host_added_person` the cap 120 (message `display name must be 1..120 characters`) and `auth_login_google` a `pg_catalog.left(..., 120)` on the external display name it stores for a new person (O7; it truncates, never raises). Still open, so the row stays `idea`: the web half (the inline literals and the UTF-16 counting in apps/web/lib/session-form-model.ts, club-settings-model.ts and me-settings-client.ts, and the web roster form's own `DISPLAY_NAME_MAX = 100` in apps/web/components/sessions/roster-add-player-form.tsx:14 with `maxLength` at :141, which now refuses the 101 to 120 code points the server accepts) is lane L43's; packages/db/src/club-config-validation.ts:68 still counts UTF-16 units against a literal 120; no CHECK on persons.display_name in Phase 4 (Q4 (c)).
+  Update 2026-10-27 (lane L43 p4-name-rules-web): the web half is done in the lane's PR (no PR number or SHA is written here). apps/web/lib/session-form-model.ts holds the one web definition: `DISPLAY_NAME_MAX` and `CLUB_NAME_MAX` (120 each, counted in code points), `hasVisibleChar` and `isBoundedName` (which also refuses an unpaired surrogate); club-settings-model.ts, me-settings-client.ts, new-club-form.ts, the roster add-player form (its own cap 100 removed, now 120) and the club start route use them, and the name inputs carry `maxLength` = twice their cap so astral input is never cut; packages/db/src/club-config-validation.ts counts code points; a source guard in apps/web/lib/session-form-model.test.ts keeps one web definition. Still open, so the row stays `idea`: no CHECK on persons.display_name (a migration, P1), which the owner's Phase 4 answer Q4 (c) keeps out of Phase 4.
+
+## task: chat-messages-route-stale-member-comment
+title: Web: the chat messages route comment still says the message list renders "You"/"Member" for a person author; it renders the one NULL-name fallback "(unnamed)" now (comment only)
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/chat/channels/[id]/messages/route.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Lane L43 (p4-name-rules-web) review round 1, finding R1b-1: apps/web/app/api/chat/channels/[id]/messages/route.ts:19 says `L16 renders "You"/"Member"`, but apps/web/components/chat/message-list.tsx now renders `displayNameOf` (t("(chưa đặt tên)", "(unnamed)")) for a person author with no label. Outside L43's file ownership: write `"You"/"(unnamed)"` the next time a lane touches that file.
+
+## task: new-club-form-vi-too-long-copy-pin
+title: Web: the create-club too-long name copy is pinned in en only; pin its vi half "Tên tối đa 120 ký tự." in the unit test (test only)
+status: idea
+risk: P3
+change_class: test-only
+depends_on: []
+invariants: []
+scope: [apps/web/lib/new-club-form.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Lane L43 (p4-name-rules-web) review round 3 (the last round of its 3-round cap), finding R3-1: apps/web/lib/new-club-form.test.ts renders validateNewClub with `makeT("en")` only, so no test reaches the vi arm of the too-long copy at apps/web/lib/new-club-form.ts:60 (`Tên tối đa ${CLUB_NAME_MAX} ký tự.`), the half the create-club form shows by default (useT defaults to vi). A vi-only mutation (`${CLUB_NAME_MAX * 2}`) survived the file (25/25 passed). The name is still refused; only the vi number could drift. Recorded as this row after the final round, not as a test edit: add `expect(validateNewClub({ ...ok, name: "x".repeat(121) }, makeT("vi")).name).toBe("Tên tối đa 120 ký tự.");` next to the en over-long row.
 
 ## task: membership-display-name-follows-person-rename
 title: Names: `memberships.display_name` never follows a person rename (existing behaviour); decide whether it should

@@ -11,6 +11,7 @@ import {
   type ProfileDto,
   type ProfileView,
 } from "../../lib/me-settings-client";
+import { DISPLAY_NAME_MAX } from "../../lib/session-form-model";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
 import { Button } from "../ui/button";
@@ -131,7 +132,7 @@ export function SettingsProfileForm({
         value={value}
         error={problem ? problemText[problem] : null}
         autoComplete="name"
-        maxLength={200}
+        maxLength={2 * DISPLAY_NAME_MAX}
         onChange={(e) => {
           setValue(e.target.value);
           setProblem(null);

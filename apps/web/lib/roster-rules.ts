@@ -36,7 +36,10 @@ export interface LedgerRow {
   reversible: boolean;
 }
 
-/** The ONE place a player's name is rendered: a roster row may have no display name. */
+/**
+ * The ONE NULL-name fallback (DD-150 Q4 (a)). Its readers: a roster row, the join-request inbox
+ * (request-inbox.tsx) and a chat author with no label (message-list.tsx).
+ */
 export const displayNameOf = (name: string | null | undefined, t: TFn): string =>
   name ?? t("(chưa đặt tên)", "(unnamed)");
 

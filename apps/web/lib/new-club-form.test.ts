@@ -36,16 +36,25 @@ describe("validateNewClub", () => {
   it("accepts a valid form", () => expect(validateNewClub(ok, t)).toEqual({}));
   it("rejects empty and over-long names", () => {
     expect(validateNewClub({ ...ok, name: "   " }, t).name).toBeTruthy();
-    expect(validateNewClub({ ...ok, name: "x".repeat(121) }, t).name).toBeTruthy();
+    expect(validateNewClub({ ...ok, name: "x".repeat(121) }, t).name).toBe(
+      "Name can be at most 120 characters.",
+    );
     expect(validateNewClub({ ...ok, name: "x".repeat(120) }, t).name).toBeUndefined();
+  });
+  it("counts the club name in code points: 120 astral letters accepted, 121 refused", () => {
+    const ch = String.fromCodePoint(0x20000); // a CJK Extension B ideograph, a letter
+    expect(validateNewClub({ ...ok, name: ch.repeat(120) }, t).name).toBeUndefined();
+    expect(validateNewClub({ ...ok, name: ch.repeat(121) }, t).name).toBe(
+      "Name can be at most 120 characters.",
+    );
   });
   // L27: strip first, as the server stores the stripped name. R2 and R5 raise no error, R3 is the
   // existing empty error; R5: composed emoji are stored split (the owner's rule as written).
   it.each([
     ["CLB " + String.fromCodePoint(0x200b) + "Đống Đa", false],
     ["x".repeat(120) + String.fromCodePoint(0x200b), false],
-    ["x".repeat(114) + String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), false], // R5 (owner's rule, emoji stored split): 120 UTF-16 units after the strip, 122 if the ZWJs stayed
-    ["x".repeat(119) + String.fromCodePoint(0x2764, 0xfe0f), false], // R5 (owner's rule, emoji stored split): 120 UTF-16 units after the strip, 121 if U+FE0F stayed
+    ["x".repeat(114) + String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), false], // R5 (owner's rule, emoji stored split): 117 code points after the strip, 119 if the ZWJs stayed
+    ["x".repeat(119) + String.fromCodePoint(0x2764, 0xfe0f), false], // R5 (owner's rule, emoji stored split): 120 code points after the strip, 121 if U+FE0F stayed
     [String.fromCodePoint(0x20, 0x200b, 0x3164), true],
   ])("name %j -> error %s", (name, hasError) => {
     const error = validateNewClub({ ...ok, name }, t).name;
@@ -68,6 +77,7 @@ describe("validateNewClub", () => {
     ["U+2028 inside", "WAO" + cp(0x2028) + "Club", hiddenPair],
     ["U+2800 only", cp(0x2800), hiddenPair],
     ["U+0000 inside", "WAO" + cp(0x00) + "Club", hiddenPair],
+    ["lone surrogate U+D800 inside", "WAO" + cp(0xd800) + "Club", hiddenPair],
     ["U+00A0 only", cp(0xa0), emptyPair],
     ["U+200B only", cp(0x200b), emptyPair],
     ["ordinary name", "WAO Club", undefined],
