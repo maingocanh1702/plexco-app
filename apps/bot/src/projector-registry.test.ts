@@ -840,8 +840,6 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     // L31 S1 (security round 1 finding S1): DA-4..DA-8 reach the age check at attempts 0 only.
     // RETRYING fails a zalo_dm row once (failed, attempts 1, due 15 s later); DUE makes it due now
     // on the verify seat. Decision table P2 (a live retry) and P4 (a failed row resumed).
-    // Keep these, and every zalo_dm test that asserts stub.calls, above DA-8: its finally deletes
-    // its row, so a later CLI enable re-prepares that event.
     const RETRYING = (...ids: string[]) =>
       ownZaloDm(ids, { result: "retry", errorCode: "retry_transient" });
     const FAILED_ONCE = {
@@ -961,7 +959,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     // A player.promoted DM is bounded by its session's start on the DB clock, not by the flat
     // bound: each path arms a promotion back-dated past the flat bound, and one cycle sends it while
     // the start is a day ahead; after moveStart("-1 minute") the next one armed the same way is not
-    // sent. Above DA-8, like every zalo_dm test that asserts stub.calls.
+    // sent.
     const PROMOTION_PATHS: {
       id: string;
       path: string;
@@ -1149,9 +1147,13 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     for (const cell of PROMOTION_PATHS)
       it(`${cell.id} zalo_dm promotion, ${cell.path}: back-dated past the flat bound, it is sent once while its session starts a day ahead (delivered/sent, attempts ${cell.attempts}, no record); with the start one minute past, the next one is not sent (delivered/noop_expired, attempts ${cell.attempts}, one session-started line)`, async () => {
         const zalo = await zaloBoot();
+        const own: string[] = [];
         try {
           const ahead = await zalo.promote();
+          own.push(ahead.event);
           await cell.arm(zalo, ahead.event);
+          const plant = await plantForeignZaloDmRow(zalo);
+          own.push(plant.event);
           expect(await promotionCycle(zalo, ahead)).toEqual({
             sent: [{ chatId: ahead.chat, token: zalo.token }],
             row: [
@@ -1169,6 +1171,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
 
           await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
           const started = await zalo.promote();
+          own.push(started.event);
           await cell.arm(zalo, started.event);
           expect(await expiries([started.event])).toEqual([]);
           await zalo.moveStart("-1 minute");
@@ -1196,7 +1199,9 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           expect(seconds).toBeGreaterThanOrEqual(60);
           expect(seconds).toBeLessThanOrEqual(180);
           await cell.settled?.(started.event);
+          await expectPlantClaimed(plant);
         } finally {
+          await neutralize(own);
           await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
           await zalo.close();
         }
@@ -1779,6 +1784,8 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         const pending = { projector, status: "pending", attempts: 0, error_code: null };
         const audits = () =>
           rowCount("SELECT 1 FROM job_audit_events WHERE job_id = ANY($1::uuid[])", ids);
+        const zalo = projector === "zalo_dm" ? await zaloBoot() : undefined;
+        const own: string[] = [...ids];
         try {
           await ackedWhileOff(ids, only);
           await enable(projector);
@@ -1791,13 +1798,18 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           for (const id of ids) expect(await deliveries(id)).toEqual([pending]);
           expect(await audits()).toBe(before);
           expect(await expiries(ids)).toEqual([]);
+          const plant = zalo ? await plantForeignZaloDmRow(zalo) : undefined;
+          if (plant) own.push(plant.event);
           await cycleUntil(only, async () => (await rowCount(DELIVERED, ids)) === ids.length);
           for (const id of ids)
             expect(await deliveries(id)).toEqual([
               { ...pending, status: "delivered", attempts: 1 },
             ]);
+          if (plant) await expectPlantClaimed(plant);
         } finally {
+          await neutralize(own);
           await disable(projector);
+          await zalo?.close();
         }
       },
       30_000,
