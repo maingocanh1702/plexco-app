@@ -162,11 +162,42 @@ export function stripInvisibleChars(value: string): string {
 const VISIBLE_CHAR = /[^\s\p{DI}]/u;
 
 /**
+ * Web twin of hasVisibleChar in packages/db/src/text-safety.ts: true when the value holds at least
+ * one VISIBLE_CHAR (not whitespace, not default-ignorable). session-form-model.test.ts pins it.
+ */
+export function hasVisibleChar(value: string): boolean {
+  return VISIBLE_CHAR.test(value);
+}
+
+/**
  * Web twin of packages/db/src/text-safety.ts checkTypedName (L29-AG2 pins it over every scalar).
  */
 export function checkTypedName(value: string): string | null {
   const name = stripInvisibleChars(value).trim();
-  return hasHiddenChar(name) || !VISIBLE_CHAR.test(name) ? null : name;
+  return hasHiddenChar(name) || !hasVisibleChar(name) ? null : name;
+}
+
+/**
+ * Web twin of DISPLAY_NAME_MAX in packages/db/src/text-safety.ts: the most code points a person's
+ * display name holds, counted on the stripped, trimmed value (DD-150 Q4 (b)). Pinned by
+ * session-form-model.test.ts.
+ */
+export const DISPLAY_NAME_MAX = 120;
+
+/**
+ * The club (tenant) name cap, its own field: twin of tenants_name_len_chk (migration 0039) and
+ * tenant_profile_update, which count char_length (code points). Not the person cap above.
+ */
+export const CLUB_NAME_MAX = 120;
+
+/**
+ * True when the name holds 1..max code points and no unpaired surrogate (in unicode mode \p{Cs}
+ * matches only a lone surrogate, never a well-formed pair). Web twin of isBoundedText,
+ * packages/db/src/roster-money-shared.ts:63-77; its NUL refusal is already hasHiddenChar's.
+ */
+export function isBoundedName(name: string, max: number): boolean {
+  const points = [...name].length;
+  return points >= 1 && points <= max && !/\p{Cs}/u.test(name);
 }
 
 /**
