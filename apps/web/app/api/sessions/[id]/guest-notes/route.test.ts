@@ -4,8 +4,10 @@ import {
   SessionGuestNoteError,
   authorize,
 } from "@plexco/db";
+import { runWithLang } from "@plexco/core/i18n";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
+import { mapGuestNoteError } from "../../../../../lib/session-guest-note-route";
 import { POST } from "./route";
 
 vi.mock("@plexco/db", async (importOriginal) => {
@@ -233,6 +235,22 @@ describe("POST /api/sessions/:id/guest-notes", () => {
     const { error } = await envelope(response);
     expect(error).toMatchObject({ code, statusCode: status });
     expect(error?.message).not.toMatch(/internal detail/);
+  });
+
+  it("D6: COMMAND_ID_CONFLICT answers the human copy, without the word commandId", async () => {
+    // The route takes the tenant locale, which both db stubs above pin to "vi"; en goes through its mapper.
+    vi.mocked(createGuestNote).mockRejectedValue(
+      new SessionGuestNoteError("COMMAND_ID_CONFLICT", "internal detail"),
+    );
+    const response = await POST(req({ commandId: "cmd_1", guestName: "Khách A" }), ctx());
+    const { error } = await envelope(response);
+    expect(error?.message).toBe("Thao tác bị trùng. Tải lại trang rồi thử lại.");
+    const en = await runWithLang("en", async () =>
+      mapGuestNoteError(new SessionGuestNoteError("COMMAND_ID_CONFLICT", "internal detail")),
+    );
+    expect((await envelope(en!)).error?.message).toBe(
+      "Duplicate action. Reload the page and try again.",
+    );
   });
 
   it("collapses the narrow INVALID_INPUT variant onto the registered INVALID_BODY 400", async () => {

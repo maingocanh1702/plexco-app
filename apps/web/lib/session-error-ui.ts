@@ -1,4 +1,9 @@
-import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
+import {
+  ApiClientError,
+  CLIENT_BAD_RESPONSE,
+  CLIENT_NETWORK_ERROR,
+  CLIENT_TIMEOUT,
+} from "./api-client";
 import type { TFn } from "./i18n-client";
 
 /**
@@ -134,6 +139,15 @@ export function describeSessionError(error: unknown, t: TFn): ErrorView {
       "retry",
     );
   }
+  if (code === CLIENT_TIMEOUT) {
+    return view(
+      t(
+        "Máy chủ chưa phản hồi kịp. Thao tác có thể vẫn đang được xử lý; thử lại sau giây lát.",
+        "The server did not answer in time. It may still be processing; try again in a moment.",
+      ),
+      "retry",
+    );
+  }
   switch (code) {
     case "AUTH_REQUIRED":
       return view(
@@ -203,6 +217,14 @@ export function isDefiniteFailure(error: unknown): boolean {
   if (!(error instanceof ApiClientError)) return false;
   if (error.code === CLIENT_NETWORK_ERROR || error.code === CLIENT_BAD_RESPONSE) return false;
   return error.statusCode >= 400 && error.statusCode < 500;
+}
+
+/** Shown instead of the success message when a 2xx carries `replayed: true` (copy D5). */
+export function replayedNotice(t: TFn): string {
+  return t(
+    "Thao tác này đã được ghi nhận ở lần gửi trước; không có gì mới được lưu.",
+    "Already recorded by an earlier attempt; nothing new was saved.",
+  );
 }
 
 /**

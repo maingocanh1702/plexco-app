@@ -1108,6 +1108,22 @@ describe("mapSessionCommandError", () => {
     expect(mapped).toMatchObject({ code, statusCode });
   });
 
+  it("D6: COMMAND_ID_CONFLICT answers the human copy in both languages, without the word commandId", async () => {
+    for (const [lang, message] of [
+      ["vi", "Thao tác bị trùng. Tải lại trang rồi thử lại."],
+      ["en", "Duplicate action. Reload the page and try again."],
+    ] as const) {
+      const response = await runWithLang(lang, async () =>
+        mapSessionCommandError(new SessionCommandError("COMMAND_ID_CONFLICT", "internal")),
+      );
+      expect((await envelope(response!)).error).toMatchObject({
+        code: "COMMAND_ID_CONFLICT",
+        statusCode: 409,
+        message,
+      });
+    }
+  });
+
   it.each([
     "INVALID_INPUT",
     "INVALID_PRICE",

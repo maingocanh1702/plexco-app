@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n-client";
 import { buildConfirmBody, initialAmounts, type AmountMap } from "../../lib/mark-paid-model";
 import { formatVndInput } from "../../lib/money";
@@ -11,6 +11,7 @@ import {
   type MarkPaidResultDto,
   type PaymentMethod,
 } from "../../lib/roster-payments-api";
+import { replayedNotice } from "../../lib/session-error-ui";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { ConfirmDialog } from "../ui/confirm-dialog";
@@ -53,6 +54,8 @@ export function MarkPaidSheet({
   const [raw, setRaw] = useState<Record<string, string>>({});
   const [names, setNames] = useState<Record<string, string>>({});
   const [result, setResult] = useState<MarkPaidResultDto | null>(null);
+  const [replayed, setReplayed] = useState(false);
+  const replayedRef = useRef<HTMLParagraphElement>(null);
   const previewCmd = useRosterCommand();
   const confirmCmd = useRosterCommand();
 
@@ -64,9 +67,15 @@ export function MarkPaidSheet({
     setNote("");
     setLines([]);
     setResult(null);
+    setReplayed(false);
     previewCmd.reset();
     confirmCmd.reset();
   }, [open]);
+
+  // The parent's effect runs after the child list's mount focus, so the notice is read first (readiness file 3.2 D5).
+  useEffect(() => {
+    if (step === "result" && replayed) replayedRef.current?.focus();
+  }, [step, replayed]);
 
   const amounts: AmountMap = Object.fromEntries(
     lines.map((l) => [l.playerId, parseAmount(raw[l.playerId] ?? "")]),
@@ -93,11 +102,21 @@ export function MarkPaidSheet({
 
   async function confirm() {
     if (!body) return;
-    const res = await confirmCmd.run((commandId) =>
-      confirmMarkPaid(ctx, sessionId, { ...body, commandId }),
+    // Every field sent (commandId aside) is in the fingerprint, so any change is a new command;
+    // item order is not.
+    const fingerprint = JSON.stringify({
+      ...body,
+      items: [...body.items].sort((a, b) =>
+        a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0,
+      ),
+    });
+    const res = await confirmCmd.run(
+      (commandId) => confirmMarkPaid(ctx, sessionId, { ...body, commandId }),
+      { tenantId: ctx.tenantId, kind: "mark-paid", targets: [sessionId], fingerprint },
     );
     if (res) {
       setResult(res);
+      setReplayed(res.replayed);
       setStep("result");
       onReload();
     }
@@ -162,12 +181,20 @@ export function MarkPaidSheet({
             }}
           />
         ) : (
-          <MarkPaidResult lines={result?.lines ?? []} names={names} />
+          <>
+            {replayed ? (
+              <p ref={replayedRef} tabIndex={-1}>
+                {replayedNotice(t)}
+              </p>
+            ) : null}
+            <MarkPaidResult lines={result?.lines ?? []} names={names} />
+          </>
         )
       }
       error={
         active.error && step !== "result" ? (
           <ApiErrorNotice
+            autoFocus
             error={active.error}
             onRetry={copy[step].run}
             onReload={() => onClose(true)}
