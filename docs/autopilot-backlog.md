@@ -6850,6 +6850,19 @@ notes: |
   Update 2026-10-26 (lane L42 p4-name-rules-db): the DB half is done in the lane's PR (no PR number or SHA is written here). One `DISPLAY_NAME_MAX` (120, counted in code points) now lives in packages/db/src/text-safety.ts; me-settings.ts and roster-money-shared.ts import and re-export it, so the roster cap moves from 100 to 120 code points (the owner's Phase 4 answer Q4 (b)); a source guard in packages/db/src/text-safety.test.ts keeps one definition. Migration packages/db/migrations/0073_member_name_length_cap_120.sql gives `create_host_added_person` the cap 120 (message `display name must be 1..120 characters`) and `auth_login_google` a `pg_catalog.left(..., 120)` on the external display name it stores for a new person (O7; it truncates, never raises). Still open, so the row stays `idea`: the web half (the inline literals and the UTF-16 counting in apps/web/lib/session-form-model.ts, club-settings-model.ts and me-settings-client.ts, and the web roster form's own `DISPLAY_NAME_MAX = 100` in apps/web/components/sessions/roster-add-player-form.tsx:14 with `maxLength` at :141, which now refuses the 101 to 120 code points the server accepts) is lane L43's; packages/db/src/club-config-validation.ts:68 still counts UTF-16 units against a literal 120; no CHECK on persons.display_name in Phase 4 (Q4 (c)).
   Update 2026-10-27 (lane L43 p4-name-rules-web): the web half is done in the lane's PR (no PR number or SHA is written here). apps/web/lib/session-form-model.ts holds the one web definition: `DISPLAY_NAME_MAX` and `CLUB_NAME_MAX` (120 each, counted in code points), `hasVisibleChar` and `isBoundedName` (which also refuses an unpaired surrogate); club-settings-model.ts, me-settings-client.ts, new-club-form.ts, the roster add-player form (its own cap 100 removed, now 120) and the club start route use them, and the name inputs carry `maxLength` = twice their cap so astral input is never cut; packages/db/src/club-config-validation.ts counts code points; a source guard in apps/web/lib/session-form-model.test.ts keeps one web definition. Still open, so the row stays `idea`: no CHECK on persons.display_name (a migration, P1), which the owner's Phase 4 answer Q4 (c) keeps out of Phase 4.
 
+## task: chat-messages-route-stale-member-comment
+title: Web: the chat messages route comment still says the message list renders "You"/"Member" for a person author; it renders the one NULL-name fallback "(unnamed)" now (comment only)
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/chat/channels/[id]/messages/route.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Lane L43 (p4-name-rules-web) review round 1, finding R1b-1: apps/web/app/api/chat/channels/[id]/messages/route.ts:19 says `L16 renders "You"/"Member"`, but apps/web/components/chat/message-list.tsx now renders `displayNameOf` (t("(chưa đặt tên)", "(unnamed)")) for a person author with no label. Outside L43's file ownership: write `"You"/"(unnamed)"` the next time a lane touches that file.
+
 ## task: membership-display-name-follows-person-rename
 title: Names: `memberships.display_name` never follows a person rename (existing behaviour); decide whether it should
 status: idea
