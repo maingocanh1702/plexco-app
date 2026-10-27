@@ -564,6 +564,70 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
       /bot is revoked/,
     );
   });
+
+  // botA is revoked since the test above; these two leave it so.
+  it("finish on a revoked bot throws ZaloConnectError BOT_REVOKED (not a raw 22023) and writes nothing (L47)", async () => {
+    // Every row a successful finish writes: the bot row, the tenant's steps, its processed commands.
+    const snapshot = async () => ({
+      bots: (
+        await ctx.owner.query<{ status: string; webhook_token: string; bot_token_enc: string }>(
+          `SELECT * FROM zalo_bots WHERE tenant_id = $1`,
+          [ctx.tenantA],
+        )
+      ).rows,
+      steps: (
+        await ctx.owner.query<{ idempotency_key: string | null }>(
+          `SELECT s.* FROM onboarding_steps s JOIN onboarding_runs r ON r.id = s.run_id
+            WHERE r.tenant_id = $1 ORDER BY s.run_id, s.step, s.idempotency_key`,
+          [ctx.tenantA],
+        )
+      ).rows,
+      commands: (
+        await ctx.owner.query<{ command_id: string }>(
+          `SELECT * FROM processed_commands WHERE tenant_id = $1 ORDER BY command_id`,
+          [ctx.tenantA],
+        )
+      ).rows,
+    });
+    const before = await snapshot();
+    expect(before.bots).toHaveLength(1);
+    const bot = before.bots[0]!;
+    expect(bot.status).toBe("revoked");
+    const commandId = `zc-${seq++}`;
+    const err = await finishZaloConnect(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      botId: botA,
+      commandId,
+      webhookToken: bot.webhook_token,
+      outcome: "registered",
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ZaloConnectError);
+    expect(err).toMatchObject({ code: "BOT_REVOKED" });
+    const text = `${(err as ZaloConnectError).message}\n${String(err)}`;
+    expect(text).not.toContain(bot.bot_token_enc);
+    expect(text).not.toContain(bot.webhook_token);
+    const after = await snapshot();
+    expect(after).toEqual(before);
+    expect(after.steps.some((s) => s.idempotency_key === commandId)).toBe(false);
+    expect(after.commands.some((c) => c.command_id === commandId)).toBe(false);
+  });
+
+  it("begin on a revoked bot throws ZaloConnectError BOT_REVOKED via the shared predicate (L47)", async () => {
+    const err = await beginZaloConnect(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      actorPersonId: ownerA,
+      commandId: `zc-${seq++}`,
+      newBotId: randomUUID(),
+      prepare: async () => ({
+        botTokenEnc: "enc",
+        webhookToken: `wh-${randomUUID()}`,
+        webhookSecretEnc: bytes("s"),
+        keyVersion: "local",
+      }),
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ZaloConnectError);
+    expect(err).toMatchObject({ code: "BOT_REVOKED" });
+  });
 });
 
 describe("markBotVerifiedActive (token-bound activation)", () => {
