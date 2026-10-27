@@ -6874,7 +6874,9 @@ notes: |
 
 ## task: name-strip-migrations-apply-with-writers-drained
 title: Deploy: apply the cleanup of migrations 0068, 0069 and 0070 with writers drained, or lock the four tables before the loops
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-runbooks-start-here (L53); find it with `gh pr list --state merged --head docs/p4-docs-runbooks-start-here` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (docs-only scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-27 L53: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (the PR #127 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L53 (plan row L53 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane. F2: the PR adds the deploy-order note for the 0068-0070 name cleanup to section 7 of docs/standards/deployment-infra.md after the base's :215 (labelled "inferred, not run"; the remedy is to apply with writers drained; locking the four tables before the loops would be a migration change outside the note; 0068 loops over two tables, 0069 and 0070 over four; 0072 and 0073 hold no such loop), prefixes the version line :3 with v1.10 and adds a v1.10 changelog row after the v1.8 row (:308); the row's `close_by` line stays.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -7110,7 +7112,9 @@ notes: |
 
 ## task: outbox-runbook-zalo-dm-expiry-wording
 title: Docs: three wording fixes in the `zalo_dm` expiry text of the outbox enable and rollback runbook (from L34's round-3 reviews)
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-runbooks-start-here (L53); find it with `gh pr list --state merged --head docs/p4-docs-runbooks-start-here` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (docs-only scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-27 L53: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (the PR #127 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L53 (plan row L53 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane. F2: the PR rewords docs/runbooks/outbox-dispatch-enable-rollback.md at the base's lines: :84 and :85 write `<event-uuid>` (R3-F4); :85 adds the infinite `starts_at` as a `NULL` cause (R3b-F3); :110, and :62 with the same gap, scope the never-`age` clause to `zalo_dm` (R3c-F1); :72 and :97 now state the L44 deadline (deliver() stops at the earlier of 120 s and the bound); :118-124 are unchanged.
 risk: P2
 change_class: docs
 depends_on: []
@@ -7140,7 +7144,9 @@ notes: |
 
 ## task: start-here-docs-outbox-flag-and-enable-path
 title: Docs: make the outbox claims of DEV-ONBOARDING.md and HANDOFF.md match the runbook (the owner CLI is the only enable path; the dispatch flag defaults to true since PR #94)
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-runbooks-start-here (L53); find it with `gh pr list --state merged --head docs/p4-docs-runbooks-start-here` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (docs-only scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-27 L53: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (the PR #127 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L53 (plan row L53 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane. F2: the PR rewrites docs/00-start-here/DEV-ONBOARDING.md:77 (the owner CLI `node scripts/outbox-projector-enable.mjs enable` is the enable path, the raw setter only disables, and the schedule also needs a projector map without a stub), amends :70 (the `announce` route exists and the projectors are real) and strikes the stale next step at :257 through; docs/00-start-here/HANDOFF.md:304, the current-state line, now names the three real projectors (seeded disabled, enabled only by the owner CLI; `zalo_dm` needs the owner's real Zalo token) and the first business producer (`createSession`), with a v1.46 changelog row above :506; the dated block at :23-31 (v1.42) is not rewritten.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -7395,3 +7401,17 @@ notes: |
   Line numbers at 8e918f0ec541ef4f72740be652a3a86584d381c3 plus lane L46's 0074. The function's two audit INSERTs (0022:360 and :386, restated verbatim at 0074:76 and :102) name no created_at, so each audit row takes the table's DEFAULT now(), the transaction start, while 0023 gives both audit rows of the outbox claim an explicit clock_timestamp() (codex round-02: the reclaim audit 0023:167-173, the value at :172; the claim audit :200-204, the value at :202); OAM-13 (packages/db/src/rls-invariants.test.ts:3002 at this base) pins the live clock of the outbox claim and ack audit rows. A caller inside an aged transaction therefore writes a projector audit row timestamped before the claim it records. Lane L46 kept both INSERTs unchanged so that every byte of 0074 except the lease stamp equals 0022 (design D5).
   Deliverable: a migration that re-creates the function with `created_at` = clock_timestamp() in both INSERTs (the 0023:171-172 and :201-202 form) and a test modelled on OAM-13. Audit ordering only: no money, tenant or grant path.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-outbox-lease-clock.md (lane L46), design D5; step 0 reader A.
+
+## task: backlog-projector-real-replace-stub-status-stale
+title: Backlog: the row `projector-real-replace-stub` is still `planned` although apps/bot maps the three projectors to real modules
+status: idea
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/autopilot-backlog.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 336e84e616e672cf3958320909cb1e2c6475c59a: docs/autopilot-backlog.md:5184 gives `projector-real-replace-stub` (:5182) `status: planned`, and its `merged_probe` (:5191) names no symbol, while apps/bot/src/projectors/index.ts:21-25 maps public_sessions, web_realtime and zalo_dm to their real modules. Fix: one pass that checks the row's two `depends_on` rows and then closes it by hand with the merged PRs as evidence, or re-scopes what is left. Outside lane L53's scope (the lane closes only its own three rows); found by its step 0 (2026-10-27).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-docs-runbooks-start-here.md (lane L53), item 8 F1.
