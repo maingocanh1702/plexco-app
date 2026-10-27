@@ -70,6 +70,15 @@ describe("createCommandIdKeeper (DD-117 D5 + payload binding)", () => {
     expect(k.get('{"name":"A"}')).not.toBe(first);
   });
 
+  it("no store: a sticky key (uncertain, then COMMAND_ID_CONFLICT) is dropped; the next get mints (no conflict loop)", () => {
+    const k = keeper();
+    expect(k.get("p")).toBe("k1");
+    k.settle(network);
+    expect(k.get("p")).toBe("k1");
+    k.settle(new ApiClientError("COMMAND_ID_CONFLICT", "", 409, "req"));
+    expect(k.get("p")).toBe("k2");
+  });
+
   it("the same sticky rule for no-payload callers: uncertain, then 403/429, keeps the key until 2xx or reset", () => {
     const k = keeper();
     const first = k.get();

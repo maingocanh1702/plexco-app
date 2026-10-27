@@ -232,6 +232,36 @@ describe("addMemberToSession", () => {
     expect(await fx.counts(tenantId)).toEqual(before);
   });
 
+  it("replay of the SAME add-by-name command: one person, one membership, the second answer replayed, nothing written twice (L49 D9)", async () => {
+    const { tenantId, actor, sessionId } = await world();
+    // persons is global (no tenant column); a name unique to this case lets the persons query
+    // below also catch a second person minted without a membership.
+    const displayName = `Replay ${randomUUID().slice(0, 8)}`;
+    const commandId = nextCommandId();
+    const first = await add(tenantId, actor, sessionId, { displayName }, commandId);
+    expect(first.replayed).toBe(false);
+    const before = await fx.counts(tenantId);
+    expect(before).toMatchObject({ players: 1, charges: 1, allocations: 0, commands: 1 });
+    const again = await add(tenantId, actor, sessionId, { displayName }, commandId);
+    expect(again).toMatchObject({
+      playerId: first.playerId,
+      membershipId: first.membershipId,
+      chargeId: first.chargeId,
+      replayed: true,
+    });
+    expect(await fx.counts(tenantId)).toEqual(before);
+    const people = await fx.rows(
+      `SELECT m.id AS membership_id FROM persons p
+         LEFT JOIN memberships m ON m.person_id = p.id AND m.tenant_id = $2
+        WHERE p.display_name = $1`,
+      [displayName, tenantId],
+    );
+    expect(people).toEqual([{ membership_id: first.membershipId }]);
+    const ev = await fx.events(sessionId);
+    expect(ev).toHaveLength(1);
+    expect(ev[0]).toMatchObject({ type: "player.added" });
+  });
+
   it("COMMAND_ID_CONFLICT: the key reused for another session, another actor, or another command", async () => {
     const { tenantId, actor, sessionId } = await world();
     const otherActor = await fx.seedAdmin(tenantId, "co_admin");
