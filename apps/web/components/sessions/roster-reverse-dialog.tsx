@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useT } from "../../lib/i18n-client";
 import { formatVnd } from "../../lib/money";
-import { describeReverseError } from "../../lib/session-error-ui";
+import { describeReverseError, replayedNotice } from "../../lib/session-error-ui";
 import { reversePayment } from "../../lib/roster-payments-api";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
@@ -51,15 +51,24 @@ export function RosterReverseDialog({
       setInvalid(true);
       return;
     }
-    const result = await cmd.run((commandId) =>
-      reversePayment(ctx, sessionId, target.allocationId, { commandId, reason: trimmed }),
+    const result = await cmd.run(
+      (commandId) =>
+        reversePayment(ctx, sessionId, target.allocationId, { commandId, reason: trimmed }),
+      {
+        tenantId: ctx.tenantId,
+        kind: "reverse",
+        targets: [sessionId, target.allocationId],
+        fingerprint: trimmed,
+      },
     );
     if (result) {
       onReversed(
-        t(
-          `Đã hoàn tác ${formatVnd(target.amount)} của ${target.name}`,
-          `Reversed ${formatVnd(target.amount)} for ${target.name}`,
-        ),
+        result.replayed
+          ? replayedNotice(t)
+          : t(
+              `Đã hoàn tác ${formatVnd(target.amount)} của ${target.name}`,
+              `Reversed ${formatVnd(target.amount)} for ${target.name}`,
+            ),
       );
     }
   }

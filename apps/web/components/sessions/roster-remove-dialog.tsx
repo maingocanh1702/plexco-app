@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useT } from "../../lib/i18n-client";
 import { removePlayer } from "../../lib/roster-payments-api";
+import { replayedNotice } from "../../lib/session-error-ui";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { ConfirmDialog } from "../ui/confirm-dialog";
@@ -37,10 +38,15 @@ export function RosterRemoveDialog({
 
   async function confirm() {
     if (!target || cmd.busy) return;
-    const result = await cmd.run((commandId) =>
-      removePlayer(ctx, sessionId, target.id, { commandId }),
+    const result = await cmd.run(
+      (commandId) => removePlayer(ctx, sessionId, target.id, { commandId }),
+      { tenantId: ctx.tenantId, kind: "remove", targets: [sessionId, target.id], fingerprint: "" },
     );
-    if (result) onRemoved(t(`Đã gỡ ${target.name}`, `${target.name} removed`));
+    if (result) {
+      onRemoved(
+        result.replayed ? replayedNotice(t) : t(`Đã gỡ ${target.name}`, `${target.name} removed`),
+      );
+    }
   }
 
   return (

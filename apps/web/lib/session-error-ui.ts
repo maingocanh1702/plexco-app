@@ -205,6 +205,14 @@ export function isDefiniteFailure(error: unknown): boolean {
   return error.statusCode >= 400 && error.statusCode < 500;
 }
 
+/** Shown instead of the success message when a 2xx carries `replayed: true` (copy D5). */
+export function replayedNotice(t: TFn): string {
+  return t(
+    "Thao tác này đã được ghi nhận ở lần gửi trước; không có gì mới được lưu.",
+    "Already recorded by an earlier attempt; nothing new was saved.",
+  );
+}
+
 /**
  * Reversal-dialog variant (OD-5): reversal is owner-only until a grant UI exists, so FORBIDDEN there
  * tells the host to ask the club owner, which the generic "not allowed" text would not explain. No

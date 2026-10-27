@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import { addPlayer } from "../../lib/roster-payments-api";
+import { replayedNotice } from "../../lib/session-error-ui";
 import { checkTypedName, stripInvisibleChars } from "../../lib/session-form-model";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
@@ -71,19 +72,20 @@ export function RosterAddPlayerForm({
       return;
     }
     setProblem(null);
-    const result = await cmd.run((commandId) =>
-      addPlayer(ctx, sessionId, { commandId, displayName }),
+    const result = await cmd.run(
+      (commandId) => addPlayer(ctx, sessionId, { commandId, displayName }),
+      { tenantId: ctx.tenantId, kind: "add", targets: [sessionId], fingerprint: displayName },
     );
     if (!result) return;
     const { status, waitlistPosition } = result.player;
-    onAdded(
+    const added =
       status === "waitlisted"
         ? t(
             `${displayName} vào danh sách chờ (#${waitlistPosition ?? "?"})`,
             `${displayName} joined the waitlist (#${waitlistPosition ?? "?"})`,
           )
-        : t(`Đã thêm ${displayName}`, `${displayName} added`),
-    );
+        : t(`Đã thêm ${displayName}`, `${displayName} added`);
+    onAdded(result.replayed ? replayedNotice(t) : added);
     setName("");
     setOpen(false);
   }
