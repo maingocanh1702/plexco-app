@@ -67,10 +67,10 @@ const createIn = (tenantId: string, startHour: number) =>
 
 describe("migrations", () => {
   it("apply clean on a fresh database and are idempotent on re-run", async () => {
-    expect(ctx.migrateResult.applied.length).toBe(74); // 0000..0073 (0073 member name length cap 120, 0072 member name definers qualify builtins, 0071 zalo dm promotion start definer, 0070 member name control chars, 0069 member name invisible chars, 0068 public name invisible chars,0067 session venue visibility, 0066 account club chat context, 0065 chat message author label, 0064 channel identity link gate, 0063 chat message commands, 0062 gender pricing, 0061 public sessions projector writer, 0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
+    expect(ctx.migrateResult.applied.length).toBe(75); // 0000..0074 (0074 projector delivery lease clock, 0073 member name length cap 120, 0072 member name definers qualify builtins, 0071 zalo dm promotion start definer, 0070 member name control chars, 0069 member name invisible chars, 0068 public name invisible chars,0067 session venue visibility, 0066 account club chat context, 0065 chat message author label, 0064 channel identity link gate, 0063 chat message commands, 0062 gender pricing, 0061 public sessions projector writer, 0060 tenant public alias, 0059 me player reads definers, 0058 player self-join definer + player.promoted route, 0057 zalo delivery targets definer, 0056 outbox projector registry + DLQ replay, 0055 me settings definers, 0054 link_code reparent empty person, 0050 attested_transfer allocation source, 0051 host-add person definer, 0052 tenant profile definers, 0053 zalo ingress)
     const second = await ctx.remigrate();
     expect(second.applied).toEqual([]);
-    expect(second.skipped.length).toBe(74);
+    expect(second.skipped.length).toBe(75);
   });
 
   it("RLS is FORCED on every tenant-scoped table (silent-rollback guard)", async () => {
@@ -1838,12 +1838,12 @@ describe("tenant-integrity migrations 0019/0020/0021 direct behaviour (TI-6/LTI-
         await bootstrapJobDefiner(admin);
         return migrate(url(dbName));
       });
-      expect(res.applied.length).toBe(74); // 0000..0073
+      expect(res.applied.length).toBe(75); // 0000..0074
 
       const c = await connect(url(dbName));
       try {
         const { rows } = await c.query(`SELECT name, sha256 FROM schema_migrations ORDER BY name`);
-        expect(rows.length).toBe(74);
+        expect(rows.length).toBe(75);
         for (const row of rows as { name: string; sha256: string }[]) {
           const disk = createHash("sha256")
             .update(await readFile(path.join(MIGRATIONS_DIR, row.name), "utf8"))
@@ -2119,7 +2119,7 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
       // withJobDefinerLock hold around this whole body: the migration and the checks below.
       await nsCtx.bootstrapAndMigrateAsOwner(async () => {
         const res = await nsCtx.runMigration();
-        expect(res.applied[res.applied.length - 1]).toBe("0073_member_name_length_cap_120.sql");
+        expect(res.applied[res.applied.length - 1]).toBe("0074_projector_delivery_lease_clock.sql");
 
         const { rows } = await nsCtx.ownerPool.query(
           `SELECT p.proname FROM pg_proc p WHERE pg_get_userbyid(p.proowner) = 'job_definer' ORDER BY p.proname`,
@@ -4821,10 +4821,10 @@ describe("CND-1..CND-11 check constraint naming drift (0025)", () => {
       }
     });
 
-    it("UCC-8: MIGRATION_COUNT (74) matches the actual migrations/ directory listing, and the tail is 0073", async () => {
+    it("UCC-8: MIGRATION_COUNT (75) matches the actual migrations/ directory listing, and the tail is 0074", async () => {
       const files = (await readdir(MIGRATIONS_DIR)).filter((f) => f.endsWith(".sql")).sort();
-      expect(files.length).toBe(74);
-      expect(files[files.length - 1]).toBe("0073_member_name_length_cap_120.sql");
+      expect(files.length).toBe(75);
+      expect(files[files.length - 1]).toBe("0074_projector_delivery_lease_clock.sql");
     });
 
     it("UCC-9: 0026 changes only CHECK constraint identity — no RLS/role/grant/column/type/nullability statement, zero DROP/ADD CONSTRAINT, exactly 6 RENAME CONSTRAINT", async () => {
