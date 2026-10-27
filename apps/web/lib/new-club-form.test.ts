@@ -36,13 +36,17 @@ describe("validateNewClub", () => {
   it("accepts a valid form", () => expect(validateNewClub(ok, t)).toEqual({}));
   it("rejects empty and over-long names", () => {
     expect(validateNewClub({ ...ok, name: "   " }, t).name).toBeTruthy();
-    expect(validateNewClub({ ...ok, name: "x".repeat(121) }, t).name).toBeTruthy();
+    expect(validateNewClub({ ...ok, name: "x".repeat(121) }, t).name).toBe(
+      "Name can be at most 120 characters.",
+    );
     expect(validateNewClub({ ...ok, name: "x".repeat(120) }, t).name).toBeUndefined();
   });
   it("counts the club name in code points: 120 astral letters accepted, 121 refused", () => {
     const ch = String.fromCodePoint(0x20000); // a CJK Extension B ideograph, a letter
     expect(validateNewClub({ ...ok, name: ch.repeat(120) }, t).name).toBeUndefined();
-    expect(validateNewClub({ ...ok, name: ch.repeat(121) }, t).name).toBeTruthy();
+    expect(validateNewClub({ ...ok, name: ch.repeat(121) }, t).name).toBe(
+      "Name can be at most 120 characters.",
+    );
   });
   // L27: strip first, as the server stores the stripped name. R2 and R5 raise no error, R3 is the
   // existing empty error; R5: composed emoji are stored split (the owner's rule as written).
