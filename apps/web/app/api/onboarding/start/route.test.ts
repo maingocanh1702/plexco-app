@@ -191,7 +191,7 @@ describe("POST /api/onboarding/start — bounded body + name length (audit W-8)"
     vi.mocked(csrfOk).mockReturnValue(true);
     vi.mocked(rateLimited).mockResolvedValue(false);
     vi.mocked(provisionTenant).mockReset().mockResolvedValue("tenant-1");
-    vi.mocked(issueSession).mockResolvedValue({ csrfToken: "new-csrf" });
+    vi.mocked(issueSession).mockReset().mockResolvedValue({ csrfToken: "new-csrf" });
   });
 
   function rawReq(body: string, contentType: string | null = "application/json"): Request {
@@ -226,6 +226,51 @@ describe("POST /api/onboarding/start — bounded body + name length (audit W-8)"
     const res120 = await POST(req({ slug: "club-a", name: "x".repeat(120) }));
     expect(res120.status).toBe(200);
     expect(provisionTenant).toHaveBeenCalledOnce();
+  });
+
+  // The route counts code points, like tenants_name_len_chk (char_length).
+  it("counts the club name in code points: 120 astral accepted, 121 refused", async () => {
+    const e = String.fromCodePoint(0x1f3f8);
+    const res121 = await POST(req({ slug: "club-a", name: e.repeat(121) }));
+    expect(res121.status).toBe(400);
+    expect((await res121.json()).error).toMatchObject({
+      code: "INVALID_BODY",
+      message: "Tên CLB hoặc slug không hợp lệ.",
+    });
+    expect(provisionTenant).not.toHaveBeenCalled();
+    const res120 = await POST(req({ slug: "club-a", name: e.repeat(120) }));
+    expect(res120.status).toBe(200);
+    expect(vi.mocked(provisionTenant).mock.calls[0]?.[1]).toMatchObject({ name: e.repeat(120) });
+  });
+
+  // tenant_provision (0072) raises 22023 for a name or slug it refuses; the walker also finds it
+  // under .cause. Either way: the route's one 400, with no internal message or code in the body.
+  const nameRefused = Object.assign(new Error("tenant_provision: name refused"), { code: "22023" });
+  it.each([
+    ["top level", nameRefused],
+    ["under .cause", new Error("provision failed", { cause: nameRefused })],
+  ])(
+    "maps a tenant_provision 22023 (%s) to the same 400, no internal text",
+    async (_where, error) => {
+      vi.mocked(provisionTenant).mockRejectedValue(error);
+      const res = await POST(req({ slug: "club-new", name: "New" }));
+      expect(res.status).toBe(400);
+      const text = await res.text();
+      expect(JSON.parse(text).error).toMatchObject({
+        code: "INVALID_BODY",
+        message: "Tên CLB hoặc slug không hợp lệ.",
+      });
+      expect(text).not.toContain("tenant_provision");
+      expect(text).not.toContain("22023");
+      expect(issueSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it("re-throws another coded pg error (42501): it stays a 5xx", async () => {
+    const failure = Object.assign(new Error("permission denied"), { code: "42501" });
+    vi.mocked(provisionTenant).mockRejectedValue(failure);
+    await expect(POST(req({ slug: "club-new", name: "New" }))).rejects.toBe(failure);
+    expect(issueSession).not.toHaveBeenCalled();
   });
 
   // L27: the route strips first, then runs its existing checks on the stripped name.
