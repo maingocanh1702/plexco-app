@@ -565,7 +565,7 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
     );
   });
 
-  // botA is revoked since the test above; these two leave it so.
+  // botA is revoked since the test above; the cases below leave it so.
   it("finish on a revoked bot throws ZaloConnectError BOT_REVOKED (not a raw 22023) and writes nothing (L47)", async () => {
     // Every row a successful finish writes: the bot row, the tenant's steps, its processed commands.
     const snapshot = async () => ({
@@ -627,6 +627,25 @@ describe("zalo_bot_upsert_for_tenant / token lookup / status", () => {
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ZaloConnectError);
     expect(err).toMatchObject({ code: "BOT_REVOKED" });
+  });
+
+  it("begin rethrows a 22023 that is not the revoked one (invalid arguments) raw, not as BOT_REVOKED (L47)", async () => {
+    const attempt = beginZaloConnect(ctx.appDb.db, {
+      tenantId: ctx.tenantA,
+      actorPersonId: ownerA,
+      commandId: `zc-${seq++}`,
+      newBotId: randomUUID(),
+      prepare: async () => ({
+        botTokenEnc: "enc",
+        // 15 characters, under 0053's 16-character floor: "invalid arguments" (22023).
+        webhookToken: "w".repeat(15),
+        webhookSecretEnc: bytes("s"),
+        keyVersion: "local",
+      }),
+    });
+    await expectErrorChainToMatch(attempt, /zalo_bot_upsert_for_tenant: invalid arguments/);
+    const err = await attempt.catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(ZaloConnectError);
   });
 });
 
