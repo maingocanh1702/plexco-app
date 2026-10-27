@@ -105,14 +105,15 @@ Command at the base: `git grep -n -E "lease_expires_at *=|lease_expires_at *(<|>
 
 - No test pins this function's body, md5, prosrc or its now() stamp (reader A, QA3 (a)); `member-name-writer-guard.test.ts:176-182`
   loads every function's source for its name-writer scan, and 0074 adds no name write. So no body pin moves (GOAL (4)); threat (4) is
-  checked by the generator equality, the reverse-edit catalog md5 and the independent diff (sections 3 and 9).
+  checked by the generator equality, the reverse-edit catalog md5, the independent diff (sections 3 and 9) and the new body pin
+  JCL-15b (D9).
 - The 14 tail pins at the base, each moving 74 -> 75 and 0073 -> 0074 (the count comments add the 0074 entry), nothing else on the line:
   - `migrate.test.ts:53` `const MIGRATION_COUNT = 74; // 0000..0073 (0073 member name length cap 120) ...` and `:755`
     `expect(res.applied[res.applied.length - 1]).toBe("0073_member_name_length_cap_120.sql");`;
   - `outbox-projector-registry.test.ts:119` `it("A1: 74 migrations apply with tail 0073 and re-run idempotently", ...`, `:120`
     `toBe(74)`, `:122` the tail, `:125` `expect(again.skipped.length).toBe(74);`;
   - `rls-invariants.test.ts:70` (`toBe(74)` and the count comment), `:73` (skipped), `:1841`, `:1846`, `:2122` (JCL-1's tail), `:4739`
-    (the UCC-8 title), `:4741`, `:4742`.
+    (the UCC-8 title), `:4741`, `:4742` (at the head, after the +85 lines of JCL-15 and JCL-15b: `:4824`, `:4826`, `:4827`).
 - Owner and ACL pins that stay true (QA3 (b)): the `job_definer` function-owner lists `rls-invariants.test.ts:2131` and `:2606` (JCL-12
   at `:2593`), JCL-9 `:2364-2376` (app_worker has no direct SELECT on `projector_deliveries`) and `packages/db/README.md:113` INV-8:
   CREATE OR REPLACE keeps the owner and the ACL, and the restated ACL equals 0022:523/:529.
@@ -207,13 +208,13 @@ Each is "default applied, pending owner sign-off" (Tier B, pre-approved by RO-L4
 - **D4 the test home.** `rls-invariants.test.ts`, in the 0022 describe (`:2094`), one new `it` **JCL-15** placed after JCL-10
   (`:2474-2517`), modelled on OAM-12 (`:2961-3000`): a worker client (`ctx.workerPool.connect()`); `BEGIN`;
   `job_prepare_projector_delivery(ev, P)` for an event from `seedOutboxEvent(ctx.tenantA, ...)` (`:2095`) and a unique projector name P
-  (both scans filter `pd.projector = p_projector`, 0022:348 and :372); `SELECT pg_sleep(2)`; `b = clock_timestamp()::text`; the claim
+  (both scans filter `pd.projector = p_projector`, 0022:348 and :372); `SELECT pg_sleep(1.5)` (the OAM-12 sleep); `b = clock_timestamp()::text`; the claim
   (exactly one row for the event); `a = clock_timestamp()::text`; `COMMIT`; then, as `ctx.owner` (app_worker has no direct SELECT,
   JCL-9), `lease_expires_at BETWEEN b::timestamptz + interval '5 minutes' AND a::timestamptz + interval '5 minutes'` is true. The bounds
   are computed in SQL from the text values (microseconds kept), with no tolerance. Cleanup: `complete_projector_delivery` 'delivered'
   with the claim token, as JCL-10 does (`:2496-2499`); `ROLLBACK` on error, `release()` in finally. No jobd lock (as OAM-12 and JCL-10);
   no enable flag (the claim body never reads `outbox_projectors`; `enabled` is enforced only in the bot, `dispatcher.ts:338`). On the old
-  body the lease is the BEGIN-time now() + 5 minutes, about 2 s below the lower bound: false (RED). Rejected: a new test file (the 0022
+  body the lease is the BEGIN-time now() + 5 minutes, about 1.5 s below the lower bound: false (RED). Rejected: a new test file (the 0022
   describe holds the claim's contract; tests are a semantic map); a JS tolerance window (millisecond truncation plus a tolerance could
   let a short lease pass).
 - **D5 the two audit INSERTs unchanged.** GOAL (1): every other byte unchanged. Their `created_at` keeps the `job_audit_events` column
@@ -324,9 +325,11 @@ Where each defended item is checked:
 
 Before: measured by the orchestrator on a lane scratch database migrated to 0073, one catalog query, inside the lane's lock. After:
 the expected value, measured by the orchestrator with the same query at the migration commit (section 5 step 3) and again after the
-re-run (threat (5)). "equal" means byte-equal to the before value.
+re-run (threat (5)). "equal" means byte-equal to the before value. Measured on 2026-10-27 on the scratch database at the migration
+commit 2bf296e16ff975cd1062e8e4325aec6e841b0e90: every row is equal except md5(prosrc) and the three stamp rows; the probe after the
+re-run (`[migrate] applied=0 skipped=75`, then the 0074 file run directly a second time, exit 0) equals the after probe.
 
-| key | before (measured at 0073) | after (expected; measured at the migration commit) |
+| key | before (measured at 0073) | after (measured at 0074) |
 |---|---|---|
 | fn | `claim_projector_delivery_batch(text,integer)` | equal |
 | prosecdef | `true` | equal |
@@ -343,7 +346,7 @@ re-run (threat (5)). "equal" means byte-equal to the before value.
 | args | `p_projector text, p_limit integer DEFAULT 100` | equal |
 | owner | `job_definer` | equal |
 | proacl | `{job_definer=X/job_definer,app_worker=X/job_definer}` | equal |
-| md5(prosrc) | `ddc6f09f0def69c98fbda444924ecfd3` | changes; the reverse-edit md5 (section 3) equals the before value |
+| md5(prosrc) | `ddc6f09f0def69c98fbda444924ecfd3` | `749a60da4ee0bd5cbdd35cc33bea8e22`; the reverse-edit md5 (section 3) is `ddc6f09f0def69c98fbda444924ecfd3`, equal to the before value (new text once, old text zero times in the body) |
 | stamp now() | `true` | `false` |
 | stamp clock_timestamp() | `false` | `true` |
 | overloads named claim_projector_delivery_batch | `1` | equal |
