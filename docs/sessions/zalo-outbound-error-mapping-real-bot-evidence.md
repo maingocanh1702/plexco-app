@@ -16,8 +16,11 @@ run). Nobody else provokes, records or pastes anything here.
 - Record only: the HTTP status; the values of `ok` and `error_code`; the `description` text with every id, name or
   number that identifies a person, a chat or the bot replaced by `<redacted>`; the date (YYYY-MM-DD).
 - Never paste a command line, a shell history, a log line or a screenshot: each can carry the token.
-- When you send, keep the token out of your shell history and out of any process's arguments (a token typed into a
-  command line lands in both), and clear any history line that holds it afterwards.
+- When you send, keep the token out of everything that records or syncs what you type or run: your shell history, any
+  process's arguments, a browser's address bar and history, an API client's saved history, and, for a lane, its
+  prompt, tool calls, output and transcript (a token typed into a command line lands in the first two). Clear any
+  history line that holds it afterwards; if it reached this file, a commit or anything that syncs or leaves the
+  machine, treat it as leaked and have it reissued.
 - In doubt, leave the slot empty and write "withheld (redaction)".
 
 ## 2. What the run checks: the shipped mapping
@@ -50,9 +53,9 @@ the point of this file. Send each one with the real bot to your own test chat on
 | # | Attempt | HTTP status | `ok` | `error_code` | `description` (redacted) | Class (section 2) | Shipped outcome as expected? | Date |
 |---|---|---|---|---|---|---|---|---|
 | P1 | control: one ordinary send to your own test chat | | | | | | | |
-| P2 | the same send with one character of the token changed | | | | | | | |
+| P2 | the same send with one character of the token changed (never write the changed token or which character you changed) | | | | | | | |
 | P3 | the same send with an old token the bot no longer accepts, if you have one | | | | | | | |
-| P4 | a send to a chat id that has never messaged the bot | | | | | | | |
+| P4 | a send to a chat id that has never messaged the bot: a made-up one or a second account of your own, never another person's | | | | | | | |
 | P5 | a send with an empty text | | | | | | | |
 | P6 | a send with a very long text (write the length used, never the text) | | | | | | | |
 | P7 | a fast burst of sends to your own test chat, stopped at the first throttling answer or after 20 sends (write the count) | | | | | | | |
