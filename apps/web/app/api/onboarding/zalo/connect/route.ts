@@ -197,7 +197,7 @@ export async function POST(request: Request): Promise<Response> {
       if (error instanceof ZaloConnectError) {
         switch (error.code) {
           case "BOT_REVOKED":
-            return err("FORBIDDEN", t("Bot này đã bị thu hồi.", "This bot has been revoked."), 403);
+            return tokenInvalid();
           case "FORBIDDEN":
             return err(
               "FORBIDDEN",

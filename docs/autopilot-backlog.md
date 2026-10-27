@@ -6168,15 +6168,17 @@ notes: |
 
 ## task: zalo-connect-bot-revoked-error-mapping
 title: Onboarding Zalo connect: `BOT_REVOKED` ra `FORBIDDEN` 403; `finishZaloConnect` để lọt 22023 thành 500
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-error-mapping-fakes (L47); find it with `gh pr list --state merged --head feat/p4-zalo-error-mapping-fakes` (no PR number or merge SHA is written here)
+note_merged: 2026-10-27 L47: closed BY HAND in the lane's own PR, measured at base a965de349f59a76b909296460520afd9c02e6d4b (the PR #128 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`. F1: the owner's written approval of 2026-10-26 (DD-150, "Phase 4 plan approved, Q1-Q10 default") approves the plan whose row L47 this is; its answer Q5 gives the API error code the `_readiness` line below waited for (a bot revoked at connect reuses the code and the t(vi, en) message the connect route returns when `getMe` rejects the token; no new code), so that line is the row's state before Q5. F2: `finishZaloConnect` maps the 22023 "bot is revoked" of `zalo_bot_set_status` to `ZaloConnectError("BOT_REVOKED")` inside its transaction (nothing written) through the predicate `isZaloBotRevokedError`, which `beginZaloConnect` shares; the route answers `BOT_REVOKED` with `tokenInvalid()` (400 `ZALO_TOKEN_INVALID`) instead of 403 `FORBIDDEN`. Readiness record: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md.
 risk: P2
 change_class: code
 depends_on: []
 invariants: [auth, transport-zalo]
 scope: [apps/web/app/api/onboarding/zalo/connect/route.ts, packages/db/src/zalo-ingress.ts]
 manifest: null
-merged_probe: null
-_probe_note: probe do slice tác giả đưa vào; chưa có.
+merged_probe: isZaloBotRevokedError
+_probe_note: the predicate lane L47 adds to packages/db/src/zalo-ingress.ts; absent at a965de349f59a76b909296460520afd9c02e6d4b (`git grep -n -w isZaloBotRevokedError` found nothing there).
 _readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; cần chọn mã lỗi API cho bot đã thu hồi.
 notes: |
   `apps/web/app/api/onboarding/zalo/connect/route.ts:199-200` map `BOT_REVOKED` sang `FORBIDDEN` 403 (nhầm với thiếu quyền). `beginZaloConnect` đã bắt 22023 "bot is revoked" (`zalo-ingress.ts:394`),
@@ -6592,6 +6594,7 @@ notes: |
   Blocked: the evidence can only come from outside the repository, from responses of the real Zalo bot. Who closes it: the owner, who holds the real bot token (that step is the owner's and is not done by this row). With what: one recorded real-bot response per mapped error class, written into `docs/sessions/zalo-outbound-error-mapping-real-bot-evidence.md`. Back to `ready` when the real bot token is available to the lane that records the responses. The mapping to verify is the one the DD-138 row `p3-m6-zalo-outbound Z-6` (`docs/standards/decisions.md:1922` at 2c7dfe7; the full row key is the stable reference, the line moves) records as shipped by L4 (#66): 401, 429, 5xx, other 4xx, a 2xx with `ok:false` by numeric `error_code`, a bad or oversize response, timeout and network failure. The owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
   > "verify Zalo error mapping with the real bot (L4 Z-6)"
   Related, different task, not replaced by this row: `zalo-connect-bot-revoked-error-mapping` (`docs/autopilot-backlog.md:6159` at 2c7dfe7). source: `docs/standards/decisions.md`, DD-138 row `p3-m6-zalo-outbound Z-6` and the DD-138 sign-off subsection "Kết quả ký của owner (2026-10-21)" · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+  Update 2026-10-27 (lane L47 p4-zalo-error-mapping-fakes): the fake half is done; this row is NOT flipped and stays `blocked` on the owner's real bot token. The template its `scope` names now exists (docs/sessions/zalo-outbound-error-mapping-real-bot-evidence.md: the classes C1-C8, the provocations P1-P8, empty slots and the redaction rule). The shipped mapping is pinned against a local fake server by packages/db/src/zalo-bot-api-fake-server-matrix.test.ts (the real `sendMessage` and `classifyZaloError`) and apps/bot/src/projectors/zalo-dm-error-mapping-matrix.test.ts (the zalo_dm projector's result per class), with 0 disagreements with the DD-138 row; the live values (packages/db/src/zalo-bot-api.ts:14, "AWAIT-verify") are what only the real-bot run can record.
 
 ## task: docs-sync-phase3-owner-decision-spec-follow-ups
 title: Docs: one lane to sync the Reviewed specs that DD-138 and DD-139..DD-142 name as spec follow-ups
@@ -7574,3 +7577,74 @@ merged_probe: null
 notes: |
   Line numbers at 336e84e616e672cf3958320909cb1e2c6475c59a: docs/autopilot-backlog.md:5184 gives `projector-real-replace-stub` (:5182) `status: planned`, and its `merged_probe` (:5191) names no symbol, while apps/bot/src/projectors/index.ts:21-25 maps public_sessions, web_realtime and zalo_dm to their real modules. Fix: one pass that checks the row's two `depends_on` rows and then closes it by hand with the merged PRs as evidence, or re-scopes what is left. Outside lane L53's scope (the lane closes only its own three rows); found by its step 0 (2026-10-27).
   Source: docs/sessions/web-mvp-phase4-readiness-p4-docs-runbooks-start-here.md (lane L53), item 8 F1.
+
+## task: web-e2e-zalo-connect-revoked-bot-stale-403
+title: Web e2e: the settings spec's route fake still answers 403 FORBIDDEN for a bot revoked at connect, the answer lane L47 replaced by 400 ZALO_TOKEN_INVALID
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: [web-app, transport-zalo]
+scope: [apps/web/e2e/settings.spec.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at a965de349f59a76b909296460520afd9c02e6d4b (lane L47 does not edit the file): apps/web/e2e/settings.spec.ts:801-823 pins the base's answer for a revoked bot: its route fake (:809-813) answers FORBIDDEN 403, and the test stays green after L47 because its assertion (:817) matches the revoked note the card shows from the refetched state, not the alert. Since L47 the connect route answers `BOT_REVOKED` with the getMe-rejected pair (400 `ZALO_TOKEN_INVALID`, apps/web/app/api/onboarding/zalo/connect/route.ts), so the fake pins an answer the server no longer sends. Fix: the fake answers the 400 pair and the test also asserts the token-invalid alert before the revoked note. A test-only edit adds no code symbol: close by hand with the PR as evidence.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (a).
+
+## task: zalo-webhook-verified-active-revoked-bot-22023
+title: Zalo webhook: `markBotVerifiedActive` lets the 22023 "bot is revoked" of `zalo_bot_set_status` escape for a revoked bot; what its caller answers is unmeasured
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [auth, transport-zalo]
+scope: [packages/db/src/zalo-ingress.ts, apps/web/app/api/webhooks/zalo/[token]/route.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at the lane's head (base a965de349f59a76b909296460520afd9c02e6d4b plus lane L47's commits, which leave these lines unchanged): `markBotVerifiedActive` (packages/db/src/zalo-ingress.ts:372-390) calls `zalo_bot_set_status(..., 'active', ...)` (:386-388) with no catch, and migration 0053 raises 22023 "bot is revoked" when the bot row is `revoked` (packages/db/migrations/0053_zalo_ingress.sql:371-372), as it did in `finishZaloConnect` before L47. Its caller is the Zalo webhook route (apps/web/app/api/webhooks/zalo/[token]/route.ts:114); lane L47 did not measure what that route answers for this error. Fix: measure the webhook path for a revoked bot first; if the 22023 escapes, map it through the shared predicate `isZaloBotRevokedError` (zalo-ingress.ts) to the webhook's own fail-closed answer, with a real-DB test.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (b) and its default D6.
+
+## task: zalo-connect-getme-unavailable-reads-as-bad-token
+title: Onboarding Zalo connect: a getMe answer of HTTP 5xx or 429, or a bad ZALO_BOT_API_BASE setting, answers ZALO_TOKEN_INVALID 400, so Zalo being down reads as a bad token
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [auth, transport-zalo]
+scope: [apps/web/app/api/onboarding/zalo/connect/route.ts, apps/web/app/api/onboarding/zalo/connect/route.test.ts]
+manifest: null
+merged_probe: null
+_readiness: NOT_CODE_READY — the answer for "Zalo is down" and for a bad API base setting at connect is not chosen (AUTH_UNAVAILABLE 503, route.ts:131-132, is the nearest existing one).
+notes: |
+  Line numbers at the lane's head (unchanged by lane L47): the connect route's getMe catch (apps/web/app/api/onboarding/zalo/connect/route.ts:130-135) answers AUTH_UNAVAILABLE 503 only for the client kinds `timeout` and `network` (:131-132); every other `ZaloApiError` answers `tokenInvalid()` 400 (:134), including `rejected` with an HTTP 5xx or 429 (Zalo down or throttling, packages/db/src/zalo-bot-api.ts:82-85) and `invalid_base` (a bad ZALO_BOT_API_BASE setting, zalo-bot-api.ts:45-58). The host is then told to re-enter a token that may be fine. Fix: choose the answer for those kinds (the copy is an owner or product decision), then map them and pin each in route.test.ts.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (c) and decision table row 7.
+
+## task: zalo-bot-api-declared-oversize-body-left-open
+title: Zalo Bot API client: a response announced oversize by its content-length is left unread and uncancelled, so its connection can stay open until the 5 s signal
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: [transport-zalo]
+scope: [packages/db/src/zalo-bot-api.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at the lane's head (unchanged by lane L47), measured by reading: `readBoundedBody` returns `too_large` from the declared content-length alone without touching the stream (packages/db/src/read-bounded-body.ts:9-12), and the client then throws `bad_response` at packages/db/src/zalo-bot-api.ts:94 without cancelling the body, unlike its non-2xx path (:83, `res.body?.cancel()`). The verdict is right (recipient terminal `zalo_bad_response`); the connection is left to the 5 s timeout signal (:74) or the peer. Lane L47's fake-server matrix closes its server with `closeAllConnections()` after each test, so that test cannot hang on it. Fix: cancel the body before that throw, with a test that the connection closes at once.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (d).
+
+## task: bot-test-db-harness-shared-module
+title: apps/bot tests: one shared DB test harness instead of a local copy of the #62 setup context in each DB test file, and one zalo_dm fixture for its two files
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: []
+scope: [apps/bot/src/test-db.ts, apps/bot/src/dispatcher.test.ts, apps/bot/src/preflight.test.ts, apps/bot/src/schedule.test.ts, apps/bot/src/outbox-wake.test.ts, apps/bot/src/projector-registry.test.ts, apps/bot/src/projectors/zalo-dm.test.ts, apps/bot/src/projectors/zalo-dm-error-mapping-matrix.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at the lane's head (base a965de349f59a76b909296460520afd9c02e6d4b plus lane L47's commits): the #62 DB harness (a throwaway database; `withJobDefinerLock` around `bootstrapJobDefiner` and `migrate`; `setAppWorkerPasswordRaceSafe`; a teardown that releases the password lease after the pools close) is copied as a local function in apps/bot/src/dispatcher.test.ts:54 (`setupDispatcherContext`), preflight.test.ts:39 (`setupWorkerContext`), schedule.test.ts:53 (`setupScheduleContext`), projectors/zalo-dm.test.ts:183 and projectors/zalo-dm-error-mapping-matrix.test.ts:60 (both `setupZaloDmContext`), and inline in outbox-wake.test.ts (:135, :142) and projector-registry.test.ts (:123, :130); only its pieces are shared, from apps/bot/src/test-db.ts (:25, :36, :41, :45). The zalo_dm fixture (`club`, `player`, `insertEvent`, `claim`) is copied between projectors/zalo-dm.test.ts:254-328 and the matrix :146-206. Lane L47 added the latest copies because zalo-dm.test.ts is a file of parked lane L45. Proposal: one exported harness in test-db.ts (and one zalo_dm fixture module) that these files import, in a later lane once L45 has merged, running every apps/bot DB test file twice.
+  Source: lane L47 (p4-zalo-error-mapping-fakes), ruling RO-L47-4 item 3 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
