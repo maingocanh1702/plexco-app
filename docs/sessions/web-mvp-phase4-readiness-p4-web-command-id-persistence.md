@@ -206,10 +206,16 @@ the design follows the file (section 4).
   page-level attacker is outside the threat model; a `ponytail:` comment names the ceiling. Why the client must fingerprint at all: the
   server REPLAYS a changed body under the same type and target and ignores the new body (2.1), and DD-117 D5 forbids a server fingerprint.
 - **D3 Keeper.** `createCommandIdKeeper` takes an optional store (3.3); with none it behaves exactly as today. `get` restores a persisted id
-  for the identical intent, marked uncertain (sticky). `settle`: success -> drop the record and the entry; uncertain -> save the record;
-  COMMAND_ID_CONFLICT -> drop the record, and the entry by the definite rule (kept when sticky, R1a-1); any other definite failure -> keep
-  both when sticky, else drop the entry (no record exists). `reset()` clears memory ONLY and never removes a persisted record: Cancel is an explicit `reset()` (2.3), so this
-  is what "survives a dialog Cancel" means.
+  for the identical intent, marked uncertain (sticky); otherwise it mints the id and saves its record at once, BEFORE the request is sent
+  (review SEC-1, RO-L49-9 item 1: the standard idempotency-key shape). `settle`: success -> drop the record and the entry; uncertain -> keep
+  both (the record is saved again); COMMAND_ID_CONFLICT -> drop the record, and the entry by the definite rule (kept when sticky, R1a-1);
+  any other definite failure -> keep both when sticky, else drop both (the only attempt was refused: nothing is stored under the id).
+  `reset()` clears memory ONLY and never removes a persisted record: Cancel is an explicit `reset()` (2.3), so this is what "survives a
+  dialog Cancel" means. Measured during review (2026-10-27, Chromium, the e2e case "SEC-1" in `e2e/roster.spec.ts`): a reload aborts the
+  in-flight fetch and the old page still settles it as uncertain, which saved the record before this change too; the save at `get` covers
+  a page that dies without running more script (a discarded tab, a crash). Accepted edge (RO-L49-9 item 1): a Cancel while the request is
+  in flight, then a late 2xx, leaves the record (that settle is a no-op), so the next identical intent within the TTL replays ONCE with the
+  replayed notice and then mints (the unresolved-attempt rule, 3.4: never a double apply, never a silent loss).
 - **D4 Hook.** `run(call, intent?)` passes the fingerprint and the scope to `get` and settles EVERY failure into the keeper, the uncertain
   ones too (today they are never settled: URC:55-56, 2.3). Scope = {tenantId, personId, kind, targets}: kind, targets and tenantId from the
   screen, the person from the NEW non-throwing export `useSessionPersonId(): string | undefined` in `lib/use-session.tsx` (RO-L49-2 item 2;
@@ -231,7 +237,11 @@ the design follows the file (section 4).
   server message for this code (2.6), so the server table fixes them. Out of ownership: the three onboarding sites (row R2) and the e2e hand
   copy `e2e/support/roster-api-mock.ts:96` (no assertion reads it: roster.spec.ts asserts the code only, :276), left as is.
 - **D7 Timeout.** AC gets `API_TIMEOUT_MS = 15_000` (the five existing 15_000 ms client timeouts, 2.4), applied ONLY when the caller passes
-  no `signal`: merging a caller signal breaks the three non-owned tests of 2.4, and the roster and session commands pass none (2.4).
+  no `signal` (merging a caller signal breaks the three non-owned tests of 2.4, and the roster and session commands pass none, 2.4) AND the
+  request is a GET or HEAD or its JSON body carries a string `commandId` (review SEC-2, RO-L49-9 item 2): only there is a timeout retried
+  safely. A mutation without a commandId keeps the base behaviour, no client deadline, because its timeout would read as a definite failure
+  while the server may still commit (`components/onboarding/new-club-form.tsx:75`: an edited slug would create a second club; backlog row
+  `web-non-dedup-mutation-timeout`).
   Mechanism: setTimeout + an AbortController of its own, cleared when the call settles, covering `response.json()` too (today outside the
   try, 2.4); a timeout is classified by that controller, never by the error name. A NEW code `CLIENT_TIMEOUT` (status 0) joins the constant
   block (AC:37-39) and the uncertain list of `isDefiniteFailure` (SEU:204), and gets a copy branch in `describeSessionError` next to :128
@@ -277,10 +287,12 @@ KEEPER (UCI):
 - `createCommandIdKeeper(mint, store?: UncertainCommandIdStore)` -> `{ get(payload?: string, scope?: CommandIdScope): string; settle(error?:
   unknown): void; reset(): void }`; no store and no scope = EXACTLY today.
 - `get`: the same payload AND the same scope as the current entry -> its id; else, when a store, a scope and a payload are all present,
-  `store.find(scope, payload)`: a hit becomes the current entry with uncertain = true (sticky); else mint (as today).
+  `store.find(scope, payload)`: a hit becomes the current entry with uncertain = true (sticky); else mint (as today) and, with a store, a
+  scope and a payload, `store.save` the minted id at once, before the request is sent (review SEC-1, RO-L49-9 item 1).
 - `settle()`: `store.drop` for the current entry, then current = null. `settle(e)`: `!isDefiniteFailure(e)` -> uncertain = true +
-  `store.save`; an `ApiClientError` with code COMMAND_ID_CONFLICT -> `store.drop`, then the definite rule for the entry (R1a-1); any
-  definite failure: sticky -> keep the entry (and, but for a conflict, the record); not sticky -> current = null (no record was written).
+  `store.save` (again); an `ApiClientError` with code COMMAND_ID_CONFLICT -> `store.drop`, then the definite rule for the entry (R1a-1);
+  any definite failure: sticky -> keep the entry (and, but for a conflict, the record); not sticky -> `store.drop` (the record saved at
+  `get`: the only attempt was refused, so nothing is stored under the id) and current = null.
 - `reset()`: current = null ONLY; never touches the store.
 - `useCommandId(store?)` -> `useState(() => createCommandIdKeeper(() => crypto.randomUUID(), store))`. The 10 other users keep calling
   `useCommandId()`, unchanged; the two deliberate no-payload callers (`zalo-connect-card.tsx:141`, `moderation-sheet.tsx:38`, section 4
@@ -314,14 +326,14 @@ PROBES (ABSENT at the base, section 1): `createUncertainCommandIdSessionStore` (
 
 | # | Case | Key | locked | Host sees | Refetch | Why (2.1 unless noted) |
 |---|---|---|---|---|---|---|
-| 1 | Uncertain failure (network, 5xx, CLIENT_BAD_RESPONSE, CLIENT_TIMEOUT) | kept in memory + record saved | true (as today) | the uncertain copy, focused (D8) | none until Cancel/unmount (as today) | it may have committed; dedup on commandId only replays the SAME id, a NEW id applies twice (two same-amount payments; two "Minh") |
-| 2 | Definite 4xx, no earlier uncertain attempt | dropped, no record | false | the domain copy | none | the only attempt under this id was refused, so no stored result exists under it |
+| 1 | Uncertain failure (network, 5xx, CLIENT_BAD_RESPONSE, CLIENT_TIMEOUT) | kept in memory + record kept (saved at `get`, before the send) | true (as today) | the uncertain copy, focused (D8) | none until Cancel/unmount (as today) | it may have committed; dedup on commandId only replays the SAME id, a NEW id applies twice (two same-amount payments; two "Minh") |
+| 2 | Definite 4xx, no earlier uncertain attempt | dropped + the record saved at `get` dropped | false | the domain copy | none | the only attempt under this id was refused, so no stored result exists under it |
 | 3 | Definite 4xx after an uncertain attempt (RATE_LIMITED, CSRF, 403/TENANT_SUSPENDED) | kept + record kept (sticky) | true | the copy | Cancel refetches (as today) | authz precedes dedup: a COMMITTED id can answer 403/TENANT_SUSPENDED, so the 4xx proves nothing about the first attempt |
 | 4 | COMMAND_ID_CONFLICT 409 | record dropped; the key by the definite rule: dropped when fresh, kept when sticky (rows 2, 3) | unchanged (true after an uncertain attempt) | the human copy, "reload and try again" | Cancel refetches (as today); after a reload the next attempt mints a NEW id (no 24 h loop) | usually another type, session, actor or target (the 409 sites), but also the SAME intent when its stored result is unusable (2.1 Dedup), so a sticky key never becomes a new id before the host has seen a refetch (review R1a-1) |
 | 5 | Success, first apply (`replayed: false`) | dropped + record dropped | false | the success copy | the screen's own refresh | outcome observed; a deliberate second payment gets its own id (RO-L49-1 item 4) |
 | 6 | Success, `replayed: true` | dropped + record dropped | false | the replayed notice (D5) | the screen's own refresh | a replay is HTTP 200 `replayed: true` with zero writes: the first attempt had landed |
-| 7 | Reload while uncertain | memory lost, record survives (same tab) | false (the body is not stored, the inputs cannot be re-frozen) | fresh state (the page fetches) | inherent | the record holds only id, hash and time; the identical intent restores it (row 9) |
-| 8 | Dialog Cancel while uncertain | memory reset (as today), record KEPT | false after Cancel | the refreshed roster | as today (locked Cancel -> onReload/finished) | Cancel is an explicit `reset()` (2.3); `reset()` never touches the store (D3) |
+| 7 | Reload while uncertain or still in flight, or the page dies (a discarded tab, a crash) | memory lost, record survives (same tab; saved at `get`, before the send) | false (the body is not stored, the inputs cannot be re-frozen) | fresh state (the page fetches) | inherent | the record holds only id, hash and time; the identical intent restores it (row 9) |
+| 8 | Dialog Cancel while uncertain or in flight | memory reset (as today), record KEPT (a late 2xx after a Cancel in flight leaves it too: D3's accepted edge) | false after Cancel | the refreshed roster | as today (locked Cancel -> onReload/finished) | Cancel is an explicit `reset()` (2.3); `reset()` never touches the store (D3) |
 | 9 | Next attempt, identical fingerprint, within TTL | the persisted id restored, sticky | per outcome (rows 1-6) | per outcome | per outcome | same type + target + body under the same id = a replay if the first landed, else the first apply |
 | 10 | Changed payload (same scope, other fingerprint) | a NEW id (the keeper's changed-payload rule); the old record stays to its TTL | per outcome | per outcome | per outcome | under the old id the server would replay and silently ignore the new body |
 | 11 | Another tab | a fresh tab has no records (as today); a duplicated tab starts with a copy: both send one id | - | - | - | `UNIQUE (tenant_id, command_id)` + the advisory lock: the server applies once |
@@ -334,7 +346,8 @@ PROBES (ABSENT at the base, section 1): `createUncertainCommandIdSessionStore` (
 **The unresolved-attempt rule (RO-L49-2 item 5, confirmed).** An UNRESOLVED attempt (no 2xx, no definite 4xx) cannot be told apart from
 its retry: the identical intent reuses the persisted id; if the first landed the server answers `replayed: true`, the screen shows the new
 notice and the record is dropped, so a deliberate second payment goes out under its own NEW id on the next explicit submit: never a double
-apply, never a silent loss; every case where the first outcome WAS observed (2xx, a definite 4xx, a 409) drops the record first. The
+apply, never a silent loss; every case where the first outcome WAS observed (2xx, a definite 4xx, a 409) drops the record first. A Cancel while the request is in flight followed by a late 2xx is unresolved from
+the screen's side (D3's accepted edge): the record stays, so the next identical intent replays once with the notice, then mints. The
 user-visible effect: one new notice string (the replayed notice, section 5). The PR body states this rule as written here.
 
 ## 4. Lead corrections (33: RA 12, RB 9, RC 5, RD 7)
@@ -386,7 +399,7 @@ In every case the measured file wins and the design follows it.
 | 5 | Cap 50 records | unbounded (storage growth) |
 | 6 | `useSessionPersonId` (RO-L49-2 item 2) | a SessionProvider in `roster-tab.test.tsx` (a non-owned test edit); a tenant-only namespace (another person in the tab would restore an id and meet a 409) |
 | 7 | Opt-in `autoFocus` (RO-L49-2 item 3) | a default focus move across 25 mounts in 20 files (unreviewed behaviour change) |
-| 8 | Timeout 15_000 ms only without a caller signal | merging the signals (breaks three non-owned tests, 2.4) |
+| 8 | Timeout 15_000 ms only without a caller signal, and only for a GET/HEAD or a JSON body with a `commandId` (SEC-2) | merging the signals (breaks three non-owned tests, 2.4); a deadline on every signal-less request (a POST without a commandId would read its timeout as definite, SEC-2) |
 | 9 | `CLIENT_TIMEOUT` | CLIENT_NETWORK_ERROR (means offline in six places, 2.4) |
 | 10 | Scope: 4 persisted, 2 in-memory, preview excluded | persisting create/update and the preview (no money; no `replayed` forwarded; the preview is a read) |
 | 11 | The replayed notice via the success path | a new notice mount per screen (new mounts, new focus logic) |
@@ -482,20 +495,24 @@ The lane block's 7 threats, restated in substance from the design's threat-to-ro
 
 | # | Threat | Defended by |
 |---|---|---|
-| 1 | the key is lost between an uncertain attempt and its retry (reload, Cancel), so the retry applies twice | rows 7, 8, 9; D1, D3 |
+| 1 | the key is lost between an attempt and its retry (a reload or a page death while in flight or after an uncertain failure, a Cancel), so the retry applies twice | rows 7, 8, 9; D1, D3 (the record is saved at `get`, before the send: review SEC-1) |
 | 2 | a stale key re-sent with another body replays and silently drops it, or a deliberate second payment shares an id | rows 10, 5, 6; D2, D5 |
 | 3 | a key restored across person, tenant or time | rows 13, 14, 15; D1 |
 | 4 | a COMMAND_ID_CONFLICT loop | row 4 (the record is dropped, so a reload ends it; a sticky key repeats in the mount until Cancel or a reload, both refetch first: fail-closed, R1a-1); D3, D6 |
-| 5 | a timeout classified as definite (the key dropped while the server may have committed) | row 1; D7 (CLIENT_TIMEOUT is uncertain), D8 |
-| 6 | PII or money data in browser storage | D1, D2: only an id, a hash and a time |
+| 5 | a timeout classified as definite (the key dropped while the server may have committed) | row 1; D7 (CLIENT_TIMEOUT is uncertain; a request that cannot dedupe gets no client deadline, review SEC-2), D8 |
+| 6 | PII or money data in browser storage | D1, D2: only an id, a hash and a time, no name or amount in clear; the shared-device limit (the add key hashes the typed name, unsalted; the records survive a sign-out in the same tab) is named under Not defended (review SEC2-1) |
 | 7 | storage that throws, is absent or full (private mode) | row 12 (degrade to today's in-memory behaviour; the command is never blocked) |
 
 Not defended (named): a page-level attacker (script injection, an extension) can read or write sessionStorage and craft hash collisions
-(outside the threat model; the D2 ceiling; nothing sensitive is stored); a server that replays wrongly (the server contract is out of
+(outside the threat model; the D2 ceiling; nothing is stored in clear); a server that replays wrongly (the server contract is out of
 scope and cited in section 2.1); a changed payload after an unresolved attempt that did land is a
 new intent under a new id (row 10, as today; the server has no content dedup, DD-117 D5); an identical retry past the 24 h TTL is a new
 command (row 15); a fresh tab has no records (row 11, as today); create and update keep their key in memory only (a reload loses it, as
-today; no money).
+today; no money). A shared device (review SEC2-1, RO-L49-9 item 3, a documented limit): the records survive a deliberate sign-out in the
+same tab until their 24 h TTL, and a later user of that open tab with devtools can read them and recover a typed name from the add key's
+unsalted 53-bit hash by a dictionary (no name, amount or id in clear; the keys are scoped by tenant and person). Clearing at sign-out is
+rejected: a sign-in again and an identical retry would mint a new id and could apply a payment twice (backlog row
+`web-command-id-records-shared-device`).
 
 ## 11. Open
 
@@ -510,9 +527,12 @@ today; no money).
     `components/sessions/visibility-toggle.tsx:115`, `components/me/link-code-form.tsx:25`), unchanged.
   - `e2e/support/roster-api-mock.ts:96` keeps its hand copy (no assertion reads it).
   - `new-session-view.tsx:57-67` keeps its own conflict copy, unchanged.
-  - Sign-out does not wipe the records: the person in the key and the TTL cover it (rows 13, 15).
+  - Sign-out does not wipe the records: the person in the key and the TTL cover it (rows 13, 15); the shared-device limit is named in
+    section 10 (review SEC2-1, RO-L49-9 item 3) with the backlog row `web-command-id-records-shared-device`.
   - The 10 other keeper users are unchanged.
-- Backlog: rows R1-R3 use the lane's allowance of three, plus the two rows closed by hand (section 1).
+- Backlog: rows R1-R3 (the lane's allowance of three) and four review rows, `db-command-id-conflict-unusable-result-code` (RO-L49-7),
+  `web-confirm-dialog-tab-trap-focused-notice`, `web-non-dedup-mutation-timeout` and `web-command-id-records-shared-device` (RO-L49-9
+  item 5): seven new rows, plus the two rows closed by hand (section 1).
 
 ## 12. Closure matrix (12 of 12 PASS)
 
@@ -540,8 +560,8 @@ REVIEWED_AT: 2026-10-27
 AUTHORITY_SHA: 336e84e616e672cf3958320909cb1e2c6475c59a
 BASE_BRANCH: main
 TARGET_FILES:
-  - apps/web/lib/api-client.ts (edited: API_TIMEOUT_MS, the own-controller timeout without a caller signal, CLIENT_TIMEOUT in the codes :37-39)
-  - apps/web/lib/use-command-id.ts (edited: the optional store, get(payload, scope), settle, reset keeps the record)
+  - apps/web/lib/api-client.ts (edited: API_TIMEOUT_MS, the own-controller timeout without a caller signal for a GET/HEAD or a commandId body, CLIENT_TIMEOUT in the codes :37-39)
+  - apps/web/lib/use-command-id.ts (edited: the optional store, get(payload, scope) saving a minted record before the send, settle, reset keeps the record)
   - apps/web/lib/use-roster-command.ts (edited: run(call, intent), every failure settled, the module-level store)
   - apps/web/lib/session-error-ui.ts (edited: CLIENT_TIMEOUT uncertain :204, the timeout copy next to :128, replayedNotice)
   - apps/web/lib/session-command-route.ts (edited: the conflict pair :715-716)
@@ -560,9 +580,12 @@ TARGET_FILES:
   - apps/web/e2e/roster.spec.ts (edited: A-21 to A-26, A-29)
   - apps/web/e2e/sessions.spec.ts (edited: A-27, A-28)
   - packages/db/src/roster-service.test.ts (edited: the add-by-name replay case, A-20)
-  - docs/autopilot-backlog.md (edited: the two rows closed by hand and rows R1-R3)
+  - apps/web/lib/tenant-lang.test.ts (edited: one SURFACE_BUCKETS line for the new store file, RO-L49-6)
+  - apps/web/lib/session-command-route.test.ts (edited: the D6 conflict wording pin, review R1b2-1)
+  - apps/web/app/api/sessions/[id]/guest-notes/route.test.ts (edited: the D6 conflict wording pin, review R1b2-1)
+  - docs/autopilot-backlog.md (edited: the two rows closed by hand, rows R1-R3 and the four review rows)
 SLICE: p4-web-command-id-persistence
-IN_SCOPE: the new apps/web/lib/uncertain-command-id-session-store.ts and apps/web/lib/uncertain-command-id-session-store.test.ts; the store-backed keeper; the hook's intent and settle-every-failure; useSessionPersonId; the four roster screens' intents and the replayed notice; edit and new session on the in-memory keeper; the conflict pair in the two server tables; the apiFetch timeout and CLIENT_TIMEOUT; the opt-in autoFocus on ApiErrorNotice at the four roster mounts and session-detail-view.tsx:81; the add-by-name replay case; the browser tests; the two rows closed by hand and rows R1-R3; this readiness file
+IN_SCOPE: the new apps/web/lib/uncertain-command-id-session-store.ts and apps/web/lib/uncertain-command-id-session-store.test.ts; the store-backed keeper; the hook's intent and settle-every-failure; useSessionPersonId; the four roster screens' intents and the replayed notice; edit and new session on the in-memory keeper; the conflict pair in the two server tables; the apiFetch timeout and CLIENT_TIMEOUT; the opt-in autoFocus on ApiErrorNotice at the four roster mounts and session-detail-view.tsx:81; the add-by-name replay case; the browser tests; the D6 wording pins in the two route tests; the two rows closed by hand, rows R1-R3 and the four review rows; this readiness file
 OUT_OF_SCOPE: production packages/db, migrations, the ledger and the dedup rule (commandId-only, DD-117 D5) and any server answer; localStorage and any persisted body, token, name or amount; the 10 other keeper users and the three sibling bare refs (R3); the onboarding conflict copies (R2); a default focus rule for the other ApiErrorNotice mounts (R1); the e2e support mocks; mark-paid-result.tsx; session-error-ui.test.ts; new dependencies; PR #50
 G1_DECISION: PASS
 G2_SPEC: PASS
