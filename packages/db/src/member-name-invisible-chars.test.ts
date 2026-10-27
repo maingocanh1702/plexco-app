@@ -2389,6 +2389,8 @@ describe("L29-TW T2 validatePatch refuses with checkTypedName (club-config-valid
     ["ordinary WAO Club", "WAO Club", "WAO Club"],
     ["edge U+0009 before and U+2028 after", mix(9, "WAO", 0x2028), "WAO"],
     ["121 characters", "a".repeat(121), "INVALID_INPUT"],
+    ["120 characters", "a".repeat(120), "a".repeat(120)],
+    ["120 + 3 ZWSP", "a".repeat(120) + String.fromCodePoint(0x200b).repeat(3), "a".repeat(120)],
     // Club-name parity, db half (web half: club-settings-model.test.ts): counted in code points.
     [
       "120 astral (240 UTF-16 units)",

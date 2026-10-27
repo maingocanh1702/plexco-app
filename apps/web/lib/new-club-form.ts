@@ -54,15 +54,16 @@ export function validateNewClub(values: NewClubValues, t: TFn): NewClubErrors {
   // L27: strip first (the web mirror of the server list), then trim, as the server stores it.
   const name = stripInvisibleChars(values.name).trim();
   if (name.length === 0) errors.name = t("Nhập tên câu lạc bộ.", "Enter a club name.");
-  else if (!isBoundedName(name, CLUB_NAME_MAX)) {
+  else if ([...name].length > CLUB_NAME_MAX) {
     // Counts code points, equal to the start route and the SQL char_length rule.
     errors.name = t(
       `Tên tối đa ${CLUB_NAME_MAX} ký tự.`,
       `Name can be at most ${CLUB_NAME_MAX} characters.`,
     );
-  } else if (checkTypedName(name) === null) {
+  } else if (!isBoundedName(name, CLUB_NAME_MAX) || checkTypedName(name) === null) {
     // L29: refuse what the server rule refuses (web twin of checkTypedName): a control, bidi or
-    // line-separator code point, or no visible character left after the strip and trim.
+    // line-separator code point, or no visible character left after the strip and trim. A lone
+    // surrogate (isBoundedName refuses \p{Cs}) gets this copy too, as me-settings-client.ts:127 does.
     errors.name = t(
       "Tên không được chứa ký tự điều khiển hoặc ký tự ẩn.",
       "The name cannot contain control or hidden characters.",

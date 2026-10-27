@@ -73,6 +73,7 @@ describe("validateNewClub", () => {
     ["U+2028 inside", "WAO" + cp(0x2028) + "Club", hiddenPair],
     ["U+2800 only", cp(0x2800), hiddenPair],
     ["U+0000 inside", "WAO" + cp(0x00) + "Club", hiddenPair],
+    ["lone surrogate U+D800 inside", "WAO" + cp(0xd800) + "Club", hiddenPair],
     ["U+00A0 only", cp(0xa0), emptyPair],
     ["U+200B only", cp(0x200b), emptyPair],
     ["ordinary name", "WAO Club", undefined],

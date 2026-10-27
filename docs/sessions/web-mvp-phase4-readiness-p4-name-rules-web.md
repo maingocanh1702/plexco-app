@@ -176,7 +176,7 @@ itself: GOAL (1) "the db club-name validator counts code points" and lead (5) "s
 - **D2 The club name in CP** with `CLUB_NAME_MAX`: CSM `clubNameProblem` (:39), START (the constant :20 removed, the count :76-79) and CCV:68
   (the counting only: the db package cannot import SFM, so its literal 120 and its message stay): all equal to the SQL `char_length`
   rule. RO-L43-1 item 3: not a ruling request; the server margin it opens is astral names of 61-120 CP, which the SQL already accepts
-  (`tenants_name_len_chk`, 0072:374). The CSM docstring :30-33 and the test title :29 follow the new unit.
+  (`tenants_name_len_chk`, 0039:130; tenant_profile_update's own 22023 check, 0072:374). The CSM docstring :30-33 and the test title :29 follow the new unit.
 - **D3 The roster form (RAF)**: the local `DISPLAY_NAME_MAX = 100` (:15) removed and SFM's imported; `isBoundedName(name,
   DISPLAY_NAME_MAX)` replaces the `.length` check (:25); `maxLength={2 * DISPLAY_NAME_MAX}` replaces :143 (240 UTF-16 units: the most a
   120-CP name takes); the hint's hard-coded "1–100" (:126/:127) interpolates the cap and the docstring :31 follows. L49's command-key code

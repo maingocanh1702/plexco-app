@@ -94,9 +94,10 @@ const textOrNull = (s: string): string | null => (s.trim() === "" ? null : s.tri
 
 /**
  * Client mirror of hasHiddenChar (packages/db/src/text-safety.ts, the rule behind display names and
- * the session text fields). Client code cannot import the db package (FE-INV-3), so the class is copied
- * from me-settings-client.ts; session-form-model.test.ts pins it against validateDisplayName over
- * every code point. Control, format (bidi, zero-width), line and paragraph separators, invisible fillers.
+ * the session text fields). Client code cannot import the db package (FE-INV-3), so this is the
+ * web's one copy, imported by me-settings-client.ts and club-settings-model.ts;
+ * session-form-model.test.ts pins it against validateDisplayName over every code point. Control,
+ * format (bidi, zero-width), line and paragraph separators, invisible fillers.
  */
 export function hasHiddenChar(value: string): boolean {
   return /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u17b4\u17b5\u115f\u1160\u3164\uffa0\u2800]/u.test(value);

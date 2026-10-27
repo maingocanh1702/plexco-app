@@ -819,18 +819,30 @@ describe("name rule sources", () => {
   const read = (file: string) => readFileSync(new URL(file, web), "utf8");
 
   it("source guard: one definition of the name caps and the visible-char rule, in session-form-model.ts", () => {
-    const sources = ["app", "components", "lib"].flatMap((root) =>
-      readdirSync(new URL(`${root}/`, web), { encoding: "utf8", recursive: true })
-        .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
-        .map((file) => `${root}/${file}`),
-    );
+    // Web sources: app, components, lib, sw and the root middleware; build config stays out.
+    const texts = [
+      ...["app", "components", "lib", "sw"].flatMap((root) =>
+        readdirSync(new URL(`${root}/`, web), { encoding: "utf8", recursive: true })
+          .filter((file) => /\.(?:tsx?|m?js)$/.test(file) && !/\.test\.(?:tsx?|m?js)$/.test(file))
+          .map((file) => `${root}/${file}`),
+      ),
+      "middleware.ts",
+    ].map((file) => [file, read(file)] as const);
     // Every declaration counts, with or without a type annotation or a numeric initializer.
-    const caps = sources.filter((file) =>
-      /\b(?:const|let|var)\s+(?:DISPLAY_NAME_MAX|CLUB_NAME_MAX)\b/.test(read(file)),
+    const caps = texts.flatMap(([file, text]) =>
+      (text.match(/\b(?:const|let|var)\s+(?:DISPLAY_NAME_MAX|CLUB_NAME_MAX)\b/g) ?? []).map(
+        (match) => `${file}: ${match}`,
+      ),
     );
+    // Catches a copy of the rule literal, not a rewrite (a reordered class, a RegExp string).
     const visibleChar = "[^\\s\\p{DI}]";
-    const rules = sources.filter((file) => read(file).includes(visibleChar));
-    expect(caps).toEqual(["lib/session-form-model.ts"]);
+    const rules = texts.flatMap(([file, text]) =>
+      Array.from({ length: text.split(visibleChar).length - 1 }, () => file),
+    );
+    expect(caps).toEqual([
+      "lib/session-form-model.ts: const DISPLAY_NAME_MAX",
+      "lib/session-form-model.ts: const CLUB_NAME_MAX",
+    ]);
     expect(rules).toEqual(["lib/session-form-model.ts"]);
   });
 
