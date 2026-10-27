@@ -7662,3 +7662,17 @@ merged_probe: null
 notes: |
   Line numbers at lane L60's head: apps/web/e2e/golden-path.spec.ts is opt-in and local only (:22-28: the default playwright.config.ts ignores it, and CI has no production build or database for it), and .github/workflows/ci.yml has no golden path step (its e2e-web job, :112, runs the signed-out specs). Lane L49 (PR #129) added the 15 s client deadline in apps/web/lib/api-client.ts (`API_TIMEOUT_MS`, :47); the golden path's test-only pacer held a request longer than that, and nothing ran the golden path until an independent verifier did after the merge (lane L60 fixed the pacer). The same gap stays open for the next change to apps/web/lib/api-client.ts, apps/web/lib/session-command-route.ts (the per-account ceiling `ACTOR_LIMIT`, :99) or apps/web/app/api/sessions/. Proposal (one mechanism; the design is open): a path-filtered CI step that, when a PR touches those paths, fails until the PR body records a local golden path run on its head, or another trigger the owner prefers.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-golden-path-pacer-deadline.md (lane L60), ruling RO-L60-2 item 3 (c) (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
+
+## task: golden-path-timeout-comments-name-the-old-60-s-pacer-hold
+title: Two golden path timeout comments still give the pacer's old 60 s hold as their reason; since lane L60 a held request waits at most 8 s
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: []
+scope: [apps/web/e2e/support/golden-path-timeouts.ts, apps/web/e2e/golden-path.config.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at lane L60's head: apps/web/e2e/support/golden-path-timeouts.ts:12 reads "One slow dev-server compile, plus the API pacer's worst-case hold of one 60 s rate-limit window." (above `COMPILE_TIMEOUT_MS`), and apps/web/e2e/golden-path.config.ts:31 reads "Must outlast one cold compile plus the API pacer's worst-case 60 s rate-limit hold." Since lane L60 the pacer holds one request at most `MAX_HOLD_MS = 8_000` (apps/web/e2e/support/golden-path-helpers.ts), and the wait of up to 60 s runs in test code, covered only by `TEST_TIMEOUT_MS`. The values stay safe (larger than needed); only the stated reason is stale. Fix: correct both comments, no value change. Both files are outside lane L60's files.
+  Source: lane L60 (p4-golden-path-pacer-deadline), review R1 finding R1-3.
