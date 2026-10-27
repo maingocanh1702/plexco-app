@@ -49,8 +49,8 @@ const MESSAGE_BY_CODE: ReadonlyMap<ApiErrorCode, readonly [string, string]> = ne
   [
     "COMMAND_ID_CONFLICT",
     [
-      "commandId đã được dùng cho yêu cầu khác.",
-      "commandId was already used for a different request.",
+      "Thao tác bị trùng. Tải lại trang rồi thử lại.",
+      "Duplicate action. Reload the page and try again.",
     ],
   ],
   [

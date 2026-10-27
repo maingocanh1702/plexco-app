@@ -6090,14 +6090,16 @@ notes: |
 
 ## task: web-command-id-persistence-and-conflict-copy
 title: Web: giữ `commandId` qua reload/Cancel (cửa sổ double-apply của thanh toán một phần và thêm theo tên) và sửa copy `COMMAND_ID_CONFLICT`
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-web-command-id-persistence (L49); find it with `gh pr list --state merged --head feat/p4-web-command-id-persistence` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/web/lib/uncertain-command-id-session-store.ts :: createUncertainCommandIdSessionStore` (slice-unique: `git grep -n -w createUncertainCommandIdSessionStore <rev>` prints 0 lines at the base 336e84e616e672cf3958320909cb1e2c6475c59a, where the file is absent; at the lane's head the file exports it at :81) · this flip changes only status, merged, note_merged and merged_probe; `_probe_note` and `_readiness` stay as the row's authoring-time notes
+note_merged: 2026-10-27 L49: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (main after the merge of feat/p4-outbox-lease-clock), so the row does not wait for the reconcile's post-merge flip, which cannot happen: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What landed: an uncertain command id is kept per intent in sessionStorage for the four roster commands (apps/web/lib/uncertain-command-id-session-store.ts, through apps/web/lib/use-roster-command.ts), so it survives a reload and Cancel; an entry holds only the id and its time and expires after 24 h (`TTL_MS`). The edit and new session forms key the id by the sent body (`useCommandId`, apps/web/lib/use-command-id.ts). The COMMAND_ID_CONFLICT copy of the two session routes (apps/web/lib/session-command-route.ts, apps/web/lib/session-guest-note-route.ts) no longer names commandId, and a 2xx with `replayed: true` shows its own notice (`replayedNotice`, apps/web/lib/session-error-ui.ts). Readiness: docs/sessions/web-mvp-phase4-readiness-p4-web-command-id-persistence.md.
 risk: P2
 change_class: web-feature
 depends_on: []
 invariants: [money-model, web-app]
 scope: [apps/web/components/sessions/edit-session-view.tsx, apps/web/lib/session-command-route.ts, apps/web/lib/use-roster-command.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/web/lib/uncertain-command-id-session-store.ts :: createUncertainCommandIdSessionStore
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — cần quyết định phạm vi (sessionStorage theo ý định) trước khi sửa.
 notes: |
@@ -6108,14 +6110,16 @@ notes: |
 
 ## task: web-api-client-timeout-and-refresh-notice-focus
 title: Web: `apiFetch` không có timeout phía client; refresh trang lỗi hiện `ApiErrorNotice` không được focus
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-web-command-id-persistence (L49), the same PR that closes row `web-command-id-persistence-and-conflict-copy`; find it with `gh pr list --state merged --head feat/p4-web-command-id-persistence` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/web/lib/api-client.ts :: API_TIMEOUT_MS` (slice-unique: `git grep -n -w API_TIMEOUT_MS <rev>` prints 0 lines at the base 336e84e616e672cf3958320909cb1e2c6475c59a; at the lane's head apps/web/lib/api-client.ts exports it at :44) · this flip changes only status, merged, note_merged and merged_probe; `_probe_note` and `_readiness` stay as the row's authoring-time notes
+note_merged: 2026-10-27 L49: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (main after the merge of feat/p4-outbox-lease-clock), so the row does not wait for the reconcile's post-merge flip, which cannot happen: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What landed: `apiFetch` (apps/web/lib/api-client.ts) sets its 15 s deadline (`API_TIMEOUT_MS`) only when the caller passes no `signal`; a request that hits it fails as an uncertain `CLIENT_TIMEOUT` (status 0) with its own copy (apps/web/lib/session-error-ui.ts). `ApiErrorNotice` (apps/web/components/sessions/api-error-notice.tsx) has an opt-in `autoFocus`, used by the four roster screens and by the failed-refresh notice of the session detail page (apps/web/components/sessions/session-detail-view.tsx). Readiness: docs/sessions/web-mvp-phase4-readiness-p4-web-command-id-persistence.md.
 risk: P2
 change_class: web-feature
 depends_on: []
 invariants: [web-app]
 scope: [apps/web/lib/api-client.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/web/lib/api-client.ts :: API_TIMEOUT_MS
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; phần focus của ApiErrorNotice chưa đo lại ở đây.
 notes: |
@@ -6164,15 +6168,17 @@ notes: |
 
 ## task: zalo-connect-bot-revoked-error-mapping
 title: Onboarding Zalo connect: `BOT_REVOKED` ra `FORBIDDEN` 403; `finishZaloConnect` để lọt 22023 thành 500
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-error-mapping-fakes (L47); find it with `gh pr list --state merged --head feat/p4-zalo-error-mapping-fakes` (no PR number or merge SHA is written here)
+note_merged: 2026-10-27 L47: closed BY HAND in the lane's own PR, measured at base a965de349f59a76b909296460520afd9c02e6d4b (the PR #128 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea`. F1: the owner's written approval of 2026-10-26 (DD-150, "Phase 4 plan approved, Q1-Q10 default") approves the plan whose row L47 this is; its answer Q5 gives the API error code the `_readiness` line below waited for (a bot revoked at connect reuses the code and the t(vi, en) message the connect route returns when `getMe` rejects the token; no new code), so that line is the row's state before Q5. F2: `finishZaloConnect` maps the 22023 "bot is revoked" of `zalo_bot_set_status` to `ZaloConnectError("BOT_REVOKED")` inside its transaction (nothing written) through the predicate `isZaloBotRevokedError`, which `beginZaloConnect` shares; the route answers `BOT_REVOKED` with `tokenInvalid()` (400 `ZALO_TOKEN_INVALID`) instead of 403 `FORBIDDEN`. Readiness record: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md.
 risk: P2
 change_class: code
 depends_on: []
 invariants: [auth, transport-zalo]
 scope: [apps/web/app/api/onboarding/zalo/connect/route.ts, packages/db/src/zalo-ingress.ts]
 manifest: null
-merged_probe: null
-_probe_note: probe do slice tác giả đưa vào; chưa có.
+merged_probe: isZaloBotRevokedError
+_probe_note: the predicate lane L47 adds to packages/db/src/zalo-ingress.ts; absent at a965de349f59a76b909296460520afd9c02e6d4b (`git grep -n -w isZaloBotRevokedError` found nothing there).
 _readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; cần chọn mã lỗi API cho bot đã thu hồi.
 notes: |
   `apps/web/app/api/onboarding/zalo/connect/route.ts:199-200` map `BOT_REVOKED` sang `FORBIDDEN` 403 (nhầm với thiếu quyền). `beginZaloConnect` đã bắt 22023 "bot is revoked" (`zalo-ingress.ts:394`),
@@ -6588,6 +6594,7 @@ notes: |
   Blocked: the evidence can only come from outside the repository, from responses of the real Zalo bot. Who closes it: the owner, who holds the real bot token (that step is the owner's and is not done by this row). With what: one recorded real-bot response per mapped error class, written into `docs/sessions/zalo-outbound-error-mapping-real-bot-evidence.md`. Back to `ready` when the real bot token is available to the lane that records the responses. The mapping to verify is the one the DD-138 row `p3-m6-zalo-outbound Z-6` (`docs/standards/decisions.md:1922` at 2c7dfe7; the full row key is the stable reference, the line moves) records as shipped by L4 (#66): 401, 429, 5xx, other 4xx, a 2xx with `ok:false` by numeric `error_code`, a bad or oversize response, timeout and network failure. The owner's words, from the owner's section C of 2026-10-21, confirmed in the conductor terminal, verbatim:
   > "verify Zalo error mapping with the real bot (L4 Z-6)"
   Related, different task, not replaced by this row: `zalo-connect-bot-revoked-error-mapping` (`docs/autopilot-backlog.md:6159` at 2c7dfe7). source: `docs/standards/decisions.md`, DD-138 row `p3-m6-zalo-outbound Z-6` and the DD-138 sign-off subsection "Kết quả ký của owner (2026-10-21)" · recorded at lane L19 p3-owner-decisions-2026-10-21, 2026-10-21
+  Update 2026-10-27 (lane L47 p4-zalo-error-mapping-fakes): the fake half is done; this row is NOT flipped and stays `blocked` on the owner's real bot token. The template its `scope` names now exists (docs/sessions/zalo-outbound-error-mapping-real-bot-evidence.md: the classes C1-C8, the provocations P1-P8, empty slots and the redaction rule). The shipped mapping is pinned against a local fake server by packages/db/src/zalo-bot-api-fake-server-matrix.test.ts (the real `sendMessage` and `classifyZaloError`) and apps/bot/src/projectors/zalo-dm-error-mapping-matrix.test.ts (the zalo_dm projector's result per class), with 0 disagreements with the DD-138 row; the live values (packages/db/src/zalo-bot-api.ts:14, "AWAIT-verify") are what only the real-bot run can record.
 
 ## task: docs-sync-phase3-owner-decision-spec-follow-ups
 title: Docs: one lane to sync the Reviewed specs that DD-138 and DD-139..DD-142 name as spec follow-ups
@@ -6874,7 +6881,9 @@ notes: |
 
 ## task: name-strip-migrations-apply-with-writers-drained
 title: Deploy: apply the cleanup of migrations 0068, 0069 and 0070 with writers drained, or lock the four tables before the loops
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-runbooks-start-here (L53); find it with `gh pr list --state merged --head docs/p4-docs-runbooks-start-here` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (docs-only scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-27 L53: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (the PR #127 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L53 (plan row L53 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane. F2: the PR adds the deploy-order note for the 0068-0070 name cleanup to section 7 of docs/standards/deployment-infra.md after the base's :215 (labelled "inferred, not run"; the remedy is to apply with writers drained; locking the four tables before the loops would be a migration change outside the note; 0068 loops over two tables, 0069 and 0070 over four; 0072 and 0073 hold no such loop), prefixes the version line :3 with v1.10 and adds a v1.10 changelog row after the v1.8 row (:308); the row's `close_by` line stays.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -6971,14 +6980,16 @@ notes: |
 
 ## task: projector-delivery-batch-lease-clock-consistency
 title: DB: `claim_projector_delivery_batch` stamps the lease with now() but the outbox claim with clock_timestamp(); use one clock
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-outbox-lease-clock (L46); find it with `gh pr list --state merged --head feat/p4-outbox-lease-clock` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `packages/db/migrations/0074_projector_delivery_lease_clock.sql :: claim_projector_delivery_batch` (slice-unique: the file is absent at the base 8e918f0ec541ef4f72740be652a3a86584d381c3, present at the lane's head)
+note_merged: 2026-10-27 L46: closed BY HAND in the lane's own PR, measured at base 8e918f0ec541ef4f72740be652a3a86584d381c3 (the PR #126 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: migration 0074 re-creates only `claim_projector_delivery_batch`, the 0022 body byte for byte except the lease stamp, now `clock_timestamp() + interval '5 minutes'` (the clock every compare of the lease and the due time already reads); the owner `job_definer`, the ACL and every attribute are unchanged. JCL-15 pins the lease to five real minutes from the claim inside an aged transaction; JCL-15b pins the body equality. The two audit INSERTs keep the column default now() (row projector-delivery-claim-audit-created-at-clock). Readiness: docs/sessions/web-mvp-phase4-readiness-p4-outbox-lease-clock.md.
 risk: P1
 change_class: schema-migration
 depends_on: []
 invariants: [retry-liveness, schema]
-scope: []
+scope: [packages/db/migrations/0074_projector_delivery_lease_clock.sql, packages/db/src/rls-invariants.test.ts]
 manifest: null
-merged_probe: null
+merged_probe: packages/db/migrations/0074_projector_delivery_lease_clock.sql :: claim_projector_delivery_batch
 notes: |
   L24 readiness section 10, residual R3; the lane states it is harmless today. A fix re-creates the function in a migration at the next free number; the function is first defined in packages/db/migrations/0022_job_claim_lease_core.sql (a later re-creation was not checked here; fill scope at the base).
   Source: PR #102 body, section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 81.
@@ -7108,7 +7119,9 @@ notes: |
 
 ## task: outbox-runbook-zalo-dm-expiry-wording
 title: Docs: three wording fixes in the `zalo_dm` expiry text of the outbox enable and rollback runbook (from L34's round-3 reviews)
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-runbooks-start-here (L53); find it with `gh pr list --state merged --head docs/p4-docs-runbooks-start-here` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (docs-only scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-27 L53: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (the PR #127 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L53 (plan row L53 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane. F2: the PR rewords docs/runbooks/outbox-dispatch-enable-rollback.md at the base's lines: :84 and :85 write `<event-uuid>` (R3-F4); :85 adds the infinite `starts_at` as a `NULL` cause (R3b-F3); :110, and :62 with the same gap, scope the never-`age` clause to `zalo_dm` (R3c-F1); :72 and :97 now state the L44 deadline (deliver() stops at the earlier of 120 s and the bound); :118-124 are unchanged.
 risk: P2
 change_class: docs
 depends_on: []
@@ -7138,7 +7151,9 @@ notes: |
 
 ## task: start-here-docs-outbox-flag-and-enable-path
 title: Docs: make the outbox claims of DEV-ONBOARDING.md and HANDOFF.md match the runbook (the owner CLI is the only enable path; the dispatch flag defaults to true since PR #94)
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch docs/p4-docs-runbooks-start-here (L53); find it with `gh pr list --state merged --head docs/p4-docs-runbooks-start-here` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (docs-only scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-27 L53: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (the PR #127 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: lane block L53 (plan row L53 of docs/sessions/web-mvp-phase4-plan.md, approved by the owner on 2026-10-26, DD-150) gives this fix and this flip to the lane. F2: the PR rewrites docs/00-start-here/DEV-ONBOARDING.md:77 (the owner CLI `node scripts/outbox-projector-enable.mjs enable` is the enable path, the raw setter only disables, and the schedule also needs a projector map without a stub), amends :70 (the `announce` route exists and the projectors are real) and strikes the stale next step at :257 through; docs/00-start-here/HANDOFF.md:304, the current-state line, no longer calls delivery a fail-closed placeholder, now names the three real projectors (seeded disabled, enabled only by the owner CLI; `zalo_dm` needs the owner's real Zalo token) and the first business producer (`createSession`), and cuts its list of what is still missing to the Messenger adapter, with a v1.46 changelog row above :506; the dated block at :23-32 (v1.42) is not rewritten.
 risk: P2
 change_class: docs-reconcile
 depends_on: []
@@ -7378,3 +7393,227 @@ notes: |
   Hazard, by code reading only (not probed): publish, announce, close and cancel hold tenants FOR SHARE (their tenant gate) when they wait for that key, while club-config takes the key (:79) and then `tenant_profile_update` (:121), which writes the tenants row; with one commandId reused across the two families in one tenant at the same moment, each waits for the other (40P01, one request fails). This predates lane L48 (its recheck adds only a tenant_admins FOR SHARE at the front) and needs a client that reuses a commandId across families.
   Deliverable: a lock-order table of every family on that key plus a two-connection probe; then either a refusal of a cross-family reuse before any lock or a documented acceptance.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-session-commands-authz-recheck.md (lane L48), design D15 (3).
+
+## task: projector-delivery-claim-audit-created-at-clock
+title: DB: the two audit INSERTs of `claim_projector_delivery_batch` take `job_audit_events.created_at` from the column default now(), while the outbox claim writes clock_timestamp(); use one clock
+status: idea
+risk: P2
+change_class: schema-migration
+depends_on: []
+invariants: [retry-liveness, schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 8e918f0ec541ef4f72740be652a3a86584d381c3 plus lane L46's 0074. The function's two audit INSERTs (0022:360 and :386, restated verbatim at 0074:76 and :102) name no created_at, so each audit row takes the table's DEFAULT now(), the transaction start, while 0023 gives both audit rows of the outbox claim an explicit clock_timestamp() (codex round-02: the reclaim audit 0023:167-173, the value at :172; the claim audit :200-204, the value at :202); OAM-13 (packages/db/src/rls-invariants.test.ts:3002 at this base) pins the live clock of the outbox claim and ack audit rows. A caller inside an aged transaction therefore writes a projector audit row timestamped before the claim it records. Lane L46 kept both INSERTs unchanged so that every byte of 0074 except the lease stamp equals 0022 (design D5).
+  Deliverable: a migration that re-creates the function with `created_at` = clock_timestamp() in both INSERTs (the 0023:171-172 and :201-202 form) and a test modelled on OAM-13. Audit ordering only: no money, tenant or grant path.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-outbox-lease-clock.md (lane L46), design D5; step 0 reader A.
+
+## task: web-api-error-notice-default-focus-audit
+title: Web: decide which other `ApiErrorNotice` mounts opt in to `autoFocus` (lane L49 opted in only the four roster screens and the failed-refresh notice of the session detail page)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — no per-mount focus decision yet; fill scope with the mounts it opts in.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits). `ApiErrorNotice` (apps/web/components/sessions/api-error-notice.tsx) takes an opt-in `autoFocus` (default false, :21): with it the notice gets tabIndex -1 (:50) and its effect focuses it each time `error` changes (:46-47). `git grep -n -F '<ApiErrorNotice' -- apps/web` prints 26 mounts, none in a test file; 5 opt in (`git grep -n -A 1 -F '<ApiErrorNotice' -- apps/web | grep -c -w autoFocus`): sessions/mark-paid-sheet.tsx:196, sessions/roster-add-player-form.tsx:153, sessions/roster-remove-dialog.tsx:69, sessions/roster-reverse-dialog.tsx:110 and sessions/session-detail-view.tsx:81, all under apps/web/components/.
+  The other 21, also under apps/web/components/: discover/discover-detail-view.tsx:62; discover/discover-list-view.tsx:98 and :145; me/settings-channels-list.tsx:198; me/settings-view.tsx:48; player/player-leave-session-button.tsx:43; player/player-page.tsx:97; sessions/edit-session-view.tsx:40; sessions/join-panel.tsx:80 and :124; sessions/new-session-view.tsx:33; sessions/request-inbox.tsx:117 and :179; sessions/session-detail-view.tsx:251; sessions/session-form.tsx:134; sessions/sessions-list-view.tsx:85 and :127; sessions/share-link-control.tsx:84; sessions/visibility-toggle.tsx:166; settings/club-settings-view.tsx:71; settings/form-feedback.tsx:42.
+  Deliverable: a decision per mount (opt in where the notice replaces the content the user acted on, such as a failed page load; stay off where focus should stay on the control that failed), then a view test for each mount that opts in.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding
+
+## task: web-command-id-conflict-copy-onboarding
+title: Web: the two onboarding routes still show the word "commandId" in their COMMAND_ID_CONFLICT copy (lane L49 changed that copy on the two session routes only)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/app/api/onboarding/club/route.ts, apps/web/app/api/onboarding/zalo/connect/route.ts, apps/web/e2e/support/roster-api-mock.ts]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — the copy pair is not chosen (the session routes' pair is the natural default).
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed none of the three files in scope). Lane L49 gave the COMMAND_ID_CONFLICT entries of apps/web/lib/session-command-route.ts (the entry at :713) and apps/web/lib/session-guest-note-route.ts (:50) a copy pair that does not name the field. The onboarding routes still answer `t("commandId đã được dùng.", "commandId already used.")`: apps/web/app/api/onboarding/club/route.ts:131 (the case at :128) and apps/web/app/api/onboarding/zalo/connect/route.ts:119 (the replay probe's conflict, :116) and :210 (the case at :207). Their INVALID_BODY copy `t("Thiếu commandId.", "Missing commandId.")` (club :76, zalo connect :105) names the field too, but answers only a malformed body.
+  The e2e mock apps/web/e2e/support/roster-api-mock.ts:96 hand-copies a Vietnamese-only conflict text, `"commandId đã được dùng cho yêu cầu khác."`; no e2e assertion reads it (`git grep -n -e 'đã được dùng' -e 'already used' -- apps/web/e2e` finds that line and one unrelated comment only).
+  Deliverable: the session routes' pair at the three onboarding sites (or one shared pair for every site), the mock's text aligned or dropped, and a route test per site that the copy no longer names commandId.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding
+
+## task: web-bare-command-id-refs-to-keeper
+title: Web: move the three remaining bare `useRef` command ids (session detail transitions, visibility toggle, link code form) to the command-id keeper, which binds the id to the sent body
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app, session-command]
+scope: [apps/web/components/sessions/session-detail-view.tsx, apps/web/components/sessions/visibility-toggle.tsx, apps/web/components/me/link-code-form.tsx]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — measure per site which body can change under a kept id, and whether the uncertain-id session store applies, before choosing the change.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits). `git grep -n -F -e 'commandId.current' -e 'useRef<string | null>' -- apps/web` finds three components that keep a bare id in a ref (`commandId.current ??= crypto.randomUUID()`) across retries without binding it to the body they send: apps/web/components/sessions/session-detail-view.tsx:46 (the ref), :152 (the id, sent by `transitionSession` at :156-157), cleared at :147, :163, :166 and :197; apps/web/components/sessions/visibility-toggle.tsx:47 (the ref), :115 (the id), the body `{ commandId: commandId.current, expectedVersion: session.version }` at :119, cleared at :111 and :124; apps/web/components/me/link-code-form.tsx:20 (the ref), :25 (the id), the request `{ code: code.trim(), commandId: commandId.current }` at :27 (the code is user-edited), cleared at :28 unless `keepCommandId` and at :49. The grep's two other hits, apps/web/components/me/settings-channels-list.tsx:59 (`orphan`) and apps/web/components/pwa/offline-view.tsx:40 (`target`), hold no command id.
+  The keeper is `useCommandId` (apps/web/lib/use-command-id.ts:117), which takes an optional `UncertainCommandIdStore`; the edit and new session forms use it at the lane's head, and the roster commands use the session store (apps/web/lib/use-roster-command.ts:20).
+  Deliverable: each site on the keeper (or a written reason to keep the bare ref), with a view test that an edited body gets a new id and an unchanged retry keeps it.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding
+
+## task: db-command-id-conflict-unusable-result-code
+title: DB: answer a command whose stored result has no usable shape with its own code instead of COMMAND_ID_CONFLICT, so a client can tell "another command owns this key" from "this intent committed but its result is unreadable"
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [session-command, money-model, api-contract]
+scope: [packages/db/src/roster-money-shared.ts, packages/db/src/session-service.ts]
+manifest: null
+merged_probe: COMMAND_ID_RESULT_UNUSABLE
+_probe_note: the proposed code name, absent at the lane's head (`git grep -n -w COMMAND_ID_RESULT_UNUSABLE` finds nothing); the authoring slice renames the probe if it picks another name.
+_readiness: NOT_CODE_READY — the new code's class (uncertain like a 5xx, or its own), its HTTP status, its copy and every client describer that must map it are not chosen.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed no file in scope). `replayOrNull` (packages/db/src/roster-money-shared.ts:119-142) answers COMMAND_ID_CONFLICT, message "command_id belongs to a different command, session or actor, or has no usable result" (:140), also when `isStored(prior.stored)` fails (:132): the SAME intent whose stored result no longer has the expected shape (a stored-shape change across a deploy, a corrupt row). Its callers inherit that answer: join-request-service.ts:220, payment-manual.ts:292, payment-reversal.ts:88, public-session-share-link.ts:57, roster-service.ts:147 and :391, session-join-service.ts:338 and :464. packages/db/src/session-service.ts carries its own copy of the clause at :355 (create), :633, :1026, :1359 (update), :2072, :2387, :2919 and :3133.
+  A client cannot tell that case from "another command owns this key", so lane L49 keeps a sticky key on any COMMAND_ID_CONFLICT and drops only its saved record (review R1a-1; apps/web/lib/use-command-id.ts, settle).
+  Deliverable: a distinct code for the unusable-result case at every site above (fail-closed: a client must read it as "may have committed"), the client describers mapping it, and a real-database test per site.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review R1a-1; conductor ruling RO-L49-7 item 2)
+
+## task: web-confirm-dialog-tab-trap-focused-notice
+title: Web: keep Shift+Tab inside ConfirmDialog when focus sits on an element focused by code (tabIndex -1), such as the error notice lane L49 focuses in the remove dialog
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/components/ui/confirm-dialog.tsx]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet (a selector or condition change adds no new identifier).
+_readiness: NOT_CODE_READY — the trap rule for an active element outside the focusable list is not chosen (wrap to the last element, or put the active element in the cycle).
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed no file in scope). The Tab trap of apps/web/components/ui/confirm-dialog.tsx builds its cycle from the native controls and `[tabindex]:not([tabindex='-1'])` (:69-73) and wraps only when the active element is the first or the last of that list (:77-83). An element focused by code with tabIndex -1 is outside the list, so Shift+Tab from it falls through to the browser. Lane L49 focuses the `role="alert"` notice (`ApiErrorNotice` with `autoFocus`, tabIndex -1) inside the remove, reverse and mark-paid dialogs; in the remove dialog, where the notice comes first, Shift+Tab from it leaves the dialog (review R1b2 observation, read from the code, not run in a browser).
+  Deliverable: the trap keeps focus inside the dialog from an active element that is inside it but outside the list, plus a browser test: focus on the notice, Shift+Tab, focus stays in the dialog.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review R1b2; conductor ruling RO-L49-9 item 5)
+
+## task: web-non-dedup-mutation-timeout
+title: Web: give the four mutation calls that carry no commandId a commandId or an uncertain-timeout copy, so apiFetch's 15 s default deadline can cover them too (lane L49 leaves them without a client deadline)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/api-client.ts, apps/web/components/shell/sign-out-button.tsx, apps/web/lib/me-settings-client.ts, apps/web/components/onboarding/new-club-form.tsx, apps/web/lib/new-club-form.ts]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — per call the choice (a commandId the server dedups, or an uncertain CLIENT_TIMEOUT copy) is not made; POST /api/onboarding/start has no commandId contract.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; of the files in scope the lane changed only apps/web/lib/api-client.ts). Lane L49's default deadline (`API_TIMEOUT_MS`, apps/web/lib/api-client.ts) applies only when the caller passes no signal AND the request is a GET or HEAD or its JSON body carries a string `commandId`, because only there is a timeout safe to retry under the same id (review SEC-2; conductor ruling RO-L49-9 item 2). Four mutation calls carry no commandId and keep the base behaviour (no client deadline): POST /api/auth/logout (apps/web/components/shell/sign-out-button.tsx:21), PATCH /api/me/profile (apps/web/lib/me-settings-client.ts:48), POST /api/me/channels/<id>/detach (:81) and POST /api/onboarding/start (apps/web/components/onboarding/new-club-form.tsx:75).
+  The last one is why: with a deadline, a slow create answers CLIENT_TIMEOUT, the form shows the definite "We could not create the club. Please try again." (apps/web/lib/new-club-form.ts:96-99), and an edited slug then creates a second club if the first one landed (the route is idempotent by slug for the same owner only, apps/web/app/api/onboarding/start/route.ts:14-18).
+  Deliverable: per call, a commandId the server dedups (onboarding start needs that server contract first) or an uncertain CLIENT_TIMEOUT copy, then the deadline extended to it, with a test per call.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review SEC-2; conductor ruling RO-L49-9 item 2)
+
+## task: web-command-id-records-shared-device
+title: Web: decide whether the uncertain command-id records in sessionStorage are cleared at sign-out, or their payload hash protected, once a shared-device use case appears (lane L49 names the limit and changes nothing)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/uncertain-command-id-session-store.ts, apps/web/components/shell/sign-out-button.tsx]
+manifest: null
+merged_probe: clearUncertainCommandIds
+_probe_note: the proposed function name (review SEC2-1), absent at the lane's head (`git grep -n -w clearUncertainCommandIds` finds nothing); the authoring slice renames the probe if it picks another name or does not clear at sign-out.
+_readiness: NOT_CODE_READY — no shared-device use case exists yet, and the trade-off below needs a product decision.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits). The store (apps/web/lib/uncertain-command-id-session-store.ts) keeps each record under the prefix `plx-cmd:v1:` plus tenant, person, kind, targets and an unsalted 53-bit hash of the payload fingerprint; the value holds only the id and a time, and records expire after 24 h. Sign-out (apps/web/components/shell/sign-out-button.tsx:22-23) clears the list snapshots and the language, not these records. A later user of the same open tab with devtools can read the keys, and the add-player key hashes the typed name, which a dictionary can recover (review SEC2-1; a mark-paid fingerprint hashes ids and amounts, no name). Lane L49 names this in its readiness file (section 10, Not defended; conductor ruling RO-L49-9 item 3).
+  Trade-off: clearing at sign-out ends the uncertain window, so a deliberate sign-out, a sign-in again and an identical retry would mint a new id and could apply a payment twice; a salt helps only where that reader cannot see it, and it must survive the reload the records exist for, so a salt kept in sessionStorage does not qualify. Deliverable when a shared-device case appears: the chosen option with the lane's unresolved-attempt rule restated for it, and a test.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review SEC2-1; conductor ruling RO-L49-9 item 3)
+
+## task: backlog-projector-real-replace-stub-status-stale
+title: Backlog: the row `projector-real-replace-stub` is still `planned` although apps/bot maps the three projectors to real modules
+status: idea
+risk: P3
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/autopilot-backlog.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 336e84e616e672cf3958320909cb1e2c6475c59a: docs/autopilot-backlog.md:5184 gives `projector-real-replace-stub` (:5182) `status: planned`, and its `merged_probe` (:5191) names no symbol, while apps/bot/src/projectors/index.ts:21-25 maps public_sessions, web_realtime and zalo_dm to their real modules. Fix: one pass that checks the row's two `depends_on` rows and then closes it by hand with the merged PRs as evidence, or re-scopes what is left. Outside lane L53's scope (the lane closes only its own three rows); found by its step 0 (2026-10-27).
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-docs-runbooks-start-here.md (lane L53), item 8 F1.
+
+## task: web-e2e-zalo-connect-revoked-bot-stale-403
+title: Web e2e: the settings spec's route fake still answers 403 FORBIDDEN for a bot revoked at connect, the answer lane L47 replaced by 400 ZALO_TOKEN_INVALID
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: [web-app, transport-zalo]
+scope: [apps/web/e2e/settings.spec.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at a965de349f59a76b909296460520afd9c02e6d4b (lane L47 does not edit the file): apps/web/e2e/settings.spec.ts:801-823 pins the base's answer for a revoked bot: its route fake (:809-813) answers FORBIDDEN 403, and the test stays green after L47 because its assertion (:817) matches the revoked note the card shows from the refetched state, not the alert. Since L47 the connect route answers `BOT_REVOKED` with the getMe-rejected pair (400 `ZALO_TOKEN_INVALID`, apps/web/app/api/onboarding/zalo/connect/route.ts), so the fake pins an answer the server no longer sends. Fix: the fake answers the 400 pair and the test also asserts the token-invalid alert before the revoked note. A test-only edit adds no code symbol: close by hand with the PR as evidence.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (a).
+
+## task: zalo-webhook-verified-active-revoked-bot-22023
+title: Zalo webhook: `markBotVerifiedActive` lets the 22023 "bot is revoked" of `zalo_bot_set_status` escape for a revoked bot; what its caller answers is unmeasured
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [auth, transport-zalo]
+scope: [packages/db/src/zalo-ingress.ts, apps/web/app/api/webhooks/zalo/[token]/route.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at the lane's head (base a965de349f59a76b909296460520afd9c02e6d4b plus lane L47's commits, which leave these lines unchanged): `markBotVerifiedActive` (packages/db/src/zalo-ingress.ts:372-390) calls `zalo_bot_set_status(..., 'active', ...)` (:386-388) with no catch, and migration 0053 raises 22023 "bot is revoked" when the bot row is `revoked` (packages/db/migrations/0053_zalo_ingress.sql:371-372), as it did in `finishZaloConnect` before L47. Its caller is the Zalo webhook route (apps/web/app/api/webhooks/zalo/[token]/route.ts:114); lane L47 did not measure what that route answers for this error. Fix: measure the webhook path for a revoked bot first; if the 22023 escapes, map it through the shared predicate `isZaloBotRevokedError` (zalo-ingress.ts) to the webhook's own fail-closed answer, with a real-DB test.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (b) and its default D6.
+
+## task: zalo-connect-getme-unavailable-reads-as-bad-token
+title: Onboarding Zalo connect: a getMe answer of HTTP 5xx or 429, or a bad ZALO_BOT_API_BASE setting, answers ZALO_TOKEN_INVALID 400, so Zalo being down reads as a bad token
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [auth, transport-zalo]
+scope: [apps/web/app/api/onboarding/zalo/connect/route.ts, apps/web/app/api/onboarding/zalo/connect/route.test.ts]
+manifest: null
+merged_probe: null
+_readiness: NOT_CODE_READY — the answer for "Zalo is down" and for a bad API base setting at connect is not chosen (AUTH_UNAVAILABLE 503, route.ts:131-132, is the nearest existing one).
+notes: |
+  Line numbers at the lane's head (unchanged by lane L47): the connect route's getMe catch (apps/web/app/api/onboarding/zalo/connect/route.ts:130-135) answers AUTH_UNAVAILABLE 503 only for the client kinds `timeout` and `network` (:131-132); every other `ZaloApiError` answers `tokenInvalid()` 400 (:134), including `rejected` with an HTTP 5xx or 429 (Zalo down or throttling, packages/db/src/zalo-bot-api.ts:82-85) and `invalid_base` (a bad ZALO_BOT_API_BASE setting, zalo-bot-api.ts:45-58). The host is then told to re-enter a token that may be fine. Fix: choose the answer for those kinds (the copy is an owner or product decision), then map them and pin each in route.test.ts.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (c) and decision table row 7.
+
+## task: zalo-bot-api-declared-oversize-body-left-open
+title: Zalo Bot API client: a response announced oversize by its content-length is left unread and uncancelled, so its connection can stay open until the 5 s signal
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: [transport-zalo]
+scope: [packages/db/src/zalo-bot-api.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at the lane's head (unchanged by lane L47), measured by reading: `readBoundedBody` returns `too_large` from the declared content-length alone without touching the stream (packages/db/src/read-bounded-body.ts:9-12), and the client then throws `bad_response` at packages/db/src/zalo-bot-api.ts:94 without cancelling the body, unlike its non-2xx path (:83, `res.body?.cancel()`). The verdict is right (recipient terminal `zalo_bad_response`); the connection is left to the 5 s timeout signal (:74) or the peer. Lane L47's fake-server matrix closes its server with `closeAllConnections()` after each test, so that test cannot hang on it. Fix: cancel the body before that throw, with a test that the connection closes at once.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (d).
+
+## task: bot-test-db-harness-shared-module
+title: apps/bot tests: one shared DB test harness instead of a local copy of the #62 setup context in each DB test file, and one zalo_dm fixture for its two files
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: []
+scope: [apps/bot/src/test-db.ts, apps/bot/src/dispatcher.test.ts, apps/bot/src/preflight.test.ts, apps/bot/src/schedule.test.ts, apps/bot/src/outbox-wake.test.ts, apps/bot/src/projector-registry.test.ts, apps/bot/src/projectors/zalo-dm.test.ts, apps/bot/src/projectors/zalo-dm-error-mapping-matrix.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at the lane's head (base a965de349f59a76b909296460520afd9c02e6d4b plus lane L47's commits): the #62 DB harness (a throwaway database; `withJobDefinerLock` around `bootstrapJobDefiner` and `migrate`; `setAppWorkerPasswordRaceSafe`; a teardown that releases the password lease after the pools close) is copied as a local function in apps/bot/src/dispatcher.test.ts:54 (`setupDispatcherContext`), preflight.test.ts:39 (`setupWorkerContext`), schedule.test.ts:53 (`setupScheduleContext`), projectors/zalo-dm.test.ts:183 and projectors/zalo-dm-error-mapping-matrix.test.ts:60 (both `setupZaloDmContext`), and inline in outbox-wake.test.ts (:135, :142) and projector-registry.test.ts (:123, :130); only its pieces are shared, from apps/bot/src/test-db.ts (:25, :36, :41, :45). The zalo_dm fixture (`club`, `player`, `insertEvent`, `claim`) is copied between projectors/zalo-dm.test.ts:254-328 and the matrix :146-206. Lane L47 added the latest copies because zalo-dm.test.ts is a file of parked lane L45. Proposal: one exported harness in test-db.ts (and one zalo_dm fixture module) that these files import, in a later lane once L45 has merged, running every apps/bot DB test file twice.
+  Source: lane L47 (p4-zalo-error-mapping-fakes), ruling RO-L47-4 item 3 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).

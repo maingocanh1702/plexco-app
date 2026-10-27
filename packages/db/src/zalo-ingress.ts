@@ -444,6 +444,11 @@ export class ZaloConnectError extends Error {
   }
 }
 
+// 0053's zalo_bot_upsert_for_tenant and zalo_bot_set_status RAISE 22023 "...: bot is revoked".
+function isZaloBotRevokedError(e: unknown): boolean {
+  return pgErrorHasCode(e, "22023") && /bot is revoked/.test(pgErrorChainText(e));
+}
+
 export type BeginZaloConnectResult =
   | { replayed: true; state: ZaloOnboardingState }
   | { replayed: false; botId: string; webhookToken: string };
@@ -542,9 +547,7 @@ export async function beginZaloConnect(
     });
   } catch (e) {
     if (pgErrorHasCode(e, "42501")) throw new ZaloConnectError("FORBIDDEN", "not permitted");
-    if (pgErrorHasCode(e, "22023") && /bot is revoked/.test(pgErrorChainText(e))) {
-      throw new ZaloConnectError("BOT_REVOKED", "bot is revoked");
-    }
+    if (isZaloBotRevokedError(e)) throw new ZaloConnectError("BOT_REVOKED", "bot is revoked");
     throw e;
   }
 }
@@ -603,10 +606,16 @@ export async function finishZaloConnect(
       }
       return { state: current, superseded: true };
     }
-    await tx.execute(
-      sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${p.botId}::uuid, ${p.outcome}, false, true,
-              ARRAY['connecting','registered']::text[])`,
-    );
+    try {
+      await tx.execute(
+        sql`SELECT 1 FROM zalo_bot_set_status(${tenantId}::uuid, ${p.botId}::uuid, ${p.outcome}, false, true,
+                ARRAY['connecting','registered']::text[])`,
+      );
+    } catch (e) {
+      // Thrown out of withTenant, so the transaction rolls back and nothing is written.
+      if (isZaloBotRevokedError(e)) throw new ZaloConnectError("BOT_REVOKED", "bot is revoked");
+      throw e;
+    }
     const [run] = await tx
       .select({ id: onboardingRuns.id })
       .from(onboardingRuns)

@@ -1,12 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef } from "react";
 import { ApiClientError } from "../../lib/api-client";
 import { useT } from "../../lib/i18n-client";
 import { buildCreateBody, emptyFormValues } from "../../lib/session-form-model";
-import { isDefiniteFailure } from "../../lib/session-error-ui";
 import { createSession } from "../../lib/sessions-api";
+import { useCommandId } from "../../lib/use-command-id";
 import { useSports } from "../../lib/use-sessions-data";
 import { useTenantContext } from "../../lib/use-tenant-context";
 import { Button } from "../ui/button";
@@ -14,13 +13,16 @@ import { Skeleton } from "../ui/skeleton";
 import { ApiErrorNotice } from "./api-error-notice";
 import { SessionForm } from "./session-form";
 
-/** /sessions/new. One commandId per attempt, kept across an uncertain failure (DD-117 idempotency). */
+/**
+ * /sessions/new. One commandId per intent: kept across an uncertain failure for the identical body;
+ * a changed body is a new command (DD-117 idempotency).
+ */
 export function NewSessionView({ tenantId }: { tenantId: string }) {
   const t = useT();
   const router = useRouter();
   const ctx = useTenantContext(tenantId);
   const sports = useSports();
-  const commandId = useRef<string | null>(null);
+  const id = useCommandId();
   const back = `/c/${tenantId}/sessions`;
 
   return (
@@ -45,15 +47,14 @@ export function NewSessionView({ tenantId }: { tenantId: string }) {
             submitLabel={t("Tạo bản nháp", "Create draft")}
             cancelHref={back}
             onSubmit={async (values) => {
-              commandId.current ??= crypto.randomUUID();
+              const body = buildCreateBody(values, ctx.timezone);
+              const commandId = id.get(JSON.stringify(body));
               try {
-                const created = await createSession(ctx, {
-                  ...buildCreateBody(values, ctx.timezone),
-                  commandId: commandId.current,
-                });
+                const created = await createSession(ctx, { ...body, commandId });
+                id.settle();
                 router.push(`${back}/${created.id}`);
               } catch (error) {
-                if (isDefiniteFailure(error)) commandId.current = null; // not applied: next attempt is a new command
+                id.settle(error);
                 if (error instanceof ApiClientError && error.code === "COMMAND_ID_CONFLICT") {
                   // The key was already used: the earlier attempt may have been saved.
                   throw new ApiClientError(

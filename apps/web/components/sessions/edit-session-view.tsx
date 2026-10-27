@@ -1,13 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef } from "react";
 import { useT } from "../../lib/i18n-client";
 import { blockedReason } from "../../lib/session-actions";
-import { isDefiniteFailure } from "../../lib/session-error-ui";
 import { resolveTimeZone } from "../../lib/session-time";
 import { buildUpdateBody, valuesFromSession } from "../../lib/session-form-model";
 import { updateSession } from "../../lib/sessions-api";
+import { useCommandId } from "../../lib/use-command-id";
 import { useSessionDetail } from "../../lib/use-sessions-data";
 import { useTenantContext } from "../../lib/use-tenant-context";
 import { Button } from "../ui/button";
@@ -22,7 +21,7 @@ export function EditSessionView({ tenantId, sessionId }: { tenantId: string; ses
   const router = useRouter();
   const ctx = useTenantContext(tenantId);
   const { state, reload } = useSessionDetail(tenantId, sessionId);
-  const commandId = useRef<string | null>(null);
+  const id = useCommandId();
   const detail = `/c/${tenantId}/sessions/${sessionId}`;
 
   if (state.status === "loading") {
@@ -88,16 +87,14 @@ export function EditSessionView({ tenantId, sessionId }: { tenantId: string; ses
             router.push(detail); // nothing changed: no command, no version bump
             return;
           }
-          commandId.current ??= crypto.randomUUID();
+          const request = { ...body, expectedVersion: session.version };
+          const commandId = id.get(JSON.stringify(request));
           try {
-            await updateSession(ctx, session.id, {
-              ...body,
-              commandId: commandId.current,
-              expectedVersion: session.version,
-            });
+            await updateSession(ctx, session.id, { ...request, commandId });
+            id.settle();
             router.push(detail);
           } catch (error) {
-            if (isDefiniteFailure(error)) commandId.current = null;
+            id.settle(error);
             throw error;
           }
         }}

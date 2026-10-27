@@ -242,9 +242,42 @@ describe("POST /api/onboarding/zalo/connect", () => {
     expect(logLines).not.toContain(webhookToken);
   });
 
-  it("a revoked bot cannot be re-connected: 403", async () => {
-    vi.mocked(beginZaloConnect).mockRejectedValueOnce(new ZaloConnectError("BOT_REVOKED", "x"));
-    expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);
+  // Status, data and error of an answer (meta.requestId differs per response); never the token.
+  const answer = async (res: Response) => {
+    const text = await res.text();
+    expect(text).not.toContain(BOT_TOKEN);
+    const { data, error } = JSON.parse(text) as Awaited<ReturnType<typeof env>>;
+    return { status: res.status, data, error };
+  };
+  // The reference a revoked bot must equal: the getMe-rejected answer (tokenInvalid).
+  const tokenInvalidAnswer = async () => {
+    vi.mocked(getMe).mockRejectedValueOnce(new Error("rejected"));
+    const ref = await answer(await POST(req({ commandId: "c1", botToken: BOT_TOKEN })));
+    expect(ref).toMatchObject({ status: 400, error: { code: "ZALO_TOKEN_INVALID" } });
+    return ref;
+  };
+
+  it("BOT_REVOKED from begin -> the getMe-rejected 400 ZALO_TOKEN_INVALID answer, no token (L47)", async () => {
+    const expected = await tokenInvalidAnswer();
+    vi.mocked(beginZaloConnect).mockRejectedValueOnce(
+      new ZaloConnectError("BOT_REVOKED", "bot is revoked"),
+    );
+    expect(await answer(await POST(req({ commandId: "c1", botToken: BOT_TOKEN })))).toEqual(
+      expected,
+    );
+    expect(finishZaloConnect).not.toHaveBeenCalled();
+  });
+
+  it("BOT_REVOKED from finish -> the same 400 ZALO_TOKEN_INVALID answer, no token (L47)", async () => {
+    const expected = await tokenInvalidAnswer();
+    vi.mocked(finishZaloConnect).mockRejectedValueOnce(
+      new ZaloConnectError("BOT_REVOKED", "bot is revoked"),
+    );
+    expect(await answer(await POST(req({ commandId: "c1", botToken: BOT_TOKEN })))).toEqual(
+      expected,
+    );
+    expect(setWebhook).toHaveBeenCalledTimes(1);
+    expect(finishZaloConnect).toHaveBeenCalledTimes(1);
   });
 
   it("a superseded attempt (a newer connect replaced the token) -> 409 CONNECT_SUPERSEDED, not success", async () => {

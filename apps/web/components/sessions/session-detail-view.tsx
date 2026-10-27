@@ -78,7 +78,7 @@ export function SessionDetailView({
     return (
       <div className={styles.page}>
         <h1 className="sr-only">{t("Chi tiết buổi chơi", "Session details")}</h1>
-        <ApiErrorNotice error={state.error} onRetry={reload} onReload={reload} />
+        <ApiErrorNotice autoFocus error={state.error} onRetry={reload} onReload={reload} />
         <Button href={base} variant="secondary">
           {t("Về danh sách", "Back to list")}
         </Button>
