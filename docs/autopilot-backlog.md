@@ -6863,6 +6863,19 @@ merged_probe: null
 notes: |
   Lane L43 (p4-name-rules-web) review round 1, finding R1b-1: apps/web/app/api/chat/channels/[id]/messages/route.ts:19 says `L16 renders "You"/"Member"`, but apps/web/components/chat/message-list.tsx now renders `displayNameOf` (t("(chưa đặt tên)", "(unnamed)")) for a person author with no label. Outside L43's file ownership: write `"You"/"(unnamed)"` the next time a lane touches that file.
 
+## task: new-club-form-vi-too-long-copy-pin
+title: Web: the create-club too-long name copy is pinned in en only; pin its vi half "Tên tối đa 120 ký tự." in the unit test (test only)
+status: idea
+risk: P3
+change_class: test-only
+depends_on: []
+invariants: []
+scope: [apps/web/lib/new-club-form.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Lane L43 (p4-name-rules-web) review round 3 (the last round of its 3-round cap), finding R3-1: apps/web/lib/new-club-form.test.ts renders validateNewClub with `makeT("en")` only, so no test reaches the vi arm of the too-long copy at apps/web/lib/new-club-form.ts:60 (`Tên tối đa ${CLUB_NAME_MAX} ký tự.`), the half the create-club form shows by default (useT defaults to vi). A vi-only mutation (`${CLUB_NAME_MAX * 2}`) survived the file (25/25 passed). The name is still refused; only the vi number could drift. Recorded as this row after the final round, not as a test edit: add `expect(validateNewClub({ ...ok, name: "x".repeat(121) }, makeT("vi")).name).toBe("Tên tối đa 120 ký tự.");` next to the en over-long row.
+
 ## task: membership-display-name-follows-person-rename
 title: Names: `memberships.display_name` never follows a person rename (existing behaviour); decide whether it should
 status: idea
