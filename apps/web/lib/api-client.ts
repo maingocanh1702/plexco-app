@@ -37,6 +37,11 @@ export class ApiClientError extends Error {
 /** Synthetic codes the client itself raises (never sent by the server). */
 export const CLIENT_NETWORK_ERROR = "CLIENT_NETWORK_ERROR";
 export const CLIENT_BAD_RESPONSE = "CLIENT_BAD_RESPONSE";
+// Not CLIENT_NETWORK_ERROR: that reads as offline, and a slow server may still apply the call.
+export const CLIENT_TIMEOUT = "CLIENT_TIMEOUT";
+
+/** apiFetch's deadline, set only when the caller passes no `signal` (that caller owns its own). */
+export const API_TIMEOUT_MS = 15_000;
 
 export interface ApiFetchInit extends Omit<RequestInit, "body" | "credentials" | "cache"> {
   /** Serialized as JSON. */
@@ -59,25 +64,36 @@ export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promis
   if (json !== undefined) headers.set("content-type", "application/json");
   if (method.toUpperCase() !== "GET" && csrfToken) headers.set("x-csrf-token", csrfToken);
 
+  const controller = rest.signal ? null : new AbortController();
+  const timer = controller ? setTimeout(() => controller.abort(), API_TIMEOUT_MS) : undefined;
   let response: Response;
+  let envelope: ApiEnvelope<T> | null;
   try {
     response = await fetch(path, {
       ...rest,
+      signal: rest.signal ?? controller?.signal,
       method,
       headers,
       body: json === undefined ? undefined : JSON.stringify(json),
       credentials: "same-origin",
       cache: "no-store",
     });
+    // A body that is not JSON (proxy error page, empty 502) is "no envelope", not a thrown parse error.
+    envelope = await response.json().then(
+      (value: unknown) => value as ApiEnvelope<T>,
+      (error: unknown) => {
+        if (controller?.signal.aborted) throw error;
+        return null;
+      },
+    );
   } catch {
+    // By our own controller, never the error name: a caller's abort stays CLIENT_NETWORK_ERROR.
+    if (controller?.signal.aborted)
+      throw new ApiClientError(CLIENT_TIMEOUT, "Request timed out", 0);
     throw new ApiClientError(CLIENT_NETWORK_ERROR, "Network request failed", 0);
+  } finally {
+    clearTimeout(timer);
   }
-
-  // A body that is not JSON (proxy error page, empty 502) is "no envelope", not a thrown parse error.
-  const envelope = await response.json().then(
-    (value: unknown) => value as ApiEnvelope<T>,
-    () => null,
-  );
   const requestId = envelope?.meta?.requestId ?? null;
   if (envelope?.error) {
     throw new ApiClientError(

@@ -1,4 +1,9 @@
-import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR } from "./api-client";
+import {
+  ApiClientError,
+  CLIENT_BAD_RESPONSE,
+  CLIENT_NETWORK_ERROR,
+  CLIENT_TIMEOUT,
+} from "./api-client";
 import type { TFn } from "./i18n-client";
 
 /**
@@ -130,6 +135,15 @@ export function describeSessionError(error: unknown, t: TFn): ErrorView {
       t(
         "Không có kết nối mạng. Kiểm tra mạng rồi thử lại.",
         "No connection. Check your network and try again.",
+      ),
+      "retry",
+    );
+  }
+  if (code === CLIENT_TIMEOUT) {
+    return view(
+      t(
+        "Máy chủ chưa phản hồi kịp. Thao tác có thể vẫn đang được xử lý; thử lại sau giây lát.",
+        "The server did not answer in time. It may still be processing; try again in a moment.",
       ),
       "retry",
     );

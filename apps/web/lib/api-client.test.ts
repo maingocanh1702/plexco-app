@@ -1,5 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiClientError, CLIENT_BAD_RESPONSE, CLIENT_NETWORK_ERROR, apiFetch } from "./api-client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  API_TIMEOUT_MS,
+  ApiClientError,
+  CLIENT_BAD_RESPONSE,
+  CLIENT_NETWORK_ERROR,
+  CLIENT_TIMEOUT,
+  apiFetch,
+} from "./api-client";
+import { isDefiniteFailure } from "./session-error-ui";
 
 function mockFetch(body: unknown, status = 200) {
   const fn = vi.fn(async () => new Response(JSON.stringify(body), { status }));
@@ -122,5 +130,79 @@ describe("apiFetch", () => {
       code: CLIENT_NETWORK_ERROR,
       statusCode: 0,
     });
+  });
+});
+
+/** Never settles on its own; rejects once `signal` aborts, as a real fetch (and its body read) does. */
+function untilAborted(signal: AbortSignal | null | undefined): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    signal?.addEventListener("abort", () =>
+      reject(new DOMException("This operation was aborted", "AbortError")),
+    );
+  });
+}
+
+function stalledFetch() {
+  const fn = vi.fn((_path: string, init?: RequestInit) => untilAborted(init?.signal));
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
+describe("apiFetch deadline", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  async function timedOut(): Promise<unknown> {
+    stalledFetch();
+    const call = apiFetch("/api/x").catch((e: unknown) => e);
+    vi.advanceTimersByTime(API_TIMEOUT_MS);
+    return call;
+  }
+
+  it("A-15: no answer within API_TIMEOUT_MS is ApiClientError CLIENT_TIMEOUT, status 0", async () => {
+    const error = await timedOut();
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect(error).toMatchObject({ code: CLIENT_TIMEOUT, statusCode: 0 });
+  });
+
+  it("A-16: a timeout is uncertain, so the same commandId is reused on retry", async () => {
+    expect(isDefiniteFailure(await timedOut())).toBe(false);
+  });
+
+  it("A-17: an answer before the deadline clears it; nothing aborts afterwards", async () => {
+    const fn = mockFetch({ data: { ok: 1 }, error: null, meta: { requestId: "r" } });
+    await expect(apiFetch("/api/x")).resolves.toEqual({ ok: 1 });
+    vi.advanceTimersByTime(API_TIMEOUT_MS + 1);
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  it("A-18: a caller signal reaches fetch as is and gets no default deadline", async () => {
+    const fn = stalledFetch();
+    const caller = new AbortController();
+    let rejected = false;
+    const call = apiFetch("/api/x", { signal: caller.signal }).catch((e: unknown) => {
+      rejected = true;
+      return e;
+    });
+    await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
+    expect(rejected).toBe(false);
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.signal).toBe(caller.signal);
+    caller.abort();
+    expect(await call).toMatchObject({ code: CLIENT_NETWORK_ERROR, statusCode: 0 });
+  });
+
+  it("A-19: a body read that stalls past the deadline is CLIENT_TIMEOUT too", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_path: string, init?: RequestInit) => ({
+        json: () => untilAborted(init?.signal),
+      })),
+    );
+    const call = apiFetch("/api/x").catch((e: unknown) => e);
+    // async advance: the answered fetch has to reach response.json() before the deadline fires
+    await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
+    expect(await call).toMatchObject({ code: CLIENT_TIMEOUT, statusCode: 0 });
   });
 });
