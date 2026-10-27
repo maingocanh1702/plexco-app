@@ -30,9 +30,9 @@ const store = createUncertainCommandIdSessionStore();
  * keeps the key and the lock. `run` resolves to the result, or `undefined` when it failed (the
  * error is then in `error`).
  *
- * Persistence (L49 D4): with an `intent` and a signed-in person (`useSessionPersonId`), the key of an
- * uncertain attempt is also saved in sessionStorage under {tenant, person, kind, targets} + the
- * intent's fingerprint, so the identical intent after a reload or a Cancel (`reset()` clears memory
+ * Persistence (L49 D4): with an `intent` and a signed-in person (`useSessionPersonId`), the key of each
+ * attempt is saved in sessionStorage BEFORE the send (the keeper drops it on a 2xx, a conflict or a
+ * fresh definite failure) under {tenant, person, kind, targets} + the intent's fingerprint, so the identical intent after a reload or a Cancel (`reset()` clears memory
  * only) restores the same key and the server replays it. A restored key is sticky in the keeper but
  * does not lock by itself: `locked` derives from this mount's attempts only. No intent (the preview)
  * or no person (no SessionProvider): memory only, as before.

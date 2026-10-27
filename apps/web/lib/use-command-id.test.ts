@@ -155,13 +155,16 @@ const conflict = new ApiClientError("COMMAND_ID_CONFLICT", "", 409, "req");
 
 describe("createCommandIdKeeper with a store (L49 D3)", () => {
   it("an uncertain key is restored for the identical payload + scope after a remount, and stays sticky", () => {
-    const { store } = fakeStore();
+    const { store, calls } = fakeStore();
     const first = persistentKeeper(store, "a");
     const id = first.get(body, paid);
     first.settle(network);
     // A reload: a new keeper (a new mount) over the same store.
     const second = persistentKeeper(store, "b");
     expect(second.get(body, { ...paid, targets: ["s1"] })).toBe(id);
+    // An uncertain failure of the restored key saves its record again (its TTL starts over).
+    second.settle(network);
+    expect(calls.at(-1)).toBe("save");
     // Sticky: a definite 4xx from the entry gate proves nothing about the earlier attempt.
     second.settle(rateLimited);
     expect(second.get(body, paid)).toBe(id);
