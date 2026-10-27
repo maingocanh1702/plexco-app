@@ -228,6 +228,7 @@ test.describe("add / remove", () => {
     await expect(dialog(page).getByRole("alert")).toContainText(
       "Người chơi đã có thanh toán — hãy hoàn tác trước khi xoá.",
     );
+    await expect(dialog(page).getByRole("alert")).toBeFocused(); // D8: the opt-in notice focus (R1b2-2)
     // OD-5 also holds for the retry: a 4xx is definite, so the second press is a NEW command
     await dialog(page).getByRole("button", { name: "Gỡ người chơi" }).click();
     const ids = mock.callsTo("DELETE", /\/players\/p1$/).map((c) => body(c).commandId);
@@ -540,6 +541,7 @@ test.describe("mark-paid", () => {
     await dialog(page).getByRole("button", { name: "Thử lại" }).click();
     expect((await (await replay).json()).data.replayed).toBe(true);
     await expect(dialog(page)).toContainText("Đã ghi nhận thanh toán");
+    await expect(dialog(page).getByText(REPLAYED)).toBeFocused(); // D5: the notice is read first (R1b2-3)
     const ids = mock
       .callsTo("POST", /\/mark-paid$/)
       .filter((c) => c.body!.preview !== true)
@@ -572,6 +574,7 @@ test.describe("mark-paid", () => {
     await expect(amount).toHaveAttribute("readonly", ""); // still frozen while the retry is in flight
     release();
     await expect(dialog(page).getByRole("alert")).toContainText("Bạn thao tác quá nhanh");
+    await expect(dialog(page).getByRole("alert")).toBeFocused(); // D8 (R1b2-2)
     await expect(amount).toHaveAttribute("readonly", ""); // a definite 4xx keeps the lock
     await dialog(page).getByRole("button", { name: "Thử lại" }).click();
     await expect(dialog(page)).toContainText("Đã ghi nhận thanh toán");
@@ -622,6 +625,7 @@ test.describe("ledger / reversal", () => {
     await expect(alert).toContainText(
       "Chỉ chủ CLB mới hoàn tác được thanh toán. Hãy nhờ chủ CLB thực hiện.",
     );
+    await expect(alert).toBeFocused(); // D8 (R1b2-2)
     await expect(alert).not.toContainText("money.correct");
   });
 
