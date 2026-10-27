@@ -7603,3 +7603,17 @@ merged_probe: null
 notes: |
   Line numbers at the lane's head (unchanged by lane L47), measured by reading: `readBoundedBody` returns `too_large` from the declared content-length alone without touching the stream (packages/db/src/read-bounded-body.ts:9-12), and the client then throws `bad_response` at packages/db/src/zalo-bot-api.ts:94 without cancelling the body, unlike its non-2xx path (:83, `res.body?.cancel()`). The verdict is right (recipient terminal `zalo_bad_response`); the connection is left to the 5 s timeout signal (:74) or the peer. Lane L47's fake-server matrix closes its server with `closeAllConnections()` after each test, so that test cannot hang on it. Fix: cancel the body before that throw, with a test that the connection closes at once.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-zalo-error-mapping-fakes.md (lane L47), section 11 (d).
+
+## task: bot-test-db-harness-shared-module
+title: apps/bot tests: one shared DB test harness instead of a local copy of the #62 setup context in each DB test file, and one zalo_dm fixture for its two files
+status: idea
+risk: P3
+change_class: test-infra
+depends_on: []
+invariants: []
+scope: [apps/bot/src/test-db.ts, apps/bot/src/dispatcher.test.ts, apps/bot/src/preflight.test.ts, apps/bot/src/schedule.test.ts, apps/bot/src/outbox-wake.test.ts, apps/bot/src/projector-registry.test.ts, apps/bot/src/projectors/zalo-dm.test.ts, apps/bot/src/projectors/zalo-dm-error-mapping-matrix.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at the lane's head (base a965de349f59a76b909296460520afd9c02e6d4b plus lane L47's commits): the #62 DB harness (a throwaway database; `withJobDefinerLock` around `bootstrapJobDefiner` and `migrate`; `setAppWorkerPasswordRaceSafe`; a teardown that releases the password lease after the pools close) is copied as a local function in apps/bot/src/dispatcher.test.ts:54 (`setupDispatcherContext`), preflight.test.ts:39 (`setupWorkerContext`), schedule.test.ts:53 (`setupScheduleContext`), projectors/zalo-dm.test.ts:183 and projectors/zalo-dm-error-mapping-matrix.test.ts:59 (both `setupZaloDmContext`), and inline in outbox-wake.test.ts (:135, :142) and projector-registry.test.ts (:123, :130); only its pieces are shared, from apps/bot/src/test-db.ts (:25, :36, :41, :45). The zalo_dm fixture (`club`, `player`, `insertEvent`, `claim`) is copied between projectors/zalo-dm.test.ts:254-328 and the matrix :145-205. Lane L47 added the latest copies because zalo-dm.test.ts is a file of parked lane L45. Proposal: one exported harness in test-db.ts (and one zalo_dm fixture module) that these files import, in a later lane once L45 has merged, running every apps/bot DB test file twice.
+  Source: lane L47 (p4-zalo-error-mapping-fakes), ruling RO-L47-4 item 3 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
