@@ -810,14 +810,26 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       await expiredAfterReEnable(() => asOwner(raw, []));
     }, 30_000);
 
+    /** zalo_dm: `result` for the jobs of `ids`; any other job (a plant) is delivered. */
+    function ownZaloDm(ids: string[], result: Awaited<ReturnType<DeliverFn>>) {
+      const other: DeliverFn = delivered; // type-safe whatever delivered's declared arity
+      return new Map<string, DeliverFn>([
+        ["zalo_dm", async (...args) => (ids.includes(args[0].eventId) ? result : other(...args))],
+      ]);
+    }
+
+    /** The stub calls to one of `own`'s chats: a plant or another test's row is sent elsewhere. */
+    function sentTo(zalo: Awaited<ReturnType<typeof zaloBoot>>, own: { chat: string }[]) {
+      return zalo.stub.calls.filter((call) => own.some((p) => p.chat === call.chatId));
+    }
+
     // L31 S1 (security round 1 finding S1): DA-4..DA-8 reach the age check at attempts 0 only.
     // RETRYING fails a zalo_dm row once (failed, attempts 1, due 15 s later); DUE makes it due now
     // on the verify seat. Decision table P2 (a live retry) and P4 (a failed row resumed).
     // Keep these, and every zalo_dm test that asserts stub.calls, above DA-8: its finally deletes
     // its row, so a later CLI enable re-prepares that event.
-    const RETRYING = new Map<string, DeliverFn>([
-      ["zalo_dm", async () => ({ result: "retry", errorCode: "retry_transient" })],
-    ]);
+    const RETRYING = (...ids: string[]) =>
+      ownZaloDm(ids, { result: "retry", errorCode: "retry_transient" });
     const FAILED_ONCE = {
       projector: "zalo_dm",
       status: "failed",
@@ -828,12 +840,16 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
 
     it("DA-11 zalo_dm: a live retry (the row failed once, attempts 1), its event back-dated past the bound and made due, expires at delivery (no send, delivered/noop_expired, attempts 2, one warning line); its fresh twin, failed in the same cycle, is delivered at its retry (sent, attempts 2)", async () => {
       const zalo = await zaloBoot();
+      const own: string[] = [];
       try {
         const stale = await zalo.update();
         const fresh = await zalo.update();
+        own.push(stale.event, fresh.event);
         await ackedWhileOff([stale.event, fresh.event], zalo.projectors);
         await enable("zalo_dm");
-        await cycle(RETRYING);
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
+        await cycle(RETRYING(stale.event, fresh.event));
         for (const p of [stale, fresh]) expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
         await backdate([stale.event], ZALO_DM_MAX_AGE_MINUTES + 1);
         await verify.query(DUE, [stale.event]);
@@ -846,7 +862,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
 
         await verify.query(DUE, [fresh.event]);
         await cycle(zalo.projectors);
-        expect(zalo.stub.calls.map((call) => call.chatId)).toEqual([fresh.chat]);
+        expect(sentTo(zalo, [stale, fresh]).map((call) => call.chatId)).toEqual([fresh.chat]);
         const row = await verify.query(
           "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
           [fresh.event],
@@ -854,7 +870,10 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         expect(row.rows).toEqual([
           { status: "delivered", attempts: 2, provider_ref: "sent", error_code: null },
         ]);
+        await expectPlantClaimed(plant);
+        expect((await deliveries(plant.event))[0]?.status).toBe("delivered");
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
@@ -862,11 +881,15 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
 
     it("DA-11b zalo_dm: the DA-11 failed row (attempts 1), back-dated past the bound and made due while disabled, is not claimed; a CLI re-enable adds no row and no record, then it expires at delivery with attempts 2 as in DA-11", async () => {
       const zalo = await zaloBoot();
+      const own: string[] = [];
       try {
         const p = await zalo.update();
+        own.push(p.event);
         await ackedWhileOff([p.event], zalo.projectors);
         await enable("zalo_dm");
-        await cycle(RETRYING);
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
+        await cycle(RETRYING(p.event));
         expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await backdate([p.event], ZALO_DM_MAX_AGE_MINUTES + 1);
@@ -878,7 +901,10 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
         expect(await expiries([p.event])).toEqual([]);
         await expiredAtDelivery(zalo, p, 2);
+        await expectPlantClaimed(plant);
+        expect((await deliveries(plant.event))[0]?.status).toBe("delivered");
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
@@ -914,9 +940,8 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       const args = ["replay", "--event", event, "--projector", "zalo_dm"];
       return withJobDefinerLock(base, () => runCli(args, testUrl(base, { db: dbName })));
     }
-    const DLQ_ONCE = new Map<string, DeliverFn>([
-      ["zalo_dm", async () => ({ result: "dlq", errorCode: "replay_terminal" })],
-    ]);
+    const DLQ_ONCE = (...ids: string[]) =>
+      ownZaloDm(ids, { result: "dlq", errorCode: "replay_terminal" });
 
     // L34 W4b1 (PSD-1..PSD-3; PSD-4..PSD-6 add rows): the promotion twins of DA-4, DA-11 and DA-3.
     // A player.promoted DM is bounded by its session's start on the DB clock, not by the flat
@@ -951,7 +976,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         arm: async (zalo, event) => {
           await ackedWhileOff([event], zalo.projectors);
           await enable("zalo_dm");
-          await cycle(RETRYING);
+          await cycle(RETRYING(event));
           expect(await deliveries(event)).toEqual([FAILED_ONCE]);
           await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
           await verify.query(DUE, [event]);
@@ -983,7 +1008,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         arm: async (zalo, event) => {
           await ackedWhileOff([event], zalo.projectors);
           await enable("zalo_dm");
-          await cycle(RETRYING);
+          await cycle(RETRYING(event));
           expect(await deliveries(event)).toEqual([FAILED_ONCE]);
           await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
           await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
@@ -1010,7 +1035,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         arm: async (zalo, event) => {
           await ackedWhileOff([event], zalo.projectors);
           await enable("zalo_dm");
-          await cycle(DLQ_ONCE);
+          await cycle(DLQ_ONCE(event));
           expect(await deliveries(event)).toEqual([
             { projector: "zalo_dm", status: "dlq", attempts: 1, error_code: "replay_terminal" },
           ]);
