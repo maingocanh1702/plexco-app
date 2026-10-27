@@ -7471,3 +7471,55 @@ notes: |
   A client cannot tell that case from "another command owns this key", so lane L49 keeps a sticky key on any COMMAND_ID_CONFLICT and drops only its saved record (review R1a-1; apps/web/lib/use-command-id.ts, settle).
   Deliverable: a distinct code for the unusable-result case at every site above (fail-closed: a client must read it as "may have committed"), the client describers mapping it, and a real-database test per site.
   source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review R1a-1; conductor ruling RO-L49-7 item 2)
+
+## task: web-confirm-dialog-tab-trap-focused-notice
+title: Web: keep Shift+Tab inside ConfirmDialog when focus sits on an element focused by code (tabIndex -1), such as the error notice lane L49 focuses in the remove dialog
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/components/ui/confirm-dialog.tsx]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet (a selector or condition change adds no new identifier).
+_readiness: NOT_CODE_READY — the trap rule for an active element outside the focusable list is not chosen (wrap to the last element, or put the active element in the cycle).
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed no file in scope). The Tab trap of apps/web/components/ui/confirm-dialog.tsx builds its cycle from the native controls and `[tabindex]:not([tabindex='-1'])` (:69-73) and wraps only when the active element is the first or the last of that list (:77-83). An element focused by code with tabIndex -1 is outside the list, so Shift+Tab from it falls through to the browser. Lane L49 focuses the `role="alert"` notice (`ApiErrorNotice` with `autoFocus`, tabIndex -1) inside the remove, reverse and mark-paid dialogs; in the remove dialog, where the notice comes first, Shift+Tab from it leaves the dialog (review R1b2 observation, read from the code, not run in a browser).
+  Deliverable: the trap keeps focus inside the dialog from an active element that is inside it but outside the list, plus a browser test: focus on the notice, Shift+Tab, focus stays in the dialog.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review R1b2; conductor ruling RO-L49-9 item 5)
+
+## task: web-non-dedup-mutation-timeout
+title: Web: give the four mutation calls that carry no commandId a commandId or an uncertain-timeout copy, so apiFetch's 15 s default deadline can cover them too (lane L49 leaves them without a client deadline)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/api-client.ts, apps/web/components/shell/sign-out-button.tsx, apps/web/lib/me-settings-client.ts, apps/web/components/onboarding/new-club-form.tsx, apps/web/lib/new-club-form.ts]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — per call the choice (a commandId the server dedups, or an uncertain CLIENT_TIMEOUT copy) is not made; POST /api/onboarding/start has no commandId contract.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; of the files in scope the lane changed only apps/web/lib/api-client.ts). Lane L49's default deadline (`API_TIMEOUT_MS`, apps/web/lib/api-client.ts) applies only when the caller passes no signal AND the request is a GET or HEAD or its JSON body carries a string `commandId`, because only there is a timeout safe to retry under the same id (review SEC-2; conductor ruling RO-L49-9 item 2). Four mutation calls carry no commandId and keep the base behaviour (no client deadline): POST /api/auth/logout (apps/web/components/shell/sign-out-button.tsx:21), PATCH /api/me/profile (apps/web/lib/me-settings-client.ts:48), POST /api/me/channels/<id>/detach (:81) and POST /api/onboarding/start (apps/web/components/onboarding/new-club-form.tsx:75).
+  The last one is why: with a deadline, a slow create answers CLIENT_TIMEOUT, the form shows the definite "We could not create the club. Please try again." (apps/web/lib/new-club-form.ts:96-99), and an edited slug then creates a second club if the first one landed (the route is idempotent by slug for the same owner only, apps/web/app/api/onboarding/start/route.ts:14-18).
+  Deliverable: per call, a commandId the server dedups (onboarding start needs that server contract first) or an uncertain CLIENT_TIMEOUT copy, then the deadline extended to it, with a test per call.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review SEC-2; conductor ruling RO-L49-9 item 2)
+
+## task: web-command-id-records-shared-device
+title: Web: decide whether the uncertain command-id records in sessionStorage are cleared at sign-out, or their payload hash protected, once a shared-device use case appears (lane L49 names the limit and changes nothing)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/uncertain-command-id-session-store.ts, apps/web/components/shell/sign-out-button.tsx]
+manifest: null
+merged_probe: clearUncertainCommandIds
+_probe_note: the proposed function name (review SEC2-1), absent at the lane's head (`git grep -n -w clearUncertainCommandIds` finds nothing); the authoring slice renames the probe if it picks another name or does not clear at sign-out.
+_readiness: NOT_CODE_READY — no shared-device use case exists yet, and the trade-off below needs a product decision.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits). The store (apps/web/lib/uncertain-command-id-session-store.ts) keeps each record under the prefix `plx-cmd:v1:` plus tenant, person, kind, targets and an unsalted 53-bit hash of the payload fingerprint; the value holds only the id and a time, and records expire after 24 h. Sign-out (apps/web/components/shell/sign-out-button.tsx:22-23) clears the list snapshots and the language, not these records. A later user of the same open tab with devtools can read the keys, and the add-player key hashes the typed name, which a dictionary can recover (review SEC2-1; a mark-paid fingerprint hashes ids and amounts, no name). Lane L49 names this in its readiness file (section 10, Not defended; conductor ruling RO-L49-9 item 3).
+  Trade-off: clearing at sign-out ends the uncertain window, so a deliberate sign-out, a sign-in again and an identical retry would mint a new id and could apply a payment twice; a salt helps only where that reader cannot see it, and it must survive the reload the records exist for, so a salt kept in sessionStorage does not qualify. Deliverable when a shared-device case appears: the chosen option with the lane's unresolved-attempt rule restated for it, and a test.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review SEC2-1; conductor ruling RO-L49-9 item 3)
