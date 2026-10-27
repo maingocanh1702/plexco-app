@@ -16,6 +16,8 @@ run). Nobody else provokes, records or pastes anything here.
 - Record only: the HTTP status; the values of `ok` and `error_code`; the `description` text with every id, name or
   number that identifies a person, a chat or the bot replaced by `<redacted>`; the date (YYYY-MM-DD).
 - Never paste a command line, a shell history, a log line or a screenshot: each can carry the token.
+- When you send, keep the token out of your shell history and out of any process's arguments (a token typed into a
+  command line lands in both), and clear any history line that holds it afterwards.
 - In doubt, leave the slot empty and write "withheld (redaction)".
 
 ## 2. What the run checks: the shipped mapping
@@ -47,7 +49,7 @@ the point of this file. Send each one with the real bot to your own test chat on
 
 | # | Attempt | HTTP status | `ok` | `error_code` | `description` (redacted) | Class (section 2) | Shipped outcome as expected? | Date |
 |---|---|---|---|---|---|---|---|---|
-| P1 | control: one ordinary send to your own test chat | | | | | (success expected) | | |
+| P1 | control: one ordinary send to your own test chat | | | | | | | |
 | P2 | the same send with one character of the token changed | | | | | | | |
 | P3 | the same send with an old token the bot no longer accepts, if you have one | | | | | | | |
 | P4 | a send to a chat id that has never messaged the bot | | | | | | | |
