@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
+> **Version:** v1.10 · 2026-10-27 (§7: ghi chú thứ tự deploy cho cleanup tên `0068`–`0070`); v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -214,6 +214,8 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 **Deployment strategy:** immutable artifact staging→prod · migration là controlled job (không rollback irreversible) · canary/feature-flag cho adapter rủi ro · health/readiness check + tiêu chí auto-rollback · projector/worker hỗ trợ mixed event version trong lúc rollout.
 
+**Thứ tự deploy cho cleanup tên của `0068`, `0069`, `0070`** (inferred, not run: suy luận từ READ COMMITTED của PostgreSQL, chưa chạy): mỗi migration chạy một khối `DO` với vòng `LOOP` dọn giá trị cũ (`0068`: `sessions`, `tenants`; `0069`, `0070`: `persons`, `memberships`, `tenants`, `sessions`). Một transaction ghi bắt đầu trước khi migration commit vẫn có thể lưu một giá trị chưa chuẩn hoá sau snapshot của vòng dọn, và vòng dọn không thấy giá trị đó. Vì vậy cách xử lý là **apply with writers drained**: apply ba migration này khi không còn transaction ghi nào đang mở trên bốn bảng đó; cách còn lại, khoá bốn bảng trước các vòng `LOOP`, là một thay đổi migration, không thuộc ghi chú này. `0072` và `0073` không có vòng dọn như vậy.
+
 ---
 
 ## 8. Backup/DR & Observability
@@ -306,3 +308,4 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-07-16 | v1.6 | **DD-04 cost-model closure:** so sánh production theo cùng 5–6 replica × 1 GiB; DO DB dùng list price `$60.90`; core production = **`$121–133`**. Thêm khoản bắt buộc logs + encrypted offsite backup và giữ read isolation/WAF/Sentry/KMS → money-safe Tier B = **`$202–254`**. Pin VPC private là steady state; Fly public-TLS chỉ là fallback nếu egress-IP gate fail. |
 | 2026-07-16 | v1.7 | **DD-04 Rev 2 — cost model đổi sang Day-1 baseline + trigger-based (record §8.2 PROPAGATION).** §9 viết lại: bỏ "Tier B money-safe bắt buộc `$202–254`", thay bằng **Day-1 baseline `$120–135`** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`; subtotal cố định `$118.90`) money-safe nhờ non-negotiables + **§9.3 read-isolation controls** (projection-role, bounded pool, reserved budget, CDN, circuit-breaker). Read replica/WAF Pro/Sentry Team/worker-2/DB-resize = **trigger-based upgrade** (§9.2), không mặc định Day-1. Ephemeral staging `$8–18` → prod+staging `$128–153` (§9.4). **Caveat:** deferral chỉ an toàn khi §9.3 controls ship thật + telemetry trigger được giám sát. |
 | 2026-07-16 | v1.8 | Đồng bộ topology/process/security với Rev 2: Day-1 discovery dùng read isolation trên primary; read-only node chỉ bật theo telemetry và chỉ đổi component-scoped `DATABASE_URL`. Sửa mô tả autoscale DO: RPS/p95 dùng shared hoặc dedicated, CPU autoscale cần dedicated CPU. |
+| 2026-10-27 | v1.10 | §7: thêm ghi chú thứ tự deploy cho cleanup tên của `0068`–`0070` (apply with writers drained; inferred, not run). |
