@@ -6971,14 +6971,16 @@ notes: |
 
 ## task: projector-delivery-batch-lease-clock-consistency
 title: DB: `claim_projector_delivery_batch` stamps the lease with now() but the outbox claim with clock_timestamp(); use one clock
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-outbox-lease-clock (L46); find it with `gh pr list --state merged --head feat/p4-outbox-lease-clock` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `packages/db/migrations/0074_projector_delivery_lease_clock.sql :: claim_projector_delivery_batch` (slice-unique: the file is absent at the base 8e918f0ec541ef4f72740be652a3a86584d381c3, present at the lane's head)
+note_merged: 2026-10-27 L46: closed BY HAND in the lane's own PR, measured at base 8e918f0ec541ef4f72740be652a3a86584d381c3 (the PR #126 merge). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: migration 0074 re-creates only `claim_projector_delivery_batch`, the 0022 body byte for byte except the lease stamp, now `clock_timestamp() + interval '5 minutes'` (the clock every compare of the lease and the due time already reads); the owner `job_definer`, the ACL and every attribute are unchanged. JCL-15 pins the lease to five real minutes from the claim inside an aged transaction; JCL-15b pins the body equality. The two audit INSERTs keep the column default now() (row projector-delivery-claim-audit-created-at-clock). Readiness: docs/sessions/web-mvp-phase4-readiness-p4-outbox-lease-clock.md.
 risk: P1
 change_class: schema-migration
 depends_on: []
 invariants: [retry-liveness, schema]
-scope: []
+scope: [packages/db/migrations/0074_projector_delivery_lease_clock.sql, packages/db/src/rls-invariants.test.ts]
 manifest: null
-merged_probe: null
+merged_probe: packages/db/migrations/0074_projector_delivery_lease_clock.sql :: claim_projector_delivery_batch
 notes: |
   L24 readiness section 10, residual R3; the lane states it is harmless today. A fix re-creates the function in a migration at the next free number; the function is first defined in packages/db/migrations/0022_job_claim_lease_core.sql (a later re-creation was not checked here; fill scope at the base).
   Source: PR #102 body, section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 81.
@@ -7378,3 +7380,18 @@ notes: |
   Hazard, by code reading only (not probed): publish, announce, close and cancel hold tenants FOR SHARE (their tenant gate) when they wait for that key, while club-config takes the key (:79) and then `tenant_profile_update` (:121), which writes the tenants row; with one commandId reused across the two families in one tenant at the same moment, each waits for the other (40P01, one request fails). This predates lane L48 (its recheck adds only a tenant_admins FOR SHARE at the front) and needs a client that reuses a commandId across families.
   Deliverable: a lock-order table of every family on that key plus a two-connection probe; then either a refusal of a cross-family reuse before any lock or a documented acceptance.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-session-commands-authz-recheck.md (lane L48), design D15 (3).
+
+## task: projector-delivery-claim-audit-created-at-clock
+title: DB: the two audit INSERTs of `claim_projector_delivery_batch` take `job_audit_events.created_at` from the column default now(), while the outbox claim writes clock_timestamp(); use one clock
+status: idea
+risk: P2
+change_class: schema-migration
+depends_on: []
+invariants: [retry-liveness, schema]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at 8e918f0ec541ef4f72740be652a3a86584d381c3 plus lane L46's 0074. The function's two audit INSERTs (0022:360 and :386, restated verbatim at 0074:76 and :102) name no created_at, so each audit row takes the table's DEFAULT now(), the transaction start, while 0023 gives both audit rows of the outbox claim an explicit clock_timestamp() (codex round-02: the reclaim audit 0023:167-173, the value at :172; the claim audit :200-204, the value at :202); OAM-13 (packages/db/src/rls-invariants.test.ts:3002 at this base) pins the live clock of the outbox claim and ack audit rows. A caller inside an aged transaction therefore writes a projector audit row timestamped before the claim it records. Lane L46 kept both INSERTs unchanged so that every byte of 0074 except the lease stamp equals 0022 (design D5).
+  Deliverable: a migration that re-creates the function with `created_at` = clock_timestamp() in both INSERTs (the 0023:171-172 and :201-202 form) and a test modelled on OAM-13. Audit ordering only: no money, tenant or grant path.
+  Source: docs/sessions/web-mvp-phase4-readiness-p4-outbox-lease-clock.md (lane L46), design D5; step 0 reader A.
