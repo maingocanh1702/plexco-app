@@ -40,7 +40,10 @@ export const CLIENT_BAD_RESPONSE = "CLIENT_BAD_RESPONSE";
 // Not CLIENT_NETWORK_ERROR: that reads as offline, and a slow server may still apply the call.
 export const CLIENT_TIMEOUT = "CLIENT_TIMEOUT";
 
-/** apiFetch's deadline, set only when the caller passes no `signal` (that caller owns its own). */
+/**
+ * apiFetch's deadline, set only when the caller passes no `signal` (that caller owns its own) and
+ * the request is a GET/HEAD read or sends a JSON body with a string `commandId`.
+ */
 export const API_TIMEOUT_MS = 15_000;
 
 export interface ApiFetchInit extends Omit<RequestInit, "body" | "credentials" | "cache"> {
@@ -59,12 +62,23 @@ function isPlainObject(value: unknown): value is ApiErrorDetails {
 
 export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
   const { json, csrfToken, headers: extra, method = "GET", ...rest } = init;
+  const verb = method.toUpperCase();
   const headers = new Headers(extra);
   headers.set("accept", "application/json");
   if (json !== undefined) headers.set("content-type", "application/json");
-  if (method.toUpperCase() !== "GET" && csrfToken) headers.set("x-csrf-token", csrfToken);
+  if (verb !== "GET" && csrfToken) headers.set("x-csrf-token", csrfToken);
 
-  const controller = rest.signal ? null : new AbortController();
+  // A read or a commandId command is safe to retry under the same id, so its timeout is uncertain.
+  // A mutation without a commandId gets no client deadline: a timeout would read as a definite
+  // failure while the server may still commit, and an edited retry would apply twice.
+  const deadline =
+    !rest.signal &&
+    (verb === "GET" ||
+      verb === "HEAD" ||
+      (typeof json === "object" &&
+        json !== null &&
+        typeof (json as { commandId?: unknown }).commandId === "string"));
+  const controller = deadline ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), API_TIMEOUT_MS) : undefined;
   let response: Response;
   let envelope: ApiEnvelope<T> | null;

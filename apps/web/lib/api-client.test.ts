@@ -205,4 +205,35 @@ describe("apiFetch deadline", () => {
     await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
     expect(await call).toMatchObject({ code: CLIENT_TIMEOUT, statusCode: 0 });
   });
+
+  it("SEC-2: a HEAD read and a command whose JSON body carries a commandId get the deadline", async () => {
+    stalledFetch();
+    for (const init of [
+      { method: "HEAD" },
+      { method: "POST", json: { commandId: "c1" }, csrfToken: "s" },
+    ]) {
+      const call = apiFetch("/api/x", init).catch((e: unknown) => e);
+      vi.advanceTimersByTime(API_TIMEOUT_MS);
+      expect(await call).toMatchObject({ code: CLIENT_TIMEOUT, statusCode: 0 });
+    }
+  });
+
+  it("SEC-2: a mutation without a commandId keeps the base behaviour: no deadline, no signal", async () => {
+    const fn = stalledFetch();
+    let settled = false;
+    const settle = () => {
+      settled = true;
+    };
+    for (const init of [
+      { method: "POST", json: { slug: "a" } },
+      { method: "POST" },
+      { method: "PATCH", json: { commandId: 1 } },
+    ]) {
+      void apiFetch("/api/x", init).then(settle, settle);
+    }
+    await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
+    expect(settled).toBe(false);
+    expect(fn).toHaveBeenCalledTimes(3);
+    for (const [, init] of fn.mock.calls) expect(init?.signal).toBeUndefined();
+  });
 });
