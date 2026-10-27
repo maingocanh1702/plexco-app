@@ -2,6 +2,7 @@
 // real 0057 definers (as app_worker) retries or dead-letters with no recipient recorded, or records
 // that one recipient terminal and delivers. The stub (127.0.0.1) never sees a real token.
 import { randomUUID } from "node:crypto";
+import { format } from "node:util";
 import pg from "pg";
 import { migrate } from "@plexco/db";
 import {
@@ -36,7 +37,7 @@ let stub: ZaloStub;
 beforeAll(async () => {
   for (const level of ["log", "info", "warn", "error", "debug"] as const)
     vi.spyOn(console, level).mockImplementation((...a: unknown[]) => {
-      logged.push(a.map(String).join(" "));
+      logged.push(format(...a));
     });
   stub = await startZaloStub();
   Object.assign(process.env, { ENCRYPTION_KEY: KEY, APP_BASE_URL: "https://app.test" });

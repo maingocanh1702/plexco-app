@@ -18,7 +18,7 @@ import {
 const TOKEN = "123456:FIXTURE-fake-server-token";
 const SEND_PATH = `/bot${TOKEN}/sendMessage`;
 
-// Copied from zalo-bot-api.test.ts (a test file is never imported).
+// Adapted from zalo-bot-api.test.ts (a test file is never imported).
 const failure = async (p: Promise<unknown>) =>
   (await p.then(
     () => {
@@ -26,10 +26,11 @@ const failure = async (p: Promise<unknown>) =>
     },
     (e: unknown) => e,
   )) as ZaloApiError;
-const leakFree = (e: ZaloApiError) => {
+const leakFree = (e: ZaloApiError, token = TOKEN) => {
   const seen = JSON.stringify({ ...e, message: e.message, stack: e.stack });
-  expect(seen).not.toContain(TOKEN);
+  expect(seen).not.toContain(token);
   expect(seen).not.toContain("Unauthorized");
+  expect((e as { cause?: unknown }).cause).toBeUndefined();
 };
 
 type Handler = (req: http.IncomingMessage, res: http.ServerResponse) => void;
@@ -150,6 +151,7 @@ const row = (id: string, what: string, c: Case): [string, Case] => [
   `${id}: ${what} -> ${c.verdict.action} ${c.verdict.code} (L47)`,
   c,
 ];
+const UNNAMED = " (not named by DD-138, as shipped)";
 
 const CASES: [string, Case][] = [
   row("A-8 row 1", "HTTP 401 with an envelope body", {
@@ -191,21 +193,21 @@ const CASES: [string, Case][] = [
     verdict: RATE_LIMITED,
   }),
   ...[500, 503, 600].map((n) =>
-    row("A-14 row 7", `200 ok:false error_code ${n}`, {
+    row("A-14 row 7", `200 ok:false error_code ${n}${n === 600 ? UNNAMED : ""}`, {
       answer: okFalse(n),
       want: rej(null, n),
       verdict: SERVER_ERROR,
     }),
   ),
   ...[403, 0, -1].map((n) =>
-    row("A-15 row 8", `200 ok:false error_code ${n}`, {
+    row("A-15 row 8", `200 ok:false error_code ${n}${n === 403 ? "" : UNNAMED}`, {
       answer: okFalse(n),
       want: rej(null, n),
       verdict: REJECTED,
     }),
   ),
   ...[{ ok: false }, { ok: false, error_code: "401" }, { ok: false, error_code: 401.5 }].map((v) =>
-    row("A-16 row 9", `200 ${JSON.stringify(v)}`, {
+    row("A-16 row 9", `200 ${JSON.stringify(v)}${"error_code" in v ? UNNAMED : ""}`, {
       answer: okJson(v),
       want: rej(null, null),
       verdict: REJECTED,
@@ -216,10 +218,20 @@ const CASES: [string, Case][] = [
   ),
   row("A-18 row 11", "200 raw {not json", { answer: raw("{not json"), ...BAD }),
   row("A-18 row 11", "200 with an empty body", { answer: raw(""), ...BAD }),
-  row("A-18 row 11", "200 bytes 7b ff 7d (bad UTF-8)", {
-    answer: raw(Buffer.from([0x7b, 0xff, 0x7d])),
-    ...BAD,
-  }),
+  row(
+    "A-18 row 11",
+    "200 a valid ok:true envelope with one invalid UTF-8 byte (0xff) inside a string",
+    {
+      answer: raw(
+        Buffer.concat([
+          Buffer.from('{"ok":true,"result":"'),
+          Buffer.from([0xff]),
+          Buffer.from('"}'),
+        ]),
+      ),
+      ...BAD,
+    },
+  ),
   row("A-19 row 12 (a)", "200 declaring a 70 KiB ok:true body", {
     answer: (_req, res) =>
       void res.writeHead(200, { "content-length": String(70 * 1024) }).end(okEnvelopeOf(70 * 1024)),
@@ -255,10 +267,14 @@ const CASES: [string, Case][] = [
     ...NET,
   }),
   ...[301, 302, 303, 307, 308].map((s) =>
-    row("A-22 row 15 (b)", `HTTP ${s} with a location to /elsewhere (redirect: "error")`, {
-      answer: redirect(s),
-      ...NET,
-    }),
+    row(
+      "A-22 row 15 (b)",
+      `HTTP ${s} with a location to /elsewhere (redirect: "error")${UNNAMED}`,
+      {
+        answer: redirect(s),
+        ...NET,
+      },
+    ),
   ),
   ...[300, 304].map((s) =>
     row("A-23 (c) outside Z-6", `HTTP ${s} without a location`, {
@@ -296,14 +312,13 @@ describe("sendMessage against a local fake Zalo server (L47 sender leg)", () => 
 
   it("A-23 (a) outside Z-6: a token failing TOKEN_RE -> dlq bot_unavailable, no request (L47)", async () => {
     const f = await serve(okJson({ ok: true, result: {} }));
-    expectFailure(
-      await failure(sendMessage("abc/../x?y=1", "chat-1", "hi")),
-      only("invalid_token"),
-      {
-        action: "dlq",
-        code: "bot_unavailable",
-      },
-    );
+    const badToken = "abc/../x?y=1";
+    const e = await failure(sendMessage(badToken, "chat-1", "hi"));
+    expectFailure(e, only("invalid_token"), {
+      action: "dlq",
+      code: "bot_unavailable",
+    });
+    leakFree(e, badToken);
     expect(f.requests).toHaveLength(0);
   });
 
