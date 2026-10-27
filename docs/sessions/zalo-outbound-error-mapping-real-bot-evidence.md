@@ -47,13 +47,13 @@ projector's result per class). A fake cannot show what the real Zalo API answers
 ## 3. Provocations (one row per attempt)
 
 These are attempts, not predictions: which class the real API answers with is unknown until it is recorded, which is
-the point of this file. Send each one with the real bot to your own test chat only, with a plain test text such as
+the point of this file. Send each one with the real bot to your own test chat only (P4 names its own target), with a plain test text such as
 "plexco evidence P1".
 
 | # | Attempt | HTTP status | `ok` | `error_code` | `description` (redacted) | Class (section 2) | Shipped outcome as expected? | Date |
 |---|---|---|---|---|---|---|---|---|
 | P1 | control: one ordinary send to your own test chat | | | | | | | |
-| P2 | the same send with one character of the token changed (never write the changed token or which character you changed) | | | | | | | |
+| P2 | the same send with one character of the token changed (it counts as the token for section 1; never write it or which character you changed) | | | | | | | |
 | P3 | the same send with an old token the bot no longer accepts, if you have one | | | | | | | |
 | P4 | a send to a chat id that has never messaged the bot: a made-up one or a second account of your own, never another person's | | | | | | | |
 | P5 | a send with an empty text | | | | | | | |
