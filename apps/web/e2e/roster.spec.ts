@@ -319,6 +319,34 @@ test.describe("L49 command id: reload, Cancel, conflict, timeout", () => {
     expect(members).toHaveLength(1);
   });
 
+  test("SEC-1: a reload while the add is in flight keeps the key; the identical add replays", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    const binh = () =>
+      (mock.state[0]!.players as { displayName: string }[]).filter((p) => p.displayName === "Bình");
+    const release = mock.holdNext("add");
+    await add(page, "Bình");
+    await expect.poll(() => mock.callsTo("POST", /\/players$/).length).toBe(1); // held at the server
+    // The record is stored while the request is still held, so a page that dies now without running
+    // any more script (a discarded tab, a crash) keeps the key too; a reload alone also settles the
+    // aborted fetch as uncertain, which saved the record even before the fix.
+    const records = await page.evaluate(
+      () => Object.keys(sessionStorage).filter((k) => k.startsWith("plx-cmd:v1:")).length,
+    );
+    expect(records).toBe(1);
+    await page.reload(); // the browser abandons the request
+    release(); // the server commits it; nobody sees the reply
+    await expect.poll(() => binh().length).toBe(1);
+    await expect(page.getByText("Lan Nguyễn")).toBeVisible();
+    await add(page, "Bình");
+    await expect(page.getByText(REPLAYED)).toBeVisible();
+    const ids = mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+    expect(binh()).toHaveLength(1);
+  });
+
   test("A-22: after a lost reply and a reload, a changed name is a NEW command", async ({
     page,
   }) => {

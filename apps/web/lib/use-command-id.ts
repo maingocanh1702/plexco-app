@@ -25,15 +25,19 @@ import type { CommandIdScope, UncertainCommandIdStore } from "./uncertain-comman
  * failure sees the plain rule.
  *
  * Persistence (L49 D3, optional): with a `store` AND a `scope` (tenant, person, command kind, targets)
- * AND a payload, an uncertain failure also saves `{key}` for that scope + payload, and a `get` that would
- * mint first restores a saved key, sticky, so the identical intent after a reload or a dialog Cancel
- * replays instead of applying twice. A 2xx drops the record with the key. COMMAND_ID_CONFLICT drops the
- * record but, like any definite failure, keeps a sticky key: the server also answers it for THIS intent
- * when its stored result is unusable (`replayOrNull`), so a new key now could apply twice; after a
- * reload, which refetches, the next attempt is a new command (no 24 h conflict loop). Another definite
- * failure keeps the record when sticky and has none to drop otherwise. `reset()` clears memory ONLY and
- * never removes a record: that is how an uncertain attempt survives a dialog Cancel. No store or no scope
- * or no payload: memory only, exactly the rule above.
+ * AND a payload, a `get` that would mint first restores a saved key, sticky, and otherwise saves the
+ * minted `{key}` for that scope + payload, i.e. BEFORE the request is sent (an uncertain failure saves
+ * it again). A reload while the request is in flight, a reload after an uncertain failure and a dialog
+ * Cancel thus all restore the same key, so the identical intent replays instead of applying twice. A
+ * 2xx drops the record, and so does a definite failure of a fresh key (its only attempt was refused:
+ * nothing is stored under it). COMMAND_ID_CONFLICT drops the record but, like any definite failure,
+ * keeps a sticky key: the server also answers it for THIS intent when its stored result is unusable
+ * (`replayOrNull`), so a new key now could apply twice; after a reload, which refetches, the next
+ * attempt is a new command (no 24 h conflict loop). Another definite failure keeps a sticky key's
+ * record. `reset()` clears memory ONLY. No store or no scope or no payload: memory only, as above.
+ * Accepted edge: a Cancel (`reset()`) in flight, then a late 2xx, leaves the record (that settle is a
+ * no-op), so the next identical intent within the TTL replays once (the replayed notice), then mints:
+ * never a double apply, never a silent loss.
  *
  * A caller whose body carries a secret (the Zalo bot token) must not use the body as the fingerprint:
  * it calls `get()` with no payload and `reset()` on every edit instead, which is equivalent.
@@ -80,6 +84,8 @@ export function createCommandIdKeeper(
         restored !== null
           ? { id: restored, payload, scope, uncertain: true } // it may have committed: sticky
           : { id: mint(), payload, scope, uncertain: false };
+      const p = restored === null ? persisted(current) : null; // a restored key has its record
+      p?.store.save(p.scope, p.payload, current.id); // minted: saved BEFORE the request is sent
       return current.id;
     },
     settle: (error) => {
@@ -92,9 +98,11 @@ export function createCommandIdKeeper(
         current.uncertain = true;
         p?.store.save(p.scope, p.payload, current.id);
       } else {
-        if (error instanceof ApiClientError && error.code === "COMMAND_ID_CONFLICT") {
-          p?.store.drop(p.scope, p.payload); // the record only: a sticky key stays (see above)
-        }
+        // The record goes on COMMAND_ID_CONFLICT (a sticky key stays, see above) and for a fresh
+        // entry: it was saved before the send, and a definite refusal of the only attempt proves no
+        // result is stored under this id.
+        const conflict = error instanceof ApiClientError && error.code === "COMMAND_ID_CONFLICT";
+        if (conflict || !current.uncertain) p?.store.drop(p.scope, p.payload);
         if (!current.uncertain) current = null; // definite, and no attempt under it was uncertain
       }
     },

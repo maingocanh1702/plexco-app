@@ -169,6 +169,23 @@ describe("createCommandIdKeeper with a store (L49 D3)", () => {
     expect(persistentKeeper(store, "c").get(body, paid)).toBe(id);
   });
 
+  it("the record is saved BEFORE the send: a reload while the request is in flight restores the same key, sticky; a Cancel in flight and a late 2xx leave it", () => {
+    const { store, records } = fakeStore();
+    const first = persistentKeeper(store, "a");
+    const id = first.get(body, paid); // in flight: not settled yet
+    expect(records.size).toBe(1);
+    // A reload while the request is in flight: a new mount restores the key, sticky.
+    const second = persistentKeeper(store, "b");
+    expect(second.get(body, paid)).toBe(id);
+    second.settle(rateLimited);
+    expect(second.get(body, paid)).toBe(id);
+    // A Cancel while in flight, then the late 2xx: that settle is a no-op, so the record stays.
+    first.reset();
+    first.settle();
+    expect(records.size).toBe(1);
+    expect(persistentKeeper(store, "c").get(body, paid)).toBe(id); // the accepted edge: one replay
+  });
+
   it("a fresh but equal scope object is the same entry; another target or person is another command", () => {
     const { store } = fakeStore();
     const k = persistentKeeper(store);
@@ -185,7 +202,7 @@ describe("createCommandIdKeeper with a store (L49 D3)", () => {
     k.settle(serverError);
     const edited = k.get('{"method":"transfer"}', paid);
     expect(edited).not.toBe(id);
-    expect(records.size).toBe(1);
+    expect(records.size).toBe(2); // the edit's own record is saved before its send
     expect(persistentKeeper(store, "b").get(body, paid)).toBe(id);
   });
 
@@ -227,17 +244,17 @@ describe("createCommandIdKeeper with a store (L49 D3)", () => {
     expect(k.get(body, paid)).toBe(id);
     k.settle();
     expect(records.size).toBe(0);
-    expect(k.get(body, paid)).not.toBe(id);
-    expect(persistentKeeper(store, "b").get(body, paid)).toBe("b1");
+    expect(persistentKeeper(store, "b").get(body, paid)).toBe("b1"); // no record left for a new mount
+    expect(k.get(body, paid)).not.toBe(id); // nor an entry in memory
   });
 
-  it("a definite failure on a non-sticky entry drops memory and writes no record", () => {
+  it("a definite failure on a non-sticky entry drops memory and the record saved before the send", () => {
     const { store, records, calls } = fakeStore();
     const k = persistentKeeper(store);
     const id = k.get(body, paid);
     k.settle(definite);
-    expect(calls).not.toContain("save");
     expect(records.size).toBe(0);
+    expect(calls).toEqual(["find", "save", "drop"]);
     expect(k.get(body, paid)).not.toBe(id);
   });
 
