@@ -56,7 +56,7 @@ read -rs PW && export DATABASE_URL_MIGRATION="postgres://plexco:${PW}@localhost:
 node scripts/outbox-projector-enable.mjs enable --projector web_realtime
 ```
 
-Password có ký tự dành riêng của URL (`@ : / ? # [ ] %`...) phải percent-encode trước khi ghép vào `DATABASE_URL_MIGRATION` (ví dụ `@` thành `%40`, `#` thành `%23`); nếu không, URL bị cắt sai chỗ hoặc không parse được, và khi không parse được CLI dừng với `error: ERR_INVALID_URL Invalid URL`, thoát `1`, không in URL ra.
+Password có ký tự dành riêng của URL (`@ : / ? # [ ] %`...) phải percent-encode trước khi ghép vào `DATABASE_URL_MIGRATION` (ví dụ `@` thành `%40`, `#` thành `%23`); nếu không, URL bị cắt sai chỗ hoặc không parse được, và khi không parse được CLI dừng trước khi kết nối nên chưa làm gì: in `error: ERR_INVALID_URL Invalid URL`, thoát `1`, không in URL ra (CLI enable in thêm dòng gợi ý chung `if the enable step had committed, the projector stays enabled: re-run this command (it is idempotent) or disable it`; ở trường hợp này bước bật chưa chạy, projector không đổi).
 
 CLI chạy hai phần liên tiếp. Transaction đầu từ chối nếu còn event chưa ack cũ hơn ngưỡng (bước 2.3), nếu không thì bật bằng chính function cũ `outbox_projector_set_enabled`. Transaction sau, khi transaction đầu đã commit, quét mọi event thuộc route của projector mà chưa có dòng delivery và chưa có record cho projector đó: event chưa ack **luôn** được chuẩn bị delivery (ngoài cap); event đã ack, còn trong ngưỡng và thuộc nhóm mới nhất trong cap, được chuẩn bị delivery rồi gửi qua đường DD-134 không đổi; mọi event đã ack còn lại được ghi **một** expiry record. Chỉ `public_sessions`: sau đó CLI dựng lại projection từ trạng thái canonical cho mọi tenant có outbox event.
 
