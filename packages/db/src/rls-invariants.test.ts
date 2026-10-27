@@ -2516,6 +2516,91 @@ describe("JCL-1/JCL-4..JCL-12 job-infra lease/reclaim/audit/delivery (0022)", ()
     expect(f.attempts).toBe(1); // incremented exactly once
   });
 
+  it("JCL-15: a claim made inside a transaction open for 1.5 s stamps a lease of five real minutes from the claim (0074)", async () => {
+    // 0022:380 stamped the lease from now(), frozen at BEGIN, while every lease compare reads
+    // clock_timestamp(); 0074 stamps clock_timestamp(), as 0023 did for claim_outbox_batch (OAM-12).
+    const ev = await seedOutboxEvent(ctx.tenantA, "jcl15.lease_clock");
+    const client = await ctx.workerPool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`SELECT job_prepare_projector_delivery($1, 'jcl15_lease_clock')`, [ev]);
+      await client.query("SELECT pg_sleep(1.5)"); // now() stays at BEGIN; clock_timestamp() moves on
+      const before = await client.query("SELECT clock_timestamp()::text AS t");
+      const claimed = await client.query(
+        `SELECT * FROM claim_projector_delivery_batch('jcl15_lease_clock', 1)`,
+      );
+      // p_limit 1 is enough: no other test prepares a 'jcl15_lease_clock' delivery.
+      expect(claimed.rows.length).toBe(1);
+      const claim = claimed.rows[0] as { event_id: string; claim_token: string };
+      expect(claim.event_id).toBe(ev);
+      const after = await client.query("SELECT clock_timestamp()::text AS t");
+      await client.query("COMMIT");
+
+      // app_worker cannot SELECT projector_deliveries (JCL-9). Exact SQL bounds, no tolerance:
+      // 0022's BEGIN-time stamp lands about 1.5 s below the lower one.
+      const stamped = await ctx.owner.query(
+        `SELECT lease_expires_at BETWEEN $1::timestamptz + interval '5 minutes'
+                                    AND $2::timestamptz + interval '5 minutes' AS in_bounds
+         FROM projector_deliveries WHERE event_id = $3 AND projector = 'jcl15_lease_clock'`,
+        [(before.rows[0] as { t: string }).t, (after.rows[0] as { t: string }).t, ev],
+      );
+      // Complete before asserting, so a red run still leaves the delivery terminal (as JCL-10 does).
+      const completed = await ctx.workerPool.query(
+        `SELECT complete_projector_delivery($1, 'jcl15_lease_clock', $2, 'delivered', NULL, 'prov-ref-jcl15', NULL) AS ok`,
+        [ev, claim.claim_token],
+      );
+      expect((completed.rows[0] as { ok: boolean }).ok).toBe(true);
+      expect(stamped.rows).toEqual([{ in_bounds: true }]);
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => undefined); // a no-op once COMMIT has run
+      throw err;
+    } finally {
+      client.release();
+    }
+  }, 30_000);
+
+  it("JCL-15b: 0074 re-creates claim_projector_delivery_batch as its 0022 body with exactly the lease-stamp edit, and the live body is 0074's", async () => {
+    // Both files are read inside this it, so a missing 0074 fails only this test, not the whole
+    // file at module load. A later migration that re-creates the function moves this pin.
+    const sql0022 = await readFile(
+      path.join(MIGRATIONS_DIR, "0022_job_claim_lease_core.sql"),
+      "utf8",
+    );
+    const sql0074 = await readFile(
+      path.join(MIGRATIONS_DIR, "0074_projector_delivery_lease_clock.sql"),
+      "utf8",
+    );
+    const blockOf = (label: string, sql: string): string => {
+      const at = sql.indexOf("\nCREATE OR REPLACE FUNCTION claim_projector_delivery_batch(");
+      const end = sql.indexOf("\n$$;", at);
+      if (at < 0 || end < 0)
+        throw new Error(`${label}: no claim_projector_delivery_batch CREATE block`);
+      return sql.slice(at + 1, end + "\n$$;".length);
+    };
+    const occurrences = (text: string, needle: string) => text.split(needle).length - 1;
+    const block0022 = blockOf("0022", sql0022);
+    const block0074 = blockOf("0074", sql0074);
+
+    // 0022:380's stamp is the one edit; the once-checks keep the equality from passing on a wrong cut.
+    const oldStamp = "lease_expires_at = now() + interval '5 minutes'";
+    const newStamp = "lease_expires_at = clock_timestamp() + interval '5 minutes'";
+    expect(occurrences(block0022, oldStamp)).toBe(1);
+    expect(occurrences(block0074, newStamp)).toBe(1);
+    expect(block0022.split(oldStamp).join(newStamp)).toBe(block0074);
+    expect(occurrences(sql0074, "CREATE OR REPLACE FUNCTION")).toBe(1);
+
+    // prosrc is the text between the `$$` after `AS ` and the block's closing `$$`.
+    const body0074 = block0074.slice(
+      block0074.indexOf("\nAS $$\n") + "\nAS $$".length,
+      block0074.length - "$$;".length,
+    );
+    const live = await ctx.owner.query(
+      `SELECT prosrc FROM pg_catalog.pg_proc
+       WHERE oid = 'public.claim_projector_delivery_batch(text, integer)'::pg_catalog.regprocedure`,
+    );
+    expect(live.rows).toEqual([{ prosrc: body0074 }]);
+  }, 30_000);
+
   it("JCL-11: retry-then-reclaim increments attempts once per completion; stale token rejected after re-claim; dlq is terminal", async () => {
     const ev = await seedOutboxEvent(ctx.tenantA);
     await ctx.workerPool.query(`SELECT job_prepare_projector_delivery($1, 'jcl11_projector')`, [
