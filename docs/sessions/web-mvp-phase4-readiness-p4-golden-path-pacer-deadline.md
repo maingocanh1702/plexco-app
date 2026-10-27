@@ -21,7 +21,7 @@ Short forms: H = `apps/web/e2e/support/golden-path-helpers.ts`, S = `apps/web/e2
 
 ### 2.2 The two mechanisms
 
-- The pacer (test-only), H:12-20 (doc comment), H:21 `WINDOW_MS = 60_000`, H:22 `BUDGET = 45`, H:23 `PACE_FILE` (a temp file shared by tests and back-to-back runs), H:36-53 `paceSessionApi(page)`: a `page.route` handler on `/api/sessions` that queues each browser request and holds it (the `setTimeout` loop at H:40-48) until fewer than `BUDGET` hits are in the last 60 s. Installed at S:54 (host test) and S:275 (player test). It exists because SCR:99 `ACTOR_LIMIT = { limit: 60, windowSeconds: 60 }` (SCR:116-118) limits every ACCOUNT to 60 session API calls per rolling 60 s; both tests sign in as the same owner persona (`/Chủ CLB/`, S:61 and S:296).
+- The pacer (test-only), H:12-20 (doc comment), H:21 `WINDOW_MS = 60_000`, H:22 `BUDGET = 45`, H:23 `PACE_FILE` (a temp file shared by tests and back-to-back runs), H:36-53 `paceSessionApi(page)`: a `page.route` handler on `/api/sessions` that queues each browser request and holds it (the `setTimeout` loop at H:40-48) until fewer than `BUDGET` hits are in the last 60 s. Installed at S:54 (host test) and S:275 (player test); two more callers pass no argument: `apps/web/e2e/public-card-hide-address.spec.ts:136` (a local real-server run that CI ignores, `apps/web/playwright.config.ts:22`) and `apps/web/e2e/public-share-page.proof.ts:162` (not a spec); `apps/web/tsconfig.json:17` includes `e2e`, so both are typechecked (section 4). It exists because SCR:99 `ACTOR_LIMIT = { limit: 60, windowSeconds: 60 }` (SCR:116-118) limits every ACCOUNT to 60 session API calls per rolling 60 s; both tests sign in as the same owner persona (`/Chủ CLB/`, S:61 and S:296).
 - The product deadline, AC:43-47 and AC:76-85: `API_TIMEOUT_MS = 15_000`; every GET/HEAD and every non-PATCH JSON command with a string `commandId` (and no caller `signal`) aborts 15 s after `apiFetch` calls `fetch()`. A request held in the browser by the pacer counts against it. Before L49 (PR #129) nothing aborted a held request, so the same hold was invisible.
 
 ### 2.3 Call counts (Q2)
@@ -44,7 +44,7 @@ Short forms: H = `apps/web/e2e/support/golden-path-helpers.ts`, S = `apps/web/e2
 
 ## 3. Design
 
-- **D1 (the wait moves into the test).** `paceSessionApi(page, room)` first computes how long until at most `BUDGET - room` hits remain in the shared window, prints one stdout line (`golden path pacer: waiting <s> s for <room> session API slots ...`) and waits that long in test code; only then it installs the route handler. `room` is the test's measured number of paced calls (2.3): host 41, player 5. A test therefore starts its session API calls only when its whole run fits the budget, and the handler normally holds nothing.
+- **D1 (the wait moves into the test).** `paceSessionApi(page, room)` first computes how long until at most `BUDGET - room` hits remain in the shared window, prints one stdout line (`golden path pacer: waiting <s> s for <room> session API slots ...`) and waits that long in test code; only then it installs the route handler. `room` is the test's measured number of paced calls (2.3): host 41, player 5. A test therefore starts its session API calls only when its whole run fits the budget, and the handler normally holds nothing. A caller that has not measured its calls gets the default `room = 1` (D7): today's rule, wait only for the next free slot.
 - **D2 (the handler is a bounded backstop).** The route handler keeps the queue and `BUDGET`, but before every sleep it checks the hold so far plus the needed wait against `MAX_HOLD_MS = 8_000` (well under `API_TIMEOUT_MS`, imported from AC so the relation is checked, never copied). Beyond it, the handler aborts the request and throws one error naming the pacer, the request, the window count and the remedy (raise that test's `room`); the throw fails the test at once (2.5). A hold within the cap prints one stdout line (`golden path pacer: held <method> <path> <ms> ms`). A silent hold, or a 15 s abort that reads as a product timeout, cannot happen again.
 - **D3.** `PACE_FILE`'s path and JSON format, `WINDOW_MS` and `BUDGET = 45` stay (older runs share the window; the margin of 15 below the server ceiling stays).
 - **One computation.** A single pure function gives the wait for `room` free slots from the sorted window; the pre-wait uses it with the test's `room`, the handler with 1 (the same rule as H:43-47 today).
@@ -52,6 +52,7 @@ Short forms: H = `apps/web/e2e/support/golden-path-helpers.ts`, S = `apps/web/e2
 ## 4. Lead corrections
 
 - The lane block's evidence line 3 cites the doc comment as H:13-19 and `paceSessionApi` as H:36-51: the comment block is H:12-20 (its text lines are 13-19) and the function is H:36-53 (the route handler H:38-52). Same code; line ranges only.
+- Q1 (O) looked for `paceSessionApi` callers in S only and missed two (section 2.2); W1's typecheck found them (TS2554 with a required `room`). Resolved inside the lane's files by the default `room = 1` (D7); the two callers stay untouched and inherit only the bounded hold (A-10).
 - The verifier's report left "whether the request left the browser" unmeasured: E1 (2.4) settles the cause by experiment.
 - The lane block expects the second proof run to "start with a nearly full pace window". Measured: E1's whole run took 40 s, about 9 s of it before the test; after a full run's last paced call (the player test's) the chat tests and the setup of the next run follow, so the next host test may well start with an empty window. The proof records the pre-wait lines of both runs instead of assuming either; the hard case the pacer exists for is inside every run (the player test right after the host test's 41 calls).
 
@@ -65,6 +66,7 @@ Short forms: H = `apps/web/e2e/support/golden-path-helpers.ts`, S = `apps/web/e2
 | D4 | `room` = the measured paced-call count per test (host 41, player 5): the smallest value that leaves the handler nothing to hold | a margin on top (longer waits for no measured need; the backstop already names a drift); one global room (the player test would wait for the host test's whole budget) |
 | D5 | no unit test (VC:6 excludes `e2e/**`; VC is out of scope); the proof is the two full runs with their wait and hold lines | editing VC; a test file outside the lane's files |
 | D6 | `MAX_HOLD_MS` checked against the imported `API_TIMEOUT_MS` at module load (one source of truth for the deadline) | a copied 15 s literal (drifts silently if the product deadline changes) |
+| D7 | `room` defaults to 1 (today's rule) for the two unmeasured callers (2.2); their files are not edited | editing them with an explicit room (outside the lane's negative scope "no change to the other e2e specs", for no measured need) |
 
 ## 6. Implementation steps
 
@@ -72,7 +74,7 @@ Short forms: H = `apps/web/e2e/support/golden-path-helpers.ts`, S = `apps/web/e2
 2. O: the proof (section 7, A-1) under the lock, then R1 (section 8).
 3. Fixes re-reviewed in round 2; round 3 is the last; then one push, the PR, CI.
 
-## 7. Acceptance matrix (A-1..A-9)
+## 7. Acceptance matrix (A-1..A-10)
 
 | ID | Check | Where |
 |---|---|---|
@@ -85,6 +87,7 @@ Short forms: H = `apps/web/e2e/support/golden-path-helpers.ts`, S = `apps/web/e2
 | A-7 | the backstop aborts the request (never left pending) and its one error names the pacer, the request, the window count and the remedy | H; R1 |
 | A-8 | web typecheck, lint, `format:check`, `review:check:changed` and the full `review:check`, `pnpm build`, the backlog reconcile `--check` and `--audit` green | O |
 | A-9 | before/after: at the base the verifier's two runs FAIL (3 passed, 1 failed, the publish step); at the head A-1 passes | 2.1; A-1 |
+| A-10 | the two other callers (2.2) are unchanged and typecheck with the default `room = 1`; their only behaviour change is the bounded hold (before: an unbounded hold that the 15 s client deadline aborts) | `git diff`; the web typecheck; R1 |
 
 ## 8. Verification and review
 
@@ -94,7 +97,7 @@ Short forms: H = `apps/web/e2e/support/golden-path-helpers.ts`, S = `apps/web/e2
 ## 9. Budget (B3) and files
 
 - Estimate (the lane block): 2-3 non-docs files, test lines up to 150 (H and S are e2e test tooling), non-test lines 0 (any non-test product line is a ruling request), 0 migrations; docs: this file and backlog rows (new-row cap 3).
-- Edited: H, S (test tooling); BL (rows only). Read-only: AC (`API_TIMEOUT_MS` imported), SCR. New: this file.
+- Edited: H, S (test tooling); BL (rows only). Read-only: AC (`API_TIMEOUT_MS` imported), SCR, the two other callers (2.2). New: this file.
 
 ## 10. Threat model
 
@@ -123,7 +126,7 @@ SECURITY_REVIEW: not required: the diff touches no auth, secret, money or extern
 | 6 | Data, API, state, auth contract | no product contract changes; the pacer's temp-file format unchanged (D3) | PASS |
 | 7 | Fail-closed, idempotency, order | the backstop fails the test with a named error instead of holding (D2); the queue order unchanged | PASS |
 | 8 | Open questions in scope = 0 | section 11 | PASS |
-| 9 | Acceptance matrix with expected results | section 7 (A-1..A-9) | PASS |
+| 9 | Acceptance matrix with expected results | section 7 (A-1..A-10) | PASS |
 | 10 | Migration, security, rollback | no migration; no security round, with its voiding condition (section 10); rollback = revert the PR | PASS |
 | 11 | First slice hard dependencies merged | W1 depends on nothing unmerged | PASS |
 | 12 | Implementation handoff ready | sections 3 and 5-7; W1 has every input | PASS |
@@ -139,6 +142,8 @@ BASE_BRANCH: main
 TARGET_FILES:
   - apps/web/e2e/support/golden-path-helpers.ts (edited: the pre-wait, the bounded hold, one wait function, the doc comment)
   - apps/web/e2e/golden-path.spec.ts (edited: the two paceSessionApi call sites only)
+  - apps/web/e2e/public-card-hide-address.spec.ts (read-only: calls paceSessionApi with the default room)
+  - apps/web/e2e/public-share-page.proof.ts (read-only: calls paceSessionApi with the default room)
   - apps/web/lib/api-client.ts (read-only: API_TIMEOUT_MS imported by the helper)
   - apps/web/lib/session-command-route.ts (read-only: ACTOR_LIMIT)
   - docs/autopilot-backlog.md (edited: new rows only, cap 3)
