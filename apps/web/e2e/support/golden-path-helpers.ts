@@ -102,6 +102,11 @@ export async function paceSessionApi(page: Page, room = 1): Promise<void> {
       () => route.continue(),
       async (error) => {
         await route.abort().catch(() => undefined);
+        // Once the page has closed (its test ended), a throw would fail the NEXT test: print it instead.
+        if (page.isClosed()) {
+          console.log(String(error));
+          return;
+        }
         throw error;
       },
     );
