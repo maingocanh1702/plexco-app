@@ -133,6 +133,7 @@ node scripts/outbox-dlq-replay.mjs list --projector web_realtime --limit 50
 node scripts/outbox-dlq-replay.mjs replay --event <event-uuid> --projector web_realtime
 ```
 
+- Password: cùng luật percent-encode như ghi chú ở bước 4; URL không parse được thì CLI dừng trước khi kết nối, thoát `1`, không in URL ra.
 - `list`: mỗi dòng dlq một JSON (không có payload), cuối cùng `dlq rows: <n>`.
 - `replay`: đưa đúng một delivery dlq về `pending`, `attempts = 0`, ghi một dòng `job_audit_events`
   (`projector_delivery_replayed`); cycle kế tiếp gửi lại. Projector đang tắt thì CLI cảnh báo và dòng nằm chờ.
