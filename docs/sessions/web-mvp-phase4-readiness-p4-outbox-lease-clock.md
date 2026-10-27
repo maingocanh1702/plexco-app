@@ -59,7 +59,7 @@ Command at the base: `git grep -n -E "lease_expires_at *=|lease_expires_at *(<|>
 | 0023:194 | `claim_outbox_batch` (0023 DROP + CREATE at :137-138): `SET claimed_at = clock_timestamp(), lease_expires_at = clock_timestamp() + interval '5 minutes'` | `clock_timestamp()` | yes |
 | 0010:30, 0022:234 | the old `claim_outbox_batch` bodies | `now()` | no: replaced by the 0023:137-138 DROP + CREATE |
 | 0022:110 | a one-time backfill, `claimed_at + interval '5 minutes'` | none (data) | no: runs once |
-| compares | 0022:203; :348 (the function's reclaim scan, `pd.lease_expires_at < clock_timestamp()`); :373 (its due scan, `pd.next_attempt_at <= clock_timestamp()`); :451, :461, :471 (`complete_projector_delivery`); 0023:155, :286; 0056:202; 0057:109; 0071:51 | `clock_timestamp()` everywhere | yes |
+| compares | 0022:203; :348 (the function's reclaim scan, `pd.lease_expires_at < clock_timestamp()`); :373 (its due scan, `pd.next_attempt_at <= clock_timestamp()`); :430, :451, :461, :471 (`complete_projector_delivery`; :430 checks the caller's `p_next_attempt_at`); 0023:155, :286; 0056:202; 0057:109; 0071:51 | `clock_timestamp()` everywhere | yes |
 
 - `git grep -n claim_projector_delivery_batch -- packages/db/migrations` shows only 0022: the CREATE OR REPLACE at :322, the closing
   `$$;` at :397, the stamp at :380, the owner at :499 (`ALTER FUNCTION claim_projector_delivery_batch(text, integer) OWNER TO
@@ -160,12 +160,12 @@ The conductor's leads were read at `db8230e762bd36d21599fe4bd7dbb4725dbc364a`; m
   number; append-only). Written ONLY by a generator script kept outside the repo (the L41 and L42 method; its output and equality proof go
   in the PR body); never edited by hand.
 - Layout, in order:
-  1. Header, comments only, ASCII only: the file name; lane L46, authority DD-150 and RO-L46-1, the backlog row; `-- WHAT:` the one
-     stamp edit; `-- WHY (THREAT MODEL):` section 9 and 0023:186-194 (the stamp must read `clock_timestamp()`: "a caller running
-     claim_outbox_batch inside an explicit transaction open more than five minutes would otherwise receive an already-expired lease");
-     `-- NOT CHANGED:` every attribute, the owner, the ACL, the 5-minute length, the reclaim and due scans, and the two audit INSERTs,
-     which keep the `job_audit_events` `created_at` column default (D5; the 0023:167-170 precedent is a backlog row, not changed here);
-     `-- ROLLBACK:` a forward migration restating 0022:322-397.
+  1. Header (0074:1-34), comments only, ASCII only: the file name; lane L46, its authority (the owner's written approval of
+     2026-10-26 of the Phase 4 plan, row L46) and the backlog row; `-- WHAT:` the one stamp edit and the generator; `-- WHY:` the short
+     lease, the compares and the outbox twin fixed by 0023:189-194, and the two audit INSERTs, which keep the `job_audit_events`
+     `created_at` column default (D5; the 0023:167-170 precedent is a backlog row, not changed here); `-- THREAT MODEL:` the six
+     defended items and the not-defended line of section 9; `-- POSTURE:` the owner, the ACL, the bracket, one transaction per file,
+     nothing else changes; `-- ROLLBACK:` a forward migration that restates 0022:322-397.
   2. `GRANT CREATE ON SCHEMA public TO job_definer;`
   3. `SET ROLE job_definer;`
   4. 0022:322-397 byte for byte, with ONE edit on the 0022:380 line: `now() + interval '5 minutes'` -> `clock_timestamp() + interval
@@ -197,7 +197,8 @@ Each is "default applied, pending owner sign-off" (Tier B, pre-approved by RO-L4
 
 - **D1 `clock_timestamp()` at the stamp.** It matches every compare (section 2.1) and 0023:194, so the lease is five real minutes from
   the claim. Rejected: `statement_timestamp()`, which still ignores time spent inside the statement; changing the compare side to now(),
-  which would shorten every lease (and touches other functions: negative scope).
+  which would lengthen the lease an aged transaction sees (now() <= clock_timestamp(): a stuck row is held longer) and touches other
+  functions (negative scope).
 - **D2 the 0022 text verbatim, no attribute keyword added.** The catalog before shows VOLATILE (`v`), CALLED ON NULL INPUT (`proisstrict`
   false), PARALLEL UNSAFE (`u`), NOT LEAKPROOF, COST 100, ROWS 1000: the defaults CREATE OR REPLACE re-applies to an omitted clause, so
   the same text yields the same catalog. Rejected: stating them explicitly as 0067 did (0067:199-200, `VOLATILE` at :204), which changes
@@ -266,7 +267,7 @@ Each is "default applied, pending owner sign-off" (Tier B, pre-approved by RO-L4
 | # | GOAL | expected result | evidence |
 |---|---|---|---|
 | A1 | (1) one migration, one edit | 0074 is the only new migration; its block equals 0022:322-397 with the edit reverted; one line differs | the generator output; the independent plain diff; `git diff --name-only <base>...HEAD` |
-| A2 | (1) attributes, owner, ACL, no privilege left | section 10: every row equal except `md5(prosrc)` and the stamp rows; the reverse-edit md5 equals the before md5; `job_definer` has no CREATE on public; current_user `plexco` | the scratch after probe |
+| A2 | (1) attributes, owner, ACL, no privilege left | section 10: every row equal except `md5(prosrc)` and the stamp rows; the reverse-edit md5 equals the before md5; `job_definer` has no CREATE on public; the file ends `RESET ROLE;` and the REVOKE (0074:118-119) | the scratch after probe; the `RESET` tag of the direct re-run |
 | A3 | (1) re-run | a second migrate skips 0074 (same sha256, `migrate.ts:296`) and changes nothing | the re-run probe equals the after column; `rls-invariants.test.ts:73` and `outbox-projector-registry.test.ts:125` (skipped 75) |
 | A4 | (2) PR body | the before/after table, the generator equality and an independent diff | the PR body |
 | A5 | (3) the lease clock | JCL-15 RED at step 2, GREEN from step 4 | the locked runs (logs summarized in the PR body) |
@@ -308,7 +309,9 @@ Where each defended item is checked:
   equals 0022:322-397 byte for byte; the `SECURITY DEFINER` and `SET search_path` lines unchanged) and JCL-15b (D9); the after column
   of section 10 (every attribute row, `owner` and `proacl` equal).
 - (2) CREATE on public or the role switch left in place: the scratch catalog probe before, after 0074 and after the re-run (section
-  10): `job_definer CREATE on public` stays `false` and `current_user after probe` is back to the migration role, `plexco`.
+  10): `job_definer CREATE on public` stays `false`; the role switch ends inside the file, which closes with `RESET ROLE;` and the
+  REVOKE (0074:118-119), and the second direct run of the file on the scratch database printed the `RESET` command tag. The probe's
+  `current_user after probe` row shows only its own connection's role, so it is no evidence about the migration's session.
 - (3) A lease stamped short or long: JCL-15 (D4), RED on the old body at step 2 and GREEN from step 4 (D7); its bounds are five real
   minutes from the claim, computed in SQL with no tolerance.
 - (4) Body drift between the file, the pins and the catalog: JCL-15b (D9) on every run of the suite (0074 against 0022, the live
