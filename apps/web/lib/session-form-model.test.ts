@@ -1,3 +1,4 @@
+import { readFileSync, readdirSync } from "node:fs";
 import {
   DISPLAY_NAME_MAX as SERVER_DISPLAY_NAME_MAX,
   checkTypedName as serverCheckTypedName,
@@ -810,5 +811,35 @@ describe("L43 name caps (DD-150 Q4 (b))", () => {
     { label: "U+3164 Hangul filler", value: ch(0x3164), expected: false },
   ])("hasVisibleChar($label) answers as the db rule: $expected", ({ value, expected }) => {
     expect(hasVisibleChar(value)).toBe(expected);
+  });
+});
+
+describe("name rule sources", () => {
+  const web = new URL("../", import.meta.url);
+  const read = (file: string) => readFileSync(new URL(file, web), "utf8");
+
+  it("source guard: one definition of the name caps and the visible-char rule, in session-form-model.ts", () => {
+    const sources = ["app", "components", "lib"].flatMap((root) =>
+      readdirSync(new URL(`${root}/`, web), { encoding: "utf8", recursive: true })
+        .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+        .map((file) => `${root}/${file}`),
+    );
+    // Every declaration counts, with or without a type annotation or a numeric initializer.
+    const caps = sources.filter((file) =>
+      /\b(?:const|let|var)\s+(?:DISPLAY_NAME_MAX|CLUB_NAME_MAX)\b/.test(read(file)),
+    );
+    const visibleChar = "[^\\s\\p{DI}]";
+    const rules = sources.filter((file) => read(file).includes(visibleChar));
+    expect(caps).toEqual(["lib/session-form-model.ts"]);
+    expect(rules).toEqual(["lib/session-form-model.ts"]);
+  });
+
+  it("the create-club, club-settings and me-settings name inputs are bounded at twice their cap", () => {
+    // 240 UTF-16 units let 120 astral code points through (threat 5).
+    const bounds = (file: string, cap: string) =>
+      read(file).split(`maxLength={2 * ${cap}}`).length - 1;
+    expect(bounds("components/onboarding/new-club-form.tsx", "CLUB_NAME_MAX")).toBe(1);
+    expect(bounds("components/settings/club-profile-form.tsx", "CLUB_NAME_MAX")).toBe(1);
+    expect(bounds("components/me/settings-profile-form.tsx", "DISPLAY_NAME_MAX")).toBe(1);
   });
 });

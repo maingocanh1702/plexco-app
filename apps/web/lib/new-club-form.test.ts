@@ -39,6 +39,11 @@ describe("validateNewClub", () => {
     expect(validateNewClub({ ...ok, name: "x".repeat(121) }, t).name).toBeTruthy();
     expect(validateNewClub({ ...ok, name: "x".repeat(120) }, t).name).toBeUndefined();
   });
+  it("counts the club name in code points: 120 astral letters accepted, 121 refused", () => {
+    const ch = String.fromCodePoint(0x20000); // a CJK Extension B ideograph, a letter
+    expect(validateNewClub({ ...ok, name: ch.repeat(120) }, t).name).toBeUndefined();
+    expect(validateNewClub({ ...ok, name: ch.repeat(121) }, t).name).toBeTruthy();
+  });
   // L27: strip first, as the server stores the stripped name. R2 and R5 raise no error, R3 is the
   // existing empty error; R5: composed emoji are stored split (the owner's rule as written).
   it.each([

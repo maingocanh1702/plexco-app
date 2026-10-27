@@ -69,13 +69,21 @@ describe("MessageList", () => {
     [
       "uses the DF-1 label for every author kind",
       [
+        live("6", { authorLabel: "" }),
         live("5", { authorLabel: null }),
         live("4", { authorType: "assistant", authorLabel: null }),
         live("3", { authorType: "system", authorLabel: null }),
         live("2", { mine: true }),
         live("1"),
       ],
-      ["Ann @ msg:1", "You @ msg:2", "System @ msg:3", "Assistant @ msg:4", "(unnamed) @ msg:5"],
+      [
+        "Ann @ msg:1",
+        "You @ msg:2",
+        "System @ msg:3",
+        "Assistant @ msg:4",
+        "(unnamed) @ msg:5",
+        "(unnamed) @ msg:6",
+      ],
     ],
     [
       "quotes label and body of a loaded reply target",
