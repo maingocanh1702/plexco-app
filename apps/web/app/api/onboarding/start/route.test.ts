@@ -18,6 +18,7 @@ vi.mock("@plexco/db", async (importOriginal) => ({
   // the route strips (L27), then checks (L29).
   stripInvisibleChars: (await importOriginal<typeof import("@plexco/db")>()).stripInvisibleChars,
   checkTypedName: (await importOriginal<typeof import("@plexco/db")>()).checkTypedName,
+  pgErrorHasCode: (await importOriginal<typeof import("@plexco/db")>()).pgErrorHasCode,
 }));
 
 // Keep the REAL t() behaviour — the Vietnamese-message assertions below depend on it — but make the
