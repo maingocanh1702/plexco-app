@@ -1,9 +1,13 @@
 import type { TFn } from "./i18n-client";
-import { checkTypedName, stripInvisibleChars } from "./session-form-model";
+import {
+  checkTypedName,
+  CLUB_NAME_MAX,
+  isBoundedName,
+  stripInvisibleChars,
+} from "./session-form-model";
 
 /** Mirrors the server check in api/onboarding/start (and tenant_provision). */
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
-export const MAX_NAME_CHARS = 120;
 export const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
 /** Used until the browser's full IANA list is available (and where Intl.supportedValuesOf is not). */
 export const SHORT_TIMEZONES = [
@@ -50,10 +54,11 @@ export function validateNewClub(values: NewClubValues, t: TFn): NewClubErrors {
   // L27: strip first (the web mirror of the server list), then trim, as the server stores it.
   const name = stripInvisibleChars(values.name).trim();
   if (name.length === 0) errors.name = t("Nhập tên câu lạc bộ.", "Enter a club name.");
-  else if (name.length > MAX_NAME_CHARS) {
+  else if (!isBoundedName(name, CLUB_NAME_MAX)) {
+    // Counts code points, equal to the start route and the SQL char_length rule.
     errors.name = t(
-      `Tên tối đa ${MAX_NAME_CHARS} ký tự.`,
-      `Name can be at most ${MAX_NAME_CHARS} characters.`,
+      `Tên tối đa ${CLUB_NAME_MAX} ký tự.`,
+      `Name can be at most ${CLUB_NAME_MAX} characters.`,
     );
   } else if (checkTypedName(name) === null) {
     // L29: refuse what the server rule refuses (web twin of checkTypedName): a control, bidi or
