@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isDefiniteFailure } from "./session-error-ui";
 import { createUncertainCommandIdSessionStore } from "./uncertain-command-id-session-store";
-import { isCommandIdConflict, useCommandId } from "./use-command-id";
+import { useCommandId } from "./use-command-id";
 import { useSessionPersonId } from "./use-session";
 
 export type RosterCommandKind = "mark-paid" | "add" | "remove" | "reverse";
@@ -27,9 +27,8 @@ const store = createUncertainCommandIdSessionStore();
  * key stays and the inputs freeze until a 2xx (`replayed: true` included) or `reset()` (the host
  * cancels and refetches). A definite 4xx after that proves nothing about the earlier attempt (the
  * entry gate answers RATE_LIMITED / CSRF_INVALID before the replay lookup): it shows its error but
- * keeps the key and the lock. COMMAND_ID_CONFLICT is the exception: the key belongs to another
- * command, so the keeper drops it and the inputs unlock (the next submit is a new command, no loop).
- * `run` resolves to the result, or `undefined` when it failed (the error is then in `error`).
+ * keeps the key and the lock. `run` resolves to the result, or `undefined` when it failed (the
+ * error is then in `error`).
  *
  * Persistence (L49 D4): with an `intent` and a signed-in person (`useSessionPersonId`), the key of an
  * uncertain attempt is also saved in sessionStorage under {tenant, person, kind, targets} + the
@@ -94,7 +93,6 @@ export function useRosterCommand(onAbandon?: () => void) {
       } catch (e) {
         id.settle(e); // every failure, the uncertain ones too: the keeper saves or drops the record
         if (!isDefiniteFailure(e)) uncertain.current = true;
-        else if (isCommandIdConflict(e)) uncertain.current = false; // the keeper dropped the key
         setLocked(uncertain.current);
         setError(e);
         return undefined;

@@ -70,12 +70,14 @@ describe("createCommandIdKeeper (DD-117 D5 + payload binding)", () => {
     expect(k.get('{"name":"A"}')).not.toBe(first);
   });
 
-  it("no store: a sticky key (uncertain, then COMMAND_ID_CONFLICT) is dropped; the next get mints (no conflict loop)", () => {
+  it("no store: COMMAND_ID_CONFLICT drops a fresh key but keeps a sticky one (the server also answers it for this intent when its stored result is unusable)", () => {
     const k = keeper();
+    const conflict409 = new ApiClientError("COMMAND_ID_CONFLICT", "", 409, "req");
     expect(k.get("p")).toBe("k1");
+    k.settle(conflict409);
+    expect(k.get("p")).toBe("k2");
     k.settle(network);
-    expect(k.get("p")).toBe("k1");
-    k.settle(new ApiClientError("COMMAND_ID_CONFLICT", "", 409, "req"));
+    k.settle(conflict409);
     expect(k.get("p")).toBe("k2");
   });
 
@@ -198,21 +200,23 @@ describe("createCommandIdKeeper with a store (L49 D3)", () => {
     expect(persistentKeeper(store, "b").get(body, paid)).toBe(id);
   });
 
-  it("COMMAND_ID_CONFLICT drops the record and the entry even when sticky; the next get mints", () => {
+  it("COMMAND_ID_CONFLICT drops the record but keeps a sticky entry; after reset() the next get mints", () => {
     const { store, records } = fakeStore();
     const k = persistentKeeper(store, "a");
     const id = k.get(body, paid);
     k.settle(network);
     k.settle(conflict);
     expect(records.size).toBe(0);
-    expect(k.get(body, paid)).not.toBe(id);
+    expect(k.get(body, paid)).toBe(id); // the same intent may hold an unusable stored result
+    k.reset();
+    expect(k.get(body, paid)).not.toBe(id); // no record left to restore: no 24 h conflict loop
     // The same for a key restored from the store (sticky from the start).
     k.settle(network);
     const restoredKeeper = persistentKeeper(store, "b");
     const restored = restoredKeeper.get(body, paid);
     restoredKeeper.settle(conflict);
     expect(records.size).toBe(0);
-    expect(restoredKeeper.get(body, paid)).not.toBe(restored);
+    expect(restoredKeeper.get(body, paid)).toBe(restored);
   });
 
   it("success drops the record and the entry", () => {

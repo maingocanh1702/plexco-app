@@ -57,7 +57,9 @@ Short forms (all under `apps/web/lib/`): UCI = `use-command-id.ts`, URC = `use-r
   (`session-service.ts:2814-2833`).
 - **Dedup on commandId only (DD-117 D5)**: `roster-money-shared.ts:119-142` `replayOrNull`: `prior.commandType === commandType &&
   isStored(prior.stored) && prior.stored.sessionId === sessionId && prior.stored.actorPersonId === actorPersonId` returns the stored result,
-  else `fail("COMMAND_ID_CONFLICT", ...)`; doc `:115` "Dedup (DD-117 D5: commandId-only)".
+  else `fail("COMMAND_ID_CONFLICT", ...)`; doc `:115` "Dedup (DD-117 D5: commandId-only)". So a 409 ALSO answers the SAME intent when
+  `isStored` rejects its stored result (`:140` "or has no usable result"; create `session-service.ts:352-356` and update `:1357-1360` alike):
+  a stored-shape change across a deploy, or a corrupt row (review R1a-1; row 4).
 - **The 409 sites** (all exact): `payment-manual.ts:314` `return fail("COMMAND_ID_CONFLICT", "command_id belongs to a different player set");`;
   `payment-reversal.ts:100-101` (another allocation); `roster-service.ts:162-163` (add: another membershipId, only when the re-send carries
   one); `roster-service.ts:402-403` (remove: another player); `join-request-service.ts:229-230` (another join request); create
@@ -205,8 +207,8 @@ the design follows the file (section 4).
   server REPLAYS a changed body under the same type and target and ignores the new body (2.1), and DD-117 D5 forbids a server fingerprint.
 - **D3 Keeper.** `createCommandIdKeeper` takes an optional store (3.3); with none it behaves exactly as today. `get` restores a persisted id
   for the identical intent, marked uncertain (sticky). `settle`: success -> drop the record and the entry; uncertain -> save the record;
-  COMMAND_ID_CONFLICT -> drop the record and the entry, even when sticky; any other definite failure -> keep both when sticky, else drop the
-  entry (no record exists). `reset()` clears memory ONLY and never removes a persisted record: Cancel is an explicit `reset()` (2.3), so this
+  COMMAND_ID_CONFLICT -> drop the record, and the entry by the definite rule (kept when sticky, R1a-1); any other definite failure -> keep
+  both when sticky, else drop the entry (no record exists). `reset()` clears memory ONLY and never removes a persisted record: Cancel is an explicit `reset()` (2.3), so this
   is what "survives a dialog Cancel" means.
 - **D4 Hook.** `run(call, intent?)` passes the fingerprint and the scope to `get` and settles EVERY failure into the keeper, the uncertain
   ones too (today they are never settled: URC:55-56, 2.3). Scope = {tenantId, personId, kind, targets}: kind, targets and tenantId from the
@@ -277,8 +279,8 @@ KEEPER (UCI):
 - `get`: the same payload AND the same scope as the current entry -> its id; else, when a store, a scope and a payload are all present,
   `store.find(scope, payload)`: a hit becomes the current entry with uncertain = true (sticky); else mint (as today).
 - `settle()`: `store.drop` for the current entry, then current = null. `settle(e)`: `!isDefiniteFailure(e)` -> uncertain = true +
-  `store.save`; an `ApiClientError` with code COMMAND_ID_CONFLICT -> `store.drop` + current = null (even when sticky); any other definite
-  failure: sticky -> keep the entry and the record; not sticky -> current = null (no record was written).
+  `store.save`; an `ApiClientError` with code COMMAND_ID_CONFLICT -> `store.drop`, then the definite rule for the entry (R1a-1); any
+  definite failure: sticky -> keep the entry (and, but for a conflict, the record); not sticky -> current = null (no record was written).
 - `reset()`: current = null ONLY; never touches the store.
 - `useCommandId(store?)` -> `useState(() => createCommandIdKeeper(() => crypto.randomUUID(), store))`. The 10 other users keep calling
   `useCommandId()`, unchanged; the two deliberate no-payload callers (`zalo-connect-card.tsx:141`, `moderation-sheet.tsx:38`, section 4
@@ -289,8 +291,8 @@ HOOK (URC):
 - `export type RosterCommandKind = "mark-paid" | "add" | "remove" | "reverse"`; `run(call, intent?: { tenantId: string; kind:
   RosterCommandKind; targets: readonly string[]; fingerprint: string })`.
 - personId = `useSessionPersonId()`; scope = intent && personId ? {tenantId, personId, kind, targets} : undefined;
-  `id.get(intent?.fingerprint, scope)`; every failure is settled into the keeper; a COMMAND_ID_CONFLICT also unlocks (locked = false, the
-  uncertain ref reset); otherwise `locked` derives from this mount's attempts only, as today.
+  `id.get(intent?.fingerprint, scope)`; every failure is settled into the keeper; `locked` derives from this mount's attempts only, as
+  today (a COMMAND_ID_CONFLICT does not unlock: review R1a-1, row 4).
 - One module-level `const store = createUncertainCommandIdSessionStore()` passed to `useCommandId(store)`. The preview call
   (`mark-paid-sheet.tsx`) runs without an intent: unchanged.
 
@@ -315,7 +317,7 @@ PROBES (ABSENT at the base, section 1): `createUncertainCommandIdSessionStore` (
 | 1 | Uncertain failure (network, 5xx, CLIENT_BAD_RESPONSE, CLIENT_TIMEOUT) | kept in memory + record saved | true (as today) | the uncertain copy, focused (D8) | none until Cancel/unmount (as today) | it may have committed; dedup on commandId only replays the SAME id, a NEW id applies twice (two same-amount payments; two "Minh") |
 | 2 | Definite 4xx, no earlier uncertain attempt | dropped, no record | false | the domain copy | none | the only attempt under this id was refused, so no stored result exists under it |
 | 3 | Definite 4xx after an uncertain attempt (RATE_LIMITED, CSRF, 403/TENANT_SUSPENDED) | kept + record kept (sticky) | true | the copy | Cancel refetches (as today) | authz precedes dedup: a COMMITTED id can answer 403/TENANT_SUSPENDED, so the 4xx proves nothing about the first attempt |
-| 4 | COMMAND_ID_CONFLICT 409 | dropped + record dropped | false | the human copy, "reload and try again" -> a NEW id (no loop) | none | a 409 fires only on another type, session, actor or target (the 409 sites), so this intent was never stored under the id |
+| 4 | COMMAND_ID_CONFLICT 409 | record dropped; the key by the definite rule: dropped when fresh, kept when sticky (rows 2, 3) | unchanged (true after an uncertain attempt) | the human copy, "reload and try again" | Cancel refetches (as today); after a reload the next attempt mints a NEW id (no 24 h loop) | usually another type, session, actor or target (the 409 sites), but also the SAME intent when its stored result is unusable (2.1 Dedup), so a sticky key never becomes a new id before the host has seen a refetch (review R1a-1) |
 | 5 | Success, first apply (`replayed: false`) | dropped + record dropped | false | the success copy | the screen's own refresh | outcome observed; a deliberate second payment gets its own id (RO-L49-1 item 4) |
 | 6 | Success, `replayed: true` | dropped + record dropped | false | the replayed notice (D5) | the screen's own refresh | a replay is HTTP 200 `replayed: true` with zero writes: the first attempt had landed |
 | 7 | Reload while uncertain | memory lost, record survives (same tab) | false (the body is not stored, the inputs cannot be re-frozen) | fresh state (the page fetches) | inherent | the record holds only id, hash and time; the identical intent restores it (row 9) |
@@ -428,7 +430,7 @@ Each new test must FAIL on its planted mutation (R1b).
 | A-9 | uncertain settle saves; a new keeper on the same store, scope and payload -> the SAME id, sticky | keeper test |
 | A-10 | a changed payload -> a NEW id; the old record stays | keeper test |
 | A-11 | `reset()` keeps the record; get after reset -> the same id | keeper test |
-| A-12 | COMMAND_ID_CONFLICT drops the record and the entry even when sticky; the next get mints | keeper test |
+| A-12 | COMMAND_ID_CONFLICT drops the record; a fresh key is dropped, a sticky one kept until reset() (R1a-1) | keeper test |
 | A-13 | success drops the record; a definite 4xx keeps it when sticky, drops the entry when not | keeper test |
 | A-14 | get without a payload or a scope never calls the store | keeper test |
 | A-15 | no caller signal, no answer in 15_000 ms (fake timers) -> `ApiClientError` CLIENT_TIMEOUT, status 0 | `api-client.test.ts` |
@@ -483,7 +485,7 @@ The lane block's 7 threats, restated in substance from the design's threat-to-ro
 | 1 | the key is lost between an uncertain attempt and its retry (reload, Cancel), so the retry applies twice | rows 7, 8, 9; D1, D3 |
 | 2 | a stale key re-sent with another body replays and silently drops it, or a deliberate second payment shares an id | rows 10, 5, 6; D2, D5 |
 | 3 | a key restored across person, tenant or time | rows 13, 14, 15; D1 |
-| 4 | a COMMAND_ID_CONFLICT loop | row 4; D3, D6 |
+| 4 | a COMMAND_ID_CONFLICT loop | row 4 (the record is dropped, so a reload ends it; a sticky key repeats in the mount until Cancel or a reload, both refetch first: fail-closed, R1a-1); D3, D6 |
 | 5 | a timeout classified as definite (the key dropped while the server may have committed) | row 1; D7 (CLIENT_TIMEOUT is uncertain), D8 |
 | 6 | PII or money data in browser storage | D1, D2: only an id, a hash and a time |
 | 7 | storage that throws, is absent or full (private mode) | row 12 (degrade to today's in-memory behaviour; the command is never blocked) |

@@ -24,15 +24,14 @@ import type { CommandIdScope, UncertainCommandIdStore } from "./uncertain-comman
  * learns of the uncertainty only through `settle(error)`: a caller that never settles an uncertain
  * failure sees the plain rule.
  *
- * The one 4xx that DOES prove something is COMMAND_ID_CONFLICT (409): the server holds this key for
- * another command (type, session, actor or target), so this intent was never stored under it and every
- * retry under it would conflict again. It drops the key even when sticky (L49 row 4: a new key, no loop).
- *
  * Persistence (L49 D3, optional): with a `store` AND a `scope` (tenant, person, command kind, targets)
  * AND a payload, an uncertain failure also saves `{key}` for that scope + payload, and a `get` that would
  * mint first restores a saved key, sticky, so the identical intent after a reload or a dialog Cancel
- * replays instead of applying twice. A 2xx or COMMAND_ID_CONFLICT drops the record with the key; another
- * definite failure keeps it when sticky and has none to drop otherwise. `reset()` clears memory ONLY and
+ * replays instead of applying twice. A 2xx drops the record with the key. COMMAND_ID_CONFLICT drops the
+ * record but, like any definite failure, keeps a sticky key: the server also answers it for THIS intent
+ * when its stored result is unusable (`replayOrNull`), so a new key now could apply twice; after a
+ * reload, which refetches, the next attempt is a new command (no 24 h conflict loop). Another definite
+ * failure keeps the record when sticky and has none to drop otherwise. `reset()` clears memory ONLY and
  * never removes a record: that is how an uncertain attempt survives a dialog Cancel. No store or no scope
  * or no payload: memory only, exactly the rule above.
  *
@@ -43,11 +42,6 @@ export interface CommandIdKeeper {
   get(payload?: string, scope?: CommandIdScope): string;
   settle(error?: unknown): void;
   reset(): void;
-}
-
-/** The server's proof that a key belongs to another command: drop it, never retry under it. */
-export function isCommandIdConflict(error: unknown): boolean {
-  return error instanceof ApiClientError && error.code === "COMMAND_ID_CONFLICT";
 }
 
 const sameScope = (a: CommandIdScope | undefined, b: CommandIdScope | undefined): boolean =>
@@ -97,11 +91,11 @@ export function createCommandIdKeeper(
       } else if (!isDefiniteFailure(error)) {
         current.uncertain = true;
         p?.store.save(p.scope, p.payload, current.id);
-      } else if (isCommandIdConflict(error)) {
-        p?.store.drop(p.scope, p.payload);
-        current = null; // even when sticky
-      } else if (!current.uncertain) {
-        current = null; // definite, and no attempt under it was uncertain (so nothing was saved)
+      } else {
+        if (error instanceof ApiClientError && error.code === "COMMAND_ID_CONFLICT") {
+          p?.store.drop(p.scope, p.payload); // the record only: a sticky key stays (see above)
+        }
+        if (!current.uncertain) current = null; // definite, and no attempt under it was uncertain
       }
     },
     reset: () => {
