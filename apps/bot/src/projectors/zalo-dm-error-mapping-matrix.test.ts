@@ -24,7 +24,7 @@ import {
 import { startZaloStub, type StubReply, type ZaloStub } from "../test-zalo-stub.js";
 import { createZaloDmDeliver } from "./zalo-dm.js";
 
-// Fixture copied from zalo-dm.test.ts :28-61, :177-251 and :253-328, trimmed to these rows.
+// Fixture adapted from zalo-dm.test.ts :28-61, :177-251 and :253-328, trimmed to these rows.
 const KEY = Buffer.alloc(32, "k").toString("base64");
 const TOKEN = "654321:FIXTURE-worker-token";
 const CLAIM_BATCH = "SELECT * FROM claim_projector_delivery_batch('zalo_dm', 100)";

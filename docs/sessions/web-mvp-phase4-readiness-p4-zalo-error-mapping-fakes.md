@@ -91,7 +91,7 @@ R = retry (DM:223), D = dlq (DM:224), T = recipient terminal (DM:225-232); rej(s
 | 14 | timeout | no headers before timeoutMs | timeout API:79 | R `zalo_timeout` API:153-154 | match | A-21 |
 | 15 | network | destroy before headers, a closed port, 301-308 | network API:79 | R `zalo_network` API:155-156 | match | A-22 |
 
-- Outside Z-6, pinned as shipped where the fake reaches them (A-23): `invalid_token` -> D `bot_unavailable` (API:157-158); `invalid_base` -> D `config_missing` (API:159-160; the projector pre-checks it, DM:137-141); a non-ZaloApiError -> R `zalo_network` (API:151); 300 and 304 -> T `zalo_rejected` (API:147). Classes DD-138 does not name, pinned as shipped (no disagreement, so no ruling): 3xx; a non-integer error_code = absent; an envelope error_code >= 500 (600+ too) -> R, a negative one -> T (API:146-147, 164).
+- Outside Z-6, pinned as shipped where the fake reaches them (A-23): `invalid_token` -> D `bot_unavailable` (API:157-158); `invalid_base` -> D `config_missing` (API:159-160; the projector pre-checks it, DM:137-141); a non-ZaloApiError -> R `zalo_network` (API:151); 300 and 304 -> T `zalo_rejected` (API:147). Classes DD-138 does not name, pinned as shipped (no disagreement, so no ruling): 3xx; a non-integer error_code = absent; an envelope error_code >= 500 (600+ too) -> R, a zero or negative one -> T (API:146-147, 164).
 
 ### 2.7 Base URL, existing tests, the fake (reader A)
 
