@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiClientError, CLIENT_NETWORK_ERROR } from "./api-client";
 import { createCommandIdKeeper } from "./use-command-id";
+import type { CommandIdScope, UncertainCommandIdStore } from "./uncertain-command-id-session-store";
 
 /** Deterministic keys: k1, k2, ... */
 function keeper() {
@@ -69,6 +70,17 @@ describe("createCommandIdKeeper (DD-117 D5 + payload binding)", () => {
     expect(k.get('{"name":"A"}')).not.toBe(first);
   });
 
+  it("no store: COMMAND_ID_CONFLICT drops a fresh key but keeps a sticky one (the server also answers it for this intent when its stored result is unusable)", () => {
+    const k = keeper();
+    const conflict409 = new ApiClientError("COMMAND_ID_CONFLICT", "", 409, "req");
+    expect(k.get("p")).toBe("k1");
+    k.settle(conflict409);
+    expect(k.get("p")).toBe("k2");
+    k.settle(network);
+    k.settle(conflict409);
+    expect(k.get("p")).toBe("k2");
+  });
+
   it("the same sticky rule for no-payload callers: uncertain, then 403/429, keeps the key until 2xx or reset", () => {
     const k = keeper();
     const first = k.get();
@@ -107,5 +119,164 @@ describe("createCommandIdKeeper (DD-117 D5 + payload binding)", () => {
     k.reset();
     k.settle(network);
     expect(k.get()).not.toBe(first);
+  });
+});
+
+/** An in-memory store that records every call (the real one is covered by its own test file). */
+function fakeStore() {
+  const records = new Map<string, string>();
+  const calls: string[] = [];
+  const k = (s: CommandIdScope, fp: string) =>
+    JSON.stringify([s.tenantId, s.personId, s.kind, s.targets, fp]);
+  const store: UncertainCommandIdStore = {
+    find: (s, fp) => {
+      calls.push("find");
+      return records.get(k(s, fp)) ?? null;
+    },
+    save: (s, fp, id) => {
+      calls.push("save");
+      records.set(k(s, fp), id);
+    },
+    drop: (s, fp) => {
+      calls.push("drop");
+      records.delete(k(s, fp));
+    },
+  };
+  return { store, records, calls };
+}
+/** A keeper over `store` whose keys are `${name}1`, `${name}2`, ... (a second mount gets another name). */
+function persistentKeeper(store: UncertainCommandIdStore, name = "k") {
+  let n = 0;
+  return createCommandIdKeeper(() => `${name}${++n}`, store);
+}
+const paid: CommandIdScope = { tenantId: "t1", personId: "p1", kind: "mark-paid", targets: ["s1"] };
+const body = '{"method":"cash","items":[{"playerId":"a","amount":50000}],"note":""}';
+const conflict = new ApiClientError("COMMAND_ID_CONFLICT", "", 409, "req");
+
+describe("createCommandIdKeeper with a store (L49 D3)", () => {
+  it("an uncertain key is restored for the identical payload + scope after a remount, and stays sticky", () => {
+    const { store, calls } = fakeStore();
+    const first = persistentKeeper(store, "a");
+    const id = first.get(body, paid);
+    first.settle(network);
+    // A reload: a new keeper (a new mount) over the same store.
+    const second = persistentKeeper(store, "b");
+    expect(second.get(body, { ...paid, targets: ["s1"] })).toBe(id);
+    // An uncertain failure of the restored key saves its record again (its TTL starts over).
+    second.settle(network);
+    expect(calls.at(-1)).toBe("save");
+    // Sticky: a definite 4xx from the entry gate proves nothing about the earlier attempt.
+    second.settle(rateLimited);
+    expect(second.get(body, paid)).toBe(id);
+    second.settle(forbidden);
+    expect(persistentKeeper(store, "c").get(body, paid)).toBe(id);
+  });
+
+  it("the record is saved BEFORE the send: a reload while the request is in flight restores the same key, sticky; a Cancel in flight and a late 2xx leave it", () => {
+    const { store, records } = fakeStore();
+    const first = persistentKeeper(store, "a");
+    const id = first.get(body, paid); // in flight: not settled yet
+    expect(records.size).toBe(1);
+    // A reload while the request is in flight: a new mount restores the key, sticky.
+    const second = persistentKeeper(store, "b");
+    expect(second.get(body, paid)).toBe(id);
+    second.settle(rateLimited);
+    expect(second.get(body, paid)).toBe(id);
+    // A Cancel while in flight, then the late 2xx: that settle is a no-op, so the record stays.
+    first.reset();
+    first.settle();
+    expect(records.size).toBe(1);
+    expect(persistentKeeper(store, "c").get(body, paid)).toBe(id); // the accepted edge: one replay
+  });
+
+  it("a fresh but equal scope object is the same entry; another target or person is another command", () => {
+    const { store } = fakeStore();
+    const k = persistentKeeper(store);
+    const id = k.get(body, paid);
+    expect(k.get(body, { ...paid, targets: [...paid.targets] })).toBe(id);
+    expect(k.get(body, { ...paid, targets: ["s2"] })).not.toBe(id);
+    expect(k.get(body, { ...paid, personId: "p2" })).not.toBe(id);
+  });
+
+  it("a changed payload mints a NEW key and leaves the old record untouched", () => {
+    const { store, records } = fakeStore();
+    const k = persistentKeeper(store, "a");
+    const id = k.get(body, paid);
+    k.settle(serverError);
+    const edited = k.get('{"method":"transfer"}', paid);
+    expect(edited).not.toBe(id);
+    expect(records.size).toBe(2); // the edit's own record is saved before its send
+    expect(persistentKeeper(store, "b").get(body, paid)).toBe(id);
+  });
+
+  it("reset() clears memory only: the record survives a dialog Cancel and get restores the same key", () => {
+    const { store, records } = fakeStore();
+    const k = persistentKeeper(store, "a");
+    const id = k.get(body, paid);
+    k.settle(network);
+    k.reset();
+    expect(records.size).toBe(1);
+    expect(k.get(body, paid)).toBe(id);
+    expect(persistentKeeper(store, "b").get(body, paid)).toBe(id);
+  });
+
+  it("COMMAND_ID_CONFLICT drops the record but keeps a sticky entry; after reset() the next get mints", () => {
+    const { store, records } = fakeStore();
+    const k = persistentKeeper(store, "a");
+    const id = k.get(body, paid);
+    k.settle(network);
+    k.settle(conflict);
+    expect(records.size).toBe(0);
+    expect(k.get(body, paid)).toBe(id); // the same intent may hold an unusable stored result
+    k.reset();
+    expect(k.get(body, paid)).not.toBe(id); // no record left to restore: no 24 h conflict loop
+    // The same for a key restored from the store (sticky from the start).
+    k.settle(network);
+    const restoredKeeper = persistentKeeper(store, "b");
+    const restored = restoredKeeper.get(body, paid);
+    restoredKeeper.settle(conflict);
+    expect(records.size).toBe(0);
+    expect(restoredKeeper.get(body, paid)).toBe(restored);
+  });
+
+  it("success drops the record and the entry", () => {
+    const { store, records } = fakeStore();
+    const k = persistentKeeper(store, "a");
+    const id = k.get(body, paid);
+    k.settle(network);
+    expect(k.get(body, paid)).toBe(id);
+    k.settle();
+    expect(records.size).toBe(0);
+    expect(persistentKeeper(store, "b").get(body, paid)).toBe("b1"); // no record left for a new mount
+    expect(k.get(body, paid)).not.toBe(id); // nor an entry in memory
+  });
+
+  it("a definite failure on a non-sticky entry drops memory and the record saved before the send", () => {
+    const { store, records, calls } = fakeStore();
+    const k = persistentKeeper(store);
+    const id = k.get(body, paid);
+    k.settle(definite);
+    expect(records.size).toBe(0);
+    expect(calls).toEqual(["find", "save", "drop"]);
+    expect(k.get(body, paid)).not.toBe(id);
+  });
+
+  it("get() without a payload or without a scope never reads or writes the store", () => {
+    const { store, calls } = fakeStore();
+    const noPayload = persistentKeeper(store);
+    const id = noPayload.get(undefined, paid);
+    noPayload.settle(network);
+    expect(noPayload.get(undefined, paid)).toBe(id);
+    noPayload.settle(conflict);
+    noPayload.get(undefined, paid);
+    noPayload.settle();
+    const noScope = persistentKeeper(store);
+    const other = noScope.get(body);
+    noScope.settle(network);
+    expect(noScope.get(body)).toBe(other);
+    noScope.reset();
+    noScope.get(body);
+    noScope.settle(definite);
+    expect(calls).toEqual([]);
   });
 });

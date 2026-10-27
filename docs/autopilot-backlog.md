@@ -6090,14 +6090,16 @@ notes: |
 
 ## task: web-command-id-persistence-and-conflict-copy
 title: Web: giữ `commandId` qua reload/Cancel (cửa sổ double-apply của thanh toán một phần và thêm theo tên) và sửa copy `COMMAND_ID_CONFLICT`
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-web-command-id-persistence (L49); find it with `gh pr list --state merged --head feat/p4-web-command-id-persistence` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/web/lib/uncertain-command-id-session-store.ts :: createUncertainCommandIdSessionStore` (slice-unique: `git grep -n -w createUncertainCommandIdSessionStore <rev>` prints 0 lines at the base 336e84e616e672cf3958320909cb1e2c6475c59a, where the file is absent; at the lane's head the file exports it at :81) · this flip changes only status, merged, note_merged and merged_probe; `_probe_note` and `_readiness` stay as the row's authoring-time notes
+note_merged: 2026-10-27 L49: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (main after the merge of feat/p4-outbox-lease-clock), so the row does not wait for the reconcile's post-merge flip, which cannot happen: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What landed: an uncertain command id is kept per intent in sessionStorage for the four roster commands (apps/web/lib/uncertain-command-id-session-store.ts, through apps/web/lib/use-roster-command.ts), so it survives a reload and Cancel; an entry holds only the id and its time and expires after 24 h (`TTL_MS`). The edit and new session forms key the id by the sent body (`useCommandId`, apps/web/lib/use-command-id.ts). The COMMAND_ID_CONFLICT copy of the two session routes (apps/web/lib/session-command-route.ts, apps/web/lib/session-guest-note-route.ts) no longer names commandId, and a 2xx with `replayed: true` shows its own notice (`replayedNotice`, apps/web/lib/session-error-ui.ts). Readiness: docs/sessions/web-mvp-phase4-readiness-p4-web-command-id-persistence.md.
 risk: P2
 change_class: web-feature
 depends_on: []
 invariants: [money-model, web-app]
 scope: [apps/web/components/sessions/edit-session-view.tsx, apps/web/lib/session-command-route.ts, apps/web/lib/use-roster-command.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/web/lib/uncertain-command-id-session-store.ts :: createUncertainCommandIdSessionStore
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — cần quyết định phạm vi (sessionStorage theo ý định) trước khi sửa.
 notes: |
@@ -6108,14 +6110,16 @@ notes: |
 
 ## task: web-api-client-timeout-and-refresh-notice-focus
 title: Web: `apiFetch` không có timeout phía client; refresh trang lỗi hiện `ApiErrorNotice` không được focus
-status: idea
+status: merged
+merged: 2026-10-27 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-web-command-id-persistence (L49), the same PR that closes row `web-command-id-persistence-and-conflict-copy`; find it with `gh pr list --state merged --head feat/p4-web-command-id-persistence` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/web/lib/api-client.ts :: API_TIMEOUT_MS` (slice-unique: `git grep -n -w API_TIMEOUT_MS <rev>` prints 0 lines at the base 336e84e616e672cf3958320909cb1e2c6475c59a; at the lane's head apps/web/lib/api-client.ts exports it at :44) · this flip changes only status, merged, note_merged and merged_probe; `_probe_note` and `_readiness` stay as the row's authoring-time notes
+note_merged: 2026-10-27 L49: closed BY HAND in the lane's own PR, measured at base 336e84e616e672cf3958320909cb1e2c6475c59a (main after the merge of feat/p4-outbox-lease-clock), so the row does not wait for the reconcile's post-merge flip, which cannot happen: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What landed: `apiFetch` (apps/web/lib/api-client.ts) sets its 15 s deadline (`API_TIMEOUT_MS`) only when the caller passes no `signal`; a request that hits it fails as an uncertain `CLIENT_TIMEOUT` (status 0) with its own copy (apps/web/lib/session-error-ui.ts). `ApiErrorNotice` (apps/web/components/sessions/api-error-notice.tsx) has an opt-in `autoFocus`, used by the four roster screens and by the failed-refresh notice of the session detail page (apps/web/components/sessions/session-detail-view.tsx). Readiness: docs/sessions/web-mvp-phase4-readiness-p4-web-command-id-persistence.md.
 risk: P2
 change_class: web-feature
 depends_on: []
 invariants: [web-app]
 scope: [apps/web/lib/api-client.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/web/lib/api-client.ts :: API_TIMEOUT_MS
 _probe_note: probe do slice tác giả đưa vào; chưa có.
 _readiness: NOT_CODE_READY — scope lấy từ đo trên origin/main; phần focus của ApiErrorNotice chưa đo lại ở đây.
 notes: |
@@ -7395,3 +7399,127 @@ notes: |
   Line numbers at 8e918f0ec541ef4f72740be652a3a86584d381c3 plus lane L46's 0074. The function's two audit INSERTs (0022:360 and :386, restated verbatim at 0074:76 and :102) name no created_at, so each audit row takes the table's DEFAULT now(), the transaction start, while 0023 gives both audit rows of the outbox claim an explicit clock_timestamp() (codex round-02: the reclaim audit 0023:167-173, the value at :172; the claim audit :200-204, the value at :202); OAM-13 (packages/db/src/rls-invariants.test.ts:3002 at this base) pins the live clock of the outbox claim and ack audit rows. A caller inside an aged transaction therefore writes a projector audit row timestamped before the claim it records. Lane L46 kept both INSERTs unchanged so that every byte of 0074 except the lease stamp equals 0022 (design D5).
   Deliverable: a migration that re-creates the function with `created_at` = clock_timestamp() in both INSERTs (the 0023:171-172 and :201-202 form) and a test modelled on OAM-13. Audit ordering only: no money, tenant or grant path.
   Source: docs/sessions/web-mvp-phase4-readiness-p4-outbox-lease-clock.md (lane L46), design D5; step 0 reader A.
+
+## task: web-api-error-notice-default-focus-audit
+title: Web: decide which other `ApiErrorNotice` mounts opt in to `autoFocus` (lane L49 opted in only the four roster screens and the failed-refresh notice of the session detail page)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: []
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — no per-mount focus decision yet; fill scope with the mounts it opts in.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits). `ApiErrorNotice` (apps/web/components/sessions/api-error-notice.tsx) takes an opt-in `autoFocus` (default false, :21): with it the notice gets tabIndex -1 (:50) and its effect focuses it each time `error` changes (:46-47). `git grep -n -F '<ApiErrorNotice' -- apps/web` prints 26 mounts, none in a test file; 5 opt in (`git grep -n -A 1 -F '<ApiErrorNotice' -- apps/web | grep -c -w autoFocus`): sessions/mark-paid-sheet.tsx:196, sessions/roster-add-player-form.tsx:153, sessions/roster-remove-dialog.tsx:69, sessions/roster-reverse-dialog.tsx:110 and sessions/session-detail-view.tsx:81, all under apps/web/components/.
+  The other 21, also under apps/web/components/: discover/discover-detail-view.tsx:62; discover/discover-list-view.tsx:98 and :145; me/settings-channels-list.tsx:198; me/settings-view.tsx:48; player/player-leave-session-button.tsx:43; player/player-page.tsx:97; sessions/edit-session-view.tsx:40; sessions/join-panel.tsx:80 and :124; sessions/new-session-view.tsx:33; sessions/request-inbox.tsx:117 and :179; sessions/session-detail-view.tsx:251; sessions/session-form.tsx:134; sessions/sessions-list-view.tsx:85 and :127; sessions/share-link-control.tsx:84; sessions/visibility-toggle.tsx:166; settings/club-settings-view.tsx:71; settings/form-feedback.tsx:42.
+  Deliverable: a decision per mount (opt in where the notice replaces the content the user acted on, such as a failed page load; stay off where focus should stay on the control that failed), then a view test for each mount that opts in.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding
+
+## task: web-command-id-conflict-copy-onboarding
+title: Web: the two onboarding routes still show the word "commandId" in their COMMAND_ID_CONFLICT copy (lane L49 changed that copy on the two session routes only)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/app/api/onboarding/club/route.ts, apps/web/app/api/onboarding/zalo/connect/route.ts, apps/web/e2e/support/roster-api-mock.ts]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — the copy pair is not chosen (the session routes' pair is the natural default).
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed none of the three files in scope). Lane L49 gave the COMMAND_ID_CONFLICT entries of apps/web/lib/session-command-route.ts (the entry at :713) and apps/web/lib/session-guest-note-route.ts (:50) a copy pair that does not name the field. The onboarding routes still answer `t("commandId đã được dùng.", "commandId already used.")`: apps/web/app/api/onboarding/club/route.ts:131 (the case at :128) and apps/web/app/api/onboarding/zalo/connect/route.ts:119 (the replay probe's conflict, :116) and :210 (the case at :207). Their INVALID_BODY copy `t("Thiếu commandId.", "Missing commandId.")` (club :76, zalo connect :105) names the field too, but answers only a malformed body.
+  The e2e mock apps/web/e2e/support/roster-api-mock.ts:96 hand-copies a Vietnamese-only conflict text, `"commandId đã được dùng cho yêu cầu khác."`; no e2e assertion reads it (`git grep -n -e 'đã được dùng' -e 'already used' -- apps/web/e2e` finds that line and one unrelated comment only).
+  Deliverable: the session routes' pair at the three onboarding sites (or one shared pair for every site), the mock's text aligned or dropped, and a route test per site that the copy no longer names commandId.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding
+
+## task: web-bare-command-id-refs-to-keeper
+title: Web: move the three remaining bare `useRef` command ids (session detail transitions, visibility toggle, link code form) to the command-id keeper, which binds the id to the sent body
+status: idea
+risk: P2
+change_class: web-feature
+depends_on: []
+invariants: [web-app, session-command]
+scope: [apps/web/components/sessions/session-detail-view.tsx, apps/web/components/sessions/visibility-toggle.tsx, apps/web/components/me/link-code-form.tsx]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — measure per site which body can change under a kept id, and whether the uncertain-id session store applies, before choosing the change.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits). `git grep -n -F -e 'commandId.current' -e 'useRef<string | null>' -- apps/web` finds three components that keep a bare id in a ref (`commandId.current ??= crypto.randomUUID()`) across retries without binding it to the body they send: apps/web/components/sessions/session-detail-view.tsx:46 (the ref), :152 (the id, sent by `transitionSession` at :156-157), cleared at :147, :163, :166 and :197; apps/web/components/sessions/visibility-toggle.tsx:47 (the ref), :115 (the id), the body `{ commandId: commandId.current, expectedVersion: session.version }` at :119, cleared at :111 and :124; apps/web/components/me/link-code-form.tsx:20 (the ref), :25 (the id), the request `{ code: code.trim(), commandId: commandId.current }` at :27 (the code is user-edited), cleared at :28 unless `keepCommandId` and at :49. The grep's two other hits, apps/web/components/me/settings-channels-list.tsx:59 (`orphan`) and apps/web/components/pwa/offline-view.tsx:40 (`target`), hold no command id.
+  The keeper is `useCommandId` (apps/web/lib/use-command-id.ts:117), which takes an optional `UncertainCommandIdStore`; the edit and new session forms use it at the lane's head, and the roster commands use the session store (apps/web/lib/use-roster-command.ts:20).
+  Deliverable: each site on the keeper (or a written reason to keep the bare ref), with a view test that an edited body gets a new id and an unchanged retry keeps it.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding
+
+## task: db-command-id-conflict-unusable-result-code
+title: DB: answer a command whose stored result has no usable shape with its own code instead of COMMAND_ID_CONFLICT, so a client can tell "another command owns this key" from "this intent committed but its result is unreadable"
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [session-command, money-model, api-contract]
+scope: [packages/db/src/roster-money-shared.ts, packages/db/src/session-service.ts]
+manifest: null
+merged_probe: COMMAND_ID_RESULT_UNUSABLE
+_probe_note: the proposed code name, absent at the lane's head (`git grep -n -w COMMAND_ID_RESULT_UNUSABLE` finds nothing); the authoring slice renames the probe if it picks another name.
+_readiness: NOT_CODE_READY — the new code's class (uncertain like a 5xx, or its own), its HTTP status, its copy and every client describer that must map it are not chosen.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed no file in scope). `replayOrNull` (packages/db/src/roster-money-shared.ts:119-142) answers COMMAND_ID_CONFLICT, message "command_id belongs to a different command, session or actor, or has no usable result" (:140), also when `isStored(prior.stored)` fails (:132): the SAME intent whose stored result no longer has the expected shape (a stored-shape change across a deploy, a corrupt row). Its callers inherit that answer: join-request-service.ts:220, payment-manual.ts:292, payment-reversal.ts:88, public-session-share-link.ts:57, roster-service.ts:147 and :391, session-join-service.ts:338 and :464. packages/db/src/session-service.ts carries its own copy of the clause at :355 (create), :633, :1026, :1359 (update), :2072, :2387, :2919 and :3133.
+  A client cannot tell that case from "another command owns this key", so lane L49 keeps a sticky key on any COMMAND_ID_CONFLICT and drops only its saved record (review R1a-1; apps/web/lib/use-command-id.ts, settle).
+  Deliverable: a distinct code for the unusable-result case at every site above (fail-closed: a client must read it as "may have committed"), the client describers mapping it, and a real-database test per site.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review R1a-1; conductor ruling RO-L49-7 item 2)
+
+## task: web-confirm-dialog-tab-trap-focused-notice
+title: Web: keep Shift+Tab inside ConfirmDialog when focus sits on an element focused by code (tabIndex -1), such as the error notice lane L49 focuses in the remove dialog
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/components/ui/confirm-dialog.tsx]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet (a selector or condition change adds no new identifier).
+_readiness: NOT_CODE_READY — the trap rule for an active element outside the focusable list is not chosen (wrap to the last element, or put the active element in the cycle).
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; the lane changed no file in scope). The Tab trap of apps/web/components/ui/confirm-dialog.tsx builds its cycle from the native controls and `[tabindex]:not([tabindex='-1'])` (:69-73) and wraps only when the active element is the first or the last of that list (:77-83). An element focused by code with tabIndex -1 is outside the list, so Shift+Tab from it falls through to the browser. Lane L49 focuses the `role="alert"` notice (`ApiErrorNotice` with `autoFocus`, tabIndex -1) inside the remove, reverse and mark-paid dialogs; in the remove dialog, where the notice comes first, Shift+Tab from it leaves the dialog (review R1b2 observation, read from the code, not run in a browser).
+  Deliverable: the trap keeps focus inside the dialog from an active element that is inside it but outside the list, plus a browser test: focus on the notice, Shift+Tab, focus stays in the dialog.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review R1b2; conductor ruling RO-L49-9 item 5)
+
+## task: web-non-dedup-mutation-timeout
+title: Web: give the four mutation calls that carry no commandId a commandId or an uncertain-timeout copy, so apiFetch's 15 s default deadline can cover them too (lane L49 leaves them without a client deadline)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/api-client.ts, apps/web/components/shell/sign-out-button.tsx, apps/web/lib/me-settings-client.ts, apps/web/components/onboarding/new-club-form.tsx, apps/web/lib/new-club-form.ts]
+manifest: null
+merged_probe: null
+_probe_note: the authoring slice supplies the probe; none yet.
+_readiness: NOT_CODE_READY — per call the choice (a commandId the server dedups, or an uncertain CLIENT_TIMEOUT copy) is not made; POST /api/onboarding/start has no commandId contract.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits; of the files in scope the lane changed only apps/web/lib/api-client.ts). Lane L49's default deadline (`API_TIMEOUT_MS`, apps/web/lib/api-client.ts) applies only when the caller passes no signal AND the request is a GET or HEAD or its JSON body carries a string `commandId`, because only there is a timeout safe to retry under the same id (review SEC-2; conductor ruling RO-L49-9 item 2). Four mutation calls carry no commandId and keep the base behaviour (no client deadline): POST /api/auth/logout (apps/web/components/shell/sign-out-button.tsx:21), PATCH /api/me/profile (apps/web/lib/me-settings-client.ts:48), POST /api/me/channels/<id>/detach (:81) and POST /api/onboarding/start (apps/web/components/onboarding/new-club-form.tsx:75).
+  The last one is why: with a deadline, a slow create answers CLIENT_TIMEOUT, the form shows the definite "We could not create the club. Please try again." (apps/web/lib/new-club-form.ts:96-99), and an edited slug then creates a second club if the first one landed (the route is idempotent by slug for the same owner only, apps/web/app/api/onboarding/start/route.ts:14-18).
+  Deliverable: per call, a commandId the server dedups (onboarding start needs that server contract first) or an uncertain CLIENT_TIMEOUT copy, then the deadline extended to it, with a test per call.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review SEC-2; conductor ruling RO-L49-9 item 2)
+
+## task: web-command-id-records-shared-device
+title: Web: decide whether the uncertain command-id records in sessionStorage are cleared at sign-out, or their payload hash protected, once a shared-device use case appears (lane L49 names the limit and changes nothing)
+status: idea
+risk: P3
+change_class: web-feature
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/lib/uncertain-command-id-session-store.ts, apps/web/components/shell/sign-out-button.tsx]
+manifest: null
+merged_probe: clearUncertainCommandIds
+_probe_note: the proposed function name (review SEC2-1), absent at the lane's head (`git grep -n -w clearUncertainCommandIds` finds nothing); the authoring slice renames the probe if it picks another name or does not clear at sign-out.
+_readiness: NOT_CODE_READY — no shared-device use case exists yet, and the trade-off below needs a product decision.
+notes: |
+  Line numbers at the lane's head (base 336e84e616e672cf3958320909cb1e2c6475c59a plus lane L49's commits). The store (apps/web/lib/uncertain-command-id-session-store.ts) keeps each record under the prefix `plx-cmd:v1:` plus tenant, person, kind, targets and an unsalted 53-bit hash of the payload fingerprint; the value holds only the id and a time, and records expire after 24 h. Sign-out (apps/web/components/shell/sign-out-button.tsx:22-23) clears the list snapshots and the language, not these records. A later user of the same open tab with devtools can read the keys, and the add-player key hashes the typed name, which a dictionary can recover (review SEC2-1; a mark-paid fingerprint hashes ids and amounts, no name). Lane L49 names this in its readiness file (section 10, Not defended; conductor ruling RO-L49-9 item 3).
+  Trade-off: clearing at sign-out ends the uncertain window, so a deliberate sign-out, a sign-in again and an identical retry would mint a new id and could apply a payment twice; a salt helps only where that reader cannot see it, and it must survive the reload the records exist for, so a salt kept in sessionStorage does not qualify. Deliverable when a shared-device case appears: the chosen option with the lane's unresolved-attempt rule restated for it, and a test.
+  source: lane L49 (p4-web-command-id-persistence) out-of-scope finding (review SEC2-1; conductor ruling RO-L49-9 item 3)

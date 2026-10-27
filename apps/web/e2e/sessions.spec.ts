@@ -313,7 +313,7 @@ test.describe("create", () => {
     expect(String(call!.body!.commandId)).toMatch(/^[0-9a-f-]{36}$/);
   });
 
-  test("an uncertain failure (network) retries with the SAME commandId; a definite one does not", async ({
+  test("an uncertain failure (network) retries with the SAME commandId; a definite 4xx after it keeps that key", async ({
     page,
   }) => {
     const mock = await open(page, "/new");
@@ -335,7 +335,28 @@ test.describe("create", () => {
     const ids = mock.callsTo("POST", /^\/api\/sessions$/).map((c) => c.body!.commandId);
     expect(ids).toHaveLength(3);
     expect(ids[1]).toBe(ids[0]); // retry after network loss reuses the key
-    expect(ids[2]).not.toBe(ids[1]); // after a definite 4xx the next attempt is a new command
+    expect(ids[2]).toBe(ids[1]); // sticky: after an uncertain try a 4xx keeps the key
+  });
+
+  test("A-27: after a network failure the unchanged form keeps the key; an edited one is a NEW command", async ({
+    page,
+  }) => {
+    const mock = await open(page, "/new");
+    await fillValid(page);
+    const create = page.getByRole("button", { name: "Tạo bản nháp" });
+    const ids = () => mock.callsTo("POST", /^\/api\/sessions$/).map((c) => c.body!.commandId);
+    mock.failNext("create", "network");
+    await create.click();
+    await expect(page.locator("main").getByRole("alert")).toContainText("Không có kết nối mạng");
+    mock.failNext("create", "network");
+    await create.click();
+    await expect.poll(() => ids().length).toBe(2);
+    await page.getByLabel("Tên sân / địa điểm").fill("Sân B");
+    await create.click();
+    await expect(page).toHaveURL(/\/sessions\/new-1$/);
+    expect(ids()).toHaveLength(3);
+    expect(ids()[1]).toBe(ids()[0]); // unchanged body: the same key
+    expect(ids()[2]).not.toBe(ids()[1]);
   });
 });
 
@@ -898,6 +919,31 @@ test.describe("edit", () => {
   test("closed sessions cannot be edited", async ({ page }) => {
     await open(page, "/s-closed/edit");
     await expect(page.getByRole("heading", { name: "Không thể sửa buổi này" })).toBeVisible();
+  });
+
+  test("A-28: after a network failure the unchanged edit keeps the key; a further edit is a NEW command", async ({
+    page,
+  }) => {
+    const mock = await open(page, "/s-open/edit");
+    await expect(page.getByLabel("Giá mỗi người (VND)")).toHaveValue("50.000");
+    const address = page.getByLabel("Địa chỉ", { exact: true });
+    const save = page.getByRole("button", { name: "Lưu thay đổi" });
+    const ids = () => mock.callsTo("PUT", /\/s-open$/).map((c) => c.body!.commandId);
+    await address.fill("1 Nguyễn Văn Linh");
+    mock.failNext("update", "network");
+    await save.click();
+    await expect(page.locator("main").getByRole("alert").first()).toContainText(
+      "Không có kết nối mạng",
+    );
+    mock.failNext("update", "network");
+    await save.click();
+    await expect.poll(() => ids().length).toBe(2);
+    await address.fill("2 Nguyễn Văn Linh");
+    await save.click();
+    await expect(page).toHaveURL(/\/sessions\/s-open$/);
+    expect(ids()).toHaveLength(3);
+    expect(ids()[1]).toBe(ids()[0]); // unchanged body: the same key
+    expect(ids()[2]).not.toBe(ids()[1]);
   });
 });
 
