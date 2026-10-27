@@ -4,7 +4,12 @@ import { useState, type FormEvent } from "react";
 import { useT } from "../../lib/i18n-client";
 import { addPlayer } from "../../lib/roster-payments-api";
 import { replayedNotice } from "../../lib/session-error-ui";
-import { checkTypedName, stripInvisibleChars } from "../../lib/session-form-model";
+import {
+  DISPLAY_NAME_MAX,
+  checkTypedName,
+  isBoundedName,
+  stripInvisibleChars,
+} from "../../lib/session-form-model";
 import type { SessionApiContext } from "../../lib/sessions-api";
 import { useRosterCommand } from "../../lib/use-roster-command";
 import { Button } from "../ui/button";
@@ -12,23 +17,23 @@ import { TextField } from "../ui/text-field";
 import { ApiErrorNotice } from "./api-error-notice";
 import styles from "./roster.module.css";
 
-export const DISPLAY_NAME_MAX = 100;
-
 /**
  * Why the host-typed name cannot be sent, or null when it can. "length": nothing visible is left
- * after the L27 strip and the trim, or it is longer than DISPLAY_NAME_MAX. "chars" (L29): the web
- * twin checkTypedName refuses what is left (control, bidi, line or paragraph separator, blank-looking
- * code points), as the server does. The value sent stays the strip-and-trim result.
+ * after the L27 strip and the trim, or it is longer than DISPLAY_NAME_MAX code points, or it holds
+ * an unpaired surrogate (isBoundedName). "chars" (L29): the web twin checkTypedName refuses what is
+ * left (control, bidi, line or paragraph separator, blank-looking code points), as the server does.
+ * The value sent stays the strip-and-trim result.
  */
 export function addPlayerNameProblem(raw: string): "length" | "chars" | null {
   const name = stripInvisibleChars(raw).trim();
-  if (name.length === 0 || name.length > DISPLAY_NAME_MAX) return "length";
+  if (!isBoundedName(name, DISPLAY_NAME_MAX)) return "length";
   return checkTypedName(name) === null ? "chars" : null;
 }
 
 /**
  * Host-add by display name (DD-85: no member picker, a name is never resolved to a member). The
- * one field is trimmed 1..100; the server answers active or waitlisted and the result is announced.
+ * one field is trimmed 1..DISPLAY_NAME_MAX (120) code points; the server answers active or
+ * waitlisted and the result is announced.
  * The name is read-only while an add is in flight and after an UNCERTAIN failure (the add may have
  * committed): the retry replays the same command key, where an edit would mint a new key and could
  * add the person twice. The lock lasts until a 2xx or Cancel (which refetches). Leaving the tab
@@ -123,8 +128,8 @@ export function RosterAddPlayerForm({
       <TextField
         label={t("Tên hiển thị", "Display name")}
         hint={t(
-          "Thêm người mới theo tên (1–100 ký tự). Hệ thống không tự ghép với thành viên cũ.",
-          "Adds a new person by name (1–100 characters). It is never matched to an existing member.",
+          `Thêm người mới theo tên (1–${DISPLAY_NAME_MAX} ký tự). Hệ thống không tự ghép với thành viên cũ.`,
+          `Adds a new person by name (1–${DISPLAY_NAME_MAX} characters). It is never matched to an existing member.`,
         )}
         error={
           problem === "length"
@@ -140,7 +145,8 @@ export function RosterAddPlayerForm({
               : null
         }
         value={name}
-        maxLength={DISPLAY_NAME_MAX}
+        // A coarse paste bound in UTF-16 units (240 = the most a 120 code-point name takes); addPlayerNameProblem decides.
+        maxLength={2 * DISPLAY_NAME_MAX}
         autoComplete="off"
         autoFocus
         readOnly={locked || cmd.busy}

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { apiFetch, CLIENT_NETWORK_ERROR } from "../../lib/api-client";
 import { badResponse, rec, required, rows, str } from "../../lib/discover-api";
 import { useT, type TFn } from "../../lib/i18n-client";
+import { displayNameOf } from "../../lib/roster-rules";
 import { describePlayerError } from "../../lib/session-error-ui";
 import { tenantQuery, type SessionApiContext, type SessionDetailDto } from "../../lib/sessions-api";
 import { useCommandId } from "../../lib/use-command-id";
@@ -95,7 +96,7 @@ export function RequestRowView({
   return (
     <li className={styles.row}>
       <div className={styles.who}>
-        <strong>{request.displayName ?? t("Người chơi chưa có tên", "Unnamed player")}</strong>
+        <strong>{displayNameOf(request.displayName, t)}</strong>
         <time dateTime={request.createdAt} className={styles.when}>
           {t("Yêu cầu lúc", "Requested")} {when.at(request.createdAt)}
         </time>

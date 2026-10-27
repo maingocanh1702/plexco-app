@@ -53,6 +53,9 @@ describe("displayNameProblem (client mirror of the 0055 / validateDisplayName ru
     ["   ", "empty"],
     ["x".repeat(121), "too_long"],
     ["\u{1F600}".repeat(121), "too_long"],
+    // An unpaired surrogate is refused (isBoundedName); a valid pair counts one code point, rows above.
+    ["a" + String.fromCharCode(0xd800) + "b", "invalid_chars"],
+    [String.fromCharCode(0xdc00), "invalid_chars"],
     ["a\tb", "invalid_chars"],
     ["a\u200Bb", null],
     ["a\u202Eb", "invalid_chars"],

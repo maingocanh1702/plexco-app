@@ -14,6 +14,7 @@ import {
 } from "../../lib/club-settings-model";
 import { useT, type TFn } from "../../lib/i18n-client";
 import { isDefiniteFailure } from "../../lib/session-error-ui";
+import { CLUB_NAME_MAX } from "../../lib/session-form-model";
 import { useCommandId } from "../../lib/use-command-id";
 import { useOnlineStatus } from "../../lib/use-online-status";
 import { Button } from "../ui/button";
@@ -110,7 +111,7 @@ function ProfileForm({
         label={t("Tên câu lạc bộ", "Club name")}
         value={values.name}
         error={nameError}
-        maxLength={200}
+        maxLength={2 * CLUB_NAME_MAX}
         onChange={(e) => {
           setValues({ ...values, name: e.target.value });
           setNameError(null);

@@ -55,17 +55,22 @@ const isValidTimezone = (tz: string): boolean => {
   }
 };
 
+// The club name cap: tenants_name_len_chk (migration 0039) and tenant_profile_update (0072) count
+// char_length, i.e. code points.
+const CLUB_NAME_MAX = 120;
+
 /** Validates TYPES and ranges only; the sport lookup needs the tx and happens in the command. */
 export function validatePatch(patch: ClubConfigPatch): ClubConfigPatch {
   if (patch === null || typeof patch !== "object") return bad("patch must be an object");
   const out: ClubConfigPatch = {};
   if (patch.name !== undefined) {
     // L27: strip the invisible set first (text-safety.ts), then trim; every check below runs on
-    // the stripped value (length counted after the strip), so invisible-only fails as empty.
+    // the stripped value (its length counted in code points, as the SQL char_length), so
+    // invisible-only fails as empty.
     const name = typeof patch.name === "string" ? stripInvisibleChars(patch.name).trim() : "";
     // checkTypedName refuses every HIDDEN_CHAR code point left after the strip (Cc incl. NUL, every
     // remaining Cf with all Bidi_Control, U+2028/U+2029, U+2800) and a name with no visible char.
-    if (name.length > 120 || checkTypedName(name) === null)
+    if ([...name].length > CLUB_NAME_MAX || checkTypedName(name) === null)
       bad("name must be 1-120 printable chars");
     out.name = name;
   }

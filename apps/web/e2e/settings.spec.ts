@@ -606,13 +606,13 @@ test.describe("/c/[tenantId]/settings", () => {
     expect(world.club.name).toBe("CLB Cầu Lông Test");
   });
 
-  test("a club name over 120 UTF-16 units (61 emoji) is refused on the field, as the route counts; nothing is sent", async ({
+  test("a club name over 120 code points is refused on the field, as the route counts; nothing is sent", async ({
     page,
   }) => {
     const world = await install(page);
     await page.goto(URL_);
     const name = page.getByLabel("Tên câu lạc bộ");
-    await name.fill(String.fromCodePoint(0x1f3f8).repeat(61)); // 61 code points, 122 units
+    await name.fill("x".repeat(121)); // 121 code points: one over CLUB_NAME_MAX, below the 240-unit maxLength
     await profileForm(page).getByRole("button", { name: "Lưu" }).click();
     await expect(page.getByText("Tên tối đa 120 ký tự")).toBeVisible();
     await expect(name).toBeFocused();

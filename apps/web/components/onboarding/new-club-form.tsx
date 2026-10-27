@@ -13,6 +13,7 @@ import {
   validateNewClub,
   type NewClubErrors,
 } from "../../lib/new-club-form";
+import { CLUB_NAME_MAX } from "../../lib/session-form-model";
 import { useSession } from "../../lib/use-session";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
@@ -133,7 +134,7 @@ export function NewClubForm() {
               label={t("Tên câu lạc bộ", "Club name")}
               name="name"
               value={name}
-              maxLength={120}
+              maxLength={2 * CLUB_NAME_MAX}
               autoComplete="organization"
               required
               error={errors.name}

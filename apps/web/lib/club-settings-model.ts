@@ -1,6 +1,12 @@
 import type { ClubConfigDto, ClubPatchBody } from "./club-settings-client";
 import { INT4_MAX, formatVndInput, parseVndInput } from "./money";
-import { checkTypedName, hasHiddenChar, stripInvisibleChars } from "./session-form-model";
+import {
+  CLUB_NAME_MAX,
+  checkTypedName,
+  hasHiddenChar,
+  hasVisibleChar,
+  stripInvisibleChars,
+} from "./session-form-model";
 
 /**
  * Pure model of the club settings forms: option lists and "what changed" -> PATCH body. The route
@@ -28,15 +34,17 @@ export type ClubNameProblem = "empty" | "too_long" | "invalid_chars";
 
 /**
  * Client mirror of the club-name rule in club-config-validation.ts (validatePatch), counted the
- * SAME way: trimmed, 1..120 UTF-16 code units (String.length, so most emoji count 2), then the
- * web checkTypedName (L29). Not the display-name rule (me-settings-client.ts), which counts
- * code points and refuses more characters. The invisible set is stripped first (L27, as the server
- * stores it), so a name that strips to nothing is "empty". Returns the first problem or null.
+ * SAME way: trimmed, 1..120 code points (`[...name].length`) like validatePatch and the SQL
+ * char_length of tenants_name_len_chk (0039) and tenant_profile_update (0072), then the web
+ * checkTypedName (L29). Not the display-name rule (me-settings-client.ts), which refuses more
+ * characters. The invisible set is stripped first (L27, as the server stores it), so a name that
+ * strips to nothing is "empty". Returns the first problem or null.
  */
 export function clubNameProblem(raw: string): ClubNameProblem | null {
   const name = stripInvisibleChars(raw).trim();
-  if (name.length < 1) return "empty";
-  if (name.length > 120) return "too_long";
+  const length = [...name].length;
+  if (length < 1) return "empty";
+  if (length > CLUB_NAME_MAX) return "too_long";
   return checkTypedName(name) === null ? "invalid_chars" : null;
 }
 
@@ -54,9 +62,9 @@ export function publicAliasValue(raw: string): string {
 
 /**
  * Client mirror of validatePublicAlias (packages/db/src/public-alias.ts, the 0060 set definer as
- * re-created by 0068): the alias is stripped and trimmed (publicAliasValue), then 1..60 CODE POINTS
- * (not UTF-16 units, unlike clubNameProblem), no hidden character (hasHiddenChar, the pinned
- * text-safety mirror: the code points the strip leaves, such as controls, bidi controls, U+2028 and
+ * re-created by 0068): the alias is stripped and trimmed (publicAliasValue), then 1..60 CODE
+ * POINTS, no hidden character (hasHiddenChar, the pinned text-safety mirror: the code points the
+ * strip leaves, such as controls, bidi controls, U+2028 and
  * U+2800, are still refused) and at least one visible one, i.e. neither whitespace nor
  * Default_Ignorable (`\p{DI}`). An invisible-only alias is stripped to nothing, so it reads as
  * "empty": exactly the problem an empty alias gets.
@@ -67,7 +75,7 @@ export function publicAliasProblem(raw: string): PublicAliasProblem | null {
   if (length < 1) return "empty";
   if (length > 60) return "too_long";
   if (hasHiddenChar(alias)) return "invalid_chars";
-  return /[^\s\p{DI}]/u.test(alias) ? null : "empty";
+  return hasVisibleChar(alias) ? null : "empty";
 }
 
 export const COMMON_TIMEZONES = [

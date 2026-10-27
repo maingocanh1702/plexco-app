@@ -1,4 +1,6 @@
+import { readFileSync, readdirSync } from "node:fs";
 import {
+  DISPLAY_NAME_MAX as SERVER_DISPLAY_NAME_MAX,
   checkTypedName as serverCheckTypedName,
   stripInvisibleChars as serverStripInvisibleChars,
   validateDisplayName,
@@ -8,12 +10,16 @@ import { addPlayerNameProblem } from "../components/sessions/roster-add-player-f
 import { clubNameProblem } from "./club-settings-model";
 import { validateNewClub, type NewClubValues } from "./new-club-form";
 import {
+  CLUB_NAME_MAX,
+  DISPLAY_NAME_MAX,
   VENUE_ADDRESS_MAX,
   buildCreateBody,
   buildUpdateBody,
   checkTypedName,
   emptyFormValues,
   hasHiddenChar,
+  hasVisibleChar,
+  isBoundedName,
   stripInvisibleChars,
   validateForm,
   valuesFromSession,
@@ -749,4 +755,103 @@ describe("L23, L27: the session form strips invisible code points from area, ven
     },
     30_000,
   );
+});
+
+// L43: the shared name caps and the two exported name rules (D1). Fast cases only: the every-scalar
+// agreement of the visible-char test is AG2 above, through checkTypedName (readiness L-9).
+describe("L43 name caps (DD-150 Q4 (b))", () => {
+  const ch = (...cps: number[]) => String.fromCodePoint(...cps);
+  const units = (...codeUnits: number[]) => String.fromCharCode(...codeUnits);
+  // U+1D49C MATHEMATICAL SCRIPT CAPITAL A: one code point, two UTF-16 units.
+  const astral = ch(0x1d49c);
+
+  it("DISPLAY_NAME_MAX equals the @plexco/db DISPLAY_NAME_MAX", () => {
+    expect(DISPLAY_NAME_MAX).toBe(SERVER_DISPLAY_NAME_MAX);
+  });
+
+  it("CLUB_NAME_MAX is 120 (tenants_name_len_chk, its own field)", () => {
+    expect(CLUB_NAME_MAX).toBe(120);
+  });
+
+  it.each([
+    { label: "120 ASCII letters", name: "a".repeat(120), expected: true },
+    { label: "121 ASCII letters", name: "a".repeat(121), expected: false },
+    { label: "the empty string", name: "", expected: false },
+    { label: "120 astral letters (240 UTF-16 units)", name: astral.repeat(120), expected: true },
+    { label: "121 astral letters", name: astral.repeat(121), expected: false },
+    { label: "a lone high surrogate U+D835", name: units(0xd835), expected: false },
+    {
+      label: "a lone low surrogate U+DC00 between letters",
+      name: units(0x61, 0xdc00, 0x62),
+      expected: false,
+    },
+    { label: "e and U+0301 combining acute", name: ch(0x65, 0x301), expected: true },
+  ])("isBoundedName($label, 120) is $expected", ({ name, expected }) => {
+    expect(isBoundedName(name, 120)).toBe(expected);
+  });
+
+  // The @plexco/db root (packages/db/src/index.ts) does not export hasVisibleChar, so the expected
+  // column is the db rule's own answer: VISIBLE_CHAR /[^\s\p{DI}]/u in packages/db/src/text-safety.ts.
+  it.each([
+    { label: "a letter", value: "a", expected: true },
+    { label: "a space", value: " ", expected: false },
+    { label: "U+200B zero width space", value: ch(0x200b), expected: false },
+    { label: "U+FE0F variation selector-16", value: ch(0xfe0f), expected: false },
+    { label: "e and U+0301 combining acute", value: ch(0x65, 0x301), expected: true },
+    {
+      label: "a ZWJ family emoji",
+      value: ch(0x1f469, 0x200d, 0x1f469, 0x200d, 0x1f467),
+      expected: true,
+    },
+    {
+      label: "a between U+2067 and U+2069 isolates",
+      value: ch(0x2067, 0x61, 0x2069),
+      expected: true,
+    },
+    { label: "U+3164 Hangul filler", value: ch(0x3164), expected: false },
+  ])("hasVisibleChar($label) answers as the db rule: $expected", ({ value, expected }) => {
+    expect(hasVisibleChar(value)).toBe(expected);
+  });
+});
+
+describe("name rule sources", () => {
+  const web = new URL("../", import.meta.url);
+  const read = (file: string) => readFileSync(new URL(file, web), "utf8");
+
+  it("source guard: one definition of the name caps and the visible-char rule, in session-form-model.ts", () => {
+    // Web sources: app, components, lib, sw and the root middleware; build config stays out.
+    const texts = [
+      ...["app", "components", "lib", "sw"].flatMap((root) =>
+        readdirSync(new URL(`${root}/`, web), { encoding: "utf8", recursive: true })
+          .filter((file) => /\.(?:tsx?|m?js)$/.test(file) && !/\.test\.(?:tsx?|m?js)$/.test(file))
+          .map((file) => `${root}/${file}`),
+      ),
+      "middleware.ts",
+    ].map((file) => [file, read(file)] as const);
+    // Every declaration counts, with or without a type annotation or a numeric initializer.
+    const caps = texts.flatMap(([file, text]) =>
+      (text.match(/\b(?:const|let|var)\s+(?:DISPLAY_NAME_MAX|CLUB_NAME_MAX)\b/g) ?? []).map(
+        (match) => `${file}: ${match}`,
+      ),
+    );
+    // Catches a copy of the rule literal, not a rewrite (a reordered class, a RegExp string).
+    const visibleChar = "[^\\s\\p{DI}]";
+    const rules = texts.flatMap(([file, text]) =>
+      Array.from({ length: text.split(visibleChar).length - 1 }, () => file),
+    );
+    expect(caps).toEqual([
+      "lib/session-form-model.ts: const DISPLAY_NAME_MAX",
+      "lib/session-form-model.ts: const CLUB_NAME_MAX",
+    ]);
+    expect(rules).toEqual(["lib/session-form-model.ts"]);
+  });
+
+  it("the create-club, club-settings and me-settings name inputs are bounded at twice their cap", () => {
+    // 240 UTF-16 units let 120 astral code points through (threat 5).
+    const bounds = (file: string, cap: string) =>
+      read(file).split(`maxLength={2 * ${cap}}`).length - 1;
+    expect(bounds("components/onboarding/new-club-form.tsx", "CLUB_NAME_MAX")).toBe(1);
+    expect(bounds("components/settings/club-profile-form.tsx", "CLUB_NAME_MAX")).toBe(1);
+    expect(bounds("components/me/settings-profile-form.tsx", "DISPLAY_NAME_MAX")).toBe(1);
+  });
 });
