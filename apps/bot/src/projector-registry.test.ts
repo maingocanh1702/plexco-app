@@ -720,53 +720,49 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     });
 
     /**
-     * L31 U4b (readiness 7.2 DA-4..DA-6, DD-146): one cycle with the real zalo_dm deliverer ends
-     * `event`'s row as delivered/noop_expired without a send, and the only warning line is the
+     * L31 U4b (readiness 7.2 DA-4..DA-6, DD-146): promotionCycle with the real zalo_dm deliverer
+     * ends `own.event`'s row delivered/noop_expired, no send to own.chat; its only line is the
      * exact template: the event id, the projector and two integers, never a payload value, tenant,
      * recipient or amount. `deliveries()` selects no provider_ref, so the row is read directly.
      */
     async function expiredAtDelivery(
       zalo: Awaited<ReturnType<typeof zaloBoot>>,
-      event: string,
+      own: { event: string; chat: string },
       attempts = 1,
     ) {
       const bound = ZALO_DM_MAX_AGE_MINUTES * 60;
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-      try {
-        await cycle(zalo.projectors);
-        expect(zalo.stub.calls).toEqual([]);
-        const row = await verify.query(
-          "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
-          [event],
-        );
-        expect(row.rows).toEqual([
-          { status: "delivered", attempts, provider_ref: "noop_expired", error_code: null },
-        ]);
-        const lines = warn.mock.calls.map((args) => args.join(" "));
-        const age = Number(/ age (\d+)s /.exec(lines.join("\n"))?.[1]);
-        expect(lines).toEqual([
-          `[dispatcher] delivery expired: age ${age}s > bound ${bound}s (event ${event}, projector zalo_dm)`,
-        ]);
-        // back-dated by the bound plus one minute; the test's 30 s timeout caps the rest
-        expect(age).toBeGreaterThanOrEqual(bound + 60);
-        expect(age).toBeLessThan(bound + 60 + 30);
-      } finally {
-        warn.mockRestore();
-      }
+      const { sent, row, lines } = await promotionCycle(zalo, own);
+      expect(sent).toEqual([]);
+      expect(row).toEqual([
+        { status: "delivered", attempts, provider_ref: "noop_expired", error_code: null },
+      ]);
+      const age = Number(/ age (\d+)s /.exec(lines.join("\n"))?.[1]);
+      expect(lines).toEqual([
+        `[dispatcher] delivery expired: age ${age}s > bound ${bound}s (event ${own.event}, projector zalo_dm)`,
+      ]);
+      // back-dated by the bound plus one minute; the test's 30 s timeout caps the rest
+      expect(age).toBeGreaterThanOrEqual(bound + 60);
+      expect(age).toBeLessThan(bound + 60 + 30);
     }
 
     it("DA-4 zalo_dm: a row the CLI prepared inside the bound, its event then back-dated past it, expires at delivery (no send, delivered/noop_expired, attempts 1, one warning line)", async () => {
       const zalo = await zaloBoot();
+      const own: string[] = [];
       try {
         const p = await zalo.update();
+        own.push(p.event);
         await ackedWhileOff([p.event], zalo.projectors);
         await enable("zalo_dm");
         expect(await deliveries(p.event)).toEqual([
           { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null },
         ]);
         await backdate([p.event], ZALO_DM_MAX_AGE_MINUTES + 1);
-        await expiredAtDelivery(zalo, p.event);
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
+        await expiredAtDelivery(zalo, p);
+        await expectPlantClaimed(plant);
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
@@ -780,8 +776,10 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     async function expiredAfterReEnable(reEnable: () => Promise<unknown>) {
       const zalo = await zaloBoot();
       const pending = { projector: "zalo_dm", status: "pending", attempts: 0, error_code: null };
+      const own: string[] = [];
       try {
         const p = await zalo.update();
+        own.push(p.event);
         await ackedWhileOff([p.event], zalo.projectors);
         await enable("zalo_dm");
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
@@ -792,8 +790,12 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         await reEnable();
         expect(await deliveries(p.event)).toEqual([pending]);
         expect(await expiries([p.event])).toEqual([]);
-        await expiredAtDelivery(zalo, p.event);
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
+        await expiredAtDelivery(zalo, p);
+        await expectPlantClaimed(plant);
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
@@ -840,7 +842,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           "UPDATE projector_deliveries SET next_attempt_at = now() + interval '1 hour' WHERE event_id = $1",
           [fresh.event],
         );
-        await expiredAtDelivery(zalo, stale.event, 2);
+        await expiredAtDelivery(zalo, stale, 2);
 
         await verify.query(DUE, [fresh.event]);
         await cycle(zalo.projectors);
@@ -875,7 +877,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         await enable("zalo_dm");
         expect(await deliveries(p.event)).toEqual([FAILED_ONCE]);
         expect(await expiries([p.event])).toEqual([]);
-        await expiredAtDelivery(zalo, p.event, 2);
+        await expiredAtDelivery(zalo, p, 2);
       } finally {
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
@@ -1228,7 +1230,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
           ]);
         await backdate([stale.event], ZALO_DM_MAX_AGE_MINUTES + 1);
         expect((await replay(stale.event)).code).toBe(0);
-        await expiredAtDelivery(zalo, stale.event);
+        await expiredAtDelivery(zalo, stale);
         const again = await replay(stale.event);
         expect(again.code).toBe(2);
         expect(again.stderr).toContain("delivery_not_in_dlq: the delivery is delivered, not dlq");
