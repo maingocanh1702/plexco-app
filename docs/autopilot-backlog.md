@@ -6739,15 +6739,16 @@ notes: |
 
 ## task: owner-cli-pg-client-inside-try
 title: Owner CLIs: build `new pg.Client` inside `try` in scripts/outbox-projector-enable.mjs and scripts/outbox-dlq-replay.mjs, plus a runbook note on percent-encoding the password
-status: idea
+status: merged
+merged: 2026-10-28 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-dm-routable-list-and-cycle-tests (L45); find it with `gh pr list --state merged --head feat/p4-zalo-dm-routable-list-and-cycle-tests` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `scripts/outbox-dlq-replay.mjs :: CLI_APPLICATION_NAME` (slice-unique: absent at the base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da, present at the lane's head)
+note_merged: 2026-10-28 L45: closed BY HAND in the lane's own PR, measured at base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da (the PR #131 merge). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: both owner CLIs (scripts/outbox-projector-enable.mjs, scripts/outbox-dlq-replay.mjs) declare `let client;` before `try`, build `new pg.Client` as the first statement inside it and end it with `client?.end()` in `finally`, so an invalid DATABASE_URL_MIGRATION reaches the existing handler (`error: ERR_INVALID_URL Invalid URL`, exit 1) instead of Node's uncaught stack dump; each application_name string moved byte for byte into the module constant `CLI_APPLICATION_NAME`; no flag or output text changed, and no byte of the connection string is printed before or after (measured with a fake password: zero occurrences in every stream); a no-DB describe in apps/bot/src/projector-registry.test.ts holds it and fails against the base CLIs. docs/runbooks/outbox-dispatch-enable-rollback.md gained one line after the step-4 bash block on percent-encoding the password. The `close_by` line is removed: the constant is a slice-unique symbol, so the row carries a real probe (default applied, pending owner sign-off).
 risk: P2
 change_class: security-posture
 depends_on: []
 invariants: [retry-liveness]
 scope: [scripts/outbox-projector-enable.mjs, scripts/outbox-dlq-replay.mjs, docs/runbooks/outbox-dispatch-enable-rollback.md]
 manifest: null
-merged_probe: null
-close_by: hand · a code move adds no slice-unique symbol; close with the merge SHA
+merged_probe: scripts/outbox-dlq-replay.mjs :: CLI_APPLICATION_NAME
 notes: |
   Lane L24 security round-2 P3-3 (round-1 P3-2), not fixed: the client is built before `try` (at 21b57f8: enable :260 before `try` :261; dlq-replay :101), so an invalid owner URL throws outside the redaction path. No leak was measured (pg-connection-string masks the input). One follow-up covers both CLIs.
   Source: PR #102 body, section "Review rounds (2 of at most 3)", line 57; section "Open follow-ups (OUT_OF_SCOPE, not done here)", line 80.
@@ -7122,28 +7123,32 @@ notes: |
 
 ## task: zalo-dm-routable-event-types-one-list
 title: Bot and CLI: one source (or a drift test) for the four `zalo_dm`-routable event types that the dispatcher and the enable CLI each write out
-status: idea
+status: merged
+merged: 2026-10-28 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-dm-routable-list-and-cycle-tests (L45); find it with `gh pr list --state merged --head feat/p4-zalo-dm-routable-list-and-cycle-tests` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/bot/src/zalo-dm-delivery-age-bound.json :: routableEventTypes` (slice-unique: absent at the base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da, present at the lane's head)
+note_merged: 2026-10-28 L45: closed BY HAND in the lane's own PR, measured at base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da (the PR #131 merge). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: the four types are written once, as the key `routableEventTypes` of apps/bot/src/zalo-dm-delivery-age-bound.json; apps/bot/src/dispatcher.ts (`ZALO_DM_ROUTABLE_EVENT_TYPES`) and scripts/outbox-projector-enable.mjs (`ZALO_DM_EVENT_TYPES`) read it, each with its own fail-closed load check, and keep their untilSessionStart subset checks; PSD-16 in apps/bot/src/projector-registry.test.ts asserts that both exports equal the key and that the key equals the ARRAY literals of the live CHECK `outbox_projector_routes_zalo_dm_chk` (migration 0056). The JSON file is outside this row's declared scope: it is the one home that both the TypeScript dispatcher and the .mjs CLI can read (default applied, pending owner sign-off).
 risk: P2
 change_class: code
 depends_on: []
 invariants: [transport-zalo, retry-liveness]
 scope: [apps/bot/src/dispatcher.ts, scripts/outbox-projector-enable.mjs, apps/bot/src/projector-registry.test.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/bot/src/zalo-dm-delivery-age-bound.json :: routableEventTypes
 notes: |
   Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512: the four types (`session.updated`, `session.cancelled`, `session.announcement_requested`, `player.promoted`) are written twice, as `ZALO_DM_ROUTABLE_EVENT_TYPES` at apps/bot/src/dispatcher.ts:72-77 ("the four types 0056 routes to zalo_dm (outbox_projector_routes_zalo_dm_chk)") and as `ZALO_DM_EVENT_TYPES` at scripts/outbox-projector-enable.mjs:66-71; each checks the JSON's `untilSessionStart` at load, and no test ties the two lists to each other or to 0056's check (PSD-11, apps/bot/src/projector-registry.test.ts:703, ties only `untilSessionStart`). Fix: one list read by both, or a drift test beside PSD-11. Reported in L34's round-1 review (R1-F3), not fixed in PR #111; the row was added by lane L36 (2026-10-24).
   Source: PR #111 body, section "Reported P3s and observations, not fixed", line 35.
 
 ## task: bot-zalo-dm-cycle-tests-isolation-and-cells
 title: Tests: keep each `zalo_dm` dispatch-cycle cell to its own rows on the shared test database, and add the cells L34's reviews found missing
-status: idea
+status: merged
+merged: 2026-10-28 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-dm-routable-list-and-cycle-tests (L45); find it with `gh pr list --state merged --head feat/p4-zalo-dm-routable-list-and-cycle-tests` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/bot/src/projector-registry.test.ts :: plantForeignZaloDmRow` (slice-unique: absent at the base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da, present at the lane's head)
+note_merged: 2026-10-28 L45: closed BY HAND in the lane's own PR, measured at base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da (the PR #131 merge). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: every `zalo_dm` dispatch-cycle cell of apps/bot/src/projector-registry.test.ts reads, asserts and cleans up only its own event ids and leaves its own delivery rows neutralized (delivered, token and lease cleared: neither claimable nor re-preparable), because an outbox event that a cycle has touched cannot be deleted (the job_audit_events FK; audit rows are append-only); the committed proof `plantForeignZaloDmRow` plants one realistic foreign claimable promotion with an explicit low event id before each pass cell, and the cell asserts that the plant was claimed and that its own result is unchanged; the file ran green twice in a row under the lane's lock. Added cells: PSD-8b (the stale stop; it fails when that `break` becomes `continue`), PSD-8's restored stub check (it fails when the stub answers every start read), and in packages/db/src/zalo-dm-delivery.test.ts PSD-10c's finished-delivery and other-projector-token cells (each fails when one condition of the 0071 function is dropped). Corrected cause: the row's "shared test database" was wrong; each bot test file has its own database, and the cross-claims came from leftovers of earlier cells of the same file (random v4 event ids; a pass claims any claimable row). A pass may still claim the planted row: the strict "never claimed" reading needs a dispatcher change, which was negative scope (RO-L45-2 item 1, decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
 risk: P2
 change_class: test-infra
 depends_on: []
 invariants: [transport-zalo, test-chain]
 scope: [apps/bot/src/projector-registry.test.ts, packages/db/src/zalo-dm-delivery.test.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/bot/src/projector-registry.test.ts :: plantForeignZaloDmRow
 notes: |
   Line numbers at ca1d2cae2e1d0b637d5419e6fc0b8671b615b512: a cycle claims `zalo_dm` rows one at a time in `event_id` order (apps/bot/src/dispatcher.ts:331-336, `claim_projector_delivery_batch($1, 1)`; `ORDER BY pd.event_id` at packages/db/migrations/0022_job_claim_lease_core.sql:349 and :374) whichever test file emitted them, so bot test files running in parallel on the shared database can claim each other's `zalo_dm` rows; this is true at the base and was true before L34's PSD-8 fix too. Observed in L34's last run: it cost PR #111 two red full bot-suite runs at `731f2c4`, because PSD-8's old stub answered the start read for any event, so a parallel file's older promotion row took the zero-row answer and the stale stop (dispatcher.ts:362-364) ended the pass before PSD-8's own row was claimed; commit `22d7009` then isolated only PSD-8 (apps/bot/src/projector-registry.test.ts:1209) by construction. Same cause: PSD-13 (:1500) leaves its event unacked and PSD-14 (:1533) drains it (R1-F4); PSD-8's `finally` deletes every claimed `zalo_dm` row, not only its own (R1b-F2). Missing cells: PSD-8 has one claimable row, so the stale stop's `break` (dispatcher.ts:364) changed to `continue` still passes (R1b-F1); PSD-10c (packages/db/src/zalo-dm-delivery.test.ts:507, the stale-claim cell) has no finished-delivery cell and no other-projector-token cell (R2-F3); PSD-8 lost its stub check (R2b-F3). Fix: scope every cycle cell's stub, claims and cleanup to its own event ids (or run the bot test files that drive a dispatch cycle one at a time; at the base they are apps/bot/src/dispatcher-outcome.test.ts, dispatcher.test.ts, outbox-wake.test.ts, projector-registry.test.ts, schedule.test.ts and projectors/public-sessions.test.ts, web-realtime.test.ts, zalo-dm.test.ts), then add the three cells. Reported in L34's reviews and its post-round fix, not fixed in PR #111; the row was added by lane L36 (2026-10-24).
   Source: PR #111 body, section "Reported P3s and observations, not fixed", lines 36-40, and section "Post-round fix D1: fix applied after the final round, not re-reviewed (3-round cap)", line 70.
@@ -7198,14 +7203,16 @@ notes: |
 
 ## task: bot-queues-outbox-schedule-default-comment
 title: Bot: correct the stale "default false" comment on the outbox dispatch schedule flag in apps/bot/src/queues.ts (the committed default is true since PR #94)
-status: idea
+status: merged
+merged: 2026-10-28 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p4-zalo-dm-routable-list-and-cycle-tests (L45); find it with `gh pr list --state merged --head feat/p4-zalo-dm-routable-list-and-cycle-tests` (the conductor's merge log has the number; no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe `apps/bot/src/queues.ts :: committed` (slice-unique: absent at the base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da, present at the lane's head)
+note_merged: 2026-10-28 L45: closed BY HAND in the lane's own PR, measured at base dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da (the PR #131 merge). The reconcile cannot flip it: it scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. What closed it: the comment on the outbox dispatch schedule flag in apps/bot/src/queues.ts now says that the committed default is "true" and that an unset or other value leaves the schedule off; comment only, no code line changed.
 risk: P2
 change_class: code
 depends_on: []
 invariants: [transport-zalo, retry-liveness]
 scope: [apps/bot/src/queues.ts]
 manifest: null
-merged_probe: null
+merged_probe: apps/bot/src/queues.ts :: committed
 notes: |
   Line numbers at 8086f8e31bc4a05328cc9c974844cc9aa7b62e14: the comment at apps/bot/src/queues.ts:12 says the schedule is gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED "(default false; the owner enables it", while .env.example:91 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED=true` and infra/docker-compose.yml:133 is `OUTBOX_DISPATCH_SCHEDULE_ENABLED: "true"` (PR #94, owner decision B3, DD-141 at docs/standards/decisions.md:128). Real delivery still waits on the projector registry (seeded disabled by migration 0056, :74 and :106; enabled only by the owner CLI scripts/outbox-projector-enable.mjs) and on the owner's P0 steps (.env.example:90). A comment-only change; lane L37 (docs only) found it at step 0 and does not edit code; the row was added by lane L37 (2026-10-25).
   Source: docs/sessions/web-mvp-phase3-readiness-p3-docs-flags-and-dd148-labels.md, item 8 (F-2).
@@ -7648,3 +7655,18 @@ merged_probe: null
 notes: |
   Line numbers at the lane's head (base a965de349f59a76b909296460520afd9c02e6d4b plus lane L47's commits): the #62 DB harness (a throwaway database; `withJobDefinerLock` around `bootstrapJobDefiner` and `migrate`; `setAppWorkerPasswordRaceSafe`; a teardown that releases the password lease after the pools close) is copied as a local function in apps/bot/src/dispatcher.test.ts:54 (`setupDispatcherContext`), preflight.test.ts:39 (`setupWorkerContext`), schedule.test.ts:53 (`setupScheduleContext`), projectors/zalo-dm.test.ts:183 and projectors/zalo-dm-error-mapping-matrix.test.ts:60 (both `setupZaloDmContext`), and inline in outbox-wake.test.ts (:135, :142) and projector-registry.test.ts (:123, :130); only its pieces are shared, from apps/bot/src/test-db.ts (:25, :36, :41, :45). The zalo_dm fixture (`club`, `player`, `insertEvent`, `claim`) is copied between projectors/zalo-dm.test.ts:254-328 and the matrix :146-206. Lane L47 added the latest copies because zalo-dm.test.ts is a file of parked lane L45. Proposal: one exported harness in test-db.ts (and one zalo_dm fixture module) that these files import, in a later lane once L45 has merged, running every apps/bot DB test file twice.
   Source: lane L47 (p4-zalo-error-mapping-fakes), ruling RO-L47-4 item 3 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature).
+
+## task: session-command-context-actor-person-id
+title: Web: twelve session-command routes read the actor from a second `currentSession()` call instead of the session-command gate's context
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: [auth, session-command]
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da (found by lane L48's review R1b1, re-measured and recorded by lane L45 at its merged base, outside both lanes' scope). Inside `handleSessionCommand` (apps/web/lib/session-command-route.ts:848) these routes call `currentSession()` a second time to get the actor: apps/web/app/api/sessions/[id]/mark-paid/route.ts:32, sessions/[id]/payments/[allocationId]/reverse/route.ts:20, sessions/[id]/players/route.ts:27, sessions/[id]/players/[playerId]/route.ts:20, join-requests/[id]/approve/route.ts:26, join-requests/[id]/reject/route.ts:25, join-requests/[id]/route.ts:30, sessions/[id]/join/route.ts:35, sessions/[id]/leave/route.ts:30, sessions/[id]/share-link/route.ts:25, sessions/[id]/guest-notes/route.ts:56 and sessions/[id]/guest-notes/[noteId]/route.ts:58 (paths under apps/web/app/api/). The source finding listed the first ten; the two guest-note routes follow the same pattern and already did at 8e918f0ec541ef4f72740be652a3a86584d381c3 (measured by L45; the measurement wins). share-link's header (:11-13) says why: the command context carries no actor. A session that ends between the gate's read and the second one reaches each route's own fallback (the eleven others throw "session vanished between the entry gate and the command", e.g. mark-paid :33; share-link answers AUTH_REQUIRED, :26). By code reading only, not probed.
+  Deliverable: the gate passes the actor it authorized in the command context, the twelve routes read it from there, and a test per route family shows the command runs as the gate's actor.
+  Source: PR #126 body, section 9 (line 233; also section 6, line 214).
