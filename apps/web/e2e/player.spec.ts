@@ -517,7 +517,7 @@ const APPROVE = { name: "Duyệt", exact: true } as const;
 const REJECT = { name: "Từ chối", exact: true } as const;
 const RELOAD = { name: "Tải lại dữ liệu", exact: true } as const;
 const NAMED = "Nguyễn Văn An"; // the mock's first pending request; the second has no display name
-const UNNAMED = "Người chơi chưa có tên";
+const UNNAMED = "(chưa đặt tên)";
 /** The host detail read: the roster rides on it, and the view's refresh refetches it. */
 const ROSTER_READ = /^\/api\/sessions\/[^/]+$/;
 /** What R8 / R9 answer: only the keys the outcome line reads (H-1). */

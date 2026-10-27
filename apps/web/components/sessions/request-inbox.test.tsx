@@ -148,10 +148,8 @@ describe("RequestRowView", () => {
 
   it("a missing name shows the fixed unnamed label and nothing else", () => {
     const named = request({ displayName: null });
-    expect(text(row({ kind: "idle" }, { request: named }))).toContain("Unnamed player");
-    expect(text(row({ kind: "idle" }, { request: named }, "vi"))).toContain(
-      "Người chơi chưa có tên",
-    );
+    expect(text(row({ kind: "idle" }, { request: named }))).toContain("(unnamed)");
+    expect(text(row({ kind: "idle" }, { request: named }, "vi"))).toContain("(chưa đặt tên)");
   });
 
   it("idle: Approve and Reject are enabled and not busy", () => {

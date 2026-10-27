@@ -75,7 +75,7 @@ describe("MessageList", () => {
         live("2", { mine: true }),
         live("1"),
       ],
-      ["Ann @ msg:1", "You @ msg:2", "System @ msg:3", "Assistant @ msg:4", "Member @ msg:5"],
+      ["Ann @ msg:1", "You @ msg:2", "System @ msg:3", "Assistant @ msg:4", "(unnamed) @ msg:5"],
     ],
     [
       "quotes label and body of a loaded reply target",
