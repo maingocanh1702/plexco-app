@@ -640,21 +640,27 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
 
     it("BS-3 zalo_dm: promotion DMs acked '{}' while off reach the stub once each after the CLI enables; a back-dated session update DM is never sent and gets one age record", async () => {
       const zalo = await zaloBoot();
+      const own: string[] = [];
       try {
         const promoted = [await zalo.promote(), await zalo.promote(), await zalo.update()];
         const ids = promoted.map((p) => p.event);
+        own.push(...ids);
         const inBound = promoted.slice(0, 2);
         const aged = promoted[2]!;
         await ackedWhileOff(ids, zalo.projectors);
         expect(zalo.stub.calls).toEqual([]);
         await backdate([aged.event], ZALO_DM_MAX_AGE_MINUTES + 1);
         await enable("zalo_dm");
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
         await cycle(zalo.projectors);
         await cycle(zalo.projectors); // a delivered row is never claimed again
-        expect(zalo.stub.calls.map((call) => call.chatId).sort()).toEqual(
-          inBound.map((p) => p.chat).sort(),
-        );
-        expect(zalo.stub.calls.every((call) => call.token === zalo.token)).toBe(true);
+        expect(
+          sentTo(zalo, promoted)
+            .map((call) => call.chatId)
+            .sort(),
+        ).toEqual(inBound.map((p) => p.chat).sort());
+        expect(sentTo(zalo, promoted).every((call) => call.token === zalo.token)).toBe(true);
         for (const p of inBound)
           expect(await deliveries(p.event)).toEqual([
             { projector: "zalo_dm", status: "delivered", attempts: 1, error_code: null },
@@ -663,7 +669,9 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         expect(await expiries(ids)).toEqual([
           { job_id: aged.event, reason: `${EXPIRED}:zalo_dm:age` },
         ]);
+        await expectPlantClaimed(plant);
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
@@ -671,21 +679,27 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
 
     it("DA-3 zalo_dm: an event back-dated 45 minutes and acked '{}' while off is prepared by the CLI (the shared bound, not L24's 30 minutes) and reaches the stub once", async () => {
       const zalo = await zaloBoot();
+      const own: string[] = [];
       try {
         const p = await zalo.update();
+        own.push(p.event);
         await ackedWhileOff([p.event], zalo.projectors);
         // 45 minutes: past L24's 30-minute bound (it expired then), inside the shared bound
         await backdate([p.event], 45);
         await enable("zalo_dm");
         expect(await deliveries(p.event)).toMatchObject([{ projector: "zalo_dm", attempts: 0 }]);
         expect(zalo.stub.calls).toEqual([]);
-        await cycle(zalo.projectors);
-        expect(zalo.stub.calls).toMatchObject([{ chatId: p.chat, token: zalo.token }]);
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
+        const { sent } = await promotionCycle(zalo, p);
+        expect(sent).toEqual([{ chatId: p.chat, token: zalo.token }]);
         expect(await deliveries(p.event)).toEqual([
           { projector: "zalo_dm", status: "delivered", attempts: 1, error_code: null },
         ]);
         expect(await expiries([p.event])).toEqual([]);
+        await expectPlantClaimed(plant);
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
@@ -1241,14 +1255,16 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         const args = ["replay", "--event", event, "--projector", "zalo_dm"];
         return withJobDefinerLock(base, () => runCli(args, testUrl(base, { db: dbName })));
       };
+      const own: string[] = [];
       try {
         const stale = await zalo.update();
         const fresh = await zalo.update();
+        own.push(stale.event, fresh.event);
         await ackedWhileOff([stale.event, fresh.event], zalo.projectors);
         await enable("zalo_dm");
-        await cycle(
-          new Map([["zalo_dm", async () => ({ result: "dlq", errorCode: "replay_terminal" })]]),
-        );
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
+        await cycle(DLQ_ONCE(stale.event, fresh.event));
         for (const p of [stale, fresh])
           expect(await deliveries(p.event)).toEqual([
             { projector: "zalo_dm", status: "dlq", attempts: 1, error_code: "replay_terminal" },
@@ -1263,7 +1279,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         expect((await replay(fresh.event)).code).toBe(0);
         await cycle(zalo.projectors);
         await cycle(zalo.projectors); // a delivered row is never claimed again
-        expect(zalo.stub.calls.map((call) => call.chatId)).toEqual([fresh.chat]);
+        expect(sentTo(zalo, [stale, fresh]).map((call) => call.chatId)).toEqual([fresh.chat]);
         const row = await verify.query(
           "SELECT status, attempts, provider_ref, error_code FROM projector_deliveries WHERE event_id = $1",
           [fresh.event],
@@ -1271,7 +1287,10 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         expect(row.rows).toEqual([
           { status: "delivered", attempts: 1, provider_ref: "sent", error_code: null },
         ]);
+        await expectPlantClaimed(plant);
+        expect((await deliveries(plant.event))[0]?.status).toBe("delivered");
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
