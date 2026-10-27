@@ -67,14 +67,14 @@ Launch = **web app (installable/offline) + Zalo bot ra mắt song song** → pha
 - Multi-tenant + RLS fail-closed, `tenantRepo` choke-point, `ensureTenantContext` set-or-assert.
 - Google login (6 route auth, cookie `__Host-`/`__Secure-`, idle TTL 14 ngày) — **merged nhưng ⛔ chưa bật** (`GOOGLE_OAUTH_*` còn rỗng, là quyết định go-live của owner).
 - Họ lệnh session đủ 8: `create · publish · announce · update · close · cancel · createGuestNote · deleteGuestNote` (`packages/db/src/session-service.ts`).
-- 7 route nghiệp vụ; `announce` **cố ý chưa có route** (gate DD-56 clause 1 — announce không giao được cho ai khi projector còn stub).
+- 7 route nghiệp vụ; `announce` **cố ý chưa có route** (gate DD-56 clause 1 — announce không giao được cho ai khi projector còn stub). ⚠️ **27/10/2026:** route `announce` đã có (`apps/web/app/api/sessions/[id]/announce/route.ts`) và projector không còn stub (`apps/bot/src/projectors/index.ts`).
 - Public read model + fence (`0033`/`0036`): guarded view, `app`/`readonly` **0 quyền** trên bảng gốc.
 - Bundle hardening audit 06–07/09 (`0037`–`0042`) và link_code identity (`0043`).
 
 **Chưa có, đừng đọc nhầm:**
 
 - **0 màn FE** — FE đang **PENDING theo lệnh owner** (DD-116 Option B), không phải "chưa kịp làm". Carve-out DD-119 vẫn **🟡 chưa ratify**. ⚠️ **12/10/2026: gỡ bởi DD-122** (full MVP; DD-119 superseded; chương trình `../autopilot-templates/web-mvp-2026-10-12-RUN.md`).
-- **Gửi thật qua kênh** — cần owner bật projector trong registry (`outbox_projector_set_enabled`, runbook `outbox-dispatch-enable-rollback.md`); `zalo_dm` còn cần token Zalo thật (P0 của owner). `OUTBOX_DISPATCH_SCHEDULE_ENABLED` default commit `true` (B3, DD-141); worker chỉ lên lịch khi cờ đúng `"true"` và probe registry qua.
+- **Gửi thật qua kênh** — cần owner bật projector trong registry (chỉ bằng CLI owner `node scripts/outbox-projector-enable.mjs enable --projector <tên>`, runbook `outbox-dispatch-enable-rollback.md` bước 2.4: CLI từ chối (`unacked_backlog`) khi còn event chưa ack cũ hơn ngưỡng, nếu không thì bật rồi backfill; gọi thẳng `outbox_projector_set_enabled(<tên>, true)` bị cấm vì bỏ qua backfill, hàm đó chỉ còn để tắt); `zalo_dm` còn cần token Zalo thật (P0 của owner). `OUTBOX_DISPATCH_SCHEDULE_ENABLED` default commit `true` (B3, DD-141); worker chỉ lên lịch khi cờ đúng `"true"`, bản đồ projector không chứa stub và probe registry qua.
 - **Route ĐỌC session** (`GET /api/sessions`, `/[id]`) — chờ DD-56 amendment #3 ký.
 - **In-app Chat** — có DB root `0030`–`0032` và **0 dòng TS production nào đọc `chat_*`**. Schema không phải runtime.
 - **Zalo/Messenger adapter**, đối soát CK runtime, billing entitlement (`resolveCapability()` vẫn **0 caller production**).
@@ -254,7 +254,7 @@ git --no-optional-locks log --oneline -1    # xác nhận HEAD đã nhúc nhích
 
 Ưu tiên đã chốt: **lane BE + infra trước, FE và legal xếp sau**.
 
-1. **Projector thật thay `productionStubDeliver`** (row `projector-real-replace-stub`). Đây là nút thắt: schedule OFF, `announce` không có route, sync engine "infra-only" đều quy về nó.
+1. ~~**Projector thật thay `productionStubDeliver`** (row `projector-real-replace-stub`). Đây là nút thắt: schedule OFF, `announce` không có route, sync engine "infra-only" đều quy về nó.~~ ⛔ **Đo 27/10/2026:** ba projector đã nối module thật (`apps/bot/src/projectors/index.ts`), default commit của cờ lịch là `true` (B3, DD-141); bật dùng thật là CLI owner `scripts/outbox-projector-enable.mjs` + token Zalo thật cho `zalo_dm` (P0 của owner).
 2. **Route ĐỌC session** — chờ DD-56 amendment #3 ký, code thì đã có đủ tiền đề.
 3. **DD-29 capability wiring** — `resolveCapability()` còn 0 caller ⇒ hard-dependency (a) của phase-1 vẫn mở, billing chưa gate được nhánh tiền nào.
 4. **`app-worker-password` (L8)** và **`migrate-gate` (L4a)** trong hàng đợi infra.
