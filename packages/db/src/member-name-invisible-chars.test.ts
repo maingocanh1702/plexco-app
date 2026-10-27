@@ -2389,7 +2389,19 @@ describe("L29-TW T2 validatePatch refuses with checkTypedName (club-config-valid
     ["ordinary WAO Club", "WAO Club", "WAO Club"],
     ["edge U+0009 before and U+2028 after", mix(9, "WAO", 0x2028), "WAO"],
     ["121 characters", "a".repeat(121), "INVALID_INPUT"],
+    // Club-name parity, db half (web half: club-settings-model.test.ts): counted in code points.
+    [
+      "120 astral (240 UTF-16 units)",
+      String.fromCodePoint(0x1f3f8).repeat(120),
+      String.fromCodePoint(0x1f3f8).repeat(120),
+    ],
+    ["121 astral (242 UTF-16 units)", String.fromCodePoint(0x1f3f8).repeat(121), "INVALID_INPUT"],
   ])("T2 %s", (_label, sent, want) => expect(run(sent)).toBe(want));
+  it("T2 121 astral is refused with the cap message", () => {
+    expect(() => validatePatch({ name: String.fromCodePoint(0x1f3f8).repeat(121) })).toThrow(
+      "name must be 1-120 printable chars",
+    );
+  });
 });
 
 // L29-TW (unit U7d, N2): P3's TS entry point; the shared normalizer runs before the SQL call.
