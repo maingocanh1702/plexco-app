@@ -1696,8 +1696,10 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
 
     it("PSD-12 zalo_dm promotion (R-CLI): an unacked player.promoted back-dated past the flat bound -> the CLI exits 2 unacked_backlog and changes nothing; acked while off, the CLI prepares one pending row and records no age", async () => {
       const zalo = await zaloBoot();
+      const own: string[] = [];
       try {
         const { event } = await zalo.promote();
+        own.push(event);
         await backdate([event], ZALO_DM_MAX_AGE_MINUTES + 1);
         const refused = await runEnableCli(["enable", "--projector", "zalo_dm"]);
         expect(refused.code).toBe(2);
@@ -1712,6 +1714,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         ]);
         expect(await expiries([event])).toEqual([]);
       } finally {
+        await neutralize(own);
         await disable("zalo_dm");
         await zalo.close();
       }
@@ -1755,8 +1758,10 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     );
     it("PSD-13 zalo_dm promotion (producer): an active player's real leaveSession promotes the waitlisted player and writes exactly one player.promoted row (aggregate session, the emit's payload keys, the promoted player's ids)", async () => {
       const boot = await zaloBoot();
+      let session = "";
       try {
         const made = await boot.producerPromote();
+        session = made.session;
         const { rows } = await verify.query(
           "SELECT id, type, aggregate_type, aggregate_id, payload FROM outbox_events WHERE type = 'player.promoted' AND payload->>'player_id' = $1",
           [made.waiter.player],
@@ -1782,6 +1787,22 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         ]);
         expect(seated.rows[0].status).toBe("active");
       } finally {
+        // delete, not ack: an acked in-bound player.promoted would be re-prepared by a later enable CLI backfill
+        if (session) {
+          const ids = (
+            await verify.query<{ id: string }>(
+              "SELECT id FROM outbox_events WHERE aggregate_id = $1",
+              [session],
+            )
+          ).rows.map(({ id }) => id);
+          if (ids.length > 0) {
+            await verify.query(
+              "DELETE FROM projector_deliveries WHERE event_id = ANY($1::uuid[])",
+              [ids],
+            );
+            await verify.query("DELETE FROM outbox_events WHERE id = ANY($1::uuid[])", [ids]);
+          }
+        }
         await boot.close();
       }
     }, 30_000);
@@ -1789,24 +1810,25 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
     it("PSD-14 zalo_dm promotion (producer, end to end): the real leaveSession's player.promoted, back-dated past the flat bound, is sent once to the promoted player's chat while its session starts a day ahead (delivered/sent, attempts 1, no record); a second one made the same way is not sent once the start is one minute past (delivered/noop_expired, attempts 1, one session-started line); the leavers' player.removed events get no delivery row", async () => {
       const live = PROMOTION_PATHS.find((cell) => cell.id === "PSD-1")!;
       const zalo = await zaloBoot();
+      const own: string[] = [];
       try {
-        // PSD-13 runs no cycle: drain earlier cells' events first, so the stub counts only ours
-        await cycle(zalo.projectors);
-        await enable("zalo_dm");
-        await cycle(zalo.projectors);
-        await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         const calls = zalo.stub.calls.length;
         const made = await zalo.producerPromote();
+        own.push(made.event);
         await live.arm(zalo, made.event);
+        const plant = await plantForeignZaloDmRow(zalo);
+        own.push(plant.event);
         expect(await promotionCycle(zalo, made)).toEqual({
           sent: [{ chatId: made.chat, token: zalo.token }],
           row: [{ status: "delivered", attempts: 1, provider_ref: "sent", error_code: null }],
           lines: [],
         });
+        await expectPlantClaimed(plant);
         expect(await expiries([made.event])).toEqual([]);
 
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         const made2 = await zalo.producerPromote();
+        own.push(made2.event);
         await live.arm(zalo, made2.event);
         expect(await expiries([made2.event])).toEqual([]);
         await zalo.moveStart("-1 minute");
@@ -1835,8 +1857,14 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
         );
         expect(removed.rows).toHaveLength(2);
         for (const { id } of removed.rows) expect(await deliveries(String(id))).toEqual([]);
-        expect(zalo.stub.calls.slice(calls).map(({ chatId }) => chatId)).toEqual([made.chat]);
+        expect(
+          zalo.stub.calls
+            .slice(calls)
+            .map(({ chatId }) => chatId)
+            .filter((c) => c === made.chat || c === made2.chat),
+        ).toEqual([made.chat]);
       } finally {
+        await neutralize(own);
         await asOwner("SELECT outbox_projector_set_enabled('zalo_dm', false)", []);
         await zalo.close();
       }
