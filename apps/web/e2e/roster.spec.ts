@@ -81,6 +81,8 @@ const select = (page: Page, name: string) =>
 const dialog = (page: Page) => page.getByRole("dialog");
 const body = (call: { body: Record<string, unknown> | null }) => call.body!;
 const heading = (page: Page) => page.getByRole("heading", { name: "Người chơi", exact: true });
+/** Copy D5: shown instead of the success message when the answer carries `replayed: true`. */
+const REPLAYED = "Thao tác này đã được ghi nhận ở lần gửi trước; không có gì mới được lưu.";
 /** A call from the page itself (another tab or host): page.route sees it, page.request would not. */
 const send = (page: Page, method: string, path: string, json: object) =>
   page.evaluate(
@@ -164,7 +166,7 @@ test.describe("add / remove", () => {
     );
     await page.getByRole("button", { name: "Thử lại" }).click();
     expect((await (await replay).json()).data.replayed).toBe(true);
-    await expect(page.getByText("Đã thêm Bình")).toBeVisible();
+    await expect(page.getByText(REPLAYED)).toBeVisible(); // D5 replaces the success copy
     const ids = mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
     expect(ids).toHaveLength(2);
     expect(ids[1]).toBe(ids[0]);
@@ -281,6 +283,119 @@ test.describe("add / remove", () => {
       status: string;
     };
     expect(p4.status).toBe("waitlisted"); // the conflicting call changed nothing
+  });
+});
+
+test.describe("L49 command id: reload, Cancel, conflict, timeout", () => {
+  const add = async (page: Page, name: string) => {
+    await page.getByRole("button", { name: "Thêm người chơi" }).click();
+    await page.getByLabel("Tên hiển thị").fill(name);
+    await page.getByRole("button", { name: "Thêm", exact: true }).click();
+  };
+  /** Adds "Bình" with the reply lost (the server APPLIED it): the form is left uncertain. */
+  const lostAdd = async (page: Page) => {
+    const mock = await open(page);
+    mock.failNext("add", "lost-response");
+    await add(page, "Bình");
+    await expect(page.getByRole("button", { name: "Thử lại" })).toBeVisible();
+    return mock;
+  };
+
+  test("A-21: after a lost reply and a reload, the identical add reuses the key and replays", async ({
+    page,
+  }) => {
+    const mock = await lostAdd(page);
+    await page.reload(); // the mock and sessionStorage survive it
+    await expect(page.getByText("Lan Nguyễn")).toBeVisible();
+    await add(page, "Bình");
+    await expect(page.getByText(REPLAYED)).toBeVisible();
+    const ids = mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+    const members = (mock.state[0]!.players as { displayName: string }[]).filter(
+      (p) => p.displayName === "Bình",
+    );
+    expect(members).toHaveLength(1);
+  });
+
+  test("A-22: after a lost reply and a reload, a changed name is a NEW command", async ({
+    page,
+  }) => {
+    const mock = await lostAdd(page);
+    await page.reload();
+    await expect(page.getByText("Lan Nguyễn")).toBeVisible();
+    await add(page, "Bình An");
+    await expect(page.getByText("Bình An vào danh sách chờ (#2)")).toBeVisible();
+    const ids = mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  test("A-23: the retry shows the replayed notice; the next identical add is a NEW command", async ({
+    page,
+  }) => {
+    const mock = await lostAdd(page);
+    await page.getByRole("button", { name: "Thử lại" }).click();
+    await expect(page.getByText(REPLAYED)).toBeVisible();
+    await add(page, "Bình");
+    const ids = () => mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
+    await expect.poll(() => ids().length).toBe(3);
+    expect(ids()[2]).not.toBe(ids()[1]); // the success dropped the key and its record
+  });
+
+  test("A-24: Cancel while uncertain, reopen: the identical add reuses the key and replays", async ({
+    page,
+  }) => {
+    const mock = await lostAdd(page);
+    await page.getByRole("button", { name: "Huỷ", exact: true }).click();
+    await add(page, "Bình");
+    await expect(page.getByText(REPLAYED)).toBeVisible();
+    const ids = mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  test("A-25: COMMAND_ID_CONFLICT shows the human copy, focused; the next add is a NEW command", async ({
+    page,
+  }) => {
+    const mock = await open(page);
+    mock.failNext("add", {
+      code: "COMMAND_ID_CONFLICT",
+      message: "Thao tác bị trùng. Tải lại trang rồi thử lại.",
+      statusCode: 409,
+    });
+    await add(page, "Bình");
+    const alert = page.locator("main").getByRole("alert");
+    await expect(alert).toContainText("Thao tác bị trùng. Tải lại trang rồi thử lại.");
+    await expect(alert).not.toContainText("commandId");
+    await expect(alert).toBeFocused();
+    await page.getByRole("button", { name: "Thêm", exact: true }).click();
+    await expect(page.getByText("Đã thêm Bình")).toBeVisible();
+    const ids = mock.callsTo("POST", /\/players$/).map((c) => body(c).commandId);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]); // a fresh key answered by a 4xx is dropped
+  });
+
+  test("A-26: an add unanswered for 15 s shows the timeout copy, focused", async ({ page }) => {
+    await page.clock.install();
+    const mock = await open(page);
+    mock.holdNext("add"); // never released: the client aborts it at 15 s
+    await add(page, "Bình");
+    await expect.poll(() => mock.callsTo("POST", /\/players$/).length).toBe(1);
+    await page.clock.fastForward(15_000);
+    const alert = page.locator("main").getByRole("alert");
+    await expect(alert).toContainText(
+      "Máy chủ chưa phản hồi kịp. Thao tác có thể vẫn đang được xử lý; thử lại sau giây lát.",
+    );
+    await expect(alert).toBeFocused();
+  });
+
+  test("A-29: a failed detail load moves focus to the error notice", async ({ page }) => {
+    const mock = await installApiMock(page, sessions());
+    mock.failNext("detail", { code: "INTERNAL", message: "Lỗi máy chủ.", statusCode: 500 });
+    await page.goto(`${BASE}/r-open`);
+    // in main: Next's route announcer is a second role="alert" outside it
+    await expect(page.locator("main").getByRole("alert")).toBeFocused();
   });
 });
 
@@ -507,7 +622,7 @@ test.describe("ledger / reversal", () => {
     );
     await dialog(page).getByRole("button", { name: "Thử lại" }).click();
     expect((await (await replay).json()).data.replayed).toBe(true);
-    await expect(page.getByText(/Đã hoàn tác .*20\.000/)).toBeVisible(); // the replay is a success
+    await expect(page.getByText(REPLAYED)).toBeVisible(); // the replay: D5 notice, not the success copy
     const ids = mock.callsTo("POST", /\/payments\/a2\/reverse$/).map((c) => body(c).commandId);
     expect(ids).toHaveLength(2);
     expect(ids[1]).toBe(ids[0]);
