@@ -42,7 +42,7 @@ export const CLIENT_TIMEOUT = "CLIENT_TIMEOUT";
 
 /**
  * apiFetch's deadline, set only when the caller passes no `signal` (that caller owns its own) and
- * the request is a GET/HEAD read or sends a JSON body with a string `commandId`.
+ * the request is a GET/HEAD read or, other than a PATCH, sends a JSON body with a string `commandId`.
  */
 export const API_TIMEOUT_MS = 15_000;
 

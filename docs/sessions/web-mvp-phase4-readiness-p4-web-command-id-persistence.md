@@ -502,7 +502,7 @@ The lane block's 7 threats, restated in substance from the design's threat-to-ro
 | 2 | a stale key re-sent with another body replays and silently drops it, or a deliberate second payment shares an id | rows 10, 5, 6; D2, D5 |
 | 3 | a key restored across person, tenant or time | rows 13, 14, 15; D1 |
 | 4 | a COMMAND_ID_CONFLICT loop | row 4 (the record is dropped, so a reload ends it; a sticky key repeats in the mount until Cancel or a reload, both refetch first: fail-closed, R1a-1); D3, D6 |
-| 5 | a timeout classified as definite (the key dropped while the server may have committed) | row 1; D7 (CLIENT_TIMEOUT is uncertain; a request without a commandId and any PATCH get no client deadline, reviews SEC-2 and R2s-2), D8 |
+| 5 | a timeout classified as definite (the key dropped while the server may have committed) | row 1; D7 (CLIENT_TIMEOUT is uncertain; a mutation without a commandId and any PATCH get no client deadline, reviews SEC-2 and R2s-2), D8 |
 | 6 | PII or money data in browser storage | D1, D2: only ids, a hash and a time, no name, amount or reason in clear; the shared-device limit (the add key hashes the typed name and the reversal key the reason, unsalted; the records survive a sign-out in the same tab) is named under Not defended (reviews SEC2-1, R2s-1) |
 | 7 | storage that throws, is absent or full (private mode) | row 12 (degrade to today's in-memory behaviour; the command is never blocked) |
 
