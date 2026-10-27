@@ -194,6 +194,7 @@ export function MarkPaidSheet({
       error={
         active.error && step !== "result" ? (
           <ApiErrorNotice
+            autoFocus
             error={active.error}
             onRetry={copy[step].run}
             onReload={() => onClose(true)}

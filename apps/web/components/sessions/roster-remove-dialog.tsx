@@ -66,7 +66,12 @@ export function RosterRemoveDialog({
       busy={cmd.busy}
       error={
         cmd.error ? (
-          <ApiErrorNotice error={cmd.error} onRetry={() => void confirm()} onReload={onReload} />
+          <ApiErrorNotice
+            autoFocus
+            error={cmd.error}
+            onRetry={() => void confirm()}
+            onReload={onReload}
+          />
         ) : null
       }
       onConfirm={() => void confirm()}

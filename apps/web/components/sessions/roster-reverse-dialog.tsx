@@ -108,6 +108,7 @@ export function RosterReverseDialog({
       error={
         cmd.error ? (
           <ApiErrorNotice
+            autoFocus
             error={cmd.error}
             describe={describeReverseError}
             onRetry={() => void confirm()}

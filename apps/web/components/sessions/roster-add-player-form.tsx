@@ -150,7 +150,12 @@ export function RosterAddPlayerForm({
         }}
       />
       {cmd.error ? (
-        <ApiErrorNotice error={cmd.error} onRetry={() => void submit()} onReload={onReload} />
+        <ApiErrorNotice
+          autoFocus
+          error={cmd.error}
+          onRetry={() => void submit()}
+          onReload={onReload}
+        />
       ) : null}
       <div className={styles.formActions}>
         <Button type="submit" disabled={cmd.busy} aria-busy={cmd.busy ? true : undefined}>
