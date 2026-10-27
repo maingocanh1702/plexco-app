@@ -2,6 +2,8 @@ import { expect, type Page } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { API_TIMEOUT_MS } from "../../lib/api-client";
 import { COMPILE_TIMEOUT_MS } from "./golden-path-timeouts";
 
 /**
@@ -11,44 +13,98 @@ import { COMPILE_TIMEOUT_MS } from "./golden-path-timeouts";
 
 /**
  * Every session API call (/api/sessions...) spends the signed-in ACCOUNT's pre-authorization ceiling:
- * 60 per rolling 60 s (ACTOR_LIMIT in lib/session-command-route.ts), shared by all clubs and all runs.
- * A robot clicks far faster than a host, so one run (with the dev server's double fetches) lands
- * close to it and a second run right after would get 429 "Bạn thao tác quá nhanh". This test-only
- * pacer queues /api/sessions requests in the browser and holds each until fewer than `BUDGET` were
- * sent in the last 60 s. The timestamps live in a temp file so back-to-back runs share the window.
- * It adds no waiting when the host-speed pace stays under the budget.
+ * 60 per rolling 60 s (ACTOR_LIMIT in lib/session-command-route.ts), shared by all clubs and all runs;
+ * a robot clicks far faster than a host and would get 429. This test-only pacer keeps the calls under
+ * `BUDGET` (15 of margin), counted in a temp file shared by the tests and by back-to-back runs. Each
+ * test first WAITS in test code until `room` slots are free: apiFetch aborts a request API_TIMEOUT_MS
+ * after its fetch() call (lib/api-client.ts), so a hold inside a request would read as a product
+ * timeout. The route handler is only a backstop: it never holds a request longer than MAX_HOLD_MS
+ * and otherwise fails the test with a pacer error.
  */
 const WINDOW_MS = 60_000;
 const BUDGET = 45; // margin of 15 below the server ceiling of 60
 const PACE_FILE = join(tmpdir(), "plexco-golden-path-session-api-hits.json");
+const MAX_HOLD_MS = 8_000; // the backstop's longest hold of one request, queue time included
+if (MAX_HOLD_MS >= API_TIMEOUT_MS) {
+  throw new Error(
+    `golden path pacer: the hold cap MAX_HOLD_MS (${MAX_HOLD_MS} ms) must stay under the client deadline API_TIMEOUT_MS (${API_TIMEOUT_MS} ms)`,
+  );
+}
 
 function recentHits(now: number): number[] {
   try {
     const hits = JSON.parse(readFileSync(PACE_FILE, "utf8")) as unknown;
     return Array.isArray(hits)
-      ? hits.filter((t): t is number => typeof t === "number" && now - t < WINDOW_MS)
+      ? hits
+          .filter((t): t is number => typeof t === "number" && now - t < WINDOW_MS)
+          .sort((a, b) => a - b)
       : [];
   } catch {
     return [];
   }
 }
 
-export async function paceSessionApi(page: Page): Promise<void> {
+/** Ms until at most `BUDGET - room` of the sorted `hits` are left in the window; 0 = free now. */
+function msUntilFree(hits: number[], now: number, room: number): number {
+  if (hits.length <= BUDGET - room) return 0;
+  // The slot opens when this hit leaves the window; +50 ms of margin.
+  return hits[hits.length - (BUDGET - room) - 1]! + WINDOW_MS - now + 50;
+}
+
+/**
+ * `room` = the test's measured number of paced calls: it starts only when all of them fit. `room`
+ * defaults to 1, today's rule (wait only for the next free slot), for callers that have not
+ * measured their calls (public-card-hide-address.spec.ts, public-share-page.proof.ts); the golden
+ * path tests pass their measured counts.
+ */
+export async function paceSessionApi(page: Page, room = 1): Promise<void> {
+  if (!Number.isInteger(room) || room < 1 || room > BUDGET) {
+    throw new Error(`golden path pacer: room must be an integer from 1 to ${BUDGET}, got ${room}`);
+  }
+  const now = Date.now();
+  const hits = recentHits(now);
+  const wait = msUntilFree(hits, now, room);
+  if (wait > 0) {
+    console.log(
+      `golden path pacer: waiting ${(wait / 1000).toFixed(1)} s for ${room} free session API slots (${hits.length} of ${BUDGET} used in the last 60 s)`,
+    );
+    await sleep(wait);
+  }
   let queue: Promise<void> = Promise.resolve();
   await page.route(/\/api\/sessions(\/|\?|$)/, (route) => {
+    const queued = Date.now();
+    const method = route.request().method();
+    const { pathname } = new URL(route.request().url());
     const turn = queue.then(async () => {
       for (;;) {
         const now = Date.now();
         const hits = recentHits(now);
-        if (hits.length < BUDGET) {
+        const wait = msUntilFree(hits, now, 1);
+        if (wait <= 0) {
           writeFileSync(PACE_FILE, JSON.stringify([...hits, now]));
+          if (now - queued >= 100) {
+            console.log(`golden path pacer: held ${method} ${pathname} ${now - queued} ms`);
+          }
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, hits[0]! + WINDOW_MS - now + 50));
+        if (now - queued + wait > MAX_HOLD_MS) {
+          throw new Error(
+            `golden path pacer: ${method} ${pathname} would be held ${((now - queued + wait) / 1000).toFixed(1)} s ` +
+              `(${hits.length} of ${BUDGET} calls in the last 60 s), over MAX_HOLD_MS ${MAX_HOLD_MS} ms ` +
+              `(API_TIMEOUT_MS ${API_TIMEOUT_MS} ms): raise this test's room in paceSessionApi(page, room)`,
+          );
+        }
+        await sleep(wait);
       }
     });
     queue = turn.catch(() => undefined);
-    return turn.then(() => route.continue());
+    return turn.then(
+      () => route.continue(),
+      async (error) => {
+        await route.abort().catch(() => undefined);
+        throw error;
+      },
+    );
   });
 }
 
