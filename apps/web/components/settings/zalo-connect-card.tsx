@@ -33,8 +33,9 @@ type Card =
 /**
  * Zalo bot connect card. Authority is connector.secret_manage (owner; an admin only with an
  * explicit grant), enforced by the routes: a 403 renders ONE uniform "not permitted" note. A
- * revoked bot is terminal (0053 refuses every later connect for the club, the route answers 403),
- * so the card shows that status and why it cannot be reconnected, with no form.
+ * revoked bot is terminal (0053 refuses every later connect for the club, the route answers
+ * ZALO_TOKEN_INVALID 400), so the card shows that status and why it cannot be reconnected, with no
+ * form; the revoked note comes from the refetched state, not from that answer.
  *
  * The bot token is write-only and never persisted: it lives only in this component's state (no
  * storage, URL, log, DTO or error object), goes out in the POST body and is never rendered back.

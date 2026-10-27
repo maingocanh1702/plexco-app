@@ -47,7 +47,8 @@ export function statusLabel(status: string, t: TFn): string {
 /**
  * The note that replaces the connect form for a revoked bot. Revoked is terminal (0053): the upsert
  * refuses ANY connect for a club whose bot row is revoked (a different token included) and the route
- * answers 403, so the card offers no reconnect and says why instead.
+ * answers ZALO_TOKEN_INVALID 400, so the card offers no reconnect and says why instead (this note
+ * comes from the refetched revoked state, not from that answer).
  */
 export function revokedNote(t: TFn): string {
   return t(
