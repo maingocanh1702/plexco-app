@@ -376,6 +376,25 @@ test.describe("L49 command id: reload, Cancel, conflict, timeout", () => {
     expect(ids[1]).not.toBe(ids[0]); // a fresh key answered by a 4xx is dropped
   });
 
+  test("row 4: a 409 conflict after a lost mark-paid reply keeps the lock", async ({ page }) => {
+    const mock = await open(page);
+    await select(page, "An Võ");
+    await page.getByRole("button", { name: "Gạch nợ (1)" }).click();
+    await dialog(page).getByRole("button", { name: "Xem trước" }).click();
+    const amount = dialog(page).getByLabel("Số tiền cho An Võ");
+    mock.failNext("mark-paid", "lost-response"); // applied server-side, the reply is lost
+    mock.failNext("mark-paid", {
+      code: "COMMAND_ID_CONFLICT",
+      message: "Thao tác bị trùng. Tải lại trang rồi thử lại.",
+      statusCode: 409,
+    });
+    await dialog(page).getByRole("button", { name: "Xác nhận" }).click();
+    await expect(amount).toHaveAttribute("readonly", "");
+    await dialog(page).getByRole("button", { name: "Thử lại" }).click();
+    await expect(dialog(page).getByRole("alert")).toContainText("Thao tác bị trùng");
+    await expect(amount).toHaveAttribute("readonly", ""); // the 409 proves nothing about attempt 1
+  });
+
   test("A-26: an add unanswered for 15 s shows the timeout copy, focused", async ({ page }) => {
     await page.clock.install();
     const mock = await open(page);

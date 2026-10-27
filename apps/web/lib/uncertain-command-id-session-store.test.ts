@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { ApiClientError, CLIENT_NETWORK_ERROR } from "./api-client";
 import {
   createUncertainCommandIdSessionStore,
   type CommandIdScope,
 } from "./uncertain-command-id-session-store";
+import { useRosterCommand } from "./use-roster-command";
 
 const TTL_MS = 86_400_000;
 const PREFIX = "plx-cmd:v1:";
@@ -185,6 +189,26 @@ describe("createUncertainCommandIdSessionStore (L49 D1/D2)", () => {
       .find((k) => k.includes(":mark-paid:")) as string;
     for (const field of ["method", "cash", "items", "amount", "50000", "note", "Hoa"]) {
       expect(paidKey).not.toContain(field);
+    }
+  });
+
+  it("rows 16 and 11: the default store writes sessionStorage only; with no signed-in person an uncertain run saves nothing", async () => {
+    let run!: ReturnType<typeof useRosterCommand>["run"];
+    // no SessionProvider = no person; a setState after a server render is a no-op
+    renderToStaticMarkup(createElement(() => ((run = useRosterCommand().run), null)));
+    const session = fakeStorage();
+    const local = fakeStorage();
+    vi.stubGlobal("window", { sessionStorage: session, localStorage: local });
+    try {
+      // control: the stub reaches the default resolver (so the row 16 check is not vacuous)
+      createUncertainCommandIdSessionStore().save(scope, fp, "probe");
+      expect([session.length, local.length]).toEqual([1, 0]); // row 11: never localStorage
+      session.clear();
+      const intent = { tenantId: "t1", kind: "add" as const, targets: ["s1"], fingerprint: "Bình" };
+      await run(() => Promise.reject(new ApiClientError(CLIENT_NETWORK_ERROR, "", 0)), intent);
+      expect(session.length).toBe(0); // row 16: no person = no safe key, memory only
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
