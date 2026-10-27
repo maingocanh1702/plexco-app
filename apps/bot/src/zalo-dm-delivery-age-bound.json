@@ -1,1 +1,10 @@
-{ "maxAgeMinutes": 60, "untilSessionStart": ["player.promoted"] }
+{
+  "maxAgeMinutes": 60,
+  "untilSessionStart": ["player.promoted"],
+  "routableEventTypes": [
+    "session.updated",
+    "session.cancelled",
+    "session.announcement_requested",
+    "player.promoted"
+  ]
+}

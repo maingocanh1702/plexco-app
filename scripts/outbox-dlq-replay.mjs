@@ -26,6 +26,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const USAGE =
   "usage: outbox-dlq-replay.mjs list [--projector <name>] [--limit <1..500>] | replay --event <uuid> --projector <name>";
 const REFUSAL_RE = /^(delivery_not_found|delivery_not_in_dlq):/;
+const CLI_APPLICATION_NAME = "plexco_outbox_dlq_cli";
 
 class Refusal extends Error {}
 
@@ -98,8 +99,9 @@ async function main(argv, env) {
     console.error("error: DATABASE_URL_MIGRATION is not set (the owner credential; see the runbook)");
     return 1;
   }
-  const client = new pg.Client({ connectionString: url, application_name: "plexco_outbox_dlq_cli" });
+  let client;
   try {
+    client = new pg.Client({ connectionString: url, application_name: CLI_APPLICATION_NAME });
     await client.connect();
     await client.query("SET ROLE job_definer");
     try {
@@ -117,7 +119,7 @@ async function main(argv, env) {
     console.error(`error: ${error?.code ? `${error.code} ` : ""}${message}`);
     return 1;
   } finally {
-    await client.end().catch(() => {});
+    await client?.end().catch(() => {});
   }
 }
 

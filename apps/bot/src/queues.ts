@@ -9,10 +9,13 @@
  * The only queue this repo registers: the periodic trigger for the outbox
  * dispatch drain (dispatcher.ts) plus, once per tick, the stale-draft expiry
  * (draft-expiry-job.ts). worker.ts registers a schedule against it (job-infra
- * slice 3a), gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED (default false; the
- * owner enables it, docs/runbooks/outbox-dispatch-enable-rollback.md). Producers
- * exist (session-service.ts inserts outbox_events for every session command);
- * which projectors receive an event is the 0056 registry's decision.
+ * slice 3a), gated behind OUTBOX_DISPATCH_SCHEDULE_ENABLED: the committed
+ * default is "true" (.env.example, infra/docker-compose.yml; DD-141, PR #94),
+ * and an unset or any other value leaves the schedule off (worker.ts); see
+ * docs/runbooks/outbox-dispatch-enable-rollback.md. Producers exist
+ * (session-service.ts inserts outbox_events for every session command); which
+ * projectors receive an event is the 0056 registry's decision, so delivery
+ * still waits on it (projectors seeded off; only the owner CLI enables one).
  */
 export const OUTBOX_DISPATCH_QUEUE = "outbox_dispatch";
 
