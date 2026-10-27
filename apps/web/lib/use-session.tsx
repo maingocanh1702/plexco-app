@@ -56,3 +56,9 @@ export function useSessionContext(): UseSession {
   if (!ctx) throw new Error("useSessionContext must be used inside <SessionProvider>");
   return ctx;
 }
+
+/** The signed-in person's id, or undefined (no provider, loading, signed out). Never throws: a caller
+ * outside <SessionProvider> just gets undefined and does not persist anything keyed by the person. */
+export function useSessionPersonId(): string | undefined {
+  return useContext(SessionContext)?.session?.personId;
+}
