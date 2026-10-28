@@ -7732,3 +7732,19 @@ notes: |
   Also: packages/db/migrations/0033_public_projection_fences.sql (lines 4, 6, 22, 48, 226: pins 264-269, 906-923, 946-968, 1852-1862, 914, 269) and packages/db/migrations/0036_revoke_app_dml_public_sessions.sql (lines 9 and 19: pins 274 and 1949) carry the same kind of pin in SQL comments. These are applied migrations: whether a comment-only edit is allowed was NOT measured (check the migration runner's ledger rule first); leave them unless that check allows it.
   Proposal: replace each pin in the .ts comments with the DD number and a phrase `git grep` finds ("DD-90 Q6", "DD-39", "DD-12" and so on), never a line number; comment-only change, no behavior or test change; the lane picks each DD from the comment's own words. Done when the `git grep` above finds nothing outside the applied migrations.
   Source: found by lane L79 (step 0), 2026-10-28.
+
+## task: do-managed-pg-bypassrls-measure-on-first-cluster
+title: Measure DD-129 risk R1 (a BYPASSRLS role may be refused on DigitalOcean Managed PostgreSQL) on the first DO cluster
+status: idea
+risk: P1
+change_class: owner-evidence-gate
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Problem: DD-129 lists R1 among its measured risks that are not closed: "R1 role BYPASSRLS trên DO Managed PG có thể bị từ chối — đo trên cluster đầu tiên" (docs/standards/decisions.md, the DD-129 summary-table row, line 144 at dced86d4237416822d98795f8c2a3a970c41444c). DD-132 froze the DD-129 constraints, "R1 BYPASSRLS trên DO" first, with PR 50 and took them off the MVP critical path (lines 3329-3330 at the same commit); the DD-154 addendum under DD-132 puts them back on the go-live path because the DigitalOcean deploy is in scope again.
+  No open home before this row: the row `identity-definer-bypassrls-ownership-0054` names R1 but has `status: merged` (delivered by PR 49), and its note_merged line puts PR 50's risk R1 out of scope because DD-132 removed DO from the MVP; the plan docs/sessions/web-mvp-phase5-golive-plan.md has 0 lines matching BYPASSRLS (case-insensitive grep, measured 2026-10-28), so no plan lane holds the measurement. Why it matters, per the same note_merged line: the 0054 definer is owned by the dedicated role identity_definer (NOLOGIN, BYPASSRLS), set up by pnpm db:bootstrap.
+  Proposal: on the first DigitalOcean Managed PostgreSQL cluster, measure whether that BYPASSRLS role can be created and used; the cluster and every action on it are the owner's (agents never create cloud resources or touch production data). Done when the result is recorded in docs/standards/decisions.md; what follows a refusal is the owner's decision.
+  Source: found by lane L79 (review round 1), 2026-10-28.
