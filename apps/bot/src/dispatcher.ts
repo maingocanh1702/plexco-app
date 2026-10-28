@@ -74,18 +74,30 @@ if (!Number.isInteger(ZALO_DM_MAX_AGE_MINUTES) || ZALO_DM_MAX_AGE_MINUTES <= 0) 
 // A newly listed type needs a new branch in the 0071 definer, which is a migration.
 export const ZALO_DM_UNTIL_SESSION_START: readonly string[] =
   zaloDmDeliveryAgeBound.untilSessionStart;
-const ZALO_DM_ROUTABLE_EVENT_TYPES: readonly unknown[] = [
-  "session.updated",
-  "session.cancelled",
-  "session.announcement_requested",
-  "player.promoted",
-]; // the four types 0056 routes to zalo_dm (outbox_projector_routes_zalo_dm_chk)
+// The types 0056 routes to zalo_dm (outbox_projector_routes_zalo_dm_chk). The JSON key is the one
+// list (the enable CLI reads it too); PSD-16 ties it to the live CHECK. Checked at load.
+export const ZALO_DM_ROUTABLE_EVENT_TYPES: readonly string[] =
+  zaloDmDeliveryAgeBound.routableEventTypes;
+const routableEventTypes: unknown = ZALO_DM_ROUTABLE_EVENT_TYPES;
+if (
+  !Array.isArray(routableEventTypes) ||
+  !routableEventTypes.every(
+    (type: unknown, i: number, all: unknown[]) =>
+      typeof type === "string" && type !== "" && all.indexOf(type) === i,
+  )
+) {
+  throw new Error(
+    "zalo-dm-delivery-age-bound.json: routableEventTypes must list distinct non-empty event types",
+  );
+}
 const untilSessionStart: unknown = ZALO_DM_UNTIL_SESSION_START;
 if (
   !Array.isArray(untilSessionStart) ||
   !untilSessionStart.every(
     (type: unknown, i: number, all: unknown[]) =>
-      ZALO_DM_ROUTABLE_EVENT_TYPES.includes(type) && all.indexOf(type) === i,
+      typeof type === "string" &&
+      ZALO_DM_ROUTABLE_EVENT_TYPES.includes(type) &&
+      all.indexOf(type) === i,
   )
 ) {
   throw new Error(

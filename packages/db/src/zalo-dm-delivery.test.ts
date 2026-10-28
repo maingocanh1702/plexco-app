@@ -524,6 +524,56 @@ describe("zalo_dm_promotion_seconds_to_start (0071, PSD-10; zalo_dm enabled; as 
     }
   });
 
+  it("PSD-10c2: a finished delivery (status forged to delivered, failed, dlq, pending; token and lease kept) -> zero rows; restored to claimed -> one row", async () => {
+    // Real exits from claimed null the token and lease, so only a forged status (token and lease
+    // kept) isolates `pd.status = 'claimed'` (0071); the row always ends claimed for later cells.
+    const e = await claimed(await club(), "player.promoted");
+    const forge = (status: string) =>
+      q(
+        "UPDATE projector_deliveries SET status = $2 WHERE event_id = $1 AND projector = 'zalo_dm'",
+        [e.event, status],
+      );
+    expect(await claimState(e)).toEqual(["claimed", e.token]);
+    try {
+      for (const status of ["delivered", "failed", "dlq", "pending"]) {
+        await forge(status);
+        expect([await claimState(e), await toStart(e)]).toEqual([[status, e.token], []]);
+        await forge("claimed");
+        expect(await toStart(e)).toHaveLength(1);
+      }
+    } finally {
+      await forge("claimed");
+    }
+  });
+
+  it("PSD-10c3: another projector's claim token (web_realtime) -> zero rows; the zalo_dm token -> one row", async () => {
+    // web_realtime (seeded off, 0056) routes every session event, so its own live claim of the same
+    // player.promoted event isolates `pd.projector = 'zalo_dm'` (0071).
+    const setWebRealtime = (on: boolean) =>
+      ownerPath((c) => c.query("SELECT outbox_projector_set_enabled('web_realtime', $1)", [on]));
+    await setWebRealtime(true);
+    try {
+      const e = await claimed(await club(), "player.promoted");
+      await worker("SELECT job_prepare_projector_delivery($1, 'web_realtime')", [e.event]);
+      await worker("SELECT * FROM claim_projector_delivery_batch('web_realtime', 100)");
+      const web = await one(
+        "SELECT status, claim_token, lease_expires_at > now() AS live FROM projector_deliveries WHERE event_id = $1 AND projector = 'web_realtime'",
+        [e.event],
+      );
+      expect([web.status, typeof web.claim_token, web.claim_token === e.token, web.live]).toEqual([
+        "claimed",
+        "string",
+        false,
+        true,
+      ]);
+      expect(await claimState(e)).toEqual(["claimed", e.token]);
+      expect(await toStart({ ...e, token: web.claim_token as string })).toEqual([]);
+      expect(await toStart(e)).toHaveLength(1);
+    } finally {
+      await setWebRealtime(false);
+    }
+  });
+
   it("PSD-10d/e: a foreign tenant's session or a missing session -> one row, NULL (start unreadable)", async () => {
     const a = await club();
     const b = await club();

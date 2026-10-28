@@ -62,13 +62,18 @@ export const ZALO_DM_MAX_AGE_MINUTES = zaloDmDeliveryAgeBound.maxAgeMinutes;
 if (!Number.isInteger(ZALO_DM_MAX_AGE_MINUTES) || ZALO_DM_MAX_AGE_MINUTES <= 0) {
   throw new Error("zalo-dm-delivery-age-bound.json: maxAgeMinutes must be a positive integer");
 }
+// The file's routableEventTypes (lane L45): the types 0056 routes to zalo_dm
+// (outbox_projector_routes_zalo_dm_chk), ONE list shared with the dispatcher; PSD-16 ties it to the live
+// CHECK. Checked as there: distinct non-empty strings, else throw.
+export const ZALO_DM_EVENT_TYPES = zaloDmDeliveryAgeBound.routableEventTypes;
+if (
+  !Array.isArray(ZALO_DM_EVENT_TYPES) ||
+  new Set(ZALO_DM_EVENT_TYPES).size !== ZALO_DM_EVENT_TYPES.length ||
+  !ZALO_DM_EVENT_TYPES.every((type) => typeof type === "string" && type !== "")
+) {
+  throw new Error("zalo-dm-delivery-age-bound.json: routableEventTypes must list distinct non-empty event types");
+}
 // The file's untilSessionStart (lane L34), checked as there: distinct zalo_dm event types, else throw.
-const ZALO_DM_EVENT_TYPES = [
-  "session.updated",
-  "session.cancelled",
-  "session.announcement_requested",
-  "player.promoted",
-];
 export const ZALO_DM_UNTIL_SESSION_START = zaloDmDeliveryAgeBound.untilSessionStart;
 if (
   !Array.isArray(ZALO_DM_UNTIL_SESSION_START) ||
@@ -96,6 +101,7 @@ export const BACKFILL_MAX_ROWS = 200;
 
 const NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
 const USAGE = "usage: outbox-projector-enable.mjs enable --projector <name>";
+const CLI_APPLICATION_NAME = "plexco_outbox_projector_enable_cli";
 const EXPIRY_REASON = "projector_delivery_expired";
 
 export class Refusal extends Error {
@@ -293,9 +299,10 @@ async function main(argv, env) {
     console.error("error: DATABASE_URL_MIGRATION is not set (the owner credential; see the runbook)");
     return 1;
   }
-  const pg = createRequire(new URL("../packages/db/package.json", import.meta.url))("pg");
-  const client = new pg.Client({ connectionString: url, application_name: "plexco_outbox_projector_enable_cli" });
+  let client;
   try {
+    const pg = createRequire(new URL("../packages/db/package.json", import.meta.url))("pg");
+    client = new pg.Client({ connectionString: url, application_name: CLI_APPLICATION_NAME });
     await client.connect();
     console.log(JSON.stringify(await enableProjector(client, projector)));
     return 0;
@@ -311,7 +318,7 @@ async function main(argv, env) {
     );
     return 1;
   } finally {
-    await client.end().catch(() => {});
+    await client?.end().catch(() => {});
   }
 }
 
