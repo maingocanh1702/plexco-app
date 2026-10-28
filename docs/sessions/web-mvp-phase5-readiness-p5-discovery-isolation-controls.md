@@ -122,7 +122,7 @@ CREATE UNLOGGED TABLE discovery_rate_limit_counters (  -- UNLOGGED as 0012:324-3
   PRIMARY KEY (window_id, bucket));  -- RLS on without FORCE, no policy, no grant (section 7)
 ```
 
-- Window: `v_window := pg_catalog.floor(extract(epoch FROM pg_catalog.now()) / 60)::bigint`; retry-after `pg_catalog.ceil((v_window + 1) * 60 - extract(epoch FROM pg_catalog.now()))::integer`, 1..60. drs calls the function with `pool.query` (autocommit), so `now()` is the call time.
+- Window, with `v_now` the call's `extract(epoch FROM pg_catalog.now())` (numeric): `v_window := pg_catalog.floor(v_now / DISCOVERY_RATE_WINDOW_SECONDS::numeric)::bigint`; retry-after `pg_catalog.ceil(((v_window + 1) * DISCOVERY_RATE_WINDOW_SECONDS)::numeric - v_now)::integer`, 1..60 (0075:72-73: both operands numeric, so each operator is an exact pg_catalog match). drs calls the function with `pool.query` (autocommit), so `now()` is the call time.
 - Steps of one call (one transaction):
   0. NULL, length and character-set check of p_key against the forms `discoveryRateLimitKey` (drs, the one exported builder of the key the web passes) emits (dotted IPv4, the /64 form, the fixed fallbacks), else RAISE (section 7 item 9). No write before this step.
   1. `UPDATE ... SET hits = hits + 1 WHERE window_id = v_window AND bucket = 'k:' || p_key RETURNING hits`; found: allowed iff hits <= 60. Most traffic stops here, on one row.
@@ -164,7 +164,7 @@ CREATE UNLOGGED TABLE discovery_rate_limit_counters (  -- UNLOGGED as 0012:324-3
 5. `REVOKE ALL ON TABLE discovery_rate_limit_counters FROM PUBLIC, app, app_worker, readonly;` and no table GRANT [0060:273; 0012:334].
 6. `CREATE FUNCTION discovery_rate_limit_hit(p_key text) RETURNS integer` (a new name, so a plain CREATE); 0 = allowed, else the retry-after in seconds.
 7. `LANGUAGE plpgsql` / `VOLATILE` / `SECURITY DEFINER` / `SET search_path = pg_catalog, public, pg_temp` [0072:150-153]; no STRICT, no PARALLEL clause (the default, unsafe, because it writes), no LEAKPROOF.
-8. Every built-in function call is `pg_catalog.`-qualified (`now`, `floor`, `ceil`, `left`, ...); operators, casts and keyword forms stay unqualified [0072:15-17, :22-25, :324].
+8. Every built-in function call is `pg_catalog.`-qualified (`now`, `floor`, `ceil`, `left`, ...); operators, casts and keyword forms stay unqualified [0072:15-17, :22-25, :324]; every operator's operand types exactly match a pg_catalog operator (the two numeric window expressions are cast for it, 0075:72-73), so a `public` operator cannot shadow it.
 9. p_key's NULL, length and character set are checked before any write; a failure RAISEs with `ERRCODE = 'invalid_parameter_value'` and never echoes the key. Never STRICT: a NULL result read in JS as `Number(null)` is 0, which would mean allowed.
 10. The thresholds are DECLARE constants, never parameters; no dynamic SQL (no `EXECUTE` of a string, no `format()`).
 11. `REVOKE ALL ON FUNCTION discovery_rate_limit_hit(text) FROM PUBLIC, app, app_worker, readonly;` [0068:65, 0070:89], then `GRANT EXECUTE ON FUNCTION discovery_rate_limit_hit(text) TO readonly;` as the only grant [0061:486].
