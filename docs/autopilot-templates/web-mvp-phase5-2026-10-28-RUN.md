@@ -20,10 +20,10 @@ Phase 5 chạy từ bốn nguồn: plan đã duyệt (PLAN, merged as PR #134), 
 Agents never create cloud resources, never read, print or store a secret value, never trigger a deploy, and never touch production data. A classifier denial is AWAIT with exact commands, never a workaround.
 ```
 
-- **Luật đồng thời:** luật hiện hành là luật của owner 2026-10-27 16:46 (DD-153; nguyên văn ở P4RUN:26), áp cho mọi lần khởi động agent mới từ lúc đó (P4RUN:25), nên áp cả trong Phase 5: tối đa hai lane song song, chỉ ghép khi file không chồng nhau, mỗi lane một lane orchestrator và tối đa một worker, reviewer hoặc verifier sống dưới nó, tức tối đa bốn lane agent cộng một merge clerk; migration tuần tự; khoá DB/e2e tuần tự hoá mọi lần chạy DB và e2e; merge từng PR một theo thứ tự plan (ở Phase 5 là thứ tự các lane bắt đầu, dòng MERGE ORDER của S1).
+- **Luật đồng thời:** luật hiện hành là luật của owner 2026-10-27 16:46 (DD-153; nguyên văn ở P4RUN:26), áp cho mọi lần khởi động agent mới từ lúc đó (P4RUN:25), nên áp cả trong Phase 5: tối đa hai lane song song, chỉ ghép khi file không chồng nhau, mỗi lane một lane orchestrator và tối đa một worker, reviewer hoặc verifier sống dưới nó, tức tối đa bốn lane agent cộng một merge clerk; migration tuần tự; khoá DB/e2e tuần tự hoá mọi lần chạy DB và e2e; merge từng PR một theo thứ tự plan (P4RUN:26); ở Phase 5 thứ tự merge theo dòng MERGE ORDER của S1 (thứ tự các lane thật sự bắt đầu, khác thứ tự plan ở phần tách P5-S1, xem S4; conductor reading, the owner may correct it).
 - **Thứ tự và điều kiện bắt đầu:** thứ tự session ở S3; phụ thuộc và run cap của từng lane ở bảng PLAN §3 (header PLAN:72) và S2. Không lane nào bắt đầu trước khi mọi phụ thuộc của nó đã merge vào `main`, và mỗi lane cần verdict `CODE_READY` riêng ở step 0 (PLAN:6; như P4RUN:33).
 - **Orchestrator và worker:** conductor khởi động mỗi lane bằng một orchestrator riêng, mới, model opus effort max (luật routing của owner 2026-10-21); orchestrator không tạo orchestrator khác; worker theo trường MODELS của lane block; không agent nào chạy model `fable`. Mỗi lượt orchestrator mới tính vào run cap của lane, như ở Phase 4 (P4RUN:28; dòng RUN CAP của S1).
-- **Merge:** một merge clerk cho cả Phase 5, model sonnet/high như ở Phase 3 và Phase 4 (P4RUN:29), merge từng PR một có dòng `MERGE_READY` khi CI xanh, theo thứ tự bắt đầu ở S3 (dòng MERGE ORDER của S1); conductor chạy cổng S4 trước và sau mỗi lần merge.
+- **Merge:** một merge clerk cho cả Phase 5, model sonnet/high như ở Phase 3 và Phase 4 (P4RUN:29), merge từng PR một có dòng `MERGE_READY` khi CI xanh, theo thứ tự các lane thật sự bắt đầu (dòng MERGE ORDER của S1; S3 là thứ tự bắt đầu dự kiến); conductor chạy cổng S4 trước và sau mỗi lần merge.
 - **HEARTBEAT:** conductor tạo lại cron HEARTBEAT khi Phase 5 bắt đầu và xoá nó khi Phase 5 kết thúc: mọi lane đã merge, không agent nào chạy, không quyết định nào chờ owner (bước 5 của luật heartbeat, như P4RUN:30). Nguồn: chỉ dẫn của owner ngày 2026-10-25.
 - **Việc chỉ owner làm:** checklist ở PLAN §8 (PLAN:190; 12 bước 8.0-8.11, PLAN:16) và các gate go-live G1-G7 ở PLAN §9 (PLAN:234; PLAN:17): trỏ tới, không chép lại. Bản duyệt 2026-10-28 không giao bước nào trong đó cho agent; tài khoản, secret, console cloud, deploy và dữ liệu production là bước của owner (PLAN:11).
 - **PR 50:** chỉ owner được động tới. GitHub đã tự đóng nó ngày 2026-10-28; owner quyết nó giữ trạng thái đóng hay được mở lại (DD-154, Hệ quả (k)); không lane nào checkout, rebase hay push nhánh của nó (PLAN:13).
@@ -38,7 +38,7 @@ Mỗi dòng của khối ghi nguồn trong repo (`path:line` đo tại `dced86d4
 ```text
 PLEXCO WEB MVP PHASE 5 - OPERATING RULES (a worker brief is one file of about 10 KB or less, see AGENT TYPE: the mandatory lines, the owner run rules verbatim, one lane block, one task line, its output file and its stop rule; it names by path and line range, never pastes, this block, the Phase 4 S1 block P4RUN:41-131 without its first line P4RUN:42, and the ENABLEMENT block of this doc, which repeats P4RUN:87)
 SOURCES: PLAN = docs/sessions/web-mvp-phase5-golive-plan.md and P4RUN = docs/autopilot-templates/web-mvp-phase4-2026-10-26-RUN.md, lines measured at dced86d4237416822d98795f8c2a3a970c41444c; docs/standards/decisions.md is cited by DD id. Every Phase 4 S1 line that this block does not replace holds unchanged; where they differ, this block wins.
-AUTHORITY (ADAPT, replaces P4RUN:43; delta P2): the owner texts printed in your brief are the authority and go verbatim into writer and reviewer briefs: the owner decisions of 2026-10-16, 2026-10-21, 2026-10-22 and 2026-10-24, the written approvals of 2026-10-26 (DD-150) and 2026-10-28 (DD-154), the concurrency rule of 2026-10-27 16:46 (DD-153), the go-live rule of the owner's Phase 5 prompt (S0 of this RUN doc), the token, resume and tool-hygiene rules, and the orchestrator routing rule of 2026-10-21; the newest owner text wins. The Phase 5 plan is PLAN (merged as PR #134).
+AUTHORITY (ADAPT, replaces P4RUN:43; delta P2): the owner texts printed in your brief are the authority and go verbatim into writer and reviewer briefs (verbatim means never paraphrased: a short owner text, such as the 2026-10-28 approval (DD-154) or the go-live rule, is pasted whole; a long rule block, such as the Phase 4 S1 block or the ENABLEMENT block, is named by path and line range, never pasted, see AGENT TYPE): the owner decisions of 2026-10-16, 2026-10-21, 2026-10-22 and 2026-10-24, the written approvals of 2026-10-26 (DD-150) and 2026-10-28 (DD-154), the concurrency rule of 2026-10-27 16:46 (DD-153), the go-live rule of the owner's Phase 5 prompt (S0 of this RUN doc), the token, resume and tool-hygiene rules, and the orchestrator routing rule of 2026-10-21; the newest owner text wins. The Phase 5 plan is PLAN (merged as PR #134).
   The written approval of 2026-10-28, verbatim: "Phase 5 plan approved. Q1, Q2, Q4-Q10 default. Q3 override: production starts without HA (shape 3, about 52 USD/month); the §7.6 failover drill runs on a temporary HA staging window (shape 4); upgrade production to HA before money flows or before adding more clubs. Raise the run caps of L65, L68 and L74 to 6. G4 does not wait for L54."
   Precedence: the owner's message, then the plan on main; where the message differs from a plan default (Q3 and the run caps of L65, L68 and L74) the message wins; "G4 does not wait for L54." confirms the current plan text and overrides nothing (DD-154).
 PROGRAM FACTS (ADAPT, replaces P4RUN:60-63; pointers only: read the entry in docs/standards/decisions.md before you touch its area): the Phase 4 list of P4RUN:60-63 stays; DD-132 is read together with its dated addendum of 2026-10-28 (DD-154: the owner-triggered DigitalOcean deploy enters the scope, agents write only its config and deploy-workflow files) and DD-04 together with its dated addendum of 2026-10-28 (the Day-1 HA baseline as changed for the pilot phase); added: DD-151, DD-152 and DD-153 (the owner's concurrency rules; DD-153 is current) and DD-154 (the Phase 5 approval and the answers Q1-Q10).
@@ -132,7 +132,7 @@ LANES: L79 (the conductor's lane: DD-154 and this RUN doc; not a PLAN section 3 
 REGIONS: docs only (the files of the lane block FILE OWNERSHIP)
 STARTS WHEN: B1 met (the owner's written approval of 2026-10-28, DD-154) and PR #134 merged; beside P5-S1a (the conductor's start order above, D46)
 RUN CAPS: 4 orchestrator runs (the conductor's cap for its own lane, raised from 3 after a usage-limit stop; not a PLAN section 3 cap; decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature)
-SECURITY ROUND: none (not in the PLAN:170 list)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: none (not in the PLAN:170 list)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 ```text
 SESSION P5-S1a    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -140,7 +140,7 @@ LANES: L62 (opus)
 REGIONS: research on official vendor pages (docs/standards/environments-setup.md section 1.1)
 STARTS WHEN: PLAN:178 (P5-S1: B1 done and main contains the plan PR, PR #134); as run: beside P5-S0b (D46)
 RUN CAPS: 3
-SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 ```text
 SESSION P5-S1b    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -148,7 +148,7 @@ LANES: L65 (opus)
 REGIONS: infra tooling (PLAN:77)
 STARTS WHEN: PLAN:178 pairs L65 with L62; as run: at the first free slot, when the first of L79 and L62 merges (D46); a YES or UNRESOLVED-with-fallback result of L62 would re-plan the DigitalOcean-specific part of L65 under Q7 (D46)
 RUN CAPS: 6 (raised from 4 by the owner, DD-154)
-SECURITY ROUND: L65 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: L65 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 ```text
 SESSION P5-S2    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -156,7 +156,7 @@ LANES: L66 (opus) · L73 (opus)
 REGIONS: App Specs · discovery isolation and the O-6 closure path
 STARTS WHEN: L66: L62 and L65 merged and G1 PASS (PLAN:179, :78); while G1 has not passed, the conductor runs the next ready lane and L66, L67, L69 move back with G1 (PLAN:174); L73: a free slot (PLAN:179)
 RUN CAPS: 6 · 6
-SECURITY ROUND: L66 and L73 (opus/max; PLAN:170)    MIGRATION: L73 only, the DB limiter (Q10 (i)) at the next free number measured at its start, 0075 if none lands first (PLAN:85, :95); L73 merges before the first staging deploy (PLAN:85, :241)    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: L66 and L73 (opus/max; PLAN:170)    MIGRATION: L73 only, the DB limiter (Q10 (i)) at the next free number measured at its start, 0075 if none lands first (PLAN:85, :95); L73 merges before the first staging deploy (PLAN:85, :241)    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 ```text
 SESSION P5-S3    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -164,7 +164,7 @@ LANES: L67 (opus) · L74 (opus)
 REGIONS: deploy workflows · staging smoke and golden path
 STARTS WHEN: L67: L66 merged; L74: L65 merged (PLAN:180). 8.3 gates G2's staging run, not the start of L74: the owner's Google test accounts (step 8.3, PLAN:199) are needed only when the owner runs L74's staging spec at step 8.6 (PLAN:202, gate G2); L74's acceptance is local (PLAN:86) (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature)
 RUN CAPS: 6 · 6 (L74 raised from 4 by the owner, DD-154)
-SECURITY ROUND: L67 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: L67 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 ```text
 SESSION P5-S4    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -172,7 +172,7 @@ LANES: L69 (sonnet) · L64 (sonnet)
 REGIONS: deploy runbook · environment manifest
 STARTS WHEN: L69: L67 merged; L64: a free slot (PLAN:181)
 RUN CAPS: 3 · 3
-SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 ```text
 SESSION P5-S5    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -180,7 +180,7 @@ LANES: L70 (sonnet) · L72 (opus)
 REGIONS: drill runbooks · headers, cookie, CSP
 STARTS WHEN: a free slot (PLAN:182)
 RUN CAPS: 3 · 6
-SECURITY ROUND: L72 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched; an independent verifier runs the local golden path in L72 (PLAN:188)
+SECURITY ROUND: L72 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched; an independent verifier runs the local golden path in L72 (PLAN:188)
 ```
 ```text
 SESSION P5-S6    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -188,7 +188,7 @@ LANES: L63 (sonnet) · L68 (opus)
 REGIONS: deploy standards doc · web logs
 STARTS WHEN: a free slot (PLAN:183)
 RUN CAPS: 3 · 6 (L68 raised from 4 by the owner, DD-154)
-SECURITY ROUND: L68 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched; an independent verifier runs the local golden path in L68 (PLAN:188)
+SECURITY ROUND: L68 (opus/max; PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched; an independent verifier runs the local golden path in L68 (PLAN:188)
 ```
 ```text
 SESSION P5-S7    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -196,7 +196,7 @@ LANES: L71 (sonnet) · L75 (sonnet)
 REGIONS: outbox runbook · legal draft
 STARTS WHEN: a free slot (PLAN:184)
 RUN CAPS: 3 · 3
-SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 ```text
 SESSION P5-S8    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -204,7 +204,7 @@ LANES: L76 (sonnet), alone
 REGIONS: host guide
 STARTS WHEN: a free slot (PLAN:185)
 RUN CAPS: 3
-SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched; after P5-S8 an independent verifier runs the local golden path on the final main (PLAN:188)
+SECURITY ROUND: none (PLAN:170)    MIGRATION: none    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched; after P5-S8 an independent verifier runs the local golden path on the final main (PLAN:188)
 ```
 ```text
 SESSION P5-S9 (conditional)    ORCHESTRATOR: one fresh orchestrator per lane, opus at max effort; workers per the lane block MODELS; never pass model fable to any Agent call
@@ -212,7 +212,7 @@ LANES: L77 (opus), then L78 (opus), sequential
 REGIONS: packages/db
 STARTS WHEN: L77 only if the owner's KMS input (Q8) needs code; L78 only after the owner has created the Managed PostgreSQL (PLAN section 8) (PLAN:186, :89, :90)
 RUN CAPS: 6 · 6
-SECURITY ROUND: L77 and L78 (opus/max; PLAN:170)    MIGRATION: none planned    MERGE: the Phase 5 merge clerk, in the start order of S3, after CI green and the S4 gate; PR 50 untouched
+SECURITY ROUND: L77 and L78 (opus/max; PLAN:170)    MIGRATION: none planned    MERGE: the Phase 5 merge clerk, in the order of the S1 MERGE ORDER line (the order the lanes actually start), after CI green and the S4 gate; PR 50 untouched
 ```
 
 ## S4. Ghi chú cho conductor
@@ -222,8 +222,8 @@ Cổng S4, merge clerk, thứ tự merge, HEARTBEAT, phục hồi sau usage limi
 ```text
 S4 GATE: P4RUN:261 holds for every Phase 5 hand-back; the gate also checks the PR BODY and CLOSING KEYWORDS lines of S1 in the body and in every commit message.
 AFTER EACH MERGE: P4RUN:262 holds: main CI green on the merge before a lane that depends on the merged one starts.
-MERGE CLERK: P4RUN:263 holds with Phase 5 values: one clerk for all of Phase 5 (PLAN:171), sonnet at high effort; it merges a lane PR (merge commit) one at a time in the start order of S3, only after CI green and the S4 gate; one rerun of the failed jobs per head for a flake on the single known-flake list the conductor keeps outside the repo (the list P4RUN:263 names), a second red is real; never PR 50 (owner-only); orchestrators never merge, close PRs or delete branches.
-MERGE ORDER: the MERGE ORDER line of S1 (conductor rule for Phase 5, decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature): merge in the order lanes start (S3), one PR at a time (DD-153); the repo source for plan order is PLAN:171, and the start order differs from the plan order only by the P5-S1 split (S3).
+MERGE CLERK: P4RUN:263 holds with Phase 5 values: one clerk for all of Phase 5 (PLAN:171), sonnet at high effort; it merges a lane PR (merge commit) one at a time in the order of the S1 MERGE ORDER line (the order the lanes actually start), only after CI green and the S4 gate; one rerun of the failed jobs per head for a flake on the single known-flake list the conductor keeps outside the repo (the list P4RUN:263 names), a second red is real; never PR 50 (owner-only); orchestrators never merge, close PRs or delete branches.
+MERGE ORDER: the MERGE ORDER line of S1 (conductor rule for Phase 5, decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature): merge in the order the lanes actually start (S3 gives the planned start order), one PR at a time (DD-153); the repo source for plan order is PLAN:171, and the planned start order differs from the plan order only by the P5-S1 split (S3); applying the owner's "in plan order" (P4RUN:26) as this start order is a conductor reading, the owner may correct it.
 HEARTBEAT: rule and source in S0.
 USAGE LIMIT: P4RUN:265-266 holds unchanged.
 LOGIN LAPSE: P4RUN:267-268 holds unchanged (verify the disk before acting).
