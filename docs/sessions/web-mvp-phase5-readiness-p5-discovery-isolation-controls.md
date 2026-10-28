@@ -242,7 +242,7 @@ Default unchanged: every other caller (2.2) passes none of them, and its pool co
 | drs:44 | the three R6 options (8.3) |
 | drs:59-64 | the constants and the map go; the DB thresholds live in the function (6.3), the timeout and breaker constants in drs |
 | drs:66-83 | the precondition comment is rewritten to the new current state (GOAL 1) |
-| drs:84 | `discoveryRateLimited(request: Request): Promise<Response \| null>`; the key comes from `rateLimitKey` (drs:118, unchanged), never from the request's slug or listing id, and is never logged |
+| drs:84 | `discoveryRateLimited(request: Request): Promise<Response \| null>`; the key comes from the one exported builder `discoveryRateLimitKey` (the bare `rateLimitKey(clientIp(request))`, no prefix; pinned against 0075 by `discovery-rate-limit-key-db.test.ts`), never from the request's slug or listing id, and is never logged |
 | drs:279-281 | the comment becomes: the limiter (keyed by client IP, never the request key) is the one DB call before the shape check |
 | drs:301-305 | the test reset clears the breaker instead of the map; same name and signature |
 | the four discovery test files | R9: their DB fakes answer the limiter SQL with a keyed fake (0 while a key is at or under 60, else a retry-after), reset per test; page.test.tsx gains the `createDb` mock, the env stub and the fake (R8); route.test.ts:236 `[1, 2]` becomes `[1, 3]`; the map-fill test (:190-191) and the fake-timer test (:264, its fill :272-273) go with the map, as the negative scope allows: their 429 with retry-after stays on a fake refusal, and full = fail closed and the window reset move to the DB tests (A-4, A-6) |
