@@ -58,7 +58,18 @@ const DTO = {
   venueName: "Sân Pickleball Lê Lợi",
   venueAddress: "12 Lê Lợi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
 };
-const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
+// R9: the DB limiter as a keyed fake, reset per test: 0 while a key has at most 60 hits, then 30.
+const hits = new Map<string, number>();
+const POOL = {
+  query: async (sql: string, [key = ""]: string[] = []) => {
+    if (sql !== "SELECT discovery_rate_limit_hit($1)") {
+      return { rows: [{ u: "readonly", s: "readonly" }] };
+    }
+    const count = (hits.get(key) ?? 0) + 1;
+    hits.set(key, count);
+    return { rows: [{ discovery_rate_limit_hit: count > 60 ? 30 : 0 }] };
+  },
+};
 
 const request = (path: string, ip: string) =>
   new Request(`https://plexco.app/api/discover/${path}`, { headers: { "fly-client-ip": ip } });
@@ -77,6 +88,7 @@ async function settled(res: Response) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetDiscoveryRouteSupportForTests();
+  hits.clear();
   vi.stubEnv("DISCOVERY_DATABASE_URL", "postgres://readonly@127.0.0.1:5432/plexco_test");
   vi.stubEnv("TRUSTED_INGRESS_PROVIDER", "fly");
   vi.mocked(createDb).mockReturnValue({ pool: POOL } as never);

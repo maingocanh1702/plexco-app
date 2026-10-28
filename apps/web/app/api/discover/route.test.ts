@@ -1,10 +1,7 @@
 import { createDb, listDiscoveryListings } from "@plexco/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeDiscoveryCursor, encodeDiscoveryCursor } from "../../../lib/discovery-cursor";
-import {
-  discoveryRateLimited,
-  resetDiscoveryRouteSupportForTests,
-} from "../../../lib/discovery-route-support";
+import { resetDiscoveryRouteSupportForTests } from "../../../lib/discovery-route-support";
 import { GET } from "./route";
 
 vi.mock("@plexco/db", async (importOriginal) => ({
@@ -61,7 +58,18 @@ const DTO = {
   venueAddress: "12 Lê Lợi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
 };
 const NEXT = { startsAt: "2026-11-01T10:00:00.000000Z", publicListingId: ID2 };
-const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
+// R9: the DB limiter as a keyed fake, reset per test: 0 while a key has at most 60 hits, then 30.
+const hits = new Map<string, number>();
+const POOL = {
+  query: async (sql: string, [key = ""]: string[] = []) => {
+    if (sql !== "SELECT discovery_rate_limit_hit($1)") {
+      return { rows: [{ u: "readonly", s: "readonly" }] };
+    }
+    const count = (hits.get(key) ?? 0) + 1;
+    hits.set(key, count);
+    return { rows: [{ discovery_rate_limit_hit: count > 60 ? 30 : 0 }] };
+  },
+};
 // Each bad value of readiness 4.4; hidden characters are URL escapes (NUL, U+202E).
 const BAD_QUERIES = `skill=3 level_min=2 level_strict=true q=x sport=a&sport=b limit=5&limit=5
   sport=Pickleball sport=9ball sport=${"a".repeat(33)} area= area=%20 area=${"a".repeat(65)}
@@ -84,6 +92,7 @@ async function expectError(res: Response, status: number, code: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetDiscoveryRouteSupportForTests();
+  hits.clear();
   vi.stubEnv("DISCOVERY_DATABASE_URL", "postgres://readonly@127.0.0.1:5432/plexco_test");
   vi.stubEnv("TRUSTED_INGRESS_PROVIDER", "fly");
   vi.mocked(createDb).mockReturnValue({ pool: POOL } as never);
@@ -177,7 +186,7 @@ describe("GET /api/discover", () => {
     expect(createDb).not.toHaveBeenCalled();
   });
 
-  it("A-7: request 61 within 60 s is DISCOVERY_RATE_LIMITED 429 + retry-after; another IP passes; a full Map is 429", async () => {
+  it("A-7: request 61 within 60 s is DISCOVERY_RATE_LIMITED 429 + retry-after; another IP passes; a refused new key is 429", async () => {
     for (let i = 0; i < 60; i += 1) expect((await get()).status).toBe(200);
     const limited = await get();
     const retryAfter = Number(limited.headers.get("retry-after"));
@@ -186,11 +195,9 @@ describe("GET /api/discover", () => {
     expect((await get("", "198.51.100.9")).status).toBe(200);
     expect(listDiscoveryListings).toHaveBeenCalledTimes(61);
 
-    resetDiscoveryRouteSupportForTests();
-    for (let i = 0; i < 10_000; i += 1) {
-      discoveryRateLimited(request("/api/discover", `10.0.${Math.floor(i / 256)}.${i % 256}`));
-    }
-    const full = await get();
+    // A full table refuses a new key (the DB tests pin it): the 429 carries the limiter's retry-after.
+    vi.spyOn(POOL, "query").mockResolvedValueOnce({ rows: [{ discovery_rate_limit_hit: 60 }] });
+    const full = await get("", "198.51.100.10");
     expect(full.headers.get("retry-after")).toBe("60");
     await expectError(full, 429, "DISCOVERY_RATE_LIMITED");
   });
@@ -227,13 +234,21 @@ describe("GET /api/discover", () => {
   });
 
   it("A-7: an unavailable probe is the 500 of that call only; the next call re-probes the same handle", async () => {
-    const query = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("connect ECONNREFUSED"))
-      .mockResolvedValue({ rows: [{ u: "readonly", s: "readonly" }] });
+    const query = vi.fn(POOL.query).mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
     vi.mocked(createDb).mockReturnValue({ pool: { query } } as never);
     expect([(await get()).status, (await get()).status]).toEqual([500, 200]);
-    expect([vi.mocked(createDb).mock.calls.length, query.mock.calls.length]).toEqual([1, 2]);
+    // the failed probe, the re-probe and the limiter query
+    expect([vi.mocked(createDb).mock.calls.length, query.mock.calls.length]).toEqual([1, 3]);
+  });
+
+  it("A-16: the discovery pool is built by createDb with max 5 and the three R6 timeouts", async () => {
+    expect((await get()).status).toBe(200);
+    expect(vi.mocked(createDb).mock.calls).toEqual([
+      [
+        "postgres://readonly@127.0.0.1:5432/plexco_test",
+        { max: 5, statement_timeout: 2_000, connectionTimeoutMillis: 2_000, query_timeout: 2_500 },
+      ],
+    ]);
   });
 
   it("A-7: an IPv6 client is keyed by its /64, so every spelling in one /64 shares the bucket; another /64 passes", async () => {
@@ -258,23 +273,6 @@ describe("GET /api/discover", () => {
     for (let i = 0; i < 60; i += 1) expect((await get("", spellings[i % 4])).status).toBe(200);
     await expectError(await get("", "::ffff:c000:0201"), 429, "DISCOVERY_RATE_LIMITED");
     expect((await get("", "::ffff:192.0.2.2")).status).toBe(200);
-  });
-
-  it("A-7 (fake timers): a window resets at 60 s; a Map full of live windows frees them once they expire", async () => {
-    vi.useFakeTimers();
-    for (let i = 0; i < 61; i += 1) await get();
-    vi.advanceTimersByTime(59_999);
-    expect((await get()).status).toBe(429);
-    vi.advanceTimersByTime(1);
-    expect((await get()).status).toBe(200);
-
-    resetDiscoveryRouteSupportForTests();
-    for (let i = 0; i < 10_000; i += 1) {
-      discoveryRateLimited(request("/api/discover", `10.0.${Math.floor(i / 256)}.${i % 256}`));
-    }
-    expect((await get()).status).toBe(429);
-    vi.advanceTimersByTime(60_000);
-    expect((await get()).status).toBe(200);
   });
 
   it("A-7: in production a missing or short DISCOVERY_CURSOR_KEY is the empty 500 on every list page, before any DB call", async () => {
