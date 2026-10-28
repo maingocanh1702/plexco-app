@@ -107,6 +107,17 @@ it("(3) answers a null read, a malformed slug and the 61st call with the SAME no
   await expect(run(SLUG)).rejects.toBe(NOT_FOUND);
   expect(read).toHaveBeenCalledTimes(60);
 });
+it("L73 A-18: a limiter 503 (its query rejects) gives the SAME notFound() as (3), unread", async () => {
+  await expect(run("short")).rejects.toBe(NOT_FOUND); // warms the pool (its role probe), unread
+  vi.spyOn(POOL, "query").mockRejectedValueOnce(new Error("limiter query failed"));
+  await expect(run(SLUG)).rejects.toBe(NOT_FOUND);
+  expect(read).not.toHaveBeenCalled();
+});
+it("L73 A-18: a limiter throw (the role probe answers no row) rejects to the error boundary, unread", async () => {
+  vi.mocked(createDb).mockReturnValue({ pool: { query: async () => ({ rows: [] }) } } as never);
+  await expect(run(SLUG)).rejects.not.toBe(NOT_FOUND);
+  expect(read).not.toHaveBeenCalled();
+});
 it("(4) hands a well-formed slug to exactly one read on the readonly pool", async () => {
   read.mockResolvedValue(ROW);
   await run(SLUG);

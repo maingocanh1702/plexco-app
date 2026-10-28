@@ -171,6 +171,17 @@ describe("GET /api/discover/[publicListingId]", () => {
     expect(readDiscoveryListing).toHaveBeenCalledTimes(1);
   });
 
+  it("L73 A-13: the awaited limiter's refusal is the 429 with its retry-after and no-store, before the read", async () => {
+    expect((await get("probe-0")).status).toBe(404); // warms the pool (its role probe), unread
+    vi.spyOn(POOL, "query").mockResolvedValueOnce({ rows: [{ discovery_rate_limit_hit: 42 }] });
+    const limited = await get(ID);
+    const headers = [limited.headers.get("retry-after"), limited.headers.get("cache-control")];
+    expect([limited.status, ...headers]).toEqual([429, "42", "no-store"]);
+    const { error } = (await limited.json()) as { error: { code: string } };
+    expect(error.code).toBe("DISCOVERY_RATE_LIMITED");
+    expect(readDiscoveryListing).not.toHaveBeenCalled();
+  });
+
   it("A-17: no log line carries the listing id, the IP, money or the DB error text", async () => {
     const spies = (["log", "info", "warn", "error", "debug"] as const).map((method) =>
       vi.spyOn(console, method).mockImplementation(() => {}),

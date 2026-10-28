@@ -202,6 +202,15 @@ describe("GET /api/discover", () => {
     await expectError(full, 429, "DISCOVERY_RATE_LIMITED");
   });
 
+  it("L73 A-13: the awaited limiter's refusal is the 429 with its retry-after and no-store, before the read", async () => {
+    expect((await get()).status).toBe(200); // warms the pool: its role probe is the first query
+    vi.spyOn(POOL, "query").mockResolvedValueOnce({ rows: [{ discovery_rate_limit_hit: 42 }] });
+    const limited = await get();
+    expect(limited.headers.get("retry-after")).toBe("42");
+    await expectError(limited, 429, "DISCOVERY_RATE_LIMITED");
+    expect(listDiscoveryListings).toHaveBeenCalledTimes(1); // the warm-up's read only
+  });
+
   it("A-7: an unset DISCOVERY_DATABASE_URL or any probe answer but a plain readonly poisons the handle: empty 500, no-store, no re-probe, no read", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     // [] is what Postgres answers for a SUPERUSER or BYPASSRLS current_user: the probe filters it out.
