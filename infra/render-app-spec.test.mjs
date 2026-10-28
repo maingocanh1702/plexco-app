@@ -206,8 +206,9 @@ test("errors print only a token or a key, never the string around it or a value"
     assertRefused(leak, /missing secret in live app: services\/web\/DATABASE_URL/);
     assert.doesNotMatch(leak.stderr, /FAKECIPHER/);
   }
-  // A committed list is absent or an array: `false` is not read as absent, nor an object or a string as
-  // a list (either would drop components or envs, their live secrets included, and still exit 0).
+  // A committed list is absent or an array: `false` is not read as absent, nor an object as a list
+  // (either would drop components or envs, their live secrets included, and still exit 0); a string
+  // fails naming the field.
   const lists = {
     "web envs: false": ["envs", (s) => (s.services[0].envs = false)],
     "jobs: false": ["jobs", (s) => (s.jobs = false)],
