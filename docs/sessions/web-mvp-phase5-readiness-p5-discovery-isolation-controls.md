@@ -87,6 +87,7 @@ RO-L73-2 items 4-10, Tier B, reversible:
 - **Tier-B list** (RO-L73-2 item 10, accepted as recorded): (1) the join route (2.1) shares the discovery pool outside the breaker: backlog row (c), no change; (2) the discovery BE tech doc does not pin the in-process limiter, so it needs no edit; (3) `rate_limit_check` is not reused: it has no total bound and takes a caller-chosen bucket and limit, so readonly EXECUTE on it could write auth and chat buckets; a dedicated table instead; (4) the table is mirrored in `packages/db/schema.ts` per the repo convention (2.3); (5) the readonly probe (drs:27-28) is unchanged; a dropped `statement_timeout` is covered by `query_timeout` (R6), and a rejected startup parameter makes connections fail, which opens the breaker and answers 503, fail closed and visible at the staging smoke; (6) the breaker: one per process behind one choke point; 5 failures in a fixed 10 s window open it for 30 s, then 1 half-open probe; the limiter's own refusal is not a failure.
 - **G3 note** (the orchestrator's choice, recorded here instead of a fourth backlog row, as RO-L73-2 item 10 allows): at G3 item 6 (DD-04:289 on staging), verify on the staging discovery URL that the statement timeout is applied (for example, `SHOW statement_timeout` through the discovery pool answers `2s`).
 - **Derived** (Tier A, from the rulings and the ownership; no new choice): (i) the definer tests and the createDb pins share one new DB test file, `packages/db/src/discovery-rate-limit-definer.test.ts`, named for the mechanism as 0075 is (no client test exists at the base: `git ls-files packages/db/src | grep -i client` lists `client.ts` only); (ii) the page's read (page.tsx:38) stays outside the breaker's choke point, because the page changes at :36 only (R8); the limiter call before it answers 503 while the breaker is open, so the page never reaches its read then; (iii) the writer order of section 12.
+- **RO-L73-4 items 1-3** (run 4; decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature; Tier B, reversible): (1) a `discoveryPool()` rejection counts only as row 10 says (8.1), so a pool, probe or configuration failure keeps the base 500; (2) the JS result bound is the named `DISCOVERY_RATE_WINDOW_SECONDS` (60), mirroring 0075:66; (3) every breaker 503 carries `retry-after` (whole seconds until the half-open probe, at least 1) and no-store, row 12 included.
 
 ### GOAL 1 (RO-L73-2 R4, verbatim)
 
@@ -192,7 +193,7 @@ One breaker per process, module state in drs, behind one choke point `discoveryQ
 | 9 | HALF_OPEN | probe success | CLOSED, count 0, generation + 1 | base | - |
 | 10 | HALF_OPEN | probe failure, or its `discoveryPool()` rejects | OPEN, a fresh 30 s, generation + 1 | as 3, or 500 | - |
 | 11 | any | stale outcome | unchanged | its own base answer | - |
-| 12 | any | unknown state (a `never` switch) | as OPEN | 503 no-store | no |
+| 12 | any | unknown state (a `never` switch) | OPEN until now + 30 s, generation + 1 (as OPEN) | 503 no-store, retry-after 30 | no |
 
 No row allows a request without the limiter's DB answer. The 503 has an empty body (as drs:274-276) and `cache-control: no-store`; no new error code and no new i18n string.
 

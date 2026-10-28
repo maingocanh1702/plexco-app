@@ -123,7 +123,8 @@ function admitDiscoveryCall(now: number): number | Response {
     default: {
       const unknown: never = breaker.state;
       log.error("discovery.breaker.state.unknown", { state: String(unknown) });
-      return discoveryUnavailable(); // row 12: as OPEN, no DB call
+      openBreaker(now); // row 12: as OPEN, a real open period, then rows 6, 7 and 9
+      return discoveryUnavailable(Math.ceil(DISCOVERY_BREAKER_OPEN_MS / 1000));
     }
   }
 }
@@ -174,6 +175,9 @@ export async function discoveryQuery<T>(
   }
 }
 
+// Mirrors 0075:66 DISCOVERY_RATE_WINDOW_SECONDS; 0075:73's retry-after is at most one window.
+const DISCOVERY_RATE_WINDOW_SECONDS = 60;
+
 /**
  * null when the request may proceed, else its answer (readiness 6.1, 8.2); every discovery call
  * site awaits it before its read. The durable limiter `discovery_rate_limit_hit` (0075) counts
@@ -192,8 +196,14 @@ export async function discoveryRateLimited(request: Request): Promise<Response |
       [key],
     );
     const value = rows[0]?.discovery_rate_limit_hit;
-    // Only an integer in 0..60 (the window) is an answer: NULL (Number(null) is 0) fails closed.
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 60) {
+    // Only an integer in 0..DISCOVERY_RATE_WINDOW_SECONDS is an answer: NULL (Number(null) is 0)
+    // fails closed.
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > DISCOVERY_RATE_WINDOW_SECONDS
+    ) {
       throw new Error("discovery limiter: invalid result");
     }
     return value;
@@ -400,4 +410,9 @@ export function resetDiscoveryRouteSupportForTests(): void {
   breaker = closedBreaker(breaker.generation + 1); // a call still in flight settles as stale
   discoveryHandle = null;
   discoveryReady = null;
+}
+
+/** Test seam (readiness 8.1 rows 10, 12): write only breaker.state, an unknown one included. */
+export function setDiscoveryBreakerStateForTests(state: string): void {
+  breaker.state = state as DiscoveryBreaker["state"];
 }
