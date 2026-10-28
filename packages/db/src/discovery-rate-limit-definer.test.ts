@@ -366,7 +366,8 @@ describe("createDb options (A-11)", () => {
     ] as const) {
       const handle = createDb(url, options);
       try {
-        expect(handle.pool.options).toMatchObject({ connectionString: url, max });
+        expect(handle.pool.options).toEqual(new pg.Pool({ connectionString: url, max }).options);
+        // toEqual ignores an undefined-valued key: a timeout key must be absent, not undefined.
         expect(timeouts.filter((key) => key in handle.pool.options)).toEqual([]);
       } finally {
         await handle.close();
