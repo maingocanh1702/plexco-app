@@ -50,7 +50,7 @@ vi.mock("node:fs/promises", async () => {
 });
 
 const MIGRATIONS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
-const MIGRATION_COUNT = 75; // 0000..0074 (0074 projector delivery lease clock) (0073 member name length cap 120) (0072 member name definers qualify builtins) (0071 zalo dm promotion start definer) (0070 member name control chars) (0069 member name invisible chars) (0068 public name invisible chars) (0067 session venue visibility) (0066 account club chat context) (0065 chat message author label) (0064 channel identity link gate) (0063 chat message commands) (0062 gender pricing) (0061 public sessions projector writer) (0060 tenant public alias) (0059 me player reads definers) (0058 player self-join: guest-membership definer + player.promoted route) (0057 zalo delivery targets definer) (0056 outbox projector registry + DLQ replay) (0055 me settings definers) (0054 link_code reparent empty person) (0053 zalo ingress) (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core · 0048 capability grant trigger search_path · 0049 tenant capability authorize · 0050 attested_transfer allocation source · 0051 host-add person definer · 0052 tenant profile definers)
+const MIGRATION_COUNT = 76; // 0000..0075 (0075 discovery rate limit definer) (0074 projector delivery lease clock) (0073 member name length cap 120) (0072 member name definers qualify builtins) (0071 zalo dm promotion start definer) (0070 member name control chars) (0069 member name invisible chars) (0068 public name invisible chars) (0067 session venue visibility) (0066 account club chat context) (0065 chat message author label) (0064 channel identity link gate) (0063 chat message commands) (0062 gender pricing) (0061 public sessions projector writer) (0060 tenant public alias) (0059 me player reads definers) (0058 player self-join: guest-membership definer + player.promoted route) (0057 zalo delivery targets definer) (0056 outbox projector registry + DLQ replay) (0055 me settings definers) (0054 link_code reparent empty person) (0053 zalo ingress) (0037 D-2 · 0038 D-1 · 0039 audit P3 schema · 0040 idle TTL · 0041 worker heartbeat · 0042 drop telegram login · 0043 link_code issue/consume · 0044 session guest notes schema · 0045 guest-note tenant context · 0046 bounded rate-limit cleanup · 0047 tenant capability authority core · 0048 capability grant trigger search_path · 0049 tenant capability authorize · 0050 attested_transfer allocation source · 0051 host-add person definer · 0052 tenant profile definers)
 
 const BASE = process.env.DATABASE_URL_TEST;
 if (!BASE) {
@@ -752,7 +752,7 @@ describe("BR-6 0022 succeeds end to end when the migration role is NOINHERIT", (
       // concurrent JCL-2/JCL-3 hiding job_definer. Waiting for the chat slot while holding jobd
       // could close a cycle with a slot holder whose jobd request queues behind a waiting breaker.
       const res = await ctx.bootstrapAndMigrateAsOwner();
-      expect(res.applied[res.applied.length - 1]).toBe("0074_projector_delivery_lease_clock.sql");
+      expect(res.applied[res.applied.length - 1]).toBe("0075_discovery_rate_limit_definer.sql");
 
       const worker = await ctx.connectAsWorker();
       const claimed = await worker.query(`SELECT * FROM claim_outbox_batch(1)`);
