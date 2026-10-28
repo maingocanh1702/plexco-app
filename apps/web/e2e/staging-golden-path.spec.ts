@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { paceSessionApi } from "./support/golden-path-helpers";
 import { runHostSessionMoneyPath } from "./support/golden-path-host-steps";
 import { TEST_TIMEOUT_MS } from "./support/golden-path-timeouts";
-import { stagingGoldenPathOrigin } from "./support/staging-golden-path-guard";
+import { signedInPersonId, stagingGoldenPathOrigin } from "./support/staging-golden-path-guard";
 
 /**
  * OPT-IN staging golden path of the Web MVP, for the OWNER persona only, run by the owner with
@@ -66,8 +66,7 @@ test("staging owner golden path: Google sign-in by hand -> club -> session -> co
             `Google sign-in failed: the app answered auth_error=${at.searchParams.get("auth_error")}`,
           );
         }
-        const res = await page.request.get("/api/auth/session");
-        if (res.status() === 200 && (await res.json())?.data?.personId) break;
+        if (await signedInPersonId(page.request)) break;
         if (Date.now() > deadline) {
           throw new Error(
             `Google sign-in not proven within ${SIGN_IN_WAIT_MS / 60_000} min: GET /api/auth/session ` +

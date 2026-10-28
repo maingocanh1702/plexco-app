@@ -1,9 +1,17 @@
 import { expect, test } from "@playwright/test";
-import { REFUSED, stagingGoldenPathOrigin } from "./support/staging-golden-path-guard";
+import { once } from "node:events";
+import { createServer, type AddressInfo } from "node:net";
+import {
+  REFUSED,
+  SESSION_POLL_NO_RESPONSE,
+  signedInPersonId,
+  stagingGoldenPathOrigin,
+} from "./support/staging-golden-path-guard";
 
 /**
- * The staging golden path's guard (support/staging-golden-path-guard.ts), in the default suite. Pure
- * calls only: no page, no request, no navigation. Every refused class and the accepted shape.
+ * The staging golden path's guard (support/staging-golden-path-guard.ts), in the default suite: pure
+ * calls (no page, no request, no navigation) for every refused class and the accepted shape. The last
+ * test forces the sign-in poll's failure on a closed local port: no server, no page, no navigation.
  */
 const STAGING = "https://staging.plexco.app";
 const OPT_IN = { STAGING_GOLDEN_PATH: "1" };
@@ -68,4 +76,61 @@ test("staging guard accepts https://staging.plexco.app with the opt-in and retur
 test("staging guard returns the bare origin when a path and another production origin are set", () => {
   const env = { ...at(`${STAGING}/c/x?y=1`), PRODUCTION_BASE_URL: "https://plexco.app" };
   expect(stagingGoldenPathOrigin(env)).toBe(STAGING);
+});
+
+/** A local port that was free a moment ago and is closed now: a request to it gets no response. */
+async function closedPort(): Promise<number> {
+  const server = createServer().listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  server.close();
+  await once(server, "close");
+  return port;
+}
+
+/** Passes every write through and keeps a copy of its chunk; returns the undo. */
+function keepWrites(stream: NodeJS.WriteStream, chunks: string[]): () => void {
+  const write = stream.write;
+  stream.write = (chunk: unknown, ...rest: unknown[]) => {
+    chunks.push(String(chunk));
+    return Reflect.apply(write, stream, [chunk, ...rest]);
+  };
+  return () => {
+    stream.write = write;
+  };
+}
+
+test("a failed session poll prints no cookie, header or session token", async ({ browser }) => {
+  // the list reporter prints a failed test's error and the worker's stdout/stderr, and the runbook
+  // (docs/runbooks/local-mvp-smoke.md section 12) tells the owner to keep that output
+  const base = `http://127.0.0.1:${await closedPort()}`;
+  const token = `poll-probe-${Date.now()}`;
+  const context = await browser.newContext({ baseURL: base });
+  try {
+    await context.addCookies([{ name: "plx_session", value: token, url: base }]);
+    // control: Playwright's own error quotes the cookie header, so the check below can see a leak
+    const control = await context.request.get("/api/auth/session").catch((e: unknown) => e);
+    expect(control).toBeInstanceOf(Error);
+    expect(String((control as Error).stack ?? control)).toContain(token);
+
+    const chunks: string[] = [];
+    const undo = [keepWrites(process.stdout, chunks), keepWrites(process.stderr, chunks)];
+    let failure: unknown;
+    try {
+      failure = await signedInPersonId(context.request).catch((e: unknown) => e);
+    } finally {
+      for (const restore of undo) restore();
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const error = failure as Error;
+    expect(error.message).toBe(SESSION_POLL_NO_RESPONSE);
+    const seen = [error.message, error.stack, String(error.cause), ...chunks]
+      .join("\n")
+      .toLowerCase();
+    for (const word of ["cookie", "authorization", token.toLowerCase()]) {
+      expect(seen).not.toContain(word);
+    }
+  } finally {
+    await context.close();
+  }
 });

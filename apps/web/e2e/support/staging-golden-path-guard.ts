@@ -1,3 +1,4 @@
+import type { APIRequestContext } from "@playwright/test";
 import { isIP } from "node:net";
 
 /**
@@ -11,6 +12,8 @@ import { isIP } from "node:net";
  * "staging" (for example staging.plexco.app); plexco.app and www.plexco.app are refused by name,
  * loopback hosts and IP literals too; a PRODUCTION_BASE_URL that is set must parse, and its origin
  * must differ. Host checks compare the parsed hostname and its labels as plain strings.
+ * The second export, signedInPersonId, is the spec's sign-in poll; it lives here so the default suite
+ * can force its failure (the spec cannot be imported: its module load runs the guard).
  */
 export const REFUSED = {
   optIn: "set STAGING_GOLDEN_PATH=1 to run the staging golden path",
@@ -66,4 +69,18 @@ export function stagingGoldenPathOrigin(env: Readonly<Record<string, string | un
   if (!staging) refuse(`${REFUSED.notStaging} (host ${host})`);
   if (production && production.origin === url.origin) refuse(REFUSED.productionOrigin);
   return url.origin;
+}
+
+export const SESSION_POLL_NO_RESPONSE =
+  "owner sign-in poll: GET /api/auth/session got no response (Playwright's error is withheld: its call log lists the request headers)";
+
+/** The signed-in person's id (GET /api/auth/session answers 200 with data.personId), else null. */
+export async function signedInPersonId(request: APIRequestContext): Promise<string | null> {
+  // Playwright's error is never passed on: its call log lists every request header, the session
+  // cookie included, and the list reporter prints it
+  const res = await request.get("/api/auth/session").catch(() => null);
+  if (res === null) throw new Error(SESSION_POLL_NO_RESPONSE);
+  if (res.status() !== 200) return null;
+  const personId: unknown = (await res.json().catch(() => null))?.data?.personId;
+  return typeof personId === "string" && personId !== "" ? personId : null;
 }
