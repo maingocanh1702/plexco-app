@@ -1,21 +1,16 @@
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "./client.js";
-import {
-  ROLE_PW,
-  setupNonSuperuserOwnerContext,
-  setupRlsTestContext,
-  type NonSuperuserOwnerContext,
-  type RlsTestContext,
-} from "./test-harness.js";
+import { setupRlsTestContext, type RlsTestContext } from "./test-harness.js";
 
 // 0075 discovery_rate_limit_hit, called AS readonly (the discovery pool's role); the owner only
-// seeds, truncates and inspects. Contract: sections 6, 7 and 11 (A-1..A-10) of
+// seeds, truncates and inspects. Contract: sections 6, 7 and 11 (A-1..A-9, A-11) of
 // docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md. Window rollover: each
 // behaviour is ONE readonly transaction (now() is fixed per transaction) that reads its window and
 // retry-after in the statement of each call, and every owner seed derives its window from the DB
 // clock in its own statement, for the current and the next window, so a rollover between a seed and
-// a call cannot change an outcome.
+// a call cannot change an outcome. A-10 runs isolated in
+// discovery-rate-limit-definer-nobypass.test.ts; the helpers below are kept in step with it.
 
 const WINDOW = "floor(extract(epoch FROM now()) / 60)::int";
 const RETRY =
@@ -308,40 +303,6 @@ describe("0075 discovery_rate_limit_hit (A-1..A-9)", () => {
       expect(e.text).not.toContain(String(key));
     }
     expect(await count()).toBe(0);
-  });
-});
-
-describe("0075 under a NOSUPERUSER NOBYPASSRLS owner (A-10)", () => {
-  let ns: NonSuperuserOwnerContext;
-  let ro: pg.Pool;
-
-  beforeAll(async () => {
-    ns = await setupNonSuperuserOwnerContext("plexco_discovery_rate_limit_nobypass");
-    await ns.bootstrapAndMigrateAsOwner();
-    await ns.useRuntimeRolePasswords();
-    const url = new URL(process.env.DATABASE_URL_TEST!);
-    url.pathname = `/${ns.dbName}`;
-    url.username = "readonly";
-    url.password = ROLE_PW.readonly;
-    ro = new pg.Pool({ connectionString: url.toString(), max: 1 });
-  }, 240_000);
-  afterAll(async () => {
-    await ro?.end();
-    await ns?.teardown();
-  });
-
-  it("A-10 NOBYPASSRLS owner replay: the definer is the non-superuser table owner, and A-1 and A-2 hold", async () => {
-    const owner = await ns.ownerPool.query(
-      `SELECT pg_get_userbyid(p.proowner) AS owner, r.rolsuper, r.rolbypassrls,
-              p.proowner = c.relowner AS same_owner
-         FROM pg_proc p JOIN pg_roles r ON r.oid = p.proowner, pg_class c
-        WHERE p.oid = 'discovery_rate_limit_hit(text)'::regprocedure
-          AND c.oid = 'discovery_rate_limit_counters'::regclass`,
-    );
-    expect(owner.rows).toEqual([
-      { owner: ns.ownerRole, rolsuper: false, rolbypassrls: false, same_owner: true },
-    ]);
-    await expectA1A2(ro);
   });
 });
 

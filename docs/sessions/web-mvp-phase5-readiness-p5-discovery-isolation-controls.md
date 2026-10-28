@@ -247,7 +247,7 @@ Default unchanged: every other caller (2.2) passes none of them, and its pool co
 
 ## 11. Acceptance matrix (A-1..A-23; expected results)
 
-DB tests live in the new `packages/db/src/discovery-rate-limit-definer.test.ts` and run only through the DB/e2e lock by the orchestrator (sandbox off); the writer of each row is in brackets.
+DB tests live in the new `packages/db/src/discovery-rate-limit-definer.test.ts` and, for the A-10 NOBYPASSRLS owner replay, the new `packages/db/src/discovery-rate-limit-definer-nobypass.test.ts`, which runs isolated (listed in `isolatedTestFiles`, `packages/db/vitest.config.ts`) because `setupNonSuperuserOwnerContext` hands a shared role membership to a non-superuser owner; both run only through the DB/e2e lock by the orchestrator (sandbox off); the writer of each row is in brackets.
 
 | # | Test | Expected |
 |---|---|---|
