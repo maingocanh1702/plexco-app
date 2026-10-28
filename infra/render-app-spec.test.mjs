@@ -218,7 +218,8 @@ test("errors print only a token or a key, never the string around it or a value"
   };
   for (const [label, [field, change]] of Object.entries(lists)) {
     const bad = render(variant(committed, change), live);
-    assertRefused(bad, new RegExp(`render: ${field} must be an array`), label);
+    assertRefused(bad, /must be an array/, label);
+    assert.ok(bad.stderr.includes(`render: ${field} must be an array`), label);
     assert.doesNotMatch(bad.stderr, /plain-fake-svc/, label);
   }
   // Any other jq error is replaced by RS's own message.
