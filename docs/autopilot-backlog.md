@@ -7698,3 +7698,31 @@ notes: |
   Line numbers at dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da (found by lane L48's review R1b1, re-measured and recorded by lane L45 at its merged base, outside both lanes' scope). Inside `handleSessionCommand` (apps/web/lib/session-command-route.ts:848) these routes call `currentSession()` a second time to get the actor: apps/web/app/api/sessions/[id]/mark-paid/route.ts:32, sessions/[id]/payments/[allocationId]/reverse/route.ts:20, sessions/[id]/players/route.ts:27, sessions/[id]/players/[playerId]/route.ts:20, join-requests/[id]/approve/route.ts:26, join-requests/[id]/reject/route.ts:25, join-requests/[id]/route.ts:30, sessions/[id]/join/route.ts:35, sessions/[id]/leave/route.ts:30, sessions/[id]/share-link/route.ts:25, sessions/[id]/guest-notes/route.ts:56 and sessions/[id]/guest-notes/[noteId]/route.ts:58 (paths under apps/web/app/api/). The source finding listed the first ten; the two guest-note routes follow the same pattern and already did at 8e918f0ec541ef4f72740be652a3a86584d381c3 (measured by L45; the measurement wins). share-link's header (:11-13) says why: the command context carries no actor. A session that ends between the gate's read and the second one reaches each route's own fallback (the eleven others throw "session vanished between the entry gate and the command", e.g. mark-paid :33; share-link answers AUTH_REQUIRED, :26). By code reading only, not probed.
   Deliverable: the gate passes the actor it authorized in the command context, the twelve routes read it from there, and a test per route family shows the command runs as the gate's actor.
   Source: PR #126 body, section 9 (line 233; also section 6, line 214).
+
+## task: p5-deploy-awaits-deployment-id-and-keeps-spec-out-of-logs
+title: The deploy workflows of lane L67 must await their own deployment by id, keep the rendered App Spec out of logs and never trace the deployment wait script
+status: idea
+risk: P1
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [.github/workflows/deploy-staging.yml, .github/workflows/deploy-production.yml, infra/wait-for-deployment.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: the plan row for lane L67 (docs/sessions/web-mvp-phase5-golive-plan.md:79) builds the staging and production deploy workflows that will call the scripts lane L65 adds (infra/render-app-spec.sh, infra/wait-for-deployment.sh and infra/smoke-check.sh; new files, not at the base). Three constraints found in lane L65 belong to that lane. (1) Await the deployment by id: infra/wait-for-deployment.sh knows its deployment only by the image digest of the `web` service and takes the first listed match, so a redeploy of an unchanged digest (for example a config-only change) can pass at once on an earlier ACTIVE deployment of the same digest, a false success (the same mix-up on an earlier ERROR, CANCELED or SUPERSEDED deployment is a false failure). The script cannot close this without a new input: the workflow deploys a new digest every time, or passes the id of the deployment it created and the script awaits that id. (2) Keep the renderer's stdout out of logs: infra/render-app-spec.sh prints the rendered spec with the live SECRET ciphertexts copied in, by design; its only sinks are a git-ignored `spec.local.json` or a runner temp file, never a step log or `tee`. (3) Never trace the wait script: none of the three scripts sets `-x`, but under xtrace infra/wait-for-deployment.sh would print its `raw=` assignment, every listed deployment's spec with its ciphertexts; the workflow never runs it under `bash -x` or with `xtrace` in an exported `SHELLOPTS`.
+  Source: lane L65 (p5-staging-tooling-port), docs/sessions/web-mvp-phase5-readiness-p5-staging-tooling-port.md section 11 row 1 (from K2, S1 and S5 there).
+
+## task: p5-committed-app-specs-carry-no-secret-value
+title: The committed App Specs of lane L66 must give every SECRET env no value and spell its type `SECRET`, because the renderer passes a committed SECRET value through unchanged
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [infra/app.staging.yaml, infra/app.prod.yaml]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: the plan row for lane L66 (docs/sessions/web-mvp-phase5-golive-plan.md:78) writes the committed App Specs infra/app.staging.yaml and infra/app.prod.yaml (new files, not at the base). Lane L65's renderer infra/render-app-spec.sh (new, not at the base) fills only a SECRET env that carries no value, copying the live ciphertext into it; a committed SECRET that already carries a value passes through unchanged, so the renderer does not enforce its own header rule that a committed SECRET carries no value. Lane L65 pins that as current behavior. So in both files every env of type SECRET carries no `value`, and the type is spelled `SECRET`: the DigitalOcean App Spec reference lists the values `GENERAL` and `SECRET`, while its file-structure example writes `type: secret`; the renderer matches either case, and the committed files use the listed spelling. L66's review checks both; a later lane may instead make the renderer refuse a SECRET that carries a value, if lane L65's security round rules so.
+  Source: lane L65 (p5-staging-tooling-port), docs/sessions/web-mvp-phase5-readiness-p5-staging-tooling-port.md section 11 row 2 (from S3 and R2 there).

@@ -75,8 +75,15 @@ case "$ROLE" in
     #     worker provision
     exec pnpm --filter @plexco/bot provision:queue
     ;;
+  migrate)
+    # One-shot SQL migrations, step 2 of the required CI order in docs/standards/environments-setup.md
+    # (`provision` above is step 3). The runner reads only DATABASE_URL_MIGRATION and refuses an empty
+    # value itself. It runs through apps/bot because tsx is a production dependency there; the db
+    # package's own script needs a dev-only tsx that the pruned image does not carry.
+    exec pnpm --filter @plexco/bot exec tsx ../../packages/db/src/migrate.ts
+    ;;
   *)
-    echo "[entrypoint] PROCESS_ROLE không hợp lệ: ${ROLE} (web|discovery|worker|provision)" >&2
+    echo "[entrypoint] PROCESS_ROLE không hợp lệ: ${ROLE} (web|discovery|worker|provision|migrate)" >&2
     exit 1
     ;;
 esac
