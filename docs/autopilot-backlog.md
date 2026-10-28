@@ -7748,3 +7748,45 @@ notes: |
   No open home before this row: the row `identity-definer-bypassrls-ownership-0054` names R1 but has `status: merged` (delivered by PR 49), and its note_merged line puts PR 50's risk R1 out of scope because DD-132 removed DO from the MVP; the plan docs/sessions/web-mvp-phase5-golive-plan.md has 0 lines matching BYPASSRLS (case-insensitive grep, measured 2026-10-28), so no plan lane holds the measurement. Why it matters, per the same note_merged line: the 0054 definer is owned by the dedicated role identity_definer (NOLOGIN, BYPASSRLS), set up by pnpm db:bootstrap.
   Proposal: on the first DigitalOcean Managed PostgreSQL cluster, measure whether that BYPASSRLS role can be created and used; the cluster and every action on it are the owner's (agents never create cloud resources or touch production data). Done when the result is recorded in docs/standards/decisions.md; what follows a refusal is the owner's decision.
   Source: found by lane L79 (review round 1), 2026-10-28.
+
+## task: p5-deploy-awaits-deployment-id-and-keeps-spec-out-of-logs
+title: The deploy workflows of lane L67 must await their own deployment by id, keep the rendered App Spec out of logs and never trace the deployment wait script
+status: idea
+risk: P1
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [.github/workflows/deploy-staging.yml, .github/workflows/deploy-production.yml, infra/wait-for-deployment.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: the plan row for lane L67 (docs/sessions/web-mvp-phase5-golive-plan.md:79) builds the staging and production deploy workflows that will call the scripts lane L65 adds (infra/render-app-spec.sh, infra/wait-for-deployment.sh and infra/smoke-check.sh; new files, not at the base). Three constraints found in lane L65 belong to that lane. (1) Await the deployment by id: infra/wait-for-deployment.sh knows its deployment only by the image digest of the `web` service and takes the first listed match, so a redeploy of an unchanged digest (for example a config-only change) can pass at once on an earlier ACTIVE deployment of the same digest, a false success (the same mix-up on an earlier ERROR, CANCELED or SUPERSEDED deployment is a false failure). The script cannot close this without a new input: the workflow deploys a new digest every time, or passes the id of the deployment it created and the script awaits that id. (2) Keep the renderer's stdout out of logs: infra/render-app-spec.sh prints the rendered spec with the live SECRET ciphertexts copied in, by design; its only sinks are a git-ignored `spec.local.json` or a runner temp file, never a step log or `tee`. (3) Never trace the wait script: none of the three scripts sets `-x`, but under xtrace infra/wait-for-deployment.sh would print its `raw=` assignment, every listed deployment's spec with its ciphertexts; the workflow never runs it under `bash -x` or with `xtrace` in an exported `SHELLOPTS`.
+  Source: lane L65 (p5-staging-tooling-port), docs/sessions/web-mvp-phase5-readiness-p5-staging-tooling-port.md section 11 row 1 (from K2, S1 and S5 there).
+
+## task: p5-committed-app-specs-carry-no-secret-value
+title: The committed App Specs of lane L66 must give every env a `type` and every SECRET env no value, because the renderer refuses any other spec and a value committed to git has already leaked
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [infra/app.staging.yaml, infra/app.prod.yaml]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: the plan row for lane L66 (docs/sessions/web-mvp-phase5-golive-plan.md:78) writes the committed App Specs infra/app.staging.yaml and infra/app.prod.yaml (new files, not at the base). Lane L65's renderer infra/render-app-spec.sh (new, not at the base) fills a SECRET env that carries no value with the live ciphertext. Lane L65's security round (SEC-1 and SEC-2, applied in commit 843c2963254e9222d7ab612b8b0ca5adaaa7e570) made it refuse a committed SECRET that carries a value (an empty string counts as no value), an env whose `type` is missing or is neither GENERAL nor SECRET, and, on services, workers and jobs, a committed GENERAL env that would replace a live SECRET. It also refuses a committed SECRET on any other surface (it fills SECRETs on services, workers and jobs only) and, since commit bca512fecc5502d13696150b239c5afcc16bc222, a list (services, workers, jobs or any `envs`) that is not an array. That refusal comes at render time, after the commit: a value written into either file has already leaked into git history. So in both files every env carries a `type`, every env of type SECRET carries no `value`, and the type is spelled `SECRET`: the DigitalOcean App Spec reference lists the values `GENERAL` and `SECRET`, while its file-structure example writes `type: secret`; the renderer matches either case, and the committed files use the listed spelling. L66's review checks all three. Every env the live app holds as SECRET must sit on a service, worker or job and appear there in the committed spec (typed SECRET, no value): the renderer leaves out a live SECRET the committed spec does not name and refuses a committed SECRET on any other surface.
+  Source: lane L65 (p5-staging-tooling-port), docs/sessions/web-mvp-phase5-readiness-p5-staging-tooling-port.md section 11 row 2 (from S3 and R2 there).
+
+## task: p5-entrypoint-provision-role-fails-if-no-package-matches
+title: The `provision` role of infra/entrypoint.sh must fail when its pnpm filter matches no package, as the `migrate` role does since lane L65
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [infra/entrypoint.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: infra/entrypoint.sh:76 runs `exec pnpm --filter @plexco/bot provision:queue`. When a filter matches no package, pnpm prints "No projects matched the filters" and exits 0 unless `--fail-if-no-match` is given (https://pnpm.io/filtering, section "Matching": "Use this flag if you want the CLI to fail if no packages have matched the filters.", accessed 2026-10-28; measured with pnpm 10.30.2, the packageManager pin: a no-match filter exits 0 without the flag and 1 with it). The role works today only because the image carries apps/bot; a renamed package or a per-component image would make it exit 0 without provisioning anything. Lane L65 added the flag to the `migrate` role only, the one role its file ownership covers. The fix is the same flag after `--filter @plexco/bot` on that line.
+  Source: lane L65 (p5-staging-tooling-port), its security round finding SEC-4 (the `provision` role has the same pattern as the `migrate` role it fixed).
