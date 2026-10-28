@@ -6,10 +6,12 @@ set -euo pipefail
 base="${1:?usage: smoke-check.sh <https://origin>}"
 base="${base%/}"
 case "$base" in https://*) ;; *) echo "smoke: origin must be https://" >&2; exit 1 ;; esac
-curl_ok() { curl -fsS --max-time 15 --retry 6 --retry-delay 10 --retry-all-errors "$@"; }
+# -q first: curl skips any .curlrc, which could add -L or -k behind this script's back.
+curl_ok() { curl -q -fsS --max-time 15 --retry 6 --retry-delay 10 --retry-all-errors "$@"; }
 
 health="$(curl_ok "$base/healthz")"
-[ "$(jq -r '.ok' <<<"$health")" = "true" ] || { echo "smoke: /healthz not ok: $health" >&2; exit 1; }
+# A JSON boolean only (the string "true" fails); jq's stderr is dropped so no message quotes the body.
+jq -e '.ok == true' >/dev/null 2>&1 <<<"$health" || { echo "smoke: /healthz field .ok is not true" >&2; exit 1; }
 echo "ok /healthz"
 
 # curl -f without -L passes a 3xx, so both checks below also require a 2xx status.

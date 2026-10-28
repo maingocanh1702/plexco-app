@@ -11,8 +11,13 @@ set -euo pipefail
 app="${1:?usage: wait-for-deployment.sh <app-id> <digest> [timeout]}"
 digest="${2:?digest required}"
 timeout="${3:-900}"
-# Digits only: the arithmetic below would also evaluate an array subscript such as a[$(cmd)].
-[[ "$timeout" =~ ^[0-9]+$ ]] || { echo "wait: timeout must be whole seconds" >&2; exit 1; }
+# Digits only, no leading zero: the arithmetic below would also evaluate an array subscript such as
+# a[$(cmd)], and it reads a leading-zero constant as octal (010 is 8 seconds, 08 is an error).
+[[ "$timeout" =~ ^(0|[1-9][0-9]*)$ ]] || { echo "wait: timeout must be whole seconds" >&2; exit 1; }
+# The app id goes to doctl ahead of its flags, so a leading - would parse as a flag (an empty one
+# already stopped at ${1:?} above). No --: doctl's handling of it is not confirmed.
+case "$app" in -*) echo "wait: app id must not start with -" >&2; exit 1 ;; esac
+[[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "wait: digest must be sha256:<64 hex>" >&2; exit 1; }
 deadline=$(( $(date +%s) + timeout ))
 dep=""
 fails=0
@@ -36,7 +41,8 @@ while :; do
     dep="$(printf '%s' "$dep_json" | jq -r '.id')"
     phase="$(printf '%s' "$dep_json" | jq -r '.phase')"
     # doctl's JSON shape is not confirmed: a missing field stops at once, and failure messages name
-    # the field, never a value read from doctl (an unknown phase VALUE keeps polling).
+    # the field, never a value read from doctl other than a terminal phase the `case` below matches
+    # (an unknown phase VALUE keeps polling).
     case "$dep" in ""|null) echo "wait: deployment field .id missing" >&2; exit 1 ;; esac
     case "$phase" in ""|null) echo "wait: deployment field .phase missing" >&2; exit 1 ;; esac
     echo "deployment $dep phase=$phase"
