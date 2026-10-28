@@ -195,6 +195,8 @@ One breaker per process, module state in drs, behind one choke point `discoveryQ
 | 11 | any | stale outcome | unchanged | its own base answer | - |
 | 12 | any | unknown state (a `never` switch) | OPEN until now + 30 s, generation + 1 (as OPEN) | 503 no-store, retry-after 30 | no |
 
+Every rejected limiter or read query counts toward the breaker (rows 3-5 and 10), whatever its SQLSTATE, so the premise that a client cannot choose a DB error rests on the validators that run before any DB call: `FILTER_INSTANT` and the control-character check `CONTROL_OR_BIDI` (drs), the cursor's `PUBLIC_LISTING_ID` (discovery-cursor.ts) and the share route's `SHARE_SLUG`. A new client-chosen input that reaches SQL must keep a validator before the DB (security review P3; a design note, not a defect).
+
 No row allows a request without the limiter's DB answer. The 503 has an empty body (as drs:274-276) and `cache-control: no-store`; no new error code and no new i18n string.
 
 ### 8.2 Statuses (RO-L73-2 R7 (a))
@@ -303,6 +305,7 @@ The lane block: about 350 changed lines (production about 180, tests about 170) 
 - K6. UNLOGGED: a crash empties the table, which resets at most the current window (as 0012's `rate_limit_hits`).
 - K7. The breaker is per process: R processes send at most R half-open probes per open period.
 - K8. The join route (2.1) shares the pool, so its query gains the three timeouts without a code change, and the breaker neither counts nor refuses it; backlog row (c).
+- K9. The limiter's bind parameter is the client IP or its /64, so the server-side bind-parameter logging (`log_min_duration_statement`, `log_parameter_max_length`) is checked on the production database at enablement (security review P3, unconfirmed, no code change).
 
 ## 16. Open
 

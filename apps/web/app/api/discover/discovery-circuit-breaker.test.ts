@@ -153,9 +153,12 @@ describe("discovery breaker and statuses (readiness 8.1, 8.2)", () => {
   });
 
   it("L73 A-14 row 5: the 5th failure in the window opens it: the next call is 503 retry-after 30 with no DB call", async () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
     await fail(5);
     await expect503("30", false);
     expect(listDiscoveryListings).not.toHaveBeenCalled();
+    // One key-free line per opening, none per refused call.
+    expect(warn.mock.calls).toEqual([["discovery.breaker.open"]]);
   });
 
   it("L73 A-14 row 6: OPEN answers retry-after = ceil(remaining s): 18 at +12.5 s", async () => {

@@ -102,6 +102,7 @@ function openBreaker(now: number): void {
   breaker.state = "OPEN";
   breaker.openUntil = now + DISCOVERY_BREAKER_OPEN_MS;
   breaker.generation += 1;
+  log.warn("discovery.breaker.open"); // once per opening; no IP, key, slug, id or SQLSTATE
 }
 
 /** Admission (readiness 8.1 rows 1 and 6-8, 12): an admitted call's generation, else the 503. */
