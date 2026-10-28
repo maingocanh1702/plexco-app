@@ -7790,3 +7790,45 @@ merged_probe: null
 notes: |
   Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: infra/entrypoint.sh:76 runs `exec pnpm --filter @plexco/bot provision:queue`. When a filter matches no package, pnpm prints "No projects matched the filters" and exits 0 unless `--fail-if-no-match` is given (https://pnpm.io/filtering, section "Matching": "Use this flag if you want the CLI to fail if no packages have matched the filters.", accessed 2026-10-28; measured with pnpm 10.30.2, the packageManager pin: a no-match filter exits 0 without the flag and 1 with it). The role works today only because the image carries apps/bot; a renamed package or a per-component image would make it exit 0 without provisioning anything. Lane L65 added the flag to the `migrate` role only, the one role its file ownership covers. The fix is the same flag after `--filter @plexco/bot` on that line.
   Source: lane L65 (p5-staging-tooling-port), its security round finding SEC-4 (the `provision` role has the same pattern as the `migrate` role it fixed).
+
+## task: p5-discovery-rate-max-keys-follows-process-topology
+title: The discovery limiter's bound DISCOVERY_RATE_MAX_KEYS (N) must follow the number of processes that serve the discovery paths when the topology changes (App Spec, lane L66)
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [packages/db/migrations/, packages/db/src/client.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: lane L73 replaces the in-process discovery limiter (apps/web/lib/discovery-route-support.ts:59-64 and :84; at most 10 000 keys per process, :61) with one global DB limiter whose bound N = DISCOVERY_RATE_MAX_KEYS = 20 000 keys per window is a constant inside the SECURITY DEFINER function of migration 0075_discovery_rate_limit_definer.sql (new, not at the base): 10 000 per process times R = 2, because the web process and the discovery process each served the discovery paths with their own map (:70-82). The owner's Q3 override (DD-154, docs/standards/decisions.md:120) starts production with ONE web process and no discovery component (R = 1), where 20 000 makes a fill harder than at base. When the topology changes (the App Specs of lane L66, more replicas or a discovery component), three things follow it: (1) N = 10 000 x R, set by a new migration that re-creates the function (0075 is append-only once merged); (2) the discovery pools' connections (5 per process, :44) are counted in the per-role connection budgets of docs/decisions/analysis/dd-04-hosting-final-decision.md:143; (3) the comment at packages/db/src/client.ts:9, which names readonly as the discovery-process role although the web process serves discovery too, is corrected.
+  Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (a) (from RO-L73-2 R2 and sections 2.4 and 9 there).
+
+## task: p5-discovery-limiter-bounded-negative-cache
+title: A bounded per-window negative cache in front of the discovery DB limiter, if a flood shows the discovery pool saturating on refusals
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [apps/web/lib/discovery-route-support.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: at the base a refused discovery request costs only memory (the in-process map of apps/web/lib/discovery-route-support.ts:59-64 and :84). Lane L73's DB limiter (migration 0075_discovery_rate_limit_definer.sql, new) makes every request, a refused one included, cost one round trip on the 5-connection discovery pool (:44), so during a flood other visitors of that process wait or get a 503 from the timeouts or the breaker. RO-L73-2 R3 accepted that cost (option A, default applied, pending owner sign-off): docs/decisions/analysis/dd-04-hosting-final-decision.md:142 lets discovery degrade to 429 or 503 before the web and worker pools suffer, and the pool cap bounds the load. Option B, not built: a per-window negative cache in that file, about 15 lines, that replays only a DB refusal of the same key in the same window (the same 429 and retry-after), is bounded, stops caching when full and never refuses on its own. Build it if a staging or production flood shows the pool saturating on refusals.
+  Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (b) (from RO-L73-2 R3 and K3 there).
+
+## task: p5-join-route-discovery-pool-outside-breaker
+title: The public join route shares the discovery pool outside lane L73's circuit breaker; route it through the breaker or give it its own pool
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/public-listings/[publicListingId]/join/route.ts, apps/web/lib/discovery-route-support.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: apps/web/app/api/public-listings/[publicListingId]/join/route.ts:80 resolves its listing with `resolveDiscoveryListing(await discoveryPool(), publicListingId)`, the discovery pool of apps/web/lib/discovery-route-support.ts:37-54. Lane L73 adds a per-process circuit breaker behind one choke point in that file, through which the limiter and the discovery API reads go, and three timeouts on the pool (statement 2 000 ms, acquire 2 000 ms, client 2 500 ms). The join route keeps calling the pool directly (L73's negative scope: no other route), so it gains the timeouts without a code change, its failures are not counted, and it is not refused while the breaker is open; it also shares the pool's 5 connections (:44) with discovery. Decide whether the join route goes through the breaker (and what it answers while the breaker is open) or gets its own pool.
+  Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (c) (from the RO-L73-2 Tier-B list and K8 there).
