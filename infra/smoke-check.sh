@@ -10,8 +10,9 @@ case "$base" in https://*) ;; *) echo "smoke: origin must be https://" >&2; exit
 curl_ok() { curl -q -fsS --max-time 15 --retry 6 --retry-delay 10 --retry-all-errors "$@"; }
 
 health="$(curl_ok "$base/healthz")"
-# A JSON boolean only (the string "true" fails); jq's stderr is dropped so no message quotes the body.
-jq -e '.ok == true' >/dev/null 2>&1 <<<"$health" || { echo "smoke: /healthz field .ok is not true" >&2; exit 1; }
+# Exactly one JSON document whose .ok is the boolean true (the string "true" fails; `-s` stops a second
+# document from deciding the result); jq's stderr is dropped so no message quotes the body.
+jq -es 'length == 1 and .[0].ok == true' >/dev/null 2>&1 <<<"$health" || { echo "smoke: /healthz field .ok is not true" >&2; exit 1; }
 echo "ok /healthz"
 
 # curl -f without -L passes a 3xx, so both checks below also require a 2xx status.
