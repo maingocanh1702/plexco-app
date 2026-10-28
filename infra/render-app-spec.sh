@@ -9,12 +9,16 @@
 #  1. Placeholders __IMAGE_DIGEST__ / __VPC_ID__ / __APP_DOMAIN__ are replaced from the environment,
 #     each validated by shape (a malformed digest must never reach the spec).
 #  2. Every committed env is typed GENERAL or SECRET (any case); a missing or unknown type FAILS. A
-#     `type: SECRET` entry carries NO value (one that does FAILS). Its value is copied from the same
-#     component + key in the live spec (already DO-encrypted EV[...]). If the live app lacks it, or a
-#     committed GENERAL env would replace it, the render FAILS and names the secret: a deploy must
-#     never silently drop, blank or demote a secret.
+#     `type: SECRET` entry carries NO value (one that does FAILS). On services, workers and jobs its
+#     value is copied from the same component + key in the live spec (already DO-encrypted EV[...]);
+#     if the live app lacks it, or a committed GENERAL env would replace a live SECRET there, the
+#     render FAILS and names the secret. A committed SECRET on any other surface FAILS as unfilled. A
+#     live SECRET the committed spec does not name is left out of the rendered spec: the committed
+#     spec decides which envs exist.
 #  3. A committed spec that still contains a __PLACEHOLDER__ after substitution fails.
 #  4. stdin holds exactly one JSON document whose .name is a non-blank string equal to the live .name.
+#     Its services, workers and jobs, and every `envs` in it, are absent (null) or an array: anything
+#     else FAILS naming the field (`false` would read as absent, an object as a list).
 # Every failure prints this script's own message, naming a key or a field, never a value: jq's own
 # error text is withheld (it can quote input bytes). No secret value is ever read from or written to
 # anything but the live spec. Needs: bash 3.2+, jq.
@@ -42,6 +46,10 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
     [ ("services", "workers", "jobs") as $k | ($live[0][$k] // [] | arrays)[] | . as $c | ($c.envs // [] | arrays)[]
       | select(((.type? // "") | ascii_upcase) == "SECRET" and (.value // "") != "")
       | { key: "\($k)/\($c.name)/\(.key)", value: .value } ] | from_entries;
+  # Every committed list RS reads (services, workers, jobs, any envs) goes through this: absent (null)
+  # reads as empty, an array as itself, anything else FAILS naming the field. `//` would read `false`
+  # as absent and `map` an object as a list: components or envs, live secrets included, would drop.
+  def list($f): if . == null then [] elif type == "array" then . else error("render: \($f) must be an array") end;
   # One document (a multi-document YAML through yq is two). A nameless one fails here: null or {} (an
   # empty YAML file through yq), an array, a string, a non-string or blank .name. Secrets are copied
   # from the same app only.
@@ -57,7 +65,7 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
    then error("render: DATABASE_URL_MIGRATION outside the PRE_DEPLOY job") else . end)
   # Every committed env on any surface is typed GENERAL or SECRET (any case), and a SECRET carries no
   # value: a masked or pasted one would be submitted as the NEW live value. Runs after the guard.
-  | ((.. | objects | .envs // empty | if type == "array" then .[] else error("render: envs must be an array") end
+  | ((.. | objects | .envs | list("envs") | .[]
       | (.type? // null | if type == "string" then ascii_upcase else null end) as $t
       | if $t != "GENERAL" and $t != "SECRET" then error("render: env type must be GENERAL or SECRET: \(.key? // null)")
         elif $t == "SECRET" and (.value // "") != "" then error("render: committed SECRET carries a value: \(.key)")
@@ -73,7 +81,7 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
     else . end
   | liveSecrets as $ls
   # A SECRET is copied from the live app. A GENERAL env over a live SECRET would blank or demote it.
-  | def fill($kind): . as $c | .envs = [ ($c.envs // [])[] | $ls["\($kind)/\($c.name)/\(.key)"] as $v |
+  | def fill($kind): . as $c | .envs = [ ($c.envs | list("envs"))[] | $ls["\($kind)/\($c.name)/\(.key)"] as $v |
       if (.type | ascii_upcase) == "SECRET"
       then if $v == null then error("render: missing secret in live app: \($kind)/\($c.name)/\(.key) - set it in DO first")
            elif ($v | type == "string" and startswith("EV[") and endswith("]") | not)
@@ -81,9 +89,9 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
            else . + {value: $v} end
       elif $v != null then error("render: live SECRET would be demoted to a plain env: \($kind)/\($c.name)/\(.key)")
       else . end ];
-  .services |= (. // [] | map(fill("services")))
-  | .workers |= (. // [] | map(fill("workers")))
-  | .jobs    |= (. // [] | map(fill("jobs")))
+  .services |= (list("services") | map(fill("services")))
+  | .workers |= (list("workers") | map(fill("workers")))
+  | .jobs    |= (list("jobs") | map(fill("jobs")))
   # Never silently blank a secret: a SECRET left valueless on any surface fill() does not cover fails.
   | (if any(.. | objects | select(((.type? // "") | ascii_upcase) == "SECRET" and (.value // "") == ""); .)
      then error("render: unfilled SECRET outside services/workers/jobs") else . end)

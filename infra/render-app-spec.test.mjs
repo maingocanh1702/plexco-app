@@ -199,14 +199,28 @@ test("errors print only a token or a key, never the string around it or a value"
   assert.doesNotMatch(r.stderr, /super-long-value/);
   assert.equal(r.stdout, "");
   // jq's own error text quotes the offending input. A live string where an array belongs leaves the
-  // secret missing (named), and any other jq error is replaced by RS's own message.
+  // secret missing (named).
   const long = `EV[1:FAKECIPHER-${"x".repeat(300)}]`;
   for (const bad of [{ ...live, services: long }, variant(live, (l) => (l.services[0].envs = long))]) {
     const leak = render(committed, bad);
     assertRefused(leak, /missing secret in live app: services\/web\/DATABASE_URL/);
     assert.doesNotMatch(leak.stderr, /FAKECIPHER/);
   }
-  const shape = render({ ...committed, services: "plain-fake-svc" }, live);
+  // A committed list is absent or an array: `false` is not read as absent, nor an object or a string as
+  // a list (either would drop components or envs, their live secrets included, and still exit 0).
+  const lists = {
+    "web envs: false": ["envs", (s) => (s.services[0].envs = false)],
+    "jobs: false": ["jobs", (s) => (s.jobs = false)],
+    "services: {}": ["services", (s) => (s.services = {})],
+    "services: a string": ["services", (s) => (s.services = "plain-fake-svc")],
+  };
+  for (const [label, [field, change]] of Object.entries(lists)) {
+    const bad = render(variant(committed, change), live);
+    assertRefused(bad, new RegExp(`render: ${field} must be an array`), label);
+    assert.doesNotMatch(bad.stderr, /plain-fake-svc/, label);
+  }
+  // Any other jq error is replaced by RS's own message.
+  const shape = render({ ...committed, services: ["plain-fake-svc"] }, live);
   assertRefused(shape, /render: the input is not the expected JSON shape/);
   assert.doesNotMatch(shape.stderr, /plain-fake-svc/);
 });
