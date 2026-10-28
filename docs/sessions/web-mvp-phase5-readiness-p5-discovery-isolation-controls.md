@@ -246,6 +246,7 @@ Default unchanged: every other caller (2.2) passes none of them, and its pool co
 | drs:279-281 | the comment becomes: the limiter (keyed by client IP, never the request key) is the one DB call before the shape check |
 | drs:301-305 | the test reset clears the breaker instead of the map; same name and signature |
 | the four discovery test files | R9: their DB fakes answer the limiter SQL with a keyed fake (0 while a key is at or under 60, else a retry-after), reset per test; page.test.tsx gains the `createDb` mock, the env stub and the fake (R8); route.test.ts:236 `[1, 2]` becomes `[1, 3]`; the map-fill test (:190-191) and the fake-timer test (:264, its fill :272-273) go with the map, as the negative scope allows: their 429 with retry-after stays on a fake refusal, and full = fail closed and the window reset move to the DB tests (A-4, A-6) |
+| `public-listings/[publicListingId]/join/route.test.ts`, the fifth test file | RO-L73-6 item 1 (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature): its fake answers the limiter SQL with an allowed 0, because its A-12 compares 404s by calling the detail route; every other SQL is answered as before and no assertion changes; the join route itself stays outside the limiter and the breaker (backlog row p5-join-route-discovery-pool-outside-breaker) |
 
 ## 11. Acceptance matrix (A-1..A-23; expected results)
 
