@@ -15,7 +15,7 @@
 - **8 câu hỏi cho owner (§5)**, mỗi câu một default: Q1 skip list (agent viết FILE config DigitalOcean và workflow deploy; giá trị secret, console và deploy luôn là của owner), Q2 lane mới thay #50, Q3 HA từ Day-1 như DD-04 (giá đo 2026-10-28: $118.90 mỗi tháng nếu tài khoản còn tạo được Standard có standby, $318.00 nếu phải lên Advanced; owner kiểm lại vào ngày mua), Q4 domain `plexco.app`, Q5 pilot 2 CLB và ngày chốt sau G1, Q6 Messenger ngoài lần ra mắt đầu, Q7 fallback Fly + DO nếu Zalo cần IP cố định, Q8 `aws-kms`. Default USER-VISIBLE: Q4 (domain trong mọi link), Q6 (pilot không có kênh Messenger).
 - **Checklist owner (§8):** 12 bước 8.0-8.11, mỗi bước ghi ai làm, làm gì, chặn lane hay gate nào, default, và thời gian chờ là tham số `T_owner_*` (không đoán số): duyệt plan, tài khoản và billing, domain, OAuth Google và bot Zalo, email nhà cung cấp cho §7.1, nhập secret theo TÊN, bấm deploy, chứng kiến drill, bật projector, MỘT lần xác nhận trước pilot, tám điểm pháp lý, chọn và mời CLB.
 - **Gate go-live (§9):** G1 §7.1 egress verified → G2 staging up và golden path staging PASS → G3 nghiệm thu §7.6 → G4 production up, giới tính tắt → G5 projector bật → G6 pilot 1-2 CLB → G7 review; mỗi gate ghi bằng chứng, ai tạo bằng chứng và chặn gì.
-- <!-- TODO W3: one bullet for the estimate (section 6), agent time and owner-wait time apart -->
+- **Ước lượng (§6):** agent khoảng 31-82 giờ, trung vị 55-58 giờ, đã gồm usage limit (15 lane, 8 sóng, tối đa 2 lane song song; số đo Phase 4). Thời gian chờ owner tính riêng bằng tham số của §8 trên đường găng: `T_owner_approval` + 2 × `T_owner_secrets` + 2 × `T_owner_deploy` + `T_owner_drills` + `T_owner_projectors` + `T_owner_signoff`, cộng phần `T_owner_vendor_reply` vượt sóng 1. Không hứa lịch.
 - **Điều kiện resume (nhị phân):** chỉ tin nhắn VIẾT "Phase 5 plan approved" của owner, kèm trả lời hoặc override từng câu ở §5, mới khởi động Phase 5. Merge PR này mà không có tin nhắn đó không duyệt gì, không khởi động gì.
 
 ## 2. Phạm vi, baseline và luật go-live
@@ -112,7 +112,7 @@ L78 <- [Q3, owner's Managed PG exists]          (conditional, P1)
 
 - **Luật song song** (DD-153, `docs/standards/decisions.md:1768`): tối đa hai lane cùng lúc, chỉ ghép hai lane không chung file; migration chạy tuần tự; một khoá cho suite DB và e2e.
 - **Vùng file:** research và docs chuẩn (L62, L63); runbook (L64, L69, L70, L71, L75, L76); infra và workflow (L65, L66, L67); web và script (L68, L72, L73, L74); `packages/db` (L77, L78). File chung phải chạy tuần tự: `docs/standards/environments-setup.md` (L62 rồi L66, đã là phụ thuộc), `scripts/smoke-predeploy.mjs` (L65 rồi L74, đã là phụ thuộc).
-- **Cặp đề xuất:** L62 · L72; L63 · L68; L64 · L73; L65 · L70; L66 · L71; L67 · L75; L69 · L74; L76 một mình (L77, L78 sau đó, mỗi lúc một lane). Lane kế tiếp bắt đầu ngay khi phụ thuộc của nó merge. <!-- TODO W3: confirm the pairs in section 7 with the measured durations -->
+- **Cặp đề xuất (đo ở §6, xếp ở §7):** L65 · L62; L66 · L64; L67 · L74; L69 · L72; L70 · L73; L63 · L68; L71 · L75; L76 một mình (L77, L78 sau đó, mỗi lúc một lane). Chuỗi G2 (L65 → L66 → L67 → L69) đi trước để owner dựng staging trong lúc các sóng sau chạy. Lane kế tiếp bắt đầu ngay khi phụ thuộc của nó merge.
 
 ## 5. Checklist câu hỏi cho owner
 
@@ -142,11 +142,48 @@ Luật Standard (phát hiện (a) ở §2 của file research): từ 15/10/2026 
 
 ## 6. Sizing và ước lượng wall-clock
 
-<!-- TODO W3 -->
+Nguồn: `docs/research/web-mvp-phase5-golive-measurements-2026-10-28.md` §4 (cùng PR). Thời lượng lane = spawn orchestrator đầu tới merge, đo ở 19 lane Phase 4; phút theo class lấy từ dòng "Phút theo lane" của §4; khoảng của class code bỏ 14 h 20 chờ owner của L45 (598 phút, §4). Mỗi sóng dài bằng lane dài nhất của nó (cùng cách tính `docs/sessions/web-mvp-phase4-plan.md` §6); usage limit cộng theo tỷ lệ đo được. Kiểm chứng cách tính: Phase 4 ước 46-57 giờ (`docs/sessions/web-mvp-phase4-plan.md:14`), đo được 52 h 20 (§4 của file research). **Không hứa lịch.**
+
+| Class (số đo Phase 4, §4) | Lane Phase 5 | Giờ mỗi lane: trung vị (khoảng) |
+| --- | --- | --- |
+| docs, n = 5; research chưa có số đo (class research 0), ước như docs | L62, L63, L64, L69, L70, L71, L75, L76 | 4 h 40 (1 h 19 - 5 h 11) |
+| code, n = 7 | L65, L68, L72, L73, L74 | 6 h 50 (4 h 38 - 10 h 23) |
+| config P1: chưa có số đo (class config 0), ước như P1 code, n = 5 | L66, L67; L77, L78 nếu chạy | 5 h 39 (2 h 13 - 8 h 11) |
+
+- **Sóng (§7):** 15 lane chắc chắn trong 8 sóng. Sóng 1, 3, 4, 5, 6 có lane code (6 h 50; 4 h 38 - 10 h 23), sóng 2 có lane P1 (5 h 39; 2 h 13 - 8 h 11), sóng 7, 8 chỉ docs (4 h 40; 1 h 19 - 5 h 11). Cộng: **trung vị 49 h 09, khoảng 28 h 01 - 70 h 28**, chưa gồm usage limit.
+- **Usage limit (§4 của file research):** 1 lần mỗi 8.7 giờ, trung vị 59.5-89 phút mỗi lần (tuỳ giá trị chưa kiểm của stop 6). Cộng 3 h 12 (3.2 lần × 59.5 phút) ở đầu thấp, 12 h 01 (8.1 lần × 89 phút) ở đầu cao, 5 h 36 - 8 h 23 ở trung vị.
+- **A = giờ agent, đã gồm usage limit: khoảng 31-82 giờ, trung vị 55-58 giờ** (1.3-3.4 ngày nếu chạy liên tục). Kiểm chéo: tốc độ merge khi tối đa 2 lane sống, 3.0 giờ mỗi PR (§4 của file research) × 15 lane = 45 giờ lịch, nằm trong khoảng.
+- **File G2 xong sớm:** L62, L64-L67, L69, L74 nằm ở sóng 1-4: 16 h 07 - 39 h 20, trung vị 26 h 09 (chưa gồm usage limit); owner làm 8.5, 8.6 cho staging trong lúc sóng 5-8 chạy (12-31 giờ, trung vị 23 giờ).
+- **Chờ G1:** L66 chỉ bắt đầu khi L62 merge VÀ đã có câu trả lời viết của bước 8.4 (`docs/standards/environments-setup.md:81`). Khi `T_owner_vendor_reply` dài hơn sóng 1, conductor chạy lane sẵn sàng kế tiếp (sóng 5-8); chuỗi L66 → L67 → L69 (5 h 45 - 21 h 33, trung vị 15 h 58) chạy sau G1, nên phần agent thành max(A, `T_owner_vendor_reply` + chuỗi đó).
+- **Thời gian owner (§8):** tham số có tên, không đoán số. Trên đường găng tới G6: `T_owner_approval` (trước mọi lane), 2 × `T_owner_secrets` (staging, production), 2 × `T_owner_deploy` (staging, production), `T_owner_drills`, `T_owner_projectors`, `T_owner_signoff`. Chạy song song với agent, chỉ cộng phần vượt A: `T_owner_accounts`, `T_owner_domain`, `T_owner_oauth_zalo` (cần trước G2), `T_owner_legal`, `T_owner_pilot_invite` (cần trước G6). Sau G6: cửa sổ pilot (Q5), rồi G7.
+- **Tổng tới pilot (G6), cận trên:** `T_owner_approval` + max(A, `T_owner_vendor_reply` + 6-22 giờ) + 2 × `T_owner_secrets` + 2 × `T_owner_deploy` + `T_owner_drills` + `T_owner_projectors` + `T_owner_signoff`, với A = 31-82 giờ. Là cận trên vì bước staging của owner chồng lên sóng 5-8.
+- **L54 (Phase 4, ngày cố định):** cửa sổ 2026-12-01..2026-12-14, chạy một mình (`docs/sessions/web-mvp-phase4-plan.md:12`, `:159`). Nếu phần agent của Phase 5 còn chạy trong cửa sổ đó, L54 chiếm một khe chạy một mình 3-7 giờ (ước ở `docs/sessions/web-mvp-phase4-plan.md:132`), cộng vào A. Ignore của `braces` hết hạn 2026-12-21 (`osv-scanner.toml:11`).
+- **Lane có điều kiện:** L77, L78 mỗi lane thêm 2 h 13 - 8 h 11 (trung vị 5 h 39), chạy sau sóng 8, mỗi lúc một lane; L78 còn chờ Managed PG thật của owner (8.1).
+- **Orchestrator run:** trung vị Phase 4 theo class: docs 3, code 6, P1 code 4 (§4 của file research) ⇒ khoảng 62 run cho 15 lane (8 × 3 + 5 × 6 + 2 × 4); tổng run cap ở §3 là 60 (72 nếu L77, L78 chạy). Class code đo được 6 run, cao hơn cap 4 của L65, L68, L74 (§10).
 
 ## 7. Thiết kế thực thi
 
-<!-- TODO W3 -->
+- **Luật đồng thời của owner** (DD-153, `docs/standards/decisions.md:1768`, nguyên văn ở `:1773`; prompt Phase 5 mục 5 giữ nguyên): tối đa hai lane song song; mỗi lane một orchestrator opus/max với tối đa một worker, reviewer hoặc verifier sống; tối đa bốn agent lane cộng một merge clerk; chỉ ghép hai lane không chung file; migration tuần tự; khoá DB/e2e xếp hàng suite DB và e2e; merge từng PR theo thứ tự plan.
+- **Worker:** opus/max cho việc phức tạp (P1, config deploy, bảo mật, bề mặt public, research gate); sonnet cho việc đơn giản (docs, runbook). Worker dừng ở khoảng 200k context hoặc 80 tool call: commit, viết handoff, trả về; orchestrator mở worker MỚI cùng model và effort. Sau usage limit, agent trên khoảng 250k context thay bằng agent mới từ handoff (luật token của owner, `docs/sessions/web-mvp-phase4-plan.md:145`).
+- **Review:** một reviewer Claude độc lập, tối đa 3 vòng (DD-122 D4, không Codex); thêm security round opus/max cho lane ghi "security round" ở §3 (L65, L66, L67, L68, L72, L77, L78).
+- **Merge:** một merge clerk cho cả Phase 5, merge từng PR khi CI xanh, theo thứ tự plan; lane chỉ bắt đầu trên `main` đã có phụ thuộc của nó. PR #50 chỉ owner (Q2).
+- **Step 0 mỗi lane:** readiness reviewer đo lại live truth tại base; `CODE_READY` ⇒ file readiness là commit đầu của branch; `NOT_CODE_READY` ⇒ lane không bắt đầu, thành mục AWAIT.
+- **Khoá DB/e2e:** mỗi sóng có tối đa một lane cần suite DB hoặc e2e (lane code ở §6), nên hai lane của một sóng không chờ nhau ở khoá. Không lane nào dự kiến có migration (§3).
+- **Chuỗi G2 đi trước:** L65 → L66 → L67 → L69 ở sóng 1-4 để owner dựng staging trong lúc sóng 5-8 chạy (§6). Tới lượt L66 mà G1 chưa PASS ⇒ conductor chạy lane sẵn sàng kế tiếp; L66, L67, L69 lùi theo G1.
+
+| Session | Lane (model writer) | Vùng | Bắt đầu khi | Run cap |
+| --- | --- | --- | --- | --- |
+| P5-S1 | L65 (opus) · L62 (opus) | infra tooling · research trang chính thức | B1 xong và `main` chứa PR này | 4 · 3 |
+| P5-S2 | L66 (opus) · L64 (sonnet) | App Spec · manifest env | L62, L65 merge và G1 PASS (L66); một khe trống (L64) | 6 · 3 |
+| P5-S3 | L67 (opus) · L74 (opus) | workflow deploy · smoke và golden path staging | L66 merge (L67); L65 merge (L74) | 6 · 4 |
+| P5-S4 | L69 (sonnet) · L72 (opus) | runbook deploy · header, cookie, CSP | L67 merge (L69); một khe trống (L72) | 3 · 6 |
+| P5-S5 | L70 (sonnet) · L73 (opus) | runbook drill · discovery | một khe trống | 3 · 6 |
+| P5-S6 | L63 (sonnet) · L68 (opus) | docs chuẩn deploy · log web | một khe trống | 3 · 4 |
+| P5-S7 | L71 (sonnet) · L75 (sonnet) | runbook outbox · nháp pháp lý | một khe trống | 3 · 3 |
+| P5-S8 | L76 (sonnet), một mình | hướng dẫn host | một khe trống | 3 |
+| P5-S9 (có điều kiện) | L77 (opus) rồi L78 (opus), tuần tự | `packages/db` | Q8 cần code (L77); Q3 và Managed PG của owner (L78) | 6 · 6 |
+
+- Nhóm session và model writer: default applied, pending owner sign-off. Golden path local chạy bằng một verifier độc lập trên `main` cuối sau P5-S8, và trong lane chạm route session hoặc cookie (L68, L72); golden path staging là bước owner (G2).
 
 ## 8. Việc chỉ owner làm (checklist owner, không xếp lịch cho agent)
 
