@@ -11,7 +11,7 @@ import { err, NO_STORE, ok } from "./api-envelope";
 import { decodeDiscoveryCursor, isCalendarDay } from "./discovery-cursor";
 import { log } from "./log";
 import { SESSION_NOT_FOUND_MESSAGE } from "./session-command-route";
-import { clientIp } from "./session-cookies";
+import { clientIp, type TrustedIngressProvider } from "./session-cookies";
 
 /**
  * Shared by the anonymous discovery routes (readiness 4.2-4.5, 4.7): the readonly handle, the
@@ -181,15 +181,15 @@ const DISCOVERY_RATE_WINDOW_SECONDS = 60;
 /**
  * null when the request may proceed, else its answer (readiness 6.1, 8.2); every discovery call
  * site awaits it before its read. The durable limiter `discovery_rate_limit_hit` (0075) counts
- * `discover:<key>` per clock-aligned 60 s window in one table for every process and replica, and
+ * the key per clock-aligned 60 s window in one table for every process and replica, and
  * closes the /64 fill: one /48 never holds more than half of the table, and a full table refuses
- * every new key (fail closed). The key is the clientIp, an IPv6 one cut to its /64 (rateLimitKey),
+ * every new key (fail closed). The key is discoveryRateLimitKey(request), passed bare (0075:82-85),
  * never a slug or a listing id, and is never logged. 0 => null; 1..60 => the 429 with that
  * retry-after; any other result, a query failure or the breaker => the empty 503. A clientIp
  * misconfiguration (production) or a discoveryPool() failure rejects: the caller's 500.
  */
 export async function discoveryRateLimited(request: Request): Promise<Response | null> {
-  const key = `discover:${rateLimitKey(clientIp(request))}`;
+  const key = discoveryRateLimitKey(request);
   const retryAfter = await discoveryQuery(async (pool) => {
     const { rows } = await pool.query<{ discovery_rate_limit_hit: unknown }>(
       "SELECT discovery_rate_limit_hit($1)",
@@ -210,6 +210,16 @@ export async function discoveryRateLimited(request: Request): Promise<Response |
   }, discoveryUnavailable);
   if (typeof retryAfter !== "number") return retryAfter;
   return retryAfter === 0 ? null : rateLimitedResponse(retryAfter);
+}
+
+/**
+ * The ONE builder of the limiter key, and the whole key expression of discoveryRateLimited: the
+ * clientIp value (an undefined provider keeps clientIp's default), an IPv6 one cut to its /64
+ * (rateLimitKey). 0075:82-85 accepts only these bare forms and RAISEs 22023 on any other, a
+ * `discover:` prefix included; discovery-rate-limit-key-db.test.ts pins each form against it.
+ */
+export function discoveryRateLimitKey(request: Request, provider?: TrustedIngressProvider): string {
+  return rateLimitKey(clientIp(request, provider));
 }
 
 /**

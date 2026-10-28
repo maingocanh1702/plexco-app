@@ -124,7 +124,7 @@ CREATE UNLOGGED TABLE discovery_rate_limit_counters (  -- UNLOGGED as 0012:324-3
 
 - Window: `v_window := pg_catalog.floor(extract(epoch FROM pg_catalog.now()) / 60)::bigint`; retry-after `pg_catalog.ceil((v_window + 1) * 60 - extract(epoch FROM pg_catalog.now()))::integer`, 1..60. drs calls the function with `pool.query` (autocommit), so `now()` is the call time.
 - Steps of one call (one transaction):
-  0. NULL, length and character-set check of p_key against the forms `rateLimitKey` emits (dotted IPv4, the /64 form, the fixed fallbacks), else RAISE (section 7 item 9). No write before this step.
+  0. NULL, length and character-set check of p_key against the forms `discoveryRateLimitKey` (drs, the one exported builder of the key the web passes) emits (dotted IPv4, the /64 form, the fixed fallbacks), else RAISE (section 7 item 9). No write before this step.
   1. `UPDATE ... SET hits = hits + 1 WHERE window_id = v_window AND bucket = 'k:' || p_key RETURNING hits`; found: allowed iff hits <= 60. Most traffic stops here, on one row.
   2. Unlocked read of the `#keys` row; >= N: refuse (the full fast path, no lock).
   3. IPv6 and `#keys` >= N/2: unlocked read of its `p48:` row; >= 256: refuse.
@@ -247,7 +247,7 @@ Default unchanged: every other caller (2.2) passes none of them, and its pool co
 
 ## 11. Acceptance matrix (A-1..A-23; expected results)
 
-DB tests live in the new `packages/db/src/discovery-rate-limit-definer.test.ts` and, for the A-10 NOBYPASSRLS owner replay, the new `packages/db/src/discovery-rate-limit-definer-nobypass.test.ts`, which runs isolated (listed in `isolatedTestFiles`, `packages/db/vitest.config.ts`) because `setupNonSuperuserOwnerContext` hands a shared role membership to a non-superuser owner; both run only through the DB/e2e lock by the orchestrator (sandbox off); the writer of each row is in brackets.
+DB tests live in the new `packages/db/src/discovery-rate-limit-definer.test.ts` and, for the A-10 NOBYPASSRLS owner replay, the new `packages/db/src/discovery-rate-limit-definer-nobypass.test.ts`, which runs isolated (listed in `isolatedTestFiles`, `packages/db/vitest.config.ts`) because `setupNonSuperuserOwnerContext` hands a shared role membership to a non-superuser owner; both run only through the DB/e2e lock by the orchestrator (sandbox off); the writer of each row is in brackets. The key-form contract test, the new `apps/web/app/api/discover/discovery-rate-limit-key-db.test.ts`, is DB-backed and runs with the db-backed web tests through the same lock: it pins every form `discoveryRateLimitKey` builds as admitted by 0075's step 0, and the old `discover:` prefix as its 22023.
 
 | # | Test | Expected |
 |---|---|---|

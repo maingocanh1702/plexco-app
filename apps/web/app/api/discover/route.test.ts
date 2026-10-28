@@ -1,7 +1,10 @@
 import { createDb, listDiscoveryListings } from "@plexco/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodeDiscoveryCursor, encodeDiscoveryCursor } from "../../../lib/discovery-cursor";
-import { resetDiscoveryRouteSupportForTests } from "../../../lib/discovery-route-support";
+import {
+  discoveryRateLimitKey,
+  resetDiscoveryRouteSupportForTests,
+} from "../../../lib/discovery-route-support";
 import { GET } from "./route";
 
 vi.mock("@plexco/db", async (importOriginal) => ({
@@ -282,6 +285,18 @@ describe("GET /api/discover", () => {
     for (let i = 0; i < 60; i += 1) expect((await get("", spellings[i % 4])).status).toBe(200);
     await expectError(await get("", "::ffff:c000:0201"), 429, "DISCOVERY_RATE_LIMITED");
     expect((await get("", "::ffff:192.0.2.2")).status).toBe(200);
+  });
+
+  it("L73 A-7: the limiter's parameter is exactly discoveryRateLimitKey(request), unprefixed: an IPv6 client sends its /64", async () => {
+    // The call-site half of discovery-rate-limit-key-db.test.ts, which pins the builder to 0075.
+    const query = vi.spyOn(POOL, "query");
+    const req = request("/api/discover", "2001:db8:1:2::abcd");
+    expect((await GET(req)).status).toBe(200);
+    const limiter = query.mock.calls.filter(
+      ([sql]) => sql === "SELECT discovery_rate_limit_hit($1)",
+    );
+    expect(limiter.map(([, params]) => params)).toEqual([[discoveryRateLimitKey(req)]]);
+    expect(discoveryRateLimitKey(req)).toBe("2001:0db8:0001:0002");
   });
 
   it("A-7: in production a missing or short DISCOVERY_CURSOR_KEY is the empty 500 on every list page, before any DB call", async () => {
