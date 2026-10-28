@@ -71,20 +71,27 @@ async function expect200() {
   expect(limiterCalls()).toBe(before + 1);
 }
 
-/** Holds the next limiter query: `inFlight` settles once a call is inside it; `release` answers 0. */
+/** Holds the next limiter query: `inFlight` settles once a call is inside it; `release` answers 0,
+ * `reject` fails it. */
 function holdLimiter() {
   let reached: () => void = () => {};
   let settle: (rows: Rows) => void = () => {};
+  let refuse: (error: Error) => void = () => {};
   const inFlight = new Promise<void>((resolve) => {
     reached = () => resolve();
   });
   fault = () => {
     reached();
-    return new Promise<Rows>((resolve) => {
+    return new Promise<Rows>((resolve, reject) => {
       settle = resolve;
+      refuse = reject;
     });
   };
-  return { inFlight, release: () => settle({ rows: [{ discovery_rate_limit_hit: 0 }] }) };
+  return {
+    inFlight,
+    release: () => settle({ rows: [{ discovery_rate_limit_hit: 0 }] }),
+    reject: () => refuse(new Error("connect ECONNRESET")),
+  };
 }
 
 beforeEach(() => {
@@ -201,14 +208,32 @@ describe("discovery breaker and statuses (readiness 8.1, 8.2)", () => {
     await expect503("30", false);
   });
 
-  it("L73 A-14 row 11: a call admitted before the breaker opened and settled after leaves it OPEN", async () => {
+  it("L73 A-14 row 11: a call admitted while CLOSED that fails after the breaker opened leaves openUntil: retry-after 25 at +5 s, not a fresh 30", async () => {
     const early = holdLimiter();
     const admitted = discoveryRateLimited(request("/api/discover"));
     await early.inFlight;
     await fail(5);
-    early.release(); // a late success of the old generation
+    at(5_000); // inside the 10 s window: counted, this 6th failure would reopen it for 30 s
+    early.reject(); // a late failure of the old generation
+    await is503((await admitted) as Response, null); // its own answer: the limiter's 503
+    await expect503("25", false);
+  });
+
+  it("L73 A-14 row 11: a stale success settling while the probe is held leaves it HALF_OPEN: the next call is 503 retry-after 1", async () => {
+    const early = holdLimiter();
+    const admitted = discoveryRateLimited(request("/api/discover"));
+    await early.inFlight;
+    await fail(5);
+    at(30_000);
+    const probe = holdLimiter();
+    const first = get(); // the probe (row 7)
+    await probe.inFlight;
+    fault = null; // a call wrongly admitted next reaches the keyed fake: 200, not a hang
+    early.release(); // a late success of the CLOSED generation
     expect(await admitted).toBeNull(); // its own base answer: allowed
-    await expect503("30", false);
+    await expect503("1", false); // the probe is still the only one (row 8)
+    probe.release();
+    expect((await first).status).toBe(200);
   });
 
   it("L73 A-14 row 12: an unknown state opens a real period: 503 retry-after 30, no DB call, only the state logged; the next call is row 6", async () => {
