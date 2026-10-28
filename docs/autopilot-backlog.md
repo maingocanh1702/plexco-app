@@ -7726,3 +7726,17 @@ merged_probe: null
 notes: |
   Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: the plan row for lane L66 (docs/sessions/web-mvp-phase5-golive-plan.md:78) writes the committed App Specs infra/app.staging.yaml and infra/app.prod.yaml (new files, not at the base). Lane L65's renderer infra/render-app-spec.sh (new, not at the base) fills a SECRET env that carries no value with the live ciphertext. Lane L65's security round (SEC-1 and SEC-2, applied in commit 843c2963254e9222d7ab612b8b0ca5adaaa7e570) made it refuse a committed SECRET that carries a value (an empty string counts as no value), an env whose `type` is missing or is neither GENERAL nor SECRET, and a committed GENERAL env that would replace a live SECRET. That refusal comes at render time, after the commit: a value written into either file has already leaked into git history. So in both files every env carries a `type`, every env of type SECRET carries no `value`, and the type is spelled `SECRET`: the DigitalOcean App Spec reference lists the values `GENERAL` and `SECRET`, while its file-structure example writes `type: secret`; the renderer matches either case, and the committed files use the listed spelling. L66's review checks all three.
   Source: lane L65 (p5-staging-tooling-port), docs/sessions/web-mvp-phase5-readiness-p5-staging-tooling-port.md section 11 row 2 (from S3 and R2 there).
+
+## task: p5-entrypoint-provision-role-fails-if-no-package-matches
+title: The `provision` role of infra/entrypoint.sh must fail when its pnpm filter matches no package, as the `migrate` role does since lane L65
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [infra/entrypoint.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4345c284857f70d398d1421ef25db796b56ad319: infra/entrypoint.sh:76 runs `exec pnpm --filter @plexco/bot provision:queue`. When a filter matches no package, pnpm prints "No projects matched the filters" and exits 0 unless `--fail-if-no-match` is given (https://pnpm.io/filtering, section "Matching": "Use this flag if you want the CLI to fail if no packages have matched the filters.", accessed 2026-10-28; measured with pnpm 10.30.2, the packageManager pin: a no-match filter exits 0 without the flag and 1 with it). The role works today only because the image carries apps/bot; a renamed package or a per-component image would make it exit 0 without provisioning anything. Lane L65 added the flag to the `migrate` role only, the one role its file ownership covers. The fix is the same flag after `--filter @plexco/bot` on that line.
+  Source: lane L65 (p5-staging-tooling-port), its security round finding SEC-4 (the `provision` role has the same pattern as the `migrate` role it fixed).
