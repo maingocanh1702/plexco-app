@@ -922,6 +922,7 @@ notes: P0 manual workflow only; canonical v0.6.0 classifies its migration orches
 
   **Treat these as inputs, not findings to re-derive.** Each cost a review round to discover on a
   slice whose actual subject was something else.
+  Update 2026-10-28 (L79, DD-154 Q1): agents may write the DigitalOcean config FILES and the deploy workflows for lanes L65, L66, L67, L69 and L70; the console, `doctl`, creating cloud resources, deploying and every secret value stay owner-only (agents handle secret NAMES only). `docs/standards/environments-setup.md:81` ("Until the gate closes, do not create the App Spec and do not disable the private DB path silently.") still holds until G1 (egress verified, docs/sessions/web-mvp-phase5-golive-plan.md section 9). This row stays P0 and keeps `status: idea`.
 
 ## task: infra-egress-compatibility-evidence
 title: Close DD-04 fixed-egress compatibility evidence for SePay, ApiPay, Zalo and Meta
@@ -7698,3 +7699,52 @@ notes: |
   Line numbers at dc1ca89bf759e9069d92f5e4d71bbf10e69aa3da (found by lane L48's review R1b1, re-measured and recorded by lane L45 at its merged base, outside both lanes' scope). Inside `handleSessionCommand` (apps/web/lib/session-command-route.ts:848) these routes call `currentSession()` a second time to get the actor: apps/web/app/api/sessions/[id]/mark-paid/route.ts:32, sessions/[id]/payments/[allocationId]/reverse/route.ts:20, sessions/[id]/players/route.ts:27, sessions/[id]/players/[playerId]/route.ts:20, join-requests/[id]/approve/route.ts:26, join-requests/[id]/reject/route.ts:25, join-requests/[id]/route.ts:30, sessions/[id]/join/route.ts:35, sessions/[id]/leave/route.ts:30, sessions/[id]/share-link/route.ts:25, sessions/[id]/guest-notes/route.ts:56 and sessions/[id]/guest-notes/[noteId]/route.ts:58 (paths under apps/web/app/api/). The source finding listed the first ten; the two guest-note routes follow the same pattern and already did at 8e918f0ec541ef4f72740be652a3a86584d381c3 (measured by L45; the measurement wins). share-link's header (:11-13) says why: the command context carries no actor. A session that ends between the gate's read and the second one reaches each route's own fallback (the eleven others throw "session vanished between the entry gate and the command", e.g. mark-paid :33; share-link answers AUTH_REQUIRED, :26). By code reading only, not probed.
   Deliverable: the gate passes the actor it authorized in the command context, the twelve routes read it from there, and a test per route family shows the command runs as the gate's actor.
   Source: PR #126 body, section 9 (line 233; also section 6, line 214).
+
+## task: prod-pg-ha-upgrade-before-money-or-more-clubs
+title: Upgrade the production PostgreSQL cluster from single-node (shape 3) to HA, triggered by the owner
+status: idea
+risk: P0
+change_class: manual-infra-security-deployment
+depends_on: [infra-do-app-vpc-deployment]
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Trigger, the owner's words (DD-154, the owner's written message of 2026-10-28, Q3 override): "upgrade production to HA before money flows or before adding more clubs". Production starts on shape 3 (single-node PostgreSQL, "about 52 USD/month") under DD-154; the failover drill runs on a temporary HA staging window (shape 4), not on production. The owner triggers this upgrade; agents never create the cluster, open a console or run `doctl`.
+  Readings of the trigger (DD-154 Hệ quả (c); none of them is the owner's): "before money flows" reading 1 = before any payment flows through Plexco (the MVP has none under DD-132, which keeps money recording manual): default applied, pending owner sign-off; reading 2 = the pilot records real `cash` and `attested_transfer` money from G6 (DD-132), which would put this upgrade before G6: the owner decides. "before adding more clubs" = before any club beyond the 1-2 pilot clubs: conductor reading, the owner may correct it.
+  Upgrade path NOT measured yet (DD-154 Hệ quả (f)): a new cluster, Standard with standby if the owner's account can still create it, else Advanced. Plan "Luật Standard" paragraph (docs/sessions/web-mvp-phase5-golive-plan.md section 5, line 143 at dced86d4237416822d98795f8c2a3a970c41444c): from 2026-10-15 for new accounts and 2026-11-30 for every account a new Standard cluster has no standby; which case the owner's account falls under: unknown; the "new account" definition and "existing clusters are not affected" are only a search summary, no official page. Plan line 125 (Q3): a Standard cluster created from those dates on cannot add a standby later, so going HA becomes a move to Advanced (how: not measured); a cluster created before the dates: not confirmed. Measure the edition rule, the price and the cutover with the owner when the upgrade is triggered.
+  Source: DD-154 (docs/standards/decisions.md, Hệ quả (c) and (f)); found by lane L79 (p5-dd-and-run-doc), 2026-10-28.
+
+## task: decisions-md-line-pins-in-code-comments-to-dd-refs
+title: Replace docs/standards/decisions.md line-number pins in code comments with DD-number references
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Problem: code comments cite docs/standards/decisions.md by LINE number, and every addition to that file (an entry, a summary-table row, a dated addendum) shifts every line below it, so the pins drift. Measured 2026-10-28 by lane L79 with `git grep -n -E 'decisions\.md:[0-9]' -- apps packages`; the .ts sites are apps/bot/src/preflight.ts:14 ("decisions.md:1140-1144", DD-90 Q6), packages/core/src/api-contract.ts:180 ("decisions.md:542-556", DD-39 gender value set), packages/db/src/rls-invariants.test.ts:256 and :387 ("decisions.md:269", the immediate-deny fence) and :647 ("decisions.md:923", fence race, D3).
+  Already stale before lane L79, in decisions.md at dced86d4237416822d98795f8c2a3a970c41444c: 1140-1144 sit inside DD-78 (heading at 1131; DD-90 starts at 1307, its Q6 question at 1329); 542-556 sit inside DD-37 and DD-38 (headings at 539 and 553; DD-39 starts at 566); 269 sits inside DD-08 (heading at 268; DD-12, the public read model, starts at 302); 923 is a `---` line inside DD-63 (heading at 916). The L79 DD-154 entry and addenda shift the later lines again.
+  Also: packages/db/migrations/0033_public_projection_fences.sql (lines 4, 6, 22, 48, 226: pins 264-269, 906-923, 946-968, 1852-1862, 914, 269) and packages/db/migrations/0036_revoke_app_dml_public_sessions.sql (lines 9 and 19: pins 274 and 1949) carry the same kind of pin in SQL comments. These are applied migrations: whether a comment-only edit is allowed was NOT measured (check the migration runner's ledger rule first); leave them unless that check allows it.
+  Proposal: replace each pin in the .ts comments with the DD number and a phrase `git grep` finds ("DD-90 Q6", "DD-39", "DD-12" and so on), never a line number; comment-only change, no behavior or test change; the lane picks each DD from the comment's own words. Done when the `git grep` above finds nothing outside the applied migrations.
+  Source: found by lane L79 (step 0), 2026-10-28.
+
+## task: do-managed-pg-bypassrls-measure-on-first-cluster
+title: Measure DD-129 risk R1 (a BYPASSRLS role may be refused on DigitalOcean Managed PostgreSQL) on the first DO cluster
+status: idea
+risk: P1
+change_class: owner-evidence-gate
+depends_on: []
+invariants: []
+scope: []
+manifest: null
+merged_probe: null
+notes: |
+  Problem: DD-129 lists R1 among its measured risks that are not closed: "R1 role BYPASSRLS trên DO Managed PG có thể bị từ chối — đo trên cluster đầu tiên" (docs/standards/decisions.md, the DD-129 summary-table row, line 144 at dced86d4237416822d98795f8c2a3a970c41444c). DD-132 froze the DD-129 constraints, "R1 BYPASSRLS trên DO" first, with PR 50 and took them off the MVP critical path (lines 3329-3330 at the same commit); the DD-154 addendum under DD-132 puts them back on the go-live path because the DigitalOcean deploy is in scope again.
+  No open home before this row: the row `identity-definer-bypassrls-ownership-0054` names R1 but has `status: merged` (delivered by PR 49), and its note_merged line puts PR 50's risk R1 out of scope because DD-132 removed DO from the MVP; the plan docs/sessions/web-mvp-phase5-golive-plan.md has 0 lines matching BYPASSRLS (case-insensitive grep, measured 2026-10-28), so no plan lane holds the measurement. Why it matters, per the same note_merged line: the 0054 definer is owned by the dedicated role identity_definer (NOLOGIN, BYPASSRLS), set up by pnpm db:bootstrap.
+  Proposal: on the first DigitalOcean Managed PostgreSQL cluster, measure whether that BYPASSRLS role can be created and used; the cluster and every action on it are the owner's (agents never create cloud resources or touch production data). Done when the result is recorded in docs/standards/decisions.md; what follows a refusal is the owner's decision.
+  Source: found by lane L79 (review round 1), 2026-10-28.
