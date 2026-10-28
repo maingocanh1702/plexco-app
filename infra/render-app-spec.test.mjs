@@ -20,12 +20,13 @@ const committed = {
     {
       name: "web",
       image: { digest: "__IMAGE_DIGEST__" },
-      envs: [{ key: "LOG_LEVEL", value: "info" }, { key: "DATABASE_URL", type: "SECRET" }],
+      envs: [{ key: "LOG_LEVEL", type: "GENERAL", value: "info" }, { key: "DATABASE_URL", type: "SECRET" }],
     },
   ],
   workers: [{ name: "worker", image: { digest: "__IMAGE_DIGEST__" }, envs: [{ key: "DATABASE_URL", type: "SECRET" }] }],
 };
 const live = {
+  name: "x",
   jobs: [{ name: "migrate", envs: [{ key: "DATABASE_URL_MIGRATION", type: "SECRET", value: "EV[1:mig]" }] }],
   // Placeholder-shaped on purpose: a copied value is never substituted or scanned (test 1 fails otherwise).
   services: [{ name: "web", envs: [{ key: "DATABASE_URL", type: "SECRET", value: "EV[1:__WEB__]" }] }],
@@ -49,18 +50,43 @@ function render(spec, liveSpec, env = {}) {
   }
 }
 
+// A deep copy of a fixture with one change applied.
+function variant(base, change) {
+  const copy = JSON.parse(JSON.stringify(base));
+  change(copy);
+  return copy;
+}
+
+// A refusal: non-zero, the expected message, nothing on stdout.
+function assertRefused(r, message, label) {
+  assert.notEqual(r.status, 0, label);
+  assert.match(r.stderr, message, label);
+  assert.equal(r.stdout, "", label);
+}
+
 test("fills placeholders and copies each secret from the SAME component (same key, different value)", () => {
   const r = render(committed, live);
   assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, "");
   const out = JSON.parse(r.stdout);
   assert.equal(out.vpc.id, VPC);
   assert.equal(out.services[0].image.digest, DIGEST);
   assert.equal(out.services[0].envs[1].value, "EV[1:__WEB__]");
   assert.equal(out.workers[0].envs[0].value, "EV[1:wrk]");
   assert.equal(out.jobs[0].envs[0].value, "EV[1:mig]");
+  // The app-spec reference writes `type: secret`: a lower-case SECRET is filled (committed) and found (live).
+  const lower = render(
+    variant(committed, (s) => (s.services[0].envs[1].type = "secret")),
+    variant(live, (l) => (l.workers[0].envs[0].type = "secret")),
+  );
+  assert.equal(lower.status, 0, lower.stderr);
+  assert.equal(lower.stderr, "");
+  const lowerOut = JSON.parse(lower.stdout);
+  assert.equal(lowerOut.services[0].envs[1].value, "EV[1:__WEB__]");
+  assert.equal(lowerOut.workers[0].envs[0].value, "EV[1:wrk]");
 });
 
-test("fails closed when a secret is missing in the live app, naming it", () => {
+test("fails closed, naming it, when a secret is missing, carries a value, would be demoted or is another app's", () => {
   const r = render(committed, { ...live, workers: [{ name: "worker", envs: [] }] });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /missing secret in live app: workers\/worker\/DATABASE_URL/);
@@ -74,6 +100,22 @@ test("fails closed when a secret is missing in the live app, naming it", () => {
   assert.match(masked.stderr, /live secret is not an EV ciphertext: workers\/worker\/DATABASE_URL/);
   assert.doesNotMatch(masked.stderr, /\*{8}/);
   assert.equal(masked.stdout, "");
+  // A live value that is not even a string is refused by key too, not with jq's generic text.
+  const objectValue = variant(live, (l) => (l.workers[0].envs[0].value = { v: "EV[1:obj]" }));
+  assertRefused(render(committed, objectValue), /live secret is not an EV ciphertext: workers\/worker\/DATABASE_URL/);
+  // A committed SECRET carries NO value: a masked (or pasted) one would become the NEW live value.
+  const valued = render(variant(committed, (s) => (s.services[0].envs[1].value = "********")), live);
+  assertRefused(valued, /committed SECRET carries a value: DATABASE_URL/);
+  assert.doesNotMatch(valued.stderr, /\*{8}/);
+  // A GENERAL env over a live SECRET of the same component and key would blank or demote that secret.
+  const general = { key: "DATABASE_URL", type: "GENERAL", value: "plain-fake" };
+  const demoted = render(variant(committed, (s) => (s.services[0].envs[1] = general)), live);
+  assertRefused(demoted, /live SECRET would be demoted to a plain env: services\/web\/DATABASE_URL/);
+  assert.doesNotMatch(demoted.stderr, /plain-fake/);
+  // Secrets are copied from the same app only: the message names the field, never either name.
+  const other = render(committed, { ...live, name: "other-app" });
+  assertRefused(other, /live spec \.name differs from the committed \.name/);
+  assert.doesNotMatch(other.stderr, /other-app/);
 });
 
 test("DATABASE_URL_MIGRATION outside the PRE_DEPLOY job FAILS the render (closed-set guard)", () => {
@@ -109,6 +151,11 @@ test("a SECRET left valueless on an uncovered surface fails instead of being sil
   assert.notEqual(lower.status, 0);
   assert.match(lower.stderr, /unfilled SECRET outside services\/workers\/jobs/);
   assert.equal(lower.stdout, "");
+  // Every committed env is typed GENERAL or SECRET (any case): a missing or misspelled type is refused by key.
+  for (const env of [{ key: "DATABASE_URL" }, { key: "DATABASE_URL", type: "SECRET " }]) {
+    const typo = render(variant(committed, (s) => (s.services[0].envs[1] = env)), live);
+    assertRefused(typo, /env type must be GENERAL or SECRET: DATABASE_URL/, JSON.stringify(env));
+  }
 });
 
 test("empty stdin fails instead of rendering 0 bytes", () => {
@@ -130,19 +177,38 @@ test("empty stdin fails instead of rendering 0 bytes", () => {
     assert.notEqual(nameless.status, 0);
     assert.match(nameless.stderr, /committed spec has no name/);
     assert.equal(nameless.stdout, "");
+    // Exactly one document: two (a multi-document YAML through yq) or none (blank stdin) are refused.
+    for (const [label, input] of [["two documents", JSON.stringify(committed).repeat(2)], ["no document", " \n"]]) {
+      assertRefused(spawn(input), /stdin must hold exactly one JSON document/, label);
+    }
+    // The name must be a non-blank string.
+    for (const name of [5, " "]) {
+      assertRefused(spawn(JSON.stringify({ ...committed, name })), /committed spec has no name/, String(name));
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("unresolved-placeholder error prints only the token, never the whole string", () => {
+test("errors print only a token or a key, never the string around it or a value", () => {
   const spec = JSON.parse(JSON.stringify(committed));
-  spec.services[0].envs.push({ key: "X", value: "prefix-super-long-value-__NOPE__-suffix" });
+  spec.services[0].envs.push({ key: "X", type: "GENERAL", value: "prefix-super-long-value-__NOPE__-suffix" });
   const r = render(spec, live);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /unresolved placeholder: __NOPE__/);
   assert.doesNotMatch(r.stderr, /super-long-value/);
   assert.equal(r.stdout, "");
+  // jq's own error text quotes the offending input. A live string where an array belongs leaves the
+  // secret missing (named), and any other jq error is replaced by RS's own message.
+  const long = `EV[1:FAKECIPHER-${"x".repeat(300)}]`;
+  for (const bad of [{ ...live, services: long }, variant(live, (l) => (l.services[0].envs = long))]) {
+    const leak = render(committed, bad);
+    assertRefused(leak, /missing secret in live app: services\/web\/DATABASE_URL/);
+    assert.doesNotMatch(leak.stderr, /FAKECIPHER/);
+  }
+  const shape = render({ ...committed, services: "plain-fake-svc" }, live);
+  assertRefused(shape, /render: the input is not the expected JSON shape/);
+  assert.doesNotMatch(shape.stderr, /plain-fake-svc/);
 });
 
 test("rejects a malformed digest, a non-UUID VPC, and an unresolved placeholder", () => {
@@ -153,5 +219,7 @@ test("rejects a malformed digest, a non-UUID VPC, and an unresolved placeholder"
   const r = render(spec, live);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /unresolved placeholder: __APP_DOMAIN__/);
-  assert.equal(JSON.parse(render(spec, live, { APP_DOMAIN: "app.example.com" }).stdout).domains[0].domain, "app.example.com");
+  const ok = render(spec, live, { APP_DOMAIN: "app.example.com" });
+  assert.equal(ok.stderr, "");
+  assert.equal(JSON.parse(ok.stdout).domains[0].domain, "app.example.com");
 });
