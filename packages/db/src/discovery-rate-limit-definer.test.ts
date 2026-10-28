@@ -1,5 +1,6 @@
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createDb } from "./client.js";
 import {
   ROLE_PW,
   setupNonSuperuserOwnerContext,
@@ -303,4 +304,46 @@ describe("0075 under a NOSUPERUSER NOBYPASSRLS owner (A-10)", () => {
   });
 });
 
-// A-11 (web writer): its describe goes here.
+describe("createDb options (A-11)", () => {
+  // The pool-config rows contact no server: a pool connects on its first query only.
+  const url = "postgres://a11@127.0.0.1:1/a11";
+  const timeouts = ["statement_timeout", "connectionTimeoutMillis", "query_timeout"] as const;
+
+  it("A-11 a short statement_timeout reaches the session: SHOW answers it and a longer pg_sleep fails 57014", async () => {
+    const handle = createDb(process.env.DATABASE_URL_TEST!, { statement_timeout: 200 });
+    try {
+      const shown = await handle.pool.query<{ statement_timeout: string }>(
+        "SHOW statement_timeout",
+      );
+      expect(shown.rows[0]!.statement_timeout).toBe("200ms");
+      expect((await failure(handle.pool.query("SELECT pg_sleep(2)"))).code).toBe("57014");
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("A-11 default unchanged: createDb(url) and createDb(url, { max: 3 }) set no timeout key", async () => {
+    for (const [options, max] of [
+      [undefined, 10],
+      [{ max: 3 }, 3],
+    ] as const) {
+      const handle = createDb(url, options);
+      try {
+        expect(handle.pool.options).toMatchObject({ connectionString: url, max });
+        expect(timeouts.filter((key) => key in handle.pool.options)).toEqual([]);
+      } finally {
+        await handle.close();
+      }
+    }
+  });
+
+  it("A-11 given timeouts reach pool.options unchanged", async () => {
+    const given = { statement_timeout: 200, connectionTimeoutMillis: 2000, query_timeout: 2500 };
+    const handle = createDb(url, given);
+    try {
+      expect(handle.pool.options).toMatchObject({ connectionString: url, max: 10, ...given });
+    } finally {
+      await handle.close();
+    }
+  });
+});
