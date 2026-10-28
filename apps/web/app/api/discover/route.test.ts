@@ -287,7 +287,7 @@ describe("GET /api/discover", () => {
     expect((await get("", "::ffff:192.0.2.2")).status).toBe(200);
   });
 
-  it("L73 A-7: the limiter's parameter is exactly discoveryRateLimitKey(request), unprefixed: an IPv6 client sends its /64", async () => {
+  it("L73 key form: the limiter's parameter is exactly discoveryRateLimitKey(request), unprefixed: an IPv6 client sends its /64", async () => {
     // The call-site half of discovery-rate-limit-key-db.test.ts, which pins the builder to 0075.
     const query = vi.spyOn(POOL, "query");
     const req = request("/api/discover", "2001:db8:1:2::abcd");
