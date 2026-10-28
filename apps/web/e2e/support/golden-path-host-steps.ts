@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { formatVnd } from "../../lib/money";
 import {
   addPlayer,
   confirmTransition,
@@ -37,7 +38,7 @@ export async function runHostSessionMoneyPath(
     const details = page.getByRole("tabpanel");
     await expect(details).toContainText(venue);
     await expect(details).toContainText(address);
-    await expect(details).toContainText("100.000đ");
+    await expect(details).toContainText(formatVnd(100000));
     await page.getByRole("tab", { name: "Người chơi" }).click();
     await shot("session-draft");
   });
@@ -52,11 +53,13 @@ export async function runHostSessionMoneyPath(
     await shot("session-open");
   });
 
-  await test.step("add two players; each owes the full 100.000đ", async () => {
+  await test.step(`add two players; each owes the full ${formatVnd(100000)}`, async () => {
     await addPlayer(page, alice);
     await addPlayer(page, bob);
     for (const name of [alice, bob]) {
-      await expect(rosterRow(page, name)).toContainText("Còn 100.000đ / 100.000đ");
+      await expect(rosterRow(page, name)).toContainText(
+        `Còn ${formatVnd(100000)} / ${formatVnd(100000)}`,
+      );
       await expect(rosterRow(page, name)).toContainText("Chưa thanh toán");
     }
     await shot("roster-two-players");
@@ -74,9 +77,11 @@ export async function runHostSessionMoneyPath(
     await expect(dialog).toBeHidden();
   });
 
-  await test.step("collect a PARTIAL cash payment (40.000đ) from the first player", async () => {
+  await test.step(`collect a PARTIAL cash payment (${formatVnd(40000)}) from the first player`, async () => {
     expect(await payCash(page, alice, "40000")).toBe("40.000");
-    await expect(rosterRow(page, alice)).toContainText("Còn 60.000đ / 100.000đ");
+    await expect(rosterRow(page, alice)).toContainText(
+      `Còn ${formatVnd(60000)} / ${formatVnd(100000)}`,
+    );
     await expect(rosterRow(page, alice)).toContainText("Trả một phần");
     await shot("alice-partly-paid");
   });
@@ -100,16 +105,20 @@ export async function runHostSessionMoneyPath(
     await shot("both-paid");
   });
 
-  await test.step("reverse the 60.000đ payment: the balance is open again", async () => {
+  await test.step(`reverse the ${formatVnd(60000)} payment: the balance is open again`, async () => {
     const row = rosterRow(page, alice);
     await row.getByText(/Chi tiết thanh toán/).click();
-    await row.getByRole("button", { name: `Hoàn tác khoản 60.000đ của ${alice}` }).click();
+    await row
+      .getByRole("button", { name: `Hoàn tác khoản ${formatVnd(60000)} của ${alice}` })
+      .click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText("Hoàn tác khoản thanh toán?");
     await dialog.getByLabel("Lý do (bắt buộc)").fill("Smoke: nhập nhầm");
     await dialog.getByRole("button", { name: "Hoàn tác", exact: true }).click();
-    await expectToast(page, `Đã hoàn tác 60.000đ của ${alice}`);
-    await expect(rosterRow(page, alice)).toContainText("Còn 60.000đ / 100.000đ");
+    await expectToast(page, `Đã hoàn tác ${formatVnd(60000)} của ${alice}`);
+    await expect(rosterRow(page, alice)).toContainText(
+      `Còn ${formatVnd(60000)} / ${formatVnd(100000)}`,
+    );
     await expect(rosterRow(page, alice)).toContainText("Trả một phần");
     await shot("alice-reversed");
   });
