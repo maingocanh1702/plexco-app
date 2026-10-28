@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "pnpm -r run typecheck",
     "lint": "eslint .",
-    "test": "pnpm run kit:check && pnpm run guard:dev-login && pnpm run test:review-readiness && pnpm -r run test",
+    "test": "pnpm run kit:check && pnpm run guard:dev-login && pnpm run test:review-readiness && pnpm run test:infra && pnpm -r run test",
+    "test:infra": "node --test infra/render-app-spec.test.mjs",
     "test:core": "pnpm --filter @plexco/core run test",
     "test:db": "pnpm --filter @plexco/db run test",
     "test:web": "pnpm --filter @plexco/web run test",
