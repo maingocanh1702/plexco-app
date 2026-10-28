@@ -23,11 +23,11 @@ Bảng thành phần, đối chiếu với cỡ DD-04 ghi:
 | worker x1 (fixed 1 GiB) | 1 x $10 = $10.00 (`DD4:104`) | `apps-s-1vcpu-1gb-fixed` $10.00/tháng (100 GiB transfer); trang không có giá worker riêng (cỡ x số lượng); khớp | https://docs.digitalocean.com/products/app-platform/details/pricing/ | 2026-10-28 (trang: 26 Oct 2026) |
 | outbound transfer | buffer $0-8 (`DD4:110`) | gộp theo team, vượt mức $0.02/GiB, inbound miễn phí; mức cấp hình dạng Day-1 = 4 x 150 + 100 = 700 GiB/tháng (tính ở đây); khối lượng thật chưa đo; không vào tổng nào | https://docs.digitalocean.com/products/app-platform/details/pricing/ | 2026-10-28 (trang: 26 Oct 2026) |
 | dedicated egress IP | gate DD-04 §7.1 (`DD4:170`), không có giá | "up to $25.00 per month", tính theo giây, tối thiểu 60 giây; search summary: $25 mỗi app, hai IP; không vào tổng nào | https://docs.digitalocean.com/products/app-platform/details/pricing/ | 2026-10-28 (trang: 26 Oct 2026) |
-| PG primary 2 GiB / 1 vCPU | $30.45 (`DD4:64`) | Standard $30.45/tháng ($0.04531/giờ); 1 GiB $15.15, 2 GiB $30.45, 4 GiB $60.90, 8 GiB $122.10, 16 GiB $244.35; khớp | https://www.digitalocean.com/pricing/managed-databases | 2026-10-28 (trang không ghi ngày) |
+| PG primary 2 GiB / 1 vCPU | $30.45 (`DD4:64`) | Standard $30.45/tháng ($0.04531/giờ); 1 GiB $15.15, 2 GiB $30.45, 4 GiB $60.90, 8 GiB $122.10, 16 GiB $244.35; khớp (8 và 16 GiB: cluster Standard mới không dùng được sau mốc theo (a); trang giá không ghi ngày) | https://www.digitalocean.com/pricing/managed-databases | 2026-10-28 (trang không ghi ngày) |
 | PG standby (Standard) | $30.45 (`DD4:64`, `DD4:105`) | trang giá PG không có giá standby; trang chi tiết: ví dụ "$30.00 ... matching standby node"; Advanced: "Standby nodes ... bill at the same rate as the primary node"; $30.45 chỉ theo quy tắc matching (tính ở đây); xem phát hiện (a) | https://docs.digitalocean.com/products/databases/postgresql/details/pricing/ | 2026-10-28 (trang: 30 Sep 2026) |
 | PG Advanced (đường HA) | không có trong DD-04 | "Advanced Edition clusters begin at $130.00 per month for an 8 GiB RAM/2 vCPU primary node"; primary + 1 standby = 2 x $130.00 = $260.00 (tính ở đây, chưa tính storage; storage $0.115/GiB/tháng Advanced, $0.215 Standard) | https://docs.digitalocean.com/products/databases/postgresql/details/pricing/ | 2026-10-28 (trang: 30 Sep 2026) |
 | PG region | sgp1 | PostgreSQL "SGP1: Available"; App Platform dynamic apps "SGP: Available"; app region `sgp` ứng với VPC `sgp1` | https://docs.digitalocean.com/platform/regional-availability/ và https://docs.digitalocean.com/products/app-platform/how-to/enable-vpc/ | 2026-10-28 (trang: 9 Oct 2026; 3 Sep 2026) |
-| PG PITR, giới hạn | PITR | "PITR is limited to the last 7 days"; backend connections 1 GiB 22, 2 GiB 47, 4 GiB 97, 8 GiB 197; 21 PgBouncer pools | https://docs.digitalocean.com/products/databases/postgresql/details/limits/ | 2026-10-28 (trang: 8 Oct 2026) |
+| PG PITR, giới hạn | PITR | "Point-in-time-recovery (PITR) is limited to the last 7 days."; backend connections 1 GiB 22, 2 GiB 47, 4 GiB 97, 8 GiB 197; 21 PgBouncer pools | https://docs.digitalocean.com/products/databases/postgresql/details/limits/ | 2026-10-28 (trang: 8 Oct 2026) |
 | Spaces | DD-04 dùng R2, không nêu Spaces | giá chưa kiểm lại; trang regional ghi SGP1 available | https://docs.digitalocean.com/platform/regional-availability/ | 2026-10-28 (trang: 9 Oct 2026) |
 | Container Registry | DD-04 không nêu (grep "registry" = 0 hit trong DD-04 và `docs/standards/deployment-infra.md`) | giá chưa kiểm lại; trang regional ghi SGP1 available | https://docs.digitalocean.com/platform/regional-availability/ | 2026-10-28 (trang: 9 Oct 2026) |
 | billing alerts | "monthly budget alerts" (DD-04 §7.6) | "Spend Alerts": email theo ngưỡng phần trăm của budget tự đặt; trang không nêu giá; trang spend-alerts chưa mở: chưa kiểm lại giá | https://docs.digitalocean.com/products/billing/ | 2026-10-28 (trang: 7 Oct 2026) |
@@ -38,12 +38,13 @@ Tổng (chỉ giá list DO đã kiểm lại; dòng ngoài DO, buffer egress và
 
 | # | Hình dạng | Phép tính | Tổng |
 | --- | --- | --- | --- |
-| 1 | HA Day-1 như DD-04 ghi (Standard HA) | web 24.00 + discovery 24.00 + worker 10.00 + PG 30.45 + 30.45 | $118.90 = chính subtotal của DD-04 (`DD4:111`); $120-135 của DD-04 còn cộng KMS $1-3, R2/log $0-5, egress $0-8 (chưa kiểm lại) |
+| 1 | HA Day-1 như DD-04 ghi (Standard HA) | web 24.00 + discovery 24.00 + worker 10.00 + PG 30.45 + 30.45 | $118.90 = chính subtotal của DD-04 (`DD4:111`); với standby $30.00 theo ví dụ của trang chi tiết: $118.45; $120-135 của DD-04 còn cộng KMS $1-3, R2/log $0-5, egress $0-8 (chưa kiểm lại) |
 | 2 | HA cho cluster MỚI sau thay đổi Standard (standby ở Advanced) | 58.00 + 2 x 130.00 | $318.00, chưa tính storage và dòng loại ra |
 | 3 | Khởi đầu nhỏ nhất, không HA, không có discovery | web 1 x 12.00 + worker 1 x 10.00 + PG đơn nút 2 GiB 30.45 | $52.45 (PG 1 GiB $15.15 cho $37.15, nhưng chỉ 22 backend connection) |
-| 4 | Staging tạm 48-96 giờ, một cửa sổ mỗi tháng | tổng #1 x giờ / 672 (cơ sở 730 giờ của DD-04, `DD4:61`: / 730) | trên #1: $8.49-16.99 (730 giờ: $7.82-15.64), khớp "$8-18/month" của `DD4:150`; trên #2: $22.71-45.43 |
+| 4 | Staging tạm 48-96 giờ, một cửa sổ mỗi tháng | tổng #1 x giờ / 672 (cơ sở 730 giờ của DD-04, `DD4:61`: / 730) | trên #1: $8.49-16.99 (730 giờ: $7.82-15.64), cùng bậc với "$8-18/month" của `DD4:150`; trên #2: $22.71-45.43 (730 giờ: $20.91-41.82) |
+| 5 | Staging tạm HA cho drill + production #3 (phương án thay của Q3) | #3 + #4 | trên #1: 52.45 + 8.49-16.99 = $60.94-69.44; trên #2: 52.45 + 22.71-45.43 = $75.16-97.88 (672 giờ) |
 
-Cơ sở 672 giờ là giả định của người đo (từ chữ "first 28 days" của trang), trang không nói cho App Platform; App Platform tính theo giây, database theo giờ. Hình dạng được chia là #1 và #2 (web x2, discovery x2), không phải spec staging của #50 (mỗi component x1, mục 3).
+Cơ sở 672 giờ là giả định của người đo (từ chữ "first 28 days" của trang), trang App Platform ghi "billed for the first 28 days" và "prorated per second" nhưng không nêu mẫu số giờ; App Platform tính theo giây, database theo giờ. Hình dạng được chia là #1 và #2 (web x2, discovery x2), không phải spec staging của #50 (mỗi component x1, mục 3).
 
 Hai phát hiện:
 
@@ -176,7 +177,7 @@ Người đọc kế hoạch không nên coi các mục dưới đây là đã �
 
 | Mục | Trạng thái |
 | --- | --- |
-| Giá: trang "PostgreSQL and MySQL plan changes" (link từ trang chi tiết giá PG) | chưa mở; "cluster đã tồn tại không bị ảnh hưởng" chỉ có ở search summary; cỡ và giá Advanced chưa đối chiếu ở đó |
+| Giá: trang "PostgreSQL and MySQL plan changes" (link từ trang chi tiết giá PG, đường dẫn `/release-notes/upcoming/dbaas-plan-changes/`) | chưa mở; "cluster đã tồn tại không bị ảnh hưởng" chỉ có ở search summary; cỡ và giá Advanced chưa đối chiếu ở đó |
 | Giá: Spend Alerts (https://docs.digitalocean.com/platform/billing/spend-alerts/), cảnh báo giám sát App Platform | trang đầu chưa mở, trang sau chưa tìm thấy; giá và giới hạn chưa kiểm lại |
 | Giá: Spaces, Container Registry, Cloudflare, Sentry, AWS KMS, R2, Better Stack | chưa kiểm lại, không vào tổng nào; Container Registry: DD-04 không nêu nhưng workflow của #50 dùng DOCR (`DOCR_REGISTRY`) |
 | Giá: gói Advanced shared-CPU | search summary nói "Basic Shared CPU plans arrive on Advanced on 15 Oct 2026"; trang how-to Advanced (verified 8 Oct 2026) nói "Basic - Shared CPU plans are not available for Advanced Edition"; chưa giải quyết, URL trang how-to không ghi trong hồ sơ đo; không định giá gói nào |
