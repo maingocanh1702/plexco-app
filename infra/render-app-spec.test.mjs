@@ -213,6 +213,7 @@ test("errors print only a token or a key, never the string around it or a value"
     "jobs: false": ["jobs", (s) => (s.jobs = false)],
     "services: {}": ["services", (s) => (s.services = {})],
     "services: a string": ["services", (s) => (s.services = "plain-fake-svc")],
+    "workers: {}": ["workers", (s) => (s.workers = {})],
   };
   for (const [label, [field, change]] of Object.entries(lists)) {
     const bad = render(variant(committed, change), live);
