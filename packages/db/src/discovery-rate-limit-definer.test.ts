@@ -234,6 +234,43 @@ describe("0075 discovery_rate_limit_hit (A-1..A-9)", () => {
     }
   }, 30_000);
 
+  it("A-6 race (IPv6 refused key): a NEW key refused at the count row after a concurrent admission fills the window takes back its /48 count", async () => {
+    for (let attempt = 1; ; attempt++) {
+      await truncate();
+      await seed([["#keys", 19999]]);
+      const t1 = await ctx.readonlyPool.connect();
+      let t2: Promise<Hit[]> | undefined;
+      try {
+        await t1.query("BEGIN");
+        const h1 = (await t1.query<Hit>(HIT, ["192.0.2.21"])).rows[0]!;
+        expect(h1.r).toBe(0); // '#keys' is now 20 000 under T1's uncommitted row lock
+        t2 = series(ctx.readonlyPool, ["2001:0db8:0007:0001"]); // a fresh /48: inserts its p48: row at step 5, then waits at step 6
+        let blocked = false;
+        for (const end = Date.now() + 5000; !blocked && Date.now() < end;) {
+          await new Promise((ok) => setTimeout(ok, 20));
+          blocked = (await lockWaits()) > 0;
+        }
+        await t1.query("COMMIT");
+        const h2 = (await t2)[0]!;
+        if (h2.w !== h1.w && attempt === 1) continue; // a window rollover between the calls: rerun once
+        expect([h2.w, blocked]).toEqual([h1.w, true]);
+        expect(h2.r).toBe(h2.retry);
+        expectRetry(h2.r);
+        // The step-6 take-back: its p48: row back to 0; '#keys' unchanged by T2; no k: row for its key.
+        expect(await rowsAt(h1.w)).toEqual({
+          "#keys": 20000,
+          "k:192.0.2.21": 1,
+          "p48:2001:0db8:0007": 0,
+        });
+        return;
+      } finally {
+        await t1.query("ROLLBACK").catch(() => undefined);
+        t1.release();
+        await t2?.catch(() => undefined);
+      }
+    }
+  }, 30_000);
+
   it("A-6 race (one key): two concurrent first calls of one key count it once in #keys and in its /48", async () => {
     const key = "2001:0db8:0006:0001";
     for (let attempt = 1; ; attempt++) {
