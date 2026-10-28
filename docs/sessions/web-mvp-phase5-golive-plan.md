@@ -126,7 +126,7 @@ L78 <- [Q3, owner's Managed PG exists]          (conditional, P1)
 
 ## 8. Việc chỉ owner làm (checklist owner, không xếp lịch cho agent)
 
-<!-- TODO W2 -->
+<!-- TODO W2: owner checklist; section 9 already cites these step numbers, keep them: 8.0 plan approval and section 5 answers (B1); 8.1 cloud accounts and billing (DO, offsite backup account, AWS if Q8, Cloudflare if used); 8.2 domain and DNS (Q4); 8.3 Zalo bot and Google OAuth client; 8.4 section 7.1 vendor emails and written answers; 8.5 entering every secret by NAME (DB users and component URLs included); 8.6 approving and triggering each deploy, running smoke and the staging golden path (test accounts); 8.7 the section 7.6 drills witnessed and the budget alerts; 8.8 enabling projectors in the runbook order; 8.9 ONE pre-pilot sign-off (Phase 4 closing report section 3 defaults, DD-129 defaults, deferred section 7.6 items 5, 10, 11, 12, 13); 8.10 legal answers (eight points); 8.11 choosing and inviting pilot clubs -->
 
 ## 9. Gate go-live theo thứ tự
 
@@ -139,7 +139,7 @@ Thứ tự đúng như mục 3 của prompt Phase 5. Gate sau chỉ mở khi gat
 | G3 nghiệm thu §7.6 trên staging | 6 mục prompt nêu (bảng dưới) PASS, rồi 8 mục còn lại PASS hoặc được hoãn kèm sign-off của owner (8.9) | L63, L66, L69, L70, L72, L73 (runbook, file); owner chạy và chứng kiến mọi drill (8.7) | G4 |
 | G4 production up, giới tính tắt | G3 PASS; owner nhập secret production (8.5) và bấm `workflow_dispatch` của workflow production (8.6); App Spec production ghi `GENDER_COLLECTION_ENABLED: "false"` (L66; DD-150 Q7, DD-141) và owner kiểm giá trị đó trên app đang chạy; smoke production xanh; domain và TLS theo Q4 chạy; §7.6 mục 2 kiểm trên production | L66, L67 (file); owner (secret, trigger, kiểm) | G5 |
 | G5 projector bật | owner chạy CLI `scripts/outbox-projector-enable.mjs` theo thứ tự của runbook staging/production (L71, thứ tự owner duyệt), mỗi bước kiểm của runbook PASS, đường rollback của runbook đã biết; hạn 60 phút của `zalo_dm` (DD-146) giữ nguyên | L71 (runbook); owner chạy (8.8) | G6 |
-| G6 pilot với 1-2 CLB | sign-off trước pilot (8.9) đã ký; tám điểm pháp lý đã trả lời và trang quyền riêng tư, điều khoản (L75) chỉ publish sau đó (8.10); hướng dẫn host (L76) đã merge; CLB đã chọn và mời theo Q5 (8.11); form go/no-go (`docs/runbooks/go-no-go-template.md`, L69) owner điền và ký | L69, L75, L76 (file); owner (pháp lý, chọn CLB, ký go/no-go) | G7 |
+| G6 pilot với 1-2 CLB | owner đã xác nhận bằng văn bản bước sign-off trước pilot (8.9); tám điểm pháp lý đã trả lời và trang quyền riêng tư, điều khoản (L75) chỉ publish sau đó (8.10); hướng dẫn host (L76) đã merge; CLB đã chọn và mời theo Q5 (8.11); form go/no-go (`docs/runbooks/go-no-go-template.md`, L69) owner điền và xác nhận | L69, L75, L76 (file); owner (pháp lý, chọn CLB, go/no-go) | G7 |
 | G7 review | hết cửa sổ pilot (Q5): ghi chú review có sự cố, lỗi và log, chi phí so với budget alert, kế hoạch cho các mục §7.6 đã hoãn, quyết định mở rộng, giữ hay rollback | owner quyết; bản nháp do một phiên docs sau pilot soạn (không phải lane của plan này) | mở rộng quá pilot |
 
 **G3, sáu mục prompt nêu** (khớp bản rút gọn của entry, `docs/standards/decisions.md:235`):
@@ -164,7 +164,7 @@ Thứ tự đúng như mục 3 của prompt Phase 5. Gate sau chỉ mở khi gat
 | 10 KMS envelope, xoay key, đường degraded và fail-closed (:293) | input ở G2, test ở G3 | staging cần key root (`packages/db/src/secret-key-root.ts:41-42`) nên input Q8 phải có trước G2; test của L77 nếu input cần đổi code; Q8 = key local ⇒ hoãn, sign-off 8.9 |
 | 11 staging tạm dựng từ IaC, tự huỷ theo TTL (:294) | hoãn | dòng `staging-ttl-teardown-automation` (:5892) chờ staging chạy lần đầu; tới lúc đó owner tự xoá staging khi hết cửa sổ staging (Q3); sign-off 8.9 |
 | 12 load test (:295-296) | hoãn tới trước khi mở rộng quá pilot (G7) | §3 không có lane load test; pilot 1-2 CLB; sign-off 8.9 |
-| 13 rehearsal ở provider khác theo §7.4, có rollback (:297) | G3 cho phần restore, phần migration hoãn | L70 có restore ra ngoài DO; chưa lane nào viết runbook rehearsal §7.4 đủ (bản ghi :225-261); bản ghi :319 ghi "before production launch", nên hoãn phần migration là ngoại lệ owner phải ký (8.9) |
+| 13 rehearsal ở provider khác theo §7.4, có rollback (:297) | G3 cho phần restore, phần migration hoãn | L70 có restore ra ngoài DO; chưa lane nào viết runbook rehearsal §7.4 đủ (bản ghi :225-261); bản ghi :319 ghi "before production launch", nên hoãn phần migration là ngoại lệ owner phải xác nhận bằng văn bản (8.9) |
 
 ## 10. Rủi ro
 
