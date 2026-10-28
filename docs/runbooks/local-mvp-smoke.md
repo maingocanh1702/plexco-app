@@ -209,6 +209,47 @@ bash apps/web/e2e/public-card-hide-address-proof.sh
 - Kiểm tra preflight (lane L50): `lsof` không chạy bằng root chỉ thấy listener của chính user đó, nên script còn thử kết nối tới `127.0.0.1` và `::1` cổng 3000 (kết nối được là bận; chỉ `Connection refused` mới là trống). Lane kiểm bằng một thư mục shim đặt đầu `PATH`: `lsof` giả exit 1 với stderr rỗng, `nc` giả theo từng trường hợp, `docker` giả luôn lỗi nên không lần chạy nào tới database; script phải exit 2 trước danh sách database khi kết nối được trên một trong hai địa chỉ, khi `nc` trả lỗi khác `Connection refused` và khi thiếu `nc`, và phải qua preflight khi cả hai địa chỉ đều `Connection refused`. Kịch bản nằm nguyên văn trong PR body của lane L50 (`gh pr list --state merged --head test/p4-public-proof-harness`).
 - Kết quả đo gần nhất: không ghim ở đây, vì một SHA hay một con số chép tay sẽ cũ ngay khi script đổi. Lần chạy mới nhất (số `passed`, thời gian, dòng enable, dòng drop) nằm trong PR body của PR cuối cùng đã sửa script: `git log --first-parent -1 --format=%s origin/main -- apps/web/e2e/public-card-hide-address-proof.sh` in ra tiêu đề merge mang số PR đó. Chỉ là các lần chạy local.
 
+## 12. Staging: smoke và golden path của owner (bước 8.6, gate G2)
+
+> **Ngoại lệ duy nhất của runbook này:** mục này KHÔNG chạy trên máy local mà nhắm deployment **staging** (bước 8.6 và gate G2 của `docs/sessions/web-mvp-phase5-golive-plan.md`). Không dev-login, không database local, không seed. **Production không bao giờ là đích:** mọi lệnh dưới đây chỉ trỏ vào host staging.
+
+Chuẩn bị (owner, một lần):
+
+- **Host staging** (bước 8.2): `https`, là subdomain của `plexco.app` và label đầu **bắt đầu bằng `staging`** (ví dụ `staging.plexco.app`); không thì spec từ chối chạy. `plexco.app`, `www.plexco.app`, mọi host khác, `localhost` và địa chỉ IP đều bị từ chối. Đổi luật host là một thay đổi code phải qua review.
+- **OAuth client Google của staging** (bước 8.3): `${APP_BASE_URL}/api/auth/google/callback` nằm trong authorized redirect URIs, với `APP_BASE_URL` của staging chính là origin staging.
+- **MỘT tài khoản Google test**, cho persona owner. Bước 8.3 ghi một tài khoản cho mỗi persona, nhưng trên staging chỉ persona owner có đường đi qua sản phẩm; ba test còn lại chờ hàng backlog `p5-staging-golden-path-player-and-chat-tests`. Password do owner giữ và **tự gõ tay** trong cửa sổ trình duyệt; không bao giờ đặt vào biến môi trường, file hay lệnh.
+
+Biến môi trường (chỉ TÊN; không có giá trị secret nào):
+
+- `STAGING_BASE_URL`: origin staging (`https://...`).
+- `STAGING_GOLDEN_PATH`: opt-in của spec, phải đúng bằng `1`.
+- `PRODUCTION_BASE_URL` (tuỳ chọn): khi đã đặt, spec từ chối nếu origin staging trùng origin này, và cũng từ chối nếu nó không parse được.
+- `SMOKE_BASE_URL`: base của smoke `scripts/smoke-predeploy.mjs`.
+
+Chạy từ thư mục gốc repo:
+
+```bash
+# ví dụ: thay bằng host staging thật của bước 8.2 (https, label đầu bắt đầu bằng "staging")
+export STAGING_BASE_URL=https://staging.plexco.app
+
+# smoke: /healthz (đúng một JSON, ok=true), / (text/html), /manifest.webmanifest (application/manifest+json)
+SMOKE_BASE_URL="$STAGING_BASE_URL" pnpm smoke:predeploy
+# hoặc adapter mà workflow deploy (L67) gọi: chỉ nhận https, thử lại cả smoke tới 7 lần, cách nhau 10 giây
+bash infra/smoke-check.sh "$STAGING_BASE_URL"
+
+# golden path staging (đọc STAGING_BASE_URL đã export ở trên)
+STAGING_GOLDEN_PATH=1 pnpm --filter @plexco/web exec playwright test --config e2e/staging-golden-path.config.ts
+```
+
+- **Smoke:** PASS là đúng một dòng `smoke: PASS — ...` nêu cả ba check, exit 0. FAIL in check, HTTP status và content type, **không bao giờ in body**: exit 1 = một check fail, exit 2 = gọi sai (base không phải `http(s)://`, timeout không hợp lệ). Adapter exit 1 ngay, trước mọi request, khi origin không phải `https://`.
+- **Chặn trước khi mở trình duyệt:** thiếu opt-in, host không phải staging, hoặc trùng `PRODUCTION_BASE_URL` thì lần chạy dừng với dòng `staging golden path refused: <lý do>`, trước khi trình duyệt mở và trước mọi request.
+- **Đăng nhập bằng tay:** spec mở MỘT cửa sổ Chromium có giao diện (context mới, chỉ trong bộ nhớ), vào `/` khi chưa đăng nhập và bấm "Tiếp tục với Google". Trước khi bạn gõ gì, spec kiểm `redirect_uri` của Google mang đúng origin staging (chứng minh `APP_BASE_URL` của server staging là host này); lệch thì fail ngay. Khi terminal in `STAGING GOLDEN PATH: sign in by hand as the OWNER persona ...`, gõ email và password của tài khoản test trong cửa sổ đó; có tối đa 10 phút. Đăng nhập chỉ được coi là xong khi `GET /api/auth/session` trả 200 kèm `personId`; app trả về URL có `auth_error` thì fail ngay.
+- **Sau đăng nhập:** onboarding tạo CLB của lần chạy qua sản phẩm (tên `Smoke CLB <hậu tố>`, mỗi lần chạy một CLB mới trên staging), rồi chạy đúng các bước host của test host ở bước 10 (từ tạo buổi nháp tới đóng buổi). Giới hạn tạo CLB 3 lần/giờ/tài khoản: lần thứ 4 trong cùng giờ **FAIL** ("Club creation was refused by the tenant-create limit ..."), không có CLB seed để đi tiếp: đợi hết giờ. Không retry (`retries: 0`): retry sẽ đăng nhập lại và tạo CLB thứ hai.
+- **Không lưu gì:** config tắt trace, screenshot và video, không có `storageState`, reporter chỉ `list`, thư mục output của test bị xoá khi test kết thúc (`preserveOutput: "never"`). Output terminal không chứa cookie, token hay password, nên giữ được làm run log của G2; muốn có file thì thêm `2>&1 | tee ~/plexco-g2-staging-golden-path.log` (ghi ngoài repo) vào cuối lệnh. `1 passed` là đã chứng minh; mọi kết quả khác là chưa.
+- **Đừng thêm** `--trace`, `--reporter=html`, `--reporter=blob` hay `DEBUG=pw:api` vào lệnh trên: trace và hai reporter đó ghi call log của Playwright (gồm header của request, kể cả cookie phiên) ra file, còn `DEBUG=pw:api` có thể in nó ra output.
+- Google có thể từ chối trình duyệt tự động (repo chưa có bằng chứng theo chiều nào): lần chạy có giao diện đầu tiên chính là phép thử. Bị từ chối thì ghi lại thông báo của Google; không có đường vòng (không cookie lưu sẵn, không đường đăng nhập riêng cho test).
+- Spec **không chạy trong CI** (`apps/web/playwright.config.ts` liệt kê nó trong `testIgnore`, không workflow nào dùng `e2e/staging-golden-path.config.ts`), và agent không bao giờ chạy nó với host thật: chỉ owner chạy.
+
 ## Xử lý sự cố
 
 | Triệu chứng | Nguyên nhân thường gặp | Cách xử lý |
