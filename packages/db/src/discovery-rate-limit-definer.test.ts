@@ -22,6 +22,8 @@ const RETRY =
   "ceil((floor(extract(epoch FROM now()) / 60) + 1) * 60 - extract(epoch FROM now()))::int";
 
 type Hit = { r: number; w: number; retry: number };
+/** One call, with its window and retry-after read in the same statement. */
+const HIT = `SELECT discovery_rate_limit_hit($1) AS r, ${WINDOW} AS w, ${RETRY} AS retry`;
 
 /** Each key in order, in ONE readonly transaction: the result, its window and the retry-after. */
 async function series(pool: pg.Pool, keys: (string | null)[]): Promise<Hit[]> {
@@ -30,8 +32,7 @@ async function series(pool: pg.Pool, keys: (string | null)[]): Promise<Hit[]> {
     await c.query("BEGIN");
     const out: Hit[] = [];
     for (const key of keys) {
-      const sql = `SELECT discovery_rate_limit_hit($1) AS r, ${WINDOW} AS w, ${RETRY} AS retry`;
-      out.push((await c.query<Hit>(sql, [key])).rows[0]!);
+      out.push((await c.query<Hit>(HIT, [key])).rows[0]!);
     }
     await c.query("COMMIT");
     return out;
@@ -196,6 +197,46 @@ describe("0075 discovery_rate_limit_hit (A-1..A-9)", () => {
     expect(await count()).toBe(6);
     expect(await hitsOf("#keys")).toEqual([20000, 20000]);
   });
+
+  it("A-6 race: a NEW key past the unlocked count read waits on the count row and is refused once a concurrent admission fills the window", async () => {
+    const lockWaits = async () =>
+      (
+        await ctx.owner.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND usename = 'readonly' AND wait_event_type = 'Lock'`,
+        )
+      ).rows[0]!.n;
+    for (let attempt = 1; ; attempt++) {
+      await truncate();
+      await seed([["#keys", 19999]]);
+      const t1 = await ctx.readonlyPool.connect();
+      let t2: Promise<Hit[]> | undefined;
+      try {
+        await t1.query("BEGIN");
+        const h1 = (await t1.query<Hit>(HIT, ["192.0.2.21"])).rows[0]!;
+        expect(h1.r).toBe(0); // '#keys' is now 20 000 under T1's uncommitted row lock
+        t2 = series(ctx.readonlyPool, ["192.0.2.22"]); // reads the committed 19 999, then waits at step 6
+        let blocked = false;
+        for (const end = Date.now() + 5000; !blocked && Date.now() < end;) {
+          await new Promise((ok) => setTimeout(ok, 20));
+          blocked = (await lockWaits()) > 0;
+        }
+        await t1.query("COMMIT");
+        const h2 = (await t2)[0]!;
+        if (h2.w !== h1.w && attempt === 1) continue; // a window rollover between the calls: rerun once
+        expect([h2.w, blocked]).toEqual([h1.w, true]);
+        expect(h2.r).toBe(h2.retry);
+        expectRetry(h2.r);
+        expect(await hitsOf("k:192.0.2.22")).toBeNull();
+        expect((await rowsAt(h1.w))["#keys"]).toBe(20000);
+        return;
+      } finally {
+        await t1.query("ROLLBACK").catch(() => undefined);
+        t1.release();
+        await t2?.catch(() => undefined);
+      }
+    }
+  }, 30_000);
 
   it("A-7 readonly gets 42501 on SELECT, INSERT, UPDATE and DELETE of the table and may EXECUTE the function", async () => {
     for (const sql of [
