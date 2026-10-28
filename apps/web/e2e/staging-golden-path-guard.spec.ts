@@ -37,6 +37,11 @@ const refused: [string, Record<string, string | undefined>, string][] = [
     { ...at(STAGING), PRODUCTION_BASE_URL: "plexco.app" },
     REFUSED.productionUnparsable,
   ],
+  [
+    "PRODUCTION_BASE_URL is set but empty",
+    { ...at(STAGING), PRODUCTION_BASE_URL: "" },
+    REFUSED.productionUnparsable,
+  ],
   ["http", at("http://staging.plexco.app"), REFUSED.notHttps],
   ["a user name in the URL", at("https://owner@staging.plexco.app"), REFUSED.userInfo],
   ["plexco.app", at("https://plexco.app"), REFUSED.productionHost],

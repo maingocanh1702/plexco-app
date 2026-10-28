@@ -122,6 +122,18 @@ const negatives: [string, (m: string) => Routes, string][] = [
     }),
     "/healthz",
   ],
+  [
+    "a 503 on /healthz",
+    (m) => ({
+      "/healthz": { status: 503, type: "application/json", body: `{"ok":true,"m":"${m}"}` },
+    }),
+    "/healthz",
+  ],
+  [
+    "/healthz as text/plain",
+    (m) => ({ "/healthz": { status: 200, type: "text/plain", body: `{"ok":true,"m":"${m}"}` } }),
+    "/healthz",
+  ],
   ["a 500 on /", (m) => ({ "/": { status: 500, type: "text/html", body: m } }), "/"],
   ["a non-JSON /healthz body", (m) => ({ "/healthz": json(`ok ${m}`) }), "/healthz"],
   [
