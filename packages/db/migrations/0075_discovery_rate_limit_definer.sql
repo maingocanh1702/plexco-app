@@ -69,15 +69,16 @@ DECLARE
   DISCOVERY_RATE_PER_48_GATE     CONSTANT integer := 10000;
   DISCOVERY_RATE_CLEANUP_BATCH   CONSTANT integer := 100;
   v_now    numeric := extract(epoch FROM pg_catalog.now());
-  v_window bigint  := pg_catalog.floor(v_now / DISCOVERY_RATE_WINDOW_SECONDS)::bigint;
-  v_retry  integer := pg_catalog.ceil((v_window + 1) * DISCOVERY_RATE_WINDOW_SECONDS - v_now)::integer;
+  v_window bigint  := pg_catalog.floor(v_now / DISCOVERY_RATE_WINDOW_SECONDS::numeric)::bigint;
+  v_retry  integer := pg_catalog.ceil(((v_window + 1) * DISCOVERY_RATE_WINDOW_SECONDS)::numeric - v_now)::integer;
   v_p48    text;
   v_keys   integer;
   v_hits   integer;
 BEGIN
-  -- 0. Before any write: p_key is a form rateLimitKey (discovery-route-support.ts) emits, a dotted
-  -- IPv4, the /64 form (four padded lowercase hextets) or a fixed fallback of session-cookies.ts
-  -- (clientIp). The length check runs first; the message never echoes the key.
+  -- 0. Before any write: p_key is a form emitted by discoveryRateLimitKey (discovery-route-support.ts),
+  -- the one exported builder of the key the web passes: a dotted IPv4, the /64 form (four padded
+  -- lowercase hextets) or a fixed fallback of session-cookies.ts (clientIp). The length check runs
+  -- first; the message never echoes the key.
   IF p_key IS NULL OR pg_catalog.length(p_key) > 22
      OR p_key !~ '^([0-9]{1,3}([.][0-9]{1,3}){3}|[0-9a-f]{4}(:[0-9a-f]{4}){3}|local|fly:untrusted|digitalocean:untrusted)$'
   THEN
@@ -121,7 +122,9 @@ BEGIN
 
   -- 5-7. Admission under row locks, always in this order (no lock cycle): the /48 row (counted at
   -- any load, enforced only at the gate), the window's key count (the hard bound, refusing a NEW key
-  -- when full), then the key's own row.
+  -- when full), then the key's own row. Both counts are exact per distinct admitted key: a call
+  -- refused at step 6 takes back its /48 count, and a call whose key row already exists at step 7
+  -- takes back both; each take-back updates rows this call already holds (no new lock).
   IF v_p48 IS NOT NULL THEN
     INSERT INTO discovery_rate_limit_counters AS c (window_id, bucket, hits)
     VALUES (v_window, v_p48, 1)
@@ -136,12 +139,22 @@ BEGIN
   ON CONFLICT (window_id, bucket) DO UPDATE SET hits = c.hits + 1
     WHERE c.hits < DISCOVERY_RATE_MAX_KEYS;
   IF NOT FOUND THEN
+    IF v_p48 IS NOT NULL THEN  -- refused: take back this call's step-5 /48 count
+      UPDATE discovery_rate_limit_counters AS c SET hits = c.hits - 1
+       WHERE c.window_id = v_window AND c.bucket = v_p48;
+    END IF;
     RETURN v_retry;
   END IF;
   INSERT INTO discovery_rate_limit_counters AS c (window_id, bucket, hits)
   VALUES (v_window, 'k:' || p_key, 1)
   ON CONFLICT (window_id, bucket) DO UPDATE SET hits = c.hits + 1
   RETURNING c.hits INTO v_hits;
+  -- The key row already existed: a concurrent first call of this key committed it first, unseen by
+  -- step 1 under READ COMMITTED. Take back this call's two counts (a NULL v_p48 matches nothing).
+  IF v_hits > 1 THEN
+    UPDATE discovery_rate_limit_counters AS c SET hits = c.hits - 1
+     WHERE c.window_id = v_window AND c.bucket IN ('#keys', v_p48);
+  END IF;
   RETURN CASE WHEN v_hits <= DISCOVERY_RATE_LIMIT THEN 0 ELSE v_retry END;
 END;
 $$;

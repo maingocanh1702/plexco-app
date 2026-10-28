@@ -98,6 +98,14 @@ describe("0075 discovery_rate_limit_hit (A-1..A-9)", () => {
         )
       ).rows.map((x) => [x.bucket, x.hits]),
     );
+  /** The readonly sessions waiting on a lock (the A-6 races' check that a second call waits). */
+  const lockWaits = async () =>
+    (
+      await ctx.owner.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND usename = 'readonly' AND wait_event_type = 'Lock'`,
+      )
+    ).rows[0]!.n;
 
   beforeAll(async () => {
     ctx = await setupRlsTestContext("plexco_discovery_rate_limit");
@@ -194,13 +202,6 @@ describe("0075 discovery_rate_limit_hit (A-1..A-9)", () => {
   });
 
   it("A-6 race: a NEW key past the unlocked count read waits on the count row and is refused once a concurrent admission fills the window", async () => {
-    const lockWaits = async () =>
-      (
-        await ctx.owner.query<{ n: number }>(
-          `SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE datname = current_database() AND usename = 'readonly' AND wait_event_type = 'Lock'`,
-        )
-      ).rows[0]!.n;
     for (let attempt = 1; ; attempt++) {
       await truncate();
       await seed([["#keys", 19999]]);
@@ -224,6 +225,40 @@ describe("0075 discovery_rate_limit_hit (A-1..A-9)", () => {
         expectRetry(h2.r);
         expect(await hitsOf("k:192.0.2.22")).toBeNull();
         expect((await rowsAt(h1.w))["#keys"]).toBe(20000);
+        return;
+      } finally {
+        await t1.query("ROLLBACK").catch(() => undefined);
+        t1.release();
+        await t2?.catch(() => undefined);
+      }
+    }
+  }, 30_000);
+
+  it("A-6 race (one key): two concurrent first calls of one key count it once in #keys and in its /48", async () => {
+    const key = "2001:0db8:0006:0001";
+    for (let attempt = 1; ; attempt++) {
+      await truncate();
+      const t1 = await ctx.readonlyPool.connect();
+      let t2: Promise<Hit[]> | undefined;
+      try {
+        await t1.query("BEGIN");
+        const h1 = (await t1.query<Hit>(HIT, [key])).rows[0]!;
+        expect(h1.r).toBe(0); // the p48:, #keys and k: rows are T1's, uncommitted and locked
+        t2 = series(ctx.readonlyPool, [key]); // misses T1's k: row at step 1, then waits at step 5
+        let blocked = false;
+        for (const end = Date.now() + 5000; !blocked && Date.now() < end;) {
+          await new Promise((ok) => setTimeout(ok, 20));
+          blocked = (await lockWaits()) > 0;
+        }
+        await t1.query("COMMIT");
+        const h2 = (await t2)[0]!;
+        if (h2.w !== h1.w && attempt === 1) continue; // a window rollover between the calls: rerun once
+        expect([h2.w, blocked, h2.r]).toEqual([h1.w, true, 0]);
+        expect(await rowsAt(h1.w)).toEqual({
+          "#keys": 1,
+          "p48:2001:0db8:0006": 1,
+          "k:2001:0db8:0006:0001": 2,
+        });
         return;
       } finally {
         await t1.query("ROLLBACK").catch(() => undefined);
