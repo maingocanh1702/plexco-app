@@ -143,9 +143,9 @@ Usage limit (429; mỗi lần giết toàn bộ agent đang chạy):
 | 5 | `:612` (10-27 23:28) | 10-27 khoảng 22:50 | reset 23:20 | 30 |
 | 6 | `:626-627` (10-28 04:26, 04:29) | log không ghi; sau 03:25 (commit cuối thấy được) | reset 04:20, respawn 04:29 | ≤ 55 (cận); 30 là số chưa kiểm của conductor |
 
-Tỷ lệ (tính ở đây): 5 stop đã kiểm = 320 phút, trung vị 89. Với stop 6 = 30: 350 phút, trung vị 59.5; với stop 6 = 55 (cận): 375 phút, trung vị 72. Trên span 3140 phút: 6 stop = 1 stop mỗi 8.7 h (52.33 / 6); thời gian chết 11.1% (350 / 3140) đến 11.9% (375 / 3140). 4 trong 6 stop rơi vào 10-26 (quy tắc a, 3 lane live), hai stop cuối dưới quy tắc c và d (tối đa 2 lane live); suy ra, log không nói: ít orchestrator song song thì ít lần chạm limit mỗi giờ. Stop 2-4 kết thúc khi owner gõ "continue" (sớm hơn reset báo trước); stop 6 kết thúc ở reset (không thấy "continue").
+Tỷ lệ (tính ở đây): 5 stop đã kiểm = 320 phút, trung vị 89. Với stop 6 = 30: 350 phút, trung vị 59.5; với stop 6 = 55 (cận): 375 phút, trung vị 72. Trên span 3140 phút: 6 stop = 1 stop mỗi 8.7 h (52.33 / 6); thời gian chết 11.1% (350 / 3140) đến 11.9% (375 / 3140). 4 trong 6 stop rơi vào 10-26 (quy tắc a, 3 lane live), hai stop cuối dưới quy tắc d (tối đa 2 lane live; quy tắc b và c không có stop). Theo quy tắc (giờ hiệu lực ở bảng quy tắc dưới, span 3140 phút từ 10-26 02:45 ở trên; tính ở đây): (a) 4 stop trong 15 h 47 = 1 stop mỗi 3.9 h; (b) và (c) 0 stop trong 22 h 14; (d) 2 stop (5, 6) trong 14 h 19 (10-27 16:46 đến merge #133 lúc 07:05 10-28) = 1 stop mỗi 7.2 h, n = 2. Suy ra, log không nói: ít orchestrator song song thì ít lần chạm limit mỗi giờ. Stop 2-4 kết thúc khi owner gõ "continue" (sớm hơn reset báo trước); stop 6 kết thúc ở reset (không thấy "continue").
 
-- Classifier từ chối: 2 lần (không phải 1). (1) L40 run 5, RQ3 (chạy lại e2e bị từ chối): `:533` (10-26 17:53), "answered B", orchestrator tiếp tục push và mở PR (#121 merge 18:15); giờ từ chối và ai trả lời: chưa đọc. (2) L45 run 2 (writer sub-agent chạy DB có khóa bị từ chối): AWAIT `:568` (10-27 09:15), owner trả lời phương án A `:613` (10-27 23:35): độ trễ owner khoảng 14 h 20 giữa hai giờ entry (tính ở đây; tin nhắn có thể sớm hơn chút). Chương trình không đứng yên: L46 spawn 09:16 (`:569`), L49 chạy một mình (`:573`); L45 chạy tiếp run 3-4 và merge #133 lúc 07:05 10-28 (7 h 30 sau câu trả lời).
+- Classifier từ chối: 2 lần (không phải 1). (1) L40 run 5, RQ3 (chạy lại e2e bị từ chối): `:533` (10-26 17:53), "answered B", orchestrator tiếp tục push và mở PR (#121 merge 18:15); giờ từ chối và ai trả lời: chưa đọc. (2) L45 run 2 (writer sub-agent chạy DB có khóa bị từ chối): AWAIT `:568` (10-27 09:15), owner trả lời phương án A `:613` (10-27 23:35): độ trễ owner khoảng 14 h 20 giữa hai giờ entry (tính ở đây; tin nhắn có thể sớm hơn chút). Chương trình không đứng yên: L46 spawn 09:16 (`:569`), L49 chạy một mình (`:573`); L45 chạy tiếp run 3-6 và merge #133 lúc 07:05 10-28 (7 h 30 sau câu trả lời).
 - Mất đăng nhập ("Not logged in"): 1 lần trong Phase 4, `:516` (10-26 11:51): L39 run 5 chết lúc 11:35 (279k), run 6 (cuối của trần) spawn 11:51 = 16 phút; agent khác có chết cùng không: chưa đọc. `:496` cũng khớp grep nhưng chưa đọc. Lapse của Phase 3 nằm ngoài Phase 4 (`:412`, `:473-475`).
 
 Quy tắc đồng thời (quy tắc owner trong log):
@@ -157,7 +157,7 @@ Quy tắc đồng thời (quy tắc owner trong log):
 | c | 10-26 22:45 đến 10-27 16:46 | OWNER RULE 22:45 (bản hai): tối đa 2 sub-agent cùng chạy tổng cộng; C20 thay C19 | `:549` (entry 22:49) |
 | d | 10-27 16:46 trở đi | OWNER RULE 16:46: tối đa 2 lane song song (C22, D41); mỗi lane 1 orchestrator + tối đa 1 worker; tối đa 4 agent lane + 1 clerk; merge từng cái theo thứ tự kế hoạch | `:586` (entry 16:48) |
 
-Tốc độ merge (tính ở đây; hai khoảng không cùng điểm đầu): dưới (a) 7 PR (#115-#121) trong 15.8 h từ merge kế hoạch (02:27) đến #121 (18:15) = 2.25 h mỗi PR; dưới (b)-(d) 12 PR (#122-#133) trong 36.3 h từ merge #122 (18:45) đến merge #133 (07:05) = 3.0 h mỗi PR. Wall clock của một lane không ngắn đi dưới quy tắc chặt hơn; chỉ độ song song giảm.
+Tốc độ merge (tính ở đây, giờ merge ở bảng theo lane trên; điểm đầu khác nhau: (a) từ merge kế hoạch, (b)-(d) là khoảng giữa hai merge, (d) từ đầu quy tắc): dưới (a) 7 PR (#115-#121) trong 15.8 h từ merge kế hoạch (02:27) đến #121 (18:15) = 2.25 h mỗi PR; dưới (b)-(d) 12 PR (#122-#133), tức 11 khoảng từ merge #122 (18:45) đến merge #133 (07:05) trong 36.3 h = 3.3 h mỗi PR; riêng (d) 6 PR (#128-#133; #127 merge 11:29, trước 16:46) từ 10-27 16:46 đến merge #133 trong 14 h 19 = 2.4 h mỗi PR. Wall clock của một lane không ngắn đi dưới quy tắc chặt hơn; chỉ độ song song giảm.
 
 Phiên lập kế hoạch P4-S0 (lane L38):
 
@@ -169,7 +169,7 @@ Phiên lập kế hoạch P4-S0 (lane L38):
 | Run 3 | 01:02 đến 01:49 (STATUS của báo cáo) hoặc 01:53 (entry log), 109 tool call, 327,824 token, khoảng 47 phút | `:498`, `status/P4-S0-report.md:6,8` |
 | Phiên | 4 h 14 từ bắt đầu đến entry log (4 h 10 đến 01:49 của báo cáo); 3 run | `:495-498` |
 | Vòng review | 3 theo conductor (chưa đối chiếu báo cáo); `:498`: vòng 1 = 28 phát hiện (6 chặn), vòng 2 = 15 (2 chặn); nội dung vòng 3 chưa đọc | `:498` |
-| Cổng owner | duyệt gõ 02:25, PR #114 tạo 01:42, merge 02:27; bắt đầu đến merge 4 h 48 (tính ở đây) | `:499`, gh |
+| Cổng owner | báo MERGE_READY #114 ở entry 01:53 (`:498`), duyệt gõ 02:25: khoảng 32 phút chờ owner (tính ở đây); PR #114 tạo 01:42, merge 02:27; bắt đầu đến merge 4 h 48 (tính ở đây) | `:498-499`, gh |
 
 ## 5. Chưa đo / chưa kiểm lại
 
