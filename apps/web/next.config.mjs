@@ -41,13 +41,15 @@ const pageExtensions = pageExtensionsFor(process.env);
  * documented Next pattern (middleware issuing a per-request nonce); it is a
  * backlog row, not a config line — see `web-csp-script-src-nonce`.
  *
- * The OAuth completion landing (apps/web/lib/session-cookies.ts) sets its OWN
- * Content-Security-Policy on that one response; a route-level header replaces
- * this global one for that response only (Next applies config headers first,
- * the response's own header wins), so the landing's nonce policy is unchanged.
- * And should a Next version ever send BOTH, the intersection still lets the
- * landing work: its auto-submit posts to the same origin (`form-action
- * 'self'`), and nothing here touches `script-src`.
+ * Precedence, measured on Next 15.5.28 under next dev and next build + next
+ * start alike (durable record:
+ * docs/research/web-mvp-phase5-production-hardening-2026-10-29.md): a config
+ * header REPLACES a route's own header of the same key, so the OAuth completion
+ * landing's own CSP, X-Frame-Options and Referrer-Policy headers never reach the
+ * browser; the landing carries its policy in its document instead (a meta CSP
+ * and a meta referrer, apps/web/lib/session-cookies.ts). Of two `headers()`
+ * entries setting one key on a path the LATER entry wins (one header line, no
+ * join), and config headers also reach a `notFound()` 404.
  *
  * @type {{ key: string; value: string }[]}
  */
@@ -68,7 +70,17 @@ const nextConfig = {
   reactStrictMode: true,
   pageExtensions,
   async headers() {
-    return [{ source: "/(.*)", headers: SECURITY_HEADERS }];
+    return [
+      { source: "/(.*)", headers: SECURITY_HEADERS },
+      // Must stay AFTER the global entry: of two entries setting one key, the later one wins.
+      {
+        source: "/session/:slug",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+        ],
+      },
+    ];
   },
   // Pin tracing to this monorepo; do not let unrelated lockfiles above the
   // repository make Next.js infer /Users/maingocanh as the workspace root.
