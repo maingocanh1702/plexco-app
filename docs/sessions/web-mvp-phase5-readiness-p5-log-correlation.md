@@ -116,6 +116,7 @@ Every line logged before the point in the second column, and every line of the t
 |---|---|---|---|---|
 | CB:62 | `auth.google.callback.unhandled`, error (kept) | name, message, code; stack at debug | name, code | a fake OAuth `code` and `state` (the callback URL's query) and a fake state cookie, in the thrown error's message |
 | CB:145 | new `auth.google.callback.state_invalid`, warn | nothing | name, code | a fake state value and a fake state-cookie ciphertext, in the decrypt error's message |
+| CB:138 | new `auth.google.callback.secret_unavailable`, error (the key resolution, in its own try ahead of the decryption's: an outage, not bad input, so error although handled) (RO-L68-7) | nothing | name, code | a fake OAuth `code`, state, state cookie, PKCE ciphertext and email, in the resolver error's message |
 | CB:183 | new `auth.google.callback.email_invalid`, warn (the `InvalidEmailError` branch only; the rethrow still reaches :62) | nothing | name, code | a fake email address and a fake OAuth code, in the `InvalidEmailError`'s message |
 | CO:50 | `auth.google.complete.unhandled`, error (kept); the :49 comment becomes true | name, message, code; stack at debug | name, code | a fake handoff and a fake session cookie, in the thrown error's message |
 | CO:83 | new `auth.google.complete.limiter_unavailable`, warn | nothing | name, code | a fake handoff and a fake client IP (the limiter key is `oauth-complete:<ip>`), in the store error's message |
@@ -157,7 +158,7 @@ The orchestrator re-runs `impact` (upstream) on the current index before W1 edit
 | A-11 | TL | the inventory test green with the one added line; no key for LCT | D8 | W1 |
 | A-12 | SCRT: one wrapped request with a valid inbound id | body `meta.requestId` = header `x-request-id` = the log line's `request_id`; a line logged after SCR:855 carries the proven tenant; an early 401 (no session) has the header and no `tenant_id`; no seeded fake in any console call | D6, D9, D10, D12 | W2 |
 | A-13 | the ST, CB and CO tests | every response (302, HTML landing, JSON) carries `x-request-id`; no line carries `tenant_id`; no seeded fake in any console call | D6, D10, D12 | W3 |
-| A-14 | the 8 sites of table 5.3, one case each in its route's existing test | the site's event with `name` and `code` only; none of the row's seeded fakes, at the default level and at debug | D7 | W3 |
+| A-14 | the 9 sites of table 5.3, one case each in its route's existing test | the site's event with `name` and `code` only; none of the row's seeded fakes, at the default level and at debug | D7 | W3 |
 | A-15 | the OC, OR, OS, OZ and OZC tests | `tenant_id` on lines after the table 5.2 point and on none before; a gate's early return carries the header; OZC:217's rethrown message byte-identical | D6, D7, D10 | W3 |
 | A-16 | LGT: the moved helper | `name` cut to 64; `code` from the cause chain (8 hops, the form); a non-Error described by its type; no message in the output | D7 | W3 |
 | A-17 | existing tests | every existing route test and SCRT green per writer; `pnpm -w test` once on the final head through the lock | all | each writer; the orchestrator |

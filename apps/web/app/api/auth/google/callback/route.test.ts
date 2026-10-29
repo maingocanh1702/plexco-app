@@ -4,6 +4,7 @@ import { armOauthCompletionHandoff, rateLimitCheck } from "@plexco/db";
 import { cookies } from "next/headers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as db from "@plexco/db";
+import * as authSecrets from "../../../../../lib/auth-secrets";
 import * as oidc from "../../../../../lib/google-oidc";
 import { captureSignInLog } from "../../../../../lib/log-capture.testkit";
 import * as oauthTxn from "../../../../../lib/oauth-transaction";
@@ -36,6 +37,12 @@ vi.mock("../../../../../lib/oauth-transaction", async (importOriginal) => {
 vi.mock("../../../../../lib/google-oidc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../../../lib/google-oidc")>();
   return { ...actual, exchangeGoogleCode: vi.fn(), verifyGoogleIdToken: vi.fn() };
+});
+
+// Keep the REAL key resolver behind a pass-through spy, so a D7 case can fail the route's own call.
+vi.mock("../../../../../lib/auth-secrets", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../../../lib/auth-secrets")>();
+  return { ...actual, resolveAuthSecretKey: vi.fn(actual.resolveAuthSecretKey) };
 });
 
 // session-cookies stays REAL: post-d1b the callback no longer mints — it uses the
@@ -351,6 +358,22 @@ describe.each(["", "debug"])(
       );
       expect(res.headers.get("location")).toContain("auth_error=AUTH_UNAVAILABLE");
       expect(line.error).toEqual({ name: "Error", code: "ECONNREFUSED" }); // no message/stack
+    });
+
+    it("a key store or key config failure: auth.google.callback.secret_unavailable", async () => {
+      // An outage, not bad input (W-11): the resolver's plain Error, apart from the decryption.
+      vi.mocked(authSecrets.resolveAuthSecretKey).mockRejectedValueOnce(
+        new Error(`key store down ${FAKES.join(" ")}`),
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "error",
+        "auth.google.callback.secret_unavailable",
+        seeded,
+      );
+      expect(res.status).toBe(302); // the response is today's fail("AUTH_INVALID"), unchanged
+      expect(res.headers.get("location")).toBe("https://plexco.app/?auth_error=AUTH_INVALID");
+      expect(line.error).toEqual({ name: "Error" }); // no message/stack
     });
 
     it("a corrupt PKCE ciphertext: auth.google.callback.state_invalid", async () => {

@@ -138,9 +138,16 @@ async function handleGoogleCallback(request: Request): Promise<Response> {
     return fail("AUTH_INVALID");
   }
 
+  let authKey: Buffer;
+  try {
+    authKey = await resolveAuthSecretKey();
+  } catch (error) {
+    log.error("auth.google.callback.secret_unavailable", { error: errorClass(error) });
+    return fail("AUTH_INVALID"); // key store/config outage, not bad input (W-11)
+  }
   let verifier: string;
   try {
-    const encKey = deriveAesKey(await resolveAuthSecretKey(), PKCE_ENC_KEY_INFO);
+    const encKey = deriveAesKey(authKey, PKCE_ENC_KEY_INFO);
     verifier = decryptPkceVerifier(claim.pkceVerifierEnc, {
       encKey,
       stateHash,
