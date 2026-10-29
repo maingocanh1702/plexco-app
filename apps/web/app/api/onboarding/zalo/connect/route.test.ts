@@ -5,9 +5,10 @@ import {
   probeZaloConnectReplay,
   ZaloConnectError,
 } from "@plexco/db";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
 import { log } from "../../../../../lib/log";
+import { captureConsoleSinks, captureLogLine } from "../../../../../lib/log-capture.testkit";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
 import { getMe, setWebhook, ZaloApiError } from "../../../../../lib/zalo/client";
 import { POST } from "./route";
@@ -167,7 +168,6 @@ describe("POST /api/onboarding/zalo/connect", () => {
   it.each(["", "debug"])(
     "setWebhook failure is logged by class only (LOG_LEVEL %j)",
     async (level) => {
-      vi.stubEnv("LOG_LEVEL", level);
       const fakes = ["FAKE-BOT-TOKEN-L68", "FAKE-URL-TOKEN-L68", "FAKE-WH-SECRET-L68"];
       // undici's shape: TypeError("fetch failed") with the socket error and its code on `.cause`.
       const cause = Object.assign(new Error(`connect ECONNRESET ${fakes.join(" ")}`), {
@@ -181,22 +181,11 @@ describe("POST /api/onboarding/zalo/connect", () => {
           },
         ),
       );
-      const spies = (["error", "warn", "log"] as const).map((m) =>
-        vi.spyOn(console, m).mockImplementation(() => {}),
+      const { line } = await captureLogLine(fakes, level, "warn", "zalo_setwebhook_failed", () =>
+        POST(req({ commandId: "c1", botToken: BOT_TOKEN })),
       );
-      try {
-        await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
-        const written = JSON.stringify(spies.map((s) => s.mock.calls));
-        for (const fake of fakes) expect(written).not.toContain(fake);
-        const line = spies[1]!.mock.calls
-          .map((c) => JSON.parse(c[0] as string) as Record<string, unknown>)
-          .find((l) => l.event === "zalo_setwebhook_failed");
-        expect(line).toMatchObject({ level: "warn", tenantId: TENANT });
-        expect(line!.error).toEqual({ name: "TypeError", code: "ECONNRESET" }); // no message/stack
-      } finally {
-        for (const s of spies) s.mockRestore();
-        vi.unstubAllEnvs();
-      }
+      expect(line).toMatchObject({ level: "warn", tenantId: TENANT });
+      expect(line!.error).toEqual({ name: "TypeError", code: "ECONNRESET" }); // no message/stack
     },
   );
 
@@ -362,20 +351,7 @@ describe("POST /api/onboarding/zalo/connect", () => {
 // captured and silenced. `l68.before` is written inside the gate (authorize), `l68.after` by the
 // token check once the tenant is proven.
 describe("L68 A-15 — the Zalo connect route runs in the request log context", () => {
-  beforeEach(() => {
-    for (const sink of ["error", "warn", "log"] as const) {
-      vi.spyOn(console, sink).mockImplementation(() => {});
-    }
-  });
-  afterEach(() => vi.restoreAllMocks());
-  const written = () =>
-    JSON.stringify([console.error, console.warn, console.log].map((s) => vi.mocked(s).mock.calls));
-  const probes = (event: string) =>
-    vi
-      .mocked(console.error)
-      .mock.calls.map((call) => String(call[0]))
-      .filter((line) => line.includes(`"event":"${event}"`))
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const { written, probes } = captureConsoleSinks();
 
   it("the token check logs the proven tenant and the response's request id; the gate none", async () => {
     vi.mocked(authorize).mockImplementationOnce(async () => {

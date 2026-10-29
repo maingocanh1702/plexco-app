@@ -7,8 +7,9 @@ import {
   updateClubConfig,
   validatePublicAlias,
 } from "@plexco/db";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../../../lib/log";
+import { captureConsoleSinks } from "../../../../lib/log-capture.testkit";
 import { csrfOk, currentSession, rateLimited } from "../../../../lib/session-cookies";
 import { GET, PATCH } from "./route";
 
@@ -323,24 +324,13 @@ describe("public alias (L10a): { commandId, publicAlias } travels alone", () => 
 // captured and silenced. `l68.before` is written inside the gate (authorize), `l68.after` by a
 // dependency the handler calls once the gate has proven the tenant.
 describe("L68 A-15 — the club routes run in the request log context with the proven tenant", () => {
+  const { written, probes } = captureConsoleSinks();
   beforeEach(() => {
-    for (const sink of ["error", "warn", "log"] as const) {
-      vi.spyOn(console, sink).mockImplementation(() => {});
-    }
     vi.mocked(authorize).mockImplementation(async () => {
       log.error("l68.before", {});
       return { allowed: true, role: "owner" };
     });
   });
-  afterEach(() => vi.restoreAllMocks());
-  const written = () =>
-    JSON.stringify([console.error, console.warn, console.log].map((s) => vi.mocked(s).mock.calls));
-  const probes = (event: string) =>
-    vi
-      .mocked(console.error)
-      .mock.calls.map((call) => String(call[0]))
-      .filter((line) => line.includes(`"event":"${event}"`))
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
   const expectTenantOnlyAfterTheGate = (response: Response) => {
     const id = response.headers.get("x-request-id");
     expect(probes("l68.after")).toEqual([

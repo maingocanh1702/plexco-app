@@ -1,7 +1,8 @@
 import { authorize, onboardingSnapshot, tenantLocale } from "@plexco/db";
 import { cookies } from "next/headers";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../../../lib/log";
+import { captureConsoleSinks } from "../../../../lib/log-capture.testkit";
 import { GET } from "./route";
 
 const allow = (role: "owner" | "admin" | "co_admin" = "owner") =>
@@ -97,22 +98,7 @@ describe("GET /api/onboarding/readiness — authorize(content.manage) gate", () 
   // captured and silenced. Nested to reuse this block's session setup. `l68.before` is written
   // inside the gate (authorize), `l68.after` by the snapshot read once the tenant is proven.
   describe("L68 A-15 — the readiness route runs in the request log context", () => {
-    beforeEach(() => {
-      for (const sink of ["error", "warn", "log"] as const) {
-        vi.spyOn(console, sink).mockImplementation(() => {});
-      }
-    });
-    afterEach(() => vi.restoreAllMocks());
-    const written = () =>
-      JSON.stringify(
-        [console.error, console.warn, console.log].map((s) => vi.mocked(s).mock.calls),
-      );
-    const probes = (event: string) =>
-      vi
-        .mocked(console.error)
-        .mock.calls.map((call) => String(call[0]))
-        .filter((line) => line.includes(`"event":"${event}"`))
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const { written, probes } = captureConsoleSinks();
 
     it("the snapshot read logs the proven tenant and the response's request id; the gate none", async () => {
       vi.mocked(authorize).mockImplementationOnce(async () => {

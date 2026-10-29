@@ -1,6 +1,7 @@
 import { provisionTenant, SlugTakenError } from "@plexco/db";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../../../lib/log";
+import { captureConsoleSinks } from "../../../../lib/log-capture.testkit";
 import {
   csrfOk,
   currentSession,
@@ -113,22 +114,7 @@ describe("POST /api/onboarding/start — issuance-fence mapping (G3-B3, D0-12)",
   // captured and silenced. Nested to reuse this block's session setup. `l68.before` is written
   // inside provisionTenant (before the tenant exists), `l68.after` by the session rotation.
   describe("L68 A-15 — the start route runs in the request log context", () => {
-    beforeEach(() => {
-      for (const sink of ["error", "warn", "log"] as const) {
-        vi.spyOn(console, sink).mockImplementation(() => {});
-      }
-    });
-    afterEach(() => vi.restoreAllMocks());
-    const written = () =>
-      JSON.stringify(
-        [console.error, console.warn, console.log].map((s) => vi.mocked(s).mock.calls),
-      );
-    const probes = (event: string) =>
-      vi
-        .mocked(console.error)
-        .mock.calls.map((call) => String(call[0]))
-        .filter((line) => line.includes(`"event":"${event}"`))
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const { written, probes } = captureConsoleSinks();
 
     it("the session rotation logs the provisioned tenant and the response's request id; provisioning none", async () => {
       vi.mocked(provisionTenant).mockImplementationOnce(async () => {

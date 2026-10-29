@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { rateLimitCheck } from "@plexco/db";
 import { cookies } from "next/headers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { captureSignInLog } from "../../../../../lib/log-capture.testkit";
 import * as oauthTxn from "../../../../../lib/oauth-transaction";
 import { GET } from "./route";
 
@@ -41,39 +42,7 @@ function reqFrom(ip: string): Request {
 
 const REQUEST_ID = /^req_[0-9a-f-]{36}$/; // A-13: the id withRequestLogContext mints
 const FAKES = ["203.0.113.68", "FAKE-STATE-COOKIE-L68"]; // L68 D7 seeds: a client IP, a state cookie
-
-/**
- * L68 D7: run `act` at LOG_LEVEL `logLevel` with every console method spied. No seed reaches any
- * console call; the `event` line is at `method`'s level, carries the response's request id and no
- * tenant (none exists before sign-in). Returns the response and that line.
- */
-async function captureLog(
-  logLevel: string,
-  method: "error" | "warn",
-  event: string,
-  act: () => Promise<Response>,
-) {
-  vi.stubEnv("LOG_LEVEL", logLevel);
-  const spies = (["error", "warn", "log"] as const).map((m) =>
-    vi.spyOn(console, m).mockImplementation(() => {}),
-  );
-  try {
-    const res = await act();
-    const written = JSON.stringify(spies.map((s) => s.mock.calls));
-    for (const fake of FAKES) expect(written).not.toContain(fake);
-    const line = vi
-      .mocked(console[method])
-      .mock.calls.map((c) => JSON.parse(c[0] as string) as Record<string, unknown>)
-      .find((l) => l.event === event);
-    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID);
-    expect(line).toMatchObject({ level: method, request_id: res.headers.get("x-request-id") });
-    expect(line).not.toHaveProperty("tenant_id");
-    return { res, line: line! };
-  } finally {
-    for (const s of spies) s.mockRestore();
-    vi.unstubAllEnvs();
-  }
-}
+const captureLog = captureSignInLog(FAKES, REQUEST_ID); // L68 D7
 
 describe("GET /api/auth/google/state (D1-1)", () => {
   beforeEach(() => {
