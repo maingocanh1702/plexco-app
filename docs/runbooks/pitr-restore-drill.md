@@ -141,19 +141,19 @@ age -d -i "$BACKUP_AGE_IDENTITY" plexco-<UTC-date>.dump.age | pg_restore --dbnam
 1. Ghi giờ bắt đầu restore (đồng hồ RTO của dạng này). Roles trước, dump sau; lỗi được chấp nhận duy nhất là `role ... already exists`, nên lệnh `grep` phải không in gì; lỗi khác, hoặc `pg_restore` báo `errors ignored on restore` ⇒ `FAIL`.
 2. Theo §6 với `VANILLA_ADMIN_URL` (superuser vanilla, Q0 true, Q0b = 0): C1-C7, Q5, Q6 bằng mốc của §2; Q1, Q2, Q4 trả 0 dòng; Q3 trả đúng các dòng của mốc §2.
 3. Owner đặt credential tạm cho các role runtime trên bản restore, trỏ một app tạm cùng SHA đã ghi ở §2 vào đó và chạy `infra/smoke-check.sh https://<restore-app>`; xanh ⇒ ghi RTO đo. Smoke xanh là phép kiểm gián tiếp cho grant của role runtime.
-4. RPO của dạng này = tuổi bộ export lúc restore (bằng khoảng cách giữa hai lần export): ghi số đo và so với §4; vượt ⇒ `OPEN` (Pass bên dưới), ghi ở cột Ghi chú cho bước 8.9.
+4. RPO của dạng này = tuổi bộ export lúc restore (bằng khoảng cách giữa hai lần export): ghi số đo và so với RPO của dạng export ở bước 8.9; vượt ⇒ `OPEN` (Pass bên dưới), ghi ở cột Ghi chú cho bước 8.9.
 5. Huỷ bản vanilla và credential tạm; ghi hàng `quarterly §5` ở §7.
 
 ```sql
 BEGIN TRANSACTION READ ONLY;
 -- C6 schema checksum from pg_catalog (not privilege-filtered): run on the source at export time (§2) and on the restore; must be equal
 SELECT md5(string_agg(c.relname || '.' || a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY c.relname, a.attname)) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm') AND a.attnum > 0 AND NOT a.attisdropped;
--- C7 table privileges, function owners and security-definer flags: run beside C6; must be equal
-SELECT md5(string_agg(x, ',' ORDER BY x)) FROM (SELECT c.relname || ':' || pg_get_userbyid(a.grantee) || ':' || a.privilege_type AS x FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE c.relnamespace = 'public'::regnamespace UNION ALL SELECT p.oid::regprocedure::text || ':' || pg_get_userbyid(p.proowner) || ':' || p.prosecdef FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace) g;
+-- C7 table privileges, function owners, security-definer flags and function privileges: run beside C6; must be equal
+SELECT md5(string_agg(x, ',' ORDER BY x COLLATE "C")) FROM (SELECT c.relname || ':' || pg_get_userbyid(a.grantee) || ':' || a.privilege_type AS x FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE c.relnamespace = 'public'::regnamespace UNION ALL SELECT p.oid::regprocedure::text || ':' || pg_get_userbyid(p.proowner) || ':' || p.prosecdef FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace UNION ALL SELECT p.oid::regprocedure::text || ':' || pg_get_userbyid(a.grantee) || ':' || a.privilege_type FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE p.pronamespace = 'public'::regnamespace) g;
 ROLLBACK;
 ```
 
-**Pass:** bước 1-3 xanh, RTO đo ≤ 60 phút và RPO đo ≤ mục tiêu §4; vượt ⇒ `OPEN` (owner chốt RPO của dạng export ở 8.9), không bao giờ `PASS`. Hoãn: load test (§7.6 mục 12, `docs/sessions/web-mvp-phase5-golive-plan.md:269`) và nửa migration của mục 13 (`docs/sessions/web-mvp-phase5-golive-plan.md:270`).
+**Pass:** bước 1-3 xanh, RTO đo ≤ 60 phút và RPO đo ≤ RPO của dạng export mà owner ghi ở bước 8.9; owner chưa ghi số đó, hoặc RPO đo vượt nó ⇒ `OPEN`, không bao giờ `PASS`. Hoãn: load test (§7.6 mục 12, `docs/sessions/web-mvp-phase5-golive-plan.md:269`) và nửa migration của mục 13 (`docs/sessions/web-mvp-phase5-golive-plan.md:270`).
 
 ## 6. Truy vấn chỉ đọc (Người làm: OWNER)
 
@@ -163,7 +163,7 @@ Mỗi kết nối: URL qua TÊN biến, TLS kiểm CA và hostname (`docs/standa
 PGOPTIONS='-c default_transaction_read_only=on' psql -X -v ON_ERROR_STOP=1 "$SRC_ADMIN_URL"   # or "$FORK_ADMIN_URL", "$VANILLA_ADMIN_URL"
 ```
 
-Khối Q0 là khối đầu tiên chạy trên mỗi URL trong một drill (cùng URL là cùng role). Role runtime là `NOBYPASSRLS` (`packages/db/migrations/0000_roles_extensions.sql:23`), nên chạy bằng chúng thì RLS giấu hàng và 0 dòng là pass giả. Chỉ chạy tiếp khi `current_user` có `rolsuper` hoặc `rolbypassrls` true và Q0b = 0 (BYPASSRLS không cấp quyền `SELECT`; Q0b đếm bảng `public` mà role không đọc được). Tài liệu DigitalOcean ghi admin có Bypass RLS, không có Superuser (`infra/postgres-init/01-job-definer.sql:97-100`), nhưng đó là điều Q0 đo, không phải giả định (DD-129 R1, `docs/standards/decisions.md:145`). Q0 false hoặc Q0b > 0 ⇒ dừng, kết quả `INVALID`; các so sánh chạy lại trên bản restore của §5 bằng superuser vanilla.
+Khối Q0 là khối đầu tiên chạy trên mỗi URL trong một drill (cùng URL là cùng role). Role runtime là `NOBYPASSRLS` (`packages/db/migrations/0000_roles_extensions.sql:23`), nên chạy bằng chúng thì RLS giấu hàng và 0 dòng là pass giả. Chỉ chạy tiếp khi `current_user` có `rolsuper` hoặc `rolbypassrls` true và Q0b = 0 (BYPASSRLS không cấp quyền `SELECT`; Q0b đếm bảng và sequence `public` mà role không đọc được). Tài liệu DigitalOcean ghi admin có Bypass RLS, không có Superuser (`infra/postgres-init/01-job-definer.sql:97-100`), nhưng đó là điều Q0 đo, không phải giả định (DD-129 R1, `docs/standards/decisions.md:145`). Q0 false hoặc Q0b > 0 ⇒ dừng, kết quả `INVALID`; không có đường vòng qua §5, vì §2 bước 1 đòi cùng điều kiện; owner dùng một role admin đạt Q0 và Q0b (ghi tên role vào Ghi chú) rồi chạy lại từ khối Q0.
 
 `<T_begin>` = mốc ghi ngay trước thao tác dữ liệu test đầu tiên của drill: §3.2 bước 0 (`SELECT clock_timestamp();` trước bước 1) cho PITR; `T_begin` ở §3.1 của `docs/runbooks/failover-drill.md` cho drill failover. §2/§5: Q3 bỏ điều kiện `created_at` (đặt `<T_begin>` = `-infinity`, khớp mọi hàng) và phải trả cùng các dòng trên nguồn và bản restore.
 
@@ -171,8 +171,8 @@ Khối Q0 là khối đầu tiên chạy trên mỗi URL trong một drill (cùn
 BEGIN TRANSACTION READ ONLY;
 -- Q0 query role: one column true, else STOP (INVALID)
 SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user;
--- Q0b public tables the query role cannot read: 0, else STOP (INVALID)
-SELECT count(*) AS unreadable FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT has_table_privilege(c.oid, 'SELECT');
+-- Q0b public tables and sequences the query role cannot read: 0, else STOP (INVALID)
+SELECT count(*) AS unreadable FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') AND NOT has_table_privilege(c.oid, 'SELECT');
 ROLLBACK;
 ```
 
