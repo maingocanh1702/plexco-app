@@ -1,0 +1,135 @@
+# Env manifest: staging và production (chỉ TÊN biến)
+
+## E1. Phạm vi và nguồn
+
+> **Dành cho:** owner, bước 8.5 (nhập secret và biến theo TÊN, PLAN:201) và bước 8.6 (smoke và golden path, PLAN:202). **Nguồn:** lane L64 `p5-env-manifest` (PLAN:76); owner duyệt plan ngày 2026-10-28, ghi là DD-154 (`docs/standards/decisions.md:120`): Q3 override (production theo hình dạng 3, PLAN:125, :140) và Q8 (`KMS_PROVIDER` là `aws-kms`, PLAN:130). Đo ở base `ae06005c807b758246e9ebff294d6943edc1c440` (merge PR #138, 2026-10-29); mọi số dòng là của base đó.
+> Viết tắt: PLAN = `docs/sessions/web-mvp-phase5-golive-plan.md`, E = `docs/standards/environments-setup.md`, RES = `docs/research/web-mvp-phase5-golive-measurements-2026-10-28.md`. Code và E lệch nhau thì file này theo code và ghi lệch ở E8; lane này không sửa E.
+> **Chỉ tên, không giá trị.** Quy tắc giá trị D4 (mục 10 của `docs/sessions/web-mvp-phase5-readiness-p5-env-manifest.md`; "default applied, pending owner sign-off"): secret ghi `<secret, owner-entered>`; URL ghi `<URL, owner-entered>` kèm DB role; flag hoặc config chỉ có giá trị khi quyết định của owner hoặc check giá trị hợp lệ của code quy định, kèm nguồn; còn lại ghi "owner quyết" và hành vi của code khi vắng.
+> `.env.example` có password local đã commit: chỉ đọc tên, bằng lệnh dưới (in số dòng và tên, không in giá trị). Bước 8.5 nhập E3 (theo component), E4 (job migrate) và E5 (GitHub); bước 8.6 dùng tên smoke và golden path của E5 trên máy owner (PLAN:202, :209-214).
+
+```text
+grep -n -o -E '^#?[[:space:]]*[A-Z_][A-Z0-9_]*=' .env.example
+```
+
+## E2. Topology theo môi trường và component
+
+Một image cho mọi component. Role lấy theo thứ tự: tham số của lệnh chạy, rồi `FLY_PROCESS_GROUP`, rồi `PROCESS_ROLE`, không có thì web (`infra/entrypoint.sh:10`, export ở :17; image đặt web, `infra/Dockerfile:75`); role ngoài web, discovery, worker, provision, migrate bị từ chối (`infra/entrypoint.sh:87-88`). Ở base ae06005 repo không track App Spec nào (không `app*.yaml`, không `.do/`), nên component của mỗi tên suy từ nhánh role của entrypoint và reader trong code. Bốn DB role: `app`, `app_worker`, `readonly` (`packages/db/migrations/0000_roles_extensions.sql:23`, :26, :29) và `migration` (E:183); owner tạo user cho cả bốn ở bước 8.5 (PLAN:201, :254).
+
+| Component | Role (entrypoint) | Staging: cửa sổ HA tạm, hình dạng 4 (PLAN:141) | Production pilot: hình dạng 3 (PLAN:140, DD-154) | Ghi chú |
+| --- | --- | --- | --- | --- |
+| web | `web`, `infra/entrypoint.sh:25-27`, chạy ở :57 | có, 2 bản (hình dạng 1 hoặc 2, PLAN:138-139) | có, 1 bản | production không có discovery, nên web phục vụ cả route discovery (`apps/web/lib/request-policy.ts:47-48`) và cần các tên discovery của E3 |
+| discovery | `discovery`, :30-32, chạy ở :62 | có, 2 bản | không có | route được phục vụ: `apps/web/lib/request-policy.ts:32-39` |
+| worker | `worker`, :64-67 | có, 1 bản | có, 1 bản | không HTTP (`infra/entrypoint.sh:4`) |
+| migrate, job PRE_DEPLOY một lần | `migrate`, :78-85 | có | có | chỉ đọc `DATABASE_URL_MIGRATION` (:80); E4 |
+| provision, job một lần | `provision`, :68-77 | vị trí trong thứ tự deploy do L63 và L67 chốt (E:425-430, D-4) | như staging | cũng đọc `DATABASE_URL_MIGRATION` (`apps/bot/src/provision-queue.ts:63`); E4 |
+
+## E3. Biến runtime: web, discovery, worker
+
+Chú thích: W web, D discovery (chỉ staging có), K worker, M job migrate; cột S staging, P production: y nhập, od owner quyết, n không nhập (E7), never không bao giờ đặt (E6), img image đặt sẵn. Tập phải nhập ở production: 12 tên có y ở cột P, cộng `DATABASE_URL_MIGRATION` ở job M (E4); `DB_EXPECTED_ROLE` là opt-in. "(+n)" là số nơi đọc khác.
+
+| # | Tên | Loại | Component | S | P | DB role | Quy tắc giá trị (D4) | Reader | `.env.example` | E nói | Drift |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `APP_BASE_URL` | config (URL) | W, K | y | y | - | `<URL, owner-entered>`; vắng: route Google của web fail closed (`apps/web/app/api/auth/google/callback/route.ts:90`), worker báo config_missing (`apps/bot/src/projectors/zalo-dm.ts:70-73`) | `apps/web/app/api/auth/google/callback/route.ts:89` (+4 web); `apps/bot/src/projectors/zalo-dm.ts:71` | `.env.example:111` | không | không |
+| 2 | `AWS_REGION` | config | W, K | y | y | - | owner quyết (region của KMS key); bắt buộc khi `aws-kms`, vắng thì throw trước mọi call mạng (secret-key-root.ts:64-69) | `packages/db/src/secret-key-root.ts:66` | `.env.example:141` | E:72: web và worker gọi KMS Decrypt khi `aws-kms` | không |
+| 3 | `CSP_SCRIPT_NONCE_ENABLED` | flag | W, D | od | od | - | chỉ đúng "true" mới bật (`apps/web/lib/request-policy.ts:68`), vắng là tắt; chỉ bật sau khi một `next start` thật cho 0 vi phạm CSP (request-policy.ts:20-27) | `apps/web/middleware.ts:58` | `.env.example:164` | không | không |
+| 4 | `DATABASE_URL` | secret (URL) | W; D không cần theo code (đo theo import tĩnh, D-2) | y | y | `app` (`infra/entrypoint.sh:25`) | `<URL, owner-entered>` + role `app`; URL này cũng mang client LISTEN SSE mà web giữ lâu (`apps/web/lib/realtime-listener.ts:211-212`, :241-242); pool mode: R1 | `apps/web/lib/session-cookies.ts:57` (vắng: throw lúc dùng, :58) | `.env.example:34` | E:192, E:154-155 | D-1, D-2 |
+| 5 | `DATABASE_URL_DIRECT` | secret (URL) | K | y | y | `app_worker` | `<URL, owner-entered>` + role `app_worker`; vắng thì worker từ chối start (worker.ts:117-118) | `apps/bot/src/worker.ts:116` (+3) | `.env.example:63` | E:193, E:156 | không |
+| 6 | `DB_EXPECTED_ROLE` | config | W, D; không đặt ở K (`infra/entrypoint.sh:35`) | od | od | - | theo check của code: W `app`, D `readonly` (entrypoint.sh:25, :30; lệch thì từ chối start, :45-49; web còn assert current_user và session_user, session-cookies.ts:60-61, :119); vắng là tắt check, owner opt-in (entrypoint.sh:43) | `apps/web/lib/session-cookies.ts:60` | `.env.example:160` | không | không |
+| 7 | `DISCOVERY_CURSOR_KEY` | secret | W, D | y | y | - | `<secret, owner-entered>`; ít nhất 32 ký tự (discovery-cursor.ts:14, :26-27); production vắng thì throw lúc dùng đầu tiên (:31-32); một giá trị chung cho mọi process phục vụ discovery (HMAC, :37-38, suy luận) | `apps/web/lib/discovery-cursor.ts:24` | `.env.example:69` (comment) | không | không; App Spec của PR #50 thiếu nó (RES:65) |
+| 8 | `DISCOVERY_DATABASE_URL` | secret (URL) | W, D | y | y | `readonly` (assert, discovery-route-support.ts:52) | `<URL, owner-entered>` + role `readonly`; pool riêng, tối đa 5 (:44) | `apps/web/lib/discovery-route-support.ts:42` (vắng: throw lúc dùng, :43) | `.env.example:68` | không; E:192 đặt discovery lên `DATABASE_URL` | D-2 |
+| 9 | `ENCRYPTION_KEY` | secret | không component nào dưới Q8 | n | n | - | E7 | `packages/db/src/secret-key-root.ts:49` | `.env.example:132` | E:385-387: fallback chỉ cho local | không |
+| 10 | `FLY_PROCESS_GROUP` | platform-set (Fly) | entrypoint, mọi component | never | never | - | E6 | `infra/entrypoint.sh:10` | không có | không | không |
+| 11 | `GENDER_COLLECTION_ENABLED` | flag | W | od | vắng hoặc "false" | - | E6; chỉ đúng "true" mới bật | `apps/web/app/api/me/profile/route.ts:32` | `.env.example:167` | không | không |
+| 12 | `GOOGLE_OAUTH_CLIENT_ID` | config | W | y | y | - | owner quyết (một OAuth client cho từng môi trường, bước 8.3, PLAN:199); vắng thì route Google fail closed (callback/route.ts:90) | `apps/web/app/api/auth/google/callback/route.ts:87` (+2) | `.env.example:106` | không | không |
+| 13 | `GOOGLE_OAUTH_CLIENT_SECRET` | secret | W | y | y | - | `<secret, owner-entered>`; cùng check với dòng 12 | `apps/web/app/api/auth/google/callback/route.ts:88` (+2) | `.env.example:107` | không | không |
+| 14 | `KMS_ENCRYPTED_AUTH_PEPPER` | secret | W; K chỉ khi không đặt `KMS_ENCRYPTED_CONNECTOR_PEPPER` | y | y | - | `<secret, owner-entered>`; bắt buộc khi `aws-kms` (secret-key-root.ts:59-63); worker chỉ gọi resolveConnectorSecretRoot (`apps/bot/src/projectors/zalo-dm.ts:5`, :131), hàm này dùng auth key khi thiếu connector pepper (secret-key-root.ts:90-91) | `packages/db/src/secret-key-root.ts:60` (đọc động; tên mặc định ở :59) | `.env.example:137` | không | không |
+| 15 | `KMS_ENCRYPTED_CONNECTOR_PEPPER` | secret | W, K | od | od | - | `<secret, owner-entered>` nếu dùng; tuỳ chọn (DD-122 O4, `docs/standards/decisions.md:152`); vắng thì connector root lấy từ auth key (secret-key-root.ts:89-91) | `packages/db/src/connector-crypto.ts:38` (+ secret-key-root.ts:90) | `.env.example:145` | không | không |
+| 16 | `KMS_KEY_ID` | config | W, K | od | od | - | owner quyết; check toàn vẹn tuỳ chọn (secret-key-root.ts:75-76); nhãn key version có default trong code (:111-113) | `packages/db/src/secret-key-root.ts:76` | `.env.example:131` | không | không |
+| 17 | `KMS_PROVIDER` | config | W, K | y | y | - | `aws-kms` (Q8, PLAN:130); tập hỗ trợ ở secret-key-root.ts:22, giá trị khác thì throw (:30-34) | `packages/db/src/secret-key-root.ts:26` (+3) | `.env.example:130` | E:72; E:385-386: KMS cho staging và production | không |
+| 18 | `LINK_CODE_LOOKUP_HMAC_KEY` | secret | W (chỉ web; PLAN:211 ghi web và worker) | y | y | - | `<secret, owner-entered>`; vắng hoặc sai dạng thì trả null (link-code-keys.ts:13) | `apps/web/lib/link-code-keys.ts:12` | `.env.example:151` | không | không |
+| 19 | `LOG_LEVEL` | config | W, D | od | od | - | owner quyết; vắng là mức mặc định của code (log.ts:24-27) | `apps/web/lib/log.ts:30` | `.env.example:171` | không | không |
+| 20 | `NODE_ENV` | config (image) | W, D; K không đọc | img | img | - | `production`, do stage runtime của image đặt (`infra/Dockerfile:43-44`); guard production dựa vào nó (session-cookies.ts:26, :383, :386; `apps/web/lib/discovery-cursor.ts:31`; `apps/web/lib/dev-login/env-policy.mjs:61`); không ghi đè (PLAN:211 xếp nó vào tên owner nhập) | `apps/web/lib/session-cookies.ts:26` (+9) | `.env.example:6` | không | không |
+| 21 | `OUTBOX_DISPATCH_SCHEDULE_ENABLED` | flag | K | od | od | - | owner quyết, bước P0 (`docs/runbooks/outbox-dispatch-enable-rollback.md`); chỉ đúng "true" mới bật (worker.ts:31-33), vắng là tắt; "true" của DD-141 (`docs/standards/decisions.md:133`) chỉ là default local | `apps/bot/src/worker.ts:137` | `.env.example:91` | không | không |
+| 22 | `PLEXCO_DEV_LOGIN` | flag (cấm) | W | never | never | - | E6 | `apps/web/lib/dev-login/gate.ts:49` (+ env-policy.mjs:49, :116) | `.env.example:16` (comment) | không | không |
+| 23 | `PORT` | config | W, D | od | od | - | owner quyết (cổng HTTP của component); `start:web` và `start:discovery` chạy `next start -p` với nó (`apps/web/package.json:8-9`; `infra/entrypoint.sh:57`, :62); vắng là fallback của lệnh start và của HEALTHCHECK (`infra/Dockerfile:82`); renderer không đặt cổng (0 token `PORT` trong `infra/render-app-spec.sh`) | `apps/web/lib/dev-login/gate.ts:54` (+3) | `.env.example:7` | không | không |
+| 24 | `PROCESS_ROLE` | config | W, D, K, M | od | od | - | không cần khi lệnh chạy của component truyền role (tham số thắng, `infra/entrypoint.sh:10`, export :17); nếu đặt: `web`, `discovery`, `worker`, `provision`, `migrate` (:87); image đặt `web` (`infra/Dockerfile:75`); "mỗi component một giá trị" của PLAN:211 chỉ là fallback | `apps/web/middleware.ts:40` (+ `apps/web/lib/request-policy.ts:41-44`) | `.env.example:8` | E:154-156 | không |
+| 25 | `TRUSTED_INGRESS_PROVIDER` | config | W, D | y | y | - | `digitalocean` (PLAN:211, E:164; được chấp nhận ở session-cookies.ts:381); ở production vắng hoặc giá trị lạ thì throw lúc dùng đầu tiên (:386-387); `direct` bị từ chối ở production (:382-384) | `apps/web/lib/session-cookies.ts:380` (+2) | `.env.example:13` | E:164 | không |
+| 26 | `TURBOPACK` | platform-set (Next) | W | never | never | - | E6 | `apps/web/lib/dev-login/env-policy.mjs:68` | không có | không | không |
+| 27 | `WORKER_HEARTBEAT_FILE` | config | K (+ `infra/Dockerfile:82`) | n | n | - | E7: default trong code (heartbeat.ts:43) | `apps/bot/src/heartbeat.ts:42` | `.env.example:94` (comment) | không | không |
+| 28 | `WORKER_ID` | config | K | n | n | - | E7: default là host name (heartbeat.ts:49) | `apps/bot/src/heartbeat.ts:48` | `.env.example:95` (comment) | không | không |
+| 29 | `ZALO_BOT_API_BASE` | config | W, K | n | n | - | E7 | `packages/db/src/zalo-bot-api.ts:45` | `.env.example:147` | không | không |
+| 30 | `__NEXT_PRIVATE_ORIGIN` | platform-set (Next) | W | never | never | - | E6 | `apps/web/lib/dev-login/gate.ts:53` | không có | không | không |
+| 31 | `DATABASE_URL_WEB` | secret (URL) | W | n | n | `app` | E7 | `infra/entrypoint.sh:26` | không có | không | không |
+| 32 | `DATABASE_URL_DISCOVERY` | secret (URL) | D | n | n | `readonly` | E7 | `infra/entrypoint.sh:31` | không có | không | không |
+| 33 | `DB_EXPECTED_ROLE_WEB` | config | W | n | n | - | E7 | `infra/entrypoint.sh:27` | không có | không | không |
+| 34 | `DB_EXPECTED_ROLE_DISCOVERY` | config | D | n | n | - | E7 | `infra/entrypoint.sh:32` | không có | không | không |
+
+- **Đọc bởi AWS SDK, không có reader trong code** (R2): `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`; secret; W, K khi `aws-kms`; S od, P od; `<secret, owner-entered>` chỉ khi nguồn credential owner chọn ở bước 8.1 (PLAN:197) là key tĩnh trong env, vì KMS client chỉ nhận region (`packages/db/src/secret-key-root.ts:71`); RES:78 ghi PR #50 có nêu cặp này; không có trong `.env.example`; F-2.
+
+## E4. Job migrate PRE_DEPLOY và tooling của owner
+
+`DATABASE_URL_MIGRATION` chỉ nằm ở job migrate PRE_DEPLOY, và ở job provision nếu chạy; không bao giờ ở W, D, K (E6). Renderer từ chối render khi có `DATABASE_URL_MIGRATION` ngoài job PRE_DEPLOY (`infra/render-app-spec.sh:59-65`). Đây là mặc định DD-129 (1) (`docs/standards/decisions.md:145`; PLAN:202, :212), lệch với E (D-4), chờ owner phê chuẩn ở bước 8.9 (PLAN:205). CLI của owner cũng đọc tên này, chạy trên máy owner, không phải component deploy: `scripts/outbox-dlq-replay.mjs:97`, `scripts/outbox-projector-enable.mjs:297` (bật projector, bước 8.8, PLAN:204, :212), `scripts/public-alias-moderate.mjs:98`.
+
+| Tên | Loại | Component | S | P | DB role | Quy tắc giá trị (D4) | Reader | `.env.example` | E nói | Drift |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `DATABASE_URL_MIGRATION` | secret (URL) | M (`infra/entrypoint.sh:78-85`); provision (:68-77) | y (chỉ M) | y (chỉ M) | `migration` (E:183) | `<URL, owner-entered>` + role `migration` | `packages/db/src/migrate.ts:415`; `apps/bot/src/provision-queue.ts:63` | không có, cố ý (comment `.env.example:78-82`) | E:183, E:195 | D-4 |
+
+## E5. GitHub secret, variable và tên tooling
+
+Không secret runtime nào vào GitHub (DD-129 mặc định (2), `docs/standards/decisions.md:145`; PLAN:213). Ở base ae06005 chưa có workflow deploy; workflow chỉ dùng secret `LINEAR_API_KEY` (`.github/workflows/linear-sync.yml:55`, không phải deploy, giữ nguyên). Tên GitHub dưới đây là tên trong hai workflow của PR #50 (RES:89); lane L67 đo lại khi viết workflow. Không tên nào ở E5 có trong `.env.example`. Viết tắt: guard = `apps/web/e2e/support/staging-golden-path-guard.ts`, renderer = `infra/render-app-spec.sh`.
+
+| Tên | Loại | Nơi đặt, ai dùng | Quy tắc giá trị (D4) | Nguồn |
+| --- | --- | --- | --- | --- |
+| `DIGITALOCEAN_ACCESS_TOKEN` | secret | GitHub secret, workflow deploy | `<secret, owner-entered>` | RES:89 |
+| `DOCR_REGISTRY` | config | GitHub variable | owner quyết | RES:89 |
+| `DO_VPC_ID` | config | GitHub variable | owner quyết | RES:89 |
+| `DO_APP_ID` | config | GitHub variable | owner quyết | RES:89 |
+| `STAGING_BASE_URL` | config (URL) | GitHub variable; máy owner khi chạy golden path (bước 8.6) | `<URL, owner-entered>`; guard đòi https và không có user info (guard :46, :21-25) | RES:89; guard :46 |
+| `PRODUCTION_BASE_URL` | config (URL) | như dòng trên | `<URL, owner-entered>`; tuỳ chọn, nếu đặt thì phải khác origin của staging (guard :51, :23, :29) | RES:89; guard :51 |
+| `APP_DOMAIN` | config | GitHub variable; input của renderer | owner quyết; tuỳ chọn, dạng hostname, rỗng thì giữ placeholder (renderer :30, :34-36) | RES:89; renderer :30 |
+| `IMAGE_DIGEST` | tooling-only | input của renderer, workflow L67 lấy từ build | không phải owner nhập; bắt buộc, dạng digest (renderer :28, :32) | renderer :28 |
+| `VPC_ID` | tooling-only | input của renderer, workflow L67 cung cấp | bắt buộc, dạng UUID (renderer :29, :33); PR #50 có biến `DO_VPC_ID` (RES:89) | renderer :29 |
+| `STAGING_GOLDEN_PATH` | tooling-only | máy owner, golden path staging (bước 8.6) | đúng chuỗi `1` (guard :45) | guard :45 |
+| `SMOKE_BASE_URL` | tooling-only | smoke trước deploy (bước 8.6, PLAN:202; lane L74) | `<URL, owner-entered>` | `scripts/smoke-predeploy.mjs:24`; `infra/smoke-check.sh:15` |
+| `SMOKE_TIMEOUT_MS` | tooling-only | như dòng trên | tuỳ chọn; có default trong code | `scripts/smoke-predeploy.mjs:25` |
+| `NEXT_PUBLIC_BUILD_ID` | tooling-only | lúc build image | không phải input runtime; có fallback lúc build (`apps/web/package.json:7`) | `scripts/stamp-sw.mjs:23` |
+
+## E6. Không bao giờ đặt
+
+| Tên | Không đặt ở | Vì sao | Nguồn |
+| --- | --- | --- | --- |
+| `PLEXCO_DEV_LOGIN` | mọi môi trường ngoài local | có mặt, kể cả rỗng, khi `NODE_ENV` không phải development thì app từ chối boot; dưới Turbopack cũng bị từ chối | `apps/web/next.config.mjs:17`; `apps/web/lib/dev-login/env-policy.mjs:48-49`, :59-62, :68-69; PLAN:214 |
+| `DATABASE_URL_MIGRATION` | W, D, K | chỉ job M giữ nó (E4) | `infra/render-app-spec.sh:59-65`; DD-129 (1) |
+| `GENDER_COLLECTION_ENABLED` | production, môi trường người dùng thật đầu tiên: vắng hoặc "false" | chỉ đúng "true" mới bật (`apps/web/app/api/me/profile/route.ts:32`); "true" của DD-141 chỉ là default local; bật ở môi trường thật chỉ sau trả lời pháp lý (bước 8.10, PLAN:206) | Q7 Phase 4 (`docs/standards/decisions.md:1898`, DD-150); DD-141 (decisions.md:133); PLAN:201, :202 |
+| `FLY_PROCESS_GROUP` | mọi component trên DigitalOcean | Fly tự đặt; có mặt thì ghi đè `PROCESS_ROLE` | `infra/entrypoint.sh:10` |
+| `TURBOPACK` | W | Next tự đặt khi chạy Turbopack; dev-login từ chối khi có nó | `apps/web/lib/dev-login/env-policy.mjs:68-69` |
+| `__NEXT_PRIVATE_ORIGIN` | W | Next tự ghi | `apps/web/lib/dev-login/gate.ts:52-53` |
+
+## E7. Không nhập
+
+- **10 tên `.env.example` có mà không code nào đọc ở base ae06005** (PLAN:214): `DATABASE_URL_LISTEN` (`.env.example:66`; D-1), `FACEBOOK_APP_ID` (:115), `FACEBOOK_APP_SECRET` (:116), `MESSENGER_PAGE_ACCESS_TOKEN` (:117), `MESSENGER_VERIFY_TOKEN` (:118), `MESSENGER_APP_SECRET` (:119), `SEPAY_WEBHOOK_SECRET` (:126; chỉ một dòng comment ở `infra/docker-compose.yml:54`), `SESSION_SECRET` (:154), `SENTRY_DSN` (:170), `DRIZZLE_STUDIO_PORT` (:174). Đo: `git grep -w` mười tên này trên apps, packages, scripts, infra cho đúng 1 hit, là dòng comment đó.
+- **Có reader nhưng default của code là đủ** (PLAN:214): `WORKER_HEARTBEAT_FILE` (`apps/bot/src/heartbeat.ts:43`), `WORKER_ID` (host name, :49), `ZALO_BOT_API_BASE` (vắng thì dùng base mặc định, `packages/db/src/zalo-bot-api.ts:48`; giá trị khác phải là origin http loopback, không thì throw, :49-56).
+- **`ENCRYPTION_KEY`** (`.env.example:132`): Q8 chọn `aws-kms`, khi đó code không đọc nó; chỉ nhánh fallback key file đọc (`packages/db/src/secret-key-root.ts:11`, :36, :48-56), và nếu `KMS_PROVIDER` vắng hoặc `local` mà thiếu nó thì throw lúc dùng key đầu tiên (:50-53). Chỉ nhập (`<secret, owner-entered>`) nếu owner đảo Q8. E:385-387 nói nó chỉ cho local; code không kiểm điều đó (file đó không đọc `NODE_ENV`).
+- **4 tên dạng Fly**: `DATABASE_URL_WEB`, `DATABASE_URL_DISCOVERY`, `DB_EXPECTED_ROLE_WEB`, `DB_EXPECTED_ROLE_DISCOVERY` có reader (`infra/entrypoint.sh:26-27`, :31-32), nhưng env riêng từng component (E:168) làm chúng thừa; vắng thì entrypoint giữ `DATABASE_URL` và `DB_EXPECTED_ROLE` chung (:21-22); chúng thuộc template Fly (`infra/fly.toml:35-38`).
+- **Chỉ cho test**: `DATABASE_URL_TEST` (`.env.example:77`; `scripts/db-reset-test.mjs:744`) và 20 tên chỉ test đọc, liệt kê trong lệnh dưới; đo ở base: 37 hit, 20 tên, 0 hit ngoài file test, e2e hoặc config Playwright.
+- **14 tên code đọc mà `.env.example` không liệt kê** (finding; lane này không sửa `.env.example`): `DATABASE_URL_MIGRATION` (cố ý, `.env.example:78-82`; E4), `NEXT_PUBLIC_BUILD_ID`, `SMOKE_BASE_URL`, `SMOKE_TIMEOUT_MS`, `IMAGE_DIGEST`, `VPC_ID`, `APP_DOMAIN` (E5), `FLY_PROCESS_GROUP`, `TURBOPACK`, `__NEXT_PRIVATE_ORIGIN` (E6) và 4 tên dạng Fly ở trên.
+
+```text
+git grep -n -o -E "process\.env\.(CI|DEV_LOGIN_E2E_BASE_URL|E2E_PG_PORT|E2E_PORT|E2E_SKIP_BUILD|GOLDEN_PATH_ALLOW_SEEDED_CLUB|GOLDEN_PATH_BASE_URL|GOLDEN_PATH_SCREENSHOT_DIR|HOME|OUTBOX_SYNC_LAG_MEASURE|OUTBOX_SYNC_LAG_OUT|PATH|PGOPTIONS|PUBLIC_CARD_PROOF_BASE_URL|PUBLIC_CARD_PROOF_DB_URL|REALTIME_LIVE_BASE_URL|RPW_CONFIG|SHARE_PROOF_BASE_URL|SHARE_PROOF_DB_URL|TZ)([^A-Z0-9_]|$)" -- apps packages scripts infra
+```
+
+## E8. Drift và finding (ghi nhận, không sửa ở đây)
+
+| ID | Doc nói | Code hoặc quyết định nói | Chuyển cho |
+| --- | --- | --- | --- |
+| D-1 URL listener | E:154, E:184, E:194 nêu URL listener riêng (`DATABASE_URL_LISTEN`); PLAN:254 vẫn ghi URL listener | không có reader `DATABASE_URL_LISTEN` (PLAN:214 cũng xếp nó vào tên không reader); client LISTEN SSE của web lấy từ pool `DATABASE_URL` và giữ luôn (`apps/web/lib/realtime-listener.ts:44`, :211-212, :241-242; `apps/web/lib/session-cookies.ts:54-59`), nên URL web phải cho phép giữ một session LISTEN, trong khi E:192 gọi nó là pooled | L63 (thêm L78 nếu đổi code); R1 |
+| D-2 key DB của discovery | E:155, E:192 và comment `infra/entrypoint.sh:3`, :61 đặt URL `readonly` của discovery lên `DATABASE_URL`; E không nêu `DISCOVERY_DATABASE_URL` | discovery mở pool riêng từ `DISCOVERY_DATABASE_URL` và assert role `readonly` (`apps/web/lib/discovery-route-support.ts:42-44`, :52), trong mọi process phục vụ discovery, kể cả web (`apps/web/lib/request-policy.ts:47-48`); component discovery không đọc `DATABASE_URL` | L63 |
+| D-3 topology | E:152-159: Day-1 web 2, discovery 2, worker 1 | DD-154 (`docs/standards/decisions.md:120`), PLAN:140: production web 1, worker 1, không discovery | L63 |
+| D-4 job migration | E:183, E:384, E:408, E:425-430: `DATABASE_URL_MIGRATION` chỉ trong job CI được bảo vệ | `infra/render-app-spec.sh:59-65`, `infra/entrypoint.sh:78-85`: job migrate PRE_DEPLOY; DD-129 (1) ghi độ lệch này, chờ owner phê chuẩn (`docs/standards/decisions.md:145`; PLAN:202, :205) | L63 |
+| F-1 | `infra/fly.toml` là template fallback có giới hạn (:1, :4; E:530) | không phải đích deploy, không dùng làm bằng chứng component | không |
+| F-2 | không code, `.env.example` hay PLAN:211 nào nêu nguồn credential AWS | KMS client chỉ nhận region (`packages/db/src/secret-key-root.ts:71`) | R2 |
+
+**Câu hỏi owner còn mở** (ngoài lane này; ghi hành vi hiện tại, không phải câu trả lời):
+
+- **R1** (owner; lane L63, L70, L78): `DATABASE_URL` của web được dùng pool mode nào khi listener SSE giữ một session LISTEN (D-1; RES:65 gọi đây là câu hỏi mở của §7.6). Hiện tại: code giữ một client LISTEN lấy từ pool `DATABASE_URL` (`apps/web/lib/realtime-listener.ts:211-212`, :241-242); file này chỉ ghi role `app` và sự thật đó, không chọn pool mode. Đóng khi có bản ghi quyết định §7.6.
+- **R2** (owner, bước 8.1, PLAN:197): nguồn credential AWS cho KMS (F-2). Hiện tại: KMS client chỉ nhận region, nên AWS SDK tìm credential theo chuỗi mặc định của nó (`packages/db/src/secret-key-root.ts:71`); cặp `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` ở E3 chỉ cần khi owner chọn key tĩnh trong env. Đóng khi owner chọn ở bước 8.1.
