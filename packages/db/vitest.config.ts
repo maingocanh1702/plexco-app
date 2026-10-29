@@ -10,6 +10,7 @@ export const isolatedTestFiles = [
   "src/identity-link-web-nobypass.test.ts",
   "src/me-player-reads-nobypass.test.ts",
   "src/public-alias-nobypass.test.ts",
+  "src/discovery-rate-limit-definer-nobypass.test.ts",
 ];
 
 export default defineConfig({

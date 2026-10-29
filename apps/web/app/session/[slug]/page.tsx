@@ -33,7 +33,7 @@ export default async function PublicSessionSharePage({
   const request = new Request("http://localhost/session", { headers: await headers() });
   // The DD-83 shape, a copy of route.ts:5; the lookup definer re-checks it (0061:447-461).
   const row =
-    discoveryRateLimited(request) || !/^[A-Za-z0-9_-]{22}$/.test(slug)
+    (await discoveryRateLimited(request)) || !/^[A-Za-z0-9_-]{22}$/.test(slug)
       ? null
       : await readDiscoveryListingByShareSlug(await discoveryPool(), slug);
   if (!row) notFound();

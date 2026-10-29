@@ -1,5 +1,5 @@
 import { format } from "node:util";
-import { readDiscoveryListingByShareSlug, type DiscoveryListingRow } from "@plexco/db";
+import { createDb, readDiscoveryListingByShareSlug, type DiscoveryListingRow } from "@plexco/db";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DiscoveryListing } from "../../../lib/discover-api";
@@ -10,6 +10,7 @@ const NOT_FOUND = vi.hoisted(() => new Error("notFound() sentinel"));
 const captured = vi.hoisted(() => [] as object[]);
 vi.mock("@plexco/db", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@plexco/db")>()),
+  createDb: vi.fn(), // the limiter's pool (R8): the real limiter runs on the keyed fake below
   readDiscoveryListingByShareSlug: vi.fn(),
 }));
 vi.mock("../../../lib/discovery-route-support", async (importOriginal) => ({
@@ -48,11 +49,26 @@ const LISTING_KEYS: Record<keyof DiscoveryListing, true> = {
 const DD41 = "sessionType levelMinRank levelMaxRank levelStrict genderRestriction ageMin ageMax";
 const ALLOWED = new Set([...Object.keys(LISTING_KEYS), ...DD41.split(" ")]); // DTO :228-241
 const LOGS = ["log", "info", "warn", "error"] as const;
+// R9: the DB limiter as a keyed fake, reset per test: 0 while a key has at most 60 hits, then 30.
+const hits = new Map<string, number>();
+const POOL = {
+  query: async (sql: string, [key = ""]: string[] = []) => {
+    if (sql !== "SELECT discovery_rate_limit_hit($1)") {
+      return { rows: [{ u: "readonly", s: "readonly" }] };
+    }
+    const count = (hits.get(key) ?? 0) + 1;
+    hits.set(key, count);
+    return { rows: [{ discovery_rate_limit_hit: count > 60 ? 30 : 0 }] };
+  },
+};
 const read = vi.mocked(readDiscoveryListingByShareSlug);
 const run = async (slug: string) =>
   renderToStaticMarkup(await PublicSessionSharePage({ params: Promise.resolve({ slug }) }));
 beforeEach(() => {
   resetDiscoveryRouteSupportForTests();
+  hits.clear();
+  vi.stubEnv("DISCOVERY_DATABASE_URL", "postgres://readonly@127.0.0.1:5432/plexco_test");
+  vi.mocked(createDb).mockReturnValue({ pool: POOL } as never);
   read.mockReset();
   captured.length = 0;
   for (const m of LOGS) vi.spyOn(console, m).mockImplementation(() => {});
@@ -60,6 +76,7 @@ beforeEach(() => {
 afterEach(() => {
   const out = LOGS.flatMap((m) => vi.mocked(console[m]).mock.calls).map((a) => format("%s", ...a));
   expect(out.filter((line) => [SLUG, ...BAD].some((s) => line.includes(s)))).toEqual([]); // (6)
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 it("(1) hands ListingSummary whitelist keys only and links on without a Referer", async () => {
@@ -84,10 +101,22 @@ it("(3) answers a null read, a malformed slug and the 61st call with the SAME no
   for (const slug of BAD) await expect(run(slug)).rejects.toBe(NOT_FOUND);
   expect(read).toHaveBeenCalledTimes(1); // a malformed slug never reaches the read
   resetDiscoveryRouteSupportForTests(); // a fresh window: 60 calls pass, the 61st is refused unread
+  hits.clear();
   read.mockReset().mockResolvedValue(ROW);
   for (let i = 0; i < 60; i += 1) await run(SLUG);
   await expect(run(SLUG)).rejects.toBe(NOT_FOUND);
   expect(read).toHaveBeenCalledTimes(60);
+});
+it("L73 A-18: a limiter 503 (its query rejects) gives the SAME notFound() as (3), unread", async () => {
+  await expect(run("short")).rejects.toBe(NOT_FOUND); // warms the pool (its role probe), unread
+  vi.spyOn(POOL, "query").mockRejectedValueOnce(new Error("limiter query failed"));
+  await expect(run(SLUG)).rejects.toBe(NOT_FOUND);
+  expect(read).not.toHaveBeenCalled();
+});
+it("L73 A-18: a limiter throw (the role probe answers no row) rejects to the error boundary, unread", async () => {
+  vi.mocked(createDb).mockReturnValue({ pool: { query: async () => ({ rows: [] }) } } as never);
+  await expect(run(SLUG)).rejects.not.toBe(NOT_FOUND);
+  expect(read).not.toHaveBeenCalled();
 });
 it("(4) hands a well-formed slug to exactly one read on the readonly pool", async () => {
   read.mockResolvedValue(ROW);

@@ -214,6 +214,17 @@ export const rateLimitHits = pgTable("rate_limit_hits", {
   atIdx: index("idx_rate_limit_at").on(t.at),
 }));
 
+// UNLOGGED in 0075 (a crash resets at most the current window), an attribute that lives only in
+// the SQL migration. Definer-only, no grants: RLS on without FORCE and no policy, so only
+// discovery_rate_limit_hit (EXECUTE to readonly only) reads or writes it.
+export const discoveryRateLimitCounters = pgTable("discovery_rate_limit_counters", {
+  windowId: bigint("window_id", { mode: "number" }).notNull(),
+  bucket: text("bucket").notNull(),
+  hits: integer("hits").notNull(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.windowId, t.bucket] }),
+}));
+
 /**
  * Shared append-only auth audit — column-for-column per the pinned shape in
  * B0 §3.1/§8.3, plus the v1.88 session_epoch_before/after amendment. This

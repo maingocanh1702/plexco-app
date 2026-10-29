@@ -11,7 +11,7 @@ import { err, NO_STORE, ok } from "./api-envelope";
 import { decodeDiscoveryCursor, isCalendarDay } from "./discovery-cursor";
 import { log } from "./log";
 import { SESSION_NOT_FOUND_MESSAGE } from "./session-command-route";
-import { clientIp } from "./session-cookies";
+import { clientIp, type TrustedIngressProvider } from "./session-cookies";
 
 /**
  * Shared by the anonymous discovery routes (readiness 4.2-4.5, 4.7): the readonly handle, the
@@ -26,6 +26,11 @@ let discoveryReady: Promise<Pool> | null = null;
 // One probe (security N-1): Postgres answers a row only while current_user is NOSUPERUSER NOBYPASSRLS.
 const ROLE_PROBE =
   "SELECT current_user AS u, session_user AS s FROM pg_roles r WHERE r.rolname = current_user AND NOT r.rolsuper AND NOT r.rolbypassrls";
+// Readiness 6.3 (R6): the server cancels a discovery statement past 2 s (57014), a saturated pool
+// rejects an acquire after 2 s, and the client gives up 0.5 s after the server cancel was due.
+const DISCOVERY_STATEMENT_TIMEOUT_MS = 2_000;
+const DISCOVERY_ACQUIRE_TIMEOUT_MS = 2_000;
+const DISCOVERY_QUERY_TIMEOUT_MS = 2_500;
 
 /**
  * The readonly pool, behind an always-on, once-per-process assert awaited before the first query:
@@ -41,7 +46,12 @@ export function discoveryPool(): Promise<Pool> {
 async function openDiscoveryPool(): Promise<Pool> {
   const url = process.env.DISCOVERY_DATABASE_URL;
   if (!url) throw new Error("DISCOVERY_DATABASE_URL is not set: refusing to serve discovery");
-  discoveryHandle ??= createDb(url, { max: 5 });
+  discoveryHandle ??= createDb(url, {
+    max: 5,
+    statement_timeout: DISCOVERY_STATEMENT_TIMEOUT_MS,
+    connectionTimeoutMillis: DISCOVERY_ACQUIRE_TIMEOUT_MS,
+    query_timeout: DISCOVERY_QUERY_TIMEOUT_MS,
+  });
   const { rows } = await discoveryHandle.pool
     .query<{ u: string; s: string }>(ROLE_PROBE)
     .catch((error: unknown) => {
@@ -56,54 +66,161 @@ async function openDiscoveryPool(): Promise<Pool> {
   return discoveryHandle.pool;
 }
 
-const DISCOVERY_RATE_LIMIT = 60;
-const DISCOVERY_RATE_WINDOW_MS = 60_000;
-const DISCOVERY_RATE_MAX_KEYS = 10_000;
-// Every window has the same length, so insertion order is expiry order: a sweep stops at the
-// first live window. Counters only, never a cache of responses.
-const discoveryWindows = new Map<string, { count: number; resetAt: number }>();
+// Readiness 6.3 and 8.1: 5 failures in a fixed 10 s window open the breaker for 30 s, then 1 probe.
+const DISCOVERY_BREAKER_FAILURES = 5;
+const DISCOVERY_BREAKER_WINDOW_MS = 10_000;
+const DISCOVERY_BREAKER_OPEN_MS = 30_000;
+const DISCOVERY_BREAKER_HALF_OPEN_PROBES = 1;
+
+interface DiscoveryBreaker {
+  state: "CLOSED" | "OPEN" | "HALF_OPEN";
+  failures: number; // counted in the fixed window that ends at windowEndsAt
+  windowEndsAt: number;
+  openUntil: number;
+  probes: number; // admitted in the current HALF_OPEN period
+  generation: number; // carried by every admitted call: a stale outcome is ignored (row 11)
+}
+const closedBreaker = (generation: number): DiscoveryBreaker => ({
+  state: "CLOSED",
+  failures: 0,
+  windowEndsAt: 0,
+  openUntil: 0,
+  probes: 0,
+  generation,
+});
+// One breaker per process (readiness 8.1), on Date.now() so fake timers drive it.
+let breaker = closedBreaker(0);
+
+/** The empty 503 (readiness 8.2): no-store, with retry-after when the breaker refused the call. */
+function discoveryUnavailable(retryAfterSeconds?: number): Response {
+  const headers: Record<string, string> = { "cache-control": NO_STORE };
+  if (retryAfterSeconds !== undefined) headers["retry-after"] = String(retryAfterSeconds);
+  return new Response(null, { status: 503, headers });
+}
+
+function openBreaker(now: number): void {
+  breaker.state = "OPEN";
+  breaker.openUntil = now + DISCOVERY_BREAKER_OPEN_MS;
+  breaker.generation += 1;
+  log.warn("discovery.breaker.open"); // once per opening; no IP, key, slug, id or SQLSTATE
+}
+
+/** Admission (readiness 8.1 rows 1 and 6-8, 12): an admitted call's generation, else the 503. */
+function admitDiscoveryCall(now: number): number | Response {
+  if (breaker.state === "OPEN" && now >= breaker.openUntil) {
+    breaker.state = "HALF_OPEN"; // row 7
+    breaker.probes = 0;
+    breaker.generation += 1;
+  }
+  switch (breaker.state) {
+    case "CLOSED":
+      return breaker.generation; // row 1
+    case "OPEN":
+      return discoveryUnavailable(Math.ceil((breaker.openUntil - now) / 1000)); // row 6
+    case "HALF_OPEN":
+      if (breaker.probes >= DISCOVERY_BREAKER_HALF_OPEN_PROBES) return discoveryUnavailable(1); // row 8
+      breaker.probes += 1; // row 7: this call is the probe
+      return breaker.generation;
+    default: {
+      const unknown: never = breaker.state;
+      log.error("discovery.breaker.state.unknown", { state: String(unknown) });
+      openBreaker(now); // row 12: as OPEN, a real open period, then rows 6, 7 and 9
+      return discoveryUnavailable(Math.ceil(DISCOVERY_BREAKER_OPEN_MS / 1000));
+    }
+  }
+}
+
+/** An admitted call's outcome (readiness 8.1 rows 2-5 and 9-11). */
+function settleDiscoveryCall(generation: number, failed: boolean): void {
+  if (generation !== breaker.generation) return; // row 11: a stale outcome changes nothing
+  const now = Date.now();
+  if (breaker.state === "HALF_OPEN") {
+    // row 10: the probe failed, a fresh open period; row 9: it succeeded, closed with count 0
+    if (failed) openBreaker(now);
+    else breaker = closedBreaker(breaker.generation + 1);
+    return;
+  }
+  if (!failed) return; // row 2: a success keeps the count
+  if (now >= breaker.windowEndsAt) {
+    breaker.failures = 0; // row 3: a fixed window from now
+    breaker.windowEndsAt = now + DISCOVERY_BREAKER_WINDOW_MS;
+  }
+  breaker.failures += 1; // row 4
+  if (breaker.failures >= DISCOVERY_BREAKER_FAILURES) openBreaker(now); // row 5
+}
 
 /**
- * null while `discover:<key>` is within 60 requests per fixed 60 s window, else the 429; the key
- * is the clientIp, an IPv6 one cut to its /64 (rateLimitKey). clientIp throws on a production
- * ingress misconfiguration (the route answers 500).
- * ponytail: in-process counters, so the ceiling is per process and per replica and resets on
- * restart (locally every request shares the one bucket `local`). The map holds at most 10 000
- * live keys, and a full map answers 429 to every new key until windows expire (fail closed).
- * One holder of an IPv6 /48 (65 536 /64 keys, for example a free tunnel-broker allocation) or
- * many IPv4 sources can fill it, and then every new visitor is refused until up to one window
- * after the filling stops. That is the readiness O-6 ceiling of an in-process, per-replica
- * limiter, so the exposure precondition is: no process that serves /api/discover* (the discovery
- * process or the web process, each holding its own copy of this map) is exposed beyond local
- * until this in-process limiter is replaced by the O-6 readonly-executable DB limiter (an owner
- * migration), or by an ingress limit that counts each IPv6 /48 as one client; that is the upgrade
- * path. A per-IP edge limit in front of this map does not close the fill (one request per /64 per
- * window is enough). A per-/48 sub-cap was considered and not built, because the durable limiter
- * replaces this one.
+ * The ONE choke point of every discovery DB call (readiness 8.1): the limiter and the API reads.
+ * The breaker admits the call or answers its 503. A rejection of an admitted call is a failure and
+ * any resolved value a success; a counted failure rethrows, or answers `failed()` when given. A
+ * discoveryPool() rejection is not counted, bar the probe's (row 10), and rethrows (the base 500).
  */
-export function discoveryRateLimited(request: Request): Response | null {
-  const key = `discover:${rateLimitKey(clientIp(request))}`;
-  const now = Date.now();
-  let bucket = discoveryWindows.get(key);
-  if (bucket && bucket.resetAt <= now) {
-    discoveryWindows.delete(key);
-    bucket = undefined;
+export async function discoveryQuery<T>(
+  run: (pool: Pool) => Promise<T>,
+  failed?: () => Response,
+): Promise<T | Response> {
+  const generation = admitDiscoveryCall(Date.now());
+  if (generation instanceof Response) return generation;
+  const pool = await discoveryPool().catch((error: unknown) => {
+    if (breaker.state === "HALF_OPEN") settleDiscoveryCall(generation, true);
+    throw error;
+  });
+  try {
+    const value = await run(pool);
+    settleDiscoveryCall(generation, false);
+    return value;
+  } catch (error) {
+    settleDiscoveryCall(generation, true);
+    if (failed) return failed();
+    throw error;
   }
-  if (!bucket) {
-    for (const [staleKey, stale] of discoveryWindows) {
-      if (stale.resetAt > now) break;
-      discoveryWindows.delete(staleKey);
+}
+
+// Mirrors 0075:66 DISCOVERY_RATE_WINDOW_SECONDS; 0075:73's retry-after is at most one window.
+const DISCOVERY_RATE_WINDOW_SECONDS = 60;
+
+/**
+ * null when the request may proceed, else its answer (readiness 6.1, 8.2); every discovery call
+ * site awaits it before its read. The durable limiter `discovery_rate_limit_hit` (0075) counts
+ * the key per clock-aligned 60 s window in one table for every process and replica, and
+ * closes the /64 fill: one /48 never holds more than half of the table, and a full table refuses
+ * every new key (fail closed). The key is discoveryRateLimitKey(request), passed bare (0075:82-85),
+ * never a slug or a listing id, and is never logged. 0 => null; 1..60 => the 429 with that
+ * retry-after; any other result, a query failure or the breaker => the empty 503. A clientIp
+ * misconfiguration (production) or a discoveryPool() failure rejects: the caller's 500.
+ */
+export async function discoveryRateLimited(request: Request): Promise<Response | null> {
+  const key = discoveryRateLimitKey(request);
+  const retryAfter = await discoveryQuery(async (pool) => {
+    const { rows } = await pool.query<{ discovery_rate_limit_hit: unknown }>(
+      "SELECT discovery_rate_limit_hit($1)",
+      [key],
+    );
+    const value = rows[0]?.discovery_rate_limit_hit;
+    // Only an integer in 0..DISCOVERY_RATE_WINDOW_SECONDS is an answer: NULL (Number(null) is 0)
+    // fails closed.
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > DISCOVERY_RATE_WINDOW_SECONDS
+    ) {
+      throw new Error("discovery limiter: invalid result");
     }
-    // Still full of live windows: limited (fail closed); each of them ends within one window.
-    if (discoveryWindows.size >= DISCOVERY_RATE_MAX_KEYS) {
-      return rateLimitedResponse(DISCOVERY_RATE_WINDOW_MS / 1000);
-    }
-    bucket = { count: 0, resetAt: now + DISCOVERY_RATE_WINDOW_MS };
-    discoveryWindows.set(key, bucket);
-  }
-  bucket.count += 1;
-  if (bucket.count <= DISCOVERY_RATE_LIMIT) return null;
-  return rateLimitedResponse(Math.ceil((bucket.resetAt - now) / 1000));
+    return value;
+  }, discoveryUnavailable);
+  if (typeof retryAfter !== "number") return retryAfter;
+  return retryAfter === 0 ? null : rateLimitedResponse(retryAfter);
+}
+
+/**
+ * The ONE builder of the limiter key, and the whole key expression of discoveryRateLimited: the
+ * clientIp value (an undefined provider keeps clientIp's default), an IPv6 one cut to its /64
+ * (rateLimitKey). 0075:82-85 accepts only these bare forms and RAISEs 22023 on any other, a
+ * `discover:` prefix included; discovery-rate-limit-key-db.test.ts pins each form against it.
+ */
+export function discoveryRateLimitKey(request: Request, provider?: TrustedIngressProvider): string {
+  return rateLimitKey(clientIp(request, provider));
 }
 
 /**
@@ -277,8 +394,9 @@ export function discoveryServerError(): Response {
 
 /**
  * One-listing GET (readiness 4.5), shared by the detail and share routes so both answer alike:
- * the limiter, the shape check before any DB call, then the whitelist `{ listing }` or the ONE
- * 404. Any failure is the empty 500; the key is never logged.
+ * the limiter (keyed by client IP, never the request key) is the one DB call before the shape
+ * check, then the read through the breaker gives the whitelist `{ listing }` or the ONE 404. Any
+ * other failure is the empty 500; the key is never logged.
  */
 export async function serveDiscoveryListing(
   request: Request,
@@ -287,19 +405,25 @@ export async function serveDiscoveryListing(
   read: (pool: Pool, key: string) => Promise<DiscoveryListingRow | null>,
 ): Promise<Response> {
   try {
-    const limited = discoveryRateLimited(request);
+    const limited = await discoveryRateLimited(request);
     if (limited) return limited;
     if (!wellFormed(key)) return discoveryNotFound();
-    const row = await read(await discoveryPool(), key);
+    const row = await discoveryQuery((pool) => read(pool, key));
+    if (row instanceof Response) return row;
     return row ? ok({ listing: toDiscoveryListingDto(row) }) : discoveryNotFound();
   } catch {
     return discoveryServerError();
   }
 }
 
-/** Test seam: forget the limiter windows and the readonly handle, a poisoned one included. */
+/** Test seam: clear the breaker and forget the readonly handle, a poisoned one included. */
 export function resetDiscoveryRouteSupportForTests(): void {
-  discoveryWindows.clear();
+  breaker = closedBreaker(breaker.generation + 1); // a call still in flight settles as stale
   discoveryHandle = null;
   discoveryReady = null;
+}
+
+/** Test seam (readiness 8.1 rows 10, 12): write only breaker.state, an unknown one included. */
+export function setDiscoveryBreakerStateForTests(state: string): void {
+  breaker.state = state as DiscoveryBreaker["state"];
 }

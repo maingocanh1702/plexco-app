@@ -23,11 +23,23 @@ export interface DbHandle {
   close: () => Promise<void>;
 }
 
-export function createDb(connectionString: string, options?: { max?: number }): DbHandle {
+/** Pool settings under pg's own names; the timeouts are milliseconds and reach pg.Pool only when given. */
+export interface CreateDbOptions {
+  max?: number;
+  statement_timeout?: number;
+  connectionTimeoutMillis?: number;
+  query_timeout?: number;
+}
+
+export function createDb(connectionString: string, options?: CreateDbOptions): DbHandle {
   if (!connectionString) {
     throw new Error("createDb: a role-scoped connection string is required");
   }
-  const pool = new pg.Pool({ connectionString, max: options?.max ?? 10 });
+  const config: pg.PoolConfig = { connectionString, max: options?.max ?? 10 };
+  for (const key of ["statement_timeout", "connectionTimeoutMillis", "query_timeout"] as const) {
+    if (options?.[key] !== undefined) config[key] = options[key];
+  }
+  const pool = new pg.Pool(config);
   const db = drizzle(pool, { schema });
   return { db, pool, close: () => pool.end() };
 }
