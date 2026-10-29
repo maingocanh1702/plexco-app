@@ -5859,7 +5859,8 @@ notes: |
 
 ## task: request-id-log-context-auth-onboarding
 title: Gắn request id + tenant id vào log cho route auth và onboarding (hiện chỉ có ở `handleSessionCommand`)
-status: planned
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-10-30). Was: planned
 risk: P2
 change_class: code
 depends_on: []
