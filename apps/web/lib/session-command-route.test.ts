@@ -24,9 +24,10 @@ import ts from "typescript";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWithLang, t } from "@plexco/core/i18n";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ok } from "./api-envelope";
 import { log } from "./log";
+import { captureConsoleSinks } from "./log-capture.testkit";
 import {
   JOIN_REQUEST_CANCEL_PERSON_LIMIT,
   SESSION_JOIN_PERSON_LIMIT,
@@ -1715,14 +1716,7 @@ it.each(["auth", "csrf", "tenant", "actor", "association", "quota"] as const)(
 // L68 A-12 (D6, D9, D10, D12): one wrapped request is traceable end to end. The REAL logger, no
 // mock of ./log; its three console sinks are captured and silenced.
 describe("L68 A-12 — the session-command family runs inside the request log context", () => {
-  beforeEach(() => {
-    for (const sink of ["error", "warn", "log"] as const) {
-      vi.spyOn(console, sink).mockImplementation(() => {});
-    }
-  });
-  afterEach(() => vi.restoreAllMocks());
-  const written = () =>
-    JSON.stringify([console.error, console.warn, console.log].map((s) => vi.mocked(s).mock.calls));
+  const { written, probes: eventLines } = captureConsoleSinks();
 
   it("body meta.requestId = the x-request-id header = the log line's request_id", async () => {
     // Upper-case ?tenant=: the gate lower-cases it, so tenant_id === TENANT proves the line's
@@ -1736,11 +1730,7 @@ describe("L68 A-12 — the session-command family runs inside the request log co
     });
 
     const body = (await response.json()) as { meta: { requestId: string } };
-    const probes = vi
-      .mocked(console.error)
-      .mock.calls.map((call) => String(call[0]))
-      .filter((line) => line.includes('"event":"l68.probe"'))
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const probes = eventLines("l68.probe");
     expect(probes).toHaveLength(1);
     expect(body.meta.requestId).toBe("l68-req-abcdef");
     expect(response.headers.get("x-request-id")).toBe("l68-req-abcdef");
