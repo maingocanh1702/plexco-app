@@ -5,7 +5,7 @@
 # `next dev` (e2e/public-share-page.config.ts) and does all host work; phase 2 runs `next build` + `next start`
 # (e2e/public-share-page-prod.config.ts) to pin the production headers, then suspends the tenant. Phase 1 hands
 # phase 2 the share paths and the host's session token in a 0600 file in a `mktemp -d` dir; only the file's path
-# travels (SHARE_PROOF_STATE_FILE), and the trap deletes the dir after the database drop. TEST-ONLY, never run in
+# travels (SHARE_PROOF_STATE_FILE), and the trap deletes the dir, then drops the database. TEST-ONLY, never run in
 # CI: no workflow names this file or either config. The one command, from the repo root, under the session DB/e2e
 # lock:
 #   bash apps/web/e2e/public-share-page-proof.sh
@@ -55,6 +55,13 @@ echo "databases BEFORE:"; list || die "listing BEFORE"
 RC=1 # non-zero until phase 2's own code is known: an early stop, INT or TERM never reads as a pass
 cleanup() {
   trap - EXIT INT TERM
+  # Bearer tokens: the state file's dir goes first, it does not depend on the drop; measured (unset = never created).
+  if [ -n "${STATE_DIR:-}" ] && [ -d "$STATE_DIR" ]; then rm -rf "$STATE_DIR"; fi
+  if [ -n "${STATE_DIR:-}" ] && [ -e "$STATE_DIR" ]; then
+    echo "state dir removed: no"; RC=1
+  else
+    echo "state dir removed: yes"
+  fi
   # Playwright's webServers have already stopped; FORCE only ends leftover sessions on the scratch DB.
   sql postgres "DROP DATABASE IF EXISTS $DB WITH (FORCE)"
   local after
@@ -65,13 +72,6 @@ cleanup() {
     echo "scratch database dropped: yes"
   else
     echo "scratch database dropped: no"; RC=1
-  fi
-  # The state file holds bearer tokens: its dir goes after the drop, measured (unset = never created).
-  if [ -n "${STATE_DIR:-}" ] && [ -d "$STATE_DIR" ]; then rm -rf "$STATE_DIR"; fi
-  if [ -n "${STATE_DIR:-}" ] && [ -e "$STATE_DIR" ]; then
-    echo "state dir removed: no"; RC=1
-  else
-    echo "state dir removed: yes"
   fi
   exit "$RC"
 }
