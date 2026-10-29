@@ -7818,3 +7818,22 @@ merged_probe: null
 notes: |
   Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: lane L74 turns infra/smoke-check.sh (lane L65, 26 lines at the base, curl and jq) into a thin adapter of scripts/smoke-predeploy.mjs, the ONE smoke definition (GET /healthz 200 with a JSON content type and exactly one JSON document whose `ok` is the boolean true, GET / 2xx as text/html, GET /manifest.webmanifest 2xx as application/manifest+json; a 3xx fails; no message quotes a body). The call shape stays `infra/smoke-check.sh https://<origin>` and its https-only refusal (exit 1) still runs before any request; the adapter then runs `node scripts/smoke-predeploy.mjs` with `SMOKE_BASE_URL=<origin>` and `SMOKE_TIMEOUT_MS=15000`, the whole smoke up to 7 times 10 s apart, and exits 0 only on a pass, else with the smoke's last code (1 a failed check, 2 a bad invocation); curl's codes 7, 22 and 28 no longer occur. For lane L67 (beside the row p5-deploy-awaits-deployment-id-and-keeps-spec-out-of-logs at docs/autopilot-backlog.md:7752): (1) the runner needs node 22 (package.json:6 engines; .github/workflows/ci.yml:63 and :123 use node-version 22) and the repo checkout, since the adapter runs the smoke script from the checkout it sits in, and no longer curl or jq; (2) decide whether the whole-smoke retry stays once the workflow awaits its own deployment by id; its worst case is about 7 x (3 x 15 s + 10 s). Done when both deploy workflows call the adapter with the https origin on a runner with node and the checkout, and that lane records the retry decision.
   Source: lane L74 (p5-staging-smoke-golden-path), docs/sessions/web-mvp-phase5-readiness-p5-staging-smoke-golden-path.md section 11 row 1 (from D2 in section 4 and K7 in section 9 there).
+
+## task: p5-environments-setup-drifts-from-env-manifest
+title: docs/standards/environments-setup.md disagrees with the code on four environment points that the L64 env manifest measured
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/standards/environments-setup.md, infra/entrypoint.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base ae06005c807b758246e9ebff294d6943edc1c440 (E = docs/standards/environments-setup.md). The env manifest docs/runbooks/env-manifest-staging-production.md follows the code (rung 1) and lists these four drifts in its section E8 without fixing the standards doc:
+  D-1 listener URL: E:154, E:184 and E:194 name a separate listener URL (`DATABASE_URL_LISTEN`); no code reads that name (the plan's do-not-enter list, docs/sessions/web-mvp-phase5-golive-plan.md:214, files it as unread), and the web SSE listener takes its LISTEN client from the `DATABASE_URL` pool (apps/web/lib/realtime-listener.ts:211-212).
+  D-2 discovery DB key: E:155, E:192 and the comments at infra/entrypoint.sh:3 and :61 put discovery's readonly URL on `DATABASE_URL`; the code opens discovery's own pool on `DISCOVERY_DATABASE_URL` (apps/web/lib/discovery-route-support.ts:44 and :52), measured on static imports only.
+  D-3 topology: E:152-159 keep the Day-1 shape (web 2, discovery 2, worker 1); DD-154 (docs/standards/decisions.md:120) and the plan's shape 3 (plan :140) start production with one web process, one worker and no discovery component.
+  D-4 migration job: E:183, E:384, E:408 and E:425-430 keep `DATABASE_URL_MIGRATION` in a protected CI job only; the repo runs it in the PRE_DEPLOY migrate job (infra/render-app-spec.sh:59-65, infra/entrypoint.sh:78-85).
+  Fix: edit the standards doc and the two infra/entrypoint.sh comments to match the code (no code change); natural owner lane L63 (deployment-infra) or the next lane that edits environments-setup.md.
+  Source: lane L64 (p5-env-manifest), docs/runbooks/env-manifest-staging-production.md section E8, rows D-1 to D-4.
