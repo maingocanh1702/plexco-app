@@ -58,7 +58,10 @@ describe("withRequestLogContext — request id source (L68)", () => {
   });
 
   it("A-3 adopts a padded id trimmed", async () => {
-    expect(await idSeenFor(requestWithId("  abcdefgh  "))).toBe("abcdefgh");
+    // A real Headers already trims on append, so the padded value is a stub request: only then
+    // does the wrapper's own trim run.
+    const padded = { headers: { get: () => "  abcdefgh  " } } as unknown as Request;
+    expect(await idSeenFor(padded)).toBe("abcdefgh");
   });
 
   it("A-4 keeps the id across awaits, and overlapping requests keep their own", async () => {
@@ -70,17 +73,18 @@ describe("withRequestLogContext — request id source (L68)", () => {
     });
     expect(await res.json()).toEqual({ afterTimer: "abcdefgh-a4", afterPromise: "abcdefgh-a4" });
 
-    // The slow request starts first and finishes last, so the two contexts genuinely overlap.
+    // The first request starts first and also finishes first, so the two contexts cross rather
+    // than nest: a save-and-restore global would hand the first request the second one's id.
     const ids = await Promise.all(
-      ["slow-request-1", "fast-request-2"].map(async (id, i) => {
+      ["fast-request-1", "slow-request-2"].map(async (id, i) => {
         const echoed = await withRequestLogContext(requestWithId(id), async () => {
-          await new Promise((r) => setTimeout(r, i === 0 ? 10 : 1));
+          await new Promise((r) => setTimeout(r, i === 0 ? 1 : 10));
           return new Response(currentRequestId());
         });
         return echoed.text();
       }),
     );
-    expect(ids).toEqual(["slow-request-1", "fast-request-2"]);
+    expect(ids).toEqual(["fast-request-1", "slow-request-2"]);
   });
 });
 

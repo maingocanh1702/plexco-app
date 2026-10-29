@@ -227,7 +227,7 @@ const SURFACE_BUCKETS: Record<string, "a" | "b" | "c"> = {
   // (c) — logger: emits JSON lines to stdout/stderr, never a user-facing response.
   "lib/log.ts": "c",
   "lib/log-context.ts": "c",
-  "lib/log-capture.testkit.ts": "c",
+  "lib/log-capture.testkit.ts": "c", // test-only capture helper, imported only by *.test.ts
   // (c) — pure routing/CSP policy consumed by middleware.ts; no response body of its own.
   "lib/request-policy.ts": "c",
   // Browser-side modules (M1a web shell). None renders a server response, so the ALS seam does not

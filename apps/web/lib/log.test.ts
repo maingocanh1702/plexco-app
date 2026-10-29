@@ -223,6 +223,20 @@ describe("log — errorClass (L68)", () => {
     expect(errorClass(chain(0, "A".repeat(32))).code).toBe("A".repeat(32));
   });
 
+  it("logs the outer code when the outer error and its cause both carry one", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const both = (outer: string, inner: string) =>
+      Object.assign(new Error("FAKE-WRAP-L68"), { code: outer, cause: chain(0, inner) });
+    log.error("l68.two_codes", { error: errorClass(both("OUTER", "INNER")) });
+    // An outer code of the wrong shape is skipped, so the first VALID code wins.
+    log.error("l68.two_codes", { error: errorClass(both("econnreset", "ECONNRESET")) });
+    const [first, second] = errSpy.mock.calls.map(
+      (call) => (JSON.parse(call[0] as string) as Record<string, unknown>).error,
+    );
+    expect(first).toEqual({ name: "Error", code: "OUTER" });
+    expect(second).toEqual({ name: "Error", code: "ECONNRESET" });
+  });
+
   it.each(["", "debug"])("logs error: { name, code } and no message (LOG_LEVEL %j)", (level) => {
     vi.stubEnv("LOG_LEVEL", level);
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});

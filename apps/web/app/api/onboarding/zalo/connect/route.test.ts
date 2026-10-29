@@ -181,8 +181,12 @@ describe("POST /api/onboarding/zalo/connect", () => {
           },
         ),
       );
-      const { line } = await captureLogLine(fakes, level, "warn", "zalo_setwebhook_failed", () =>
-        POST(req({ commandId: "c1", botToken: BOT_TOKEN })),
+      const { line } = await captureLogLine(
+        [...fakes, BOT_TOKEN],
+        level,
+        "warn",
+        "zalo_setwebhook_failed",
+        () => POST(req({ commandId: "c1", botToken: BOT_TOKEN })),
       );
       expect(line).toMatchObject({ level: "warn", tenantId: TENANT });
       expect(line!.error).toEqual({ name: "TypeError", code: "ECONNRESET" }); // no message/stack
