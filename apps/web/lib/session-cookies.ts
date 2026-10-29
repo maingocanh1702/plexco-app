@@ -283,10 +283,10 @@ function escapeHtml(value: string): string {
  * the CSP nonce always matches the one inline script (default-src 'none' blocks
  * everything else; form-action 'self' scopes the POST; frame-ancestors 'none' +
  * X-Frame-Options DENY stop clickjacking; no-store never caches the one-time
- * handoff; strict-origin keeps the callback URL's code/state out of the Referer
- * while the same-origin POST still carries a real Origin, where no-referrer
- * sends `Origin: null` and sameOriginRequest refuses it; next.config.mjs's
- * same-named global header replaces this one in dev and production, L72 K0).
+ * handoff; strict-origin keeps the callback URL's code/state out of the Referer while the same-origin
+ * POST still carries a real Origin, where no-referrer sends `Origin: null` and sameOriginRequest
+ * refuses it; next.config.mjs's same-named global headers replace this CSP, X-Frame-Options and
+ * Referrer-Policy in dev and production, so none of the three reaches a browser today, L72 K0).
  */
 export function buildCompletionLanding(handoffToken: string): {
   body: string;
