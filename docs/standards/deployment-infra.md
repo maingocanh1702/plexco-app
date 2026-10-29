@@ -222,7 +222,7 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 **Backup/DR:** Managed HA + PITR + **encrypted offsite backup ngoài DO** để giảm concentration risk. **Restore drill:** DB cô lập → apply roles/policies → checksum schema → đối chiếu count (tenants, charges, transactions, allocations, outbox, audit). RPO/RTO được chốt bằng số đo sau provision, failover drill và restore drill; DD-04 provider choice đã đóng.
 
-**Observability:** structured log gắn opaque `tenant_id`/`job_id` (không secret/PII) → metrics → traces → **SLO alert** (sync lag, reconcile p99, availability) → on-call + runbook link. Sentry cho error tracking (TDD §7).
+**Observability:** structured log gắn opaque `tenant_id`/`job_id` (không secret/PII) → metrics → traces → **SLO alert** (sync lag, reconcile p99, availability) → on-call + runbook link. Sentry cho error tracking (TDD §7): Day-1 dùng gói **Developer** (một user, error monitoring, tracing, email alert; bản ghi §5.1); Sentry Team chỉ khi trigger Tier B.
 
 **Runbook bắt buộc:** cross-tenant leak · public PII · wrong allocation · identity compromise · token leak · DB restore · provider outage · queue backlog · admin session compromise · marketplace abuse.
 
@@ -230,7 +230,7 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 ## 9. Cost estimate — Day-1 baseline + trigger-based upgrades (DD-04 Rev 2)
 
-> **Model (thay Tier A/B cũ $121–133 / $202–254).** Day-1 chạy **baseline money-safe tối thiểu** `$120–135/tháng` — đã gồm non-negotiables: HA primary+standby, PITR, VPC private, fail-closed RLS, KMS envelope encryption, offsite-backup allowance, cùng **§9.3 read-isolation controls**. Các add-on đắt (read replica vật lý, WAF Pro, Sentry Team, worker thứ 2, resize DB) **KHÔNG bắt buộc Day-1** — bật theo **telemetry trigger đo được** (§9.2). Nguồn chuẩn: `../decisions/analysis/dd-04-hosting-final-decision.md` §5.
+> **Model (thay Tier A/B cũ $121–133 / $202–254).** Day-1 chạy **baseline money-safe tối thiểu** `$120–135/tháng` — đã gồm non-negotiables: HA primary+standby, PITR, VPC private, fail-closed RLS, KMS envelope encryption, offsite-backup allowance, cùng **§9.3 read-isolation controls**. Các add-on đắt (read replica vật lý, WAF Pro, Sentry Team, worker thứ 2, resize DB) **KHÔNG bắt buộc Day-1** — bật theo **telemetry trigger đo được** (bảng Tier B bên dưới; bản ghi §5.2). Nguồn chuẩn: `../decisions/analysis/dd-04-hosting-final-decision.md` §5. **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3, không standby, khoảng $52.45/tháng (ghi chú dưới Tier A); baseline `$120–135` của bản ghi là baseline HA, giữ làm đích (điều kiện lên HA: DD-154 (c)).
 
 ### Tier A — Day-1 baseline (money-safe với fail-closed + §9.3 read isolation)
 
@@ -247,6 +247,8 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 | Egress buffer | | ~$0–8 |
 | **Tổng Day-1** | | **~$120–135** (fixed subtotal $118.90 + variable allowances) |
 
+> **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3 (PLAN `:140`): web 1 × $12.00 + worker $10.00 + PostgreSQL một nút 2 GiB $30.45 = **$52.45/tháng**, không component discovery riêng, không standby; owner kiểm lại giá vào ngày mua (PLAN bước 8.1). Topology hai instance (bản ghi §7.6 mục 5) hoãn kèm sign-off 8.9 (DD-154 (e)). Bảng trên là baseline HA của bản ghi DD-04, giữ làm đích; production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB (DD-154 (c)).
+
 ### Tier B — Trigger-based upgrades (bật khi telemetry chạm ngưỡng, KHÔNG mặc định Day-1)
 
 | Upgrade | Trigger đo được | Chi phí thêm/tháng |
@@ -256,7 +258,7 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 | Cloudflare **Pro** (WAF/rate-limit tập trung) | abuse/bot/DDoS pattern hoặc cần L7 rule | +$20 ($25 month-to-month) |
 | Sentry **Team** | hơn một operator, tích hợp bên thứ ba, hoặc quota/retention của gói Developer không đủ | +$26 (quy đổi giá năm) |
 | Log retention trả phí | retention free/low-volume không đáp ứng nhu cầu incident, audit hoặc compliance | theo usage/policy |
-| Resize component 1→2 GiB | memory pressure đo được | +$13/component |
+| Resize component 1→2 GiB | CPU/RAM hoặc latency của component vẫn bão hoà sau khi đã tinh chỉnh scale ngang (bản ghi §5.2) | +$13 mỗi instance được nâng |
 | Resize PG 2→4 GiB | DB CPU/RAM/connection ceiling | +$60.90 (primary + standby) |
 
 ### 9.3 Read isolation KHÔNG cần replica Day-1
@@ -316,4 +318,4 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-07-16 | v1.7 | **DD-04 Rev 2 — cost model đổi sang Day-1 baseline + trigger-based (record §8.2 PROPAGATION).** §9 viết lại: bỏ "Tier B money-safe bắt buộc `$202–254`", thay bằng **Day-1 baseline `$120–135`** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`; subtotal cố định `$118.90`) money-safe nhờ non-negotiables + **§9.3 read-isolation controls** (projection-role, bounded pool, reserved budget, CDN, circuit-breaker). Read replica/WAF Pro/Sentry Team/worker-2/DB-resize = **trigger-based upgrade** (§9.2), không mặc định Day-1. Ephemeral staging `$8–18` → prod+staging `$128–153` (§9.4). **Caveat:** deferral chỉ an toàn khi §9.3 controls ship thật + telemetry trigger được giám sát. |
 | 2026-07-16 | v1.8 | Đồng bộ topology/process/security với Rev 2: Day-1 discovery dùng read isolation trên primary; read-only node chỉ bật theo telemetry và chỉ đổi component-scoped `DATABASE_URL`. Sửa mô tả autoscale DO: RPS/p95 dùng shared hoặc dedicated, CPU autoscale cần dedicated CPU. |
 | 2026-10-27 | v1.10 | §7: thêm ghi chú thứ tự deploy cho cleanup tên của `0068`–`0070` (apply with writers drained; inferred, not run). |
-| 2026-10-29 | v1.11 | L63: §7-§9 khớp bản ghi DD-04 (staging IaC + TTL + smoke surface; worker 2 có điều kiện idempotency; trigger Sentry Team; log retention; restore drill hằng quý ra ngoài DO + bộ export portable; read isolation đủ rate limit, invalidation, degrade; sửa trích dẫn §9.2 thành Tier B, bản ghi §5.2; trigger deploy chỉ `workflow_dispatch` do owner bấm); thêm §9.5 budget alert (ngưỡng owner đặt, bước 8.7); ghi chú pha pilot DD-154 (production hình dạng 3 không HA, drill failover trên cửa sổ staging HA, lên HA trước khi có tiền chạy hoặc thêm CLB) ở §0, §1, §2, §3, §6, §8, §9; con trỏ runbook PITR và failover. |
+| 2026-10-29 | v1.11 | L63: §7-§9 khớp bản ghi DD-04 (staging IaC + TTL + smoke surface; worker 2 có điều kiện idempotency; trigger Sentry Team; log retention; trigger và đơn vị giá của resize component 1→2 GiB; restore drill hằng quý ra ngoài DO + bộ export portable; read isolation đủ rate limit, invalidation, degrade; sửa trích dẫn §9.2 thành Tier B, bản ghi §5.2; trigger deploy chỉ `workflow_dispatch` do owner bấm); thêm §9.5 budget alert (ngưỡng owner đặt, bước 8.7); ghi chú pha pilot DD-154 (production hình dạng 3 không HA, drill failover trên cửa sổ staging HA, lên HA trước khi có tiền chạy hoặc thêm CLB) ở §0, §1, §2, §3, §6, §8, §9; con trỏ runbook PITR và failover. |
