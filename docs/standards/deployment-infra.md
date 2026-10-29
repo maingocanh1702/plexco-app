@@ -251,26 +251,33 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 | Upgrade | Trigger đo được | Chi phí thêm/tháng |
 |---|---|---|
-| Worker thứ 2 (HA queue) | queue depth / job latency vượt ngưỡng, hoặc cần zero-downtime deploy worker | +$14 |
+| Worker thứ 2 (hai worker scalable 1 GiB) | queue lag vượt SLO kéo dài sau khi đã tinh chỉnh concurrency an toàn; **điều kiện trước:** test idempotency + duplicate-delivery xanh (Day-1 chỉ một consumer bền vững; bản ghi §5.1) | +$14 (so với worker cố định) |
 | Read node vật lý (discovery/player-view) | primary read contention đo được (§9.3 controls không đủ) | +$30.45 |
 | Cloudflare **Pro** (WAF/rate-limit tập trung) | abuse/bot/DDoS pattern hoặc cần L7 rule | +$20 ($25 month-to-month) |
-| Sentry **Team** (alerting/retention) | cần alert routing + retention dài | +$26 |
+| Sentry **Team** | hơn một operator, tích hợp bên thứ ba, hoặc quota/retention của gói Developer không đủ | +$26 (quy đổi giá năm) |
+| Log retention trả phí | retention free/low-volume không đáp ứng nhu cầu incident, audit hoặc compliance | theo usage/policy |
 | Resize component 1→2 GiB | memory pressure đo được | +$13/component |
-| Resize PG 2→4 GiB | DB CPU/RAM/connection ceiling | +$60.90 |
+| Resize PG 2→4 GiB | DB CPU/RAM/connection ceiling | +$60.90 (primary + standby) |
 
 ### 9.3 Read isolation KHÔNG cần replica Day-1
 
-Discovery/public reads được cô lập khỏi money-path **ngay trên primary** bằng: **projection-only DB role** (zero grant trên bảng tiền/PII) · **bounded pool + statement_timeout** · **reserved connection budget** cho money-path · **CDN cache** cho public reads · **circuit-breaker** ngắt read khi primary áp lực. Read replica vật lý = upgrade Tier B khi contention đo được, **không** phải điều kiện money-safe Day-1. (record §5.3)
+Discovery/public reads được cô lập khỏi money-path **ngay trên primary** bằng: **projection-only DB role** (zero grant trên bảng tiền/PII) · **bounded pool + statement_timeout** · **reserved connection budget** cho money-path · **CDN cache** cho public reads + **rate limit ở edge và application** + **invalidation an toàn cho cache** · **circuit-breaker** hạ discovery về dữ liệu cũ (stale), `429` hoặc `503` trước khi pool `web`/`worker` bị ảnh hưởng. Read replica vật lý = upgrade Tier B khi contention đo được, **không** phải điều kiện money-safe Day-1. (record §5.3)
 
 ### 9.4 Ephemeral staging
 
-Staging chạy đúng topology DO (VPC/failover/gate acceptance) nhưng **ephemeral** (spin-up cho drill rồi teardown): ~$8–18/tháng → tổng prod+staging **~$128–153/tháng**. (record §5.4)
+Staging production-shape dựng **từ IaC**, sống **48–96 giờ** quanh mỗi release để load/soak test, failover drill, restore drill hoặc rehearsal rời provider, rồi **tự huỷ bằng TTL** (bản ghi §5.4; §7.6 mục 11): ~$8–18/tháng → tổng prod+staging **~$128–153/tháng** (số của baseline HA). Chỉ giữ một bề mặt smoke non-production tối thiểu khi một callback tích hợp bền vững cần nó; đó không phải stack production thứ hai. Deploy staging do owner bấm `workflow_dispatch`, không theo `push` (§7). (record §5.4)
+
+> **Pha pilot (DD-154 (b)):** drill failover chạy trên một cửa sổ staging tạm HA (hình dạng 4, PLAN `:141`: 48-96 giờ, một cửa sổ mỗi tháng; trên hình dạng 1: $8.49-16.99, trên hình dạng 2: $22.71-45.43), owner dựng và huỷ; cái giá PLAN nêu cho lựa chọn này (PLAN `:125`, nguyên văn): "staging không còn "production-shape" (bản ghi §5.4, :148), nên drill chỉ chứng minh một topology mà production không có." Staging của G2 dùng hình dạng nào: DD-154, Hệ quả (j2).
 
 ### Tier C — Hardening một lần / định kỳ (không phải hosting cố định)
 
-Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill** định kỳ (~$10–30/drill), **pen-test** thuê ngoài, PDPA/GDPR + audit-retention tooling (§7, §8, §11). Phần lớn là **chi phí CI/người/định kỳ**, ước lượng riêng theo đợt — **không** gộp vào hosting hằng tháng.
+Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill** hằng quý ra ngoài DigitalOcean (~$10–30/drill cộng egress; bản ghi §7.5; `docs/runbooks/pitr-restore-drill.md`), **pen-test** thuê ngoài, PDPA/GDPR + audit-retention tooling (§7, §8, §11). Phần lớn là **chi phí CI/người/định kỳ**, ước lượng riêng theo đợt — **không** gộp vào hosting hằng tháng.
 
-> Doanh thu phụ thuộc plan mix (0đ free / 250k host_pro mỗi CLB/tháng — DD-29). Day-1 baseline `$120–135` đã money-safe nhờ non-negotiables + §9.3 controls thật; chi phí scale ~tuyến tính theo primary DB size + add-on trigger. **Điểm cần nhớ:** money-safe = baseline + fail-closed controls **được build thật**, không phải một tier đắt cố định. Deferral (replica/WAF Pro/Sentry Team) chỉ an toàn khi §9.3 controls ship + telemetry trigger được giám sát.
+> Doanh thu phụ thuộc plan mix (0đ free / 250k host_pro mỗi CLB/tháng — DD-29). Day-1 baseline `$120–135` đã money-safe nhờ non-negotiables + §9.3 controls thật; chi phí scale ~tuyến tính theo primary DB size + add-on trigger. **Điểm cần nhớ:** money-safe = baseline + fail-closed controls **được build thật**, không phải một tier đắt cố định. Deferral (replica/WAF Pro/Sentry Team) chỉ an toàn khi §9.3 controls ship + telemetry trigger được giám sát. Pha pilot: production là hình dạng 3 (DD-154 (a)); điều kiện lên HA và các cách đọc của nó ở DD-154 (c).
+
+### 9.5 Budget alert (ngưỡng do owner đặt)
+
+Điều kiện nghiệm thu production (bản ghi §7.6 mục 14; `decisions.md` DD-04, "Còn lại TRƯỚC khi build infra slice" (2)): **budget alert hằng tháng** phủ compute, DB, transfer, logs, backups và KMS; **ngưỡng là tham số của owner**, owner đặt trong console của từng nhà cung cấp ở PLAN bước 8.7; doc này không ghi số ngưỡng, và không có bước agent nào chạm console hay tài nguyên cloud.
 
 ---
 
@@ -309,3 +316,4 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-07-16 | v1.7 | **DD-04 Rev 2 — cost model đổi sang Day-1 baseline + trigger-based (record §8.2 PROPAGATION).** §9 viết lại: bỏ "Tier B money-safe bắt buộc `$202–254`", thay bằng **Day-1 baseline `$120–135`** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`; subtotal cố định `$118.90`) money-safe nhờ non-negotiables + **§9.3 read-isolation controls** (projection-role, bounded pool, reserved budget, CDN, circuit-breaker). Read replica/WAF Pro/Sentry Team/worker-2/DB-resize = **trigger-based upgrade** (§9.2), không mặc định Day-1. Ephemeral staging `$8–18` → prod+staging `$128–153` (§9.4). **Caveat:** deferral chỉ an toàn khi §9.3 controls ship thật + telemetry trigger được giám sát. |
 | 2026-07-16 | v1.8 | Đồng bộ topology/process/security với Rev 2: Day-1 discovery dùng read isolation trên primary; read-only node chỉ bật theo telemetry và chỉ đổi component-scoped `DATABASE_URL`. Sửa mô tả autoscale DO: RPS/p95 dùng shared hoặc dedicated, CPU autoscale cần dedicated CPU. |
 | 2026-10-27 | v1.10 | §7: thêm ghi chú thứ tự deploy cho cleanup tên của `0068`–`0070` (apply with writers drained; inferred, not run). |
+| 2026-10-29 | v1.11 | L63: §7-§9 khớp bản ghi DD-04 (staging IaC + TTL + smoke surface; worker 2 có điều kiện idempotency; trigger Sentry Team; log retention; restore drill hằng quý ra ngoài DO + bộ export portable; read isolation đủ rate limit, invalidation, degrade; sửa trích dẫn §9.2 thành Tier B, bản ghi §5.2; trigger deploy chỉ `workflow_dispatch` do owner bấm); thêm §9.5 budget alert (ngưỡng owner đặt, bước 8.7); ghi chú pha pilot DD-154 (production hình dạng 3 không HA, drill failover trên cửa sổ staging HA, lên HA trước khi có tiền chạy hoặc thêm CLB) ở §0, §1, §2, §3, §6, §8, §9; con trỏ runbook PITR và failover. |
