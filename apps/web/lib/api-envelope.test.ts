@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { err, NO_STORE, ok } from "./api-envelope";
+import { withRequestLogContext } from "./log-context";
 
 /**
  * Audit 2026-09-06 W-14 — every envelope is Cache-Control: no-store by default; GET
@@ -62,5 +63,29 @@ describe("api envelope — optional error details (DD-131 OD-1)", () => {
     expect(Object.keys(body.error)).toEqual(["code", "message", "statusCode", "details"]);
     expect(body.error.details).toEqual(details);
     expect(Object.keys(body.meta)).toEqual(["requestId"]);
+  });
+});
+
+/** L68 A-10 — one id per request: inside the wrapper the body and the header agree. */
+describe("api envelope — request id (L68)", () => {
+  it("outside a request context every envelope gets its own fresh req_<uuid>", async () => {
+    const ids = await Promise.all(
+      [ok(1), ok(1), err("AUTH_REQUIRED", "x", 401)].map(
+        async (res) => ((await res.json()) as { meta: { requestId: string } }).meta.requestId,
+      ),
+    );
+    for (const id of ids) expect(id).toMatch(/^req_[0-9a-f-]{36}$/);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it("inside withRequestLogContext the body's meta.requestId and x-request-id are the same id", async () => {
+    const res = await withRequestLogContext(
+      new Request("http://localhost/x", { headers: { "x-request-id": "abcdefgh-123" } }),
+      async () => ok({ a: 1 }),
+    );
+    const body = (await res.json()) as { meta: { requestId: string } };
+    expect(Object.keys(body)).toEqual(["data", "error", "meta"]);
+    expect(body.meta.requestId).toBe("abcdefgh-123");
+    expect(res.headers.get("x-request-id")).toBe("abcdefgh-123");
   });
 });
