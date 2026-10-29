@@ -31,7 +31,7 @@
 
 ### 3.1 Chuẩn bị
 
-Ghi `T_begin` (UTC) trước mọi thao tác dưới đây. Trình duyệt A (tài khoản test sửa được buổi test) và trình duyệt B (tài khoản test thứ hai) cùng mở trang buổi test. Baseline: A sửa một trường của buổi (ví dụ ghi chú) qua UI, B thấy thay đổi không cần reload; baseline trượt ⇒ §4.1 `FAIL` ngay (xem lưu ý URL ở §4.1). Mở trang khám phá công khai của app staging vài lần, rồi làm lần đếm 1 của §7. Cuối cùng, trước §3.3, ghi khoản tiền mặt thứ nhất của §4.2.
+Ghi `T_begin` bằng khối thời điểm của `docs/runbooks/pitr-restore-drill.md` §3.2 trên `HA_ADMIN_URL` (sau khối Q0), nguyên chuỗi psql in ra, kèm offset, trước mọi thao tác dưới đây. Trình duyệt A (tài khoản test sửa được buổi test) và trình duyệt B (tài khoản test thứ hai) cùng mở trang buổi test. Baseline: A sửa một trường của buổi (ví dụ ghi chú) qua UI, B thấy thay đổi không cần reload; baseline trượt ⇒ §4.1 `FAIL` ngay (xem lưu ý URL ở §4.1). Mở trang khám phá công khai của app staging vài lần, rồi làm lần đếm 1 của §7. Cuối cùng, trước §3.3, ghi khoản tiền mặt thứ nhất của §4.2.
 
 ### 3.2 Cách kích hoạt
 
@@ -80,7 +80,7 @@ SELECT count(*) FROM payment_allocations WHERE created_at >= '<T_begin>';
 ROLLBACK;
 ```
 
-**Pass:** Q0 và Q0b như `docs/runbooks/pitr-restore-drill.md` §6 (Q0 một cột true, Q0b = 0); Q1-Q4 trả 0 dòng; khối trên trả đúng N; hàng `worker chạy lại` của §3.4 đúng; số đếm của Q5 ghi vào hàng evidence. N = 0, hoặc hàng `worker chạy lại` không đúng ⇒ `OPEN`, không bao giờ `PASS`. Q1-Q4 có dòng, hoặc khối trên khác N ⇒ `FAIL`. Q0 false hoặc Q0b > 0 ⇒ `INVALID`, dừng, không phải PASS; khi đó, trước khi xoá cửa sổ, export cluster của cửa sổ theo §2 của runbook đó và chạy lại các truy vấn trên bản restore theo §5 của nó, bằng superuser của PostgreSQL vanilla.
+**Pass:** Q0 và Q0b như `docs/runbooks/pitr-restore-drill.md` §6 (Q0 một cột true, Q0b = 0); Q1-Q4 trả 0 dòng; khối trên trả đúng N; hàng `worker chạy lại` của §3.4 đúng; số đếm của Q5 ghi vào hàng evidence. N khác 2 (một khoản trước `T_fault`, một khoản sau `T_worker`), hoặc hàng `worker chạy lại` không đúng ⇒ `OPEN`, không bao giờ `PASS`. Q1-Q4 có dòng, hoặc khối trên khác N ⇒ `FAIL`. Q0 false hoặc Q0b > 0 ⇒ `INVALID`, dừng, không phải PASS; khi đó, trước khi xoá cửa sổ, owner chạy lại §4.2 bằng một role admin đạt Q0 và Q0b (export theo §2 của runbook đó cũng bị chặn bởi cùng điều kiện).
 
 ## 5. Bốn role DB và TLS (mục 4; Người làm: OWNER, host trên đường private)
 
