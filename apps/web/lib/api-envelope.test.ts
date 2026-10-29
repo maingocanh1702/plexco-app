@@ -78,14 +78,20 @@ describe("api envelope — request id (L68)", () => {
     expect(new Set(ids).size).toBe(3);
   });
 
-  it("inside withRequestLogContext the body's meta.requestId and x-request-id are the same id", async () => {
-    const res = await withRequestLogContext(
-      new Request("http://localhost/x", { headers: { "x-request-id": "abcdefgh-123" } }),
-      async () => ok({ a: 1 }),
-    );
-    const body = (await res.json()) as { meta: { requestId: string } };
-    expect(Object.keys(body)).toEqual(["data", "error", "meta"]);
-    expect(body.meta.requestId).toBe("abcdefgh-123");
-    expect(res.headers.get("x-request-id")).toBe("abcdefgh-123");
-  });
+  it.each([
+    ["ok()", () => ok({ a: 1 })],
+    ["err()", () => err("AUTH_REQUIRED", "x", 401)],
+  ])(
+    "inside withRequestLogContext %s: the body's meta.requestId and x-request-id are the same id",
+    async (_, envelope) => {
+      const res = await withRequestLogContext(
+        new Request("http://localhost/x", { headers: { "x-request-id": "abcdefgh-123" } }),
+        async () => envelope(),
+      );
+      const body = (await res.json()) as { meta: { requestId: string } };
+      expect(Object.keys(body)).toEqual(["data", "error", "meta"]);
+      expect(body.meta.requestId).toBe("abcdefgh-123");
+      expect(res.headers.get("x-request-id")).toBe("abcdefgh-123");
+    },
+  );
 });

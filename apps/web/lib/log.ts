@@ -4,8 +4,10 @@
  * Before this the whole app had ONE runtime console.* call and the OAuth callback/complete
  * routes swallowed every failure in `catch {}` — a KMS/JWKS outage was indistinguishable from a
  * bad request in production. This gives every catch site a way to say WHAT class of thing
- * failed without ever saying WHICH request: values are redacted by key name, errors are reduced
- * to name + message (stack only at debug), and nothing here accepts a Request object.
+ * failed without ever writing the request's content: values are redacted by key name, errors are
+ * reduced to name + message (stack only at debug) or to name + code via errorClass, and nothing
+ * here accepts a Request object. Inside withRequestLogContext each line also carries the opaque
+ * request_id and, once the tenant is proven, tenant_id: which request, never what it held.
  *
  * LOG_LEVEL (.env.example): error | warn | info | debug. Unset → info. An unrecognised value is
  * treated as info, not as "log everything" — fail closed on verbosity.

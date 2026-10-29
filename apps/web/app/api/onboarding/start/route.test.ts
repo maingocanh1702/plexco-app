@@ -1,7 +1,10 @@
 import { provisionTenant, SlugTakenError } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../../../lib/log";
-import { captureConsoleSinks } from "../../../../lib/log-capture.testkit";
+import {
+  captureConsoleSinks,
+  expectTenantOnlyAfterTheGate,
+} from "../../../../lib/log-capture.testkit";
 import {
   csrfOk,
   currentSession,
@@ -127,12 +130,7 @@ describe("POST /api/onboarding/start — issuance-fence mapping (G3-B3, D0-12)",
       });
       const res = await POST(req({ slug: "club-l68", name: "Club L68" }));
       expect(res.status).toBe(200);
-      const id = res.headers.get("x-request-id");
-      expect(probes("l68.after")).toEqual([
-        expect.objectContaining({ request_id: id, tenant_id: "tenant-l68" }),
-      ]);
-      expect(probes("l68.before")).toEqual([expect.objectContaining({ request_id: id })]);
-      expect(probes("l68.before")[0]).not.toHaveProperty("tenant_id");
+      expectTenantOnlyAfterTheGate(probes, res, "tenant-l68");
     });
 
     it("an early 401 (no session) carries a fresh x-request-id and no line carries a tenant", async () => {

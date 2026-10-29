@@ -1,6 +1,7 @@
 // Test-only (RO-L68-5): imported only by `*.test.ts`, never by a production file. Captures the REAL
 // logger's three console sinks (error, warn, log), silenced.
 // - captureConsoleSinks: around each case of the calling describe; asserts nothing itself.
+// - expectTenantOnlyAfterTheGate: asserts the A-15 pair of probe lines (see its doc).
 // - captureLogLine: asserts no fake reaches any sink's calls.
 // - captureSignInLog: captureLogLine + the response's x-request-id matches the pattern, and the line
 //   is at its sink's level, carries that id and no tenant_id.
@@ -29,6 +30,24 @@ export function captureConsoleSinks() {
       .filter((line) => line.includes(`"event":"${event}"`))
       .map((line) => JSON.parse(line) as Record<string, unknown>);
   return { written, probes };
+}
+
+/**
+ * L68 A-15, with `probes` from captureConsoleSinks: `l68.after` (written once the gate has proven
+ * the tenant) = one line with the response's x-request-id and `tenant`; `l68.before` (written
+ * inside the gate) = one line with that id and no tenant_id.
+ */
+export function expectTenantOnlyAfterTheGate(
+  probes: (event: string) => Record<string, unknown>[],
+  response: Response,
+  tenant: string,
+) {
+  const id = response.headers.get("x-request-id");
+  expect(probes("l68.after")).toEqual([
+    expect.objectContaining({ request_id: id, tenant_id: tenant }),
+  ]);
+  expect(probes("l68.before")).toEqual([expect.objectContaining({ request_id: id })]);
+  expect(probes("l68.before")[0]).not.toHaveProperty("tenant_id");
 }
 
 /**

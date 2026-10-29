@@ -1,7 +1,10 @@
 import { authorize, getZaloOnboardingState } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../../../lib/log";
-import { captureConsoleSinks } from "../../../../lib/log-capture.testkit";
+import {
+  captureConsoleSinks,
+  expectTenantOnlyAfterTheGate,
+} from "../../../../lib/log-capture.testkit";
 import { csrfOk, currentSession, rateLimited } from "../../../../lib/session-cookies";
 import { GET } from "./route";
 
@@ -100,12 +103,7 @@ describe("L68 A-15 — the Zalo state route runs in the request log context", ()
     });
     const res = await get();
     expect(res.status).toBe(200);
-    const id = res.headers.get("x-request-id");
-    expect(probes("l68.after")).toEqual([
-      expect.objectContaining({ request_id: id, tenant_id: TENANT }),
-    ]);
-    expect(probes("l68.before")).toEqual([expect.objectContaining({ request_id: id })]);
-    expect(probes("l68.before")[0]).not.toHaveProperty("tenant_id");
+    expectTenantOnlyAfterTheGate(probes, res, TENANT);
   });
 
   it("the gate's early 403 carries a fresh x-request-id and no line carries a tenant", async () => {

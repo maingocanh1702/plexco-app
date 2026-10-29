@@ -368,6 +368,12 @@ describe.each(["", "debug"])(
     });
 
     it("a malformed Google email: auth.google.callback.email_invalid", async () => {
+      // The verified address the route holds at this site is a FAKES seed too, not happyPath's.
+      vi.mocked(oidc.verifyGoogleIdToken).mockResolvedValue({
+        ok: true,
+        subject: "sub-1",
+        email: "fake-l68@example.invalid",
+      });
       vi.mocked(db.deriveEmailArtifacts).mockImplementation(() => {
         throw Object.assign(new db.InvalidEmailError(), {
           name: "InvalidEmailError", // as the real class sets it; the mock keeps Error's

@@ -9,7 +9,10 @@ import {
 } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../../../lib/log";
-import { captureConsoleSinks } from "../../../../lib/log-capture.testkit";
+import {
+  captureConsoleSinks,
+  expectTenantOnlyAfterTheGate,
+} from "../../../../lib/log-capture.testkit";
 import { csrfOk, currentSession, rateLimited } from "../../../../lib/session-cookies";
 import { GET, PATCH } from "./route";
 
@@ -331,15 +334,6 @@ describe("L68 A-15 — the club routes run in the request log context with the p
       return { allowed: true, role: "owner" };
     });
   });
-  const expectTenantOnlyAfterTheGate = (response: Response) => {
-    const id = response.headers.get("x-request-id");
-    expect(probes("l68.after")).toEqual([
-      expect.objectContaining({ request_id: id, tenant_id: TENANT }),
-    ]);
-    expect(probes("l68.before")).toEqual([expect.objectContaining({ request_id: id })]);
-    expect(probes("l68.before")[0]).not.toHaveProperty("tenant_id");
-  };
-
   it("GET: the config read logs the proven tenant and the response's request id; the gate none", async () => {
     vi.mocked(getClubConfig).mockImplementation(async () => {
       log.error("l68.after", {});
@@ -347,7 +341,7 @@ describe("L68 A-15 — the club routes run in the request log context with the p
     });
     const res = await GET(getReq());
     expect(res.status).toBe(200);
-    expectTenantOnlyAfterTheGate(res);
+    expectTenantOnlyAfterTheGate(probes, res, TENANT);
   });
 
   it("PATCH: the config command logs the proven tenant and the response's request id; the gate none", async () => {
@@ -357,7 +351,7 @@ describe("L68 A-15 — the club routes run in the request log context with the p
     });
     const res = await PATCH(patchReq({ commandId: "c1", name: "CLB" }));
     expect(res.status).toBe(200);
-    expectTenantOnlyAfterTheGate(res);
+    expectTenantOnlyAfterTheGate(probes, res, TENANT);
   });
 
   it("GET and PATCH: an early 401 carries a fresh x-request-id and no line carries a tenant", async () => {

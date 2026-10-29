@@ -24,7 +24,7 @@ import ts from "typescript";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWithLang, t } from "@plexco/core/i18n";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ok } from "./api-envelope";
 import { log } from "./log";
 import { captureConsoleSinks } from "./log-capture.testkit";
@@ -101,10 +101,7 @@ function req(body: unknown, tenant: string | null = TENANT, raw?: string): Reque
 const envelope = async (response: Response) =>
   (await response.json()) as {
     data: unknown;
-    // `message` belongs here: two tests read it. Its absence was a real TS2339 twice that the
-    // repo's canonical typecheck CANNOT see — apps/web/tsconfig.json includes only
-    // ["next-env.d.ts", "app", ".next/types/**/*.ts"], so lib/*.test.ts is compiled by nothing.
-    // codex round-01 [P3].
+    // `message` belongs here: two tests read it, and `pnpm typecheck` compiles lib/*.test.ts.
     error: { code: string; statusCode: number; message: string } | null;
   };
 
@@ -1717,8 +1714,11 @@ it.each(["auth", "csrf", "tenant", "actor", "association", "quota"] as const)(
 // mock of ./log; its three console sinks are captured and silenced.
 describe("L68 A-12 — the session-command family runs inside the request log context", () => {
   const { written, probes: eventLines } = captureConsoleSinks();
+  afterEach(() => vi.unstubAllEnvs());
 
   it("body meta.requestId = the x-request-id header = the log line's request_id", async () => {
+    // At debug every level is written, so the absence checks below also cover a log.debug line.
+    vi.stubEnv("LOG_LEVEL", "debug");
     // A hex-letter tenant sent upper-case: the gate lower-cases it, so tenant_id === lettered
     // proves the line's tenant is the authorised context.tenantId (D6), never the raw query.
     // `l68.before` is written inside the gate (authorize), before the tenant is proven.

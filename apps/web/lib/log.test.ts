@@ -141,32 +141,14 @@ describe("log — context reader (L68)", () => {
     vi.restoreAllMocks();
   });
 
-  it("writes request_id/tenant_id after the caller's fields, and only when the context has them", () => {
-    // log.error: written at every LOG_LEVEL, so this case does not depend on the environment.
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const fakes = { token: "FAKE-TOKEN-L68", cookie: "FAKE-COOKIE-L68" };
-    log.error("l68.no_reader", fakes);
-    setLogContextReader(() => ({ requestId: "req-ctx-l68" }));
-    log.error("l68.no_tenant", fakes);
-    setLogContextReader(() => ({ requestId: "req-ctx-l68", tenantId: "tenant-ctx-l68" }));
-    log.error("l68.caller_fields", { ...fakes, request_id: "forged", tenant_id: "forged" });
-    expect(errSpy).toHaveBeenCalledTimes(3);
-    const [noReader, noTenant, callerFields] = errSpy.mock.calls.map(
-      (call) => JSON.parse(call[0] as string) as Record<string, unknown>,
-    );
-    expect(noReader).not.toHaveProperty("request_id");
-    expect(noReader).not.toHaveProperty("tenant_id");
-    expect(noTenant).toMatchObject({ request_id: "req-ctx-l68" });
-    expect(noTenant).not.toHaveProperty("tenant_id");
-    expect(callerFields).toMatchObject({ request_id: "req-ctx-l68", tenant_id: "tenant-ctx-l68" });
-    const written = JSON.stringify(errSpy.mock.calls);
-    expect(written).not.toContain("FAKE-TOKEN-L68");
-    expect(written).not.toContain("FAKE-COOKIE-L68");
-  });
-
   it("D13: a caller field named request_id or tenant_id never appears, context or not", () => {
+    // log.error: written at every LOG_LEVEL. `token`: key redaction still applies in a context.
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const forged = { request_id: "forged-req", tenant_id: "forged-tenant" };
+    const forged = {
+      request_id: "forged-req",
+      tenant_id: "forged-tenant",
+      token: "FAKE-TOKEN-L68",
+    };
     log.error("l68.no_reader", forged); // the Edge bundle: lib/log-context.ts is never loaded
     setLogContextReader(() => undefined); // Node, outside withRequestLogContext
     log.error("l68.outside", forged);
@@ -186,6 +168,7 @@ describe("log — context reader (L68)", () => {
     expect(noTenant).not.toHaveProperty("tenant_id");
     expect(withTenant).toMatchObject({ request_id: "req-ctx-l68", tenant_id: "tenant-ctx-l68" });
     expect(JSON.stringify(errSpy.mock.calls)).not.toContain("forged");
+    expect(JSON.stringify(errSpy.mock.calls)).not.toContain("FAKE-TOKEN-L68");
   });
 });
 

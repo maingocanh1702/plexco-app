@@ -2,7 +2,10 @@ import { authorize, onboardingSnapshot, tenantLocale } from "@plexco/db";
 import { cookies } from "next/headers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../../../lib/log";
-import { captureConsoleSinks } from "../../../../lib/log-capture.testkit";
+import {
+  captureConsoleSinks,
+  expectTenantOnlyAfterTheGate,
+} from "../../../../lib/log-capture.testkit";
 import { GET } from "./route";
 
 const allow = (role: "owner" | "admin" | "co_admin" = "owner") =>
@@ -111,12 +114,7 @@ describe("GET /api/onboarding/readiness — authorize(content.manage) gate", () 
       });
       const res = await GET(reqFor(TENANT_ID));
       expect(res.status).toBe(200);
-      const id = res.headers.get("x-request-id");
-      expect(probes("l68.after")).toEqual([
-        expect.objectContaining({ request_id: id, tenant_id: TENANT_ID }),
-      ]);
-      expect(probes("l68.before")).toEqual([expect.objectContaining({ request_id: id })]);
-      expect(probes("l68.before")[0]).not.toHaveProperty("tenant_id");
+      expectTenantOnlyAfterTheGate(probes, res, TENANT_ID);
     });
 
     it("the gate's early 403 carries a fresh x-request-id and no line carries a tenant", async () => {
