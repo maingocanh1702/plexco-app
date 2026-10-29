@@ -81,14 +81,13 @@ Q6 and Q7 are those of the [Phase 5 go-live plan](../sessions/web-mvp-phase5-gol
 | **Meta Messenger** — backend `POST https://graph.facebook.com/v<ver>/<page_id>/messages` with `page_access_token`. Not a first-launch dependency (DD-132; Q6). Note 2026-10-28: this 2026-07-18 **NO** rests on an opt-in app security control, which a strict reading of criterion 1 does not accept; re-evaluate before Messenger enters (Q6). | **NO** | Meta: [Securing Graph API Requests](https://developers.facebook.com/docs/graph-api/securing-requests) | 2026-07-18 | Meta affirmatively documents server-IP allowlisting as an opt-in app security control the developer may enable, alongside the optional `appsecret_proof` / "Require App Secret" hardening. By default Graph API calls are token-authenticated from any IP, so no fixed egress IP is required. |
 
 **Gate status (first launch, 2026-10-29): `HALT-EVIDENCE_INCOMPLETE`** — Zalo Bot API is `UNRESOLVED`; Google OAuth
-token exchange, Google OIDC JWKS and AWS KMS Decrypt are `NO`, owner-signed 2026-10-29 21:40 (DD-155). No overall
-result is recorded and the closure marker is intentionally absent, because the Zalo Bot API row, the only
-first-launch row still open, is `UNRESOLVED` (the rule below). On 2026-07-18, SePay, ApiPay and Zalo Bot were
-`UNRESOLVED` (dated rows above). The Zalo Bot API row closes only with the owner's forwarded written answer from
-Zalo Bot Platform to the step-8.4 question below, with ticket id, date and verbatim text. The Google and AWS KMS
-rows are closed by the owner's answer (DD-155), an owner exception to this gate's evidence rule (the rule at the
-top of this section and the `NO` rule of section 3 of the egress evidence review criteria) for these three rows
-only; it is not criterion-1 or criterion-2 evidence.
+token exchange, Google OIDC JWKS and AWS KMS Decrypt are `NO`, owner-signed 2026-10-29 21:40 (DD-155). No overall result
+is recorded and the closure marker is intentionally absent, because the Zalo Bot API row, the only first-launch row still
+open, is `UNRESOLVED` (the rule below). On 2026-07-18, SePay, ApiPay and Zalo Bot were `UNRESOLVED` (dated rows above).
+The Zalo Bot API row closes only with the owner's forwarded written answer from Zalo Bot Platform to the step-8.4 question
+below, with ticket id, date and verbatim text. The Google and AWS KMS rows are closed by the owner's answer (DD-155), an
+owner exception to this gate's evidence rule (the rule at the top of this section and the `NO` rule of section 3 of the
+egress evidence review criteria) for these three rows only; it is not criterion-1 or criterion-2 evidence.
 
 **Step-8.4 question to Zalo Bot Platform** (the owner sends it in writing; the reply is class-A evidence only
 with its ticket id, date and verbatim text):
