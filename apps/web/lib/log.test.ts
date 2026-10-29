@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { bound, ERROR_TEXT_MAX, log, parseLogLevel, sanitizeFields } from "./log";
+import {
+  bound,
+  ERROR_TEXT_MAX,
+  log,
+  parseLogLevel,
+  sanitizeFields,
+  setLogContextReader,
+} from "./log";
 
 /** Audit 2026-09-06 W-11 / NFR-O2 — the logger must never be a second leak path. */
 describe("log — redaction and level (audit W-11)", () => {
@@ -104,6 +111,11 @@ describe("log — redaction and level (audit W-11)", () => {
     expect(parseLogLevel("verbose")).toBe("info");
   });
 
+  it("LOG_LEVEL ignores keys LEVELS only inherits from Object.prototype (fails closed to info)", () => {
+    expect(parseLogLevel("__proto__")).toBe("info");
+    expect(parseLogLevel("constructor")).toBe("info");
+  });
+
   it("emits one JSON line per event on the level's console channel and honours LOG_LEVEL", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -118,5 +130,36 @@ describe("log — redaction and level (audit W-11)", () => {
     expect(line.handoff).toBe("[redacted]");
     expect((line.error as { message: string }).message).toBe("kms down");
     expect(typeof line.ts).toBe("string");
+  });
+});
+
+/** L68 A-7 — the correlation keys come from the context reader alone, never from a caller. */
+describe("log — context reader (L68)", () => {
+  afterEach(() => {
+    setLogContextReader(undefined);
+    vi.restoreAllMocks();
+  });
+
+  it("writes request_id/tenant_id after the caller's fields, and only when the context has them", () => {
+    // log.error: written at every LOG_LEVEL, so this case does not depend on the environment.
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fakes = { token: "FAKE-TOKEN-L68", cookie: "FAKE-COOKIE-L68" };
+    log.error("l68.no_reader", fakes);
+    setLogContextReader(() => ({ requestId: "req-ctx-l68" }));
+    log.error("l68.no_tenant", fakes);
+    setLogContextReader(() => ({ requestId: "req-ctx-l68", tenantId: "tenant-ctx-l68" }));
+    log.error("l68.caller_fields", { ...fakes, request_id: "forged", tenant_id: "forged" });
+    expect(errSpy).toHaveBeenCalledTimes(3);
+    const [noReader, noTenant, callerFields] = errSpy.mock.calls.map(
+      (call) => JSON.parse(call[0] as string) as Record<string, unknown>,
+    );
+    expect(noReader).not.toHaveProperty("request_id");
+    expect(noReader).not.toHaveProperty("tenant_id");
+    expect(noTenant).toMatchObject({ request_id: "req-ctx-l68" });
+    expect(noTenant).not.toHaveProperty("tenant_id");
+    expect(callerFields).toMatchObject({ request_id: "req-ctx-l68", tenant_id: "tenant-ctx-l68" });
+    const written = JSON.stringify(errSpy.mock.calls);
+    expect(written).not.toContain("FAKE-TOKEN-L68");
+    expect(written).not.toContain("FAKE-COOKIE-L68");
   });
 });

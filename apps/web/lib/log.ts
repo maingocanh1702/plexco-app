@@ -23,7 +23,7 @@ const REDACT_KEY =
 
 export function parseLogLevel(raw: string | undefined): LogLevel {
   const v = raw?.trim().toLowerCase();
-  return v && v in LEVELS ? (v as LogLevel) : "info";
+  return v && Object.hasOwn(LEVELS, v) ? (v as LogLevel) : "info";
 }
 
 function currentLevel(): LogLevel {
@@ -88,13 +88,27 @@ export function sanitizeFields(
   return out;
 }
 
+/**
+ * Request correlation, installed once by lib/log-context.ts. A setter rather than an import keeps
+ * this file import-free: the dev Edge middleware bundles it through lib/dev-login/routing.ts.
+ */
+let readContext: (() => { requestId: string; tenantId?: string } | undefined) | undefined;
+
+export function setLogContextReader(reader: typeof readContext): void {
+  readContext = reader;
+}
+
 function emit(level: LogLevel, event: string, fields: Record<string, unknown> = {}): void {
   if (LEVELS[level] > LEVELS[currentLevel()]) return;
+  const ctx = readContext?.();
   const line = JSON.stringify({
     ts: new Date().toISOString(),
     level,
     event,
     ...sanitizeFields(fields, currentLevel()),
+    // After the caller's fields, so a field of the same name can never stand in for these.
+    ...(ctx ? { request_id: ctx.requestId } : {}),
+    ...(ctx?.tenantId !== undefined ? { tenant_id: ctx.tenantId } : {}),
   });
   if (level === "error") console.error(line);
   else if (level === "warn") console.warn(line);
