@@ -7860,3 +7860,22 @@ merged_probe: null
 notes: |
   Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: apps/web/app/api/public-listings/[publicListingId]/join/route.ts:80 resolves its listing with `resolveDiscoveryListing(await discoveryPool(), publicListingId)`, the discovery pool of apps/web/lib/discovery-route-support.ts:37-54. Lane L73 adds a per-process circuit breaker behind one choke point in that file, through which the limiter and the discovery API reads go, and three timeouts on the pool (statement 2 000 ms, acquire 2 000 ms, client 2 500 ms). The join route keeps calling the pool directly (L73's negative scope: no other route), so it gains the timeouts without a code change, its failures are not counted, and it is not refused while the breaker is open; it also shares the pool's 5 connections (:44) with discovery. Decide whether the join route goes through the breaker (and what it answers while the breaker is open) or gets its own pool.
   Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (c) (from the RO-L73-2 Tier-B list and K8 there).
+
+## task: p5-environments-setup-drifts-from-env-manifest
+title: docs/standards/environments-setup.md disagrees with the code on four environment points that the L64 env manifest measured
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/standards/environments-setup.md, infra/entrypoint.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base ae06005c807b758246e9ebff294d6943edc1c440 (E = docs/standards/environments-setup.md). The env manifest docs/runbooks/env-manifest-staging-production.md follows the code (rung 1) and lists these four drifts in its section E8 without fixing the standards doc:
+  D-1 listener URL: E:154 (listener) and E:184 (LISTEN) describe a separate listener URL and only E:194 names it (`DATABASE_URL_LISTEN`); no code reads that name (the plan's do-not-enter list, docs/sessions/web-mvp-phase5-golive-plan.md:214, files it as unread), and the web SSE listener takes its LISTEN client from the `DATABASE_URL` pool (apps/web/lib/realtime-listener.ts:211-212).
+  D-2 discovery DB key: E:192 (E:155 names only the readonly pooled URL) and the comments at infra/entrypoint.sh:3 and :61 put discovery's readonly URL on `DATABASE_URL`; the code opens discovery's own pool on `DISCOVERY_DATABASE_URL` (apps/web/lib/discovery-route-support.ts:42-44 and :52 at that base; :47-50 and :62 at origin/main 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb after PR 139); discovery needs no `DATABASE_URL` by call sites: no discovery-served file calls the lazy `appDb()` pool (apps/web/lib/session-cookies.ts:54-59), although its file is statically imported for `clientIp`.
+  D-3 topology: E:152-159 keep the Day-1 shape (web 2, discovery 2, worker 1); DD-154 (docs/standards/decisions.md:120) and the plan's shape 3 (plan :140) start production with one web process, one worker and no discovery component.
+  D-4 migration job: E:183 (role `migration`), E:384, E:408 and E:425-430 keep `DATABASE_URL_MIGRATION` in a protected CI job only; the repo runs it in the PRE_DEPLOY migrate job (infra/render-app-spec.sh:59-65, infra/entrypoint.sh:78-85).
+  Fix: D-2 and D-3 now: edit the standards doc and the two infra/entrypoint.sh comments to match the code (no code change); D-1 after the owner's R1 (lane L78 if the code changes); D-4 after the owner ratifies DD-129 (1). Natural owner lane L63 (deployment-infra) or the next lane that edits environments-setup.md.
+  Source: lane L64 (p5-env-manifest), docs/runbooks/env-manifest-staging-production.md section E8, rows D-1 to D-4.
