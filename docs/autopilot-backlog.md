@@ -8036,3 +8036,20 @@ notes: |
   Measured with vitest v4.1.12 `--sequence.shuffle`, seeds 6801 and 1729: that case failed both times ("got 6 times"); in declared order the 7 files R3b ran were 169/169 green. It is pre-existing at that SHA: the case fails whenever an earlier case of the same describe runs first.
   Fix: `vi.mocked(provisionTenant).mockClear()` in that beforeEach (or `vi.clearAllMocks()` first, as the sibling onboarding test files do).
   Source: lane L68 (p5-log-correlation), review round 3 part 2 (reviewer R3b, out-of-scope note), routed to this row by the conductor (RO-L68-8 item 2).
+
+## task: p5-signin-return-to-session-link
+title: Google sign-in started from a session page always lands on `/`, never back on that session, so a player must re-open the session link to join
+status: planned
+risk: P2
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/auth/google/state/route.ts, apps/web/app/api/auth/google/callback/route.ts, apps/web/app/api/auth/google/complete/route.ts, apps/web/components/sessions/join-panel.tsx, apps/web/components/landing/workspace-redirect.tsx]
+manifest: null
+merged_probe: apps/web/app/api/auth/google/complete/route.ts :: signInReturnPath
+notes: |
+  Line numbers at e827a97b7225f9847bc69326cbdf40ee916eedf5.
+  A signed-out visitor of a session page gets one button that links to `/` (apps/web/components/sessions/join-panel.tsx:66, "Sign in to join.", the English side of its t() pair). The Google sign-in completion route always ends with a redirect to `${baseUrl}/` (apps/web/app/api/auth/google/complete/route.ts:141), and `/` then routes a signed-in account by its tenant count (apps/web/components/landing/workspace-redirect.tsx:21-27: none to `/onboarding/new-club`, one to `/c/<tenantId>`). Nothing carries the session link through sign-in, so a new player is shown the create-club form instead of the session.
+  The pilot host guide added by lane L76 (docs/runbooks/pilot-club-host-onboarding.md) states this as a limitation and tells the host to ask players to re-open the session link after signing in.
+  Fix: carry a return path through the Google sign-in flow and redirect to it on completion, accepting only a same-origin relative path and failing closed to `/` on anything else. The implementing lane re-derives the risk at intake, because the change edits auth routes.
+  Source: lane L76 (p5-pilot-host-guide), step 0 (continuation reader S0b, backlog candidate 1), ruling (b) of the P5-S8a orchestrator.
