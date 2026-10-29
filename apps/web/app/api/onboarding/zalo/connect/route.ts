@@ -10,7 +10,7 @@ import {
 import { err, ok } from "../../../../../lib/api-envelope";
 import { resolveClubGate } from "../../../../../lib/club-config-route";
 import { blobToText, encryptConnectorSecret } from "../../../../../lib/connector-secrets";
-import { log } from "../../../../../lib/log";
+import { errorClass, log } from "../../../../../lib/log";
 import { readBoundedBody } from "../../../../../lib/read-bounded-body";
 import { isUnsafeCommandKey } from "../../../../../lib/session-command-route";
 import { appDb } from "../../../../../lib/session-cookies";
@@ -58,13 +58,7 @@ const invalid = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "I
  * fresh Error holding only the error name and the first code on the cause chain (SQLSTATE), no cause.
  */
 function sanitizedConnectError(error: unknown): Error {
-  let code = "";
-  for (let c = error, i = 0; !code && c && typeof c === "object" && i < 8; i++) {
-    const v = (c as { code?: unknown }).code;
-    if (typeof v === "string" && /^[0-9A-Z_]{1,32}$/.test(v)) code = v;
-    c = (c as { cause?: unknown }).cause;
-  }
-  const name = error instanceof Error ? error.name.slice(0, 64) : typeof error;
+  const { name, code } = errorClass(error);
   return new Error(`zalo_connect_failed: ${name}${code ? ` ${code}` : ""}`);
 }
 
@@ -170,7 +164,7 @@ export async function POST(request: Request): Promise<Response> {
       } catch (error) {
         outcome = "error";
         reason = "ZALO_SETWEBHOOK_FAILED";
-        log.warn("zalo_setwebhook_failed", { tenantId: gate.tenantId, error });
+        log.warn("zalo_setwebhook_failed", { tenantId: gate.tenantId, error: errorClass(error) });
       }
       const { state, superseded } = await finishZaloConnect(db, {
         tenantId: gate.tenantId,

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bound,
   ERROR_TEXT_MAX,
+  errorClass,
   log,
   parseLogLevel,
   sanitizeFields,
@@ -185,5 +186,58 @@ describe("log — context reader (L68)", () => {
     expect(noTenant).not.toHaveProperty("tenant_id");
     expect(withTenant).toMatchObject({ request_id: "req-ctx-l68", tenant_id: "tenant-ctx-l68" });
     expect(JSON.stringify(errSpy.mock.calls)).not.toContain("forged");
+  });
+});
+
+/** L68 A-16 (D7/D14) — an error by class only: the one object the logger writes as-is. */
+describe("log — errorClass (L68)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  /** An Error carrying `code`, wrapped in `depth` causes. */
+  const chain = (depth: number, code: string): Error => {
+    let e: Error = Object.assign(new Error("FAKE-LEAF-L68"), { code });
+    for (let i = 0; i < depth; i++) e = Object.assign(new Error("FAKE-WRAP-L68"), { cause: e });
+    return e;
+  };
+
+  it("cuts the name to 64, freezes the result and describes a non-Error by its type", () => {
+    const cls = errorClass(Object.assign(new Error("FAKE-MSG-L68"), { name: "N".repeat(100) }));
+    expect(cls).toEqual({ name: "N".repeat(64) });
+    expect(cls).not.toHaveProperty("code");
+    expect(Object.isFrozen(cls)).toBe(true);
+    expect(errorClass(Object.assign(new Error("x"), { name: 42 }))).toEqual({ name: "42" });
+    expect(errorClass("FAKE-MSG-L68")).toEqual({ name: "string" });
+    expect(errorClass(null)).toEqual({ name: "object" });
+    expect(errorClass({ message: "FAKE-MSG-L68" })).toEqual({ name: "object" });
+  });
+
+  it("takes the first code on the cause chain within 8 hops, SQLSTATE/constant-shaped only", () => {
+    expect(errorClass(chain(2, "40P01"))).toEqual({ name: "Error", code: "40P01" });
+    expect(errorClass(chain(7, "40P01")).code).toBe("40P01"); // the 8th error the walk reads
+    expect(errorClass(chain(8, "40P01"))).not.toHaveProperty("code");
+    expect(errorClass(chain(0, "econnreset"))).not.toHaveProperty("code");
+    expect(errorClass(chain(0, "A".repeat(33)))).not.toHaveProperty("code");
+    expect(errorClass(chain(0, "A".repeat(32))).code).toBe("A".repeat(32));
+  });
+
+  it.each(["", "debug"])("logs error: { name, code } and no message (LOG_LEVEL %j)", (level) => {
+    vi.stubEnv("LOG_LEVEL", level);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    log.error("l68.class_only", { error: errorClass(chain(1, "40P01")) });
+    const line = JSON.parse(errSpy.mock.calls[0]![0] as string) as Record<string, unknown>;
+    expect(line.error).toEqual({ name: "Error", code: "40P01" });
+    expect(JSON.stringify(errSpy.mock.calls)).not.toContain("FAKE-");
+  });
+
+  it("writes only an errorClass() result as-is: a copy or a look-alike is still [object]", () => {
+    const cls = errorClass(chain(0, "40P01"));
+    const out = sanitizeFields(
+      { a: cls, b: { ...cls }, c: { name: "Error", code: "40P01" } },
+      "info",
+    );
+    expect(out).toEqual({ a: { name: "Error", code: "40P01" }, b: "[object]", c: "[object]" });
   });
 });

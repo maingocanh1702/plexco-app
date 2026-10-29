@@ -162,6 +162,43 @@ describe("POST /api/onboarding/zalo/connect", () => {
     );
   });
 
+  // L68 D7: the swallowed setWebhook error reaches the log by class only, at every LOG_LEVEL.
+  it.each(["", "debug"])(
+    "setWebhook failure is logged by class only (LOG_LEVEL %j)",
+    async (level) => {
+      vi.stubEnv("LOG_LEVEL", level);
+      const fakes = ["FAKE-BOT-TOKEN-L68", "FAKE-URL-TOKEN-L68", "FAKE-WH-SECRET-L68"];
+      // undici's shape: TypeError("fetch failed") with the socket error and its code on `.cause`.
+      const cause = Object.assign(new Error(`connect ECONNRESET ${fakes.join(" ")}`), {
+        code: "ECONNRESET",
+      });
+      vi.mocked(setWebhook).mockRejectedValue(
+        Object.assign(
+          new TypeError(`fetch failed /bot${fakes[0]} url=/zalo/${fakes[1]} ${fakes[2]}`),
+          {
+            cause,
+          },
+        ),
+      );
+      const spies = (["error", "warn", "log"] as const).map((m) =>
+        vi.spyOn(console, m).mockImplementation(() => {}),
+      );
+      try {
+        await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+        const written = JSON.stringify(spies.map((s) => s.mock.calls));
+        for (const fake of fakes) expect(written).not.toContain(fake);
+        const line = spies[1]!.mock.calls
+          .map((c) => JSON.parse(c[0] as string) as Record<string, unknown>)
+          .find((l) => l.event === "zalo_setwebhook_failed");
+        expect(line).toMatchObject({ level: "warn", tenantId: TENANT });
+        expect(line!.error).toEqual({ name: "TypeError", code: "ECONNRESET" }); // no message/stack
+      } finally {
+        for (const s of spies) s.mockRestore();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("denies without connector.secret_manage: 403, no Zalo call", async () => {
     vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "grant_required" });
     const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));

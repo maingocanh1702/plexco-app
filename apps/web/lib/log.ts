@@ -55,6 +55,30 @@ export function bound(text: unknown, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}…[+${s.length - max}]`;
 }
 
+/** Every errorClass() result: the one object sanitizeFields writes as-is. */
+const errorClasses = new WeakSet<object>();
+
+/**
+ * An error by CLASS only (L68 D7): its name and one string `code`, never its message, stack or
+ * cause, which can carry a token, a token-bearing URL or a query's params. A swallowed or unhandled
+ * error logs `{ error: errorClass(error) }`. `name` is cut to 64 (`typeof` for a non-Error; a
+ * non-string name is described, never thrown on); `code` is the first string `code` on the cause
+ * chain shaped like a SQLSTATE or a provider constant, within 8 hops, omitted when there is none.
+ */
+export function errorClass(error: unknown): { readonly name: string; readonly code?: string } {
+  let code = "";
+  for (let c = error, i = 0; !code && c && typeof c === "object" && i < 8; i++) {
+    const v = (c as { code?: unknown }).code;
+    if (typeof v === "string" && /^[0-9A-Z_]{1,32}$/.test(v)) code = v;
+    c = (c as { cause?: unknown }).cause;
+  }
+  const raw: unknown = error instanceof Error ? error.name : typeof error;
+  const name = typeof raw === "string" ? raw.slice(0, 64) : bound(raw, 64);
+  const cls = Object.freeze(code ? { name, code } : { name });
+  errorClasses.add(cls);
+  return cls;
+}
+
 export function sanitizeFields(
   fields: Record<string, unknown>,
   level: LogLevel,
@@ -78,6 +102,8 @@ export function sanitizeFields(
           : {}),
         ...(level === "debug" && value.stack ? { stack: bound(value.stack, STACK_MAX) } : {}),
       };
+    } else if (value !== null && typeof value === "object" && errorClasses.has(value)) {
+      out[key] = value; // frozen { name, code? }, both strings already bounded by errorClass
     } else if (value !== null && typeof value === "object") {
       // Never serialise arbitrary objects (a Request, a DB row) — say their shape only.
       out[key] = Array.isArray(value) ? `[array:${value.length}]` : "[object]";
