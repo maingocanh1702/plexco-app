@@ -7898,3 +7898,20 @@ notes: |
   D-4 migration job: no analog in I at that SHA (`DATABASE_URL_MIGRATION`: 0 hits; I:193 limits role `migration` to "CI/migration job", which the PRE_DEPLOY migrate job also fits).
   Fix: D-2 now (best together with p5-environments-setup-drifts-from-env-manifest); D-1 after the owner's R1. Same gating as that row.
   Source: lane L63 (p5-deployment-infra-drift), review round 1 (reviewer R1a, unresolved question).
+
+## task: p5-security-operations-backup-recovery-drift
+title: feature_security_operations_tech.md section 4 "Backup & Recovery" keeps the HA baseline with no DD-154 pilot note and a restore drill thinner than the DD-04 record's section 7.5
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/features/BE/feature_security_operations_tech.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at a5d8e65cb49cdc4e48cd60132e34f0b16a861475 (S = docs/features/BE/feature_security_operations_tech.md, status Reviewed v2.7 at S:4-5, section 4 "Backup & Recovery" at S:188-192; DEC = docs/standards/decisions.md; REC = docs/decisions/analysis/dd-04-hosting-final-decision.md; lane L63 changes none of the three).
+  HA: S:190 says "Managed HA + PITR with encrypted backups" with no pilot note. DD-154 (DEC:1785; consequences (a) DEC:1822 and (d) DEC:1825) and its addendum under DD-04 (DEC:239-253, line :245) start production in the pilot on one 2 GiB PostgreSQL node with no standby, until the HA condition of DD-154 consequence (c) (DEC:1824). S:192 (RPO/RTO measured after the restore/failover drill) does not say that in the pilot the failover drill runs on a temporary HA staging window, not on production (DD-154 consequence (b), DEC:1823).
+  Restore drill: S:191 (isolated DB, roles/policies, schema checksums, count reconciliation) is thinner than REC section 7.5 (REC:267-279): no quarterly restore to temporary vanilla PostgreSQL outside DigitalOcean with ledger/allocation/outbox reconciliation, smoke tests and representative load tests (REC:276-277); no portable recovery set (schema, migrations, roles/grants, RLS, extensions, sequence state and data; a data-only dump is not one, REC:271-272); no three independent recovery forms (live HA data, provider PITR, encrypted logical exports outside DigitalOcean, REC:269-270; the pilot has no live HA form). S cites no runbook (`runbooks/`: 0 hits); the procedures are docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md on main.
+  Fix: annotate S section 4 with the pilot reading and the REC section 7.5 items, citing DD-154, its addendum and the two runbooks; keep the HA design (S is Reviewed: a pilot note that follows a decided DD, no new contract). docs/standards/deployment-infra.md already carries this reading at I:69 and I:239-241 (I = that file at 490d9d4d10d92494a39cf9be2ce5d5475b7327e0), and I:69 sends readers to S section 4 for the restore drill.
+  Source: lane L63 (p5-deployment-infra-drift), review round 2 (reviewer R2d, out-of-scope note), routed to this row by the conductor.
