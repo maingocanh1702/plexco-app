@@ -27,15 +27,17 @@ Một bộ export = dump định dạng custom của database + dump chỉ role 
 set -o pipefail   # a failed dump fails the pipeline instead of leaving a short encrypted file
 pg_dump -Fc "$SRC_ADMIN_URL" | pv -q -L <rate> | age -r "$BACKUP_AGE_RECIPIENT" > plexco-<UTC-date>.dump.age
 pg_dumpall --dbname="$SRC_ADMIN_URL" --roles-only --no-role-passwords | age -r "$BACKUP_AGE_RECIPIENT" > plexco-<UTC-date>-roles.sql.age
-shasum -a 256 plexco-<UTC-date>*.age
+pg_dump --version   # baseline string: section 5 must print the same one
+pg_dump --schema-only --schema=public --schema=pgboss "$SRC_ADMIN_URL" > plexco-<UTC-date>-schema.sql   # definitions only, no rows: kept unencrypted
+shasum -a 256 plexco-<UTC-date>*.age plexco-<UTC-date>-schema.sql
 ```
 
 `--no-role-passwords`: admin của DigitalOcean không phải superuser (`infra/postgres-init/01-job-definer.sql:97-100`) nên không đọc được mật khẩu role; bản restore nhận credential mới.
 
-2. Ngay sau export, trên nguồn: C1-C7 (3.4, §5) và Q1-Q6 (§6); kết quả là mốc cho §5. Không thao tác gì trên staging trong cửa sổ export; có thao tác ⇒ mốc không dùng được, export lại.
-3. Chép hai file `.age` ra nơi lưu ngoài tài khoản DigitalOcean (owner chọn) và kiểm lại sha256 ở nơi lưu; ghi SHA commit app đang chạy (từ deployment) vào hàng `export §2` ở §7.
+2. Ngay sau export, trên nguồn: C1-C5 (3.4) và Q1-Q6 (§6); kết quả này cùng file `plexco-<UTC-date>-schema.sql` và chuỗi `pg_dump --version` là mốc cho §5. Không thao tác gì trên staging trong cửa sổ export; có thao tác ⇒ mốc không dùng được, export lại.
+3. Chép hai file `.age` và file schema ra nơi lưu ngoài tài khoản DigitalOcean (owner chọn) và kiểm lại sha256 ở nơi lưu; ghi SHA commit app đang chạy (từ deployment) vào hàng `export §2` ở §7.
 
-**Pass:** pipeline exit 0, không `ABORTED`, hai file mã hoá có ở nơi lưu ngoài DigitalOcean với sha256 khớp.
+**Pass:** pipeline exit 0, không `ABORTED`, hai file mã hoá và file schema có ở nơi lưu ngoài DigitalOcean với sha256 khớp.
 
 ## 3. Diễn tập PITR trên staging
 
@@ -139,21 +141,24 @@ age -d -i "$BACKUP_AGE_IDENTITY" plexco-<UTC-date>.dump.age | pg_restore --dbnam
 ```
 
 1. Ghi giờ bắt đầu restore (đồng hồ RTO của dạng này). Roles trước, dump sau; lỗi được chấp nhận duy nhất là `role ... already exists`, nên lệnh `grep` phải không in gì; lỗi khác, hoặc `pg_restore` báo `errors ignored on restore` ⇒ `FAIL`.
-2. Theo §6 với `VANILLA_ADMIN_URL` (superuser vanilla, Q0 true, Q0b = 0): C1-C7, Q5, Q6 bằng mốc của §2; Q1, Q2, Q4 trả 0 dòng; Q3 trả đúng các dòng của mốc §2.
+2. Theo §6 với `VANILLA_ADMIN_URL` (superuser vanilla, Q0 true, Q0b = 0): C1-C5, Q5, Q6 bằng mốc của §2; Q1, Q2, Q4 trả 0 dòng; Q3 trả đúng các dòng của mốc §2. Rồi khối S bên dưới, với cùng chuỗi `pg_dump --version` như mốc §2: hai số `grep -c` > 0 và hai tổng sha256 bằng nhau ⇒ xanh; hai tổng khác ⇒ đính `schema.diff` vào hàng `quarterly §5` ở §7 và giải thích từng hunk ở cột `Ghi chú`; hunk nào owner không giải thích được ⇒ `FAIL`.
 3. Owner đặt credential tạm cho các role runtime trên bản restore, trỏ một app tạm cùng SHA đã ghi ở §2 vào đó và chạy `infra/smoke-check.sh https://<restore-app>`; xanh ⇒ ghi RTO đo. Smoke xanh là phép kiểm gián tiếp cho grant của role runtime.
 4. RPO của dạng này = tuổi bộ export lúc restore (bằng khoảng cách giữa hai lần export): ghi số đo và so với RPO của dạng export ở bước 8.9; vượt ⇒ `OPEN` (Pass bên dưới), ghi ở cột Ghi chú cho bước 8.9.
 5. Huỷ bản vanilla và credential tạm; ghi hàng `quarterly §5` ở §7.
 
-```sql
-BEGIN TRANSACTION READ ONLY;
--- C6 schema checksum from pg_catalog (not privilege-filtered): run on the source at export time (§2) and on the restore; must be equal
-SELECT md5(string_agg(c.relname || '.' || a.attname || ':' || format_type(a.atttypid, a.atttypmod), ',' ORDER BY c.relname, a.attname)) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm') AND a.attnum > 0 AND NOT a.attisdropped;
--- C7 table privileges, function owners, security-definer flags and function privileges: run beside C6; must be equal
-SELECT md5(string_agg(x, ',' ORDER BY x COLLATE "C")) FROM (SELECT c.relname || ':' || pg_get_userbyid(a.grantee) || ':' || a.privilege_type AS x FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) a WHERE c.relnamespace = 'public'::regnamespace UNION ALL SELECT p.oid::regprocedure::text || ':' || pg_get_userbyid(p.proowner) || ':' || p.prosecdef FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace UNION ALL SELECT p.oid::regprocedure::text || ':' || pg_get_userbyid(a.grantee) || ':' || a.privilege_type FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE p.pronamespace = 'public'::regnamespace) g;
-ROLLBACK;
+Khối S (Người làm: OWNER, ở bước 2): so dump chỉ-schema của nguồn ở mốc §2 với dump chỉ-schema của bản restore. `--schema` lấy đúng hai schema của app: `public` (migration tạo bảng ở đây và không tạo schema nào khác) và `pgboss` của pg-boss (`apps/bot/src/queue.ts:3`, bước provision dựng nó: `apps/bot/src/provision-queue.ts:29`); với `--schema`, pg_dump không dump các đối tượng khác mà các schema đã chọn phụ thuộc vào (mục `-n` của https://www.postgresql.org/docs/current/app-pgdump.html, bản 18, truy cập 2026-10-29), nên S không thay C2 (role) và C4 (extension). Chuẩn hoá bỏ mọi dòng chú thích `--` (phần đầu ghi version của server, có thể khác bản minor giữa nguồn và bản restore, và version của pg_dump; các dòng `-- Name: …; Owner: …` mà câu CREATE/ALTER/GRANT đã lặp lại) và các dòng `\restrict` / `\unrestrict`, vì key của chúng ngẫu nhiên mỗi lần chạy (cùng trang, mục `--restrict-key`: "If no restrict key is specified, pg_dump will generate a random one as needed"); bỏ dòng thay vì dùng `--restrict-key` để lệnh vẫn đúng với bản pg_dump chưa có option này.
+
+```bash
+pg_dump --version   # must print the section 2 baseline string; its major version >= the server's
+pg_dump --schema-only --schema=public --schema=pgboss "$VANILLA_ADMIN_URL" > restore-schema.sql
+grep -v -E '^--|^\\(un)?restrict ' plexco-<UTC-date>-schema.sql > src.norm.sql
+grep -v -E '^--|^\\(un)?restrict ' restore-schema.sql > restore.norm.sql
+grep -c '^CREATE TABLE ' src.norm.sql restore.norm.sql   # both > 0: two empty dumps would also compare equal
+shasum -a 256 src.norm.sql restore.norm.sql   # the two sums must be equal
+diff -u src.norm.sql restore.norm.sql > schema.diff   # empty when equal
 ```
 
-**Pass:** bước 1-3 xanh, RTO đo ≤ 60 phút và RPO đo ≤ RPO của dạng export mà owner ghi ở bước 8.9; owner chưa ghi số đó, hoặc RPO đo vượt nó ⇒ `OPEN`, không bao giờ `PASS`. Hoãn: load test (§7.6 mục 12, `docs/sessions/web-mvp-phase5-golive-plan.md:269`) và nửa migration của mục 13 (`docs/sessions/web-mvp-phase5-golive-plan.md:270`).
+**Pass:** bước 1-3 xanh, RTO đo ≤ 60 phút và RPO đo ≤ RPO của dạng export mà owner ghi ở bước 8.9; owner chưa ghi số đó, hoặc RPO đo vượt nó ⇒ `OPEN`, không bao giờ `PASS`. Hàng `quarterly §5` ghi hai tổng sha256 của S ở cột `Kiểm 3.4 / §5 / §6`: đó là "schema checksum" của bản ghi (`docs/decisions/analysis/dd-04-hosting-final-decision.md:276`). Hoãn: load test (§7.6 mục 12, `docs/sessions/web-mvp-phase5-golive-plan.md:269`) và nửa migration của mục 13 (`docs/sessions/web-mvp-phase5-golive-plan.md:270`).
 
 ## 6. Truy vấn chỉ đọc (Người làm: OWNER)
 
