@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.10 · 2026-10-27 (§7: ghi chú thứ tự deploy cho cleanup tên `0068`–`0070`); v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
+> **Version:** v1.11 · 2026-10-29 (L63: §2 và §7-§9 khớp bản ghi DD-04, 15 mục lệch, gồm §9.5 budget alert mới; trigger deploy chỉ `workflow_dispatch` do owner bấm; ghi chú pha pilot DD-154); v1.10 · 2026-10-27 (§7: ghi chú thứ tự deploy cho cleanup tên `0068`–`0070`); v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -11,6 +11,8 @@
 ## 0. TL;DR
 
 Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **DigitalOcean App Platform** (compute) + **DO Managed Postgres HA-standby cùng VPC private**, **region Singapore** (DD-04 ✅ (c), 2026-07-16 — thay Fly; Fly = fallback (a); pre-build **egress-IP gate §7.1** — xem `../decisions/analysis/dd-04-hosting-final-decision.md`). Full infra spec (DO App Spec, supersede `fly.toml`) làm ở **build slice riêng**. Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
+
+> **Pha pilot (DD-154, owner 2026-10-28):** production khởi đầu không HA: một instance `web`, một worker, không component `discovery` riêng, PostgreSQL một nút, không standby (hình dạng 3, khoảng $52.45/tháng); drill failover chỉ trên cửa sổ staging tạm HA; production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB nữa. Chi tiết: ghi chú pha pilot ở §2 DD-04.
 
 **KHÔNG:** Kubernetes · tách microservices · serverless function cho worker/webhook/SSE · Redis cho queue.
 
@@ -27,7 +29,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 | **Region** | Người dùng + provider (SePay/Zalo/Messenger) ở **VN** → ưu tiên độ trễ thấp | BRD §Bên thứ ba |
 | **Chi phí** | Thuê bao host **0đ (free) / 250k (host_pro) mỗi CLB/tháng** (DD-29 thay DD-03) → margin nhạy, infra phải rẻ ở giai đoạn đầu | BRD §9.1 · DD-29 |
 | **Vận hành** | Team nhỏ → tối ưu **dễ maintain**, ít moving parts | mục tiêu user |
-| **Bản chất hệ thống** | Hệ thống **tiền + multi-tenant RLS** → bắt buộc HA, PITR, least-privilege | TDD §10 · AUDIT |
+| **Bản chất hệ thống** | Hệ thống **tiền + multi-tenant RLS** → bắt buộc HA, PITR, least-privilege (HA của production hoãn trong pha pilot tới điều kiện của DD-154 (c), xem §2) | TDD §10 · AUDIT |
 
 **Nguyên tắc dẫn xuất:** vì là hệ tiền/đa-tenant nhưng team nhỏ và chi phí nhạy, ta chọn **kiến trúc đơn giản nhất *vẫn còn đúng*** — monolith container-hoá thay vì microservices/k8s — và đẩy phần "khó" (HA, PITR, pooling) sang **managed services**.
 
@@ -45,6 +47,12 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 **Gate cứng (đã đạt qua (c)):** **auto-failover HA + uptime SLA + posture private-network** (VPC by construction).
 **Phân tích đầy đủ + nguồn:** `../decisions/analysis/dd-04-hosting-final-decision.md` (final ✅) · `../decisions/analysis/dd-04-hosting-decision-brief.md` (rev 5, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
 
+> **Pha pilot: DD-154** (quyết định của owner 2026-10-28, Q3 override), nguyên văn: "Q3 override: production starts without HA (shape 3, about 52 USD/month); the §7.6 failover drill runs on a temporary HA staging window (shape 4); upgrade production to HA before money flows or before adding more clubs."
+>
+> (a) production khởi đầu ở hình dạng 3 (PLAN `:140`; PLAN = `docs/sessions/web-mvp-phase5-golive-plan.md`, như DD-154): một instance `web`, một worker, PostgreSQL một nút 2 GiB, **không standby**, không component discovery riêng; pha pilot chưa có auto-failover HA và SLA 99.95% của DB, nên gate cứng ở trên chưa đạt trong pha pilot theo override của owner; PITR, Singapore, VPC private, gate §7.1 và offsite backup không đổi. (b) drill failover của bản ghi §7.6 (mục 7, cùng 8a) chạy trên cửa sổ staging tạm HA (hình dạng 4, PLAN `:141`), **không** trên production. (c) production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB nữa; hai cách đọc của vế "before money flows", cách đọc vế "before adding more clubs" và nhãn của chúng chỉ ghi ở DD-154, Hệ quả (c).
+>
+> Thiết kế HA theo bản ghi DD-04 trong doc này (§0, §2, §3, §8, §9 Tier A) giữ nguyên làm đích: chỉ chú thích, không xoá; điều kiện lên HA: DD-154 (c); topology hai instance (bản ghi §7.6 mục 5): DD-154 (e). Nguồn: `decisions.md` DD-154 và "Bổ sung 2026-10-28 (DD-154)" dưới DD-04.
+
 **Lịch sử QĐ-1 (đã superseded bởi quyết định ở trên):** khi compute còn target Fly, DB managed khác cloud nên không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [Fly, nay chỉ là fallback] · **(b)** PrivateLink AWS [loại] · **(c)** co-locate compute+DB cùng cloud [**đã chọn**; đổi deployment target nhưng không đảo DD-10].
 
 | Option | Đạt gate? | Ưu | Nhược |
@@ -58,7 +66,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 > ⚠️ **pg-boss cần connection DIRECT (session-mode)** cho `LISTEN/NOTIFY` + advisory lock, và **poll liên tục**. Nếu dùng Neon: worker phải cắm **non-pooled connection string** và **tắt autosuspend** (worker giữ DB luôn thức → mất lợi ích serverless). Web/discovery request path dùng **pooled** (transaction-mode); riêng web SSE listener dùng `DATABASE_URL_LISTEN` session/direct như DD-07.
 
-**Hệ quả:** RPO/RTO cụ thể chốt sau khi chọn provider; phải có **restore drill** định kỳ (security-operations-tech §4).
+**Hệ quả:** RPO/RTO cụ thể chốt sau khi chọn provider; phải có **restore drill** định kỳ (security-operations-tech §4), hằng quý ra ngoài DigitalOcean theo bản ghi §7.5; quy trình: `docs/runbooks/pitr-restore-drill.md`.
 
 ### DD-07 (OD-7) — Realtime web · ✅ chốt
 
@@ -114,6 +122,8 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
         └── KMS / Secret manager (bot_token_enc, webhook_secret_enc, session keys)
 ```
 
+> **Pha pilot (DD-154 (a)):** production chạy PostgreSQL một nút, **không HA STANDBY**, và không có component `discovery` riêng (hình dạng 3); sơ đồ trên là topology đích của bản ghi DD-04 (giữ nguyên, chỉ chú thích); điều kiện lên HA: DD-154 (c). Xem ghi chú pha pilot ở §2.
+
 **Nguyên tắc "1 image, nhiều process group":** cùng artifact build ra, khác `ENTRYPOINT` và **khác DB role**. Đây là cách tôn trọng yêu cầu tách `app` / `app_worker` của TDD §3.4 mà **không** đẻ ra microservices (tránh đồng bộ schema/event giữa nhiều repo — gánh nặng maintain lớn nhất ở giai đoạn này).
 
 Ví von: **một căn bếp, nhiều ca làm** — cùng công thức (image), một ca tiếp khách (`web`), một ca phục vụ thực đơn công khai (`discovery`), một ca hậu cần (`worker`). Khác hẳn xây nhiều nhà hàng riêng (microservices).
@@ -129,6 +139,8 @@ Ví von: **một căn bếp, nhiều ca làm** — cùng công thức (image), m
 | **worker** | pg-boss scheduler/dispatcher, projectors, cron nhắc nợ | `app_worker` (chỉ narrow functions) | **DIRECT** (session-mode) | **không** ingress | 1 → vài replica (claim `SKIP LOCKED`) |
 
 > **Vì sao tách `discovery` ra process riêng** (dù cùng image): đây là đường đọc *cố ý cross-tenant*, *không PII*, và *chịu DDoS cao nhất* (G6). Tách process + DB role cho phép áp **pool/timeout/circuit-breaker + CDN/rate-limit riêng** ngay Day-1; khi telemetry chạm trigger, chỉ đổi connection của component này sang read-only node, không đổi code hay API. Nếu sau này phải "tách 1 thứ" thành service thật, đây là ứng viên duy nhất hợp lý.
+
+> **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3, không có component `discovery` riêng (một instance `web`, một worker); tách process `discovery` ở bảng trên là thiết kế đích của bản ghi DD-04 (giữ nguyên, chỉ chú thích). Xem ghi chú pha pilot ở §2.
 
 > 🔒 **"Cross-tenant không qua RLS" KHÔNG có nghĩa bypass cô lập.** Role `readonly` **chỉ được `GRANT SELECT` trên các object projection công khai** (`public_sessions` và public view do projector sinh — xem DD-12), và **zero grant** trên mọi bảng canonical chứa tiền/PII (`charges`, `bank_transactions`, `allocations`, `memberships`, `person`…). Bất biến cô lập tenant vẫn được giữ ở **tầng quyền** (least-privilege), không phải ở RLS — vì bảng `public_sessions` theo thiết kế **không chứa** dữ liệu tenant-private nên không cần RLS để bảo vệ. Phải có **test gate** khẳng định `readonly` không đọc được bảng canonical (CI §7 — "public-projection invariant").
 
@@ -185,7 +197,7 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 | **B3 / edge#1** webhook giả | timing-safe verify ×3 (code) + **body-size cap + per-token rate-limit** (edge); lưu raw trước ACK. |
 | **B5** cron privileged cross-tenant | `app_worker` chỉ gọi narrow function (`claim_outbox_batch`, `list_due_tenant_jobs`); mọi privileged call **ghi audit** (`job_id`,`tenant_id`,actor=system). |
 | **edge#12 / G4** log chứa PII · audit retention | Structured log **gắn `tenant_id`, KHÔNG secret/OTP/STK/SĐT/email/body**; audit append-only, retention định nghĩa; SLO alert → on-call + runbook. |
-| **edge#8** mất DB/region | **Managed PITR + encrypted offsite backup + restore drill** định kỳ; đo và chốt RPO/RTO sau provision/failover/restore drill. |
+| **edge#8** mất DB/region | **Managed PITR + encrypted offsite backup + restore drill** định kỳ; đo và chốt RPO/RTO sau provision/failover/restore drill (runbook `docs/runbooks/pitr-restore-drill.md`, `docs/runbooks/failover-drill.md`; pha pilot: failover drill chỉ trên cửa sổ staging tạm HA, DD-154 (b)). |
 | **G5** PDPA/GDPR | Quy trình export/delete data-subject + ToS/Privacy/retention (P6; tooling là việc deploy). |
 | **C6 / G2** player-view auth · session steal | session key auto-rotate (30d) + kill-switch invalidate-all (security-operations-tech §4); `person_id` suy từ phiên verify, không từ tham số. |
 
@@ -200,8 +212,10 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 CI/CD **chính là security gate** — nơi C1–C8 "must-fix before code" được thực thi liên tục, không chỉ review một lần.
 
 ```
-push → build immutable image (signed) → CI gates → deploy staging → promote prod
+owner: workflow_dispatch (staging) → build immutable image (signed) → CI gates → deploy staging → owner approval → owner: workflow_dispatch (production) → promote prod
 ```
+
+**Trigger deploy:** workflow deploy (staging, production) chỉ có trigger tay `workflow_dispatch`, không bao giờ chạy theo `push`; chỉ owner duyệt và bấm chạy, staging trước (PLAN §8 bước 8.6; PLAN `:26`; DD-154, Q1 theo default). Không agent nào bấm deploy.
 
 **Gate bắt buộc xanh trước khi promote** (security-operations-tech §4):
 1. Unit/integration/E2E + **RLS / public-projection / person-self / ledger invariants**
@@ -220,9 +234,16 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 ## 8. Backup/DR & Observability
 
-**Backup/DR:** Managed HA + PITR + **encrypted offsite backup ngoài DO** để giảm concentration risk. **Restore drill:** DB cô lập → apply roles/policies → checksum schema → đối chiếu count (tenants, charges, transactions, allocations, outbox, audit). RPO/RTO được chốt bằng số đo sau provision, failover drill và restore drill; DD-04 provider choice đã đóng.
+**Backup/DR** (bản ghi §7.5):
 
-**Observability:** structured log gắn opaque `tenant_id`/`job_id` (không secret/PII) → metrics → traces → **SLO alert** (sync lag, reconcile p99, availability) → on-call + runbook link. Sentry cho error tracking (TDD §7).
+- **Ba dạng khôi phục độc lập:** dữ liệu HA live, PITR của provider, và export logic mã hoá ngoài tài khoản/nhà cung cấp DigitalOcean (giảm concentration risk). Pha pilot: production chưa có dạng HA live (DD-154 (a), §2); còn PITR và export ngoài DO.
+- **Export portable:** schema, migrations, roles/grants, RLS, extensions, sequence state và data; dump chỉ-data không phải bộ khôi phục portable. Chạy off-peak, có trần bandwidth/concurrency, abort nếu p95/p99 production hoặc SLO queue xấu đi. Khi dữ liệu lớn, dùng replica/target tạm cho bản sao đầu thay vì trả tiền cho một migration replica thường trực hằng tháng.
+- **Restore drill** (bản ghi §7.6 mục 9): PITR drill vào DB cô lập và, **hằng quý**, restore vào PostgreSQL vanilla tạm ngoài DigitalOcean; sau restore: apply roles/policies → checksum schema → đối chiếu count (tenants, charges, transactions, allocations, outbox, audit) → đối soát ledger/allocation/outbox → smoke test → load test đại diện. Quy trình: `docs/runbooks/pitr-restore-drill.md`.
+- **Failover drill** (bản ghi §7.6 mục 7): pha pilot chỉ chạy trên cửa sổ staging tạm HA (DD-154 (b)). Quy trình: `docs/runbooks/failover-drill.md`.
+
+RPO/RTO được chốt bằng số đo sau provision, failover drill và restore drill; DD-04 provider choice đã đóng. Pha pilot: drill failover trên cửa sổ staging tạm HA "chỉ chứng minh một topology mà production không có" (PLAN `:125`, trích ở "Bổ sung 2026-10-28 (DD-154)" dưới DD-04).
+
+**Observability:** structured log gắn opaque `tenant_id`/`job_id` (không secret/PII) → metrics → traces → **SLO alert** (sync lag, reconcile p99, availability) → on-call + runbook link. Sentry cho error tracking (TDD §7): Day-1 dùng gói **Developer** (một user, error monitoring, tracing, email alert; bản ghi §5.1); Sentry Team chỉ khi trigger Tier B.
 
 **Runbook bắt buộc:** cross-tenant leak · public PII · wrong allocation · identity compromise · token leak · DB restore · provider outage · queue backlog · admin session compromise · marketplace abuse.
 
@@ -230,7 +251,7 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 ## 9. Cost estimate — Day-1 baseline + trigger-based upgrades (DD-04 Rev 2)
 
-> **Model (thay Tier A/B cũ $121–133 / $202–254).** Day-1 chạy **baseline money-safe tối thiểu** `$120–135/tháng` — đã gồm non-negotiables: HA primary+standby, PITR, VPC private, fail-closed RLS, KMS envelope encryption, offsite-backup allowance, cùng **§9.3 read-isolation controls**. Các add-on đắt (read replica vật lý, WAF Pro, Sentry Team, worker thứ 2, resize DB) **KHÔNG bắt buộc Day-1** — bật theo **telemetry trigger đo được** (§9.2). Nguồn chuẩn: `../decisions/analysis/dd-04-hosting-final-decision.md` §5.
+> **Model (thay Tier A/B cũ $121–133 / $202–254).** Day-1 chạy **baseline money-safe tối thiểu** `$120–135/tháng` — đã gồm non-negotiables: HA primary+standby, PITR, VPC private, fail-closed RLS, KMS envelope encryption, offsite-backup allowance, cùng **§9.3 read-isolation controls**. Các add-on đắt (read replica vật lý, WAF Pro, Sentry Team, worker thứ 2, resize DB) **KHÔNG bắt buộc Day-1** — bật theo **telemetry trigger đo được** (bảng Tier B bên dưới; bản ghi §5.2). Nguồn chuẩn: `../decisions/analysis/dd-04-hosting-final-decision.md` §5. **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3, không standby, khoảng $52.45/tháng (ghi chú dưới Tier A); baseline `$120–135` của bản ghi là baseline HA, giữ làm đích (điều kiện lên HA: DD-154 (c)).
 
 ### Tier A — Day-1 baseline (money-safe với fail-closed + §9.3 read isolation)
 
@@ -247,30 +268,39 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 | Egress buffer | | ~$0–8 |
 | **Tổng Day-1** | | **~$120–135** (fixed subtotal $118.90 + variable allowances) |
 
+> **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3 (PLAN `:140`): web 1 × $12.00 + worker $10.00 + PostgreSQL một nút 2 GiB $30.45 = **$52.45/tháng**, không component discovery riêng, không standby; owner kiểm lại giá và trường hợp tài khoản của mình trên trang chính thức vào ngày mua (PLAN bước 8.1; DD-154 (a)). Topology hai instance (bản ghi §7.6 mục 5) hoãn kèm sign-off 8.9 (DD-154 (e)). Bảng trên là baseline HA của bản ghi DD-04, giữ làm đích; production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB nữa (DD-154 (c)).
+
 ### Tier B — Trigger-based upgrades (bật khi telemetry chạm ngưỡng, KHÔNG mặc định Day-1)
 
 | Upgrade | Trigger đo được | Chi phí thêm/tháng |
 |---|---|---|
-| Worker thứ 2 (HA queue) | queue depth / job latency vượt ngưỡng, hoặc cần zero-downtime deploy worker | +$14 |
-| Read node vật lý (discovery/player-view) | primary read contention đo được (§9.3 controls không đủ) | +$30.45 |
-| Cloudflare **Pro** (WAF/rate-limit tập trung) | abuse/bot/DDoS pattern hoặc cần L7 rule | +$20 ($25 month-to-month) |
-| Sentry **Team** (alerting/retention) | cần alert routing + retention dài | +$26 |
-| Resize component 1→2 GiB | memory pressure đo được | +$13/component |
-| Resize PG 2→4 GiB | DB CPU/RAM/connection ceiling | +$60.90 |
+| Worker thứ 2 (hai worker scalable 1 GiB) | queue lag vượt SLO kéo dài sau khi đã tinh chỉnh concurrency an toàn; **điều kiện trước:** test idempotency + duplicate-delivery xanh (Day-1 chỉ một consumer bền vững; bản ghi §5.1) | +$14 (so với worker cố định) |
+| Read node vật lý (discovery/player-view) | tải discovery gây contention đo được trên primary hoặc làm p95/p99 của money-path xấu đi, sau khi đã có control pool/rate/cache (§9.3) | tối thiểu +$30.45 ở cỡ primary 2 GiB hiện tại |
+| Cloudflare **Pro** (WAF/rate-limit tập trung) | managed rules của gói Free + một rule rate-limit không diễn đạt được control cần có, hoặc abuse quan sát được đòi hỏi | +$20 (quy đổi giá năm; $25 month-to-month) |
+| Sentry **Team** | hơn một operator, tích hợp bên thứ ba, hoặc quota/retention của gói Developer không đủ | +$26 (quy đổi giá năm) |
+| Log retention trả phí | retention free/low-volume không đáp ứng nhu cầu incident, audit hoặc compliance | theo usage/policy |
+| Resize component 1→2 GiB | CPU/RAM hoặc latency của component vẫn bão hoà sau khi đã tinh chỉnh scale ngang (bản ghi §5.2) | +$13 mỗi instance được nâng |
+| Resize PG 2→4 GiB | CPU/RAM/connection hoặc query latency của DB vượt capacity gate dưới tải đại diện | +$60.90 (primary + standby) |
 
 ### 9.3 Read isolation KHÔNG cần replica Day-1
 
-Discovery/public reads được cô lập khỏi money-path **ngay trên primary** bằng: **projection-only DB role** (zero grant trên bảng tiền/PII) · **bounded pool + statement_timeout** · **reserved connection budget** cho money-path · **CDN cache** cho public reads · **circuit-breaker** ngắt read khi primary áp lực. Read replica vật lý = upgrade Tier B khi contention đo được, **không** phải điều kiện money-safe Day-1. (record §5.3)
+Discovery/public reads được cô lập khỏi money-path **ngay trên primary** bằng: **projection-only DB role** (zero grant trên bảng tiền/PII) · **bounded pool + statement_timeout** · **reserved connection budget** cho `web`, `worker` và listener session-mode · **CDN cache** cho public reads + **rate limit ở edge và application** + **invalidation an toàn cho cache** · **circuit-breaker** hạ discovery về dữ liệu cũ (stale), `429` hoặc `503` trước khi pool `web`/`worker` bị ảnh hưởng. Read replica vật lý = upgrade Tier B khi contention đo được, **không** phải điều kiện money-safe Day-1. (record §5.3)
 
 ### 9.4 Ephemeral staging
 
-Staging chạy đúng topology DO (VPC/failover/gate acceptance) nhưng **ephemeral** (spin-up cho drill rồi teardown): ~$8–18/tháng → tổng prod+staging **~$128–153/tháng**. (record §5.4)
+Staging production-shape dựng **từ IaC**, sống **48–96 giờ** quanh mỗi lần release, load/soak test, failover drill, restore drill hoặc rehearsal rời provider, rồi **tự huỷ bằng TTL** (bản ghi §5.4; §7.6 mục 11): ~$8–18/tháng → tổng prod+staging **~$128–153/tháng** (số của baseline HA). Chỉ giữ một bề mặt smoke non-production tối thiểu khi một callback tích hợp bền vững cần nó; đó không phải stack production thứ hai. Deploy staging do owner bấm `workflow_dispatch`, không theo `push` (§7). (record §5.4)
+
+> **Pha pilot (DD-154 (b)):** drill failover chạy trên một cửa sổ staging tạm HA (hình dạng 4, PLAN `:141`: 48-96 giờ, một cửa sổ mỗi tháng; trên hình dạng 1: $8.49-16.99, trên hình dạng 2: $22.71-45.43), owner dựng và xoá bằng tay khi hết cửa sổ: tự huỷ theo TTL (bản ghi §7.6 mục 11) hoãn kèm sign-off 8.9 tới khi mục backlog `staging-ttl-teardown-automation` (PLAN `:374`) được làm xong; cái giá PLAN nêu cho lựa chọn này (PLAN `:125`, nguyên văn): "staging không còn "production-shape" (bản ghi §5.4, :148), nên drill chỉ chứng minh một topology mà production không có." Staging của G2 dùng hình dạng nào: DD-154, Hệ quả (j2).
 
 ### Tier C — Hardening một lần / định kỳ (không phải hosting cố định)
 
-Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill** định kỳ (~$10–30/drill), **pen-test** thuê ngoài, PDPA/GDPR + audit-retention tooling (§7, §8, §11). Phần lớn là **chi phí CI/người/định kỳ**, ước lượng riêng theo đợt — **không** gộp vào hosting hằng tháng.
+Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill** hằng quý ra ngoài DigitalOcean (~$10–30/drill cộng egress; bản ghi §7.5; `docs/runbooks/pitr-restore-drill.md`), **pen-test** thuê ngoài, PDPA/GDPR + audit-retention tooling (§7, §8, §11). Phần lớn là **chi phí CI/người/định kỳ**, ước lượng riêng theo đợt — **không** gộp vào hosting hằng tháng.
 
-> Doanh thu phụ thuộc plan mix (0đ free / 250k host_pro mỗi CLB/tháng — DD-29). Day-1 baseline `$120–135` đã money-safe nhờ non-negotiables + §9.3 controls thật; chi phí scale ~tuyến tính theo primary DB size + add-on trigger. **Điểm cần nhớ:** money-safe = baseline + fail-closed controls **được build thật**, không phải một tier đắt cố định. Deferral (replica/WAF Pro/Sentry Team) chỉ an toàn khi §9.3 controls ship + telemetry trigger được giám sát.
+> Doanh thu phụ thuộc plan mix (0đ free / 250k host_pro mỗi CLB/tháng — DD-29). Day-1 baseline `$120–135` đã money-safe nhờ non-negotiables + §9.3 controls thật; chi phí scale ~tuyến tính theo primary DB size + add-on trigger. **Điểm cần nhớ:** money-safe = baseline + fail-closed controls **được build thật**, không phải một tier đắt cố định. Deferral (replica/WAF Pro/Sentry Team) chỉ an toàn khi §9.3 controls ship + telemetry trigger được giám sát. Pha pilot: production là hình dạng 3 (DD-154 (a)); điều kiện lên HA và các cách đọc của nó ở DD-154 (c).
+
+### 9.5 Budget alert (ngưỡng do owner đặt)
+
+Điều kiện nghiệm thu production (bản ghi §7.6 mục 14; `decisions.md` DD-04, "Còn lại TRƯỚC khi build infra slice" (2)): **budget alert hằng tháng** phủ compute, DB, transfer, logs, backups và KMS; **ngưỡng là tham số của owner**, owner đặt trong console của từng nhà cung cấp ở PLAN bước 8.7; doc này không ghi số ngưỡng, và không có bước agent nào chạm console hay tài nguyên cloud.
 
 ---
 
@@ -309,3 +339,4 @@ Image signing (CI), **DAST** trên staging, **load/soak** infra, **restore drill
 | 2026-07-16 | v1.7 | **DD-04 Rev 2 — cost model đổi sang Day-1 baseline + trigger-based (record §8.2 PROPAGATION).** §9 viết lại: bỏ "Tier B money-safe bắt buộc `$202–254`", thay bằng **Day-1 baseline `$120–135`** (2 web + 2 discovery + 1 worker × 1 GiB + DO PG HA `$60.90` + Cloudflare Free + Sentry Developer + KMS `$1–3` + logs/R2 `$0–5` + egress `$0–8`; subtotal cố định `$118.90`) money-safe nhờ non-negotiables + **§9.3 read-isolation controls** (projection-role, bounded pool, reserved budget, CDN, circuit-breaker). Read replica/WAF Pro/Sentry Team/worker-2/DB-resize = **trigger-based upgrade** (§9.2), không mặc định Day-1. Ephemeral staging `$8–18` → prod+staging `$128–153` (§9.4). **Caveat:** deferral chỉ an toàn khi §9.3 controls ship thật + telemetry trigger được giám sát. |
 | 2026-07-16 | v1.8 | Đồng bộ topology/process/security với Rev 2: Day-1 discovery dùng read isolation trên primary; read-only node chỉ bật theo telemetry và chỉ đổi component-scoped `DATABASE_URL`. Sửa mô tả autoscale DO: RPS/p95 dùng shared hoặc dedicated, CPU autoscale cần dedicated CPU. |
 | 2026-10-27 | v1.10 | §7: thêm ghi chú thứ tự deploy cho cleanup tên của `0068`–`0070` (apply with writers drained; inferred, not run). |
+| 2026-10-29 | v1.11 | L63: §2 và §7-§9 khớp bản ghi DD-04 (staging IaC + TTL + smoke surface; worker 2 có điều kiện idempotency; trigger Sentry Team; log retention; trigger và đơn vị giá của resize component 1→2 GiB; trigger và nhãn giá của read node và Cloudflare Pro; trigger của resize PG 2→4 GiB; restore drill hằng quý ra ngoài DO + bộ export portable; read isolation đủ rate limit, invalidation, degrade; sửa trích dẫn §9.2 thành Tier B, bản ghi §5.2; trigger deploy chỉ `workflow_dispatch` do owner bấm); thêm §9.5 budget alert (ngưỡng owner đặt, bước 8.7); ghi chú pha pilot DD-154 (production hình dạng 3 không HA, drill failover trên cửa sổ staging HA, lên HA trước khi có tiền chạy hoặc thêm CLB nữa) ở §0, §1, §2, §3, §4, §6, §8, §9; con trỏ runbook PITR và failover. |

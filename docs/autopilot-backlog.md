@@ -7880,3 +7880,38 @@ notes: |
   D-4 migration job: E:183 (role `migration`), E:384, E:408 and E:425-430 keep `DATABASE_URL_MIGRATION` in a protected CI job only; the repo runs it in the PRE_DEPLOY migrate job (infra/render-app-spec.sh:59-65, infra/entrypoint.sh:78-85).
   Fix: D-2 and D-3 now: edit the standards doc and the two infra/entrypoint.sh comments to match the code (no code change); D-1 after the owner's R1 (lane L78 if the code changes); D-4 after the owner ratifies DD-129 (1). Natural owner lane L63 (deployment-infra) or the next lane that edits environments-setup.md.
   Source: lane L64 (p5-env-manifest), docs/runbooks/env-manifest-staging-production.md section E8, rows D-1 to D-4.
+
+## task: p5-deployment-infra-env-key-analogs
+title: deployment-infra.md repeats the env-manifest drifts D-1 and D-2 in its own connection-string text
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/standards/deployment-infra.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at d003e7465cc8e64b5ea0fc60b2bd4ad519614732 (I = docs/standards/deployment-infra.md). The env manifest docs/runbooks/env-manifest-staging-production.md lists these drifts for environments-setup.md; row p5-environments-setup-drifts-from-env-manifest scopes only that file and infra/entrypoint.sh, so I's analogs had no tracked home.
+  D-1 listener URL: I:67, I:79, I:137 and I:160 name a separate listener URL `DATABASE_URL_LISTEN` and I:159 describes that separate listener connection (I:333 is the dated v1.1 changelog row); no code reads that name, and the web SSE listener takes its LISTEN client from the `DATABASE_URL` pool and holds it (apps/web/lib/realtime-listener.ts:211-212), so the web URL must allow a held LISTEN session, while I:157 puts `app` on a transaction-mode pooler, I:67, I:79, I:137 and I:160 call the request URL pooled and I:161 counts one session connection per web replica (env manifest :125).
+  D-2 discovery DB key: I:138 (process table, discovery row) and I:164 give discovery `DATABASE_URL` (I:340 is the dated v1.8 changelog row), and I never names `DISCOVERY_DATABASE_URL` (0 hits; I:160 lists three connection strings, I:157 gives the `readonly` role only the request path, with no key name); the code opens discovery's pool on `DISCOVERY_DATABASE_URL` in every process that serves discovery, web included (env manifest :126).
+  D-4 migration job: no analog in I at that SHA (`DATABASE_URL_MIGRATION`: 0 hits; I:193 limits role `migration` to "CI/migration job", which the PRE_DEPLOY migrate job also fits).
+  Fix: D-2 now (best together with p5-environments-setup-drifts-from-env-manifest); D-1 after the owner's R1. Same gating as that row.
+  Source: lane L63 (p5-deployment-infra-drift), review round 1 (reviewer R1a, unresolved question).
+
+## task: p5-security-operations-backup-recovery-drift
+title: feature_security_operations_tech.md section 4 "Backup & Recovery" keeps the HA baseline with no DD-154 pilot note and a restore drill thinner than the DD-04 record's section 7.5
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/features/BE/feature_security_operations_tech.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at a5d8e65cb49cdc4e48cd60132e34f0b16a861475 (S = docs/features/BE/feature_security_operations_tech.md, status Reviewed v2.7 at S:4-5, section 4 "Backup & Recovery" at S:188-192; DEC = docs/standards/decisions.md; REC = docs/decisions/analysis/dd-04-hosting-final-decision.md; lane L63 changes none of the three).
+  HA: S:190 says "Managed HA + PITR with encrypted backups" with no pilot note. DD-154 (DEC:1785; consequences (a) DEC:1822 and (d) DEC:1825) and its addendum under DD-04 (DEC:239-253, line :245) start production in the pilot on one 2 GiB PostgreSQL node with no standby, until the HA condition of DD-154 consequence (c) (DEC:1824). S:192 (RPO/RTO measured after the restore/failover drill) does not say that in the pilot the failover drill runs on a temporary HA staging window, not on production (DD-154 consequence (b), DEC:1823).
+  Restore drill: S:191 (isolated DB, roles/policies, schema checksums, count reconciliation) is thinner than REC section 7.5 (REC:267-279): no quarterly restore to temporary vanilla PostgreSQL outside DigitalOcean with ledger/allocation/outbox reconciliation, smoke tests and representative load tests (REC:276-277); no portable recovery set (schema, migrations, roles/grants, RLS, extensions, sequence state and data; a data-only dump is not one, REC:271-272); no three independent recovery forms (live HA data, provider PITR, encrypted logical exports outside DigitalOcean, REC:269-270; the pilot has no live HA form). S cites no runbook file (`runbooks/`: 0 hits; S:217 lists a "DB restore" runbook among the required runbooks, with no path); the procedures are docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md on main.
+  Fix: annotate S section 4 with the pilot reading and the REC section 7.5 items, citing DD-154, its addendum and the two runbooks; keep the HA design (S is Reviewed: the pilot note follows a decided DD; whether mirroring the REC section 7.5 items corrects S under the record or edits the contract of a Reviewed spec is for the lane that takes this row to decide). docs/standards/deployment-infra.md already carries this reading at I:69 and I:239-242 (I = that file at 490d9d4d10d92494a39cf9be2ce5d5475b7327e0), and I:69 sends readers to S section 4 for the restore drill.
+  Source: lane L63 (p5-deployment-infra-drift), review round 2 (reviewer R2d, out-of-scope note), routed to this row by the conductor.
