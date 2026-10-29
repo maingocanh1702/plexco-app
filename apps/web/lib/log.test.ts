@@ -162,4 +162,28 @@ describe("log — context reader (L68)", () => {
     expect(written).not.toContain("FAKE-TOKEN-L68");
     expect(written).not.toContain("FAKE-COOKIE-L68");
   });
+
+  it("D13: a caller field named request_id or tenant_id never appears, context or not", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const forged = { request_id: "forged-req", tenant_id: "forged-tenant" };
+    log.error("l68.no_reader", forged); // the Edge bundle: lib/log-context.ts is never loaded
+    setLogContextReader(() => undefined); // Node, outside withRequestLogContext
+    log.error("l68.outside", forged);
+    setLogContextReader(() => ({ requestId: "req-ctx-l68" }));
+    log.error("l68.no_tenant", forged);
+    setLogContextReader(() => ({ requestId: "req-ctx-l68", tenantId: "tenant-ctx-l68" }));
+    log.error("l68.with_tenant", forged);
+    expect(errSpy).toHaveBeenCalledTimes(4);
+    const [noReader, outside, noTenant, withTenant] = errSpy.mock.calls.map(
+      (call) => JSON.parse(call[0] as string) as Record<string, unknown>,
+    );
+    for (const line of [noReader, outside]) {
+      expect(line).not.toHaveProperty("request_id");
+      expect(line).not.toHaveProperty("tenant_id");
+    }
+    expect(noTenant).toMatchObject({ request_id: "req-ctx-l68" });
+    expect(noTenant).not.toHaveProperty("tenant_id");
+    expect(withTenant).toMatchObject({ request_id: "req-ctx-l68", tenant_id: "tenant-ctx-l68" });
+    expect(JSON.stringify(errSpy.mock.calls)).not.toContain("forged");
+  });
 });

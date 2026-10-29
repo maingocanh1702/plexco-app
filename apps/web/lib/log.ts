@@ -106,9 +106,10 @@ function emit(level: LogLevel, event: string, fields: Record<string, unknown> = 
     level,
     event,
     ...sanitizeFields(fields, currentLevel()),
-    // After the caller's fields, so a field of the same name can never stand in for these.
-    ...(ctx ? { request_id: ctx.requestId } : {}),
-    ...(ctx?.tenantId !== undefined ? { tenant_id: ctx.tenantId } : {}),
+    // The context is these two keys' only source: written after the caller's fields, always, and
+    // JSON.stringify drops an undefined value, so a caller field of either name never survives.
+    request_id: ctx?.requestId,
+    tenant_id: ctx?.tenantId,
   });
   if (level === "error") console.error(line);
   else if (level === "warn") console.warn(line);
