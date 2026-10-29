@@ -5218,6 +5218,7 @@ manifest: null
 merged_probe: none — evidence gate; đóng bằng transcript drill (restore vào DB tạm + so checksum), không bằng commit code
 notes: |
   Nguồn: audit §6 NFR-R5 · BRD:275. Chưa có provider deployment thật (`infra-do-app-vpc-deployment` blocked) nên drill chưa chạy được — row này giữ chủ, không giữ lịch. Khi có managed Postgres: bật PITR, ghi RPO/RTO đo được vào `environments-setup.md`, lặp lại mỗi quý.
+  2026-10-29 (L70): docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md now exist; what remains is the drill itself, run and witnessed by the owner on staging (PLAN 8.7), and this row closes only with the owner's drill transcript and the measured RPO/RTO.
 
 ## task: test-harness-job-definer-lock-client-leak
 title: `withJobDefinerLock` leaks its pg.Client if connect()/pg_advisory_lock rejects — cùng lớp với chat-definer leak đã sửa (`491a334`)
