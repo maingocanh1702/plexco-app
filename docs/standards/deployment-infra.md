@@ -140,6 +140,8 @@ Ví von: **một căn bếp, nhiều ca làm** — cùng công thức (image), m
 
 > **Vì sao tách `discovery` ra process riêng** (dù cùng image): đây là đường đọc *cố ý cross-tenant*, *không PII*, và *chịu DDoS cao nhất* (G6). Tách process + DB role cho phép áp **pool/timeout/circuit-breaker + CDN/rate-limit riêng** ngay Day-1; khi telemetry chạm trigger, chỉ đổi connection của component này sang read-only node, không đổi code hay API. Nếu sau này phải "tách 1 thứ" thành service thật, đây là ứng viên duy nhất hợp lý.
 
+> **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3, không có component `discovery` riêng (một instance `web`, một worker); tách process `discovery` ở bảng trên là thiết kế đích của bản ghi DD-04 (giữ nguyên, chỉ chú thích). Xem ghi chú pha pilot ở §2.
+
 > 🔒 **"Cross-tenant không qua RLS" KHÔNG có nghĩa bypass cô lập.** Role `readonly` **chỉ được `GRANT SELECT` trên các object projection công khai** (`public_sessions` và public view do projector sinh — xem DD-12), và **zero grant** trên mọi bảng canonical chứa tiền/PII (`charges`, `bank_transactions`, `allocations`, `memberships`, `person`…). Bất biến cô lập tenant vẫn được giữ ở **tầng quyền** (least-privilege), không phải ở RLS — vì bảng `public_sessions` theo thiết kế **không chứa** dữ liệu tenant-private nên không cần RLS để bảo vệ. Phải có **test gate** khẳng định `readonly` không đọc được bảng canonical (CI §7 — "public-projection invariant").
 
 **Webhook nằm ở `web` (không phải `worker`)** vì cần durable-ingest đồng bộ: verify timing-safe → lưu raw → enqueue pg-boss → **ACK 200 chỉ sau khi commit** (BL-PAY-1; AUDIT BL-1; TDD §3.6). Worker mới là nơi xử lý job sau đó.
