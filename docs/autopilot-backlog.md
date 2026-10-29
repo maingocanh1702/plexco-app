@@ -8039,8 +8039,8 @@ notes: |
 
 ## task: p5-signin-return-to-session-link
 title: Google sign-in started from a session page always lands on `/`, never back on that session, so a player must re-open the session link to join
-status: planned
-risk: P2
+status: idea
+risk: P1
 change_class: code
 depends_on: []
 invariants: []
@@ -8053,3 +8053,4 @@ notes: |
   The pilot host guide added by lane L76 (docs/runbooks/pilot-club-host-onboarding.md) states this as a limitation and tells the host to ask players to re-open the session link after signing in.
   Fix: carry a return path through the Google sign-in flow and redirect to it on completion, accepting only a same-origin relative path and failing closed to `/` on anything else. The implementing lane re-derives the risk at intake, because the change edits auth routes.
   Source: lane L76 (p5-pilot-host-guide), step 0 (continuation reader S0b, backlog candidate 1), ruling (b) of the P5-S8a orchestrator.
+  Risk P1, not P2: the return path is input to the sign-in flow (the open-redirect class), so a slice must accept only a same-site relative path. Status idea: its scope and invariants are not chosen yet. Both set in review round 1 (R1-13).
