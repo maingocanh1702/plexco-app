@@ -1,8 +1,8 @@
 # Runbook: bật / rollback outbox dispatch (registry, DLQ, NOTIFY wake)
 
-> **Dành cho:** owner. **Nguồn:** lane L3 `p3-m6-outbox-delivery-core`, migration `0056`, DD-134 (a)(b)(e); default commit của cờ lịch đổi thành `true` theo DD-141 (B3, 2026-10-21), thay DD-134 (e) chỉ cho default commit; bước bật projector là CLI owner `scripts/outbox-projector-enable.mjs` theo lane L24 (quyết định owner 2026-10-22, mục 1: event ack trong lúc projector tắt không được mất lặng lẽ).
+> **Dành cho:** owner. **Nguồn:** lane L3 `p3-m6-outbox-delivery-core`, migration `0056`, DD-134 (a)(b)(e); default commit của cờ lịch đổi thành `true` theo DD-141 (B3, 2026-10-21), thay DD-134 (e) chỉ cho default commit; bước bật projector là CLI owner `scripts/outbox-projector-enable.mjs` theo lane L24 (quyết định owner 2026-10-22, mục 1: event ack trong lúc projector tắt không được mất lặng lẽ); biến thể staging và production (mục 6-8) theo lane L71 (DD-154).
 > Lệnh giữ nguyên tiếng Anh, copy-paste được; chạy từ thư mục gốc repo. Ví dụ dùng Postgres compose local
-> (`plexco-postgres-1`, DB `plexco`); môi trường khác: thay bằng psql tới đúng DB với credential `DATABASE_URL_MIGRATION`.
+> (`plexco-postgres-1`, DB `plexco`); staging và production: theo mục 6-8, không dùng `OWNER_SQL`.
 > Bật dispatch cho dùng thật với token Zalo thật là **bước P0 của owner**, không phải việc của agent.
 
 ## Quy tắc an toàn
@@ -153,3 +153,94 @@ cat sync-lag.jsonl && rm sync-lag.jsonl
 ```
 
 Sau mỗi lần chạy test: đặt lại password ba role runtime theo `docs/runbooks/local-mvp-smoke.md` mục 5.
+
+## 6. Staging và production: điều kiện chung (chỉ owner)
+
+Mục 6-8 là bước của owner: không bước nào cho agent trên môi trường thật (staging hay production). Nhắc lại: bật `zalo_dm` với token bot Zalo thật vẫn là bước P0 của owner. Mục 6 mở đầu mỗi môi trường; mục 7 chạy trên staging, mục 8 trên production.
+
+- **Credential, theo tên:** một credential duy nhất, `DATABASE_URL_MIGRATION` (role `migration`, `docs/runbooks/env-manifest-staging-production.md:75`). Trên môi trường deploy, chỉ job migrate PRE_DEPLOY (và job provision nếu chạy) giữ nó, không bao giờ W, D, K (`:71`, `:102`); CLI của owner đọc cùng tên trên máy owner (`:71`; `scripts/outbox-projector-enable.mjs:297`, `scripts/outbox-dlq-replay.mjs:97`). Owner dán URL đầy đủ của môi trường, mang `sslmode=verify-full` và `sslrootcert` (`docs/runbooks/failover-drill.md:110`), ký tự dành riêng percent-encode như dòng 59; không bao giờ trên dòng lệnh. Xong việc trên một môi trường: `unset DATABASE_URL_MIGRATION`.
+
+```bash
+read -rs DATABASE_URL_MIGRATION && export DATABASE_URL_MIGRATION   # dán URL + Enter: không hiện, không vào history
+```
+
+- **SQL shell:** không dùng `OWNER_SQL` (dòng 19: `docker exec` chỉ tới container local). Mỗi lệnh SQL ở mục 7-8 là tiền tố `psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION"` (dạng của drill, `docs/runbooks/failover-drill.md:127`) cộng đúng các tham số `-c` của dòng local được dẫn; chỉ 7.3 thêm `SET ROLE` và 7.6 đổi tên projector.
+- **Chạy ở đâu:** máy owner, thư mục gốc của một checkout đúng commit đang deploy trên môi trường đó, đã cài dependency (CLI nạp `pg` từ `packages/db`, `scripts/outbox-projector-enable.mjs:304`), để file ngưỡng CLI đọc (`:60`) cũng là file dispatcher đang chạy đọc (`apps/bot/src/dispatcher.ts:8`). UNPINNED (U7): commit nào đang deploy; kiểm: commit HEAD của checkout trùng commit đang deploy.
+- **Đường mạng:** trusted sources của PG chỉ có app (`docs/sessions/web-mvp-phase5-golive-plan.md:264`); như drill (`docs/runbooks/failover-drill.md:19`), host của owner nằm trong VPC, hoặc có một trusted source tạm được ghi lại để gỡ khi xong. UNPINNED (U6): đường mạng từ host của owner tới DB managed; kiểm: lệnh kiểm role dưới đây kết nối được.
+- **TLS:** UNPINNED (U1): hai CLI chỉ truyền `connectionString` và `application_name` cho `pg` (`scripts/outbox-projector-enable.mjs:305`, `scripts/outbox-dlq-replay.mjs:104`), nên việc `pg` đã cài có áp `sslmode=verify-full` và `sslrootcert` từ URL hay không là hành vi của thư viện; kiểm: `node scripts/outbox-dlq-replay.mjs list --limit 1` (chỉ đọc, dạng `scripts/outbox-dlq-replay.mjs:6`) kết nối được; lỗi thì dừng, không hạ `sslmode`.
+- **Kiểm role (chỉ đọc, mở đầu mỗi môi trường vì membership tính theo từng cluster):**
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SHOW server_version" -c "SELECT current_user, pg_has_role(current_user, 'job_definer', 'MEMBER'), has_schema_privilege('job_definer', 'public', 'USAGE')" -c "SET ROLE job_definer" -c "SELECT current_user" -c "RESET ROLE"
+```
+
+Ghi lại `server_version`; phải thấy `migration`, `t`, `t`, rồi `job_definer` sau `SET ROLE` (`SET ROLE` không ghi gì, không được phép thì báo lỗi quyền). UNPINNED (U2, U3): tuỳ chọn SET và INHERIT mà grant `GRANT job_definer TO %I` của bootstrap (`infra/postgres-init/01-job-definer.sql:159`, không có mệnh đề `WITH`) nhận trên server managed, việc `migration` đã có grant đó, và `USAGE` của job_definer trên schema `public`; kiểm: chính lệnh trên. **Kết quả nào khác: dừng runbook** và chuyển sang bước owner của runbook deploy (`docs/sessions/web-mvp-phase5-golive-plan.md:283`).
+
+- **Owner lấy job_definer thế nào:** bằng bootstrap một lần, owner chạy `pnpm db:bootstrap` (dòng 24) qua kết nối admin, với `MIGRATION_ROLE` đặt bằng tên role migration (`package.json:26`; `infra/postgres-init/01-job-definer.sql:59-67`). Đó là bước owner của runbook deploy (`docs/sessions/web-mvp-phase5-golive-plan.md:283`), không phải của runbook này; admin chỉ bootstrap, lệnh của mục 6-8 không cần admin. Managed PostgreSQL không có superuser (`infra/postgres-init/01-job-definer.sql:99`) nên lock toàn cluster của bootstrap giảm cấp thành cảnh báo (`:129-133`): không sửa bằng cách cấp thêm quyền (`docs/autopilot-backlog.md:907`).
+
+## 7. Staging: bật, rollback, DLQ (owner)
+
+- **7.1 (bước 1) Điều kiện trước:** mục 6 đã PASS trên staging. Dòng 24-25 không áp ở đây: migration do job migrate PRE_DEPLOY chạy (`docs/runbooks/env-manifest-staging-production.md:71`), bootstrap là bước của runbook deploy (mục 6). Job provision đã chạy và log worker không có dòng `[preflight] FAILED` (dòng 26; đọc log theo U5 ở 7.2). Mọi projector đang tắt (tham số của dòng 30):
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT name, enabled FROM outbox_projectors ORDER BY name" -c "RESET ROLE"
+```
+
+- **7.2 (bước 2.1-2.2) Cờ và heartbeat:** owner đặt `OUTBOX_DISPATCH_SCHEDULE_ENABLED` đúng chuỗi `true` (`apps/bot/src/worker.ts:31-33`) trên component worker (`docs/runbooks/env-manifest-staging-production.md:52`: owner quyết, bước P0) rồi restart worker qua platform; `pnpm --filter @plexco/bot start:worker` (dòng 36) chỉ dùng local. Log worker phải có `outbox dispatch schedule registered: "* * * * *"` và `[worker] outbox wake listening` (dòng 36-37), và heartbeat là `t` trong 30 s (tham số của dòng 41). UNPINNED (U5): cách đặt biến, restart và đọc log worker trên platform; kiểm: hai dòng log đó và heartbeat này.
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT outbox_dispatch_schedule_live()" -c "RESET ROLE"   # phải là t
+```
+
+- **7.3 (bước 2.3) Drain:** SQL đếm của dòng 47, chạy giữa `SET ROLE job_definer` và `RESET ROLE`: `outbox_events` có FORCE RLS (`packages/db/migrations/0023_outbox_ack_marker.sql:67`) và job_definer là BYPASSRLS (`infra/postgres-init/01-job-definer.sql:32`), nên con số không phụ thuộc role đăng nhập. Đây là điều kiện trước của mỗi lần bật; lời từ chối của CLI vẫn là kết quả cuối (dòng 44).
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT count(*) FROM outbox_events WHERE acked_at IS NULL" -c "RESET ROLE"   # chờ = 0
+```
+
+- **7.4 (bước 2.4) Bật từng projector bằng CLI:** thứ tự đề xuất, default applied, pending owner sign-off (owner duyệt khi merge L71, `docs/sessions/web-mvp-phase5-golive-plan.md:204`): `web_realtime`, rồi `public_sessions`, rồi `zalo_dm`; staging trước, production sau G4 (`:204`, `:243-244`). Lý do: ba projector không phụ thuộc nhau trong code (ba hàm deliver độc lập, `apps/bot/src/projectors/index.ts:21-25`), nên đây là thứ tự rủi ro: `zalo_dm` là projector duy nhất mà delivery tới thiết bị của một người và giao muộn có thể gây hại (dòng 63), lại cần token bot thật (dòng 6, 15), nên bật sau cùng, ngay sau drain; `public_sessions` được CLI dựng lại từ trạng thái canonical (dòng 61). Mỗi lần một dòng (dạng của dòng 56; `scripts/outbox-projector-enable.mjs:8`, `:268`), trước mỗi dòng lệnh đếm 7.3 về 0:
+  1. `node scripts/outbox-projector-enable.mjs enable --projector web_realtime`
+  2. `node scripts/outbox-projector-enable.mjs enable --projector public_sessions`
+  3. `node scripts/outbox-projector-enable.mjs enable --projector zalo_dm`
+- **Sau mỗi dòng:** stdout đúng một dòng JSON và exit `0` (dòng 65-66); exit `2` hoặc `1` thì xử lý theo dòng 66 trước khi chạy dòng kế. Rồi đếm expiry record (tham số của dòng 71); sau `zalo_dm`, xem thêm các dòng `noop_expired` (tham số của dòng 80):
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT reason, count(*) FROM job_audit_events WHERE starts_with(reason, 'projector_delivery_expired:') GROUP BY reason ORDER BY reason" -c "RESET ROLE"
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT d.event_id, d.projector, d.delivered_at, round(extract(epoch FROM d.delivered_at - o.created_at)) AS age_s FROM projector_deliveries d JOIN outbox_events o ON o.id = d.event_id WHERE d.projector = 'zalo_dm' AND d.status = 'delivered' AND d.provider_ref = 'noop_expired' ORDER BY d.delivered_at DESC LIMIT 50" -c "RESET ROLE"   # sau zalo_dm
+```
+
+- **7.5 DD-146 cho thứ tự và cho lần bật lại sau khi tạm dừng** (`docs/standards/decisions.md:128`; DD-149 mục 2, `:125`): trong lúc `zalo_dm` tắt, event đã ack không có dòng delivery cho nó; ở lần chạy CLI, event còn trong 60 phút và thuộc 200 event mới nhất được chuẩn bị delivery, event còn lại nhận một record `age` hoặc `cap` (dòng 63, 68), trừ `player.promoted` không bao giờ nhận record `age` (dòng 64). Dòng `pending` hoặc `failed` chuẩn bị trước lúc tắt chạy tiếp khi bật lại, và kết thúc `delivered` + `noop_expired` nếu event đã quá 60 phút lúc gửi (dòng 110); `player.promoted` thì theo giờ bắt đầu session (dòng 83-88, 111). Mọi event như vậy đều có record, không event nào mất lặng lẽ (dòng 12). Vì vậy `zalo_dm` bật sau cùng, ngay sau drain; tạm dừng `zalo_dm` quá 60 phút thì DM của khoảng dừng được ghi record chứ không gửi, đúng thiết kế.
+- **7.6 (mục 3) Rollback, ngược thứ tự bật:** `zalo_dm` trước, vì là projector duy nhất có tác động ra ngoài hệ thống; mỗi dòng là tham số của dòng 107, chỉ đổi tên projector; tắt một projector thì chỉ chạy dòng của nó:
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('zalo_dm', false)" -c "RESET ROLE"
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('public_sessions', false)" -c "RESET ROLE"
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT outbox_projector_set_enabled('web_realtime', false)" -c "RESET ROLE"
+```
+
+Lệnh tắt bị chờ (dòng 113): ngắt kết nối của CLI từ phía DB. UNPINNED (U9): role đăng nhập không phải superuser có ngắt được backend của chính CLI (cùng role đăng nhập) hay không; kiểm: lệnh trả `t`, hoặc báo lỗi quyền và không đổi gì (khi đó Ctrl-C như dòng 113):
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'plexco_outbox_projector_enable_cli'"
+```
+
+Tắt hẳn dispatch (dòng 114-115): đặt cờ `false` (hoặc bỏ) trên component worker rồi restart qua platform (U5 ở 7.2); heartbeat của 7.2 về `f` trong 90 s. Bật lại chỉ bằng CLI của 7.4, không bao giờ bằng `outbox_projector_set_enabled(<tên>, true)` (dòng 14, 102). Gỡ code (dòng 116) trên staging và production là một lần deploy, không phải bước của runbook này.
+
+- **7.7 (mục 4) DLQ:** đếm (tham số của dòng 130; cảnh báo khi quá 100 dòng, dòng 127), rồi hai lệnh CLI của dòng 132-133 (dạng `scripts/outbox-dlq-replay.mjs:6-7`; đổi `web_realtime` thành projector cần xem); output, exit code và ngoại lệ `zalo_dm`, `player.promoted` như dòng 137-142.
+
+```bash
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SET ROLE job_definer" -c "SELECT count(*) FROM outbox_dlq_list(NULL, 500)" -c "RESET ROLE"
+node scripts/outbox-dlq-replay.mjs list --projector web_realtime --limit 50
+node scripts/outbox-dlq-replay.mjs replay --event <event-uuid> --projector web_realtime
+```
+
+- **7.8 (mục 5):** chỉ local, trong test process trên DB test riêng và không bao giờ bật cờ (dòng 144-146): không có bản staging hay production.
+
+## 8. Production (owner, sau G4)
+
+- Chỉ chạy sau G4 (`docs/sessions/web-mvp-phase5-golive-plan.md:243-244`) và sau khi mọi bước kiểm của mục 7 đã PASS trên staging.
+- Cùng lệnh và cùng thứ tự như mục 7 (không lặp lại ở đây), với `DATABASE_URL_MIGRATION` của production nhập theo mục 6; trước tiên chạy lại lệnh kiểm role của mục 6 trên production, vì membership tính theo từng cluster; kết quả khác thì dừng như mục 6.
+- `zalo_dm` cần token bot Zalo production: bước P0 của owner.
+- DD-146 giữ nguyên (`docs/sessions/web-mvp-phase5-golive-plan.md:244`): hạn 60 phút của `zalo_dm` và ngoại lệ `player.promoted` như 7.5.
+- Rollback và DLQ như 7.6 và 7.7, với credential production.
+- Nhắc lại: không bước nào cho agent trên môi trường thật (staging hay production). Xong: `unset DATABASE_URL_MIGRATION`.
