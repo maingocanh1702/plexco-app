@@ -45,6 +45,12 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 **Gate cứng (đã đạt qua (c)):** **auto-failover HA + uptime SLA + posture private-network** (VPC by construction).
 **Phân tích đầy đủ + nguồn:** `../decisions/analysis/dd-04-hosting-final-decision.md` (final ✅) · `../decisions/analysis/dd-04-hosting-decision-brief.md` (rev 5, phân tích) — bảng dưới là tóm tắt (a/b/c ứng viên, giữ làm tham chiếu; (c) đã chọn).
 
+> **Pha pilot: DD-154** (quyết định của owner 2026-10-28, Q3 override), nguyên văn: "Q3 override: production starts without HA (shape 3, about 52 USD/month); the §7.6 failover drill runs on a temporary HA staging window (shape 4); upgrade production to HA before money flows or before adding more clubs."
+>
+> (a) production khởi đầu ở hình dạng 3 (PLAN `:140`): một instance `web`, một worker, PostgreSQL một nút 2 GiB, **không standby**, không component discovery riêng; pha pilot chưa có auto-failover HA và SLA 99.95% của DB, nên gate cứng ở trên chưa đạt trong pha pilot theo override của owner; PITR, Singapore, VPC private, gate §7.1 và offsite backup không đổi. (b) drill failover của bản ghi §7.6 (mục 7, cùng 8a) chạy trên cửa sổ staging tạm HA (hình dạng 4, PLAN `:141`), **không** trên production. (c) production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB; các cách đọc của vế "before money flows" và nhãn của chúng chỉ ghi ở DD-154, Hệ quả (c).
+>
+> Thiết kế HA theo bản ghi DD-04 trong doc này (§0, §2, §3, §8, §9 Tier A) giữ nguyên làm đích: chỉ chú thích, không xoá; điều kiện lên HA: DD-154 (c); topology hai instance (bản ghi §7.6 mục 5): DD-154 (e). Nguồn: `decisions.md` DD-154 và "Bổ sung 2026-10-28 (DD-154)" dưới DD-04. PLAN = `docs/sessions/web-mvp-phase5-golive-plan.md` (như DD-154).
+
 **Lịch sử QĐ-1 (đã superseded bởi quyết định ở trên):** khi compute còn target Fly, DB managed khác cloud nên không private thật trừ PrivateLink/co-locate. **(a)** public TLS + `sslmode=verify-full` + static-egress-IP allowlist [Fly, nay chỉ là fallback] · **(b)** PrivateLink AWS [loại] · **(c)** co-locate compute+DB cùng cloud [**đã chọn**; đổi deployment target nhưng không đảo DD-10].
 
 | Option | Đạt gate? | Ưu | Nhược |
@@ -58,7 +64,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 
 > ⚠️ **pg-boss cần connection DIRECT (session-mode)** cho `LISTEN/NOTIFY` + advisory lock, và **poll liên tục**. Nếu dùng Neon: worker phải cắm **non-pooled connection string** và **tắt autosuspend** (worker giữ DB luôn thức → mất lợi ích serverless). Web/discovery request path dùng **pooled** (transaction-mode); riêng web SSE listener dùng `DATABASE_URL_LISTEN` session/direct như DD-07.
 
-**Hệ quả:** RPO/RTO cụ thể chốt sau khi chọn provider; phải có **restore drill** định kỳ (security-operations-tech §4).
+**Hệ quả:** RPO/RTO cụ thể chốt sau khi chọn provider; phải có **restore drill** định kỳ (security-operations-tech §4), hằng quý ra ngoài DigitalOcean theo bản ghi §7.5; quy trình: `docs/runbooks/pitr-restore-drill.md`.
 
 ### DD-07 (OD-7) — Realtime web · ✅ chốt
 
