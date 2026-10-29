@@ -5218,6 +5218,7 @@ manifest: null
 merged_probe: none — evidence gate; đóng bằng transcript drill (restore vào DB tạm + so checksum), không bằng commit code
 notes: |
   Nguồn: audit §6 NFR-R5 · BRD:275. Chưa có provider deployment thật (`infra-do-app-vpc-deployment` blocked) nên drill chưa chạy được — row này giữ chủ, không giữ lịch. Khi có managed Postgres: bật PITR, ghi RPO/RTO đo được vào `environments-setup.md`, lặp lại mỗi quý.
+  2026-10-29 (L70): docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md now exist; what remains is the drill itself, run and witnessed by the owner on staging (PLAN 8.7), and this row closes only with the owner's drill transcript and the measured RPO/RTO.
 
 ## task: test-harness-job-definer-lock-client-leak
 title: `withJobDefinerLock` leaks its pg.Client if connect()/pg_advisory_lock rejects — cùng lớp với chat-definer leak đã sửa (`491a334`)
@@ -7867,6 +7868,78 @@ merged_probe: null
 notes: |
   Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: apps/web/app/api/public-listings/[publicListingId]/join/route.ts:80 resolves its listing with `resolveDiscoveryListing(await discoveryPool(), publicListingId)`, the discovery pool of apps/web/lib/discovery-route-support.ts:37-54. Lane L73 adds a per-process circuit breaker behind one choke point in that file, through which the limiter and the discovery API reads go, and three timeouts on the pool (statement 2 000 ms, acquire 2 000 ms, client 2 500 ms). The join route keeps calling the pool directly (L73's negative scope: no other route), so it gains the timeouts without a code change, its failures are not counted, and it is not refused while the breaker is open; it also shares the pool's 5 connections (:44) with discovery. Decide whether the join route goes through the breaker (and what it answers while the breaker is open) or gets its own pool.
   Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (c) (from the RO-L73-2 Tier-B list and K8 there).
+
+## task: p5-environments-setup-drifts-from-env-manifest
+title: docs/standards/environments-setup.md disagrees with the code on four environment points that the L64 env manifest measured
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/standards/environments-setup.md, infra/entrypoint.sh]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base ae06005c807b758246e9ebff294d6943edc1c440 (E = docs/standards/environments-setup.md). The env manifest docs/runbooks/env-manifest-staging-production.md follows the code (rung 1) and lists these four drifts in its section E8 without fixing the standards doc:
+  D-1 listener URL: E:154 (listener) and E:184 (LISTEN) describe a separate listener URL and only E:194 names it (`DATABASE_URL_LISTEN`); no code reads that name (the plan's do-not-enter list, docs/sessions/web-mvp-phase5-golive-plan.md:214, files it as unread), and the web SSE listener takes its LISTEN client from the `DATABASE_URL` pool (apps/web/lib/realtime-listener.ts:211-212).
+  D-2 discovery DB key: E:192 (E:155 names only the readonly pooled URL) and the comments at infra/entrypoint.sh:3 and :61 put discovery's readonly URL on `DATABASE_URL`; the code opens discovery's own pool on `DISCOVERY_DATABASE_URL` (apps/web/lib/discovery-route-support.ts:42-44 and :52 at that base; :47-50 and :62 at origin/main 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb after PR 139); discovery needs no `DATABASE_URL` by call sites: no discovery-served file calls the lazy `appDb()` pool (apps/web/lib/session-cookies.ts:54-59), although its file is statically imported for `clientIp`.
+  D-3 topology: E:152-159 keep the Day-1 shape (web 2, discovery 2, worker 1); DD-154 (docs/standards/decisions.md:120) and the plan's shape 3 (plan :140) start production with one web process, one worker and no discovery component.
+  D-4 migration job: E:183 (role `migration`), E:384, E:408 and E:425-430 keep `DATABASE_URL_MIGRATION` in a protected CI job only; the repo runs it in the PRE_DEPLOY migrate job (infra/render-app-spec.sh:59-65, infra/entrypoint.sh:78-85).
+  Fix: D-2 and D-3 now: edit the standards doc and the two infra/entrypoint.sh comments to match the code (no code change); D-1 after the owner's R1 (lane L78 if the code changes); D-4 after the owner ratifies DD-129 (1). Natural owner lane L63 (deployment-infra) or the next lane that edits environments-setup.md.
+  Source: lane L64 (p5-env-manifest), docs/runbooks/env-manifest-staging-production.md section E8, rows D-1 to D-4.
+
+## task: p5-deployment-infra-env-key-analogs
+title: deployment-infra.md repeats the env-manifest drifts D-1 and D-2 in its own connection-string text
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/standards/deployment-infra.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at d003e7465cc8e64b5ea0fc60b2bd4ad519614732 (I = docs/standards/deployment-infra.md). The env manifest docs/runbooks/env-manifest-staging-production.md lists these drifts for environments-setup.md; row p5-environments-setup-drifts-from-env-manifest scopes only that file and infra/entrypoint.sh, so I's analogs had no tracked home.
+  D-1 listener URL: I:67, I:79, I:137 and I:160 name a separate listener URL `DATABASE_URL_LISTEN` and I:159 describes that separate listener connection (I:333 is the dated v1.1 changelog row); no code reads that name, and the web SSE listener takes its LISTEN client from the `DATABASE_URL` pool and holds it (apps/web/lib/realtime-listener.ts:211-212), so the web URL must allow a held LISTEN session, while I:157 puts `app` on a transaction-mode pooler, I:67, I:79, I:137 and I:160 call the request URL pooled and I:161 counts one session connection per web replica (env manifest :125).
+  D-2 discovery DB key: I:138 (process table, discovery row) and I:164 give discovery `DATABASE_URL` (I:340 is the dated v1.8 changelog row), and I never names `DISCOVERY_DATABASE_URL` (0 hits; I:160 lists three connection strings, I:157 gives the `readonly` role only the request path, with no key name); the code opens discovery's pool on `DISCOVERY_DATABASE_URL` in every process that serves discovery, web included (env manifest :126).
+  D-4 migration job: no analog in I at that SHA (`DATABASE_URL_MIGRATION`: 0 hits; I:193 limits role `migration` to "CI/migration job", which the PRE_DEPLOY migrate job also fits).
+  Fix: D-2 now (best together with p5-environments-setup-drifts-from-env-manifest); D-1 after the owner's R1. Same gating as that row.
+  Source: lane L63 (p5-deployment-infra-drift), review round 1 (reviewer R1a, unresolved question).
+
+## task: p5-security-operations-backup-recovery-drift
+title: feature_security_operations_tech.md section 4 "Backup & Recovery" keeps the HA baseline with no DD-154 pilot note and a restore drill thinner than the DD-04 record's section 7.5
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/features/BE/feature_security_operations_tech.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at a5d8e65cb49cdc4e48cd60132e34f0b16a861475 (S = docs/features/BE/feature_security_operations_tech.md, status Reviewed v2.7 at S:4-5, section 4 "Backup & Recovery" at S:188-192; DEC = docs/standards/decisions.md; REC = docs/decisions/analysis/dd-04-hosting-final-decision.md; lane L63 changes none of the three).
+  HA: S:190 says "Managed HA + PITR with encrypted backups" with no pilot note. DD-154 (DEC:1785; consequences (a) DEC:1822 and (d) DEC:1825) and its addendum under DD-04 (DEC:239-253, line :245) start production in the pilot on one 2 GiB PostgreSQL node with no standby, until the HA condition of DD-154 consequence (c) (DEC:1824). S:192 (RPO/RTO measured after the restore/failover drill) does not say that in the pilot the failover drill runs on a temporary HA staging window, not on production (DD-154 consequence (b), DEC:1823).
+  Restore drill: S:191 (isolated DB, roles/policies, schema checksums, count reconciliation) is thinner than REC section 7.5 (REC:267-279): no quarterly restore to temporary vanilla PostgreSQL outside DigitalOcean with ledger/allocation/outbox reconciliation, smoke tests and representative load tests (REC:276-277); no portable recovery set (schema, migrations, roles/grants, RLS, extensions, sequence state and data; a data-only dump is not one, REC:271-272); no three independent recovery forms (live HA data, provider PITR, encrypted logical exports outside DigitalOcean, REC:269-270; the pilot has no live HA form). S cites no runbook file (`runbooks/`: 0 hits; S:217 lists a "DB restore" runbook among the required runbooks, with no path); the procedures are docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md on main.
+  Fix: annotate S section 4 with the pilot reading and the REC section 7.5 items, citing DD-154, its addendum and the two runbooks; keep the HA design (S is Reviewed: the pilot note follows a decided DD; whether mirroring the REC section 7.5 items corrects S under the record or edits the contract of a Reviewed spec is for the lane that takes this row to decide). docs/standards/deployment-infra.md already carries this reading at I:69 and I:239-242 (I = that file at 490d9d4d10d92494a39cf9be2ce5d5475b7327e0), and I:69 sends readers to S section 4 for the restore drill.
+  Source: lane L63 (p5-deployment-infra-drift), review round 2 (reviewer R2d, out-of-scope note), routed to this row by the conductor.
+
+## task: p5-a3-pii-matrix-stale-vs-schema
+title: docs/legal/a3-pii-data-class-matrix-DRAFT.md predates migrations 0033 and later and still says the host name is public and that gender sits behind a CMS switch
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/legal/a3-pii-data-class-matrix-DRAFT.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (M = docs/legal/a3-pii-data-class-matrix-DRAFT.md, a derived DRAFT for counsel; S = packages/db/schema.ts; lane L75 changes neither).
+  Baseline: M:9-10 pin baseline f2af39d6dba4c335f95a15ab7e8da46861f1400b and migrations 0001-0032, so later data classes have no row: the gender ciphertext and pricing consent (0062, S:49-53), the per-session hide_exact_address option (0067, S:647), web_sessions.last_seen_at (S:164), the Zalo scope columns (0053, S:71-73), the anonymous discovery counters keyed by the client address (0075, S:217-223).
+  Host name: M:141 lists `host_display_name` as PUBLIC and M:179 (F14) says "Host name public"; S:1713-1714 says host_display_name was dropped by 0061 and persons are never projected, and the public view of packages/db/migrations/0067_session_venue_visibility.sql (0067:167-185) carries no person field.
+  Gender switch: M:42 says optional PII is collected only when a platform config is on (CMS admin, default OFF); the code reads the env flag GENDER_COLLECTION_ENABLED per call (apps/web/app/api/me/profile/route.ts:32), DD-141 made it default true (docs/standards/decisions.md:133), and production launches with it off (docs/sessions/web-mvp-phase5-golive-plan.md:243).
+  Fix: refresh M against S and the migrations at a pinned base (rows for 0033 and later, drop the host-name-public row, the env-flag reading), keeping its DRAFT banner; the counsel packet stays the owner's step (docs/sessions/web-mvp-phase5-golive-plan.md:27).
+  Source: lane L75 (p5-privacy-terms-draft), step-0 reader U1, routed to this row by the lane orchestrator.
 
 ## task: p5-oauth-landing-own-csp-browser-check
 title: The OAuth completion landing's own CSP and Referrer-Policy never reach the browser (next.config.mjs's global headers replace them); deliver them and prove the auto-submit in a default-suite browser spec
