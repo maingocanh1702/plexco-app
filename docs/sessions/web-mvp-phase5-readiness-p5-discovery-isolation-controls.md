@@ -53,7 +53,7 @@ Short forms: `drs` = `apps/web/lib/discovery-route-support.ts`; a bare four-digi
 ### 2.4 Lead corrections (a step-0 or brief fact the base contradicts)
 
 1. Q2 put the readonly row check at drs:50-53; at the base it is drs:52-54. The lane block's lead puts `discoveryPool` at drs:38; at the base it is drs:37.
-2. Q4 labelled route.test.ts:180-187 "A-7"; at the base the test titled A-7 is the poison test at :198, so this file names :180-187 by its content (the 61-call test).
+2. Q4 labelled route.test.ts:180-187 "A-7"; at the base :180-187 (the 61-call test) and :198 (the poison test) are both titled A-7, among six A-7 titles, so this file names :180-187 by its content (the 61-call test).
 3. Q2 cited "0000:28-29"; `CREATE ROLE readonly` is at 0000:29.
 4. 0037:14-22 records the measured NOBYPASSRLS-owner failure but never names FORCE; for "the superuser suite bypasses FORCE" this file cites `public-alias-nobypass.test.ts:7-8`.
 5. The orchestrator's brief counted `test-harness.ts:762` and `:765` as production call sites; they are test-harness call sites in a non-test module (2.2).
