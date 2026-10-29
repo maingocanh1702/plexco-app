@@ -266,7 +266,7 @@ RPO/RTO được chốt bằng số đo sau provision, failover drill và restor
 | Egress buffer | | ~$0–8 |
 | **Tổng Day-1** | | **~$120–135** (fixed subtotal $118.90 + variable allowances) |
 
-> **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3 (PLAN `:140`): web 1 × $12.00 + worker $10.00 + PostgreSQL một nút 2 GiB $30.45 = **$52.45/tháng**, không component discovery riêng, không standby; owner kiểm lại giá vào ngày mua (PLAN bước 8.1). Topology hai instance (bản ghi §7.6 mục 5) hoãn kèm sign-off 8.9 (DD-154 (e)). Bảng trên là baseline HA của bản ghi DD-04, giữ làm đích; production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB (DD-154 (c)).
+> **Pha pilot (DD-154 (a)):** production khởi đầu ở hình dạng 3 (PLAN `:140`): web 1 × $12.00 + worker $10.00 + PostgreSQL một nút 2 GiB $30.45 = **$52.45/tháng**, không component discovery riêng, không standby; owner kiểm lại giá và trường hợp tài khoản của mình trên trang chính thức vào ngày mua (PLAN bước 8.1; DD-154 (a)). Topology hai instance (bản ghi §7.6 mục 5) hoãn kèm sign-off 8.9 (DD-154 (e)). Bảng trên là baseline HA của bản ghi DD-04, giữ làm đích; production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB nữa (DD-154 (c)).
 
 ### Tier B — Trigger-based upgrades (bật khi telemetry chạm ngưỡng, KHÔNG mặc định Day-1)
 
