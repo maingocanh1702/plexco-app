@@ -7915,3 +7915,21 @@ notes: |
   Restore drill: S:191 (isolated DB, roles/policies, schema checksums, count reconciliation) is thinner than REC section 7.5 (REC:267-279): no quarterly restore to temporary vanilla PostgreSQL outside DigitalOcean with ledger/allocation/outbox reconciliation, smoke tests and representative load tests (REC:276-277); no portable recovery set (schema, migrations, roles/grants, RLS, extensions, sequence state and data; a data-only dump is not one, REC:271-272); no three independent recovery forms (live HA data, provider PITR, encrypted logical exports outside DigitalOcean, REC:269-270; the pilot has no live HA form). S cites no runbook file (`runbooks/`: 0 hits; S:217 lists a "DB restore" runbook among the required runbooks, with no path); the procedures are docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md on main.
   Fix: annotate S section 4 with the pilot reading and the REC section 7.5 items, citing DD-154, its addendum and the two runbooks; keep the HA design (S is Reviewed: the pilot note follows a decided DD; whether mirroring the REC section 7.5 items corrects S under the record or edits the contract of a Reviewed spec is for the lane that takes this row to decide). docs/standards/deployment-infra.md already carries this reading at I:69 and I:239-242 (I = that file at 490d9d4d10d92494a39cf9be2ce5d5475b7327e0), and I:69 sends readers to S section 4 for the restore drill.
   Source: lane L63 (p5-deployment-infra-drift), review round 2 (reviewer R2d, out-of-scope note), routed to this row by the conductor.
+
+## task: p5-a3-pii-matrix-stale-vs-schema
+title: docs/legal/a3-pii-data-class-matrix-DRAFT.md predates migrations 0033 and later and still says the host name is public and that gender sits behind a CMS switch
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/legal/a3-pii-data-class-matrix-DRAFT.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (M = docs/legal/a3-pii-data-class-matrix-DRAFT.md, a derived DRAFT for counsel; S = packages/db/schema.ts; lane L75 changes neither).
+  Baseline: M:9-10 pin baseline f2af39d6dba4c335f95a15ab7e8da46861f1400b and migrations 0001-0032, so later data classes have no row: the gender ciphertext and pricing consent (0062, S:49-53), the per-session hide_exact_address option (0067, S:647), web_sessions.last_seen_at (S:164), the Zalo scope columns (0053, S:71-73), the anonymous discovery counters keyed by the client address (0075, S:217-223).
+  Host name: M:141 lists `host_display_name` as PUBLIC and M:179 (F14) says "Host name public"; S:1713-1714 says host_display_name was dropped by 0061 and persons are never projected, and the public view of packages/db/migrations/0067_session_venue_visibility.sql (0067:167-185) carries no person field.
+  Gender switch: M:42 says optional PII is collected only when a platform config is on (CMS admin, default OFF); the code reads the env flag GENDER_COLLECTION_ENABLED per call (apps/web/app/api/me/profile/route.ts:32), DD-141 made it default true (docs/standards/decisions.md:133), and production launches with it off (docs/sessions/web-mvp-phase5-golive-plan.md:243).
+  Fix: refresh M against S and the migrations at a pinned base (rows for 0033 and later, drop the host-name-public row, the env-flag reading), keeping its DRAFT banner; the counsel packet stays the owner's step (docs/sessions/web-mvp-phase5-golive-plan.md:27).
+  Source: lane L75 (p5-privacy-terms-draft), step-0 reader U1, routed to this row by the lane orchestrator.
