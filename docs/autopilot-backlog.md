@@ -7880,3 +7880,21 @@ notes: |
   D-4 migration job: E:183 (role `migration`), E:384, E:408 and E:425-430 keep `DATABASE_URL_MIGRATION` in a protected CI job only; the repo runs it in the PRE_DEPLOY migrate job (infra/render-app-spec.sh:59-65, infra/entrypoint.sh:78-85).
   Fix: D-2 and D-3 now: edit the standards doc and the two infra/entrypoint.sh comments to match the code (no code change); D-1 after the owner's R1 (lane L78 if the code changes); D-4 after the owner ratifies DD-129 (1). Natural owner lane L63 (deployment-infra) or the next lane that edits environments-setup.md.
   Source: lane L64 (p5-env-manifest), docs/runbooks/env-manifest-staging-production.md section E8, rows D-1 to D-4.
+
+## task: p5-deployment-infra-env-key-analogs
+title: deployment-infra.md repeats the env-manifest drifts D-1 and D-2 in its own connection-string text
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/standards/deployment-infra.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at d003e7465cc8e64b5ea0fc60b2bd4ad519614732 (I = docs/standards/deployment-infra.md). The env manifest docs/runbooks/env-manifest-staging-production.md lists these drifts for environments-setup.md; row p5-environments-setup-drifts-from-env-manifest scopes only that file and infra/entrypoint.sh, so I's analogs had no tracked home.
+  D-1 listener URL: I:67, I:79, I:137 and I:160 name a separate listener URL `DATABASE_URL_LISTEN` (I:333 is the dated v1.1 changelog row); no code reads that name (env manifest :125).
+  D-2 discovery DB key: I:138 (process table, discovery row) and I:164 give discovery `DATABASE_URL` (I:340 is the dated v1.8 changelog row); the code opens discovery's pool on `DISCOVERY_DATABASE_URL` (env manifest :126).
+  D-4: no analog in I at that SHA (`DATABASE_URL_MIGRATION`: 0 hits; I:193 limits role `migration` to "CI/migration job", which the PRE_DEPLOY migrate job also fits).
+  Fix: D-2 now (best together with p5-environments-setup-drifts-from-env-manifest); D-1 after the owner's R1. Same gating as that row.
+  Source: lane L63 (p5-deployment-infra-drift), review round 1 (reviewer R1a, unresolved question).
