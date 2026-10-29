@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.11 · 2026-10-29 (L63: §2 và §7-§9 khớp bản ghi DD-04, 15 mục lệch + §9.5 budget alert; trigger deploy chỉ `workflow_dispatch` do owner bấm; ghi chú pha pilot DD-154); v1.10 · 2026-10-27 (§7: ghi chú thứ tự deploy cho cleanup tên `0068`–`0070`); v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
+> **Version:** v1.11 · 2026-10-29 (L63: §2 và §7-§9 khớp bản ghi DD-04, 15 mục lệch, gồm §9.5 budget alert mới; trigger deploy chỉ `workflow_dispatch` do owner bấm; ghi chú pha pilot DD-154); v1.10 · 2026-10-27 (§7: ghi chú thứ tự deploy cho cleanup tên `0068`–`0070`); v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -275,7 +275,7 @@ RPO/RTO được chốt bằng số đo sau provision, failover drill và restor
 | Upgrade | Trigger đo được | Chi phí thêm/tháng |
 |---|---|---|
 | Worker thứ 2 (hai worker scalable 1 GiB) | queue lag vượt SLO kéo dài sau khi đã tinh chỉnh concurrency an toàn; **điều kiện trước:** test idempotency + duplicate-delivery xanh (Day-1 chỉ một consumer bền vững; bản ghi §5.1) | +$14 (so với worker cố định) |
-| Read node vật lý (discovery/player-view) | tải discovery gây contention đo được trên primary, hoặc p95/p99 của money-path xấu đi, sau khi đã có control pool/rate/cache (§9.3) | tối thiểu +$30.45 ở cỡ primary 2 GiB hiện tại |
+| Read node vật lý (discovery/player-view) | tải discovery gây contention đo được trên primary hoặc làm p95/p99 của money-path xấu đi, sau khi đã có control pool/rate/cache (§9.3) | tối thiểu +$30.45 ở cỡ primary 2 GiB hiện tại |
 | Cloudflare **Pro** (WAF/rate-limit tập trung) | managed rules của gói Free + một rule rate-limit không diễn đạt được control cần có, hoặc abuse quan sát được đòi hỏi | +$20 (quy đổi giá năm; $25 month-to-month) |
 | Sentry **Team** | hơn một operator, tích hợp bên thứ ba, hoặc quota/retention của gói Developer không đủ | +$26 (quy đổi giá năm) |
 | Log retention trả phí | retention free/low-volume không đáp ứng nhu cầu incident, audit hoặc compliance | theo usage/policy |
@@ -290,7 +290,7 @@ Discovery/public reads được cô lập khỏi money-path **ngay trên primary
 
 Staging production-shape dựng **từ IaC**, sống **48–96 giờ** quanh mỗi lần release, load/soak test, failover drill, restore drill hoặc rehearsal rời provider, rồi **tự huỷ bằng TTL** (bản ghi §5.4; §7.6 mục 11): ~$8–18/tháng → tổng prod+staging **~$128–153/tháng** (số của baseline HA). Chỉ giữ một bề mặt smoke non-production tối thiểu khi một callback tích hợp bền vững cần nó; đó không phải stack production thứ hai. Deploy staging do owner bấm `workflow_dispatch`, không theo `push` (§7). (record §5.4)
 
-> **Pha pilot (DD-154 (b)):** drill failover chạy trên một cửa sổ staging tạm HA (hình dạng 4, PLAN `:141`: 48-96 giờ, một cửa sổ mỗi tháng; trên hình dạng 1: $8.49-16.99, trên hình dạng 2: $22.71-45.43), owner dựng và xoá bằng tay khi hết cửa sổ: tự huỷ theo TTL (§7.6 mục 11) hoãn kèm sign-off 8.9 tới khi mục backlog `staging-ttl-teardown-automation` (PLAN `:374`) được làm xong; cái giá PLAN nêu cho lựa chọn này (PLAN `:125`, nguyên văn): "staging không còn "production-shape" (bản ghi §5.4, :148), nên drill chỉ chứng minh một topology mà production không có." Staging của G2 dùng hình dạng nào: DD-154, Hệ quả (j2).
+> **Pha pilot (DD-154 (b)):** drill failover chạy trên một cửa sổ staging tạm HA (hình dạng 4, PLAN `:141`: 48-96 giờ, một cửa sổ mỗi tháng; trên hình dạng 1: $8.49-16.99, trên hình dạng 2: $22.71-45.43), owner dựng và xoá bằng tay khi hết cửa sổ: tự huỷ theo TTL (bản ghi §7.6 mục 11) hoãn kèm sign-off 8.9 tới khi mục backlog `staging-ttl-teardown-automation` (PLAN `:374`) được làm xong; cái giá PLAN nêu cho lựa chọn này (PLAN `:125`, nguyên văn): "staging không còn "production-shape" (bản ghi §5.4, :148), nên drill chỉ chứng minh một topology mà production không có." Staging của G2 dùng hình dạng nào: DD-154, Hệ quả (j2).
 
 ### Tier C — Hardening một lần / định kỳ (không phải hosting cố định)
 
