@@ -103,6 +103,49 @@ function callbackReq(
   return new Request(u, { headers: { "do-connecting-ip": ip } });
 }
 
+const REQUEST_ID = /^req_[0-9a-f-]{36}$/; // A-13: the id withRequestLogContext mints
+// L68 D7 seeds: an OAuth code, a state, a state cookie, a PKCE ciphertext, an email.
+const FAKES = [
+  "FAKE-OAUTH-CODE-L68",
+  "FAKE-STATE-L68",
+  "FAKE-STATE-COOKIE-L68",
+  "FAKE-CIPHERTEXT-L68",
+  "fake-l68@example.invalid",
+];
+
+/**
+ * L68 D7: run `act` at LOG_LEVEL `logLevel` with every console method spied. No seed reaches any
+ * console call; the `event` line is at `method`'s level, carries the response's request id and no
+ * tenant (none exists before sign-in). Returns the response and that line.
+ */
+async function captureLog(
+  logLevel: string,
+  method: "error" | "warn",
+  event: string,
+  act: () => Promise<Response>,
+) {
+  vi.stubEnv("LOG_LEVEL", logLevel);
+  const spies = (["error", "warn", "log"] as const).map((m) =>
+    vi.spyOn(console, m).mockImplementation(() => {}),
+  );
+  try {
+    const res = await act();
+    const written = JSON.stringify(spies.map((s) => s.mock.calls));
+    for (const fake of FAKES) expect(written).not.toContain(fake);
+    const line = vi
+      .mocked(console[method])
+      .mock.calls.map((c) => JSON.parse(c[0] as string) as Record<string, unknown>)
+      .find((l) => l.event === event);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID);
+    expect(line).toMatchObject({ level: method, request_id: res.headers.get("x-request-id") });
+    expect(line).not.toHaveProperty("tenant_id");
+    return { res, line: line! };
+  } finally {
+    for (const s of spies) s.mockRestore();
+    vi.unstubAllEnvs();
+  }
+}
+
 beforeEach(() => {
   vi.mocked(rateLimitCheck).mockReset();
   vi.mocked(oauthTxn.claimOauthTransaction).mockReset();
@@ -154,6 +197,7 @@ describe("GET /api/auth/google/callback", () => {
     // Structural anti-regression for the measured M1 trap: a 302 would NOT carry
     // the Strict cookie, so the callback must commit a first-party document.
     expect(res.status).toBe(200);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID); // A-13
     expect(res.headers.get("location")).toBeNull();
     expect(res.headers.get("content-type")).toContain("text/html");
     expect(body).toContain('method="POST"');
@@ -311,6 +355,67 @@ describe("GET /api/auth/google/callback", () => {
     expect(res.headers.get("location")).toContain("auth_error=");
   });
 });
+
+// L68 D7: each swallowed or unhandled error is logged by class only, at the default and debug
+// level, while the request URL, the binding cookie and the error all carry the seeds.
+describe.each(["", "debug"])(
+  "callback errors are logged by class only (LOG_LEVEL %j)",
+  (logLevel) => {
+    const seeded = () =>
+      GET(callbackReq("1.2.3.4", { state: "FAKE-STATE-L68", code: "FAKE-OAUTH-CODE-L68" }));
+    beforeEach(() => {
+      mockCookieStore("FAKE-STATE-L68.FAKE-STATE-COOKIE-L68");
+      happyPath();
+    });
+
+    it("an unexpected dependency failure: auth.google.callback.unhandled", async () => {
+      vi.mocked(rateLimitCheck).mockRejectedValue(
+        Object.assign(new Error(`rate-limit store down ${FAKES.join(" ")}`), {
+          code: "ECONNREFUSED",
+        }),
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "error",
+        "auth.google.callback.unhandled",
+        seeded,
+      );
+      expect(res.headers.get("location")).toContain("auth_error=AUTH_UNAVAILABLE");
+      expect(line.error).toEqual({ name: "Error", code: "ECONNREFUSED" }); // no message/stack
+    });
+
+    it("a corrupt PKCE ciphertext: auth.google.callback.state_invalid", async () => {
+      vi.mocked(oauthTxn.decryptPkceVerifier).mockImplementation(() => {
+        throw new Error("bad decrypt FAKE-STATE-L68 FAKE-CIPHERTEXT-L68");
+      });
+      const { res, line } = await captureLog(
+        logLevel,
+        "warn",
+        "auth.google.callback.state_invalid",
+        seeded,
+      );
+      expect(res.headers.get("location")).toContain("auth_error=AUTH_INVALID");
+      expect(line.error).toEqual({ name: "Error" });
+    });
+
+    it("a malformed Google email: auth.google.callback.email_invalid", async () => {
+      vi.mocked(db.deriveEmailArtifacts).mockImplementation(() => {
+        throw Object.assign(new db.InvalidEmailError(), {
+          name: "InvalidEmailError", // as the real class sets it; the mock keeps Error's
+          message: "invalid fake-l68@example.invalid FAKE-OAUTH-CODE-L68",
+        });
+      });
+      const { res, line } = await captureLog(
+        logLevel,
+        "warn",
+        "auth.google.callback.email_invalid",
+        seeded,
+      );
+      expect(res.headers.get("location")).toContain("auth_error=AUTH_INVALID");
+      expect(line.error).toEqual({ name: "InvalidEmailError" });
+    });
+  },
+);
 
 describe("negative scope (absence checks)", () => {
   it("D1-14 (inverted 2026-09-06, audit W-1): the Telegram auth routes are GONE — DD-37 removed Telegram from phase-1 and lane A3 deleted the live login path", () => {

@@ -3,6 +3,8 @@ import { t } from "@plexco/core/i18n";
 import { resolveAuthSecretKey } from "../../../../../lib/auth-secrets";
 import { err } from "../../../../../lib/api-envelope";
 import { buildGoogleAuthorizeUrl } from "../../../../../lib/google-oidc";
+import { errorClass, log } from "../../../../../lib/log";
+import { withRequestLogContext } from "../../../../../lib/log-context";
 import {
   authKeyVersion,
   deriveAesKey,
@@ -31,7 +33,11 @@ import { isTopLevelNavigation } from "../../../../../lib/request-policy";
  * login-state cookie); and redirect to Google. The raw nonce leaves the server
  * only in the authorization URL — only its hash is stored.
  */
-export async function GET(request: Request): Promise<Response> {
+export function GET(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handleGet(request));
+}
+
+async function handleGet(request: Request): Promise<Response> {
   const provider = "google" as const;
   if (!isTopLevelNavigation(request)) {
     return err("AUTH_INVALID", t("Yêu cầu không hợp lệ.", "Invalid request."), 403);
@@ -43,7 +49,8 @@ export async function GET(request: Request): Promise<Response> {
   let limited: boolean;
   try {
     limited = await rateLimited(`oauth-state:${ip}`);
-  } catch {
+  } catch (error) {
+    log.warn("auth.google.state.limiter_unavailable", { error: errorClass(error) });
     limited = true;
   }
   if (limited) {

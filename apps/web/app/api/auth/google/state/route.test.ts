@@ -39,6 +39,42 @@ function reqFrom(ip: string): Request {
   });
 }
 
+const REQUEST_ID = /^req_[0-9a-f-]{36}$/; // A-13: the id withRequestLogContext mints
+const FAKES = ["203.0.113.68", "FAKE-STATE-COOKIE-L68"]; // L68 D7 seeds: a client IP, a state cookie
+
+/**
+ * L68 D7: run `act` at LOG_LEVEL `logLevel` with every console method spied. No seed reaches any
+ * console call; the `event` line is at `method`'s level, carries the response's request id and no
+ * tenant (none exists before sign-in). Returns the response and that line.
+ */
+async function captureLog(
+  logLevel: string,
+  method: "error" | "warn",
+  event: string,
+  act: () => Promise<Response>,
+) {
+  vi.stubEnv("LOG_LEVEL", logLevel);
+  const spies = (["error", "warn", "log"] as const).map((m) =>
+    vi.spyOn(console, m).mockImplementation(() => {}),
+  );
+  try {
+    const res = await act();
+    const written = JSON.stringify(spies.map((s) => s.mock.calls));
+    for (const fake of FAKES) expect(written).not.toContain(fake);
+    const line = vi
+      .mocked(console[method])
+      .mock.calls.map((c) => JSON.parse(c[0] as string) as Record<string, unknown>)
+      .find((l) => l.event === event);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID);
+    expect(line).toMatchObject({ level: method, request_id: res.headers.get("x-request-id") });
+    expect(line).not.toHaveProperty("tenant_id");
+    return { res, line: line! };
+  } finally {
+    for (const s of spies) s.mockRestore();
+    vi.unstubAllEnvs();
+  }
+}
+
 describe("GET /api/auth/google/state (D1-1)", () => {
   beforeEach(() => {
     vi.mocked(rateLimitCheck).mockReset();
@@ -66,6 +102,7 @@ describe("GET /api/auth/google/state (D1-1)", () => {
     );
     // 302 to Google with S256 PKCE + state + nonce.
     expect(res.status).toBe(302);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID); // A-13
     const loc = res.headers.get("location") ?? "";
     expect(loc).toContain("https://accounts.google.com/o/oauth2/v2/auth");
     expect(loc).toContain("code_challenge_method=S256");
@@ -156,16 +193,30 @@ describe("GET /api/auth/google/state (D1-1)", () => {
     __resetAuthSecretCacheForTest();
   });
 
-  it("fails closed to 429 when the rate-limit store is unavailable (codex round-06 [P2])", async () => {
-    const store = mockCookieStore();
-    vi.mocked(rateLimitCheck).mockRejectedValue(new Error("rate-limit store down"));
+  // L68 D7: the swallowed limiter error is logged by class only, at the default and debug level.
+  it.each(["", "debug"])(
+    "fails closed to 429 when the rate-limit store is unavailable (codex round-06 [P2]), logged by class only (LOG_LEVEL %j)",
+    async (logLevel) => {
+      const store = mockCookieStore();
+      vi.mocked(rateLimitCheck).mockRejectedValue(
+        Object.assign(new Error(`rate-limit store down ${FAKES.join(" ")}`), {
+          code: "ECONNREFUSED",
+        }),
+      );
 
-    const res = await GET(reqFrom("7.7.7.7"));
+      const { res, line } = await captureLog(
+        logLevel,
+        "warn",
+        "auth.google.state.limiter_unavailable",
+        () => GET(reqFrom("203.0.113.68")),
+      );
 
-    expect(res.status).toBe(429); // bounded response, not a Next 500
-    expect(oauthTxn.issueOauthTransaction).not.toHaveBeenCalled();
-    expect(store.set).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(429); // bounded response, not a Next 500
+      expect(oauthTxn.issueOauthTransaction).not.toHaveBeenCalled();
+      expect(store.set).not.toHaveBeenCalled();
+      expect(line.error).toEqual({ name: "Error", code: "ECONNREFUSED" }); // no message/stack
+    },
+  );
 });
 
 /**
@@ -190,6 +241,7 @@ describe("GET /api/auth/google/state — fetch-metadata gate (audit W-9)", () =>
     for (const dest of ["image", "script", "iframe", "empty", "object"]) {
       const res = await GET(reqWithDest(dest));
       expect(res.status, dest).toBe(403);
+      expect(res.headers.get("x-request-id"), dest).toMatch(REQUEST_ID); // A-13
     }
     expect(rateLimitCheck).not.toHaveBeenCalled();
     expect(oauthTxn.issueOauthTransaction).not.toHaveBeenCalled();

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { t } from "@plexco/core/i18n";
 import { armOauthCompletionHandoff, deriveEmailArtifacts, InvalidEmailError } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
-import { log } from "../../../../../lib/log";
+import { errorClass, log } from "../../../../../lib/log";
+import { withRequestLogContext } from "../../../../../lib/log-context";
 import { resolveAuthSecretKey, keyedHash } from "../../../../../lib/auth-secrets";
 import { exchangeGoogleCode, verifyGoogleIdToken } from "../../../../../lib/google-oidc";
 import {
@@ -48,7 +49,11 @@ import {
  * (→ DD-53 — D1-8). Every response is `Referrer-Policy: no-referrer` and loads
  * nothing third-party; the code/state/nonce/verifier/handoff are never logged.
  */
-export async function GET(request: Request): Promise<Response> {
+export function GET(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handleGet(request));
+}
+
+async function handleGet(request: Request): Promise<Response> {
   try {
     return await handleGoogleCallback(request);
   } catch (error) {
@@ -58,8 +63,8 @@ export async function GET(request: Request): Promise<Response> {
     // closed to the home page with a generic error and no referrer.
     // The RESPONSE stays generic; the LOG says which dependency failed (audit
     // 2026-09-06 W-11: an outage was indistinguishable from bad input). The
-    // logger reduces the error to name/message and never sees the request.
-    log.error("auth.google.callback.unhandled", { error });
+    // logger receives the error's class (name and code) only, never the request.
+    log.error("auth.google.callback.unhandled", { error: errorClass(error) });
     const base = process.env.APP_BASE_URL?.trim() ?? "";
     return new Response(null, {
       status: 302,
@@ -142,7 +147,8 @@ async function handleGoogleCallback(request: Request): Promise<Response> {
       provider,
       kmsKeyVersion: claim.kmsKeyVersion,
     });
-  } catch {
+  } catch (error) {
+    log.warn("auth.google.callback.state_invalid", { error: errorClass(error) });
     return fail("AUTH_INVALID"); // tampered/corrupt ciphertext
   }
 
@@ -182,7 +188,10 @@ async function handleGoogleCallback(request: Request): Promise<Response> {
     });
   } catch (error) {
     // Google should never return a malformed address, but fail closed if so.
-    if (error instanceof InvalidEmailError) return fail("AUTH_INVALID");
+    if (error instanceof InvalidEmailError) {
+      log.warn("auth.google.callback.email_invalid", { error: errorClass(error) });
+      return fail("AUTH_INVALID");
+    }
     throw error;
   }
 
