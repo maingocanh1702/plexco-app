@@ -114,6 +114,8 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
         └── KMS / Secret manager (bot_token_enc, webhook_secret_enc, session keys)
 ```
 
+> **Pha pilot (DD-154 (a)):** production chạy PostgreSQL một nút, **không HA STANDBY**, và không có component `discovery` riêng (hình dạng 3); sơ đồ trên là topology đích của bản ghi DD-04 (giữ nguyên, chỉ chú thích); điều kiện lên HA: DD-154 (c). Xem ghi chú pha pilot ở §2.
+
 **Nguyên tắc "1 image, nhiều process group":** cùng artifact build ra, khác `ENTRYPOINT` và **khác DB role**. Đây là cách tôn trọng yêu cầu tách `app` / `app_worker` của TDD §3.4 mà **không** đẻ ra microservices (tránh đồng bộ schema/event giữa nhiều repo — gánh nặng maintain lớn nhất ở giai đoạn này).
 
 Ví von: **một căn bếp, nhiều ca làm** — cùng công thức (image), một ca tiếp khách (`web`), một ca phục vụ thực đơn công khai (`discovery`), một ca hậu cần (`worker`). Khác hẳn xây nhiều nhà hàng riêng (microservices).
@@ -185,7 +187,7 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 | **B3 / edge#1** webhook giả | timing-safe verify ×3 (code) + **body-size cap + per-token rate-limit** (edge); lưu raw trước ACK. |
 | **B5** cron privileged cross-tenant | `app_worker` chỉ gọi narrow function (`claim_outbox_batch`, `list_due_tenant_jobs`); mọi privileged call **ghi audit** (`job_id`,`tenant_id`,actor=system). |
 | **edge#12 / G4** log chứa PII · audit retention | Structured log **gắn `tenant_id`, KHÔNG secret/OTP/STK/SĐT/email/body**; audit append-only, retention định nghĩa; SLO alert → on-call + runbook. |
-| **edge#8** mất DB/region | **Managed PITR + encrypted offsite backup + restore drill** định kỳ; đo và chốt RPO/RTO sau provision/failover/restore drill. |
+| **edge#8** mất DB/region | **Managed PITR + encrypted offsite backup + restore drill** định kỳ; đo và chốt RPO/RTO sau provision/failover/restore drill (runbook `docs/runbooks/pitr-restore-drill.md`, `docs/runbooks/failover-drill.md`; pha pilot: failover drill chỉ trên cửa sổ staging tạm HA, DD-154 (b)). |
 | **G5** PDPA/GDPR | Quy trình export/delete data-subject + ToS/Privacy/retention (P6; tooling là việc deploy). |
 | **C6 / G2** player-view auth · session steal | session key auto-rotate (30d) + kill-switch invalidate-all (security-operations-tech §4); `person_id` suy từ phiên verify, không từ tham số. |
 
@@ -200,8 +202,10 @@ RLS, repo choke-point, field-whitelist nằm ở **code**. Deploy phải thêm l
 CI/CD **chính là security gate** — nơi C1–C8 "must-fix before code" được thực thi liên tục, không chỉ review một lần.
 
 ```
-push → build immutable image (signed) → CI gates → deploy staging → promote prod
+owner: workflow_dispatch (staging) → build immutable image (signed) → CI gates → deploy staging → owner approval → owner: workflow_dispatch (production) → promote prod
 ```
+
+**Trigger deploy:** workflow deploy (staging, production) chỉ có trigger tay `workflow_dispatch`, không bao giờ chạy theo `push`; chỉ owner duyệt và bấm chạy, staging trước (PLAN §8 bước 8.6; PLAN `:26`; DD-154, Q1 theo default). Không agent nào bấm deploy.
 
 **Gate bắt buộc xanh trước khi promote** (security-operations-tech §4):
 1. Unit/integration/E2E + **RLS / public-projection / person-self / ledger invariants**
@@ -220,7 +224,14 @@ push → build immutable image (signed) → CI gates → deploy staging → prom
 
 ## 8. Backup/DR & Observability
 
-**Backup/DR:** Managed HA + PITR + **encrypted offsite backup ngoài DO** để giảm concentration risk. **Restore drill:** DB cô lập → apply roles/policies → checksum schema → đối chiếu count (tenants, charges, transactions, allocations, outbox, audit). RPO/RTO được chốt bằng số đo sau provision, failover drill và restore drill; DD-04 provider choice đã đóng.
+**Backup/DR** (bản ghi §7.5):
+
+- **Ba dạng khôi phục độc lập:** dữ liệu HA live, PITR của provider, và export logic mã hoá ngoài tài khoản/nhà cung cấp DigitalOcean (giảm concentration risk). Pha pilot: production chưa có dạng HA live (DD-154 (a), §2); còn PITR và export ngoài DO.
+- **Export portable:** schema, migrations, roles/grants, RLS, extensions, sequence state và data; dump chỉ-data không phải bộ khôi phục portable. Chạy off-peak, có trần bandwidth/concurrency, abort nếu p95/p99 production hoặc SLO queue xấu đi.
+- **Restore drill** (bản ghi §7.6 mục 9): PITR drill vào DB cô lập và, **hằng quý**, restore vào PostgreSQL vanilla tạm ngoài DigitalOcean; sau restore: apply roles/policies → checksum schema → đối chiếu count (tenants, charges, transactions, allocations, outbox, audit) → đối soát ledger/allocation/outbox → smoke test → load test đại diện. Quy trình: `docs/runbooks/pitr-restore-drill.md`.
+- **Failover drill** (bản ghi §7.6 mục 7): pha pilot chỉ chạy trên cửa sổ staging tạm HA (DD-154 (b)). Quy trình: `docs/runbooks/failover-drill.md`.
+
+RPO/RTO được chốt bằng số đo sau provision, failover drill và restore drill; DD-04 provider choice đã đóng.
 
 **Observability:** structured log gắn opaque `tenant_id`/`job_id` (không secret/PII) → metrics → traces → **SLO alert** (sync lag, reconcile p99, availability) → on-call + runbook link. Sentry cho error tracking (TDD §7): Day-1 dùng gói **Developer** (một user, error monitoring, tracing, email alert; bản ghi §5.1); Sentry Team chỉ khi trigger Tier B.
 
