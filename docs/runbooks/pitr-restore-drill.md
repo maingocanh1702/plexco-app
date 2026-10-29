@@ -37,7 +37,7 @@ shasum -a 256 plexco-<UTC-date>*.age plexco-<UTC-date>-schema.sql
 2. Ngay sau export, trên nguồn: C1-C5 (3.4) và Q1-Q6 (§6); kết quả này cùng file `plexco-<UTC-date>-schema.sql` và chuỗi `pg_dump --version` là mốc cho §5. Không thao tác gì trên staging trong cửa sổ export; có thao tác ⇒ mốc không dùng được, export lại.
 3. Chép hai file `.age` và file schema ra nơi lưu ngoài tài khoản DigitalOcean (owner chọn) và kiểm lại sha256 ở nơi lưu; ghi SHA commit app đang chạy (từ deployment) vào hàng `export §2` ở §7.
 
-**Pass:** pipeline exit 0, không `ABORTED`, hai file mã hoá và file schema có ở nơi lưu ngoài DigitalOcean với sha256 khớp.
+**Pass:** mọi lệnh của khối bash ở §2 exit 0 (hai pipeline và lệnh `pg_dump --schema-only`), không `ABORTED`, hai file mã hoá và file schema có ở nơi lưu ngoài DigitalOcean với sha256 khớp.
 
 ## 3. Diễn tập PITR trên staging
 
@@ -141,7 +141,7 @@ age -d -i "$BACKUP_AGE_IDENTITY" plexco-<UTC-date>.dump.age | pg_restore --dbnam
 ```
 
 1. Ghi giờ bắt đầu restore (đồng hồ RTO của dạng này). Roles trước, dump sau; lỗi được chấp nhận duy nhất là `role ... already exists`, nên lệnh `grep` phải không in gì; lỗi khác, hoặc `pg_restore` báo `errors ignored on restore` ⇒ `FAIL`.
-2. Theo §6 với `VANILLA_ADMIN_URL` (superuser vanilla, Q0 true, Q0b = 0): C1-C5, Q5, Q6 bằng mốc của §2; Q1, Q2, Q4 trả 0 dòng; Q3 trả đúng các dòng của mốc §2. Rồi khối S bên dưới, với cùng chuỗi `pg_dump --version` như mốc §2: hai số `grep -c` > 0 và hai tổng sha256 bằng nhau ⇒ xanh; hai tổng khác ⇒ đính `schema.diff` vào hàng `quarterly §5` ở §7 và giải thích từng hunk ở cột `Ghi chú`; hunk nào owner không giải thích được ⇒ `FAIL`.
+2. Theo §6 với `VANILLA_ADMIN_URL` (superuser vanilla, Q0 true, Q0b = 0): C1-C5, Q5, Q6 bằng mốc của §2; Q1, Q2, Q4 trả 0 dòng; Q3 trả đúng các dòng của mốc §2. Rồi khối S bên dưới, với cùng chuỗi `pg_dump --version` như mốc §2 (chuỗi khác ⇒ chưa chạy S: dùng đúng bản pg_dump của mốc §2 rồi chạy S): hai số `grep -c` > 0 và hai tổng sha256 bằng nhau ⇒ xanh; hai tổng khác ⇒ đính `schema.diff` vào hàng `quarterly §5` ở §7 và giải thích từng hunk ở cột `Ghi chú`; hunk nào owner không giải thích được ⇒ `FAIL`.
 3. Owner đặt credential tạm cho các role runtime trên bản restore, trỏ một app tạm cùng SHA đã ghi ở §2 vào đó và chạy `infra/smoke-check.sh https://<restore-app>`; xanh ⇒ ghi RTO đo. Smoke xanh là phép kiểm gián tiếp cho grant của role runtime.
 4. RPO của dạng này = tuổi bộ export lúc restore (bằng khoảng cách giữa hai lần export): ghi số đo và so với RPO của dạng export ở bước 8.9; vượt ⇒ `OPEN` (Pass bên dưới), ghi ở cột Ghi chú cho bước 8.9.
 5. Huỷ bản vanilla và credential tạm; ghi hàng `quarterly §5` ở §7.
@@ -210,4 +210,4 @@ ROLLBACK;
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | _chưa chạy_ | | | | | | | | | | | | | |
 
-`Drill` ∈ `export §2` · `PITR §3` · `quarterly §5`. `Kết quả` ∈ `PASS` · `FAIL` · `INVALID` (Q0 false hoặc Q0b > 0) · `ABORTED` (§2) · `OPEN` (§5: RPO vượt mục tiêu, owner chốt ở 8.9). Chứng kiến = owner. Hàng này cùng kết quả VIẾT của owner (bước 8.7, `docs/sessions/web-mvp-phase5-golive-plan.md:203`) là bằng chứng G3 cho mục 9 và phần restore của mục 13 (`docs/sessions/web-mvp-phase5-golive-plan.md:253`); mục 9 chỉ xong khi hàng `PITR §3` gần nhất và hàng `quarterly §5` gần nhất đều `PASS`.
+`Drill` ∈ `export §2` · `PITR §3` · `quarterly §5`. `Kết quả` ∈ `PASS` · `FAIL` · `INVALID` (Q0 false hoặc Q0b > 0) · `ABORTED` (§2) · `OPEN` (§5: owner chưa ghi RPO của dạng export ở bước 8.9, hoặc RPO đo vượt số đó). Chứng kiến = owner. Hàng này cùng kết quả VIẾT của owner (bước 8.7, `docs/sessions/web-mvp-phase5-golive-plan.md:203`) là bằng chứng G3 cho mục 9 và phần restore của mục 13 (`docs/sessions/web-mvp-phase5-golive-plan.md:253`); mục 9 chỉ xong khi hàng `PITR §3` gần nhất và hàng `quarterly §5` gần nhất đều `PASS`.
