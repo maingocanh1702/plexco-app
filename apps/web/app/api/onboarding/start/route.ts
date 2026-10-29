@@ -7,6 +7,7 @@ import {
   stripInvisibleChars,
 } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
+import { setLogTenant, withRequestLogContext } from "../../../../lib/log-context";
 import { readBoundedBody } from "../../../../lib/read-bounded-body";
 import {
   appDb,
@@ -29,7 +30,11 @@ const MAX_START_BODY_BYTES = 4096;
 const invalidNameOrSlug = () =>
   err("INVALID_BODY", t("Tên CLB hoặc slug không hợp lệ.", "Invalid club name or slug."), 400);
 
-export async function POST(request: Request): Promise<Response> {
+export function POST(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handlePost(request));
+}
+
+async function handlePost(request: Request): Promise<Response> {
   const session = await currentSession();
   if (!session) return err("AUTH_REQUIRED", t("Chưa đăng nhập.", "Not signed in."), 401);
   if (!csrfOk(request, session)) {
@@ -100,6 +105,7 @@ export async function POST(request: Request): Promise<Response> {
       locale,
       personId: session.personId,
     });
+    setLogTenant(tenantId);
     // Privilege change (owner grant) → rotate the session (transition table).
     const { csrfToken } = await issueSession(session.accountId);
     return ok({ tenantId, plan: "free", status: "active", csrfToken });

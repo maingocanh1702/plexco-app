@@ -1,6 +1,11 @@
 import { authorize, onboardingSnapshot, tenantLocale } from "@plexco/db";
 import { cookies } from "next/headers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "../../../../lib/log";
+import {
+  captureConsoleSinks,
+  expectTenantOnlyAfterTheGate,
+} from "../../../../lib/log-capture.testkit";
 import { GET } from "./route";
 
 const allow = (role: "owner" | "admin" | "co_admin" = "owner") =>
@@ -90,6 +95,35 @@ describe("GET /api/onboarding/readiness — authorize(content.manage) gate", () 
     vi.mocked(authorize).mockClear();
     expect((await GET(reqFor("nope"))).status).toBe(400);
     expect(authorize).not.toHaveBeenCalled();
+  });
+
+  // L68 A-15 (D6, D10, D15): the REAL logger, no mock of lib/log; its three console sinks are
+  // captured and silenced. Nested to reuse this block's session setup. `l68.before` is written
+  // inside the gate (authorize), `l68.after` by the snapshot read once the tenant is proven.
+  describe("L68 A-15 — the readiness route runs in the request log context", () => {
+    const { written, probes } = captureConsoleSinks();
+
+    it("the snapshot read logs the proven tenant and the response's request id; the gate none", async () => {
+      vi.mocked(authorize).mockImplementationOnce(async () => {
+        log.error("l68.before", {});
+        return { allowed: true, role: "owner" };
+      });
+      vi.mocked(onboardingSnapshot).mockImplementationOnce(async () => {
+        log.error("l68.after", {});
+        return { runStatus: "in_progress", steps: [] };
+      });
+      const res = await GET(reqFor(TENANT_ID));
+      expect(res.status).toBe(200);
+      expectTenantOnlyAfterTheGate(probes, res, TENANT_ID);
+    });
+
+    it("the gate's early 403 carries a fresh x-request-id and no line carries a tenant", async () => {
+      deny("no_capability");
+      const res = await GET(reqFor(TENANT_ID));
+      expect(res.status).toBe(403);
+      expect(res.headers.get("x-request-id")).toMatch(/^req_[0-9a-f-]{36}$/);
+      expect(written()).not.toContain("tenant_id");
+    });
   });
 });
 

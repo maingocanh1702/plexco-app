@@ -1,7 +1,8 @@
 import { t } from "@plexco/core/i18n";
 import { consumeOauthCompletionHandoff } from "@plexco/db";
 import { err } from "../../../../../lib/api-envelope";
-import { log } from "../../../../../lib/log";
+import { errorClass, log } from "../../../../../lib/log";
+import { withRequestLogContext } from "../../../../../lib/log-context";
 import { readBoundedBody } from "../../../../../lib/read-bounded-body";
 import { noReferrer, redirect } from "../../../../../lib/request-policy";
 import {
@@ -41,13 +42,17 @@ const MAX_COMPLETE_BODY_BYTES = 1024;
  * fence maps a lost logout-all race to a generic reject (D1B-8). Every reject is
  * generic and `Referrer-Policy: no-referrer`; the handoff is never logged.
  */
-export async function POST(request: Request): Promise<Response> {
+export function POST(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handlePost(request));
+}
+
+async function handlePost(request: Request): Promise<Response> {
   try {
     return await handleComplete(request);
   } catch (error) {
     // Fail closed to the home page with a generic error — never a bare Next 500.
     // Logged by class only (audit 2026-09-06 W-11); the handoff never reaches the logger.
-    log.error("auth.google.complete.unhandled", { error });
+    log.error("auth.google.complete.unhandled", { error: errorClass(error) });
     const base = process.env.APP_BASE_URL?.trim() ?? "";
     return redirect(`${base}/?auth_error=AUTH_UNAVAILABLE`);
   }
@@ -80,7 +85,8 @@ async function handleComplete(request: Request): Promise<Response> {
   let limited: boolean;
   try {
     limited = await rateLimited(`oauth-complete:${ip}`);
-  } catch {
+  } catch (error) {
+    log.warn("auth.google.complete.limiter_unavailable", { error: errorClass(error) });
     limited = true;
   }
   if (limited) {
@@ -109,7 +115,8 @@ async function handleComplete(request: Request): Promise<Response> {
     const body = await readBoundedBody(request, MAX_COMPLETE_BODY_BYTES);
     if (!body.ok) return fail();
     text = body.text;
-  } catch {
+  } catch (error) {
+    log.warn("auth.google.complete.body_invalid", { error: errorClass(error) });
     return fail(); // malformed body
   }
   const raw = new URLSearchParams(text).get(HANDOFF_FIELD);

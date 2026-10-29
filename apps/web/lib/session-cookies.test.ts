@@ -311,11 +311,11 @@ describe("buildCompletionLanding (M3 first-party landing)", () => {
     expect(headers["content-type"]).toBe("text/html; charset=utf-8");
   });
 
-  it("locks the document down: nonce-only CSP (matching the one script), DENY framing, no-referrer, no-store", () => {
+  it("locks the document down: nonce-only CSP (matching the one script), DENY framing, strict-origin, no-store", () => {
     const { body, headers } = buildCompletionLanding("tok");
 
     expect(headers["x-frame-options"]).toBe("DENY");
-    expect(headers["referrer-policy"]).toBe("no-referrer");
+    expect(headers["referrer-policy"]).toBe("strict-origin");
     expect(headers["cache-control"]).toBe("no-store");
     const csp = headers["content-security-policy"];
     // Narrowing GUARD, not a suppression: a missing CSP header becomes a named failure here rather
