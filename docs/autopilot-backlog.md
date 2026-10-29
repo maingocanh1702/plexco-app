@@ -5205,6 +5205,7 @@ manifest: null
 merged_probe: none — chưa build; probe = logger module mới (vd. `createLogger`)
 notes: |
   Nguồn: audit §6 NFR-O2 · W-11 (callback/complete `catch {}` nuốt hết, 0 log — outage KMS/JWKS không phân biệt với input sai). Tối thiểu: một logger có level, gắn `tenant_id`, KHÔNG secret/PII (`.env.example:135`); Sentry wiring là bước 2. KHÔNG log token/handoff/cookie.
+  2026-10-29, lane L68 p5-log-correlation: no code reads `SENTRY_DSN` (0 hits under apps and packages on the lane branch). `LOG_LEVEL` has one reader, `currentLevel()` in apps/web/lib/log.ts (:29-31 at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25; apps/web/playwright.config.ts:52 only sets it for the e2e server), which lane L68 made read own keys only (`parseLogLevel` uses `Object.hasOwn` where dc44cc5 used `in`, so `LOG_LEVEL=__proto__` falls back to info); the logger now writes `request_id` on every line inside a request context and `tenant_id` once the tenant is proven (row request-id-log-context-auth-onboarding). The Sentry transport is still open, so this row stays open. A caller field named `ts`, `level` or `event` still overrides the logger's own key of that name (the caller's fields are spread after those keys, apps/web/lib/log.ts:94-97 at dc44cc5; pre-existing, outside L68's scope).
 
 ## task: backup-pitr-drill
 title: Backup + PITR + restore drill (NFR-R5) — chỉ có prose ở `environments-setup.md:40-41`
@@ -5865,14 +5866,15 @@ depends_on: []
 invariants: []
 scope: [apps/web/lib/log-context.ts]
 manifest: null
-merged_probe: null
-_probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — phụ thuộc PR #50 (M5) chưa merge; danh sách route cần wire chưa pin.
+merged_probe: apps/web/lib/log-context.ts :: withRequestLogContext
+_probe_note: probe supplied by lane L68 (p5-log-correlation): 0 hits at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 and on origin/main when written, present on the lane branch.
+_readiness: no longer depends on PR 50: lane L68 (p5-log-correlation) built the log context without PR 50, under docs/sessions/web-mvp-phase5-readiness-p5-log-correlation.md; the dated note below lists the wired routes.
 notes: |
   PR #50 (M5) đã wire `apps/web/lib/log-context.ts` (AsyncLocalStorage requestId + tenantId) vào choke-point `handleSessionCommand`
   (13 route session). Auth và onboarding routes là follow-up được ghi tường minh trong PR. Thêm đúng cách: đi qua cùng helper, không
   viết logger thứ hai.
   source: PR #50 (M5) · DD-129
+  2026-10-29, lane L68 p5-log-correlation: wraps the 9 auth and onboarding handlers (Google callback GET, complete POST and state GET; onboarding club GET and PATCH, readiness GET, start POST, zalo GET, zalo/connect POST) and `handleSessionCommand` in `withRequestLogContext` (apps/web/lib/log-context.ts). One request id per request: the inbound `x-request-id` when it matches `^[A-Za-z0-9._-]{8,64}$`, else `req_<uuid>`; the same id is in the envelope's `meta.requestId`, the `x-request-id` response header and every `log` line. `tenant_id` is written only after the route proves the tenant (`setLogTenant`). It does not port PR 50's files.
 
 ## task: db-tls-ca-verification-do-managed-pg
 title: Xác minh TLS CA + hostname cho kết nối DB tới DO Managed PG (hiện chỉ `sslmode=require`)
@@ -7915,3 +7917,51 @@ notes: |
   Restore drill: S:191 (isolated DB, roles/policies, schema checksums, count reconciliation) is thinner than REC section 7.5 (REC:267-279): no quarterly restore to temporary vanilla PostgreSQL outside DigitalOcean with ledger/allocation/outbox reconciliation, smoke tests and representative load tests (REC:276-277); no portable recovery set (schema, migrations, roles/grants, RLS, extensions, sequence state and data; a data-only dump is not one, REC:271-272); no three independent recovery forms (live HA data, provider PITR, encrypted logical exports outside DigitalOcean, REC:269-270; the pilot has no live HA form). S cites no runbook file (`runbooks/`: 0 hits; S:217 lists a "DB restore" runbook among the required runbooks, with no path); the procedures are docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md on main.
   Fix: annotate S section 4 with the pilot reading and the REC section 7.5 items, citing DD-154, its addendum and the two runbooks; keep the HA design (S is Reviewed: the pilot note follows a decided DD; whether mirroring the REC section 7.5 items corrects S under the record or edits the contract of a Reviewed spec is for the lane that takes this row to decide). docs/standards/deployment-infra.md already carries this reading at I:69 and I:239-242 (I = that file at 490d9d4d10d92494a39cf9be2ce5d5475b7327e0), and I:69 sends readers to S section 4 for the restore drill.
   Source: lane L63 (p5-deployment-infra-drift), review round 2 (reviewer R2d, out-of-scope note), routed to this row by the conductor.
+
+## task: p5-google-oidc-swallowed-error-class
+title: The two catches in apps/web/lib/google-oidc.ts swallow the failure, so a JWKS or token-endpoint outage logs nothing
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/lib/google-oidc.ts, apps/web/lib/google-oidc.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (G = apps/web/lib/google-oidc.ts, C = apps/web/app/api/auth/google/callback/route.ts; lane L68 changes C, not G).
+  G:77-83 (`verifyGoogleIdToken`, try at G:60) turns every throw from jose into `{ ok: false, reason }` by its `code` (`AUTH_STALE` only for `ERR_JWT_EXPIRED`, else `AUTH_INVALID`) and logs nothing, so a failed fetch of Google's key set (the default resolver, G:43) reads as a bad token. G:192-194 (`exchangeGoogleCode`, try at G:182) is a bare `catch` (no binding) that returns null on a network failure or timeout and logs nothing. C:157 and C:165 turn both results into `fail(...)` with no log line (C:163 and C:171 on the lane branch, still none).
+  Fix: log `{ error: errorClass(error) }` at warn in both catches, class only, never the message; keep the generic reasons and the null. `errorClass` (apps/web/lib/log.ts) lands with lane L68 (absent at dc44cc5). The silent non-throw paths beside them (G:195 `!response.ok`, G:196 the body's `.catch(() => null)`) carry no error object; whether to log them is for the lane that takes this row.
+  Source: lane L68 (p5-log-correlation), step 0 (S0a/S0b), D11.
+
+## task: p5-db-console-error-bypasses-logger
+title: The raw `console.error` calls in packages/db write no `request_id` and skip the logger's redaction
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [packages/db/src/auth.ts, packages/db/src/tenant.ts, packages/db/src/tenant.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (lane L68 changes none of these files).
+  packages/db/src/auth.ts:321-324 (`tenantsForPersonWithProfile`, listing without the profile) and packages/db/src/tenant.ts:192-195 (`tenantLocale`, falling back to the default language) pass the raw `error` to `console.error`: the line carries no `request_id` or `tenant_id` (the request context lives in apps/web/lib/log-context.ts), and the whole error object (message, stack, any driver fields) is written unredacted, where apps/web/lib/log.ts would write its class only. packages/db/src/tenant.test.ts:72-94 pins today's shape (:89-90: the first argument contains `[tenantLocale]`, the second the raw message) and the test at :96 pins no log for a non-UUID id. Not in scope: packages/db/src/migrate.ts:409, the migration CLI's failure sink, runs outside any request and already redacts through `formatMigrationFailureForLog` (packages/db/src/migrate.test.ts:2286 and :2330).
+  Fix: route the two calls through a logger the db package can import without importing apps/web. Decide that boundary first (for example a logger in a shared package, or one the caller injects), then add its file to this scope.
+  Source: lane L68 (p5-log-correlation), step 0 (S0a/S0b), D11.
+
+## task: p5-edge-request-id-header
+title: The web tier adopts only an inbound `x-request-id`; whether the production edge sets a request id header, and under which name and form, is unmeasured
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/lib/log-context.ts, apps/web/lib/log-context.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25. At that SHA apps/web reads no request id header: apps/web/lib/api-envelope.ts:25 and :49 mint a fresh `req_<uuid>` per envelope, and a case-insensitive search for `x-request-id|request-id|x-correlation-id|traceparent|cf-ray` over apps/web, infra, docs/standards/deployment-infra.md and docs/runbooks finds one hit, the `cf-ray` entry of a dev-login test (apps/web/lib/dev-login/gate.test.ts:125), so none of them records which header the production edge sets.
+  Lane L68 adds apps/web/lib/log-context.ts (absent at that SHA): `withRequestLogContext` adopts only an inbound `x-request-id` that matches `^[A-Za-z0-9._-]{8,64}$` and otherwise mints `req_<uuid>`, so today the only inbound id is one the client sends.
+  Fix: once a deploy measures which request id header the production edge sets (its name, its form, and whether a client can forge it), adopt it in `withRequestLogContext`, still shape-checked; never trust a header that has not been measured.
+  Source: lane L68 (p5-log-correlation), step 0 (S0a/S0b), D11.
