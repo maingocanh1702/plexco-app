@@ -5205,6 +5205,7 @@ manifest: null
 merged_probe: none — chưa build; probe = logger module mới (vd. `createLogger`)
 notes: |
   Nguồn: audit §6 NFR-O2 · W-11 (callback/complete `catch {}` nuốt hết, 0 log — outage KMS/JWKS không phân biệt với input sai). Tối thiểu: một logger có level, gắn `tenant_id`, KHÔNG secret/PII (`.env.example:135`); Sentry wiring là bước 2. KHÔNG log token/handoff/cookie.
+  2026-10-29, lane L68 p5-log-correlation: no code reads `SENTRY_DSN` (0 hits under apps and packages on the lane branch). `LOG_LEVEL` has one reader, `currentLevel()` in apps/web/lib/log.ts (:29-31 at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25; apps/web/playwright.config.ts:52 only sets it for the e2e server), which lane L68 made read own keys only (`parseLogLevel` uses `Object.hasOwn` where dc44cc5 used `in`, so `LOG_LEVEL=__proto__` falls back to info); the logger now writes `request_id` on every line inside a request context and `tenant_id` once the tenant is proven (row request-id-log-context-auth-onboarding). The Sentry transport is still open, so this row stays open. A caller field named `ts`, `level` or `event` still overrides the logger's own key of that name (the caller's fields are spread after those keys, apps/web/lib/log.ts:94-97 at dc44cc5; pre-existing, outside L68's scope).
 
 ## task: backup-pitr-drill
 title: Backup + PITR + restore drill (NFR-R5) — chỉ có prose ở `environments-setup.md:40-41`
@@ -5865,14 +5866,15 @@ depends_on: []
 invariants: []
 scope: [apps/web/lib/log-context.ts]
 manifest: null
-merged_probe: null
-_probe_note: probe do slice tác giả đưa vào; chưa có.
-_readiness: NOT_CODE_READY — phụ thuộc PR #50 (M5) chưa merge; danh sách route cần wire chưa pin.
+merged_probe: apps/web/lib/log-context.ts :: withRequestLogContext
+_probe_note: probe supplied by lane L68 (p5-log-correlation): 0 hits at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 and on origin/main when written, present on the lane branch.
+_readiness: no longer depends on PR 50: lane L68 (p5-log-correlation) built the log context without PR 50, under docs/sessions/web-mvp-phase5-readiness-p5-log-correlation.md; the dated note below lists the wired routes.
 notes: |
   PR #50 (M5) đã wire `apps/web/lib/log-context.ts` (AsyncLocalStorage requestId + tenantId) vào choke-point `handleSessionCommand`
   (13 route session). Auth và onboarding routes là follow-up được ghi tường minh trong PR. Thêm đúng cách: đi qua cùng helper, không
   viết logger thứ hai.
   source: PR #50 (M5) · DD-129
+  2026-10-29, lane L68 p5-log-correlation: wraps the 9 auth and onboarding handlers (Google callback GET, complete POST and state GET; onboarding club GET and PATCH, readiness GET, start POST, zalo GET, zalo/connect POST) and `handleSessionCommand` in `withRequestLogContext` (apps/web/lib/log-context.ts). One request id per request: the inbound `x-request-id` when it matches `^[A-Za-z0-9._-]{8,64}$`, else `req_<uuid>`; the same id is in the envelope's `meta.requestId`, the `x-request-id` response header and every `log` line. `tenant_id` is written only after the route proves the tenant (`setLogTenant`). It does not port PR 50's files.
 
 ## task: db-tls-ca-verification-do-managed-pg
 title: Xác minh TLS CA + hostname cho kết nối DB tới DO Managed PG (hiện chỉ `sslmode=require`)
@@ -6032,7 +6034,9 @@ notes: |
 
 ## task: next-config-route-header-precedence-claim
 title: Comment trong `next.config.mjs` nói header của route thắng `headers()`: đo dưới `next dev` là sai, CSP riêng của trang OAuth landing có thể không được phát
-status: idea
+status: merged
+merged: 2026-10-29 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-hardening-headers-csp (L72); find it with `gh pr list --state merged --head feat/p5-hardening-headers-csp` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (a code comment and docs, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-29 L72: closed BY HAND in the lane's own PR, measured at base 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb (the merge of PR 139). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: plan row L72 of docs/sessions/web-mvp-phase5-golive-plan.md (line 84), approved by the owner on 2026-10-28 (DD-154), gives this measurement and this flip to the lane; its design and measurements are in docs/sessions/web-mvp-phase5-readiness-p5-hardening-headers-csp.md (section 2, D2, K0-K3). F2: both modes were measured: under next dev and under next build + next start a config header REPLACES a route's own header of the same key (K0), and of two `headers()` entries setting one key the later wins (durable record: docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 2). The commit "fix(web): send no-referrer and noindex headers on the share page" rewrote the precedence comment in apps/web/next.config.mjs, and the commit "docs(backlog): L72 rows and notes; correct the landing sentence in next.config.mjs" corrects its landing sentence. Delivering the landing's own CSP is the row `p5-oauth-landing-own-csp-browser-check`.
 risk: P2
 change_class: security-posture
 depends_on: []
@@ -6302,6 +6306,7 @@ notes: |
   còn HTML prerender được dựng lúc build nên không thể mang nonce của request. Hướng sửa cần đo: chuyển trang sang render động để Next áp nonce,
   hoặc tách script inline thành file tĩnh cùng origin. Không nới CSP bằng `'unsafe-inline'`.
   source: PR #57 review round 1 (PR body chưa ghi; đo lại khi #57 merge)
+  2026-10-29 L72: still open. `CSP_SCRIPT_NONCE_ENABLED` stays off at first launch (docs/sessions/web-mvp-phase5-golive-plan.md:84), so the middleware sets no CSP and `/offline` gets only next.config.mjs's global CSP (docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 5); this row must land before the flag is turned on anywhere.
 
 ## task: session-text-fields-control-char-validation
 title: `area` / `venue_name` / `venue_address` của session nhận ký tự điều khiển C0 và bidi (ví dụ U+202E, xuống dòng) rồi hiện cho player
@@ -7251,7 +7256,9 @@ notes: |
 
 ## task: public-share-page-header-level-referrer-and-robots
 title: Web: header-level Referrer-Policy and X-Robots-Tag for the public share page `/session/<slug>` (today only its metas say no-referrer and noindex)
-status: idea
+status: merged
+merged: 2026-10-29 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-hardening-headers-csp (L72); find it with `gh pr list --state merged --head feat/p5-hardening-headers-csp` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (a config entry and its tests, no slice-unique code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-29 L72: closed BY HAND in the lane's own PR, measured at base 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb (the merge of PR 139). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: as the row `next-config-route-header-precedence-claim` (plan row L72, DD-154; readiness D3 and D4). F2: the commit "fix(web): send no-referrer and noindex headers on the share page" adds the `/session/:slug` entry after the global one in apps/web/next.config.mjs (Referrer-Policy `no-referrer`, X-Robots-Tag `noindex, nofollow`); apps/web/lib/security-headers.test.ts pins the config, apps/web/e2e/public-share-page-prod.proof.ts pins the served headers on the 200s and every 404 under next start, and apps/web/e2e/public-share-page.proof.ts pins both values under next dev on e1's 200 and on every phase-1 404 (`expectPinned`) (docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 1.2).
 risk: P2
 change_class: web-feature
 depends_on: []
@@ -7281,7 +7288,9 @@ notes: |
 
 ## task: web-public-share-page-404-production-measurement
 title: E2E: measure the public share page's 404s and Cache-Control under `next build` + `next start` (lane L39's proof runs `next dev` only)
-status: idea
+status: merged
+merged: 2026-10-29 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-hardening-headers-csp (L72); find it with `gh pr list --state merged --head feat/p5-hardening-headers-csp` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-29 L72: closed BY HAND in the lane's own PR, measured at base 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb (the merge of PR 139). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: as the row `next-config-route-header-precedence-claim` (plan row L72, DD-154; readiness D5). F2: the lane did not use this row's apps/web/e2e/public-share-page.config.ts for next start: it added apps/web/e2e/public-share-page-prod.config.ts and apps/web/e2e/public-share-page-prod.proof.ts, and apps/web/e2e/public-share-page-proof.sh now runs phase 1 under next dev, a production build, then phase 2 under next start. Phase 2's `expect404` replaces the slug and joins the Flight chunks; the markup without its script elements and the Flight of every miss (never existed, rotated away, private, malformed, suspended tenant) equal the reference miss's, and Cache-Control `private, no-cache, no-store, max-age=0, must-revalidate` is pinned on the 200s and the 404s (docs/research/web-mvp-phase5-production-hardening-2026-10-29.md sections 1.2 and 1.4). The local proof passed twice through the lane's database lock on 2026-10-29 at the commit "test(web): prove the share page and the session cookie under next start" (phase 2 `6 passed` in each run).
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7933,3 +7942,96 @@ notes: |
   Gender switch: M:42 says optional PII is collected only when a platform config is on (CMS admin, default OFF); the code reads the env flag GENDER_COLLECTION_ENABLED per call (apps/web/app/api/me/profile/route.ts:32), DD-141 made it default true (docs/standards/decisions.md:133), and production launches with it off (docs/sessions/web-mvp-phase5-golive-plan.md:243).
   Fix: refresh M against S and the migrations at a pinned base (rows for 0033 and later, drop the host-name-public row, the env-flag reading), keeping its DRAFT banner; the counsel packet stays the owner's step (docs/sessions/web-mvp-phase5-golive-plan.md:27).
   Source: lane L75 (p5-privacy-terms-draft), step-0 reader U1, routed to this row by the lane orchestrator.
+
+## task: p5-oauth-landing-own-csp-browser-check
+title: The OAuth completion landing's own CSP and Referrer-Policy never reach the browser (next.config.mjs's global headers replace them); deliver them and prove the auto-submit in a default-suite browser spec
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: [auth, web-app]
+scope: [apps/web/next.config.mjs, apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, apps/web/lib/tenant-lang.test.ts, apps/web/e2e/oauth-completion-landing.spec.ts, apps/web/lib/security-headers.mjs, apps/web/lib/completion-landing.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at lane L72's commit "docs(backlog): L72 rows and notes; correct the landing sentence in next.config.mjs" (the commit that adds this row). The landing's own headers (apps/web/lib/session-cookies.ts:313-321, its Referrer-Policy `strict-origin` at :315) are replaced by next.config.mjs's global entry (a config header replaces a route's own header of the same key: K0, docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 2), so the landing runs under the global CSP and `strict-origin-when-cross-origin`. Lane L72 could not build the browser check (docs/sessions/web-mvp-phase5-readiness-p5-hardening-headers-csp.md:71, two measured blockers): `SyntaxError: Cannot use 'import.meta' outside a module` at packages/db/src/index.ts:19, reached through session-cookies.ts's `@plexco/db` import, and next.config.mjs:10's `import.meta.url` under Playwright 1.63's require hook; moving the builder out also turned apps/web/lib/tenant-lang.test.ts:341 red (the :339 test over `SURFACE_BUCKETS`, :113-306). What a lane needs: `SECURITY_HEADERS` in an `import.meta`-free module (candidate apps/web/lib/security-headers.mjs) that next.config.mjs imports and re-exports; the builder in a database-free module (candidate apps/web/lib/completion-landing.ts) with its DD-118 `SURFACE_BUCKETS` entry; then the landing's metas (readiness D1, :70) and the browser spec (D1.1, :73) in the default testMatch. Residual until then: the completion POST's Referer is the full callback URL with its code and state (same origin; hardening report section 8 item 1).
+  Source: lane L72 (p5-hardening-headers-csp), docs/sessions/web-mvp-phase5-readiness-p5-hardening-headers-csp.md D1 "FALLBACK APPLIED" (:71) and D1.1 (:73); docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 3.
+
+## task: p5-sw-offline-fallback-hsts-parity
+title: The service worker's own offline fallback carries five of next.config.mjs's six global security headers (no Strict-Transport-Security); add it or record why not
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/sw/sw.template.js]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at lane L72's commit "docs(backlog): L72 rows and notes; correct the landing sentence in next.config.mjs". `SECURITY_HEADERS` in apps/web/sw/sw.template.js:17-24 names five headers that the worker copies from the cached `/offline` response; the only response the worker builds itself is `offlineFallback` (:77-105), and it carries no `strict-transport-security`, which next.config.mjs's global entry sends (:57). Every other response the worker serves is a network response or a header-less `Response.error()` (:80, :119). Decide whether to add the name or record why not (a browser may ignore HSTS on a response the worker builds; not measured). Low.
+  Source: lane L72 (p5-hardening-headers-csp), docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 7 (a source read, not measured).
+
+## task: p5-google-oidc-swallowed-error-class
+title: The two catches in apps/web/lib/google-oidc.ts swallow the failure, so a JWKS or token-endpoint outage logs nothing
+status: idea
+risk: P2
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/lib/google-oidc.ts, apps/web/lib/google-oidc.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (G = apps/web/lib/google-oidc.ts, C = apps/web/app/api/auth/google/callback/route.ts; lane L68 changes C, not G).
+  G:77-83 (`verifyGoogleIdToken`, try at G:60) turns every throw from jose into `{ ok: false, reason }` by its `code` (`AUTH_STALE` only for `ERR_JWT_EXPIRED`, else `AUTH_INVALID`) and logs nothing, so a failed fetch of Google's key set (the default resolver, G:43) reads as a bad token. G:192-194 (`exchangeGoogleCode`, try at G:182) is a bare `catch` (no binding) that returns null on a network failure or timeout and logs nothing. C:157 and C:165 turn both results into `fail(...)` with no log line (on the lane branch the same two statements still log nothing).
+  Fix: log `{ error: errorClass(error) }` at warn in both catches, class only, never the message; keep the generic reasons and the null. `errorClass` (apps/web/lib/log.ts) lands with lane L68 (absent at dc44cc5). The silent non-throw paths beside them (G:195 `!response.ok`, G:196 the body's `.catch(() => null)`) carry no error object; whether to log them is for the lane that takes this row.
+  Source: lane L68 (p5-log-correlation), step 0 (S0a/S0b), D11.
+
+## task: p5-db-console-error-bypasses-logger
+title: The raw `console.error` calls in packages/db write no `request_id` and skip the logger's redaction
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [packages/db/src/auth.ts, packages/db/src/tenant.ts, packages/db/src/tenant.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (lane L68 changes none of these files).
+  packages/db/src/auth.ts:321-324 (`tenantsForPersonWithProfile`, listing without the profile) and packages/db/src/tenant.ts:192-195 (`tenantLocale`, falling back to the default language) pass the raw `error` to `console.error`: the line carries no `request_id` or `tenant_id` (the request context lives in apps/web/lib/log-context.ts), and the whole error object (message, stack, any driver fields) is written unredacted, where apps/web/lib/log.ts would write its class only. packages/db/src/tenant.test.ts:72-94 pins today's shape (:89-90: the first argument contains `[tenantLocale]`, the second the raw message) and the test at :96 pins no log for a non-UUID id. Not in scope: packages/db/src/migrate.ts:409, the migration CLI's failure sink, runs outside any request and already redacts through `formatMigrationFailureForLog` (packages/db/src/migrate.test.ts:2286 and :2330).
+  Fix: route the two calls through a logger the db package can import without importing apps/web. Decide that boundary first (for example a logger in a shared package, or one the caller injects), then add its file to this scope.
+  Source: lane L68 (p5-log-correlation), step 0 (S0a/S0b), D11.
+
+## task: p5-edge-request-id-header
+title: The web tier adopts only an inbound `x-request-id`; whether the production edge sets a request id header, and under which name and form, is unmeasured
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/lib/log-context.ts, apps/web/lib/log-context.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25. At that SHA apps/web reads no request id header: apps/web/lib/api-envelope.ts:25 and :49 mint a fresh `req_<uuid>` per envelope, and a case-insensitive search for `x-request-id|request-id|x-correlation-id|traceparent|cf-ray` over apps/web, infra, docs/standards/deployment-infra.md and docs/runbooks finds one hit, the `cf-ray` entry of a dev-login test (apps/web/lib/dev-login/gate.test.ts:125), so none of them records which header the production edge sets.
+  Lane L68 adds apps/web/lib/log-context.ts (absent at that SHA): `withRequestLogContext` adopts only an inbound `x-request-id` that matches `^[A-Za-z0-9._-]{8,64}$` and otherwise mints `req_<uuid>`, so today the only inbound id is one the client sends.
+  Fix: once a deploy measures which request id header the production edge sets (its name, its form, and whether a client can forge it), adopt it in `withRequestLogContext`, still shape-checked; never trust a header that has not been measured.
+  Source: lane L68 (p5-log-correlation), step 0 (S0a/S0b), D11.
+
+## task: p5-onboarding-start-test-shuffle-order
+title: apps/web/app/api/onboarding/start/route.test.ts fails in a shuffled order because one describe never clears the `provisionTenant` mock's calls
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/onboarding/start/route.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (OST = apps/web/app/api/onboarding/start/route.test.ts).
+  The describe at OST:72 ("issuance-fence mapping") sets `provisionTenant` in its beforeEach (OST:73-79) with `mockResolvedValue` only (OST:77) and never clears its calls; the file has no `vi.clearAllMocks()`, and only two later describes reset `provisionTenant`, each in its own beforeEach (OST:193 and OST:345, `mockReset()`). That describe's case "maps SessionReauthRequiredError to a generic 401 AUTH_INVALID, no reason leaked" (OST:81) asserts `expect(provisionTenant).toHaveBeenCalledOnce()` (OST:86).
+  Measured with vitest v4.1.12 `--sequence.shuffle`, seeds 6801 and 1729: that case failed both times ("got 6 times"); in declared order the 7 files R3b ran were 169/169 green. It is pre-existing at that SHA: the case fails whenever an earlier case of the same describe runs first.
+  Fix: `vi.mocked(provisionTenant).mockClear()` in that beforeEach (or `vi.clearAllMocks()` first, as the sibling onboarding test files do).
+  Source: lane L68 (p5-log-correlation), review round 3 part 2 (reviewer R3b, out-of-scope note), routed to this row by the conductor (RO-L68-8 item 2).

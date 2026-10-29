@@ -13,11 +13,19 @@ describe("next.config.mjs — baseline security headers (audit W-2)", () => {
     return SECURITY_HEADERS.find((h) => h.key.toLowerCase() === name.toLowerCase())?.value;
   }
 
-  it("applies the header set to EVERY path via headers()", async () => {
+  it("applies the header set to EVERY path via headers(), then the share page's no-referrer + noindex entry AFTER it", async () => {
     const rules = await nextConfig.headers!();
-    expect(rules).toHaveLength(1);
+    expect(rules).toHaveLength(2);
     expect(rules[0]!.source).toBe("/(.*)");
     expect(rules[0]!.headers).toBe(SECURITY_HEADERS);
+    // Order is the contract: of two entries setting one key, the later one wins.
+    expect(rules[1]).toEqual({
+      source: "/session/:slug",
+      headers: [
+        { key: "Referrer-Policy", value: "no-referrer" },
+        { key: "X-Robots-Tag", value: "noindex, nofollow" },
+      ],
+    });
   });
 
   it("HSTS: one year, includeSubDomains, no preload (preload is a registry submission, not a header choice)", () => {

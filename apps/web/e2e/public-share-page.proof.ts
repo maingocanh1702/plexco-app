@@ -1,16 +1,18 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
+import { writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { localInput, paceSessionApi, signInAsPersona } from "./support/golden-path-helpers";
 import { COMPILE_TIMEOUT_MS } from "./support/golden-path-timeouts";
 
 /**
  * LOCAL-ONLY real-stack proof (lane L39; readiness D5; D6's discovery-role case is not run: see the
- * config). Never run in CI: the name is outside
- * Playwright's testMatch and it is skipped unless SHARE_PROOF_BASE_URL is set. A slug is a bearer
- * token: it never goes into a title, a console line or an assertion message.
+ * config). Phase 1 of two (lane L72): `next dev` and all host work; its last test hands phase 2
+ * (public-share-page-prod.proof.ts) the share paths and the host's session token in the 0600 state
+ * file. Never run in CI: the name is outside
+ * Playwright's testMatch and it is skipped unless SHARE_PROOF_BASE_URL is set. A slug and the
+ * session token are bearer tokens: neither goes into a title, a console line or an assertion message.
  */
 const BASE = process.env.SHARE_PROOF_BASE_URL;
 test.skip(!BASE, "local proof: run apps/web/e2e/public-share-page-proof.sh");
@@ -25,8 +27,8 @@ const ENABLE = ["scripts/outbox-projector-enable.mjs", "enable", "--projector", 
 const run = Date.now().toString(36);
 // ASCII, unique per run and case; "Rieng <code>" is in a case's venue name and address ONLY.
 const s = (code: string, field: string) => `${field} ${code} ${run}`;
-const ids = { On: "", Off: "" };
-const paths = { off1: "", off2: "", on: "" }; // share paths are bearer tokens: never printed
+const ids = { On: "", Off: "", Priv: "" };
+const paths = { off1: "", off2: "", on: "", priv: "" }; // share paths are bearer tokens: never printed
 let tenantId = "";
 let host: Page; // the signed-in owner; every other context is anonymous
 let anon: BrowserContext;
@@ -35,15 +37,15 @@ let firstFlight = "";
 
 // D2 MEASURED (e2e runs 2 and 3, `next dev`): Cache-Control `no-store, must-revalidate`, the dev
 // form (the production form `private, no-cache, no-store, max-age=0, must-revalidate` is expected
-// from force-dynamic; backlog row web-public-share-page-404-production-measurement); Referrer-Policy
-// strict-origin-when-cross-origin (the global one of next.config.mjs; the page's meta says
-// no-referrer); no X-Robots-Tag header; meta robots `noindex, nofollow` (D2).
+// from force-dynamic; backlog row web-public-share-page-404-production-measurement); meta robots
+// `noindex, nofollow` (D2). Lane L72 D3: next.config.mjs sends Referrer-Policy `no-referrer` and
+// X-Robots-Tag `noindex, nofollow` for /session/:slug, on the 200 and the 404, under next dev too.
 function expectPinned(h: Record<string, string>) {
   expect(h["cache-control"]).toMatch(
     /^(private, no-cache, )?no-store, (max-age=0, )?must-revalidate$/,
   );
-  expect(h["referrer-policy"]).toBe("strict-origin-when-cross-origin");
-  expect(h["x-robots-tag"], "no X-Robots-Tag header (D2)").toBeUndefined();
+  expect(h["referrer-policy"]).toBe("no-referrer");
+  expect(h["x-robots-tag"]).toBe("noindex, nofollow");
   expect(h["content-type"]).toBe("text/html; charset=utf-8");
   expect(h["x-content-type-options"]).toBe("nosniff");
 }
@@ -53,9 +55,6 @@ const meta = (html: string, name: string) => {
   const at = html.indexOf(key);
   return at < 0 ? undefined : html.slice(at + key.length, html.indexOf('"', at + key.length));
 };
-/** The slice of pg the suspension needs: pg is a dependency of packages/db only, not of apps/web. */
-type PgClient = { connect(): Promise<void>; query(q: string, v: unknown[]): Promise<unknown> };
-type Pg = { Client: new (o: { connectionString: string }) => PgClient & { end(): Promise<void> } };
 const root = () => resolve(dirname(test.info().file), "../../.."); // the repo root
 /** One CLI or script with the scratch superuser URL (DATABASE_URL_MIGRATION); its JSON lines. */
 const operator = (args: string[], cwd = root()) => {
@@ -81,8 +80,9 @@ async function visit(path: string) {
 // Measured cause (e2e run 3): under `next dev` the misses differ per request only by three clock
 // values, the `?v=<ms>` asset query, the Flight time-origin row `:N<ms>` and the server-measured I/O
 // "start"/"end" in `:J` rows; Next 15.5.28's production bundles emit none of them (security review
-// round 1, S-1), so exactly those three are masked. A malformed slug returns before the DB
-// (page.test.tsx), so its dev Flight lacks the query's I/O rows: its markup is compared, not its Flight.
+// round 1, S-1), so exactly those three are masked. A malformed slug skips only the share-slug
+// lookup (app/session/[slug]/page.tsx runs the limiter query first, then the shape check), so its
+// dev Flight lacks that lookup's I/O rows: its markup is compared, not its Flight.
 const WELL_FORMED = /^\/session\/[A-Za-z0-9_-]{22}$/;
 const devClock = (s: string) => s.replace(/\?v=\d+/g, "?v=0");
 const markupOf = (html: string) => devClock(html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, ""));
@@ -153,7 +153,7 @@ async function mintLink(code: keyof typeof ids) {
 }
 
 test.describe.serial("public share page: the link and its uniform 404", () => {
-  test("host prepares two public sessions and the club alias", async ({ browser }) => {
+  test("host prepares three public sessions and the club alias", async ({ browser }) => {
     for (const name of ["SHARE_PROOF_DB_URL", "DATABASE_URL", "DISCOVERY_DATABASE_URL"]) {
       expect(pathOf(process.env[name]), `${name} is the scratch DB`).toBe(SCRATCH);
     }
@@ -169,7 +169,7 @@ test.describe.serial("public share page: the link and its uniform 404", () => {
       timeout: COMPILE_TIMEOUT_MS,
     });
     expect(alias.status(), await alias.text()).toBe(200);
-    for (const code of ["On", "Off"] as const) ids[code] = await createAndPublish(code);
+    for (const code of ["On", "Off", "Priv"] as const) ids[code] = await createAndPublish(code);
   });
 
   test("operator enables public_sessions on the scratch database only", () => {
@@ -180,7 +180,7 @@ test.describe.serial("public share page: the link and its uniform 404", () => {
     const mine = rows.filter((row) => row.tenantId === tenantId);
     expect(mine, "one pending alias for Dev Club").toHaveLength(1);
     operator([moderate, "approve", "--tenant", tenantId, "--sha256", mine[0]?.aliasSha256 ?? ""]);
-    expect(operator(ENABLE)[0]).toMatchObject({ changed: true, rebuilt_sessions: 2 });
+    expect(operator(ENABLE)[0]).toMatchObject({ changed: true, rebuilt_sessions: 3 });
   });
 
   test("e1: the OFF link opens anonymously with the pinned headers", async () => {
@@ -206,28 +206,43 @@ test.describe.serial("public share page: the link and its uniform 404", () => {
     expect(r.html.includes(s("On", "Rieng")), "neither the venue name nor the address").toBe(false);
   });
 
-  test("e2: unknown, malformed, rotated, private, suspended slugs: one 404", async () => {
+  test("e2: unknown, malformed, rotated and private slugs: one 404", async () => {
     await expect404(`/session/${randomBytes(16).toString("base64url")}`); // the reference: 22 chars
     await expect404("/session/notAShareSlug"); // malformed: not 22 characters
     paths.off2 = await mintLink("Off"); // a second link revokes the first
     await expect404(paths.off1);
     expect((await visit(paths.off2)).status, "the new link is live").toBe(200);
-    await host.goto(`/c/${tenantId}/sessions/${ids.On}`);
+    // Priv goes private, never On: phase 2 needs On (and off2) as its 200s.
+    paths.priv = await mintLink("Priv");
+    expect((await visit(paths.priv)).status, "the link is live before the flip").toBe(200);
+    await host.goto(`/c/${tenantId}/sessions/${ids.Priv}`);
     await host.getByRole("button", { name: "Chuyển về Riêng tư" }).click();
     await host.getByRole("button", { name: "Chuyển về Riêng tư" }).last().click(); // the dialog's
     await expect(host.getByText("Hiển thị: Riêng tư")).toBeVisible();
     // No dispatcher runs in this proof: the enable CLI's re-run is the canonical rebuild
     // (outbox-projector-enable.mjs:28-35); it re-projects the session the update made private.
     expect(operator(ENABLE)[0]).toMatchObject({ changed: false });
-    await expect404(paths.on);
-    expect((await anon.request.get(paths.off2)).status(), "live before the suspension").toBe(200);
-    // Last: suspending the tenant ends the host's access. pg is a dependency of packages/db only.
-    expect(pathOf(DB_URL), "SHARE_PROOF_DB_URL is the scratch DB").toBe(SCRATCH);
-    const { Client } = createRequire(resolve(root(), "packages/db/package.json"))("pg") as Pg;
-    const db = new Client({ connectionString: DB_URL });
-    await db.connect();
-    const suspend = "UPDATE tenants SET status = 'suspended' WHERE id = $1";
-    await db.query(suspend, [tenantId]).finally(() => db.end());
-    await expect404(paths.off2);
+    await expect404(paths.priv);
+    // The tenant suspension is phase 2's, after its 200s.
+    expect((await anon.request.get(paths.off2)).status(), "live at the end of phase 1").toBe(200);
+  });
+
+  test("phase 1 hands its state to phase 2", async () => {
+    // Last, so the file exists only when every phase-1 test passed; only its path is in the env.
+    const file = process.env.SHARE_PROOF_STATE_FILE;
+    if (!file) throw new Error("SHARE_PROOF_STATE_FILE is not set");
+    // next dev's cookie name (lib/session-cookies.ts sessionCookieName), written out because that
+    // module pulls @plexco/db, which Playwright cannot load.
+    const cookies = await host.context().cookies();
+    const token = cookies.find((c) => c.name === "plx_session")?.value ?? "";
+    // Phase 2 parses exactly this shape. A check message names a key, never a value.
+    for (const [key, value] of Object.entries({ run, tenantId, token, ...paths })) {
+      expect(value.length > 0, `${key} is a non-empty string`).toBe(true);
+    }
+    for (const [key, path] of Object.entries(paths)) {
+      expect(WELL_FORMED.test(path), `${key} is a share path`).toBe(true);
+    }
+    const state = { run, tenantId, paths, token };
+    writeFileSync(file, JSON.stringify(state), { mode: 0o600, flag: "wx" });
   });
 });

@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
-
 import type { ApiEnvelope, ApiErrorCode, ApiErrorDetails } from "@plexco/core";
+
+import { currentRequestId, newRequestId } from "./log-context";
 
 /**
  * Every API envelope is `Cache-Control: no-store` (audit 2026-09-06 W-14): no route returns
@@ -22,7 +22,7 @@ export function ok(data: unknown, init?: ResponseInit): Response {
     {
       data,
       error: null,
-      meta: { requestId: `req_${randomUUID()}` },
+      meta: { requestId: currentRequestId() ?? newRequestId() },
     } satisfies ApiEnvelope<unknown>,
     withNoStore(init),
   );
@@ -46,7 +46,7 @@ export function err(
         details === undefined
           ? { code, message, statusCode }
           : { code, message, statusCode, details },
-      meta: { requestId: `req_${randomUUID()}` },
+      meta: { requestId: currentRequestId() ?? newRequestId() },
     } satisfies ApiEnvelope<never>,
     withNoStore({ status: statusCode }),
   );
