@@ -7,7 +7,8 @@ import {
   updateClubConfig,
   validatePublicAlias,
 } from "@plexco/db";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "../../../../lib/log";
 import { csrfOk, currentSession, rateLimited } from "../../../../lib/session-cookies";
 import { GET, PATCH } from "./route";
 
@@ -315,5 +316,66 @@ describe("public alias (L10a): { commandId, publicAlias } travels alone", () => 
     expect(setPublicAlias).not.toHaveBeenCalled();
     vi.mocked(setPublicAlias).mockRejectedValue(new Error("db down"));
     await expect(alias("CLB Q7")).rejects.toThrow("db down");
+  });
+});
+
+// L68 A-15 (D6, D10, D15): the REAL logger, no mock of lib/log; its three console sinks are
+// captured and silenced. `l68.before` is written inside the gate (authorize), `l68.after` by a
+// dependency the handler calls once the gate has proven the tenant.
+describe("L68 A-15 — the club routes run in the request log context with the proven tenant", () => {
+  beforeEach(() => {
+    for (const sink of ["error", "warn", "log"] as const) {
+      vi.spyOn(console, sink).mockImplementation(() => {});
+    }
+    vi.mocked(authorize).mockImplementation(async () => {
+      log.error("l68.before", {});
+      return { allowed: true, role: "owner" };
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+  const written = () =>
+    JSON.stringify([console.error, console.warn, console.log].map((s) => vi.mocked(s).mock.calls));
+  const probes = (event: string) =>
+    vi
+      .mocked(console.error)
+      .mock.calls.map((call) => String(call[0]))
+      .filter((line) => line.includes(`"event":"${event}"`))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const expectTenantOnlyAfterTheGate = (response: Response) => {
+    const id = response.headers.get("x-request-id");
+    expect(probes("l68.after")).toEqual([
+      expect.objectContaining({ request_id: id, tenant_id: TENANT }),
+    ]);
+    expect(probes("l68.before")).toEqual([expect.objectContaining({ request_id: id })]);
+    expect(probes("l68.before")[0]).not.toHaveProperty("tenant_id");
+  };
+
+  it("GET: the config read logs the proven tenant and the response's request id; the gate none", async () => {
+    vi.mocked(getClubConfig).mockImplementation(async () => {
+      log.error("l68.after", {});
+      return club;
+    });
+    const res = await GET(getReq());
+    expect(res.status).toBe(200);
+    expectTenantOnlyAfterTheGate(res);
+  });
+
+  it("PATCH: the config command logs the proven tenant and the response's request id; the gate none", async () => {
+    vi.mocked(updateClubConfig).mockImplementation(async () => {
+      log.error("l68.after", {});
+      return { club, step: "verified", replayed: false };
+    });
+    const res = await PATCH(patchReq({ commandId: "c1", name: "CLB" }));
+    expect(res.status).toBe(200);
+    expectTenantOnlyAfterTheGate(res);
+  });
+
+  it("GET and PATCH: an early 401 carries a fresh x-request-id and no line carries a tenant", async () => {
+    vi.mocked(currentSession).mockResolvedValue(null);
+    for (const res of [await GET(getReq()), await PATCH(patchReq({ commandId: "c" }))]) {
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-request-id")).toMatch(/^req_[0-9a-f-]{36}$/);
+    }
+    expect(written()).not.toContain("tenant_id");
   });
 });

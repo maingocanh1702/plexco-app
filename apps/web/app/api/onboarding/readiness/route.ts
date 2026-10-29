@@ -2,6 +2,7 @@ import { runWithLang, t } from "@plexco/core/i18n";
 import { onboardingSnapshot } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import { resolveClubGate } from "../../../../lib/club-config-route";
+import { setLogTenant, withRequestLogContext } from "../../../../lib/log-context";
 import { appDb } from "../../../../lib/session-cookies";
 
 /**
@@ -20,10 +21,15 @@ import { appDb } from "../../../../lib/session-cookies";
 const REQUIRED_STEPS = ["club_config", "bank_connect", "first_session"] as const;
 const OPTIONAL_STEPS = ["zalo_connect"] as const;
 
-export async function GET(request: Request): Promise<Response> {
+export function GET(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handleGet(request));
+}
+
+async function handleGet(request: Request): Promise<Response> {
   // authorize(content.manage) via the shared club gate; language resolves only after authz (DD-118).
   const gate = await resolveClubGate(request, { csrf: false });
   if (gate instanceof Response) return gate;
+  setLogTenant(gate.tenantId);
   const { tenantId, lang } = gate;
 
   return runWithLang(lang, async () => {

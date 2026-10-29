@@ -5,8 +5,9 @@ import {
   probeZaloConnectReplay,
   ZaloConnectError,
 } from "@plexco/db";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
+import { log } from "../../../../../lib/log";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
 import { getMe, setWebhook, ZaloApiError } from "../../../../../lib/zalo/client";
 import { POST } from "./route";
@@ -354,5 +355,51 @@ describe("POST /api/onboarding/zalo/connect", () => {
     vi.mocked(csrfOk).mockReturnValue(false);
     expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);
     expect(getMe).not.toHaveBeenCalled();
+  });
+});
+
+// L68 A-15 (D6, D10, D15): the REAL logger, no mock of lib/log; its three console sinks are
+// captured and silenced. `l68.before` is written inside the gate (authorize), `l68.after` by the
+// token check once the tenant is proven.
+describe("L68 A-15 — the Zalo connect route runs in the request log context", () => {
+  beforeEach(() => {
+    for (const sink of ["error", "warn", "log"] as const) {
+      vi.spyOn(console, sink).mockImplementation(() => {});
+    }
+  });
+  afterEach(() => vi.restoreAllMocks());
+  const written = () =>
+    JSON.stringify([console.error, console.warn, console.log].map((s) => vi.mocked(s).mock.calls));
+  const probes = (event: string) =>
+    vi
+      .mocked(console.error)
+      .mock.calls.map((call) => String(call[0]))
+      .filter((line) => line.includes(`"event":"${event}"`))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+  it("the token check logs the proven tenant and the response's request id; the gate none", async () => {
+    vi.mocked(authorize).mockImplementationOnce(async () => {
+      log.error("l68.before", {});
+      return { allowed: true, role: "owner" };
+    });
+    vi.mocked(getMe).mockImplementationOnce(async () => {
+      log.error("l68.after", {});
+    });
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(res.status).toBe(200);
+    const id = res.headers.get("x-request-id");
+    expect(probes("l68.after")).toEqual([
+      expect.objectContaining({ request_id: id, tenant_id: TENANT }),
+    ]);
+    expect(probes("l68.before")).toEqual([expect.objectContaining({ request_id: id })]);
+    expect(probes("l68.before")[0]).not.toHaveProperty("tenant_id");
+  });
+
+  it("the gate's early 403 (CSRF) carries a fresh x-request-id and no line carries a tenant", async () => {
+    vi.mocked(csrfOk).mockReturnValue(false);
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(res.status).toBe(403);
+    expect(res.headers.get("x-request-id")).toMatch(/^req_[0-9a-f-]{36}$/);
+    expect(written()).not.toContain("tenant_id");
   });
 });

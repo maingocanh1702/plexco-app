@@ -11,6 +11,7 @@ import { err, ok } from "../../../../../lib/api-envelope";
 import { resolveClubGate } from "../../../../../lib/club-config-route";
 import { blobToText, encryptConnectorSecret } from "../../../../../lib/connector-secrets";
 import { errorClass, log } from "../../../../../lib/log";
+import { setLogTenant, withRequestLogContext } from "../../../../../lib/log-context";
 import { readBoundedBody } from "../../../../../lib/read-bounded-body";
 import { isUnsafeCommandKey } from "../../../../../lib/session-command-route";
 import { appDb } from "../../../../../lib/session-cookies";
@@ -62,13 +63,18 @@ function sanitizedConnectError(error: unknown): Error {
   return new Error(`zalo_connect_failed: ${name}${code ? ` ${code}` : ""}`);
 }
 
-export async function POST(request: Request): Promise<Response> {
+export function POST(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handlePost(request));
+}
+
+async function handlePost(request: Request): Promise<Response> {
   const gate = await resolveClubGate(request, {
     csrf: true,
     action: ZALO_CONNECTOR_ACTION,
     tenantBucket: CONNECT_LIMIT,
   });
   if (gate instanceof Response) return gate;
+  setLogTenant(gate.tenantId);
 
   return runWithLang(gate.lang, async () => {
     const baseUrl = validBaseUrl(process.env.APP_BASE_URL);
