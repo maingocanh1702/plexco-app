@@ -46,8 +46,8 @@ const pageExtensions = pageExtensionsFor(process.env);
  * docs/research/web-mvp-phase5-production-hardening-2026-10-29.md): a config
  * header REPLACES a route's own header of the same key, so the OAuth completion
  * landing's own CSP, X-Frame-Options and Referrer-Policy headers never reach the
- * browser; the landing carries its policy in its document instead (a meta CSP
- * and a meta referrer, apps/web/lib/session-cookies.ts). Of two `headers()`
+ * browser; the landing runs under the global CSP and Referrer-Policy (its own
+ * CSP: backlog row p5-oauth-landing-own-csp-browser-check). Of two `headers()`
  * entries setting one key on a path the LATER entry wins (one header line, no
  * join), and config headers also reach a `notFound()` 404.
  *
