@@ -1,5 +1,6 @@
 import { consumeOauthCompletionHandoff, rateLimitCheck } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { captureSignInLog } from "../../../../../lib/log-capture.testkit";
 import * as session from "../../../../../lib/session-cookies";
 import { hashToken } from "../../../../../lib/session-cookies";
 import { POST } from "./route";
@@ -50,6 +51,11 @@ function completeReq(
   });
 }
 
+const REQUEST_ID = /^req_[0-9a-f-]{36}$/; // A-13: the id withRequestLogContext mints
+// L68 D7 seeds: a completion handoff, a session cookie, a client IP.
+const FAKES = ["FAKE-HANDOFF-L68", "FAKE-SESSION-COOKIE-L68", "203.0.113.68"];
+const captureLog = captureSignInLog(FAKES, REQUEST_ID); // L68 D7
+
 beforeEach(() => {
   vi.mocked(consumeOauthCompletionHandoff).mockReset();
   vi.mocked(session.issueSession).mockReset();
@@ -73,6 +79,7 @@ describe("POST /api/auth/google/complete", () => {
     // branch revokes the pre-existing session (D1B-3).
     expect(session.issueSession).toHaveBeenCalledWith("acc-9");
     expect(res.status).toBe(302);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID); // A-13
     expect(res.headers.get("location")).toBe("https://plexco.app/");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
   });
@@ -188,6 +195,7 @@ describe("POST /api/auth/google/complete — rate limit + bounded body (audit W-
     const res = await POST(completeReq("raw-handoff"));
 
     expect(res.status).toBe(429);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID); // A-13
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     const body = (await res.json()) as { error: { code: string } | null };
     expect(body.error?.code).toBe("LOGIN_RATE_LIMITED");
@@ -475,3 +483,64 @@ describe("bounded native request stream", () => {
     expect(session.issueSession).toHaveBeenCalledTimes(step === "consume" ? 0 : 1);
   });
 });
+
+// L68 D7: each swallowed or unhandled error is logged by class only, at the default and debug
+// level, while the request (client IP, handoff) and each error carry the seeds.
+describe.each(["", "debug"])(
+  "completion errors are logged by class only (LOG_LEVEL %j)",
+  (logLevel) => {
+    const seeded = () => completeReq("FAKE-HANDOFF-L68", { ip: "203.0.113.68" });
+
+    it("an unexpected dependency failure: auth.google.complete.unhandled", async () => {
+      vi.mocked(consumeOauthCompletionHandoff).mockRejectedValue(
+        new Error(`db down ${FAKES.join(" ")}`),
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "error",
+        "auth.google.complete.unhandled",
+        () => POST(seeded()),
+      );
+      expect(res.headers.get("location")).toContain("auth_error=AUTH_UNAVAILABLE");
+      expect(line.error).toEqual({ name: "Error" }); // no message/stack
+    });
+
+    it("the rate-limit store down: auth.google.complete.limiter_unavailable", async () => {
+      vi.mocked(rateLimitCheck).mockRejectedValue(
+        Object.assign(new Error("pg down oauth-complete:203.0.113.68 FAKE-HANDOFF-L68"), {
+          code: "57P01",
+        }),
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "warn",
+        "auth.google.complete.limiter_unavailable",
+        () => POST(seeded()),
+      );
+      expect(res.status).toBe(429); // fails closed
+      expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+      expect(line.error).toEqual({ name: "Error", code: "57P01" });
+    });
+
+    it("a body stream that errors: auth.google.complete.body_invalid", async () => {
+      // The same pull-throw shape as the "read" body failure above; readBoundedBody is real.
+      const body = new ReadableStream(
+        {
+          pull() {
+            throw new Error("source failed FAKE-HANDOFF-L68");
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "warn",
+        "auth.google.complete.body_invalid",
+        () => POST(new Request(seeded(), { body, duplex: "half" } as RequestInit)),
+      );
+      expect(res.headers.get("location")).toBe("https://plexco.app/?auth_error=AUTH_INVALID");
+      expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+      expect(line.error).toEqual({ name: "Error" });
+    });
+  },
+);

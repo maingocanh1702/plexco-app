@@ -21,6 +21,7 @@ import {
   withTenant,
 } from "@plexco/db";
 import { err } from "./api-envelope";
+import { setLogTenant, withRequestLogContext } from "./log-context";
 import { readBoundedBody } from "./read-bounded-body";
 import { appDb, csrfOk, currentSession, rateLimited } from "./session-cookies";
 import { resolveTenantLang } from "./tenant-lang";
@@ -829,8 +830,8 @@ function openBalanceDetails(error: unknown): ApiErrorDetails | undefined {
 }
 
 /**
- * The request boundary for a session command: resolve, establish the language context, run the
- * handler, map domain errors.
+ * The request boundary for a session command: open the request log context, resolve, establish
+ * the language context, run the handler, map domain errors.
  *
  * The try/catch lives HERE, inside the runWithLang callback, and that placement is the whole
  * point. mapSessionCommandError resolves its text through the ALS context; if the catch sat
@@ -841,7 +842,7 @@ function openBalanceDetails(error: unknown): ApiErrorDetails | undefined {
  * ordering structural rather than a convention each new route has to remember.
  *
  * Errors raised BEFORE the tenant is known-and-authorized are returned by
- * resolveSessionCommandContext outside this wrap and stay Vietnamese — DD-118's ratified
+ * resolveSessionCommandContext outside the language wrap and stay Vietnamese — DD-118's ratified
  * behaviour, since no tenant means no language. The set is pinned by test, not restated here:
  * duplicating it is how it came to be wrong twice.
  */
@@ -851,16 +852,22 @@ export async function handleSessionCommand(
   handler: (context: SessionCommandContext) => Promise<Response>,
   options: SessionCommandOptions = {},
 ): Promise<Response> {
-  const context = await resolveSessionCommandContext(request, rateLimit, options);
-  if (context instanceof Response) return context;
+  // The log context wraps everything, the early refusals included, so every response carries
+  // x-request-id (L68 D10).
+  return withRequestLogContext(request, async () => {
+    const context = await resolveSessionCommandContext(request, rateLimit, options);
+    if (context instanceof Response) return context;
+    // The gate's authorised tenant, never the raw ?tenant= or any client input (L68 D6).
+    setLogTenant(context.tenantId);
 
-  return runWithLang(context.lang, async () => {
-    try {
-      return await handler(context);
-    } catch (error) {
-      const mapped = mapSessionCommandError(error);
-      if (mapped) return mapped;
-      throw error;
-    }
+    return runWithLang(context.lang, async () => {
+      try {
+        return await handler(context);
+      } catch (error) {
+        const mapped = mapSessionCommandError(error);
+        if (mapped) return mapped;
+        throw error;
+      }
+    });
   });
 }

@@ -24,7 +24,10 @@ import ts from "typescript";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWithLang, t } from "@plexco/core/i18n";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ok } from "./api-envelope";
+import { log } from "./log";
+import { captureConsoleSinks } from "./log-capture.testkit";
 import {
   JOIN_REQUEST_CANCEL_PERSON_LIMIT,
   SESSION_JOIN_PERSON_LIMIT,
@@ -98,10 +101,7 @@ function req(body: unknown, tenant: string | null = TENANT, raw?: string): Reque
 const envelope = async (response: Response) =>
   (await response.json()) as {
     data: unknown;
-    // `message` belongs here: two tests read it. Its absence was a real TS2339 twice that the
-    // repo's canonical typecheck CANNOT see — apps/web/tsconfig.json includes only
-    // ["next-env.d.ts", "app", ".next/types/**/*.ts"], so lib/*.test.ts is compiled by nothing.
-    // codex round-01 [P3].
+    // `message` belongs here: tests read it, and `pnpm typecheck` compiles lib/*.test.ts.
     error: { code: string; statusCode: number; message: string } | null;
   };
 
@@ -1709,3 +1709,61 @@ it.each(["auth", "csrf", "tenant", "actor", "association", "quota"] as const)(
     expect(handler).not.toHaveBeenCalled();
   },
 );
+
+// L68 A-12 (D6, D9, D10, D12): one wrapped request is traceable end to end. The REAL logger, no
+// mock of ./log; its three console sinks are captured and silenced.
+describe("L68 A-12 — the session-command family runs inside the request log context", () => {
+  const { written, probes: eventLines } = captureConsoleSinks();
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("body meta.requestId = the x-request-id header = the log line's request_id", async () => {
+    // At debug every level is written, so the absence checks below also cover a log.debug line.
+    vi.stubEnv("LOG_LEVEL", "debug");
+    // A hex-letter tenant sent upper-case: the gate lower-cases it, so tenant_id === lettered
+    // proves the line's tenant is the authorised context.tenantId (D6), never the raw query.
+    // `l68.before` is written inside the gate (authorize), before the tenant is proven.
+    const lettered = "abcdef12-3456-4789-8abc-def012345678";
+    const request = req({ commandId: "cmd_l68", note: "FAKE-BODY-L68" }, lettered.toUpperCase());
+    request.headers.set("x-request-id", "l68-req-abcdef");
+    // The fakes travel on the request itself, through the wrapper and the gate.
+    request.headers.set("cookie", "plexco_session=FAKE-COOKIE-L68");
+    request.headers.set("x-csrf-token", "FAKE-TOKEN-L68");
+    expect(request.headers.get("cookie")).toBe("plexco_session=FAKE-COOKIE-L68");
+    vi.mocked(authorize).mockImplementationOnce(async () => {
+      log.error("l68.before", {});
+      return ALLOW_OWNER;
+    });
+    const response = await handleSessionCommand(request, LIMIT, async () => {
+      // log.error: written at every LOG_LEVEL.
+      log.error("l68.probe", {});
+      return ok({});
+    });
+
+    const body = (await response.json()) as { meta: { requestId: string } };
+    const probes = eventLines("l68.probe");
+    expect(probes).toHaveLength(1);
+    expect(body.meta.requestId).toBe("l68-req-abcdef");
+    expect(response.headers.get("x-request-id")).toBe("l68-req-abcdef");
+    expect(probes[0]).toMatchObject({ request_id: "l68-req-abcdef", tenant_id: lettered });
+    expect(eventLines("l68.before")).toEqual([
+      expect.objectContaining({ request_id: "l68-req-abcdef" }),
+    ]);
+    expect(eventLines("l68.before")[0]).not.toHaveProperty("tenant_id");
+    expect(written()).not.toContain("FAKE-TOKEN-L68");
+    expect(written()).not.toContain("FAKE-COOKIE-L68");
+    expect(written()).not.toContain("FAKE-BODY-L68");
+  });
+
+  it("an early 401 (no session) carries a fresh x-request-id and no line carries a tenant", async () => {
+    vi.mocked(currentSession).mockResolvedValue(null);
+    const response = await handleSessionCommand(req({ commandId: "cmd_l68" }), LIMIT, async () =>
+      ok({}),
+    );
+
+    expect(response.status).toBe(401);
+    const id = response.headers.get("x-request-id");
+    expect(id).toMatch(/^req_[0-9a-f-]{36}$/);
+    expect(((await response.json()) as { meta: { requestId: string } }).meta.requestId).toBe(id);
+    expect(written()).not.toContain("tenant_id");
+  });
+});

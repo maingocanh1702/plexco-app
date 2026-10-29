@@ -9,6 +9,7 @@ import {
 } from "@plexco/db";
 import { err, ok } from "../../../../lib/api-envelope";
 import { resolveClubGate } from "../../../../lib/club-config-route";
+import { setLogTenant, withRequestLogContext } from "../../../../lib/log-context";
 import { readBoundedBody } from "../../../../lib/read-bounded-body";
 import { isUnsafeCommandKey } from "../../../../lib/session-command-route";
 import { appDb } from "../../../../lib/session-cookies";
@@ -33,9 +34,14 @@ const FIELDS = [
 
 const invalid = () => err("INVALID_BODY", t("Dữ liệu không hợp lệ.", "Invalid payload."), 400);
 
-export async function GET(request: Request): Promise<Response> {
+export function GET(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handleGet(request));
+}
+
+async function handleGet(request: Request): Promise<Response> {
   const gate = await resolveClubGate(request, { csrf: false, tenantBucket: GET_LIMIT });
   if (gate instanceof Response) return gate;
+  setLogTenant(gate.tenantId);
   return runWithLang(gate.lang, async () => {
     const params = { tenantId: gate.tenantId };
     const club = await getClubConfig(appDb().db, params);
@@ -43,9 +49,14 @@ export async function GET(request: Request): Promise<Response> {
   });
 }
 
-export async function PATCH(request: Request): Promise<Response> {
+export function PATCH(request: Request): Promise<Response> {
+  return withRequestLogContext(request, () => handlePatch(request));
+}
+
+async function handlePatch(request: Request): Promise<Response> {
   const gate = await resolveClubGate(request, { csrf: true, tenantBucket: PATCH_LIMIT });
   if (gate instanceof Response) return gate;
+  setLogTenant(gate.tenantId);
 
   return runWithLang(gate.lang, async () => {
     if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) {

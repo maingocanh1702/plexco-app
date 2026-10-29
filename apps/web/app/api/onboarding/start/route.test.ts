@@ -1,5 +1,10 @@
 import { provisionTenant, SlugTakenError } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "../../../../lib/log";
+import {
+  captureConsoleSinks,
+  expectTenantOnlyAfterTheGate,
+} from "../../../../lib/log-capture.testkit";
 import {
   csrfOk,
   currentSession,
@@ -106,6 +111,35 @@ describe("POST /api/onboarding/start — issuance-fence mapping (G3-B3, D0-12)",
     const body = await res.json();
     expect(body.error).toBeNull();
     expect(body.data).toMatchObject({ tenantId: "tenant-1", plan: "free", status: "active" });
+  });
+
+  // L68 A-15 (D6, D10, D15): the REAL logger, no mock of lib/log; its three console sinks are
+  // captured and silenced. Nested to reuse this block's session setup. `l68.before` is written
+  // inside provisionTenant (before the tenant exists), `l68.after` by the session rotation.
+  describe("L68 A-15 — the start route runs in the request log context", () => {
+    const { written, probes } = captureConsoleSinks();
+
+    it("the session rotation logs the provisioned tenant and the response's request id; provisioning none", async () => {
+      vi.mocked(provisionTenant).mockImplementationOnce(async () => {
+        log.error("l68.before", {});
+        return "tenant-l68";
+      });
+      vi.mocked(issueSession).mockImplementationOnce(async () => {
+        log.error("l68.after", {});
+        return { csrfToken: "new-csrf" };
+      });
+      const res = await POST(req({ slug: "club-l68", name: "Club L68" }));
+      expect(res.status).toBe(200);
+      expectTenantOnlyAfterTheGate(probes, res, "tenant-l68");
+    });
+
+    it("an early 401 (no session) carries a fresh x-request-id and no line carries a tenant", async () => {
+      vi.mocked(currentSession).mockResolvedValue(null);
+      const res = await POST(req({ slug: "club-l68", name: "Club L68" }));
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-request-id")).toMatch(/^req_[0-9a-f-]{36}$/);
+      expect(written()).not.toContain("tenant_id");
+    });
   });
 });
 

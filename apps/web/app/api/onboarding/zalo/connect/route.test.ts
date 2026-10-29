@@ -7,6 +7,12 @@ import {
 } from "@plexco/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { __resetAuthSecretCacheForTest } from "../../../../../lib/auth-secrets";
+import { log } from "../../../../../lib/log";
+import {
+  captureConsoleSinks,
+  captureLogLine,
+  expectTenantOnlyAfterTheGate,
+} from "../../../../../lib/log-capture.testkit";
 import { csrfOk, currentSession, rateLimited } from "../../../../../lib/session-cookies";
 import { getMe, setWebhook, ZaloApiError } from "../../../../../lib/zalo/client";
 import { POST } from "./route";
@@ -161,6 +167,35 @@ describe("POST /api/onboarding/zalo/connect", () => {
       expect.objectContaining({ outcome: "error" }),
     );
   });
+
+  // L68 D7: the swallowed setWebhook error reaches the log by class only, at every LOG_LEVEL.
+  it.each(["", "debug"])(
+    "setWebhook failure is logged by class only (LOG_LEVEL %j)",
+    async (level) => {
+      const fakes = ["FAKE-BOT-TOKEN-L68", "FAKE-URL-TOKEN-L68", "FAKE-WH-SECRET-L68"];
+      // undici's shape: TypeError("fetch failed") with the socket error and its code on `.cause`.
+      const cause = Object.assign(new Error(`connect ECONNRESET ${fakes.join(" ")}`), {
+        code: "ECONNRESET",
+      });
+      vi.mocked(setWebhook).mockRejectedValue(
+        Object.assign(
+          new TypeError(`fetch failed /bot${fakes[0]} url=/zalo/${fakes[1]} ${fakes[2]}`),
+          {
+            cause,
+          },
+        ),
+      );
+      const { line } = await captureLogLine(
+        [...fakes, BOT_TOKEN],
+        level,
+        "warn",
+        "zalo_setwebhook_failed",
+        () => POST(req({ commandId: "c1", botToken: BOT_TOKEN })),
+      );
+      expect(line).toMatchObject({ level: "warn", tenantId: TENANT });
+      expect(line!.error).toEqual({ name: "TypeError", code: "ECONNRESET" }); // no message/stack
+    },
+  );
 
   it("denies without connector.secret_manage: 403, no Zalo call", async () => {
     vi.mocked(authorize).mockResolvedValue({ allowed: false, reason: "grant_required" });
@@ -317,5 +352,33 @@ describe("POST /api/onboarding/zalo/connect", () => {
     vi.mocked(csrfOk).mockReturnValue(false);
     expect((await POST(req({ commandId: "c1", botToken: BOT_TOKEN }))).status).toBe(403);
     expect(getMe).not.toHaveBeenCalled();
+  });
+});
+
+// L68 A-15 (D6, D10, D15): the REAL logger, no mock of lib/log; its three console sinks are
+// captured and silenced. `l68.before` is written inside the gate (authorize), `l68.after` by the
+// token check once the tenant is proven.
+describe("L68 A-15 — the Zalo connect route runs in the request log context", () => {
+  const { written, probes } = captureConsoleSinks();
+
+  it("the token check logs the proven tenant and the response's request id; the gate none", async () => {
+    vi.mocked(authorize).mockImplementationOnce(async () => {
+      log.error("l68.before", {});
+      return { allowed: true, role: "owner" };
+    });
+    vi.mocked(getMe).mockImplementationOnce(async () => {
+      log.error("l68.after", {});
+    });
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(res.status).toBe(200);
+    expectTenantOnlyAfterTheGate(probes, res, TENANT);
+  });
+
+  it("the gate's early 403 (CSRF) carries a fresh x-request-id and no line carries a tenant", async () => {
+    vi.mocked(csrfOk).mockReturnValue(false);
+    const res = await POST(req({ commandId: "c1", botToken: BOT_TOKEN }));
+    expect(res.status).toBe(403);
+    expect(res.headers.get("x-request-id")).toMatch(/^req_[0-9a-f-]{36}$/);
+    expect(written()).not.toContain("tenant_id");
   });
 });
