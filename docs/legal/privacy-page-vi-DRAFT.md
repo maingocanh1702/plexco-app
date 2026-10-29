@@ -23,7 +23,7 @@ Bảng dưới theo schema và migration hiện tại; mục đích chỉ đư�
 | Địa điểm do host nhập | Tên sân, địa chỉ sân và khu vực của buổi, cùng tuỳ chọn ẩn địa chỉ chính xác, mặc định tắt (xem §5) [S31][S32][S33][S34]. |
 | Ghi nhận tiền | Khoản phải trả và số đã ghi nhận; mỗi lần ghi tiền lưu số tiền, nguồn ghi và người ghi (xem §7) [S35][S36][S37][S38][S39]. |
 | Chat CLB | Nội dung tin nhắn, người viết, thời điểm sửa và thời điểm người viết xoá tin [S40][S41][S42][S43]. |
-| Bộ đếm giới hạn tần suất | Cho danh sách khám phá ẩn danh: số lượt theo từng cửa sổ thời gian và theo khoá; khoá được dựng từ địa chỉ IP của máy khách (dạng IPv4, hoặc dạng /64) [S44][S45][S46][S47][S48]. |
+| Bộ đếm giới hạn tần suất | Cho danh sách khám phá ẩn danh: số lượt theo từng cửa sổ thời gian và theo khoá [S44][S45][S46][S48]. Khoá là chính địa chỉ IPv4 của máy khách, hoặc dạng /64 của địa chỉ IPv6 của máy khách (bốn nhóm hextet đầu), hoặc một giá trị dự phòng cố định; khoá được lưu nguyên dạng theo từng cửa sổ [S47][S143][S144][S145]. Với địa chỉ IPv6, mỗi cửa sổ còn đếm theo ba nhóm hextet đầu, cũng lưu nguyên dạng [S143][S145]. |
 | Nhật ký kiểm toán đăng nhập | Nhật ký chỉ ghi thêm: loại sự kiện, tài khoản, nhóm kết quả và mã tham chiếu của yêu cầu [S49][S50][S51][S52][S53]. |
 
 ## 3. Đăng nhập bằng Google
@@ -31,14 +31,14 @@ Bảng dưới theo schema và migration hiện tại; mục đích chỉ đư�
 - Ứng dụng web cho đăng nhập bằng tài khoản Google và chỉ xin Google phạm vi openid và email [S54].
 - Plexco không lưu tên lấy từ tài khoản Google; người dùng mới bắt đầu với tên hiển thị trống [S55][S56].
 - Mã định danh Google và email Google được lưu như ở §2 [S15][S17][S18].
-- Sau khi đăng nhập, phiên được giữ bằng cookie (xem §9).
+- Sau khi đăng nhập, phiên được giữ bằng cookie (xem §9) [S131].
 
 ## 4. Zalo
 
 - Bạn có thể liên kết Zalo với tài khoản Plexco bằng một mã liên kết [S5][S26][S57].
 - Khi liên kết xong, giao diện hiện: "Đã liên kết Zalo với tài khoản Plexco của bạn." [S5]
 - Danh tính Zalo được lưu như ở §2 [S23][S25].
-- Bot Zalo gửi bốn loại tin: buổi được cập nhật, buổi bị huỷ, thông báo của buổi, và người chơi được đôn lên (session.updated, session.cancelled, session.announcement_requested, player.promoted) [S58][S59][S60][S61].
+- Bot Zalo gửi bốn loại tin: buổi được cập nhật, buổi bị huỷ, thông báo của buổi, và người chơi được đôn lên [S58][S59][S60][S61].
 - Tin cập nhật chỉ được gửi khi buổi đổi giờ, địa điểm hoặc giá [S62][S63][S64][S65].
 
 ## 5. Thông tin công khai
@@ -46,8 +46,8 @@ Bảng dưới theo schema và migration hiện tại; mục đích chỉ đư�
 - Theo mặc định, địa điểm của buổi chơi là công khai [S66][S67].
 - Danh sách khám phá ẩn danh chỉ hiện một buổi khi buổi đang mở, để công khai, chưa bắt đầu, có khu vực, và CLB có tên công khai đã được duyệt [S48][S68][S69][S70][S71][S72].
 - Mỗi buổi trong danh sách đó cho thấy: môn, giờ bắt đầu và kết thúc, khu vực, giá, số chỗ còn trống, tên công khai đã duyệt của CLB, cách tham gia, tên sân và địa chỉ sân [S73][S74][S75][S76][S77][S78][S79][S80][S81][S82][S83].
-- Danh sách công khai không chứa thông tin của người nào; tên hiển thị của host không có trong đó [S84].
-- Host có thể bật, cho từng buổi, tuỳ chọn "hide exact address until confirmed" (ẩn địa chỉ chính xác cho tới khi xác nhận); tuỳ chọn này mặc định tắt [S34][S85][S86].
+- Danh sách công khai không lấy dữ liệu từ hồ sơ của người nào; tên hiển thị của host không có trong đó [S84].
+- Host có thể bật, cho từng buổi, tuỳ chọn ẩn địa chỉ chính xác cho tới khi xác nhận; tuỳ chọn này mặc định tắt [S34][S85][S86].
 - Khi tuỳ chọn bật, danh sách công khai không có tên sân và địa chỉ sân; người xem công khai chỉ thấy khu vực [S87][S88][S89].
 - Khi tuỳ chọn bật, tên và địa chỉ sân chỉ được trả cho người có chỗ đang ở trạng thái tham gia trong buổi đó [S90][S91].
 
@@ -66,7 +66,7 @@ Bảng dưới theo schema và migration hiện tại; mục đích chỉ đư�
 **Khi cờ bật:**
 
 - Ô giới tính có các lựa chọn: Chưa đặt, Nam, Nữ, Khác, Không tiết lộ [S101][S102][S103][S104][S105].
-- Ngay tại ô giới tính có thông báo ngắn về mục đích và sự cho phép [S106]. Nguyên văn:
+- Ngay tại ô giới tính có thông báo ngắn về mục đích và sự cho phép [S146], vì việc thu thập giới tính được quyết định là phải đi kèm thông báo đó [S106]. Nguyên văn:
   - "Giới tính của bạn được dùng để tính giá khi CLB đặt giá theo giới tính cho một kèo." [S14]
   - "Việc đặt giới tính là tuỳ chọn; nếu để chưa đặt, bạn trả giá mặc định của kèo." [S107]
   - "CLB chỉ được dùng giới tính của bạn để tính giá nếu bạn đánh dấu ô bên dưới." [S108]
@@ -86,13 +86,13 @@ Còn để trống: (điểm pháp lý 1/8, §10) và (điểm pháp lý 7/8, §
 - Bản MVP không có tích hợp ngân hàng [S118].
 - Tiền chỉ được ghi thủ công, dưới dạng tiền mặt hoặc chuyển khoản có xác nhận, và có thể trả một phần [S119][S120][S121].
 - Mỗi lần ghi tiền mặt hoặc chuyển khoản có xác nhận phải có người ghi và không gắn với giao dịch ngân hàng nào [S122][S123].
-- Dữ liệu tiền được lưu như ở §2.
+- Dữ liệu tiền được lưu như ở §2 [S35][S36][S37][S38][S39].
 
 ## 8. Đồng bộ trực tiếp, chat và thông báo
 
 - Khu làm việc của host nhận cập nhật qua một luồng đồng bộ trực tiếp, xác thực bằng cookie [S124][S125].
-- Mỗi khung tin của luồng đó chỉ mang mã định danh, và luồng không bao giờ công khai hay cho người ẩn danh [S126][S127][S128].
-- Chat của CLB có luồng trực tiếp chỉ cho thành viên; khung tin chỉ mang mã định danh, không công khai và không ghi log [S129][S130].
+- Mỗi khung tin của luồng đó chỉ mang mã định danh; luồng không bao giờ công khai và không mở cho người ẩn danh [S126][S127][S128].
+- Chat của CLB có luồng trực tiếp chỉ cho thành viên; khung tin của luồng chỉ mang mã định danh; luồng này không bao giờ công khai và không ghi log [S129][S130].
 - Tin nhắn qua bot Zalo: xem §4.
 
 ## 9. Cookie
@@ -273,3 +273,7 @@ Còn để trống: (điểm pháp lý 1/8, §10) và (điểm pháp lý 7/8, §
 | S140 | docs/sessions/web-mvp-phase3-readiness-p3-flags-default-on.md:262 | `Hosting location` |
 | S141 | docs/sessions/web-mvp-phase3-readiness-p3-flags-default-on.md:263 | `Whether gender is a sensitive class of personal data` |
 | S142 | docs/sessions/web-mvp-phase3-readiness-p3-flags-default-on.md:264 | `Whether a public privacy page or a view-and-revoke consent flow should exist` |
+| S143 | packages/db/migrations/0075_discovery_rate_limit_definer.sql:44 | `bucket    text    NOT NULL,  -- 'k:'` |
+| S144 | packages/db/migrations/0075_discovery_rate_limit_definer.sql:80 | `or a fixed fallback of session-cookies.ts (clientIp)` |
+| S145 | apps/web/lib/discovery-route-support.ts:227 | `an IPv6 address is its /64, the first four hextets of the` |
+| S146 | apps/web/components/me/settings-profile-form.tsx:158 | `Purpose notice at the point of collection, wired to the Select` |

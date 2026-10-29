@@ -18,12 +18,11 @@
 - Plexco không lưu tên lấy từ tài khoản Google [S29].
 - Sau khi đăng nhập, phiên được giữ bằng một cookie phiên đăng nhập [S30].
 - Bạn có thể liên kết Zalo với tài khoản Plexco bằng một mã liên kết [S6][S31].
-- Dữ liệu của tài khoản được lưu như mô tả trong bản nháp quyền riêng tư (xem §5).
 
 ## 3. Host
 
 - Theo mặc định, địa điểm của buổi chơi là công khai [S32][S33].
-- Host có thể bật, cho từng buổi, tuỳ chọn "hide exact address until confirmed" (ẩn địa chỉ chính xác cho tới khi xác nhận); tuỳ chọn này mặc định tắt [S34][S35][S36].
+- Host có thể bật, cho từng buổi, tuỳ chọn ẩn địa chỉ chính xác cho tới khi xác nhận; tuỳ chọn này mặc định tắt [S34][S35][S36].
 - Khi tuỳ chọn bật, người xem công khai chỉ thấy khu vực, không thấy tên sân và địa chỉ sân [S37][S38][S39].
 - Khi tuỳ chọn bật, địa chỉ chính xác chỉ hiện cho người có chỗ đang ở trạng thái tham gia trong buổi đó [S40].
 - Danh sách công khai hiện tên công khai đã được duyệt của CLB, không hiện tên hiển thị của host [S41][S42][S43].
@@ -42,7 +41,7 @@
 
 ## 5. Quyền riêng tư
 
-- Dữ liệu Plexco lưu được mô tả trong bản nháp quyền riêng tư `docs/legal/privacy-page-vi-DRAFT.md`; bản đó cũng đang chờ pháp lý duyệt và chưa publish [S57][S58].
+- Dữ liệu Plexco lưu được mô tả trong bản nháp quyền riêng tư `docs/legal/privacy-page-vi-DRAFT.md` [S57]; bản đó cũng đang chờ pháp lý duyệt và chưa publish [S1][S2].
 
 ## 6. Các mục còn để trống
 
@@ -125,4 +124,3 @@
 | S55 | packages/db/schema.ts:1335 | `IN ('cash','waiver') AND ${t.amount} > 0 AND ${t.bankTransactionId} IS NULL AND ${t.createdBy} IS NOT NULL` |
 | S56 | packages/db/schema.ts:1336 | `= 'attested_transfer' AND ${t.amount} > 0 AND ${t.bankTransactionId} IS NULL AND ${t.createdBy} IS NOT NULL` |
 | S57 | docs/legal/privacy-page-vi-DRAFT.md:7 | `Bản nháp này mô tả dữ liệu của sản phẩm Plexco` |
-| S58 | docs/legal/privacy-page-vi-DRAFT.md:1 | `chờ pháp lý duyệt, chưa publish` |
