@@ -50,6 +50,43 @@ function completeReq(
   });
 }
 
+const REQUEST_ID = /^req_[0-9a-f-]{36}$/; // A-13: the id withRequestLogContext mints
+// L68 D7 seeds: a completion handoff, a session cookie, a client IP.
+const FAKES = ["FAKE-HANDOFF-L68", "FAKE-SESSION-COOKIE-L68", "203.0.113.68"];
+
+/**
+ * L68 D7: run `act` at LOG_LEVEL `logLevel` with every console method spied. No seed reaches any
+ * console call; the `event` line is at `method`'s level, carries the response's request id and no
+ * tenant (none exists before sign-in). Returns the response and that line.
+ */
+async function captureLog(
+  logLevel: string,
+  method: "error" | "warn",
+  event: string,
+  act: () => Promise<Response>,
+) {
+  vi.stubEnv("LOG_LEVEL", logLevel);
+  const spies = (["error", "warn", "log"] as const).map((m) =>
+    vi.spyOn(console, m).mockImplementation(() => {}),
+  );
+  try {
+    const res = await act();
+    const written = JSON.stringify(spies.map((s) => s.mock.calls));
+    for (const fake of FAKES) expect(written).not.toContain(fake);
+    const line = vi
+      .mocked(console[method])
+      .mock.calls.map((c) => JSON.parse(c[0] as string) as Record<string, unknown>)
+      .find((l) => l.event === event);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID);
+    expect(line).toMatchObject({ level: method, request_id: res.headers.get("x-request-id") });
+    expect(line).not.toHaveProperty("tenant_id");
+    return { res, line: line! };
+  } finally {
+    for (const s of spies) s.mockRestore();
+    vi.unstubAllEnvs();
+  }
+}
+
 beforeEach(() => {
   vi.mocked(consumeOauthCompletionHandoff).mockReset();
   vi.mocked(session.issueSession).mockReset();
@@ -73,6 +110,7 @@ describe("POST /api/auth/google/complete", () => {
     // branch revokes the pre-existing session (D1B-3).
     expect(session.issueSession).toHaveBeenCalledWith("acc-9");
     expect(res.status).toBe(302);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID); // A-13
     expect(res.headers.get("location")).toBe("https://plexco.app/");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
   });
@@ -188,6 +226,7 @@ describe("POST /api/auth/google/complete — rate limit + bounded body (audit W-
     const res = await POST(completeReq("raw-handoff"));
 
     expect(res.status).toBe(429);
+    expect(res.headers.get("x-request-id")).toMatch(REQUEST_ID); // A-13
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     const body = (await res.json()) as { error: { code: string } | null };
     expect(body.error?.code).toBe("LOGIN_RATE_LIMITED");
@@ -475,3 +514,64 @@ describe("bounded native request stream", () => {
     expect(session.issueSession).toHaveBeenCalledTimes(step === "consume" ? 0 : 1);
   });
 });
+
+// L68 D7: each swallowed or unhandled error is logged by class only, at the default and debug
+// level, while the request (client IP, handoff) and each error carry the seeds.
+describe.each(["", "debug"])(
+  "completion errors are logged by class only (LOG_LEVEL %j)",
+  (logLevel) => {
+    const seeded = () => completeReq("FAKE-HANDOFF-L68", { ip: "203.0.113.68" });
+
+    it("an unexpected dependency failure: auth.google.complete.unhandled", async () => {
+      vi.mocked(consumeOauthCompletionHandoff).mockRejectedValue(
+        new Error(`db down ${FAKES.join(" ")}`),
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "error",
+        "auth.google.complete.unhandled",
+        () => POST(seeded()),
+      );
+      expect(res.headers.get("location")).toContain("auth_error=AUTH_UNAVAILABLE");
+      expect(line.error).toEqual({ name: "Error" }); // no message/stack
+    });
+
+    it("the rate-limit store down: auth.google.complete.limiter_unavailable", async () => {
+      vi.mocked(rateLimitCheck).mockRejectedValue(
+        Object.assign(new Error("pg down oauth-complete:203.0.113.68 FAKE-HANDOFF-L68"), {
+          code: "57P01",
+        }),
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "warn",
+        "auth.google.complete.limiter_unavailable",
+        () => POST(seeded()),
+      );
+      expect(res.status).toBe(429); // fails closed
+      expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+      expect(line.error).toEqual({ name: "Error", code: "57P01" });
+    });
+
+    it("a body stream that errors: auth.google.complete.body_invalid", async () => {
+      // The same pull-throw shape as the "read" body failure above; readBoundedBody is real.
+      const body = new ReadableStream(
+        {
+          pull() {
+            throw new Error("source failed FAKE-HANDOFF-L68");
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const { res, line } = await captureLog(
+        logLevel,
+        "warn",
+        "auth.google.complete.body_invalid",
+        () => POST(new Request(seeded(), { body, duplex: "half" } as RequestInit)),
+      );
+      expect(res.headers.get("location")).toBe("https://plexco.app/?auth_error=AUTH_INVALID");
+      expect(consumeOauthCompletionHandoff).not.toHaveBeenCalled();
+      expect(line.error).toEqual({ name: "Error" });
+    });
+  },
+);
