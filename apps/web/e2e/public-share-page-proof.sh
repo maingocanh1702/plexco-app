@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# Share page proof (lane L39): on the real stack an ANONYMOUS visitor opens /session/<slug> of a host-shared public
-# session (200 and the card; one uniform 404 for an unknown, rotated-away, private or suspended-tenant slug; the
-# hide-exact-address option ON, OFF and at the D-4 default). TEST-ONLY,
-# never run in CI: no workflow names this file or e2e/public-share-page.config.ts. The one command, from the repo
-# root, under the session DB/e2e lock:
+# Share page proof (lane L39; two phases since lane L72): on the real stack an ANONYMOUS visitor opens
+# /session/<slug> of a host-shared public session (200 and the card; one uniform 404 for an unknown, rotated-away,
+# private or suspended-tenant slug; the hide-exact-address option ON, OFF and at the D-4 default). Phase 1 runs
+# `next dev` (e2e/public-share-page.config.ts) and does all host work; phase 2 runs `next build` + `next start`
+# (e2e/public-share-page-prod.config.ts) to pin the production headers, then suspends the tenant. Phase 1 hands
+# phase 2 the share paths and the host's session token in a 0600 file in a `mktemp -d` dir; only the file's path
+# travels (SHARE_PROOF_STATE_FILE), and the trap deletes the dir, then drops the database. TEST-ONLY, never run in
+# CI: no workflow names this file or either config. The one command, from the repo root, under the session DB/e2e
+# lock:
 #   bash apps/web/e2e/public-share-page-proof.sh
 # It creates ONLY the scratch database plexco_l39_scratch and always drops it (trap on EXIT, INT and TERM),
 # printing the database listing before and after; it never touches plexco, plexco_smoke or plexco_test. It needs
-# port 3000 free (that config starts the one server there). A preflight refusal
+# port 3000 free (each config starts the one server there; checked again between the phases). A preflight refusal
 # (a port busy, or lsof missing or failing; exit 2) stops before anything is created, so it prints neither the
 # database listing nor the drop line.
 set -u
@@ -48,9 +52,16 @@ APP_URL="postgres://app:$APP_PW@localhost:5432/$DB"
 RO_URL="postgres://readonly:$RO_PW@localhost:5432/$DB"
 echo "databases BEFORE:"; list || die "listing BEFORE"
 
-RC=1 # non-zero until Playwright's own code is known: an early stop, INT or TERM never reads as a pass
+RC=1 # non-zero until phase 2's own code is known: an early stop, INT or TERM never reads as a pass
 cleanup() {
   trap - EXIT INT TERM
+  # Bearer tokens: the state file's dir goes first, it does not depend on the drop; measured (unset = never created).
+  if [ -n "${STATE_DIR:-}" ] && [ -d "$STATE_DIR" ]; then rm -rf "$STATE_DIR"; fi
+  if [ -n "${STATE_DIR:-}" ] && [ -e "$STATE_DIR" ]; then
+    echo "state dir removed: no"; RC=1
+  else
+    echo "state dir removed: yes"
+  fi
   # Playwright's webServers have already stopped; FORCE only ends leftover sessions on the scratch DB.
   sql postgres "DROP DATABASE IF EXISTS $DB WITH (FORCE)"
   local after
@@ -64,7 +75,10 @@ cleanup() {
   fi
   exit "$RC"
 }
+STATE_DIR= # set before the trap, so cleanup never removes a STATE_DIR inherited from the caller
 trap cleanup EXIT INT TERM
+STATE_DIR=$(mktemp -d) && [ -d "$STATE_DIR" ] || die "state dir" # phase 1's state file (0700 dir); only its path goes into the environment
+STATE_FILE="$STATE_DIR/state.json"
 
 sql postgres "DROP DATABASE IF EXISTS $DB" || die "drop of a leftover $DB"
 sql postgres "CREATE DATABASE $DB" || die "create $DB"
@@ -83,11 +97,37 @@ ENCRYPTION_KEY="$(openssl rand -base64 32)"; export ENCRYPTION_KEY
 env -u DATABASE_URL_TEST DATABASE_URL="$APP_URL" pnpm dev:seed 2>&1 | tail -3
 [ "${PIPESTATUS[0]}" -eq 0 ] || die "seed"
 
-# SHARE_PROOF_DB_URL = superuser URL of this scratch DB only (the spec enables public_sessions there); servers use RO_URL.
+# Phase 1, `next dev`: all host work. SHARE_PROOF_DB_URL = superuser URL of this scratch DB only (the spec enables
+# public_sessions there); servers use RO_URL. `direct` is accepted outside production only.
 env -u NODE_ENV -u DATABASE_URL_TEST -u PROCESS_ROLE SHARE_PROOF_BASE_URL=http://localhost:3000 \
   SHARE_PROOF_DB_URL="$SU_URL" DATABASE_URL="$APP_URL" DISCOVERY_DATABASE_URL="$RO_URL" \
+  SHARE_PROOF_STATE_FILE="$STATE_FILE" \
   PLEXCO_DEV_LOGIN=1 TRUSTED_INGRESS_PROVIDER=direct DB_EXPECTED_ROLE=app KMS_PROVIDER=local \
   pnpm --filter @plexco/web exec playwright test --config e2e/public-share-page.config.ts --reporter=list
+P1_RC=$?
+echo "phase 1 playwright exit: $P1_RC"
+[ "$P1_RC" -eq 0 ] || { RC=$P1_RC; exit "$RC"; }
+
+# Between the phases. The file holds bearer tokens: it must exist with mode 600 (macOS stat).
+{ [ -f "$STATE_FILE" ] && [ "$(stat -f %Lp "$STATE_FILE")" = 600 ]; } || die "state file"
+echo "state file mode: 600"
+# Phase 1's dev server must be gone, or it would answer phase 2; a refusal here exits through the trap.
+port_free 3000
+# The lock wrapper sets NODE_ENV=test, which a production build must not see; next.config.mjs stops a build that
+# sees PLEXCO_DEV_LOGIN; the CSP nonce flag stays off (lane L72 D7). No key either: a build needs none (CI builds
+# without one) and the key is never written. The build rewrites apps/web/.next, so reusing it in sequence is safe.
+env -u NODE_ENV -u DATABASE_URL_TEST -u PROCESS_ROLE -u PLEXCO_DEV_LOGIN -u CSP_SCRIPT_NONCE_ENABLED \
+  -u ENCRYPTION_KEY pnpm --filter @plexco/web build 2>&1 | tail -5
+[ "${PIPESTATUS[0]}" -eq 0 ] || die "production build"
+
+# Phase 2, `next start` (NODE_ENV unset as in production; next start sets it): the production headers, then the
+# tenant suspension. Production refuses `direct`; digitalocean is valid in any mode, and the proof sends no
+# forwarded client-IP header, so every request shares one limiter bucket.
+env -u NODE_ENV -u DATABASE_URL_TEST -u PROCESS_ROLE -u PLEXCO_DEV_LOGIN -u CSP_SCRIPT_NONCE_ENABLED \
+  SHARE_PROOF_BASE_URL=http://127.0.0.1:3000 SHARE_PROOF_DB_URL="$SU_URL" SHARE_PROOF_STATE_FILE="$STATE_FILE" \
+  DATABASE_URL="$APP_URL" DISCOVERY_DATABASE_URL="$RO_URL" TRUSTED_INGRESS_PROVIDER=digitalocean \
+  DB_EXPECTED_ROLE=app KMS_PROVIDER=local \
+  pnpm --filter @plexco/web exec playwright test --config e2e/public-share-page-prod.config.ts --reporter=list
 RC=$?
-echo "playwright exit: $RC"
+echo "phase 2 playwright exit: $RC"
 exit "$RC"

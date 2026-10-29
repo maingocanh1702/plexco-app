@@ -6034,7 +6034,9 @@ notes: |
 
 ## task: next-config-route-header-precedence-claim
 title: Comment trong `next.config.mjs` nói header của route thắng `headers()`: đo dưới `next dev` là sai, CSP riêng của trang OAuth landing có thể không được phát
-status: idea
+status: merged
+merged: 2026-10-29 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-hardening-headers-csp (L72); find it with `gh pr list --state merged --head feat/p5-hardening-headers-csp` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (a code comment and docs, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-29 L72: closed BY HAND in the lane's own PR, measured at base 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb (the merge of PR 139). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: plan row L72 of docs/sessions/web-mvp-phase5-golive-plan.md (line 84), approved by the owner on 2026-10-28 (DD-154), gives this measurement and this flip to the lane; its design and measurements are in docs/sessions/web-mvp-phase5-readiness-p5-hardening-headers-csp.md (section 2, D2, K0-K3). F2: both modes were measured: under next dev and under next build + next start a config header REPLACES a route's own header of the same key (K0), and of two `headers()` entries setting one key the later wins (durable record: docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 2). The commit "fix(web): send no-referrer and noindex headers on the share page" rewrote the precedence comment in apps/web/next.config.mjs, and the commit "docs(backlog): L72 rows and notes; correct the landing sentence in next.config.mjs" corrects its landing sentence. Delivering the landing's own CSP is the row `p5-oauth-landing-own-csp-browser-check`.
 risk: P2
 change_class: security-posture
 depends_on: []
@@ -6304,6 +6306,7 @@ notes: |
   còn HTML prerender được dựng lúc build nên không thể mang nonce của request. Hướng sửa cần đo: chuyển trang sang render động để Next áp nonce,
   hoặc tách script inline thành file tĩnh cùng origin. Không nới CSP bằng `'unsafe-inline'`.
   source: PR #57 review round 1 (PR body chưa ghi; đo lại khi #57 merge)
+  2026-10-29 L72: still open. `CSP_SCRIPT_NONCE_ENABLED` stays off at first launch (docs/sessions/web-mvp-phase5-golive-plan.md:84), so the middleware sets no CSP and `/offline` gets only next.config.mjs's global CSP (docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 5); this row must land before the flag is turned on anywhere.
 
 ## task: session-text-fields-control-char-validation
 title: `area` / `venue_name` / `venue_address` của session nhận ký tự điều khiển C0 và bidi (ví dụ U+202E, xuống dòng) rồi hiện cho player
@@ -7253,7 +7256,9 @@ notes: |
 
 ## task: public-share-page-header-level-referrer-and-robots
 title: Web: header-level Referrer-Policy and X-Robots-Tag for the public share page `/session/<slug>` (today only its metas say no-referrer and noindex)
-status: idea
+status: merged
+merged: 2026-10-29 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-hardening-headers-csp (L72); find it with `gh pr list --state merged --head feat/p5-hardening-headers-csp` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (a config entry and its tests, no slice-unique code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-29 L72: closed BY HAND in the lane's own PR, measured at base 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb (the merge of PR 139). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: as the row `next-config-route-header-precedence-claim` (plan row L72, DD-154; readiness D3 and D4). F2: the commit "fix(web): send no-referrer and noindex headers on the share page" adds the `/session/:slug` entry after the global one in apps/web/next.config.mjs (Referrer-Policy `no-referrer`, X-Robots-Tag `noindex, nofollow`); apps/web/lib/security-headers.test.ts pins the config, apps/web/e2e/public-share-page-prod.proof.ts pins the served headers on the 200s and every 404 under next start, and apps/web/e2e/public-share-page.proof.ts pins both values under next dev on e1's 200 and on every phase-1 404 (`expectPinned`) (docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 1.2).
 risk: P2
 change_class: web-feature
 depends_on: []
@@ -7283,7 +7288,9 @@ notes: |
 
 ## task: web-public-share-page-404-production-measurement
 title: E2E: measure the public share page's 404s and Cache-Control under `next build` + `next start` (lane L39's proof runs `next dev` only)
-status: idea
+status: merged
+merged: 2026-10-29 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-hardening-headers-csp (L72); find it with `gh pr list --state merged --head feat/p5-hardening-headers-csp` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `null` (test-infra scope, no code symbol; this flip changes only status, merged, note_merged)
+note_merged: 2026-10-29 L72: closed BY HAND in the lane's own PR, measured at base 723d967cd5b086b1b8a5c4dd13966daeb3d92aeb (the merge of PR 139). The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` scans only planned, ready and blocked rows, and this row was `idea` with `merged_probe: null`. F1: as the row `next-config-route-header-precedence-claim` (plan row L72, DD-154; readiness D5). F2: the lane did not use this row's apps/web/e2e/public-share-page.config.ts for next start: it added apps/web/e2e/public-share-page-prod.config.ts and apps/web/e2e/public-share-page-prod.proof.ts, and apps/web/e2e/public-share-page-proof.sh now runs phase 1 under next dev, a production build, then phase 2 under next start. Phase 2's `expect404` replaces the slug and joins the Flight chunks; the markup without its script elements and the Flight of every miss (never existed, rotated away, private, malformed, suspended tenant) equal the reference miss's, and Cache-Control `private, no-cache, no-store, max-age=0, must-revalidate` is pinned on the 200s and the 404s (docs/research/web-mvp-phase5-production-hardening-2026-10-29.md sections 1.2 and 1.4). The local proof passed twice through the lane's database lock on 2026-10-29 at the commit "test(web): prove the share page and the session cookie under next start" (phase 2 `6 passed` in each run).
 risk: P2
 change_class: test-infra
 depends_on: []
@@ -7917,6 +7924,52 @@ notes: |
   Restore drill: S:191 (isolated DB, roles/policies, schema checksums, count reconciliation) is thinner than REC section 7.5 (REC:267-279): no quarterly restore to temporary vanilla PostgreSQL outside DigitalOcean with ledger/allocation/outbox reconciliation, smoke tests and representative load tests (REC:276-277); no portable recovery set (schema, migrations, roles/grants, RLS, extensions, sequence state and data; a data-only dump is not one, REC:271-272); no three independent recovery forms (live HA data, provider PITR, encrypted logical exports outside DigitalOcean, REC:269-270; the pilot has no live HA form). S cites no runbook file (`runbooks/`: 0 hits; S:217 lists a "DB restore" runbook among the required runbooks, with no path); the procedures are docs/runbooks/pitr-restore-drill.md and docs/runbooks/failover-drill.md on main.
   Fix: annotate S section 4 with the pilot reading and the REC section 7.5 items, citing DD-154, its addendum and the two runbooks; keep the HA design (S is Reviewed: the pilot note follows a decided DD; whether mirroring the REC section 7.5 items corrects S under the record or edits the contract of a Reviewed spec is for the lane that takes this row to decide). docs/standards/deployment-infra.md already carries this reading at I:69 and I:239-242 (I = that file at 490d9d4d10d92494a39cf9be2ce5d5475b7327e0), and I:69 sends readers to S section 4 for the restore drill.
   Source: lane L63 (p5-deployment-infra-drift), review round 2 (reviewer R2d, out-of-scope note), routed to this row by the conductor.
+
+## task: p5-a3-pii-matrix-stale-vs-schema
+title: docs/legal/a3-pii-data-class-matrix-DRAFT.md predates migrations 0033 and later and still says the host name is public and that gender sits behind a CMS switch
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/legal/a3-pii-data-class-matrix-DRAFT.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (M = docs/legal/a3-pii-data-class-matrix-DRAFT.md, a derived DRAFT for counsel; S = packages/db/schema.ts; lane L75 changes neither).
+  Baseline: M:9-10 pin baseline f2af39d6dba4c335f95a15ab7e8da46861f1400b and migrations 0001-0032, so later data classes have no row: the gender ciphertext and pricing consent (0062, S:49-53), the per-session hide_exact_address option (0067, S:647), web_sessions.last_seen_at (S:164), the Zalo scope columns (0053, S:71-73), the anonymous discovery counters keyed by the client address (0075, S:217-223).
+  Host name: M:141 lists `host_display_name` as PUBLIC and M:179 (F14) says "Host name public"; S:1713-1714 says host_display_name was dropped by 0061 and persons are never projected, and the public view of packages/db/migrations/0067_session_venue_visibility.sql (0067:167-185) carries no person field.
+  Gender switch: M:42 says optional PII is collected only when a platform config is on (CMS admin, default OFF); the code reads the env flag GENDER_COLLECTION_ENABLED per call (apps/web/app/api/me/profile/route.ts:32), DD-141 made it default true (docs/standards/decisions.md:133), and production launches with it off (docs/sessions/web-mvp-phase5-golive-plan.md:243).
+  Fix: refresh M against S and the migrations at a pinned base (rows for 0033 and later, drop the host-name-public row, the env-flag reading), keeping its DRAFT banner; the counsel packet stays the owner's step (docs/sessions/web-mvp-phase5-golive-plan.md:27).
+  Source: lane L75 (p5-privacy-terms-draft), step-0 reader U1, routed to this row by the lane orchestrator.
+
+## task: p5-oauth-landing-own-csp-browser-check
+title: The OAuth completion landing's own CSP and Referrer-Policy never reach the browser (next.config.mjs's global headers replace them); deliver them and prove the auto-submit in a default-suite browser spec
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: [auth, web-app]
+scope: [apps/web/next.config.mjs, apps/web/lib/session-cookies.ts, apps/web/lib/session-cookies.test.ts, apps/web/lib/tenant-lang.test.ts, apps/web/e2e/oauth-completion-landing.spec.ts, apps/web/lib/security-headers.mjs, apps/web/lib/completion-landing.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at lane L72's commit "docs(backlog): L72 rows and notes; correct the landing sentence in next.config.mjs" (the commit that adds this row). The landing's own headers (apps/web/lib/session-cookies.ts:313-321, its Referrer-Policy `strict-origin` at :315) are replaced by next.config.mjs's global entry (a config header replaces a route's own header of the same key: K0, docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 2), so the landing runs under the global CSP and `strict-origin-when-cross-origin`. Lane L72 could not build the browser check (docs/sessions/web-mvp-phase5-readiness-p5-hardening-headers-csp.md:71, two measured blockers): `SyntaxError: Cannot use 'import.meta' outside a module` at packages/db/src/index.ts:19, reached through session-cookies.ts's `@plexco/db` import, and next.config.mjs:10's `import.meta.url` under Playwright 1.63's require hook; moving the builder out also turned apps/web/lib/tenant-lang.test.ts:341 red (the :339 test over `SURFACE_BUCKETS`, :113-306). What a lane needs: `SECURITY_HEADERS` in an `import.meta`-free module (candidate apps/web/lib/security-headers.mjs) that next.config.mjs imports and re-exports; the builder in a database-free module (candidate apps/web/lib/completion-landing.ts) with its DD-118 `SURFACE_BUCKETS` entry; then the landing's metas (readiness D1, :70) and the browser spec (D1.1, :73) in the default testMatch. Residual until then: the completion POST's Referer is the full callback URL with its code and state (same origin; hardening report section 8 item 1).
+  Source: lane L72 (p5-hardening-headers-csp), docs/sessions/web-mvp-phase5-readiness-p5-hardening-headers-csp.md D1 "FALLBACK APPLIED" (:71) and D1.1 (:73); docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 3.
+
+## task: p5-sw-offline-fallback-hsts-parity
+title: The service worker's own offline fallback carries five of next.config.mjs's six global security headers (no Strict-Transport-Security); add it or record why not
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: [web-app]
+scope: [apps/web/sw/sw.template.js]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at lane L72's commit "docs(backlog): L72 rows and notes; correct the landing sentence in next.config.mjs". `SECURITY_HEADERS` in apps/web/sw/sw.template.js:17-24 names five headers that the worker copies from the cached `/offline` response; the only response the worker builds itself is `offlineFallback` (:77-105), and it carries no `strict-transport-security`, which next.config.mjs's global entry sends (:57). Every other response the worker serves is a network response or a header-less `Response.error()` (:80, :119). Decide whether to add the name or record why not (a browser may ignore HSTS on a response the worker builds; not measured). Low.
+  Source: lane L72 (p5-hardening-headers-csp), docs/research/web-mvp-phase5-production-hardening-2026-10-29.md section 7 (a source read, not measured).
 
 ## task: p5-google-oidc-swallowed-error-class
 title: The two catches in apps/web/lib/google-oidc.ts swallow the failure, so a JWKS or token-endpoint outage logs nothing
