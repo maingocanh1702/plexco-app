@@ -273,12 +273,12 @@ RPO/RTO được chốt bằng số đo sau provision, failover drill và restor
 | Upgrade | Trigger đo được | Chi phí thêm/tháng |
 |---|---|---|
 | Worker thứ 2 (hai worker scalable 1 GiB) | queue lag vượt SLO kéo dài sau khi đã tinh chỉnh concurrency an toàn; **điều kiện trước:** test idempotency + duplicate-delivery xanh (Day-1 chỉ một consumer bền vững; bản ghi §5.1) | +$14 (so với worker cố định) |
-| Read node vật lý (discovery/player-view) | primary read contention đo được (§9.3 controls không đủ) | +$30.45 |
-| Cloudflare **Pro** (WAF/rate-limit tập trung) | abuse/bot/DDoS pattern hoặc cần L7 rule | +$20 ($25 month-to-month) |
+| Read node vật lý (discovery/player-view) | tải discovery gây contention đo được trên primary, hoặc p95/p99 của money-path xấu đi, sau khi đã có control pool/rate/cache (§9.3) | tối thiểu +$30.45 ở cỡ primary 2 GiB hiện tại |
+| Cloudflare **Pro** (WAF/rate-limit tập trung) | managed rules của gói Free + một rule rate-limit không diễn đạt được control cần có, hoặc abuse quan sát được đòi hỏi | +$20 (quy đổi giá năm; $25 month-to-month) |
 | Sentry **Team** | hơn một operator, tích hợp bên thứ ba, hoặc quota/retention của gói Developer không đủ | +$26 (quy đổi giá năm) |
 | Log retention trả phí | retention free/low-volume không đáp ứng nhu cầu incident, audit hoặc compliance | theo usage/policy |
 | Resize component 1→2 GiB | CPU/RAM hoặc latency của component vẫn bão hoà sau khi đã tinh chỉnh scale ngang (bản ghi §5.2) | +$13 mỗi instance được nâng |
-| Resize PG 2→4 GiB | DB CPU/RAM/connection ceiling | +$60.90 (primary + standby) |
+| Resize PG 2→4 GiB | CPU/RAM/connection hoặc query latency của DB vượt capacity gate dưới tải đại diện | +$60.90 (primary + standby) |
 
 ### 9.3 Read isolation KHÔNG cần replica Day-1
 
