@@ -75,9 +75,9 @@ cleanup() {
   fi
   exit "$RC"
 }
+STATE_DIR= # set before the trap, so cleanup never removes a STATE_DIR inherited from the caller
 trap cleanup EXIT INT TERM
-# Phase 1 writes the state file here (0700 dir); only the file's path goes into the environment.
-STATE_DIR=$(mktemp -d) && [ -d "$STATE_DIR" ] || die "state dir"
+STATE_DIR=$(mktemp -d) && [ -d "$STATE_DIR" ] || die "state dir" # phase 1's state file (0700 dir); only its path goes into the environment
 STATE_FILE="$STATE_DIR/state.json"
 
 sql postgres "DROP DATABASE IF EXISTS $DB" || die "drop of a leftover $DB"
