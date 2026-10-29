@@ -7819,6 +7819,48 @@ notes: |
   Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: lane L74 turns infra/smoke-check.sh (lane L65, 26 lines at the base, curl and jq) into a thin adapter of scripts/smoke-predeploy.mjs, the ONE smoke definition (GET /healthz 200 with a JSON content type and exactly one JSON document whose `ok` is the boolean true, GET / 2xx as text/html, GET /manifest.webmanifest 2xx as application/manifest+json; a 3xx fails; no message quotes a body). The call shape stays `infra/smoke-check.sh https://<origin>` and its https-only refusal (exit 1) still runs before any request; the adapter then runs `node scripts/smoke-predeploy.mjs` with `SMOKE_BASE_URL=<origin>` and `SMOKE_TIMEOUT_MS=15000`, the whole smoke up to 7 times 10 s apart, and exits 0 only on a pass, else with the smoke's last code (1 a failed check, 2 a bad invocation); curl's codes 7, 22 and 28 no longer occur. For lane L67 (beside the row p5-deploy-awaits-deployment-id-and-keeps-spec-out-of-logs at docs/autopilot-backlog.md:7752): (1) the runner needs node 22 (package.json:6 engines; .github/workflows/ci.yml:63 and :123 use node-version 22) and the repo checkout, since the adapter runs the smoke script from the checkout it sits in, and no longer curl or jq; (2) decide whether the whole-smoke retry stays once the workflow awaits its own deployment by id; its worst case is about 7 x (3 x 15 s + 10 s). Done when both deploy workflows call the adapter with the https origin on a runner with node and the checkout, and that lane records the retry decision.
   Source: lane L74 (p5-staging-smoke-golden-path), docs/sessions/web-mvp-phase5-readiness-p5-staging-smoke-golden-path.md section 11 row 1 (from D2 in section 4 and K7 in section 9 there).
 
+## task: p5-discovery-rate-max-keys-follows-process-topology
+title: The discovery limiter's bound DISCOVERY_RATE_MAX_KEYS (N) must follow the number of processes that serve the discovery paths when the topology changes (App Spec, lane L66)
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [packages/db/migrations/, packages/db/src/client.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: lane L73 replaces the in-process discovery limiter (apps/web/lib/discovery-route-support.ts:59-64 and :84; at most 10 000 keys per process, :61) with one global DB limiter whose bound N = DISCOVERY_RATE_MAX_KEYS = 20 000 keys per window is a constant inside the SECURITY DEFINER function of migration 0075_discovery_rate_limit_definer.sql (new, not at the base): 10 000 per process times R = 2, because the web process and the discovery process each served the discovery paths with their own map (:70-82). The owner's Q3 override (DD-154, docs/standards/decisions.md:120) starts production with ONE web process and no discovery component (R = 1), where 20 000 makes a fill harder than at base. When the topology changes (the App Specs of lane L66, more replicas or a discovery component), three things follow it: (1) N = 10 000 x R, set by a new migration that re-creates the function (0075 is append-only once merged); (2) the discovery pools' connections (5 per process, :44) are counted in the per-role connection budgets of docs/decisions/analysis/dd-04-hosting-final-decision.md:143; (3) the comment at packages/db/src/client.ts:9, which names readonly as the discovery-process role although the web process serves discovery too, is corrected.
+  Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (a) (from RO-L73-2 R2 and sections 2.4 and 9 there).
+
+## task: p5-discovery-limiter-bounded-negative-cache
+title: A bounded per-window negative cache in front of the discovery DB limiter, if a flood shows the discovery pool saturating on refusals
+status: idea
+risk: P2
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [apps/web/lib/discovery-route-support.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: at the base a refused discovery request costs only memory (the in-process map of apps/web/lib/discovery-route-support.ts:59-64 and :84). Lane L73's DB limiter (migration 0075_discovery_rate_limit_definer.sql, new) makes every request, a refused one included, cost one round trip on the 5-connection discovery pool (:44), so during a flood other visitors of that process wait or get a 503 from the timeouts or the breaker. RO-L73-2 R3 accepted that cost (option A, default applied, pending owner sign-off): docs/decisions/analysis/dd-04-hosting-final-decision.md:142 lets discovery degrade to 429 or 503 before the web and worker pools suffer, and the pool cap bounds the load. Option B, not built: a per-window negative cache in that file, about 15 lines, that replays only a DB refusal of the same key in the same window (the same 429 and retry-after), is bounded, stops caching when full and never refuses on its own. Build it if a staging or production flood shows the pool saturating on refusals.
+  Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (b) (from RO-L73-2 R3 and K3 there).
+
+## task: p5-join-route-discovery-pool-outside-breaker
+title: The public join route shares the discovery pool outside lane L73's circuit breaker; route it through the breaker or give it its own pool
+status: idea
+risk: P1
+change_class: security-posture
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/public-listings/[publicListingId]/join/route.ts, apps/web/lib/discovery-route-support.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at base 4230c752ec0ddb2a14e2a07714a901c6022e862c: apps/web/app/api/public-listings/[publicListingId]/join/route.ts:80 resolves its listing with `resolveDiscoveryListing(await discoveryPool(), publicListingId)`, the discovery pool of apps/web/lib/discovery-route-support.ts:37-54. Lane L73 adds a per-process circuit breaker behind one choke point in that file, through which the limiter and the discovery API reads go, and three timeouts on the pool (statement 2 000 ms, acquire 2 000 ms, client 2 500 ms). The join route keeps calling the pool directly (L73's negative scope: no other route), so it gains the timeouts without a code change, its failures are not counted, and it is not refused while the breaker is open; it also shares the pool's 5 connections (:44) with discovery. Decide whether the join route goes through the breaker (and what it answers while the breaker is open) or gets its own pool.
+  Source: lane L73 (p5-discovery-isolation-controls), docs/sessions/web-mvp-phase5-readiness-p5-discovery-isolation-controls.md section 17 row (c) (from the RO-L73-2 Tier-B list and K8 there).
+
 ## task: p5-environments-setup-drifts-from-env-manifest
 title: docs/standards/environments-setup.md disagrees with the code on four environment points that the L64 env manifest measured
 status: idea

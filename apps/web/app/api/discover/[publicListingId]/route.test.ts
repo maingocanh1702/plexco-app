@@ -55,7 +55,18 @@ const DTO = {
   venueName: "Sân Pickleball Lê Lợi",
   venueAddress: "12 Lê Lợi, Phường Bến Nghé, Quận 1, TP. Hồ Chí Minh",
 };
-const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
+// R9: the DB limiter as a keyed fake, reset per test: 0 while a key has at most 60 hits, then 30.
+const hits = new Map<string, number>();
+const POOL = {
+  query: async (sql: string, [key = ""]: string[] = []) => {
+    if (sql !== "SELECT discovery_rate_limit_hit($1)") {
+      return { rows: [{ u: "readonly", s: "readonly" }] };
+    }
+    const count = (hits.get(key) ?? 0) + 1;
+    hits.set(key, count);
+    return { rows: [{ discovery_rate_limit_hit: count > 60 ? 30 : 0 }] };
+  },
+};
 
 const get = (id: string, ip = IP) =>
   GET(
@@ -75,6 +86,7 @@ async function settled(res: Response) {
 beforeEach(() => {
   vi.clearAllMocks();
   resetDiscoveryRouteSupportForTests();
+  hits.clear();
   vi.stubEnv("DISCOVERY_DATABASE_URL", "postgres://readonly@127.0.0.1:5432/plexco_test");
   vi.stubEnv("TRUSTED_INGRESS_PROVIDER", "fly");
   vi.mocked(createDb).mockReturnValue({ pool: POOL } as never);
@@ -157,6 +169,17 @@ describe("GET /api/discover/[publicListingId]", () => {
     const res = await get(ID);
     expect([res.status, await res.text()]).toEqual([500, ""]);
     expect(readDiscoveryListing).toHaveBeenCalledTimes(1);
+  });
+
+  it("L73 A-13: the awaited limiter's refusal is the 429 with its retry-after and no-store, before the read", async () => {
+    expect((await get("probe-0")).status).toBe(404); // warms the pool (its role probe), unread
+    vi.spyOn(POOL, "query").mockResolvedValueOnce({ rows: [{ discovery_rate_limit_hit: 42 }] });
+    const limited = await get(ID);
+    const headers = [limited.headers.get("retry-after"), limited.headers.get("cache-control")];
+    expect([limited.status, ...headers]).toEqual([429, "42", "no-store"]);
+    const { error } = (await limited.json()) as { error: { code: string } };
+    expect(error.code).toBe("DISCOVERY_RATE_LIMITED");
+    expect(readDiscoveryListing).not.toHaveBeenCalled();
   });
 
   it("A-17: no log line carries the listing id, the IP, money or the DB error text", async () => {

@@ -40,7 +40,13 @@ const PERSON = "44444444-4444-4444-8444-444444444444";
 const PLAYER = "55555555-5555-4555-8555-555555555555";
 const OTHER = "66666666-6666-4666-8666-666666666666";
 const IP = "203.0.113.7";
-const POOL = { query: async () => ({ rows: [{ u: "readonly", s: "readonly" }] }) };
+// A-12 calls the detail route, whose DB limiter runs first: allow it (0); other SQL as before.
+const POOL = {
+  query: async (sql: string) =>
+    sql === "SELECT discovery_rate_limit_hit($1)"
+      ? { rows: [{ discovery_rate_limit_hit: 0 }] }
+      : { rows: [{ u: "readonly", s: "readonly" }] },
+};
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 // DD-39 4.6 (T-20): the twelve exact keys no public JSON may carry (gender_restriction is DD-41).
 const GENDER_KEYS =
