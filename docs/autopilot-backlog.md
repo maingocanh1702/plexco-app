@@ -7965,3 +7965,20 @@ notes: |
   Lane L68 adds apps/web/lib/log-context.ts (absent at that SHA): `withRequestLogContext` adopts only an inbound `x-request-id` that matches `^[A-Za-z0-9._-]{8,64}$` and otherwise mints `req_<uuid>`, so today the only inbound id is one the client sends.
   Fix: once a deploy measures which request id header the production edge sets (its name, its form, and whether a client can forge it), adopt it in `withRequestLogContext`, still shape-checked; never trust a header that has not been measured.
   Source: lane L68 (p5-log-correlation), step 0 (S0a/S0b), D11.
+
+## task: p5-onboarding-start-test-shuffle-order
+title: apps/web/app/api/onboarding/start/route.test.ts fails in a shuffled order because one describe never clears the `provisionTenant` mock's calls
+status: idea
+risk: P3
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/onboarding/start/route.test.ts]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (OST = apps/web/app/api/onboarding/start/route.test.ts).
+  The describe at OST:72 ("issuance-fence mapping") sets `provisionTenant` in its beforeEach (OST:73-79) with `mockResolvedValue` only (OST:77) and never clears its calls; the file has no `vi.clearAllMocks()`, and only two later describes reset `provisionTenant`, each in its own beforeEach (OST:193 and OST:345, `mockReset()`). That describe's case "maps SessionReauthRequiredError to a generic 401 AUTH_INVALID, no reason leaked" (OST:81) asserts `expect(provisionTenant).toHaveBeenCalledOnce()` (OST:86).
+  Measured with vitest v4.1.12 `--sequence.shuffle`, seeds 6801 and 1729: that case failed both times ("got 6 times"); in declared order the 7 files R3b ran were 169/169 green. It is pre-existing at that SHA: the case fails whenever an earlier case of the same describe runs first.
+  Fix: `vi.mocked(provisionTenant).mockClear()` in that beforeEach (or `vi.clearAllMocks()` first, as the sibling onboarding test files do).
+  Source: lane L68 (p5-log-correlation), review round 3 part 2 (reviewer R3b, out-of-scope note), routed to this row by the conductor (RO-L68-8 item 2).
