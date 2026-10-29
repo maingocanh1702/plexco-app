@@ -1,6 +1,6 @@
 # Deployment & Infrastructure — Plexco
 
-> **Version:** v1.10 · 2026-10-27 (§7: ghi chú thứ tự deploy cho cleanup tên `0068`–`0070`); v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
+> **Version:** v1.11 · 2026-10-29 (L63: §7-§9 khớp bản ghi DD-04, 12 mục lệch + §9.5 budget alert; trigger deploy chỉ `workflow_dispatch` do owner bấm; ghi chú pha pilot DD-154); v1.10 · 2026-10-27 (§7: ghi chú thứ tự deploy cho cleanup tên `0068`–`0070`); v1.9 · 2026-07-25 (DD-04 ✅ Accepted — **(c) co-locate DigitalOcean**; DD-89/DD-90 add the privileged `job_definer` bootstrap boundary; Day-1 `$120–135` với read isolation trên primary; read-only node là upgrade theo telemetry; Fly = fallback; egress-IP gate §7.1; full infra spec = build slice. Record `../decisions/analysis/dd-04-hosting-final-decision.md`)
 > **Status:** Draft (chờ review)
 > **Scope:** Cách deploy Plexco tối ưu/hiệu quả/dễ maintain, kèm scalability & security ở tầng hạ tầng.
 > **References:** `../product/TDD.md` §3.4/§7/§8 · `../strategy/saas-implementation-plan.md` §4/§5/§7 · `../research/player-side-saas-AUDIT.md` (C1–C8b · B1–B6 · G1–G6) · `../features/BE/feature_security_operations_tech.md`
@@ -11,6 +11,8 @@
 ## 0. TL;DR
 
 Deploy Plexco như **một modular monolith container-hoá**: **1 Docker image → 3 process group** (`web` · `discovery` · `worker`) cùng codebase, khác entrypoint/DB-role. Chạy trên **DigitalOcean App Platform** (compute) + **DO Managed Postgres HA-standby cùng VPC private**, **region Singapore** (DD-04 ✅ (c), 2026-07-16 — thay Fly; Fly = fallback (a); pre-build **egress-IP gate §7.1** — xem `../decisions/analysis/dd-04-hosting-final-decision.md`). Full infra spec (DO App Spec, supersede `fly.toml`) làm ở **build slice riêng**. Queue/cron nằm trên Postgres qua **pg-boss** (không Redis/Kafka). Realtime = **SSE fan-out qua Postgres `LISTEN/NOTIFY`** (không cần message broker).
+
+> **Pha pilot (DD-154, owner 2026-10-28):** production khởi đầu không HA: PostgreSQL một nút, không standby (hình dạng 3, khoảng $52.45/tháng); drill failover chỉ trên cửa sổ staging tạm HA; production lên HA trước khi có tiền chạy hoặc trước khi thêm CLB. Chi tiết: ghi chú pha pilot ở §2 DD-04.
 
 **KHÔNG:** Kubernetes · tách microservices · serverless function cho worker/webhook/SSE · Redis cho queue.
 
@@ -27,7 +29,7 @@ Triết lý xuyên suốt: *PostgreSQL + domain model là canonical store; mọi
 | **Region** | Người dùng + provider (SePay/Zalo/Messenger) ở **VN** → ưu tiên độ trễ thấp | BRD §Bên thứ ba |
 | **Chi phí** | Thuê bao host **0đ (free) / 250k (host_pro) mỗi CLB/tháng** (DD-29 thay DD-03) → margin nhạy, infra phải rẻ ở giai đoạn đầu | BRD §9.1 · DD-29 |
 | **Vận hành** | Team nhỏ → tối ưu **dễ maintain**, ít moving parts | mục tiêu user |
-| **Bản chất hệ thống** | Hệ thống **tiền + multi-tenant RLS** → bắt buộc HA, PITR, least-privilege | TDD §10 · AUDIT |
+| **Bản chất hệ thống** | Hệ thống **tiền + multi-tenant RLS** → bắt buộc HA, PITR, least-privilege (HA của production hoãn trong pha pilot tới điều kiện của DD-154 (c), xem §2) | TDD §10 · AUDIT |
 
 **Nguyên tắc dẫn xuất:** vì là hệ tiền/đa-tenant nhưng team nhỏ và chi phí nhạy, ta chọn **kiến trúc đơn giản nhất *vẫn còn đúng*** — monolith container-hoá thay vì microservices/k8s — và đẩy phần "khó" (HA, PITR, pooling) sang **managed services**.
 
