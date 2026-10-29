@@ -101,7 +101,7 @@ function req(body: unknown, tenant: string | null = TENANT, raw?: string): Reque
 const envelope = async (response: Response) =>
   (await response.json()) as {
     data: unknown;
-    // `message` belongs here: two tests read it, and `pnpm typecheck` compiles lib/*.test.ts.
+    // `message` belongs here: tests read it, and `pnpm typecheck` compiles lib/*.test.ts.
     error: { code: string; statusCode: number; message: string } | null;
   };
 

@@ -373,6 +373,7 @@ describe.each(["", "debug"])(
       );
       expect(res.status).toBe(302); // the response is today's fail("AUTH_INVALID"), unchanged
       expect(res.headers.get("location")).toBe("https://plexco.app/?auth_error=AUTH_INVALID");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
       expect(line.error).toEqual({ name: "Error" }); // no message/stack
     });
 
