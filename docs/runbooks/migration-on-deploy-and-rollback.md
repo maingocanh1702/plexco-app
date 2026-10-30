@@ -126,4 +126,4 @@ infra/smoke-check.sh <base-url>
   - §5 (1), liệt kê deployment để lấy id đích: R1 và R4 nhận đích, không thì run dừng trước khi đổi app.
   - §5 (6) [Owner], các bước rollback trên Control Panel: trước rollback ghi id deployment đang active (dòng đầu của khối K-a); sau rollback id đó phải khác và smoke ở (5) xanh; không thì dừng.
 - **Default:** mặc định DD-129 (1) ở §0 (job `migrate` giữ riêng `DATABASE_URL_MIGRATION`; PLAN ghi DD-129 "đóng băng, chưa được owner duyệt"), phép kiểm K-a của §5 (5), tên file này và việc đưa PLAN §10 mục 8 vào §2 đều là "default applied, pending owner sign-off".
-- **Mẫu go/no-go:** §2, §4 và §5 trỏ tới docs/runbooks/go-no-go-template.md bằng chữ thường, không kèm số mục, và chưa được đối chiếu với mẫu đó; kiểm: mỗi chỗ trỏ tới khớp một mục của mẫu.
+- **Mẫu go/no-go:** §2 trỏ tới docs/runbooks/go-no-go-template.md §4 (hàng output kiểm role của mục đó); §4 và §5 trỏ tới mẫu đó bằng chữ thường, không kèm số mục, và chưa được đối chiếu với mẫu; kiểm: mỗi chỗ trỏ tới của §4 và §5 khớp một mục của mẫu.

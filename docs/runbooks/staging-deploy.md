@@ -3,7 +3,7 @@
 ## 0. Phạm vi, nguồn, trạng thái
 
 - **Trạng thái:** `PREPARED, NOT RUN` (WS:8-9): chưa app nào được tạo, chưa deploy gì, runbook này chưa chạy lần nào (§9).
-- **Thẩm quyền:** E §6 (:401-438), §9 (:490-502), §10 (:506-520); PLAN bước 8.1, 8.2, 8.5, 8.6 (:197-202); DD-154 (`docs/standards/decisions.md:122`, entry ở :1846: owner duyệt plan Phase 5, Q1, Q2, Q4-Q10 theo default, Q3 override). Code: `infra/app.staging.yaml`, `infra/app.prod.yaml`, `infra/render-app-spec.sh`, WS, WP.
+- **Thẩm quyền:** E §6 (:401-434), §9 (:486-498), §10 (:502-516); PLAN bước 8.1, 8.2, 8.5, 8.6 (:197-202); DD-154 (`docs/standards/decisions.md:122`, entry ở :1846: owner duyệt plan Phase 5, Q1, Q2, Q4-Q10 theo default, Q3 override). Code: `infra/app.staging.yaml`, `infra/app.prod.yaml`, `infra/render-app-spec.sh`, WS, WP.
 - **Ai làm:** mọi bước DigitalOcean hay GitHub là của owner và mang nhãn [Owner]; agent chỉ chuẩn bị file (PLAN:192), không có bước nào cho agent trên môi trường thật. Giá trị secret chỉ owner nhập, vào encrypted env của App Platform hoặc secret GitHub, không bao giờ vào repo, chat hay ghi chú (PLAN:192); runbook chỉ nêu TÊN.
 - **Nhãn:** UNPINNED = dạng chính thức của bước chưa được trích, kèm phép kiểm của nó (tiền lệ O:196). Default của lane ghi "default applied, pending owner sign-off"; ruling RO-L69-2 ghi "decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature".
 - **Viết tắt:** WS = `.github/workflows/deploy-staging.yml`, WP = `.github/workflows/deploy-production.yml`, R = `infra/render-app-spec.sh`, M = `docs/runbooks/env-manifest-staging-production.md`, E = `docs/standards/environments-setup.md`, PLAN = `docs/sessions/web-mvp-phase5-golive-plan.md`, O = `docs/runbooks/outbox-dispatch-enable-rollback.md`. Runbook cùng thư mục: MR = migration-on-deploy-and-rollback.md (migration khi deploy, rollback), GNG = go-no-go-template.md (form go/no-go). F1-F6 = trang chính thức đọc ngày 2026-10-30, trích nguyên văn ở `docs/sessions/web-mvp-phase5-readiness-p5-runbook-deploy-migration-rollback.md` §2.
@@ -12,7 +12,7 @@
 
 - Workflow `Deploy staging` chỉ chạy tay (`workflow_dispatch`, không trigger push hay tag): staging là môi trường tạm, TTL 48-96 h; deploy tự động sẽ giữ một môi trường dáng production và hoá đơn của nó sống ngoài ý muốn (WS:11-12).
 - Cả hai input rỗng thì job `staging` chạy (WS:57-58): kiểm CI xanh trên đúng commit, build và push một image (tag = SHA, deploy theo digest), render spec (spec commit + secret live + digest), reconcile app, job `PRE_DEPLOY` `migrate` chạy trước (migration rồi provision queue, M:23-24), chờ deployment mang digest đó `ACTIVE`, smoke, upload artifact `deployment-evidence-staging`. Tên step nguyên văn và bằng chứng: §4. Có `rollback_deployment_id` thì job `rollback` chạy: MR.
-- Một đường migration: job `PRE_DEPLOY` `migrate`; `DATABASE_URL_MIGRATION` chỉ nằm ở job đó, không ở GitHub, không ở component runtime (WS:20-26; M:71; E:437-438); chi tiết: MR §1.
+- Một đường migration: job `PRE_DEPLOY` `migrate`; `DATABASE_URL_MIGRATION` chỉ nằm ở job đó, không ở GitHub, không ở component runtime (WS:20-26; M:71; E:433-434); chi tiết: MR §1.
 - Topology: M E2 (M:14-24): staging `web` 2, `discovery` 2, `worker` 1; production `web` 1, `worker` 1, không `discovery` (DD-154, Q3). Không secret runtime nào vào GitHub; GitHub chỉ giữ secret `DIGITALOCEAN_ACCESS_TOKEN` (M:79, :83).
 
 ## 2. Owner setup một lần
@@ -21,7 +21,7 @@ Mỗi mục: ai làm, nguồn, bằng chứng. Thứ tự 2.1 tới 2.5; 2.6 và
 
 ### 2.1 Tài khoản, VPC, registry, PostgreSQL
 
-[Owner] Tài khoản, billing và project vùng Singapore; VPC `sgp1` (E:515); container registry (tên của nó là giá trị `DOCR_REGISTRY`, M:84); Managed PostgreSQL 16 trở lên ("never provision DO PG < 16", `docs/sessions/2026-10-14-web-mvp-program-handoff.md:92`), bật PITR, tầng theo Q3 (PLAN:197; DD-154: production hình dạng 3, drill failover trên cửa sổ staging hình dạng 4). UNPINNED: đường đi trong Control Panel cho từng tài nguyên; kiểm: GNG có tên và id từng tài nguyên, và `SHOW server_version` của lệnh kiểm role (O:181, :184) in ra 16 trở lên. Bằng chứng: các dòng đó ở GNG.
+[Owner] Tài khoản, billing và project vùng Singapore; VPC `sgp1` (E:511); container registry (tên của nó là giá trị `DOCR_REGISTRY`, M:84); Managed PostgreSQL 16 trở lên ("never provision DO PG < 16", `docs/sessions/2026-10-14-web-mvp-program-handoff.md:92`), bật PITR, tầng theo Q3 (PLAN:197; DD-154: production hình dạng 3, drill failover trên cửa sổ staging hình dạng 4). UNPINNED: đường đi trong Control Panel cho từng tài nguyên; kiểm: GNG có tên và id từng tài nguyên, và `SHOW server_version` của lệnh kiểm role (O:181, :184) in ra 16 trở lên. Bằng chứng: các dòng đó ở GNG.
 
 ### 2.2 Domain và DNS
 
@@ -29,7 +29,7 @@ Mỗi mục: ai làm, nguồn, bằng chứng. Thứ tự 2.1 tới 2.5; 2.6 và
 
 ### 2.3 User DB và setup role
 
-[Owner] User DB cho bốn role `app`, `app_worker`, `readonly`, `migration` (M:16) và setup role theo MR §2, làm ở đây, trước lần deploy đầu (PLAN:201, bước 8.5). User trước, deploy sau là an toàn với migrator: role đã có thì giữ nguyên, không tạo lại (`packages/db/src/migrate.ts:133-136`, :258-281). Bằng chứng: các phép kiểm của MR §2.
+[Owner] User DB cho bốn role `app`, `app_worker`, `readonly`, `migration` (M:16) và setup role theo MR §2, làm ở đây, trước lần deploy đầu (PLAN:201, bước 8.5). User trước, deploy sau là an toàn với migrator: role đã có thì giữ nguyên, không tạo lại (`packages/db/src/migrate.ts:258-281`). Bằng chứng: các phép kiểm của MR §2.
 
 ### 2.4 GitHub environment
 
@@ -58,6 +58,7 @@ Workflow chỉ update một app đã có (WS:126, :132, :140). Spec commit mang 
 
 - (i) Official reference đọc ngày 2026-10-30 không nói việc tạo app (bước (4); F1, F3) hay `Save` một biến (F2) có khởi động deployment không. Vì vậy mọi deployment giữa bước (4) và bước (7) chạy trước khi đủ giá trị SECRET và không bao giờ là pass, dù trạng thái của nó là gì; pass chỉ là run bình thường ở bước (7).
 - (ii) Nếu bước (4) hoặc (5) deploy digest của bước (2), run bước (7) của cùng commit có thể gặp deployment trước đó cùng digest (wait chọn theo digest, WS:145; dòng backlog về cách chọn deployment của `infra/wait-for-deployment.sh`, `docs/sessions/web-mvp-phase5-readiness-p5-deploy-workflows.md:175`). Vì vậy bước (7) chạy cho một commit `main` mới hơn (digest mới, như §8), và owner so `image_digest` của bước (7) với của bước (2): bằng nhau thì bước (7) không phải pass, dù màu gì, và owner dispatch lại cho một commit `main` mới hơn nữa.
+- (iii) Commit `main` mới hơn mà bước (7) và điểm (ii) cần là thay đổi kế tiếp được merge vào `main`; chưa có commit đó thì bước (7) chưa pass và hàng "Tạo app lần đầu" ở GNG §4 giữ No-Go.
 
 **Production**
 
@@ -73,7 +74,7 @@ Bằng chứng: artifact của bước (2) và id của từng app ở GNG; step
 
 ### 2.6 Trusted sources
 
-[Owner] Trusted sources của PostgreSQL chỉ có app (PLAN:264; E:516); nguồn tạm của owner (ví dụ cho 2.3) được ghi lại lúc thêm và gỡ khi xong (O:176). Nếu danh sách đã có mục nào trước khi app tồn tại, thêm app ngay sau 2.5 bước (4), trước bước (7): job `migrate` của bước (7) kết nối từ app (WS:20-22). UNPINNED: đường đi trong Control Panel; kiểm: danh sách đọc lại chỉ còn app. Bằng chứng: danh sách đó ở GNG.
+[Owner] Trusted sources của PostgreSQL chỉ có app (PLAN:264; E:512); nguồn tạm của owner (ví dụ cho 2.3) được ghi lại lúc thêm và gỡ khi xong (O:176). Nếu danh sách đã có mục nào trước khi app tồn tại, thêm app ngay sau 2.5 bước (4), trước bước (7): job `migrate` của bước (7) kết nối từ app (WS:20-22). UNPINNED: đường đi trong Control Panel; kiểm: danh sách đọc lại chỉ còn app. Bằng chứng: danh sách đó ở GNG.
 
 ### 2.7 URL kết nối
 
@@ -118,13 +119,13 @@ Bằng chứng vào GNG §4: run URL và artifact.
 
 ## 7. Teardown và TTL
 
-- TTL 48-96 h (WS:11; E §9). Lúc tạo, ghi owner, mục đích, `expires_at` và trần chi phí vào GNG (E:492).
+- TTL 48-96 h (WS:11; E §9). Lúc tạo, ghi owner, mục đích, `expires_at` và trần chi phí vào GNG (E:488).
 - Chưa có automation: mục 11 của §7.6 hoãn; owner tự xoá staging khi hết cửa sổ (PLAN:268; dòng backlog `staging-ttl-teardown-automation`, `infra/app.staging.yaml:25`).
-- [Owner] Hết cửa sổ: xoá app, database và VPC, thu hồi credential tạm (E:498). UNPINNED: đường đi trong Control Panel và lệnh xoá; kiểm: project không còn app, database hay VPC của staging, và credential tạm không còn dùng được. E:499 đòi báo động và fail closed khi xoá không xong; chưa có automation đó, nên owner tự kiểm.
+- [Owner] Hết cửa sổ: xoá app, database và VPC, thu hồi credential tạm (E:494). UNPINNED: đường đi trong Control Panel và lệnh xoá; kiểm: project không còn app, database hay VPC của staging, và credential tạm không còn dùng được. E:495 đòi báo động và fail closed khi xoá không xong; chưa có automation đó, nên owner tự kiểm.
 
 ## 8. Kiểm deploy cuốn hai instance (§7.6 mục 5)
 
-Bước kiểm của L69 (PLAN:265; E:518), default applied, pending owner sign-off. Staging chạy `web` 2 và `discovery` 2 (M:20-21; `infra/app.staging.yaml:94`, :193).
+Bước kiểm của L69 (PLAN:265; E:514), default applied, pending owner sign-off. Staging chạy `web` 2 và `discovery` 2 (M:20-21; `infra/app.staging.yaml:94`, :193).
 
 1. [Owner] Khi deployment trước đang `ACTIVE`, "Run workflow" `Deploy staging` cho một commit `main` MỚI HƠN: digest mới, nên bước wait (chọn theo digest, WS:145) không lẫn hai deployment.
 2. [Owner] Từ máy owner, chạy lặp lại lệnh dưới (dạng của WS:155) từ lúc step `3. Reconcile the app (creates the deployment; the PRE_DEPLOY migrate job runs first)` bắt đầu tới khi step `5. Smoke (/healthz, landing, manifest)` xanh, giữ mọi output.
@@ -138,8 +139,8 @@ PASS: mọi lần smoke xanh và run xanh. Bằng chứng: run URL và log smoke
 
 ## 9. Chưa kiểm chứng
 
-- `PREPARED, NOT RUN` (WS:8-9): chưa app nào được tạo, chưa deploy gì; `doctl apps spec validate` chưa chạy (việc của [Owner], cần đăng nhập DigitalOcean, E:444).
-- R chỉ được test trong CI với tên key thật và giá trị giả (ciphertext, host, digest, VPC id giả), chưa chạy với app live (E:445).
+- `PREPARED, NOT RUN` (WS:8-9): chưa app nào được tạo, chưa deploy gì; `doctl apps spec validate` chưa chạy (việc của [Owner], cần đăng nhập DigitalOcean, E:440).
+- R chỉ được test trong CI với tên key thật và giá trị giả (ciphertext, host, digest, VPC id giả), chưa chạy với app live (E:441).
 - Runbook này chưa chạy: điểm dừng tạo lần đầu (2.5 bước (2)) là suy luận từ dòng của WS, và mọi bước UNPINNED (2.1, 2.2, 2.5 bước (4), 2.6, §5, §7) chưa đo.
 - Tạo app hay `Save` một biến có khởi động deployment không: F1-F3 không nói (2.5, điểm (i)).
 - Lỗi deploy chưa đo, ví dụ job `migrate` lỗi: runbook chỉ khẳng định "the new deployment does not become active", không hơn (MR §3).
