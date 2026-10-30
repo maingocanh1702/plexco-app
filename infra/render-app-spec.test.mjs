@@ -269,11 +269,13 @@ function yamlContent(line, n) {
 
 // The significant lines (not blank, not a full-line comment) with their number and indentation (spaces only).
 // Tabs, trailing spaces, document markers (more than one document) and directives are refused.
+// So is any other character outside printable ASCII, comments included: CR, NEL, LS and PS end a line in YAML.
 function yamlLines(text) {
   const out = [];
   text.split("\n").forEach((line, i) => {
     const n = i + 1;
     if (line.includes("\t")) yamlFail(n, "tab");
+    if (/[^\x20-\x7e]/.test(line)) yamlFail(n, "character outside printable ASCII");
     if (line.endsWith(" ")) yamlFail(n, "trailing space");
     if (/^(---|\.\.\.)( |$)/.test(line)) yamlFail(n, "document marker");
     if (line.startsWith("%")) yamlFail(n, "directive");
@@ -330,7 +332,8 @@ function yamlMap(lines, at, indent) {
 // A double-quoted scalar has no escape: its value is the text between the quotes. A plain scalar is an integer
 // without a leading zero, true or false, or a string of [A-Za-z0-9_./-] starting with a letter, `_` or `/`. Any
 // other plain form (null, ~, yes/no/on/off/y/n, another case of true/false, a float, a leading zero, a date, 0x..,
-// 1_000, .inf) is one a YAML 1.1 parser such as Ruby Psych could type differently: refused.
+// 1_000, .inf) is one a YAML 1.1 parser such as Ruby Psych could type differently: refused. So is an integer
+// outside Number's safe range, which would lose digits here.
 function yamlScalar(raw, n) {
   if (raw.startsWith('"')) {
     const end = raw.indexOf('"', 1);
@@ -339,7 +342,11 @@ function yamlScalar(raw, n) {
     if (end !== raw.length - 1) yamlFail(n, "text after a double-quoted scalar");
     return raw.slice(1, end);
   }
-  if (/^(0|-?[1-9][0-9]*)$/.test(raw)) return Number(raw);
+  if (/^(0|-?[1-9][0-9]*)$/.test(raw)) {
+    const v = Number(raw);
+    if (!Number.isSafeInteger(v)) yamlFail(n, "integer out of range");
+    return v;
+  }
   if (raw === "true" || raw === "false") return raw === "true";
   if (!/^[A-Za-z_/][A-Za-z0-9_./-]*$/.test(raw) || /^(null|yes|no|on|off|y|n|true|false)$/i.test(raw)) {
     yamlFail(n, "ambiguous plain scalar");
@@ -502,6 +509,11 @@ test("the YAML subset reader refuses constructs outside the subset", () => {
     ["single quote", 4, "name: x\n\nservices:\n  - name: 'web'\n"],
     ["duplicate key", 3, "name: x\nregion: sgp\nname: y\n"],
     ["ambiguous plain scalar", 2, "name: x\nflag: yes\n"],
+    ["character outside printable ASCII", 2, "name: x\n# a\rregion: sgp\n"],
+    ["character outside printable ASCII", 2, "name: x\n# a\f\n"],
+    ["character outside printable ASCII", 2, "name: x\n# a\u{2028}region: sgp\n"],
+    ["character outside printable ASCII", 2, "name: x\n# a\u{85}region: sgp\n"],
+    ["integer out of range", 2, "name: x\ncount: 9007199254740993\n"],
   ];
   for (const [construct, line, input] of refused) {
     assert.throws(() => parseYamlSubset(input), { message: `yaml subset: line ${line}: ${construct}` }, construct);
@@ -509,8 +521,15 @@ test("the YAML subset reader refuses constructs outside the subset", () => {
 });
 
 test("every ingress rule keeps the full request path", () => {
-  const staging = readSpec(STAGING);
-  const prod = readSpec(PROD);
+  // On the rendered specs, built as the render tests build them: the invariant protects what DO receives.
+  const rendered = (file, domain) => {
+    const spec = readSpec(file);
+    const r = render(spec, fakeLive(spec), { APP_DOMAIN: domain });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+  const staging = rendered(STAGING, "staging.example.test");
+  const prod = rendered(PROD, "example.test");
   const routes = (spec) => spec.ingress.rules.map((rule) => `${rule.match.path.prefix} -> ${rule.component.name}`).sort();
   assert.deepEqual(routes(staging), ["/discover -> discovery", "/api/discover -> discovery", "/ -> web"].sort());
   assert.deepEqual(routes(prod), ["/ -> web"]);
