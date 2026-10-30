@@ -115,3 +115,15 @@ infra/smoke-check.sh <base-url>
 - **Wait chọn nhầm:** wait dùng chung chọn deployment đầu tiên theo thứ tự danh sách (L67R:162); cho nó chọn theo id hoặc `created_at` là một hàng ở cuối `docs/autopilot-backlog.md` (L67R:175), chưa làm.
 
 ## 6. Chưa kiểm chứng
+
+- **Chưa chạy lần nào:** WS:8-9 ghi `PREPARED, NOT RUN`: owner dựng environment `staging` cùng protection của nó, nhập mọi giá trị secret và variable, rồi bấm `workflow_dispatch` (PLAN bước 8.5 và 8.6). WP:9-12 ghi `DO NOT RUN` cho tới khi owner đóng các gate còn mở ở E §1.1 (bằng chứng IP outbound cố định) và §10 và ghi "go" vào biên bản go/no-go; deploy production là việc P0, chỉ owner làm. Cho tới lần chạy đầu của owner, §1-§5 chỉ là văn bản, chưa có lần chạy thật nào làm bằng chứng.
+- **App Spec và renderer** (E:440-441, bảng "files prepared, not applied" của E §6): App Spec staging và production cùng credential DDL theo job đang `PREPARED, NOT APPLIED`: chưa tạo app nào, chưa deploy gì, và [Owner] `doctl apps spec validate` chưa chạy (cần auth DigitalOcean; PLAN bước 8.1, 8.2 và 8.5). Renderer `infra/render-app-spec.sh` mới được test trong CI (`test:infra`) bằng tên key thật và giá trị giả, chưa chạy với app thật.
+- **Bước UNPINNED** (nhãn ở §0), mỗi bước cùng phép kiểm của nó:
+  - §1, đọc log job `migrate` (cả hai ứng viên): owner thấy cả hai dòng log của §1 trong log của đúng deployment; không đọc được theo đường nào thì coi như chưa pass và ghi lại đường đã thử.
+  - §2 (1), tạo bốn user DB trên DigitalOcean: (4) thấy `migration`, và lần chạy đầu của job `migrate` pass theo §1.
+  - §2 (3b), role nào cấp được `USAGE`: lệnh không in cảnh báo của (3b), và giá trị thứ ba của (4) là `t`.
+  - §4 (4), đọc `GENDER_COLLECTION_ENABLED` trên app production đang chạy: giá trị đọc được là vắng hoặc "false"; không đọc được hoặc giá trị khác thì G4 không đạt, ghi "no-go".
+  - §5 (1), liệt kê deployment để lấy id đích: R1 và R4 nhận đích, không thì run dừng trước khi đổi app.
+  - §5 (6) [Owner], các bước rollback trên Control Panel: trước rollback ghi id deployment đang active (dòng đầu của khối K-a); sau rollback id đó phải khác và smoke ở (5) xanh; không thì dừng.
+- **Default:** mặc định DD-129 (1) ở §0 (job `migrate` giữ riêng `DATABASE_URL_MIGRATION`; PLAN ghi DD-129 "đóng băng, chưa được owner duyệt"), phép kiểm K-a của §5 (5), tên file này và việc đưa PLAN §10 mục 8 vào §2 đều là "default applied, pending owner sign-off".
+- **Mẫu go/no-go:** §2, §4 và §5 trỏ tới docs/runbooks/go-no-go-template.md bằng chữ thường, không kèm số mục, và chưa được đối chiếu với mẫu đó; kiểm: mỗi chỗ trỏ tới khớp một mục của mẫu.
