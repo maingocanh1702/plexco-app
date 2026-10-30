@@ -83,4 +83,35 @@ Ghi lại `server_version`; phải thấy `migration`, `t`, `t`, rồi `job_defi
 
 ## 5. Rollback app
 
+- **Khi nào:** một bản phát hành chạy sai trên staging hoặc production, và mọi migration kể từ deployment đích đều expand-only: rollback chỉ đưa app về, schema giữ ở phiên bản mới hơn vì không có down-migration (WS:165-167; WP:173-175; §3). Dữ liệu chỉ lấy lại được từ backup của Managed Databases (WS:167-168), không bằng rollback.
+- **(1) [Owner] Chọn đích:** id của một trong mười deployment thành công gần nhất của app (WS:165), dạng 8-4-4-4-12 ký tự hex (WS:186). UNPINNED: cách liệt kê deployment và lấy id chưa được trích ở F1-F6; kiểm: R1 và R4 ở dưới nhận đích, không thì run dừng trước khi đổi app.
+- **(2) [Owner] Chạy:** "Run workflow" của workflow môi trường đó (`Deploy staging` hoặc `Deploy production`) trên `main`, với `rollback_deployment_id` là id đích và `confirm` là chính id đó gõ lại (WS:31-38; WP:34-41); job `rollback` chạy thay job deploy (WS:169-170; WP:177-178).
+- **(3) Job `rollback`: sáu step có tên, không có R2 hay R3 (giữa R1 và R4 là hai step `uses:` không tên); từng step kiểm gì:**
+  - `R1. Refuse unless the target is an explicit deployment id, typed twice, and APP_DOMAIN is this environment's host` (WS:180; WP:188): `rollback_deployment_id` có dạng deployment id, `confirm` bằng đúng nó (sai thì `confirm must equal rollback_deployment_id exactly`, WS:187), `APP_DOMAIN` là host của môi trường này (staging: `APP_DOMAIN is not a staging*.plexco.app host`, WS:189).
+  - `R4. Check the target (this environment's app, exactly one deployment, not the active one, a web image digest other than the active one's)` (WS:199; WP:207): app mang đúng tên của spec đã commit, đích là đúng một deployment, không phải deployment đang active, có web image digest khác digest của deployment đang active; JSON của app và deployment không bao giờ được in (WS:200-201).
+  - [Owner] Đích mang cùng web image digest với deployment đang active (sau một deployment chỉ đổi config) bị R4 từ chối với `use the Control Panel rollback` (WS:203-205, :218), vì R6 chờ theo digest nên không phân biệt được hai deployment đó: dùng (6).
+  - `R5. Roll back through the documented API (skip_pin, so later deploys are not blocked)` (WS:221; WP:229): rollback qua API có tài liệu, vì CLI không có lệnh con rollback (WS:166).
+  - `R6. Wait for the rollback deployment to be ACTIVE` (WS:229; WP:237): chờ deployment rollback lên `ACTIVE`, chọn theo digest đích (WS:203).
+  - `R7. Smoke (/healthz, landing, manifest)` (WS:232; WP:240): smoke trên `APP_DOMAIN` (WS:188).
+  - `R8. Record rollback evidence` (WS:240; WP:248): ghi `rollback-evidence.json` với `outcome`, `target_deployment_id`, `image_digest`, `run_url` (WS:250); artifact upload cả khi rollback lỗi, miễn R1 đã nhận input (WS:255; WP:263).
+- **(4) [Owner] Bằng chứng:** artifact `rollback-evidence-staging` (giữ 90 ngày, WS:257-259) hoặc `rollback-evidence-production` (giữ 365 ngày, WP:265-267): `outcome` là `success`, `target_deployment_id` bằng id đích. Ghi vào form go/no-go (docs/runbooks/go-no-go-template.md).
+- **(5) [Owner] Rollback run lỗi: kiểm deployment đang active trước mọi việc khác** (K-a, L67R:162; D4, "default applied, pending owner sign-off"). Hai chương trình jq là của chính R4 (WS:211, :216); JSON không bao giờ được in (WS:200-201):
+
+```bash
+# [Owner] K-a: the app's active deployment id, then its web image digest
+doctl apps get <app-id> -o json | jq -r '.[0].active_deployment.id // empty'
+doctl apps get <app-id> -o json | jq -r 'first(.[0].active_deployment.spec.services[]? | select(.name == "web") | .image.digest) // empty'
+```
+
+- **Bằng:** web image digest đang active bằng `image_digest` trong bằng chứng rollback của run đó: DigitalOcean đã áp rollback và lỗi là do wait chọn nhầm deployment (K-a: lỗi giả, không bao giờ là pass giả). [Owner] rồi chạy smoke trên base URL của môi trường (`STAGING_BASE_URL` hoặc `PRODUCTION_BASE_URL`):
+
+```bash
+# [Owner] smoke against the environment's base URL
+infra/smoke-check.sh <base-url>
+```
+
+- **[Owner] Không bằng:** rollback chưa có hiệu lực; dừng, dùng rollback của Control Panel (6). Không bao giờ dispatch lại trước khi kiểm xong (5).
+- **(6) [Owner] Rollback của Control Panel** (khi R4 từ chối hoặc K-a không bằng): tab `Activity` (WS:168, :218). UNPINNED: các bước rollback trên Control Panel chưa được trích ở F1-F6; kiểm: trước rollback ghi id deployment đang active (dòng đầu của khối K-a), sau rollback id đó phải khác và smoke ở (5) xanh; không thì dừng.
+- **Wait chọn nhầm:** wait dùng chung chọn deployment đầu tiên theo thứ tự danh sách (L67R:162); cho nó chọn theo id hoặc `created_at` là một hàng ở cuối `docs/autopilot-backlog.md` (L67R:175), chưa làm.
+
 ## 6. Chưa kiểm chứng
