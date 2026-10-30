@@ -46,12 +46,7 @@ MIGRATION_ROLE=<migration role name> pnpm db:bootstrap
 GRANT USAGE ON SCHEMA public TO job_definer;
 ```
 
-- **(4) [Owner] Kiểm role** (O:180-184, chỉ đọc), kết nối bằng URL của `migration`:
-
-```bash
-# [Owner] read-only role check, verbatim from O:181
-psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SHOW server_version" -c "SELECT current_user, pg_has_role(current_user, 'job_definer', 'MEMBER'), has_schema_privilege('job_definer', 'public', 'USAGE')" -c "SET ROLE job_definer" -c "SELECT current_user" -c "RESET ROLE"
-```
+- **(4) [Owner] Kiểm role** (O:180-184, chỉ đọc), kết nối bằng URL của `migration`: chạy đúng lệnh kiểm role của O §6, khối O:180-182 trong `docs/runbooks/outbox-dispatch-enable-rollback.md`; runbook này không chép lại lệnh (một nguồn cho lệnh).
 
 Ghi lại `server_version`; phải thấy `migration`, `t`, `t`, rồi `job_definer` sau `SET ROLE` (O:184); giá trị thứ ba (`has_schema_privilege`) là `t` chứng minh grant `USAGE` của (3b). Kết quả nào khác: dừng, không deploy. Bằng chứng: output này, ghi vào docs/runbooks/go-no-go-template.md §4.
 
@@ -61,3 +56,31 @@ Ghi lại `server_version`; phải thấy `migration`, `t`, `t`, rồi `job_defi
 - **Schema chỉ tiến:** không có down-migration; schema giữ ở phiên bản mới hơn, nên rollback app chỉ an toàn qua migration expand-only (WS:166-167).
 - **[Owner] Sửa:** bản sửa đi bằng một commit mới, deploy qua `docs/runbooks/staging-deploy.md` §4; không sửa schema bằng tay, không chạy migration ngoài job `migrate` (đường migration duy nhất, WS:20-26).
 - **[Owner] Bằng chứng:** hai dòng của §1 trong log job `migrate` của lần chạy chứa bản sửa, rồi bước 4 xanh.
+
+## 4. Promote production
+
+- **Khi nào:** chỉ sau G3 (PLAN:202; G4 ở PLAN:243) và sau khi owner đã ghi "go" vào form go/no-go (docs/runbooks/go-no-go-template.md); WP:9-10 cấm chạy trước khi owner đóng các gate còn mở ở E §1.1 (bằng chứng IP outbound cố định) và §10. Production deploy là việc P0, chỉ owner (WP:11-12). Trước lần promote đầu tiên, §2 chạy trên cụm production (membership tính theo từng cluster, O:178).
+- **(1) [Owner] Chạy:** "Run workflow" `Deploy production` trên `main` (`workflow_dispatch`, WP:19-20), với các input (WP:20-41):
+  - `tag`: SHA git đầy đủ 40 ký tự mà run `deploy-staging.yml` đã build và test (cũng là image tag);
+  - `digest`: `image_digest` trong `deployment-evidence.json` của chính run đó;
+  - `staging_run_id`: run id của run `deploy-staging.yml` thành công của SHA đó;
+  - `confirm`: `tag` gõ lại;
+  - `rollback_deployment_id`: để trống; trống thì job `production` chạy (WP:60-61), có giá trị thì job `rollback` chạy thay (§5).
+- **(2) Job `production` (WP:60-171), từng step kiểm gì:**
+  - `Refuse unless the inputs are a full SHA, a digest and a run id, and confirm is the tag typed again` (WP:73-81): `tag` là 40 ký tự hex, `digest` có dạng `sha256:` cộng 64 ký tự hex, `staging_run_id` là số, `confirm` bằng đúng `tag` (sai thì `confirm must equal tag exactly`).
+  - `Require the successful deploy-staging run of this tag and its evidence of this digest` (WP:90-104): run `staging_run_id` phải là run của `.github/workflows/deploy-staging.yml` với `conclusion` là `success` và `head_sha` bằng `tag`; artifact `deployment-evidence-staging` của run đó phải ghi `image_digest` bằng `digest` và `git_sha` bằng `tag`. Run rollback của staging chỉ upload `rollback-evidence-staging` nên không bao giờ qua step này (WP:91-92).
+  - `1. Require the staged image in DOCR (this digest, tagged with this SHA; nothing is built)` (WP:110-114): DOCR phải có manifest `digest` mang tag `tag`; production không build image.
+  - `2. Render the spec (committed spec + live secrets + this digest)` (WP:116-129): `APP_DOMAIN` phải đúng `plexco.app` (WP:123-125); domain khác, kể cả domain staging, dừng ở `APP_DOMAIN is not plexco.app`. Step chỉ in name, region và digest của từng component; spec đã render không bao giờ được in vì chứa giá trị secret đã mã hoá (WP:128-129).
+  - `3. Reconcile the app (creates the deployment; the PRE_DEPLOY migrate job runs first)` (WP:131-134): tạo deployment; job `migrate` (`PRE_DEPLOY`) chạy trước, bằng chứng ở §1, lỗi thì §3.
+  - `4. Wait for the deployment carrying this digest to be ACTIVE` (WP:136-139): chờ deployment mang đúng `digest` lên `ACTIVE` (`infra/wait-for-deployment.sh`).
+  - `5. Smoke (/healthz, landing, manifest)` (WP:141-149): host của `PRODUCTION_BASE_URL` phải là `APP_DOMAIN` (không thì `the PRODUCTION_BASE_URL host is not APP_DOMAIN`), rồi `infra/smoke-check.sh` chạy trên URL đó.
+  - `Record deployment evidence` (WP:151-164): ghi `deployment-evidence.json`; chạy cả khi promotion lỗi, miễn step đầu đã nhận input, vì step 3 đổi app trước khi step 4 và 5 có thể lỗi; input bị từ chối không bao giờ được in hay ghi (WP:152-155).
+- **(3) [Owner] Bằng chứng:** tải artifact `deployment-evidence-production` của run (giữ 365 ngày, WP:166-171); phải thấy `outcome` là `success` (WP:154), `git_sha` bằng `tag`, `image_digest` bằng `digest`, `promoted_from_staging_run` bằng `staging_run_id` (WP:159-162); kèm hai dòng của §1 trong log job `migrate` của deployment này. Ghi vào form go/no-go (docs/runbooks/go-no-go-template.md).
+- **(4) [Owner] Giới tính tắt:** trên app production đang chạy, `GENDER_COLLECTION_ENABLED` phải vắng hoặc "false"; chỉ đúng "true" mới bật (M:103; PLAN:243). UNPINNED: cách đọc giá trị một biến của app đang chạy chưa được trích ở F1-F6 (F2 chỉ trích đường vào tab `Settings` rồi mục `Environment Variables` của Control Panel để thêm biến); kiểm: giá trị đọc được là vắng hoặc "false"; không đọc được hoặc giá trị khác: G4 không đạt, ghi "no-go".
+- **(5) [Owner] Phần còn lại của G4:** smoke production xanh (step `5. Smoke (/healthz, landing, manifest)`), domain và TLS theo Q4, PLAN §7.6 mục 2 kiểm trên production (PLAN:243); ghi kết quả vào form go/no-go.
+- **Cửa sổ promote:** artifact `deployment-evidence-staging` chỉ giữ 90 ngày (WS:163). Quá hạn thì step `Require the successful deploy-staging run of this tag and its evidence of this digest` dừng ở `has no deployment-evidence-staging artifact` (WP:101-102): [Owner] chạy lại staging (`docs/runbooks/staging-deploy.md` §4), rồi promote với `tag`, `digest` và `staging_run_id` của run mới.
+- **Run lỗi:** lỗi trước step `3. Reconcile the app (creates the deployment; the PRE_DEPLOY migrate job runs first)` thì app chưa đổi (step 3 là step đầu tiên đổi app, WP:152); job `migrate` lỗi: §3; step 4 hoặc 5 lỗi: [Owner] đọc log của run, rồi §3 nếu job `migrate` lỗi, §5 nếu bản phát hành hỏng.
+
+## 5. Rollback app
+
+## 6. Chưa kiểm chứng
