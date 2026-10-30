@@ -47,8 +47,8 @@ Order matters on an empty DB: provision's grants (E2 :42-54) name `app_worker`, 
 
 ```sh
 #!/bin/sh
-# Stub pnpm: one log line per call (its argv, and whether DATABASE_URL_MIGRATION is the fake value; never the
-# value itself), then exits with STUB_RC_<call index>, default 0. The log file must exist (empty) before call 1.
+# Stub pnpm: one log line per call (each argument in brackets, and whether DATABASE_URL_MIGRATION is the fake
+# value; never the value itself), then exits with STUB_RC_<call index>, default 0. The log must exist (empty) first.
 n=$(( $(wc -l < "$STUB_LOG") + 1 ))
 case "$n" in
   1) rc="${STUB_RC_1:-0}" ;;
@@ -56,7 +56,7 @@ case "$n" in
   *) rc=0 ;;
 esac
 if [ "${DATABASE_URL_MIGRATION:-}" = "$STUB_FAKE_URL" ]; then url=fake; else url=other; fi
-printf '%s url=%s\n' "$*" "$url" >> "$STUB_LOG"
+{ printf '[%s]' "$@"; printf ' url=%s\n' "$url"; } >> "$STUB_LOG"
 exit "$rc"
 ```
 
@@ -64,10 +64,10 @@ exit "$rc"
 
 | Case | Role, codes | Exit | Calls, in order (log lines) |
 | --- | --- | --- | --- |
-| T1 | `migrate` | 0 | `--filter @plexco/bot --fail-if-no-match exec tsx ../../packages/db/src/migrate.ts url=fake`, then `--filter @plexco/bot --fail-if-no-match provision:queue url=fake` |
+| T1 | `migrate` | 0 | `[--filter][@plexco/bot][--fail-if-no-match][exec][tsx][../../packages/db/src/migrate.ts] url=fake`, then `[--filter][@plexco/bot][--fail-if-no-match][provision:queue] url=fake` |
 | T2 | `migrate`, `STUB_RC_1=3` | 3 | the runner line only: provision is never called |
 | T3 | `migrate`, `STUB_RC_2=4` | 4 | both T1 lines, in T1's order |
-| T4 | `provision` | 0 | `--filter @plexco/bot provision:queue url=fake` (unchanged, no flag) |
+| T4 | `provision` | 0 | `[--filter][@plexco/bot][provision:queue] url=fake` (unchanged, no flag) |
 | T5 | `nope` | 1 | none; stderr names `nope` and the five valid roles |
 
 Every case: stdout is exactly `[entrypoint] starting role=<role>` plus a newline; stderr is empty for T1-T4; FAKE appears in neither stream. Codes 3 and 4 prove that the script's status is the failing call's own, not the `exit 1` of the `*)` arm. Measured on the scratch copy of 2.1 (b): T1-T5 as in the table under both shells, and with `exec` put back on the runner T1 sees one call (exit 0), so T1 and T3 fail.

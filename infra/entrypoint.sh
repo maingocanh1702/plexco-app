@@ -78,8 +78,8 @@ case "$ROLE" in
   migrate)
     # Steps 2 and 3 of the required CI order in docs/standards/environments-setup.md, in one shell: the SQL
     # migrations, then the queues; both read only DATABASE_URL_MIGRATION and refuse an empty value. No exec
-    # on the runner: under set -eu its failure exits here, before provision. tsx is a production dependency
-    # of apps/bot. A filter matching nothing exits 0 without --fail-if-no-match, and the deploy goes ahead.
+    # on the runner: under set -eu its failure exits here, before provision. Through apps/bot: only its tsx
+    # is a prod dependency (db's is dev-only, pruned). A filter matching nothing exits 0 without the flag.
     pnpm --filter @plexco/bot --fail-if-no-match exec tsx ../../packages/db/src/migrate.ts
     exec pnpm --filter @plexco/bot --fail-if-no-match provision:queue
     ;;
