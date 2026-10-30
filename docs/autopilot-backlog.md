@@ -926,7 +926,8 @@ notes: P0 manual workflow only; canonical v0.6.0 classifies its migration orches
 
 ## task: infra-egress-compatibility-evidence
 title: Close DD-04 fixed-egress compatibility evidence for SePay, ApiPay, Zalo and Meta
-status: blocked
+status: merged
+note_merged: set by hand in lane L81 (DD-156), in the PR that lands this task's slice-unique merged_probe on origin/main (2026-10-30). Was: blocked
 risk: P2
 change_class: docs-provider-evidence
 depends_on: []
