@@ -23,7 +23,7 @@ Khối đang chạy trên staging hoặc production, đã đo. Hai hàng đầu 
 
 ## 2. Sau cờ
 
-Khả năng có trong code nhưng nằm sau cờ hoặc cấu hình môi trường. Tên biến và số dòng (`:N`) theo `docs/runbooks/env-manifest-staging-production.md`; giá trị ghi đúng giá trị đo trên app đang chạy của từng môi trường.
+Khả năng có trong code nhưng nằm sau cờ hoặc cấu hình môi trường. Tên biến và số dòng (:N) theo `docs/runbooks/env-manifest-staging-production.md`; giá trị ghi đúng giá trị đo trên app đang chạy của từng môi trường.
 
 | Cờ / khả năng | Giá trị đo được | Ai bật, điều kiện bật, bước rollback | Bằng chứng |
 | --- | --- | --- | --- |
