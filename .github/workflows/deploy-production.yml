@@ -200,7 +200,7 @@ jobs:
           app="$(doctl apps get "$APP_ID" -o json)"
           want="$(yq -o=json infra/app.prod.yaml | jq -r '.name // empty')"
           have="$(jq -r '.[0].spec.name // empty' <<< "$app")"
-          [ -n "$want" ] && [ "$have" = "$want" ] || { echo "::error::DO_APP_ID is not the app named in infra/app.prod.yaml"; exit 1; }
+          if [ -z "$want" ] || [ "$have" != "$want" ]; then echo "::error::DO_APP_ID is not the app named in infra/app.prod.yaml"; exit 1; fi
           active="$(jq -r '.[0].active_deployment.id // empty' <<< "$app")"
           [ -n "$active" ] || { echo "::error::app field .[0].active_deployment.id missing"; exit 1; }
           digest="$(doctl apps get-deployment "$APP_ID" "$DEPLOYMENT_ID" -o json | jq -r --arg active "$active" \
