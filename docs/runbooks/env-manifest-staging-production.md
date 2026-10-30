@@ -21,7 +21,7 @@ Một image cho mọi component. Role lấy theo thứ tự: tham số của l�
 | discovery | `discovery`, :29-32, chạy ở :62 | có, 2 bản | không có | route được phục vụ: `apps/web/lib/request-policy.ts:32-39` |
 | worker | `worker`, :64-67 | có, 1 bản | có, 1 bản | không HTTP (`infra/entrypoint.sh:4`) |
 | migrate, job PRE_DEPLOY một lần | `migrate`, :78-85 | có | có | chỉ đọc `DATABASE_URL_MIGRATION` (:80); E4 |
-| provision, job một lần | `provision`, :68-77 | vị trí trong thứ tự deploy do L63 và L67 chốt (E:425-430, D-4) | như staging | cũng đọc `DATABASE_URL_MIGRATION` (`apps/bot/src/provision-queue.ts:63`); E4 |
+| provision, chạy trong job migrate PRE_DEPLOY | `migrate`, :78-85: chạy sau migration, cùng shell; role `provision` (:68-77) không đổi | có, trong job migrate, sau migration (thứ tự "Required CI order" của `docs/standards/environments-setup.md`; RO-L67-2; D-4) | như staging | cùng `DATABASE_URL_MIGRATION` của job migrate (`apps/bot/src/provision-queue.ts:63`); migration lỗi thì provision không chạy, bước nào lỗi cũng làm job fail và chặn deploy; E4 |
 
 ## E3. Biến runtime: web, discovery, worker
 
