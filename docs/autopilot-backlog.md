@@ -5859,7 +5859,8 @@ notes: |
 
 ## task: request-id-log-context-auth-onboarding
 title: Gắn request id + tenant id vào log cho route auth và onboarding (hiện chỉ có ở `handleSessionCommand`)
-status: planned
+status: merged
+note_merged: auto-reconciled — slice-unique merged_probe matched origin/main (2026-10-30). Was: planned
 risk: P2
 change_class: code
 depends_on: []
@@ -8050,3 +8051,21 @@ notes: |
   Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (F = docs/runbooks/failover-drill.md, P = docs/runbooks/pitr-restore-drill.md). F:97-99, F:127, P:138 and P:168 pass a connection URL variable as a psql argument (F:127 `psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION"`), and P:28, P:29, P:31, P:140 and P:153 pass the same admin URL variables to pg_dump, pg_dumpall and pg_restore: the shell expands the URL, password included, into the process arguments, which other processes on the owner's machine can read through `ps` while that process runs.
   Fix: the form the outbox runbook's section 6 uses since lane L71 (docs/runbooks/outbox-dispatch-enable-rollback.md): each password only in a libpq password file named through PGPASSFILE (one `hostname:port:database:username:password` line per connection, written with an editor from the provider's connection fields by name, mode 0600), each URL variable on the owner's machine without its password, never PGPASSWORD. Official sources, read 2026-10-29: https://www.postgresql.org/docs/current/libpq-pgpass.html#LIBPQ-PGPASS ("If the permissions are less strict than this, the file will be ignored.") and https://www.postgresql.org/docs/current/libpq-envars.html#LIBPQ-ENVARS ("some operating systems allow non-root users to see process environment variables via ps; instead consider using a password file").
   Source: lane L71 (p5-runbook-outbox-staging-prod), review round 1 (reviewer R1, finding F1) and conductor ruling RO-L71-3 item 1; F was merged in PR 140; F and P are not edited by L71 (conductor ruling RO-L71-2 item 1a).
+
+## task: p5-signin-return-to-session-link
+title: Google sign-in started from a session page always lands on `/`, never back on that session, so a player must re-open the session link to join
+status: idea
+risk: P1
+change_class: code
+depends_on: []
+invariants: []
+scope: [apps/web/app/api/auth/google/state/route.ts, apps/web/app/api/auth/google/callback/route.ts, apps/web/app/api/auth/google/complete/route.ts, apps/web/components/sessions/join-panel.tsx, apps/web/components/landing/workspace-redirect.tsx]
+manifest: null
+merged_probe: apps/web/app/api/auth/google/complete/route.ts :: signInReturnPath
+notes: |
+  Line numbers at e827a97b7225f9847bc69326cbdf40ee916eedf5.
+  A signed-out visitor of a session page gets one button that links to `/` (apps/web/components/sessions/join-panel.tsx:66, "Sign in to join.", the English side of its t() pair). The Google sign-in completion route always ends with a redirect to `${baseUrl}/` (apps/web/app/api/auth/google/complete/route.ts:141), and `/` then routes a signed-in account by its tenant count (apps/web/components/landing/workspace-redirect.tsx:21-27: none to `/onboarding/new-club`, one to `/c/<tenantId>`). Nothing carries the session link through sign-in, so a new player is shown the create-club form instead of the session.
+  The pilot host guide added by lane L76 (docs/runbooks/pilot-club-host-onboarding.md) states this as a limitation and tells the host to ask players to re-open the session link after signing in.
+  Fix: carry a return path through the Google sign-in flow and redirect to it on completion, accepting only a same-origin relative path and failing closed to `/` on anything else. The implementing lane re-derives the risk at intake, because the change edits auth routes.
+  Source: lane L76 (p5-pilot-host-guide), step 0 (continuation reader S0b, backlog candidate 1), ruling (b) of the P5-S8a orchestrator.
+  Risk P1, not P2: the return path is input to the sign-in flow (the open-redirect class), so a slice must accept only a same-origin relative path. Status idea: its scope and invariants are not chosen yet. Both set in review round 1 (R1-13).
