@@ -1,0 +1,301 @@
+# Plexco STAGING: DigitalOcean App Platform spec (DD-04; docs/standards/environments-setup.md).
+# PREPARED, NOT APPLIED: the owner applies it.
+# Shape-4 window topology, a default pending the owner's sign-off: web x2, discovery x2, worker x1,
+# and a PRE_DEPLOY migrate job.
+# Placeholders __IMAGE_DIGEST__, __VPC_ID__ and __APP_DOMAIN__ are filled at deploy time by
+# infra/render-app-spec.sh (fed the JSON form of this file); a token left unfilled fails the render.
+# Every SECRET is a NAME only: the owner enters its value in DigitalOcean; the renderer copies the
+# encrypted value from the live app and refuses a committed SECRET that carries a value.
+# Private DB path (DD-04 section 7.1, never disabled): app-level vpc, no egress block, no databases
+# component; every DB URL is a component SECRET whose owner-entered value names the private host.
+#
+# Gates and owner steps still open:
+# - Fixed outbound IP: closed for the VPC path (DD-155, DD-156); a written Zalo Bot Platform answer
+#   requiring a fixed or registered source IP reopens it (fallback Fly + DO, DD-04 section 7.1).
+# - /api/discover*: no process serving it is exposed beyond local until the durable DB limiter is in
+#   place (DD-154 (g)): migration packages/db/migrations/0075_discovery_rate_limit_definer.sql.
+# - DB TLS CA verification OPEN: docs/autopilot-backlog.md row db-tls-ca-verification-do-managed-pg
+# - DB trusted sources: only the app's VPC egress private IP, an owner step in DigitalOcean.
+# - "false" until an owner step: GENDER_COLLECTION_ENABLED (legal answer on collecting gender),
+#   OUTBOX_DISPATCH_SCHEDULE_ENABLED, CSP_SCRIPT_NONCE_ENABLED (real next start, 0 CSP violations).
+# - KMS_ENCRYPTED_CONNECTOR_PEPPER: settled before the first real club connects (DD-122 O4).
+# - Not done: DigitalOcean resources, DNS and HTTPS, the four DB roles and their URLs, every SECRET
+#   value, doctl apps spec validate, and the owner's sign-off of every default applied here (web
+#   pool in session mode, AWS keys as component envs, the migration credential on the job, DD-129).
+# - Teardown is manual until docs/autopilot-backlog.md row staging-ttl-teardown-automation lands.
+name: plexco-staging
+region: sgp
+
+vpc:
+  id: __VPC_ID__
+
+# The staging host: a subdomain of plexco.app whose first label starts with staging, as
+# apps/web/e2e/support/staging-golden-path-guard.ts expects.
+domains:
+  - domain: __APP_DOMAIN__
+    type: PRIMARY
+
+# One public hostname: the discovery pages and API go to discovery, every other path to web. Every
+# rule keeps the full request path (preserve_path_prefix: true): by default a rule trims its matched
+# prefix, and rewrite is mutually exclusive with the key.
+ingress:
+  rules:
+    - match:
+        path:
+          prefix: /discover
+      component:
+        name: discovery
+        preserve_path_prefix: true
+    - match:
+        path:
+          prefix: /api/discover
+      component:
+        name: discovery
+        preserve_path_prefix: true
+    - match:
+        path:
+          prefix: /
+      component:
+        name: web
+        preserve_path_prefix: true
+
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+# Runs the database migrations with the new image. kind is written explicitly: an unspecified kind
+# defaults to POST_DEPLOY. The migration credential exists on this job only: the renderer refuses it
+# on any other component.
+jobs:
+  - name: migrate
+    kind: PRE_DEPLOY
+    image:
+      registry_type: DOCR
+      repository: plexco
+      digest: __IMAGE_DIGEST__
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 1
+    envs:
+      - key: PROCESS_ROLE
+        scope: RUN_TIME
+        type: GENERAL
+        value: "migrate"
+      - key: DATABASE_URL_MIGRATION # role migration
+        scope: RUN_TIME
+        type: SECRET
+
+services:
+  - name: web
+    image:
+      registry_type: DOCR
+      repository: plexco
+      digest: __IMAGE_DIGEST__
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 2
+    http_port: 3000
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 20
+      period_seconds: 10
+      timeout_seconds: 3
+      failure_threshold: 6
+    alerts:
+      - rule: CPU_UTILIZATION
+        operator: GREATER_THAN
+        value: 80
+        window: FIVE_MINUTES
+      - rule: MEM_UTILIZATION
+        operator: GREATER_THAN
+        value: 85
+        window: FIVE_MINUTES
+      - rule: RESTART_COUNT
+        operator: GREATER_THAN
+        value: 2
+        window: FIVE_MINUTES
+    envs:
+      - key: PROCESS_ROLE
+        scope: RUN_TIME
+        type: GENERAL
+        value: "web"
+      - key: TRUSTED_INGRESS_PROVIDER
+        scope: RUN_TIME
+        type: GENERAL
+        value: "digitalocean"
+      - key: APP_BASE_URL
+        scope: RUN_TIME
+        type: GENERAL
+        value: "https://__APP_DOMAIN__"
+      - key: CSP_SCRIPT_NONCE_ENABLED
+        scope: RUN_TIME
+        type: GENERAL
+        value: "false"
+      - key: DB_EXPECTED_ROLE
+        scope: RUN_TIME
+        type: GENERAL
+        value: "app"
+      - key: GENDER_COLLECTION_ENABLED
+        scope: RUN_TIME
+        type: GENERAL
+        value: "false"
+      - key: KMS_PROVIDER
+        scope: RUN_TIME
+        type: GENERAL
+        value: "aws-kms"
+      - key: AWS_REGION
+        scope: RUN_TIME
+        type: GENERAL
+        value: "ap-southeast-1"
+      - key: DATABASE_URL # role app, session-mode pool
+        scope: RUN_TIME
+        type: SECRET
+      - key: DISCOVERY_DATABASE_URL # role readonly
+        scope: RUN_TIME
+        type: SECRET
+      # One value for every process serving discovery: web and discovery.
+      - key: DISCOVERY_CURSOR_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      # One value for web and worker.
+      - key: KMS_KEY_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: AWS_ACCESS_KEY_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: AWS_SECRET_ACCESS_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: KMS_ENCRYPTED_AUTH_PEPPER
+        scope: RUN_TIME
+        type: SECRET
+      # One value for web and worker.
+      - key: KMS_ENCRYPTED_CONNECTOR_PEPPER
+        scope: RUN_TIME
+        type: SECRET
+      - key: LINK_CODE_LOOKUP_HMAC_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+  # Staging only: production serves the discovery surface from web. Discovery reads
+  # DISCOVERY_DATABASE_URL only, never DATABASE_URL.
+  - name: discovery
+    image:
+      registry_type: DOCR
+      repository: plexco
+      digest: __IMAGE_DIGEST__
+    instance_size_slug: apps-s-1vcpu-1gb
+    instance_count: 2
+    http_port: 3000
+    health_check:
+      http_path: /healthz
+      initial_delay_seconds: 20
+      period_seconds: 10
+      timeout_seconds: 3
+      failure_threshold: 6
+    alerts:
+      - rule: CPU_UTILIZATION
+        operator: GREATER_THAN
+        value: 80
+        window: FIVE_MINUTES
+      - rule: MEM_UTILIZATION
+        operator: GREATER_THAN
+        value: 85
+        window: FIVE_MINUTES
+      - rule: RESTART_COUNT
+        operator: GREATER_THAN
+        value: 2
+        window: FIVE_MINUTES
+    envs:
+      - key: PROCESS_ROLE
+        scope: RUN_TIME
+        type: GENERAL
+        value: "discovery"
+      - key: TRUSTED_INGRESS_PROVIDER
+        scope: RUN_TIME
+        type: GENERAL
+        value: "digitalocean"
+      - key: CSP_SCRIPT_NONCE_ENABLED
+        scope: RUN_TIME
+        type: GENERAL
+        value: "false"
+      - key: DB_EXPECTED_ROLE
+        scope: RUN_TIME
+        type: GENERAL
+        value: "readonly"
+      - key: DISCOVERY_DATABASE_URL # role readonly
+        scope: RUN_TIME
+        type: SECRET
+      # Same value as on web.
+      - key: DISCOVERY_CURSOR_KEY
+        scope: RUN_TIME
+        type: SECRET
+
+# No health-check key: App Platform has no readiness check for workers, and a liveness check needs a
+# listening port, while the worker has no HTTP listener.
+workers:
+  - name: worker
+    image:
+      registry_type: DOCR
+      repository: plexco
+      digest: __IMAGE_DIGEST__
+    instance_size_slug: apps-s-1vcpu-1gb-fixed
+    instance_count: 1
+    alerts:
+      - rule: CPU_UTILIZATION
+        operator: GREATER_THAN
+        value: 80
+        window: FIVE_MINUTES
+      - rule: MEM_UTILIZATION
+        operator: GREATER_THAN
+        value: 85
+        window: FIVE_MINUTES
+      - rule: RESTART_COUNT
+        operator: GREATER_THAN
+        value: 2
+        window: FIVE_MINUTES
+    envs:
+      - key: PROCESS_ROLE
+        scope: RUN_TIME
+        type: GENERAL
+        value: "worker"
+      - key: APP_BASE_URL
+        scope: RUN_TIME
+        type: GENERAL
+        value: "https://__APP_DOMAIN__"
+      - key: KMS_PROVIDER
+        scope: RUN_TIME
+        type: GENERAL
+        value: "aws-kms"
+      - key: AWS_REGION
+        scope: RUN_TIME
+        type: GENERAL
+        value: "ap-southeast-1"
+      # Only "true" enables the schedule; enabling it is the owner's P0 step in
+      # docs/runbooks/outbox-dispatch-enable-rollback.md.
+      - key: OUTBOX_DISPATCH_SCHEDULE_ENABLED
+        scope: RUN_TIME
+        type: GENERAL
+        value: "false"
+      - key: DATABASE_URL_DIRECT # role app_worker
+        scope: RUN_TIME
+        type: SECRET
+      # Same value as on web.
+      - key: KMS_KEY_ID
+        scope: RUN_TIME
+        type: SECRET
+      # Same value as on web.
+      - key: KMS_ENCRYPTED_CONNECTOR_PEPPER
+        scope: RUN_TIME
+        type: SECRET
+      - key: AWS_ACCESS_KEY_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: AWS_SECRET_ACCESS_KEY
+        scope: RUN_TIME
+        type: SECRET
