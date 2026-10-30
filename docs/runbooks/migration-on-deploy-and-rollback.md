@@ -9,7 +9,7 @@
 - **Nhãn:** UNPINNED = dạng chính thức của bước chưa được trích ở F1-F6, kèm phép kiểm của nó (tiền lệ O:196). Tên file này và việc đưa PLAN §10 mục 8 vào §2 là default của lane: "default applied, pending owner sign-off".
 - **Viết tắt:** WS = `.github/workflows/deploy-staging.yml`, WP = `.github/workflows/deploy-production.yml`, EP = `infra/entrypoint.sh`, M = `docs/runbooks/env-manifest-staging-production.md`, E = `docs/standards/environments-setup.md`, PLAN = `docs/sessions/web-mvp-phase5-golive-plan.md`, O = `docs/runbooks/outbox-dispatch-enable-rollback.md`. Form go/no-go: docs/runbooks/go-no-go-template.md (cùng thư mục). F1-F6 = trang chính thức đọc ngày 2026-10-30, trích nguyên văn ở `docs/sessions/web-mvp-phase5-readiness-p5-runbook-deploy-migration-rollback.md` §2.
 
-## 1. Job migrate (PRE_DEPLOY)
+## 1. Job migrate (`PRE_DEPLOY`)
 
 - **Job làm gì:** nhánh `migrate` của EP (EP:78-85) chạy hai lệnh trong một shell: SQL migration (`packages/db/src/migrate.ts`), rồi `provision:queue` (`apps/bot/src/provision-queue.ts`). Lệnh đầu không có `exec`: dưới `set -eu`, nó lỗi thì job thoát ngay, trước provision (EP:80-81). Cả hai chỉ đọc `DATABASE_URL_MIGRATION` và từ chối giá trị rỗng (EP:80); migration lỗi thì provision không chạy, bước nào lỗi cũng làm job fail và chặn deploy (M:24).
 - **Credential:** `DATABASE_URL_MIGRATION` chỉ nằm trên job `migrate`, không bao giờ trên component runtime (W, D, K của M; M:71, M:75, M:102); renderer từ chối render khi tên này nằm ngoài job `PRE_DEPLOY` (M:71). Giá trị do owner nhập, role `migration` (M:75); runbook không ghi giá trị.
@@ -26,4 +26,38 @@ doctl apps logs <app id> migrate --job-invocation <job invocation id>
 
 ## 2. Chuẩn bị role một lần
 
+Mỗi cluster làm một lần, trước deploy đầu tiên lên cluster đó; mọi bước là của owner (O:184 và O:186 chuyển owner về đây cho phần setup role). Kết nối theo dạng credential của O §6 (O:161-172): URL không mang password trong `DATABASE_URL_MIGRATION` (khối `read -rs`), password chỉ trong password file; không bao giờ dán URL có password vào dòng lệnh.
+
+- **(1) [Owner] Bốn user DB** (bước 8.5, PLAN:201; M:16): `migration` trước, vì bootstrap ở (2) cấp `job_definer` cho role mang tên `MIGRATION_ROLE` (O:184); rồi `app`, `app_worker`, `readonly`; cả bốn trước lần chạy đầu của job `migrate`. Thứ tự này theo phép kiểm của `packages/db/src/migrate.ts:252-282`: trước khi 0000 chạy, nó đọc `pg_roles` và chỉ tạo runtime role nào còn thiếu (`RUNTIME_ROLES`), vì cluster có thể đã tạo sẵn chúng trong khi DDL owner (`DATABASE_URL_MIGRATION`) là `NOCREATEROLE`; khi đó role còn thiếu không tạo được, job fail và deploy bị chặn. UNPINNED: dạng chính thức để tạo user DB trên DigitalOcean chưa được trích ở F1-F6; kiểm: (4) thấy `migration`, và lần chạy đầu của job `migrate` pass theo §1.
+- **(2) [Owner] Bootstrap** (O:186; `package.json:26`): qua kết nối admin theo dạng O §6: URL admin không mang password vào `DATABASE_URL_MIGRATION` bằng khối `read -rs`, password admin là một dòng riêng trong password file. Đặt `MIGRATION_ROLE` bằng tên role migration (`migration`, M:75); tên chỉ gồm chữ, số, gạch dưới, sai thì lệnh dừng (`package.json:26`). Lệnh chạy ba file `infra/postgres-init/01-job-definer.sql`, `infra/postgres-init/02-chat-definer.sql`, `infra/postgres-init/03-identity-definer.sql`. Kỳ vọng: lock toàn cluster báo cảnh báo, không phải lỗi (3a); không sửa bằng cách cấp thêm quyền (O:186). Xong: xoá dòng admin khỏi password file, nhập lại `DATABASE_URL_MIGRATION` bằng URL của `migration` (không mang password), rồi chạy (4) (O:186).
+
+```bash
+# [Owner] once per cluster; the admin URL without password is already read into DATABASE_URL_MIGRATION (O section 6 form)
+MIGRATION_ROLE=<migration role name> pnpm db:bootstrap
+```
+
+- **(3) [Owner] DEPLOYMENT INPUTS** (PLAN §10 mục 8, PLAN:283; `docs/autopilot-backlog.md:897-921`): DO Managed PostgreSQL không cấp superuser, `doadmin` chỉ có `CREATEROLE` (:897). Owner kiểm từng mục:
+  - **(3a)** `LOCK TABLE pg_auth_members` lỗi `insufficient_privilege` (:902), nên lock toàn cluster của bootstrap thành `RAISE WARNING` theo thiết kế (:904); kiểm: output của (2) có cảnh báo đó và không có lỗi; không "sửa" bằng cách cấp thêm quyền (:907).
+  - **(3b)** `GRANT USAGE ON SCHEMA public TO job_definer` của bootstrap lặng lẽ không làm gì: in `WARNING: no privileges were granted for "public"` mà transaction vẫn commit (:908-910), nên `job_definer` thiếu `USAGE` trên `public` và chỉ lộ ra khi migration đầu tiên lỗi quyền (:913-914). Owner cấp MỘT lần, ngoài bootstrap (phương án 1, :915-916), bằng khối dưới. UNPINNED: role nào cấp được (dưới role của bootstrap thì no-op, :908) chưa được nêu ở các dòng backlog này; kiểm: lệnh không in cảnh báo trên, và giá trị thứ ba của (4) là `t`.
+  - **(3c)** PostgreSQL 16 tự cấp cho người giữ `CREATEROLE` membership trong role nó tạo (:919-921): không giả định role provisioning không có membership trong role nó tạo.
+
+```sql
+-- [Owner] once per cluster, after (2); the connecting role is UNPINNED (see 3b)
+GRANT USAGE ON SCHEMA public TO job_definer;
+```
+
+- **(4) [Owner] Kiểm role** (O:180-184, chỉ đọc), kết nối bằng URL của `migration`:
+
+```bash
+# [Owner] read-only role check, verbatim from O:181
+psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION" -c "SHOW server_version" -c "SELECT current_user, pg_has_role(current_user, 'job_definer', 'MEMBER'), has_schema_privilege('job_definer', 'public', 'USAGE')" -c "SET ROLE job_definer" -c "SELECT current_user" -c "RESET ROLE"
+```
+
+Ghi lại `server_version`; phải thấy `migration`, `t`, `t`, rồi `job_definer` sau `SET ROLE` (O:184); giá trị thứ ba (`has_schema_privilege`) là `t` chứng minh grant `USAGE` của (3b). Kết quả nào khác: dừng, không deploy. Bằng chứng: output này, ghi vào docs/runbooks/go-no-go-template.md §4.
+
 ## 3. Migration lỗi, schema chỉ tiến
+
+- **Khi job `migrate` lỗi:** "the new deployment does not become active", nên lần chạy không qua bước `4. Wait for the deployment carrying this digest to be ACTIVE` (WS:142).
+- **Schema chỉ tiến:** không có down-migration; schema giữ ở phiên bản mới hơn, nên rollback app chỉ an toàn qua migration expand-only (WS:166-167).
+- **[Owner] Sửa:** bản sửa đi bằng một commit mới, deploy qua `docs/runbooks/staging-deploy.md` §4; không sửa schema bằng tay, không chạy migration ngoài job `migrate` (đường migration duy nhất, WS:20-26).
+- **[Owner] Bằng chứng:** hai dòng của §1 trong log job `migrate` của lần chạy chứa bản sửa, rồi bước 4 xanh.
