@@ -1,0 +1,233 @@
+name: Deploy staging
+
+# Builds ONE immutable image, pushes it to DOCR, reconciles the staging App Spec (its PRE_DEPLOY
+# `migrate` job migrates inside the VPC), waits for the deployment carrying that digest and smokes
+# the deployed origin. A dispatch with `rollback_deployment_id` runs the `rollback` job instead.
+# docs/standards/environments-setup.md §6 is the contract.
+#
+# PREPARED, NOT RUN: the owner sets up the `staging` environment and its protection, enters every
+# secret and variable value and presses workflow_dispatch (go-live plan steps 8.5 and 8.6).
+#
+# TRIGGER POLICY: manual only (no push/tag trigger). Staging is EPHEMERAL (48-96h TTL, §9); an
+# automatic deploy would keep a production-shaped environment and its bill alive by accident.
+# `environment: staging` carries required reviewers, so every run needs one owner approval.
+# DISPATCH THE WORKFLOW FROM THE COMMIT YOU WANT TO DEPLOY (branch/tag picker in the Run workflow
+# dialog): the build uses github.sha, so the run's head_sha IS the built SHA and production can
+# verify "this SHA passed staging" from the run alone.
+# ONE deploy job on purpose: GitHub asks for approval per job that names a protected environment,
+# and the digest/evidence flow between steps without artifact hand-offs.
+#
+# MIGRATION PATH (the one canonical choice): the App Spec's PRE_DEPLOY `migrate` job, not a CI-runner
+# step. The managed DB only trusts the app's private VPC identity (§2); GitHub-hosted runners have no
+# stable address, so a runner-side migration would force a public DB path or a standing IP allowlist.
+# DATABASE_URL_MIGRATION therefore lives as a secret on that one DO job component only - never in
+# GitHub, never on a runtime component. Queue provisioning runs in that same job after the
+# migrations: lane L82 changes the image entrypoint for it and must merge before the first real
+# dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_deployment_id:
+        description: "Rollback only: the id of a recent successful deployment. Empty: deploy this commit."
+        required: false
+        type: string
+      confirm:
+        description: "Rollback only: the same deployment id, typed again."
+        required: false
+        type: string
+
+permissions: {}
+
+# bash with -o pipefail: a failing `yq`/`doctl` at the head of a pipe must fail the step.
+defaults:
+  run:
+    shell: bash
+
+# Two runs (deploy or rollback) must never race on the same app; queue instead of cancelling one in
+# flight.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: plexco
+
+jobs:
+  staging:
+    if: inputs.rollback_deployment_id == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    environment: staging
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)
+        with:
+          persist-credentials: false
+
+      - name: Resolve commit
+        run: echo "SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Require green CI on this exact commit
+        # Required flow (§6): PR gates run BEFORE the image is built. Only a commit whose `verify`
+        # and `e2e-web` jobs already passed can reach staging; a missing run reads null and fails.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for job in verify e2e-web; do
+            conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${SHA}/check-runs?per_page=100" \
+              --jq "[.check_runs[] | select(.name == \"${job}\")] | sort_by(.completed_at) | last | .conclusion")"
+            echo "${job} conclusion for ${SHA}: ${conclusion}"
+            [ "${conclusion}" = "success" ] || { echo "::error::no successful '${job}' run on ${SHA}"; exit 1; }
+          done
+
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Log in to DOCR (short-lived)
+        run: doctl registry login --expiry-seconds 3600
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: 1. Build and push the image once (tag = git SHA; the DIGEST is what gets deployed)
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/Dockerfile
+          push: true
+          tags: registry.digitalocean.com/${{ vars.DOCR_REGISTRY }}/${{ env.IMAGE_REPOSITORY }}:${{ env.SHA }}
+
+      - name: Record deployment evidence
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          REF: ${{ github.ref_name }}
+        run: |
+          echo "DIGEST=${DIGEST}" >> "$GITHUB_ENV"
+          jq -n --arg env staging --arg sha "$SHA" --arg digest "$DIGEST" --arg ref "$REF" \
+            --arg repo "$IMAGE_REPOSITORY" \
+            --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg actor "$GITHUB_ACTOR" --arg at "$(date -u +%FT%TZ)" \
+            '{environment:$env, git_sha:$sha, requested_ref:$ref, image_repository:$repo, image_tag:$sha, image_digest:$digest, built_at:$at, run_url:$run, triggered_by:$actor}' \
+            > deployment-evidence.json
+          cat deployment-evidence.json
+
+      - name: 2. Render the spec (committed spec + live secrets + this digest)
+        env:
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
+          VPC_ID: ${{ vars.DO_VPC_ID }}
+          APP_ID: ${{ vars.DO_APP_ID }}
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          # The staging host is a plexco.app subdomain whose first label starts with staging
+          # (infra/app.staging.yaml); any other domain, the production one included, stops here.
+          [[ "$APP_DOMAIN" =~ ^staging[a-z0-9-]*\.plexco\.app$ ]] || { echo "::error::APP_DOMAIN is not a staging*.plexco.app host"; exit 1; }
+          doctl apps spec get "$APP_ID" --format json > live-spec.json
+          yq -o=json infra/app.staging.yaml | infra/render-app-spec.sh live-spec.json > rendered-spec.json
+          # Never print the rendered spec: it holds encrypted EV[...] secret values.
+          jq '{name, region, components: [(.services, .workers, .jobs)[] | {name, digest: .image.digest}]}' rendered-spec.json
+
+      - name: 3. Reconcile the app (creates the deployment; the PRE_DEPLOY migrate job runs first)
+        env:
+          APP_ID: ${{ vars.DO_APP_ID }}
+        run: doctl apps update "$APP_ID" --spec rendered-spec.json
+
+      - name: 4. Wait for the deployment carrying this digest to be ACTIVE
+        env:
+          APP_ID: ${{ vars.DO_APP_ID }}
+        run: infra/wait-for-deployment.sh "$APP_ID" "$DIGEST" 1500
+
+      - name: 5. Smoke (/healthz, landing, manifest)
+        # Runner node only: scripts/smoke-predeploy.mjs imports nothing. A smoke of another origin
+        # would read green, so the base URL's host must be APP_DOMAIN.
+        env:
+          STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          host="${STAGING_BASE_URL#https://}"; [ "${host%%/*}" = "$APP_DOMAIN" ] || { echo "::error::the STAGING_BASE_URL host is not APP_DOMAIN"; exit 1; }
+          infra/smoke-check.sh "$STAGING_BASE_URL"
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0 (commit SHA verified vs tag via GitHub API 2026-10-13)
+        if: always()
+        with:
+          name: deployment-evidence-staging
+          path: deployment-evidence.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+  # Rollback: restores one of the app's ten most recent successful deployments through the documented
+  # API (doctl has no rollback subcommand). App-only: the schema stays at the newer version (there is
+  # no down-migration), so it is safe only across expand-only migrations; database data comes back
+  # only from a Managed Databases backup. Fallback: the Control Panel rollback (Activity tab).
+  rollback:
+    if: inputs.rollback_deployment_id != ''
+    runs-on: ubuntu-24.04
+    environment: staging
+    permissions:
+      contents: read
+    env:
+      DEPLOYMENT_ID: ${{ inputs.rollback_deployment_id }}
+      APP_ID: ${{ vars.DO_APP_ID }}
+    steps:
+      - name: R1. Refuse unless the target is an explicit deployment id, typed twice
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          [[ "$DEPLOYMENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "::error::rollback_deployment_id is not a deployment id"; exit 1; }
+          [ "$CONFIRM" = "$DEPLOYMENT_ID" ] || { echo "::error::confirm must equal rollback_deployment_id exactly"; exit 1; }
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)
+        with:
+          persist-credentials: false
+
+      - uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: R4. Check the target (exactly one deployment, not the active one, a web image digest)
+        # jq reads through pipes: the app and deployment JSON carry their spec and are never printed.
+        run: |
+          active="$(doctl apps get "$APP_ID" -o json | jq -r '.[0].active_deployment.id // empty')"
+          [ -n "$active" ] || { echo "::error::app field .[0].active_deployment.id missing"; exit 1; }
+          digest="$(doctl apps get-deployment "$APP_ID" "$DEPLOYMENT_ID" -o json | jq -r --arg active "$active" \
+            'if length == 1 and .[0].id != $active then first(.[0].spec.services[]? | select(.name == "web") | .image.digest) // empty else empty end')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::the target is not one inactive deployment with a web image digest"; exit 1; }
+          echo "TARGET_DIGEST=${digest}" >> "$GITHUB_ENV"
+
+      - name: R5. Roll back through the documented API (skip_pin, so later deploys are not blocked)
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: |
+          jq -n --arg id "$DEPLOYMENT_ID" '{deployment_id: $id, skip_pin: true}' \
+            | curl -fsS -o /dev/null -X POST "https://api.digitalocean.com/v2/apps/${APP_ID}/rollback" \
+              -H "Authorization: Bearer ${DIGITALOCEAN_ACCESS_TOKEN}" -H "Content-Type: application/json" --data-binary @-
+
+      - name: R6. Wait for the rollback deployment to be ACTIVE
+        run: infra/wait-for-deployment.sh "$APP_ID" "$TARGET_DIGEST" 1500
+
+      - name: R7. Smoke (/healthz, landing, manifest)
+        env:
+          STAGING_BASE_URL: ${{ vars.STAGING_BASE_URL }}
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+        run: |
+          host="${STAGING_BASE_URL#https://}"; [ "${host%%/*}" = "$APP_DOMAIN" ] || { echo "::error::the STAGING_BASE_URL host is not APP_DOMAIN"; exit 1; }
+          infra/smoke-check.sh "$STAGING_BASE_URL"
+
+      - name: R8. Record rollback evidence
+        if: always()
+        run: |
+          jq -n --arg env staging --arg id "$DEPLOYMENT_ID" --arg digest "${TARGET_DIGEST:-}" \
+            --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg actor "$GITHUB_ACTOR" --arg at "$(date -u +%FT%TZ)" \
+            '{environment:$env, action:"rollback", target_deployment_id:$id, image_digest:$digest, run_url:$run, triggered_by:$actor, at:$at}' \
+            > rollback-evidence.json
+          cat rollback-evidence.json
+
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0 (commit SHA verified vs tag via GitHub API 2026-10-13)
+        if: always()
+        with:
+          name: rollback-evidence-staging
+          path: rollback-evidence.json
