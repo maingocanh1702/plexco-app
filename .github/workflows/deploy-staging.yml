@@ -165,6 +165,7 @@ jobs:
   rollback:
     if: inputs.rollback_deployment_id != ''
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     environment: staging
     permissions:
       contents: read
@@ -187,10 +188,16 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
-      - name: R4. Check the target (exactly one deployment, not the active one, a web image digest)
-        # jq reads through pipes: the app and deployment JSON carry their spec and are never printed.
+      - name: R4. Check the target (this environment's app, exactly one deployment, not the active one, a web image digest)
+        # jq reads through pipes or a here-string: the app and deployment JSON carry their spec and
+        # are never printed. As the deploy job's render step does, refuse a live app whose spec name
+        # is not the committed one: a DO_APP_ID naming the other environment's app stops here.
         run: |
-          active="$(doctl apps get "$APP_ID" -o json | jq -r '.[0].active_deployment.id // empty')"
+          app="$(doctl apps get "$APP_ID" -o json)"
+          want="$(yq -o=json infra/app.staging.yaml | jq -r '.name // empty')"
+          have="$(jq -r '.[0].spec.name // empty' <<< "$app")"
+          [ -n "$want" ] && [ "$have" = "$want" ] || { echo "::error::DO_APP_ID is not the app named in infra/app.staging.yaml"; exit 1; }
+          active="$(jq -r '.[0].active_deployment.id // empty' <<< "$app")"
           [ -n "$active" ] || { echo "::error::app field .[0].active_deployment.id missing"; exit 1; }
           digest="$(doctl apps get-deployment "$APP_ID" "$DEPLOYMENT_ID" -o json | jq -r --arg active "$active" \
             'if length == 1 and .[0].id != $active then first(.[0].spec.services[]? | select(.name == "web") | .image.digest) // empty else empty end')"
@@ -218,11 +225,14 @@ jobs:
 
       - name: R8. Record rollback evidence
         if: always()
+        # outcome is the job status when R8 starts: success only if every earlier step passed.
+        env:
+          JOB_STATUS: ${{ job.status }}
         run: |
-          jq -n --arg env staging --arg id "$DEPLOYMENT_ID" --arg digest "${TARGET_DIGEST:-}" \
+          jq -n --arg env staging --arg id "$DEPLOYMENT_ID" --arg digest "${TARGET_DIGEST:-}" --arg outcome "$JOB_STATUS" \
             --arg run "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg actor "$GITHUB_ACTOR" --arg at "$(date -u +%FT%TZ)" \
-            '{environment:$env, action:"rollback", target_deployment_id:$id, image_digest:$digest, run_url:$run, triggered_by:$actor, at:$at}' \
+            '{environment:$env, action:"rollback", outcome:$outcome, target_deployment_id:$id, image_digest:$digest, run_url:$run, triggered_by:$actor, at:$at}' \
             > rollback-evidence.json
           cat rollback-evidence.json
 
@@ -231,3 +241,4 @@ jobs:
         with:
           name: rollback-evidence-staging
           path: rollback-evidence.json
+          retention-days: 90
