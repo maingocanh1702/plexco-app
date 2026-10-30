@@ -415,13 +415,9 @@ pull request
   → verify running digest + health + money smoke
 ```
 
-App creation/update is automated from reviewed specs:
-
-```bash
-# First create; use `doctl apps update` for later reconciliations.
-doctl apps create --spec infra/app.staging.yaml
-doctl apps create --spec infra/app.prod.yaml
-```
+The committed specs carry placeholders (`__IMAGE_DIGEST__`, `__VPC_ID__`, `__APP_DOMAIN__`) that
+`infra/render-app-spec.sh` fills from a live app, so the first creation of each app is the owner-only sequence
+of `docs/runbooks/staging-deploy.md` §2.5; later reconciliations are `doctl apps update` in the deploy workflows.
 
 The CI workflow supplies the immutable release value to both specs. Do not rebuild for production and do not
 promote a mutable tag.
