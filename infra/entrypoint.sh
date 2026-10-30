@@ -76,12 +76,12 @@ case "$ROLE" in
     exec pnpm --filter @plexco/bot provision:queue
     ;;
   migrate)
-    # One-shot SQL migrations, step 2 of the required CI order in docs/standards/environments-setup.md
-    # (`provision` above is step 3). The runner reads only DATABASE_URL_MIGRATION and refuses an empty
-    # value itself. It runs through apps/bot because tsx is a production dependency there; the db
-    # package's own script needs a dev-only tsx that the pruned image does not carry. Without
-    # --fail-if-no-match a filter that matches nothing exits 0, and the deploy goes ahead on the old schema.
-    exec pnpm --filter @plexco/bot --fail-if-no-match exec tsx ../../packages/db/src/migrate.ts
+    # Steps 2 and 3 of the required CI order in docs/standards/environments-setup.md, in one shell: the SQL
+    # migrations, then the queues; both read only DATABASE_URL_MIGRATION and refuse an empty value. No exec
+    # on the runner: under set -eu its failure exits here, before provision. Through apps/bot: only its tsx
+    # is a prod dependency (db's is dev-only, pruned). A filter matching nothing exits 0 without the flag.
+    pnpm --filter @plexco/bot --fail-if-no-match exec tsx ../../packages/db/src/migrate.ts
+    exec pnpm --filter @plexco/bot --fail-if-no-match provision:queue
     ;;
   *)
     echo "[entrypoint] PROCESS_ROLE không hợp lệ: ${ROLE} (web|discovery|worker|provision|migrate)" >&2
