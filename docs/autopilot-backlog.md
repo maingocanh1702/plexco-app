@@ -8037,6 +8037,21 @@ notes: |
   Fix: `vi.mocked(provisionTenant).mockClear()` in that beforeEach (or `vi.clearAllMocks()` first, as the sibling onboarding test files do).
   Source: lane L68 (p5-log-correlation), review round 3 part 2 (reviewer R3b, out-of-scope note), routed to this row by the conductor (RO-L68-8 item 2).
 
+## task: p5-failover-drill-psql-url-in-argv
+title: failover-drill.md and pitr-restore-drill.md pass connection URLs, passwords included, as command arguments of psql, pg_dump, pg_dumpall and pg_restore
+status: idea
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/runbooks/failover-drill.md, docs/runbooks/pitr-restore-drill.md]
+manifest: null
+merged_probe: null
+notes: |
+  Line numbers at dc44cc55d8adbd586e6741f2d3f15d5423fc9c25 (F = docs/runbooks/failover-drill.md, P = docs/runbooks/pitr-restore-drill.md). F:97-99, F:127, P:138 and P:168 pass a connection URL variable as a psql argument (F:127 `psql -X -v ON_ERROR_STOP=1 "$DATABASE_URL_MIGRATION"`), and P:28, P:29, P:31, P:140 and P:153 pass the same admin URL variables to pg_dump, pg_dumpall and pg_restore: the shell expands the URL, password included, into the process arguments, which other processes on the owner's machine can read through `ps` while that process runs.
+  Fix: the form the outbox runbook's section 6 uses since lane L71 (docs/runbooks/outbox-dispatch-enable-rollback.md): each password only in a libpq password file named through PGPASSFILE (one `hostname:port:database:username:password` line per connection, written with an editor from the provider's connection fields by name, mode 0600), each URL variable on the owner's machine without its password, never PGPASSWORD. Official sources, read 2026-10-29: https://www.postgresql.org/docs/current/libpq-pgpass.html#LIBPQ-PGPASS ("If the permissions are less strict than this, the file will be ignored.") and https://www.postgresql.org/docs/current/libpq-envars.html#LIBPQ-ENVARS ("some operating systems allow non-root users to see process environment variables via ps; instead consider using a password file").
+  Source: lane L71 (p5-runbook-outbox-staging-prod), review round 1 (reviewer R1, finding F1) and conductor ruling RO-L71-3 item 1; F was merged in PR 140; F and P are not edited by L71 (conductor ruling RO-L71-2 item 1a).
+
 ## task: p5-signin-return-to-session-link
 title: Google sign-in started from a session page always lands on `/`, never back on that session, so a player must re-open the session link to join
 status: idea
