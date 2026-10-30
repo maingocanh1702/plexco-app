@@ -107,7 +107,7 @@ Three, all line ranges; none changes a decision:
 
 - `permissions: {}` at the top of both files; per job: staging deploy `contents: read`, `checks: read` (P50S :26-28, check-runs API); production deploy `contents: read`, `actions: read` (P50P :34-36, run API and artifact download); both rollback jobs `contents: read`.
 - `GH_TOKEN: ${{ github.token }}` only on the two `gh` steps (P50S :60, P50P :75). Every checkout `persist-credentials: false`.
-- `environment: staging` / `environment: production` on every job (deploy and rollback). The owner sets `DO_APP_ID`, `DO_VPC_ID`, `APP_DOMAIN` and the base URL as ENVIRONMENT variables and `DIGITALOCEAN_ACCESS_TOKEN` as an environment secret, per environment (owner steps 8.5, 8.6). A cross-environment mix-up fails closed twice: RS refuses a live app whose `.name` differs (RS :58) and the domain guards (4.1 #16, 4.2 #11) refuse the other domain.
+- `environment: staging` / `environment: production` on every job (deploy and rollback). The owner sets `DO_APP_ID`, `DO_VPC_ID`, `APP_DOMAIN` and the base URL as ENVIRONMENT variables and `DIGITALOCEAN_ACCESS_TOKEN` as an environment secret, per environment (owner steps 8.5, 8.6). A cross-environment mix-up fails closed twice: RS refuses a live app whose `.name` differs (RS :58) and the domain guards (4.1 #16, 4.2 #11) refuse the other domain; the rollback job's R4 refuses a live app whose spec name differs from the committed spec's (review fix RV1-1).
 - Concurrency: one group per workflow, `cancel-in-progress: false` (CI's `cancel-in-progress: true`, CI :20-22, is for CI only).
 - No secret in logs: no `set -x`; no `echo` of a secret; never print or upload `live-spec.json` or `rendered-spec.json` (P50S :109); RS prints names only (RS :22-24); curl output goes to `/dev/null`.
 - DigitalOcean token (the owner creates it), official (accessed 2026-10-30), https://docs.digitalocean.com/reference/api/reference/apps/: "Each endpoint below specifies which scope is required to access it when using custom scopes."; Retrieve an Existing App "Required scopes: app:read"; Update an App "Required scopes: app:update". R1, https://docs.digitalocean.com/reference/api/reference/container-registry/: "GET Get Docker Credentials for Container Registry" "Required scopes: registry:read registry:update"; "GET List All Container Registry Repository Manifests" "Required scopes: registry:read". Minimum, one custom-scoped token per environment: staging `app:read`, `app:update`, `registry:read`, `registry:update` (login, push); production `app:read`, `app:update`, `registry:read` (list-manifests). Deployment and rollback scopes: not stated on a reachable page (K6).
@@ -138,6 +138,8 @@ ONE review round (code-reviewer, sonnet); it is the final round (L44 policy): a 
 
 Plan estimate about 330 changed lines in the 2 workflow files. Expected about 410 (staging about 195, production about 215): an overrun of about 80 lines whose design reason is the rollback job in each file, which PR 50 lacked and the lane GOAL requires. 0 migrations. No spec block: RO-L67-2 withdraws it, so the change is the two workflow files only.
 
+B3 exception (RO-L67-3 ruling 3; accepted as a signal, not a gate; decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature): the two workflow files pass the 330-line estimate. The design reason is the rollback job of each workflow (PR 50 had none), the staging-run check of production, and `APP_DOMAIN` per environment. The measured numbers are in the PR body.
+
 ## 8. Security notes for the security round
 
 1. Image identity: staging deploys the digest build-push returned; production binds the digest to a successful staging run's evidence artifact AND to the DOCR tag (P50P :73-102), because the SHA tag is mutable (P50P :83-86).
@@ -155,6 +157,7 @@ Plan estimate about 330 changed lines in the 2 workflow files. Expected about 41
 - K4. P50P :81 compares the run's `path` with `.github/workflows/deploy-staging.yml`; its format is not re-checked and a mismatch fails closed.
 - K5. Whether a rollback re-runs the target's PRE_DEPLOY jobs is not stated (4.4). If it does, the target image's runner is a no-op on the newer ledger: it walks only its on-disk files (`packages/db/src/migrate.ts` :220, :286), skips each one already in `schema_migrations` with the same sha256 (:241, :296-298, :347-348) and never reads ledger rows for files it lacks (the order guard skips applied files, :93-94); a changed applied file throws (:338) and blocks the rollback (fails closed). Either way the schema stays at the newer version (K1).
 - K6. The DO scopes of the deployment and rollback operations are not on a reachable official page (4.4, 4.5). A missing scope fails closed (`doctl` or `curl -f` error), on staging first; only a rollback exercises the rollback path, so L69's runbook should give the owner one staging rollback drill before production use (fallback: the Control Panel rollback, 4.4).
+- K7. After a rollback the target and the rollback deployment carry the same digest; the shared wait (WD) takes the first in list order, which no official page states. A wrong pick FAILS CLOSED (a false failure after DigitalOcean accepted the rollback, never a false pass); the operator then checks the app's active deployment; lane L69's runbook carries that check. Ruled option A of RQ-L67-2 (RO-L67-3; Tier B, reversible; decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature): one wait definition, no second wait in a workflow; option C (WD selecting by deployment id or `created_at`) is one backlog row (section 11).
 
 ## 10. Open
 
@@ -167,7 +170,7 @@ Plan estimate about 330 changed lines in the 2 workflow files. Expected about 41
 
 - Measured with local git (`git log --merges --grep`): #137 merge `4230c752ec0ddb2a14e2a07714a901c6022e862c` and #150 merge `2d91aea9c99dc5bc71ab932f208929f76de37436` (= the base) are on the base.
 - Enablement-only (not a coding dependency): lane L82 `p5-migrate-job-provision` (RO-L67-2) merges before the first real `workflow_dispatch`; L69 starts after L67 and L82 merge. Current behaviour pinned: the two workflows only call `doctl apps update` and WD, so they are correct under option A and option B.
-- Backlog: no row written; the provision placement is lane L82 (RO-L67-2), so no candidate row is needed.
+- Backlog: one row at the END of `docs/autopilot-backlog.md` for option C of RQ-L67-2 (`infra/wait-for-deployment.sh` selecting the deployment by id or `created_at`), per RO-L67-3. The provision placement is lane L82 (RO-L67-2), so it needs no row.
 
 ## 12. Closure matrix
 

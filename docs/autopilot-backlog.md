@@ -8070,3 +8070,20 @@ notes: |
   Fix: carry a return path through the Google sign-in flow and redirect to it on completion, accepting only a same-origin relative path and failing closed to `/` on anything else. The implementing lane re-derives the risk at intake, because the change edits auth routes.
   Source: lane L76 (p5-pilot-host-guide), step 0 (continuation reader S0b, backlog candidate 1), ruling (b) of the P5-S8a orchestrator.
   Risk P1, not P2: the return path is input to the sign-in flow (the open-redirect class), so a slice must accept only a same-origin relative path. Status idea: its scope and invariants are not chosen yet. Both set in review round 1 (R1-13).
+
+## task: p5-wait-for-deployment-selects-by-id-or-created-at
+title: infra/wait-for-deployment.sh selects the deployment by id or created_at, because after a rollback the target and the rollback deployment carry the same digest
+status: idea
+risk: P1
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [infra/wait-for-deployment.sh, infra/wait-for-deployment.test.mjs]
+manifest: null
+merged_probe: null
+notes: |
+  The rollback job of each deploy workflow (.github/workflows/deploy-staging.yml and .github/workflows/deploy-production.yml, step R6) waits through infra/wait-for-deployment.sh (WD) with the target's image digest. After a rollback the target deployment and the rollback deployment carry the same digest, and WD takes the first deployment in list order that carries it; no official DigitalOcean page states that order. A wrong pick fails closed: a false failure after DigitalOcean accepted the rollback, never a false pass; the operator then checks the app's active deployment.
+  Fix (option C of RQ-L67-2): WD selects the deployment by id or by created_at, still the one wait definition the deploy and rollback steps share. infra/wait-for-deployment.test.mjs is a new file (no test of WD exists), in the form of infra/render-app-spec.test.mjs.
+  Related: constraint (1), await the deployment by id, of the row p5-deploy-awaits-deployment-id-and-keeps-spec-out-of-logs; lane L67 keeps the digest wait (option A).
+  Risk P1 as that row: WD gates the deploy and the rollback of both environments. The implementing lane re-derives the risk at intake.
+  Source: RQ-L67-2 of lane L67 (p5-deploy-workflows), ruled option A by RO-L67-3 on 2026-10-30; option C is this row.
