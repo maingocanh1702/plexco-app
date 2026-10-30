@@ -425,8 +425,8 @@ promote a mutable tag.
 ### Required CI order
 
 1. Validate target PostgreSQL version/extensions and roles.
-2. Run migrations with `DATABASE_URL_MIGRATION`.
-3. Run `infra/entrypoint.sh provision` using the same job-scoped credential.
+2. Run migrations with `DATABASE_URL_MIGRATION` in the PRE_DEPLOY `migrate` job.
+3. Then, in the same job and shell and with the same job-scoped credential, run `provision:queue` (`infra/entrypoint.sh`, `migrate` arm lines 78-85, `provision:queue` at line 84); since lane L82 (PR #151), queue provisioning is no longer a separate job or step.
 4. Deploy/reconcile components.
 5. Wait for health/readiness; execute smoke and reconnect checks.
 
