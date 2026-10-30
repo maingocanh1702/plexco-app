@@ -8087,3 +8087,20 @@ notes: |
   Related: constraint (1), await the deployment by id, of the row p5-deploy-awaits-deployment-id-and-keeps-spec-out-of-logs; lane L67 keeps the digest wait (option A).
   Risk P1 as that row: WD gates the deploy and the rollback of both environments. The implementing lane re-derives the risk at intake.
   Source: RQ-L67-2 of lane L67 (p5-deploy-workflows), ruled option A by RO-L67-3 on 2026-10-30; option C is this row.
+
+## task: p5-first-app-creation-path-in-tooling
+title: a first-creation path for the App Platform apps in tooling, because the committed specs carry placeholders that only infra/render-app-spec.sh fills, and it needs a live app
+status: idea
+risk: P1
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [infra/render-app-spec.sh, infra/render-app-spec.test.mjs, .github/workflows/deploy-staging.yml, .github/workflows/deploy-production.yml]
+manifest: null
+merged_probe: infra/render-app-spec.sh :: render_app_spec_create_mode
+notes: |
+  The committed App Specs hold placeholders, never values: the VPC id placeholder at infra/app.staging.yaml:30 and infra/app.prod.yaml:31, the image digest placeholder at infra/app.staging.yaml:75, :92, :191, :246 and infra/app.prod.yaml:62, :79, :179, and the app domain placeholder likewise. The only filler, infra/render-app-spec.sh, needs a live app: :8 (the live spec comes from doctl apps spec get), :27 (the live-spec argument is required), :58 (the live name must equal the committed one), :86 (a committed SECRET missing in the live app fails). The deploy workflows only update an app that already exists: .github/workflows/deploy-staging.yml:126, :132, :140 (the app id variable, spec get, update), and .github/workflows/deploy-production.yml:90 takes the digest from a staging run.
+  So the first creation of each app has no tooling path: lane L69 documents an owner-only hand fill of a never-committed spec copy in docs/runbooks/staging-deploy.md §2.5, reused for production. Staging is re-created every 48-96 h (.github/workflows/deploy-staging.yml:11), so the hand fill repeats each window.
+  Fix: a first-creation path in tooling, for example a renderer create mode that fills the spec placeholders without a live app, or a create job in the deploy workflows; the merged checks of the update path stay unchanged. The merged_probe expects render_app_spec_create_mode in infra/render-app-spec.sh; the implementing lane keeps that name or rewrites the probe at intake. Whether doctl apps create accepts SECRET entries without a value is not measured (lane L69 question Q2(a)).
+  Risk P1: the renderer and the workflows gate the deploys of both environments. The implementing lane re-derives the risk at intake.
+  Source: ruling request RQ-L69-1 of lane L69 (p5-runbook-deploy-migration-rollback), RO-L69-2 ruling 3; not built in lane L69.

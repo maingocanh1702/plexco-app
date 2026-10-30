@@ -103,6 +103,52 @@ Mỗi hàng: "default applied, pending owner sign-off" (`docs/sessions/web-mvp-p
 
 ## 4. Bằng chứng đã đo
 
+Mỗi hàng là một bằng chứng mà `docs/runbooks/staging-deploy.md` hoặc `docs/runbooks/migration-on-deploy-and-rollback.md` tạo ra; mục tiêu theo runbook, không chép lại ở đây. Smoke G2 và golden path staging ghi ở §1, không lặp ở đây. Ô "Đo được" hoặc ô bằng chứng trống = No-Go cho hàng đó.
+
+| Hạng mục | Mục tiêu | Đo được | Bằng chứng |
+| --- | --- | --- | --- |
+| CI `verify` và `e2e-web` trên SHA của image | xanh | `<kết quả>` | `<run URL>` |
+| Run deploy staging (`docs/runbooks/staging-deploy.md` §4, bước 8.6) | xanh; run không chạy e2e | `<kết quả>` | `<run URL>` · `<artifact name>` |
+| Tạo app lần đầu (`docs/runbooks/staging-deploy.md` §2.5; production theo `docs/runbooks/migration-on-deploy-and-rollback.md` §4) | các bước theo đúng thứ tự của §2.5; `DO_APP_ID` trỏ tới app mới | `<kết quả>` | `<run URL>` · `<artifact name>` |
+| User DB và setup role (`docs/runbooks/staging-deploy.md` §2.3), output kiểm role (`docs/runbooks/migration-on-deploy-and-rollback.md` §2) | output khớp kỳ vọng ghi ở §2 của runbook migration | `<output kiểm role>` | `<artifact name>` |
+| Job `migrate` (`docs/runbooks/migration-on-deploy-and-rollback.md` §1) | log có dòng bắt đầu bằng `[migrate] applied=` và dòng `[provision-queue] pgboss schema + queues provisioned` | `<dòng log>` | `<run URL>` |
+| Log (`docs/runbooks/staging-deploy.md` §5) | theo §5 của runbook | `<kết quả>` | `<artifact name>` |
+| Promote production (`docs/runbooks/migration-on-deploy-and-rollback.md` §4, `docs/runbooks/staging-deploy.md` §6) | theo §4 của runbook migration; production dùng digest của run staging, không build lại | `<kết quả>` | `<run URL>` |
+| Rollback app (`docs/runbooks/migration-on-deploy-and-rollback.md` §5) | job `rollback` theo §5 của runbook | `<kết quả>` | `<run URL>` |
+| Teardown và TTL (`docs/runbooks/staging-deploy.md` §7) | theo §7 của runbook | `<kết quả>` | `<run URL>` |
+| Deploy cuốn hai instance (`docs/runbooks/staging-deploy.md` §8; §7.6 mục 5) | PASS trên staging, nơi chạy hai `web` và hai `discovery`; production chạy một `web`, nên bản copy không ghi deploy cuốn cho production | `<kết quả>` | `<run URL>` |
+| PITR: RPO / RTO (`docs/runbooks/pitr-restore-drill.md`) | mục tiêu = default DD-129 (8) ở §3.2 | `<RPO>` / `<RTO>` | `<artifact name>` |
+| Restore ngoài provider (`docs/runbooks/pitr-restore-drill.md`) | theo runbook | `<kết quả>` | `<artifact name>` |
+| IP outbound | trạng thái G1 ở §3.1 | `<trạng thái>` | `<artifact name>` |
+| TLS verify tới DB (§7.6 mục 4; `docs/runbooks/failover-drill.md`) | theo runbook | `<kết quả>` | `<artifact name>` |
+| Mục chưa kiểm chứng (`docs/runbooks/staging-deploy.md` §9, `docs/runbooks/migration-on-deploy-and-rollback.md` §6) | mỗi mục có bằng chứng đã đo; mục chưa đo = No-Go cho mục đó | `<danh sách>` | `<artifact name>` |
+
 ## 5. Owner ask còn mở
 
+Mỗi hàng là một bước owner của PLAN §8 (`docs/sessions/web-mvp-phase5-golive-plan.md:197-207`) hoặc một câu hỏi còn mở với owner. Hạn = gate mà việc đó chặn (cột Chặn của PLAN). Trạng thái chỉ ghi xong khi có bằng chứng.
+
+| # | Việc | Chủ | Hạn | Trạng thái |
+| --- | --- | --- | --- | --- |
+| 8.1 | Tài khoản và billing: tài khoản DigitalOcean (thanh toán, project vùng Singapore) và tài nguyên theo tầng Q3 (cluster PostgreSQL, bật PITR); tài khoản backup ngoài DO và nơi giữ key backup; AWS (KMS) chỉ khi Q8 = `aws-kms`; Cloudflare chỉ khi dùng | owner | G2 | `<mở / xong>` · `<artifact name>` |
+| 8.2 | Domain và DNS: mua hoặc xác nhận domain (Q4), trỏ DNS cho staging và production theo App Spec của L66, kiểm HTTPS đã cấp | owner | G2, G4 | `<mở / xong>` · `<artifact name>` |
+| 8.3 | OAuth Google và bot Zalo: OAuth client Google cho từng môi trường (màn hình đồng ý, redirect URI); bot Zalo test, token chỉ owner giữ; tài khoản Google test theo Q9, mật khẩu chỉ owner giữ | owner | G2, G5, G6 | `<mở / xong>` · `<artifact name>` |
+| 8.4 | Email nhà cung cấp cho §7.1: gửi email đã soạn sẵn, lấy câu trả lời viết có mã ticket, ngày, trích nguyên văn, chuyển cho L62 | owner | G1 | `<mở / xong>` · `<artifact name>` |
+| 8.5 | Nhập secret theo tên: user DB cho bốn role, URL kết nối từng component, secret và biến runtime, secret và biến GitHub (`docs/runbooks/env-manifest-staging-production.md`) | owner | G2 staging, G4 production | `<mở / xong>` · `<artifact name>` |
+| 8.6 | Duyệt và bấm deploy, chỉ `workflow_dispatch`: staging trước, lần deploy staging đầu tiên chỉ sau khi điều kiện O-6 đóng theo Q10; production chỉ sau G3; smoke và golden path staging ghi ở §1 | owner | G2, G4 | `<mở / xong>` · `<artifact name>` |
+| 8.7 | Drill §7.6 và budget alert: chứng kiến trên staging các drill theo runbook L70 (failover mục 7, restore PITR mục 9, bốn role DB mục 4, SSE reconnect 8a, pg-boss không trùng 8b); kiểm cài đặt PWA trên Android Chrome và iOS Safari ở staging (trước G6); đặt budget alert hằng tháng ở từng nhà cung cấp (mục 14); gửi kết quả viết cho bằng chứng G3 | owner | G3 | `<mở / xong>` · `<artifact name>` |
+| 8.8 | Bật projector bằng CLI của owner theo runbook: staging trước, production sau G4 | owner | G5 | `<mở / xong>` · `<artifact name>` |
+| 8.9 | Một lần xác nhận bằng văn bản trước pilot cho mọi default đang áp mà chưa được owner duyệt (danh sách ở §3.2): giữ, đổi hoặc chặn | owner | G6 | `<mở / xong>` · `<artifact name>` |
+| 8.10 | Pháp lý: trả lời tám điểm pháp lý, rồi duyệt bản nháp trang quyền riêng tư và điều khoản của L75 trước khi publish | owner (kèm luật sư nếu cần) | G6 | `<mở / xong>` · `<artifact name>` |
+| 8.11 | Chọn và mời CLB pilot: chọn CLB (Q5), mời host, gửi hướng dẫn L76, chốt ngày bắt đầu sau G1 PASS | owner | G6, G7 | `<mở / xong>` · `<artifact name>` |
+| DD-154 (c) | Xác nhận hoặc sửa cách đọc vế "before adding more clubs" của điều kiện lên HA (`docs/standards/decisions.md:1885`): vế này là "trước khi thêm bất kỳ CLB nào ngoài 1-2 CLB pilot", nên việc mở rộng quá pilot mà G7 mở "cần lên HA trước khi CLB đầu tiên ngoài pilot được thêm"; D ghi nhãn "conductor reading, the owner may correct it" | owner | G7 | `<mở / xong>` · `<artifact name>` |
+
 ## 6. Ký (để trống)
+
+Owner điền ở bản copy; template để trống mọi dòng.
+
+- Tên:
+- Ngày:
+- Go / No-Go:
+- Chữ ký:
+
+[Owner] Deploy production là hành động P0 của owner: `.github/workflows/deploy-production.yml` với các input `tag`, `digest`, `staging_run_id` (lấy từ phần đầu của bản copy) và `confirm`.
