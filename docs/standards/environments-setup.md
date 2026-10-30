@@ -442,7 +442,7 @@ credential into all components.
 | Contract above | File on main | State |
 |---|---|---|
 | Staging and production App Specs (§3), job-scoped DDL credential (§4, §6) | `infra/app.staging.yaml`, `infra/app.prod.yaml` (PRE_DEPLOY `migrate` job; role `migrate` in `infra/entrypoint.sh`) | PREPARED, NOT APPLIED: no app was created, nothing was deployed, and `doctl apps spec validate` was not run (it needs DigitalOcean auth; owner steps 8.1, 8.2 and 8.5 of the Phase 5 go-live plan) |
-| Secret values never in git (§5, §6) | `infra/render-app-spec.sh` and `infra/render-app-spec.test.mjs`; env names per component in `docs/runbooks/env-manifest-staging-production.md` | tested in CI (`test:infra`) with fake names and fake ciphertext only; never run against a live app |
+| Secret values never in git (§5, §6) | `infra/render-app-spec.sh` and `infra/render-app-spec.test.mjs`; env names per component in `docs/runbooks/env-manifest-staging-production.md` | tested in CI (`test:infra`) with the real key names and fake values only (fake ciphertext, hosts, image digest and VPC id); never run against a live app |
 
 Deviation from this document (default pending owner ratification at step 8.9, DD-129 (1)):
 
