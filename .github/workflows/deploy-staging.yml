@@ -95,6 +95,10 @@ jobs:
       - name: 1. Build and push the image once (tag = git SHA; the DIGEST is what gets deployed)
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        # No build-record artifact (the action uploads one by default): the evidence JSON files are
+        # this workflow's only artifacts.
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
           file: infra/Dockerfile
@@ -173,12 +177,16 @@ jobs:
       DEPLOYMENT_ID: ${{ inputs.rollback_deployment_id }}
       APP_ID: ${{ vars.DO_APP_ID }}
     steps:
-      - name: R1. Refuse unless the target is an explicit deployment id, typed twice
+      - name: R1. Refuse unless the target is an explicit deployment id, typed twice, and APP_DOMAIN is this environment's host
+        id: validate
         env:
           CONFIRM: ${{ inputs.confirm }}
+          APP_DOMAIN: ${{ vars.APP_DOMAIN }}
         run: |
           [[ "$DEPLOYMENT_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "::error::rollback_deployment_id is not a deployment id"; exit 1; }
           [ "$CONFIRM" = "$DEPLOYMENT_ID" ] || { echo "::error::confirm must equal rollback_deployment_id exactly"; exit 1; }
+          # The deploy job's render-step regex: R7 smokes APP_DOMAIN, so it must be a staging host.
+          [[ "$APP_DOMAIN" =~ ^staging[a-z0-9-]*\.plexco\.app$ ]] || { echo "::error::APP_DOMAIN is not a staging*.plexco.app host"; exit 1; }
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0 (SHA verified vs tag 2026-07-17; Node 24 runtime)
         with:
@@ -188,10 +196,13 @@ jobs:
         with:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
 
-      - name: R4. Check the target (this environment's app, exactly one deployment, not the active one, a web image digest)
+      - name: R4. Check the target (this environment's app, exactly one deployment, not the active one, a web image digest other than the active one's)
         # jq reads through pipes or a here-string: the app and deployment JSON carry their spec and
         # are never printed. As the deploy job's render step does, refuse a live app whose spec name
         # is not the committed one: a DO_APP_ID naming the other environment's app stops here.
+        # R6 waits by digest, so a target that carries the active deployment's web image digest (after
+        # a config-only deployment) cannot be told apart from it: it stops here too, and an empty
+        # active digest fails closed. Fallback: the Control Panel rollback.
         run: |
           app="$(doctl apps get "$APP_ID" -o json)"
           want="$(yq -o=json infra/app.staging.yaml | jq -r '.name // empty')"
@@ -202,6 +213,9 @@ jobs:
           digest="$(doctl apps get-deployment "$APP_ID" "$DEPLOYMENT_ID" -o json | jq -r --arg active "$active" \
             'if length == 1 and .[0].id != $active then first(.[0].spec.services[]? | select(.name == "web") | .image.digest) // empty else empty end')"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::the target is not one inactive deployment with a web image digest"; exit 1; }
+          active_digest="$(jq -r 'first(.[0].active_deployment.spec.services[]? | select(.name == "web") | .image.digest) // empty' <<< "$app")"
+          [[ "$active_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::app field .[0].active_deployment web image digest missing"; exit 1; }
+          [ "$digest" != "$active_digest" ] || { echo "::error::the target carries the active deployment's web image digest, which the wait cannot tell apart; use the Control Panel rollback"; exit 1; }
           echo "TARGET_DIGEST=${digest}" >> "$GITHUB_ENV"
 
       - name: R5. Roll back through the documented API (skip_pin, so later deploys are not blocked)
@@ -224,8 +238,9 @@ jobs:
           infra/smoke-check.sh "$STAGING_BASE_URL"
 
       - name: R8. Record rollback evidence
-        if: always()
-        # outcome is the job status when R8 starts: success only if every earlier step passed.
+        # Only after R1 accepted the inputs: a refused input is never printed or recorded. outcome is
+        # the job status when R8 starts: success only if every earlier step passed.
+        if: always() && steps.validate.outcome == 'success'
         env:
           JOB_STATUS: ${{ job.status }}
         run: |
@@ -237,7 +252,7 @@ jobs:
           cat rollback-evidence.json
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0 (commit SHA verified vs tag via GitHub API 2026-10-13)
-        if: always()
+        if: always() && steps.validate.outcome == 'success'
         with:
           name: rollback-evidence-staging
           path: rollback-evidence.json
