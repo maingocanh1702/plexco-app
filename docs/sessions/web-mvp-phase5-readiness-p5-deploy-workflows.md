@@ -149,6 +149,8 @@ B3 exception (RO-L67-3 ruling 3; accepted as a signal, not a gate; decided by th
 5. Triggers: `workflow_dispatch` only; the environments carry the owner's required reviewers (owner step 8.5).
 6. Rollback input: explicit id plus typed confirmation; refused if it is the active deployment; the body carries `skip_pin: true` (4.4), so a rollback never leaves the app pinned.
 
+Security round (SR1): one P1 (raw rollback id in the artifact) and five P3; fixed after the final round (SR1-1 verified by the lane-check assertion, not re-reviewed; the P3 fixes are not re-reviewed); SR1-4 is an owner step (environment deployment branches = main).
+
 ## 9. Known risk
 
 - K1. Rollback is app-only (no down-migration); a release with a contracting migration cannot be rolled back safely.
@@ -157,7 +159,7 @@ B3 exception (RO-L67-3 ruling 3; accepted as a signal, not a gate; decided by th
 - K4. P50P :81 compares the run's `path` with `.github/workflows/deploy-staging.yml`; its format is not re-checked and a mismatch fails closed.
 - K5. Whether a rollback re-runs the target's PRE_DEPLOY jobs is not stated (4.4). If it does, the target image's runner is a no-op on the newer ledger: it walks only its on-disk files (`packages/db/src/migrate.ts` :220, :286), skips each one already in `schema_migrations` with the same sha256 (:241, :296-298, :347-348) and never reads ledger rows for files it lacks (the order guard skips applied files, :93-94); a changed applied file throws (:338) and blocks the rollback (fails closed). Either way the schema stays at the newer version (K1).
 - K6. The DO scopes of the deployment and rollback operations are not on a reachable official page (4.4, 4.5). A missing scope fails closed (`doctl` or `curl -f` error), on staging first; only a rollback exercises the rollback path, so L69's runbook should give the owner one staging rollback drill before production use (fallback: the Control Panel rollback, 4.4).
-- K7. After a rollback the target and the rollback deployment carry the same digest; the shared wait (WD) takes the first in list order, which no official page states. A wrong pick FAILS CLOSED (a false failure after DigitalOcean accepted the rollback, never a false pass); the operator then checks the app's active deployment; lane L69's runbook carries that check. Ruled option A of RQ-L67-2 (RO-L67-3; Tier B, reversible; decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature): one wait definition, no second wait in a workflow; option C (WD selecting by deployment id or `created_at`) is one backlog row (section 11).
+- K7. After a rollback the target and the rollback deployment carry the same digest; the shared wait (WD) takes the first in list order, which no official page states. A wrong pick FAILS CLOSED: a false failure after DigitalOcean accepted the rollback, never a false pass, because R4 refuses a target whose web image digest equals the active deployment's (security round SR1-2), so no deployment that is ACTIVE before the rollback carries the target's digest; such a target takes the Control Panel rollback. The operator then checks the app's active deployment; lane L69's runbook carries that check. Ruled option A of RQ-L67-2 (RO-L67-3; Tier B, reversible; decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature): one wait definition, no second wait in a workflow; option C (WD selecting by deployment id or `created_at`) is one backlog row (section 11).
 
 ## 10. Open
 
