@@ -34,16 +34,17 @@ const live = {
 };
 
 // Each call writes its fake live spec to its own dir, makes that dir the spawned bash's TMPDIR (its
-// here-string temp file lands there, not in the system temp dir) and removes it afterwards.
+// here-string temp file lands there, not in the system temp dir) and removes it afterwards. A string spec is
+// passed as raw stdin; `KEY_ROOT: undefined` in `env` leaves the variable unset.
 function render(spec, liveSpec, env = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "render-"));
   try {
     const livePath = path.join(dir, "live.json");
     writeFileSync(livePath, JSON.stringify(liveSpec));
     return spawnSync("bash", [SCRIPT, livePath], {
-      input: JSON.stringify(spec),
+      input: typeof spec === "string" ? spec : JSON.stringify(spec),
       encoding: "utf8",
-      env: { PATH: process.env.PATH, IMAGE_DIGEST: DIGEST, VPC_ID: VPC, TMPDIR: dir, ...env },
+      env: { PATH: process.env.PATH, IMAGE_DIGEST: DIGEST, VPC_ID: VPC, KEY_ROOT: "aws-kms", TMPDIR: dir, ...env },
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -167,7 +168,7 @@ test("empty stdin fails instead of rendering 0 bytes", () => {
       spawnSync("bash", [SCRIPT, livePath], {
         input,
         encoding: "utf8",
-        env: { PATH: process.env.PATH, IMAGE_DIGEST: DIGEST, VPC_ID: VPC, TMPDIR: dir },
+        env: { PATH: process.env.PATH, IMAGE_DIGEST: DIGEST, VPC_ID: VPC, KEY_ROOT: "aws-kms", TMPDIR: dir },
       });
     const r = spawn("");
     assert.notEqual(r.status, 0);
@@ -375,86 +376,137 @@ const PROD = fileURLToPath(new URL("./app.prod.yaml", import.meta.url));
 const STAGING_IDS = ["services/web", "services/discovery", "workers/worker", "jobs/migrate"];
 
 // The content tables of the readiness file (section 2.6), hard-coded, never derived from a spec: the GENERAL and
-// the SECRET keys of each component. Staging and production use the same list per component.
+// the SECRET keys of each component. Staging and production use the same list per component. Here the keys common
+// to both key roots; the two key-root sets (section 2.2 of docs/sessions/web-mvp-phase5-readiness-p5-kms-root-key-choice.md)
+// are KEY_ROOT_ENVS, hard-coded too, never derived from the renderer's own lists.
 const EXPECTED_ENVS = {
   web: {
     GENERAL: ["PROCESS_ROLE", "TRUSTED_INGRESS_PROVIDER", "APP_BASE_URL", "CSP_SCRIPT_NONCE_ENABLED", "DB_EXPECTED_ROLE"]
-      .concat(["GENDER_COLLECTION_ENABLED", "KMS_PROVIDER", "AWS_REGION"]),
+      .concat(["GENDER_COLLECTION_ENABLED", "KMS_PROVIDER"]),
     SECRET: ["DATABASE_URL", "DISCOVERY_DATABASE_URL", "DISCOVERY_CURSOR_KEY", "GOOGLE_OAUTH_CLIENT_ID"]
-      .concat(["GOOGLE_OAUTH_CLIENT_SECRET", "KMS_KEY_ID", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"])
-      .concat(["KMS_ENCRYPTED_AUTH_PEPPER", "KMS_ENCRYPTED_CONNECTOR_PEPPER", "LINK_CODE_LOOKUP_HMAC_KEY"]),
+      .concat(["GOOGLE_OAUTH_CLIENT_SECRET", "LINK_CODE_LOOKUP_HMAC_KEY"]),
   },
   discovery: {
     GENERAL: ["PROCESS_ROLE", "TRUSTED_INGRESS_PROVIDER", "CSP_SCRIPT_NONCE_ENABLED", "DB_EXPECTED_ROLE"],
     SECRET: ["DISCOVERY_DATABASE_URL", "DISCOVERY_CURSOR_KEY"],
   },
   worker: {
-    GENERAL: ["PROCESS_ROLE", "APP_BASE_URL", "KMS_PROVIDER", "AWS_REGION", "OUTBOX_DISPATCH_SCHEDULE_ENABLED"],
-    SECRET: ["DATABASE_URL_DIRECT", "KMS_KEY_ID", "KMS_ENCRYPTED_CONNECTOR_PEPPER", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+    GENERAL: ["PROCESS_ROLE", "APP_BASE_URL", "KMS_PROVIDER", "OUTBOX_DISPATCH_SCHEDULE_ENABLED"],
+    SECRET: ["DATABASE_URL_DIRECT"],
   },
   migrate: { GENERAL: ["PROCESS_ROLE"], SECRET: ["DATABASE_URL_MIGRATION"] },
 };
+const KEY_ROOT_ENVS = {
+  "aws-kms": {
+    web: {
+      GENERAL: ["AWS_REGION"],
+      SECRET: ["KMS_KEY_ID", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "KMS_ENCRYPTED_AUTH_PEPPER"]
+        .concat(["KMS_ENCRYPTED_CONNECTOR_PEPPER"]),
+    },
+    worker: {
+      GENERAL: ["AWS_REGION"],
+      SECRET: ["KMS_KEY_ID", "KMS_ENCRYPTED_CONNECTOR_PEPPER", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+    },
+  },
+  local: { web: { GENERAL: [], SECRET: ["ENCRYPTION_KEY"] }, worker: { GENERAL: [], SECRET: ["ENCRYPTION_KEY"] } },
+};
+const ROOTS = ["aws-kms", "local"];
+
+// One key-root set of a component (none on discovery and migrate).
+function rootSet(root, name) {
+  return KEY_ROOT_ENVS[root][name] ?? { GENERAL: [], SECRET: [] };
+}
+
+// The sorted `<KEY> <TYPE>` list of a component: its common keys plus the sets of `roots`.
+function expectedEnvs(name, roots) {
+  const tables = [EXPECTED_ENVS[name], ...roots.map((root) => rootSet(root, name))];
+  return tables.flatMap((t) => [...t.GENERAL.map((k) => `${k} GENERAL`), ...t.SECRET.map((k) => `${k} SECRET`)]).sort();
+}
 
 // Every component RS fills, with the kind RS keys a live secret by (`<kind>/<name>/<key>`).
 function components(spec) {
   return ["services", "workers", "jobs"].flatMap((kind) => (spec[kind] ?? []).map((c) => ({ kind, c })));
 }
 
-// The fake live app: the committed spec itself, every SECRET with its own fake ciphertext, `.name` unchanged.
-function fakeLive(spec) {
+// The fake live app: the committed spec itself, every SECRET (both key-root sets) with its own fake ciphertext,
+// every KMS_PROVIDER set to `root`, `.name` unchanged.
+function fakeLive(spec, root = "aws-kms") {
   return variant(spec, (l) => {
     for (const { kind, c } of components(l)) {
-      for (const env of c.envs) if (env.type === "SECRET") env.value = `EV[1:${kind}-${c.name}-${env.key}]`;
+      for (const env of c.envs) {
+        if (env.type === "SECRET") env.value = `EV[1:${kind}-${c.name}-${env.key}]`;
+        if (env.key === "KMS_PROVIDER") env.value = root;
+      }
     }
   });
 }
 
-// Each SECRET of a spec by `<kind>/<name>/<key>`, with its value.
-function secrets(spec) {
-  const entries = components(spec).flatMap(({ kind, c }) =>
-    c.envs.filter((e) => e.type === "SECRET").map((e) => [`${kind}/${c.name}/${e.key}`, e.value]),
-  );
-  return Object.fromEntries(entries);
-}
-
 // The spec's components are exactly `ids` (`<kind>/<name>`), each with exactly its EXPECTED_ENVS keys and types;
-// every entry has scope RUN_TIME and no committed SECRET has a value key.
+// every entry has scope RUN_TIME, no committed SECRET has a value key, and every KMS_PROVIDER is the placeholder
+// the renderer fills from KEY_ROOT (a literal one is a half-switched spec, row 9). Both key-root sets are declared.
 function assertEnvKeys(spec, ids) {
   assert.deepEqual(components(spec).map(({ kind, c }) => `${kind}/${c.name}`).sort(), [...ids].sort());
   for (const { c } of components(spec)) {
-    const { GENERAL, SECRET } = EXPECTED_ENVS[c.name];
-    const want = [...GENERAL.map((k) => `${k} GENERAL`), ...SECRET.map((k) => `${k} SECRET`)].sort();
-    assert.deepEqual(c.envs.map((e) => `${e.key} ${e.type}`).sort(), want, c.name);
+    assert.deepEqual(c.envs.map((e) => `${e.key} ${e.type}`).sort(), expectedEnvs(c.name, ROOTS), c.name);
     for (const env of c.envs) {
       assert.equal(env.scope, "RUN_TIME", `${c.name}/${env.key}`);
       if (env.type === "SECRET") assert.ok(!("value" in env), `${c.name}/${env.key}`);
+      if (env.key === "KMS_PROVIDER") assert.equal(env.value, "__KMS_PROVIDER__", `${c.name}/${env.key}`);
     }
   }
 }
 
+// One env of a component, by kind, name and key.
+function findEnv(spec, kind, name, key) {
+  return spec[kind].find((c) => c.name === name).envs.find((e) => e.key === key);
+}
+
+// Rows 3 and 5: each committed spec under each root, against a live app with the other set and one without it.
 for (const [label, file, domain] of [
   ["infra/app.staging.yaml", STAGING, "staging.example.test"],
   ["infra/app.prod.yaml", PROD, "example.test"],
 ]) {
-  test(`renders ${label} with fake secrets`, () => {
-    const spec = readSpec(file);
-    const liveSpec = fakeLive(spec);
-    const r = render(spec, liveSpec, { APP_DOMAIN: domain });
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stderr, "");
-    const out = JSON.parse(r.stdout);
-    // Each SECRET carries the fake value of its own component kind, name and key; none is left out or added.
-    assert.deepEqual(secrets(out), secrets(liveSpec));
-    assert.doesNotMatch(r.stdout, /__[A-Za-z0-9_]+__/);
-    // The migration credential appears once in the whole document, on the migrate job.
-    assert.equal(r.stdout.split('"DATABASE_URL_MIGRATION"').length, 2);
-    assert.ok(out.jobs.find((j) => j.name === "migrate").envs.some((e) => e.key === "DATABASE_URL_MIGRATION"));
-  });
+  for (const root of ROOTS) {
+    test(`renders ${label} with fake secrets under KEY_ROOT=${root}`, () => {
+      const spec = readSpec(file);
+      const liveSpec = fakeLive(spec, root);
+      const env = { APP_DOMAIN: domain, KEY_ROOT: root };
+      const r = render(spec, liveSpec, env);
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stderr, "");
+      // A live app without the other set renders the same spec: the other set is dropped, never read.
+      const other = ROOTS.find((x) => x !== root);
+      const lean = variant(liveSpec, (l) => {
+        for (const { c } of components(l)) {
+          const drop = rootSet(other, c.name);
+          c.envs = c.envs.filter((e) => ![...drop.GENERAL, ...drop.SECRET].includes(e.key));
+        }
+      });
+      const r2 = render(spec, lean, env);
+      assert.deepEqual([r2.status, r2.stderr, r2.stdout], [0, "", r.stdout]);
+      const out = JSON.parse(r.stdout);
+      const ids = (s) => components(s).map(({ kind, c }) => `${kind}/${c.name}`);
+      assert.deepEqual(ids(out), ids(spec));
+      // Exactly the common keys plus this root's set; each SECRET is the fake of its own kind, name and key.
+      for (const { kind, c } of components(out)) {
+        assert.deepEqual(c.envs.map((e) => `${e.key} ${e.type}`).sort(), expectedEnvs(c.name, [root]), c.name);
+        for (const e of c.envs) if (e.type === "SECRET") assert.equal(e.value, `EV[1:${kind}-${c.name}-${e.key}]`);
+      }
+      assert.equal(findEnv(out, "services", "web", "KMS_PROVIDER").value, root);
+      assert.equal(findEnv(out, "workers", "worker", "KMS_PROVIDER").value, root);
+      assert.doesNotMatch(r.stdout, /__[A-Za-z0-9_]+__/);
+      // The migration credential appears once in the whole document, on the migrate job.
+      assert.equal(r.stdout.split('"DATABASE_URL_MIGRATION"').length, 2);
+      assert.ok(out.jobs.find((j) => j.name === "migrate").envs.some((e) => e.key === "DATABASE_URL_MIGRATION"));
+    });
+  }
 }
 
 test("staging spec carries exactly the content-table keys per component", () => {
-  const counts = Object.entries(EXPECTED_ENVS).map(([name, t]) => [name, t.GENERAL.length + t.SECRET.length]);
-  assert.deepEqual(Object.fromEntries(counts), { web: 19, discovery: 6, worker: 10, migrate: 2 });
+  const counts = (roots) => Object.fromEntries(Object.keys(EXPECTED_ENVS).map((n) => [n, expectedEnvs(n, roots).length]));
+  assert.deepEqual(counts(ROOTS), { web: 20, discovery: 6, worker: 11, migrate: 2 });
+  assert.deepEqual(counts(["aws-kms"]), { web: 19, discovery: 6, worker: 10, migrate: 2 });
+  assert.deepEqual(counts(["local"]), { web: 14, discovery: 6, worker: 6, migrate: 2 });
   const spec = readSpec(STAGING);
   assertEnvKeys(spec, STAGING_IDS);
   // Negative control: dropping any one SECRET entry from the spec fails the check.
@@ -465,6 +517,9 @@ test("staging spec carries exactly the content-table keys per component", () => 
       assert.throws(() => assertEnvKeys(dropped, STAGING_IDS), assert.AssertionError, `${c.name}/${env.key}`);
     });
   }
+  // Row 11: a duplicate key fails too (the renderer does not check duplicates).
+  const twice = variant(spec, (s) => s.services.find((c) => c.name === "web").envs.push({ key: "ENCRYPTION_KEY", scope: "RUN_TIME", type: "SECRET" }));
+  assert.throws(() => assertEnvKeys(twice, STAGING_IDS), assert.AssertionError, "ENCRYPTION_KEY twice on web");
 });
 
 test("production spec is shape 3", () => {
@@ -494,6 +549,85 @@ test("a missing live secret fails closed for the staging spec", () => {
   const r = render(spec, liveSpec, { APP_DOMAIN: "staging.example.test" });
   assertRefused(r, /render: missing secret in live app: services\/discovery\/DISCOVERY_CURSOR_KEY - set it in DO first/);
   assert.doesNotMatch(r.stderr, /EV\[/);
+});
+
+// The staging spec (changed by `spec`) rendered under KEY_ROOT=root against its fake live app for that root
+// (changed by `live`), which carries every secret of both sets.
+function renderStaging(root, { spec = () => {}, live = () => {} } = {}) {
+  const committed = variant(readSpec(STAGING), spec);
+  return render(committed, variant(fakeLive(committed, root), live), { APP_DOMAIN: "staging.example.test", KEY_ROOT: root });
+}
+
+function dropEnv(spec, kind, name, key) {
+  const c = spec[kind].find((x) => x.name === name);
+  c.envs = c.envs.filter((e) => e.key !== key);
+}
+
+test("KEY_ROOT unset or empty fails before stdin is read (row 1)", () => {
+  for (const KEY_ROOT of [undefined, ""]) {
+    assertRefused(renderStaging(KEY_ROOT), /KEY_ROOT: KEY_ROOT is required/, String(KEY_ROOT));
+    // An empty stdin meets this check first, not `empty spec on stdin`.
+    const empty = render("", live, { KEY_ROOT });
+    assertRefused(empty, /KEY_ROOT: KEY_ROOT is required/, `empty stdin, ${KEY_ROOT}`);
+    assert.doesNotMatch(empty.stderr, /empty spec on stdin/);
+  }
+});
+
+test("KEY_ROOT outside aws-kms|local fails before stdin, never echoing the value (row 2)", () => {
+  for (const KEY_ROOT of ["gcp-kms", "AWS-KMS", " local", " ", "plain-fake-root"]) {
+    const r = renderStaging(KEY_ROOT);
+    assertRefused(r, /render: KEY_ROOT must be aws-kms or local/, JSON.stringify(KEY_ROOT));
+    assert.doesNotMatch(r.stderr, /gcp-kms|AWS-KMS|plain-fake-root/, KEY_ROOT);
+    assertRefused(render("", live, { KEY_ROOT }), /render: KEY_ROOT must be aws-kms or local/, `empty stdin, ${KEY_ROOT}`);
+  }
+});
+
+test("aws-kms: a chosen-set secret missing in the live app fails closed (row 4)", () => {
+  const r = renderStaging("aws-kms", { live: (l) => dropEnv(l, "workers", "worker", "KMS_KEY_ID") });
+  assertRefused(r, /render: missing secret in live app: workers\/worker\/KMS_KEY_ID - set it in DO first/);
+  assert.doesNotMatch(r.stderr, /EV\[/);
+});
+
+test("local: ENCRYPTION_KEY missing in the live app fails closed (row 6)", () => {
+  const r = renderStaging("local", { live: (l) => dropEnv(l, "workers", "worker", "ENCRYPTION_KEY") });
+  assertRefused(r, /render: missing secret in live app: workers\/worker\/ENCRYPTION_KEY - set it in DO first/);
+  assert.doesNotMatch(r.stderr, /EV\[/);
+});
+
+test("local: a live ENCRYPTION_KEY that is not an EV ciphertext fails without the value (row 7)", () => {
+  const r = renderStaging("local", { live: (l) => (findEnv(l, "services", "web", "ENCRYPTION_KEY").value = "plain-fake-key") });
+  assertRefused(r, /render: live secret is not an EV ciphertext: services\/web\/ENCRYPTION_KEY/);
+  assert.doesNotMatch(r.stderr, /plain-fake-key/);
+});
+
+test("a live KMS_PROVIDER that differs from KEY_ROOT or is absent fails, naming the component only (row 8)", () => {
+  const setLive = (kind, name, value) => (l) => (findEnv(l, kind, name, "KMS_PROVIDER").value = value);
+  for (const [label, root, live, id] of [
+    ["live web aws-kms under local", "local", setLive("services", "web", "aws-kms"), "services/web"],
+    ["live worker without KMS_PROVIDER", "aws-kms", (l) => dropEnv(l, "workers", "worker", "KMS_PROVIDER"), "workers/worker"],
+    ["live web left as the creation copy", "aws-kms", setLive("services", "web", "__KMS_PROVIDER__"), "services/web"],
+  ]) {
+    const r = renderStaging(root, { live });
+    assertRefused(r, new RegExp(`render: KMS_PROVIDER differs from KEY_ROOT: ${id}$`, "m"), label);
+    assert.doesNotMatch(r.stderr, /aws-kms|local|__KMS_PROVIDER__|EV\[/, label);
+  }
+});
+
+test("a half-switched spec (a literal KMS_PROVIDER) fails at the guard and the placeholder pin (row 9)", () => {
+  const literal = (s) => (findEnv(s, "services", "web", "KMS_PROVIDER").value = "aws-kms");
+  const r = renderStaging("local", { spec: literal });
+  assertRefused(r, /render: KMS_PROVIDER differs from KEY_ROOT: services\/web$/m);
+  assert.doesNotMatch(r.stderr, /aws-kms|local/);
+  assert.throws(() => assertEnvKeys(variant(readSpec(STAGING), literal), STAGING_IDS), assert.AssertionError);
+});
+
+test("a valued SECRET or an untyped env in the NON-chosen set fails before the drop (row 10)", () => {
+  const valued = (s) => (findEnv(s, "services", "web", "ENCRYPTION_KEY").value = "plain-fake-key");
+  const r = renderStaging("aws-kms", { spec: valued });
+  assertRefused(r, /render: committed SECRET carries a value: ENCRYPTION_KEY/);
+  assert.doesNotMatch(r.stderr, /plain-fake-key/);
+  const untyped = renderStaging("local", { spec: (s) => delete findEnv(s, "workers", "worker", "AWS_REGION").type });
+  assertRefused(untyped, /render: env type must be GENERAL or SECRET: AWS_REGION/);
 });
 
 test("the YAML subset reader refuses constructs outside the subset", () => {

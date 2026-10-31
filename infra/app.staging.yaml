@@ -2,8 +2,8 @@
 # PREPARED, NOT APPLIED: the owner applies it.
 # Shape-4 window topology, a default pending the owner's sign-off: web x2, discovery x2, worker x1,
 # and a PRE_DEPLOY migrate job.
-# Placeholders __IMAGE_DIGEST__, __VPC_ID__ and __APP_DOMAIN__ are filled at deploy time by
-# infra/render-app-spec.sh (fed the JSON form of this file); a token left unfilled fails the render.
+# infra/render-app-spec.sh fills __IMAGE_DIGEST__, __VPC_ID__, __APP_DOMAIN__ and __KMS_PROVIDER__
+# (from KEY_ROOT); an unfilled token fails. Both key-root sets are declared; it keeps KEY_ROOT's set.
 # Every SECRET is a NAME only: the owner enters its value in DigitalOcean; the renderer copies the
 # encrypted value from the live app and refuses a committed SECRET that carries a value.
 # Private DB path (DD-04 section 7.1, never disabled): app-level vpc, no egress block, no databases
@@ -18,7 +18,7 @@
 # - DB trusted sources: only the app's VPC egress private IP, an owner step in DigitalOcean.
 # - "false" until an owner step: GENDER_COLLECTION_ENABLED (legal answer on collecting gender),
 #   OUTBOX_DISPATCH_SCHEDULE_ENABLED, CSP_SCRIPT_NONCE_ENABLED (real next start, 0 CSP violations).
-# - KMS_ENCRYPTED_CONNECTOR_PEPPER: settled before the first real club connects (DD-122 O4).
+# - aws-kms: KMS_ENCRYPTED_CONNECTOR_PEPPER before the first real club connects (DD-122 O4); local: one ENCRYPTION_KEY roots auth, PII, connectors (8.9).
 # - Not done: DigitalOcean resources, DNS and HTTPS, the four DB roles and their URLs, every SECRET
 #   value, doctl apps spec validate, and the owner's sign-off of every default applied here (web
 #   pool in session mode, AWS keys as component envs, the migration credential on the job, DD-129).
@@ -140,7 +140,7 @@ services:
       - key: KMS_PROVIDER
         scope: RUN_TIME
         type: GENERAL
-        value: "aws-kms"
+        value: "__KMS_PROVIDER__"
       - key: AWS_REGION
         scope: RUN_TIME
         type: GENERAL
@@ -179,6 +179,10 @@ services:
         scope: RUN_TIME
         type: SECRET
       - key: LINK_CODE_LOOKUP_HMAC_KEY
+        scope: RUN_TIME
+        type: SECRET
+      # One value for web and worker; the renderer keeps it only when KEY_ROOT is local.
+      - key: ENCRYPTION_KEY
         scope: RUN_TIME
         type: SECRET
 
@@ -271,7 +275,7 @@ workers:
       - key: KMS_PROVIDER
         scope: RUN_TIME
         type: GENERAL
-        value: "aws-kms"
+        value: "__KMS_PROVIDER__"
       - key: AWS_REGION
         scope: RUN_TIME
         type: GENERAL
@@ -297,5 +301,9 @@ workers:
         scope: RUN_TIME
         type: SECRET
       - key: AWS_SECRET_ACCESS_KEY
+        scope: RUN_TIME
+        type: SECRET
+      # Same value as on web.
+      - key: ENCRYPTION_KEY
         scope: RUN_TIME
         type: SECRET

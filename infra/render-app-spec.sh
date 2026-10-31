@@ -2,7 +2,7 @@
 # Render a committed App Spec (JSON form) into the spec `doctl apps update --spec` receives.
 #
 #   yq -o=json infra/app.staging.yaml \
-#     | IMAGE_DIGEST=sha256:<64 hex> VPC_ID=<uuid> [APP_DOMAIN=<host>] \
+#     | IMAGE_DIGEST=sha256:<64 hex> VPC_ID=<uuid> KEY_ROOT=aws-kms|local [APP_DOMAIN=<host>] \
 #       infra/render-app-spec.sh <live-spec.json> > spec.local.json
 #
 # <live-spec.json> is `doctl apps spec get <app-id> --format json`. Contract:
@@ -19,6 +19,11 @@
 #  4. stdin holds exactly one JSON document whose .name is a non-blank string equal to the live .name.
 #     Its services, workers and jobs, and every `envs` in it, are absent (null) or an array: anything
 #     else FAILS naming the field (`false` would read as absent, an object as a list).
+#  5. KEY_ROOT is required and is exactly aws-kms or local (no default). The committed spec declares
+#     both key-root sets; both are checked as in 2, then every env of the set KEY_ROOT does not name
+#     (two closed lists, held only below) is dropped from every `envs`, and __KMS_PROVIDER__ is filled
+#     from KEY_ROOT. A service, worker or job that declares KMS_PROVIDER must render it equal to
+#     KEY_ROOT, and its live component must carry it once with that value, or the render FAILS.
 # Every failure prints this script's own message, naming a key or a field, never a value: jq's own
 # error text is withheld (it can quote input bytes). No secret value is ever read from or written to
 # anything but the live spec. Needs: bash 3.2+, jq.
@@ -27,10 +32,12 @@ set -euo pipefail
 live="${1:?usage: render-app-spec.sh <live-spec.json> < committed.json}"
 digest="${IMAGE_DIGEST:?IMAGE_DIGEST is required}"
 vpc="${VPC_ID:?VPC_ID is required}"
+root="${KEY_ROOT:?KEY_ROOT is required}"
 domain="${APP_DOMAIN:-}"
 
 [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "render: IMAGE_DIGEST must be sha256:<64 hex>" >&2; exit 1; }
 [[ "$vpc" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "render: VPC_ID must be a UUID" >&2; exit 1; }
+[[ "$root" == "aws-kms" || "$root" == "local" ]] || { echo "render: KEY_ROOT must be aws-kms or local" >&2; exit 1; }
 if [ -n "$domain" ]; then
   [[ "$domain" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || { echo "render: APP_DOMAIN is not a hostname" >&2; exit 1; }
 fi
@@ -39,7 +46,7 @@ fi
 committed="$(cat)"
 [ -n "$committed" ] || { echo "render: empty spec on stdin" >&2; exit 1; }
 
-jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg domain "$domain" 'try (
+jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg root "$root" --arg domain "$domain" 'try (
   # Live spec envs for a component, keyed "<kind>/<name>/<ENV_KEY>". `arrays` skips a live surface of
   # the wrong shape (its secrets then count as missing) instead of letting jq quote it in an error.
   def liveSecrets:
@@ -50,6 +57,9 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
   # reads as empty, an array as itself, anything else FAILS naming the field. `//` would read `false`
   # as absent and `map` an object as a list: components or envs, live secrets included, would drop.
   def list($f): if . == null then [] elif type == "array" then . else error("render: \($f) must be an array") end;
+  # The two key-root sets (closed lists, held only here): KEY_ROOT keeps one, the other is dropped.
+  def awsOnly: ["AWS_REGION", "KMS_KEY_ID", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "KMS_ENCRYPTED_AUTH_PEPPER", "KMS_ENCRYPTED_CONNECTOR_PEPPER"];
+  def localOnly: ["ENCRYPTION_KEY"];
   # One document (a multi-document YAML through yq is two). A nameless one fails here: null or {} (an
   # empty YAML file through yq), an array, a string, a non-string or blank .name. Secrets are copied
   # from the same app only.
@@ -70,15 +80,27 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
       | if $t != "GENERAL" and $t != "SECRET" then error("render: env type must be GENERAL or SECRET: \(.key? // null)")
         elif $t == "SECRET" and (.value // "") != "" then error("render: committed SECRET carries a value: \(.key)")
         else empty end), .)
+  # Only now is the set KEY_ROOT does not name dropped, from every `envs`: a valued SECRET or an untyped
+  # env in it has already FAILED above instead of vanishing here.
+  | (if $root == "local" then awsOnly else localOnly end) as $drop
+  | walk(if type == "object" and (.envs | type) == "array" then .envs |= map(select(.key | IN($drop[]) | not)) else . end)
   # Placeholders are substituted and checked BEFORE secrets are copied: a copied value is never
   # transformed, scanned or quoted.
   | walk(if type == "string" then
-           gsub("__IMAGE_DIGEST__"; $digest) | gsub("__VPC_ID__"; $vpc)
+           gsub("__IMAGE_DIGEST__"; $digest) | gsub("__VPC_ID__"; $vpc) | gsub("__KMS_PROVIDER__"; $root)
            | (if $domain != "" then gsub("__APP_DOMAIN__"; $domain) else . end)
          else . end)
   | if ([.. | strings | select(test("__[A-Z_]+__"))] | length) > 0
     then error("render: unresolved placeholder: \([.. | strings | scan("__[A-Z_]+__")] | unique | join(", "))")
     else . end
+  # Agreement guard: a component that declares KMS_PROVIDER renders it as KEY_ROOT, and its live
+  # component carries it exactly once with that value (absent, or a live surface of the wrong shape,
+  # differs): a flipped KEY_ROOT or a half-switched spec stops here. Names the component, never a value.
+  | ((("services", "workers", "jobs") as $k | (.[$k] | list($k))[] | . as $c
+      | [($c.envs | list("envs"))[] | select(.key == "KMS_PROVIDER") | .value] | select(length > 0)
+      | if all(.[]; . == $root) and [($live[0][$k] // [] | arrays)[] | select(.name? == $c.name)
+             | (.envs? // [] | arrays)[] | select(.key? == "KMS_PROVIDER") | .value] == [$root]
+        then empty else error("render: KMS_PROVIDER differs from KEY_ROOT: \($k)/\($c.name)") end), .)
   | liveSecrets as $ls
   # A SECRET is copied from the live app. A GENERAL env over a live SECRET would blank or demote it.
   | def fill($kind): . as $c | .envs = [ ($c.envs | list("envs"))[] | $ls["\($kind)/\($c.name)/\(.key)"] as $v |
