@@ -8094,7 +8094,9 @@ notes: |
 
 ## task: p5-first-app-creation-path-in-tooling
 title: a first-creation path for the App Platform apps in tooling, because the committed specs carry placeholders that only infra/render-app-spec.sh fills, and it needs a live app
-status: idea
+status: merged
+merged: 2026-11-01 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-first-creation-render-mode (L88); find it with `gh pr list --state merged --head feat/p5-first-creation-render-mode` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `infra/render-app-spec.sh :: render_app_spec_create_mode` (absent at 9eee265; this flip changes only status, merged, note_merged)
+note_merged: 2026-11-01 L88: closed BY HAND in the lane's own PR, measured at base 9eee265be97ea37947a87a9ad38594c5771e0289. The reconcile cannot flip it: `scripts/autopilot-backlog-reconcile:289` (re-measured at 9eee265) scans only planned, ready and blocked rows, and this row was `idea`. Default chosen: a create mode in infra/render-app-spec.sh (`--create`, function render_app_spec_create_mode), run by the owner on the owner's machine; same inputs and committed-spec checks as the update path; no live app; every SECRET left without a value; decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature; default applied, pending owner sign-off. Rejected: a create job in the deploy workflows (a new cloud mutation behind workflow_dispatch, and it edits deploy-guard files). Unmeasured: Q2(a), whether `doctl apps create` accepts a SECRET entry without a value; docs/runbooks/staging-deploy.md section 2.5 step (4) stops fail-closed if it refuses. Owed (renderer line cites shifted by this change, outside the lane's owned lines): docs/runbooks/staging-deploy.md section 2.4 (R:35, :40) and section 2.5 step (5) (R:61-62, :83, :108-110, :78-82); docs/runbooks/env-manifest-staging-production.md :28, :48, :67, :71, :103, :128 (render-app-spec.sh:NN cites); docs/autopilot-backlog.md :7892 (already off at 9eee265). Also owed to a later lane (found by the lane's security review, round 1): the update path's shape checks in infra/render-app-spec.sh (IMAGE_DIGEST, VPC_ID, APP_DOMAIN) are locale-dependent as at 9eee265: measured on macOS under a UTF-8 locale, their bracket ranges accept a non-ASCII letter such as `é`. L88 pins `LC_ALL=C` in create mode only (render_app_spec_create_mode); pinning the update path is outside its negative scope (row p5-render-update-path-locale-pin). The scope line still lists the two workflow files; they were not touched.
 risk: P1
 change_class: infra-tooling
 depends_on: []
@@ -8159,3 +8161,20 @@ notes: |
   Related: the braces advisory GHSA-vfj7-8cjw-p6xm was withdrawn on 2026-10-23 (osv.dev), so the braces entry osv-scanner.toml :9-33 is unused at 8f930c2. The lane that does the minimatch bump, or L54, deletes that entry and closes the rows braces-ghsa-vfj7-no-fixed-version and braces-ghsa-vfj7-ignore-expiry-2026-12-21.
   Copies of the vulnerable function (firstPhasePreProcess) are bundled in prettier 3.9.4, drizzle-kit 0.31.10 and playwright(-core) 1.63.0; OSV cannot see them; check them at the bump.
   Source: lane L85 (P5-S14a, p5-deps-osv-minimatch), recorded under RO-L85-2 and D6 branch (a), decisions.md:2106; lane L85 adds the osv-scanner.toml entry, the bump is not built in lane L85.
+
+## task: p5-render-update-path-locale-pin
+title: infra/render-app-spec.sh pins the C locale on the update path too, because under a UTF-8 locale its shape checks accept a non-ASCII letter
+status: idea
+risk: P2
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [infra/render-app-spec.sh, infra/render-app-spec.test.mjs]
+manifest: null
+merged_probe: null
+close_by: hand · infra-tooling: a pinned locale adds no symbol
+notes: |
+  The update path's shape checks in infra/render-app-spec.sh (IMAGE_DIGEST, VPC_ID, APP_DOMAIN) use bracket ranges that follow the caller's locale. Measured on macOS (probe ids as labels): under LC_ALL=en_US.UTF-8 a digest ending in `é` renders with rc 0 (G06), and so does a VPC id with `é` (G07); with LANG=en_US.UTF-8 the domain `exémple.test` renders (G02) while the C locale refuses it (G01). The script at base 9eee265 behaves the same (G13), so this predates lane L88.
+  Lane L88 pins `LC_ALL=C` in create mode only (render_app_spec_create_mode); the update path keeps the caller's locale, outside that lane's negative scope.
+  Fix, the smallest: `export LC_ALL=C` at the script's start, as create mode already does, plus one update-path test under a UTF-8 locale. The implementing lane re-derives the risk at intake.
+  Source: S1 round 1 of lane L88 (p5-first-creation-render-mode, session P5-S17a), the lane's security review; not built in lane L88.
