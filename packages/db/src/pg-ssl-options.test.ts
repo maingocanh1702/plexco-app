@@ -7,6 +7,7 @@ import tls from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { createDb } from "./client.js";
 import { PgSslConfigError, pgSslConnectionConfig } from "./pg-ssl-options.js";
 
 // Decision table R1-R11 of docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-options.md.
@@ -289,6 +290,12 @@ describe("pgSslConnectionConfig: the decision table", () => {
 const SSL_REQUEST_CODE = 80877103;
 // AuthenticationOk then ReadyForQuery(idle): connect() resolves with no database behind the stub.
 const AUTH_OK_READY = Buffer.from("5200000008000000005a0000000549", "hex");
+// R9: the codes Node reports for a server certificate that does not chain to the configured CA.
+const VERIFY_CODES = [
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+];
 
 interface Stub {
   port: number;
@@ -394,11 +401,7 @@ describe("pgSslConnectionConfig: TLS stub driven by pg's own Client", () => {
       if (flag === "0") vi.stubEnv("NODE_TLS_REJECT_UNAUTHORIZED", "0");
       stub = await startStub(srvLocalKey, srvLocalCrt);
       const err = await connectOnce(pgSslConnectionConfig(url(stub.port), env(caB)));
-      expect([
-        "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-        "SELF_SIGNED_CERT_IN_CHAIN",
-        "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-      ]).toContain(err?.code);
+      expect(VERIFY_CODES).toContain(err?.code);
       expect(`${err?.message}\n${err?.stack}`).not.toContain(PASSWORD);
       await sleep(300);
       expect(stub).toMatchObject({ connections: 1, startupOverTls: 0, plainStartup: 0 });
@@ -419,5 +422,58 @@ describe("pgSslConnectionConfig: TLS stub driven by pg's own Client", () => {
     expect(err?.code).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
     await sleep(300);
     expect(stub).toMatchObject({ connections: 1, startupOverTls: 0, plainStartup: 0 });
+  });
+
+  it("R4 createDb: an invalid CA throws before a pool exists, the stub sees 0 connections", async () => {
+    const live = await startStub(srvLocalKey, srvLocalCrt);
+    stub = live;
+    for (const [, value] of R4_CASES) {
+      vi.stubEnv("DATABASE_CA_CERT", value());
+      expect(() => createDb(url(live.port))).toThrow(PgSslConfigError);
+    }
+    await sleep(100);
+    expect(live.connections).toBe(0);
+  });
+
+  it("R9 pool: a createDb pool facing a server certificate from another CA rejects the first query, one connection", async () => {
+    stub = await startStub(srvLocalKey, srvLocalCrt);
+    vi.stubEnv("DATABASE_CA_CERT", caB);
+    const handle = createDb(url(stub.port), { max: 1 });
+    handle.pool.on("error", () => undefined); // a late socket error must not crash the run
+    try {
+      const err = await handle.pool.query("SELECT 1").then(
+        () => undefined,
+        (e: Error & { code?: string }) => e,
+      );
+      expect(VERIFY_CODES).toContain(err?.code);
+      expect(`${err?.message}\n${err?.stack}`).not.toContain(PASSWORD);
+      await sleep(300);
+      expect(stub).toMatchObject({ connections: 1, startupOverTls: 0, plainStartup: 0 });
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
+describe("createDb: the pool takes the helper's options", () => {
+  it("R1: unset builds the pool with no ssl key and the URL unchanged", async () => {
+    vi.stubEnv("DATABASE_CA_CERT", undefined);
+    const handle = createDb(URL_PLAIN);
+    try {
+      expect(handle.pool.options).not.toHaveProperty("ssl");
+      expect(handle.pool.options.connectionString).toBe(URL_PLAIN);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("R2: set gives the pool exactly the helper's ssl options", async () => {
+    vi.stubEnv("DATABASE_CA_CERT", caA);
+    const handle = createDb(URL_PLAIN);
+    try {
+      expect(handle.pool.options.ssl).toStrictEqual(pgSslConnectionConfig(URL_PLAIN, env(caA)).ssl);
+    } finally {
+      await handle.close();
+    }
   });
 });
