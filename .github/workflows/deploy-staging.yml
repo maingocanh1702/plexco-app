@@ -11,9 +11,9 @@ name: Deploy staging
 # TRIGGER POLICY: manual only (no push/tag trigger). Staging is EPHEMERAL (48-96h TTL, §9); an
 # automatic deploy would keep a production-shaped environment and its bill alive by accident.
 # `environment: staging` carries required reviewers, so every run needs one owner approval.
-# DISPATCH FROM `main` ONLY (the `staging` environment's Deployment branches rule accepts only `main`;
-# docs/runbooks/staging-deploy.md, GitHub environment step): the build uses github.sha, so the run's
-# head_sha IS the built SHA and production can verify "this SHA passed staging" from the run alone.
+# DISPATCH FROM `main` ONLY (the owner sets the `staging` environment's Deployment branches rule to
+# `main`: docs/runbooks/staging-deploy.md, GitHub environment step): the build uses github.sha, so the
+# run's head_sha IS the built SHA and production can verify "this SHA passed staging" from the run alone.
 # ONE deploy job on purpose: GitHub asks for approval per job that names a protected environment,
 # and the digest/evidence flow between steps without artifact hand-offs.
 #
