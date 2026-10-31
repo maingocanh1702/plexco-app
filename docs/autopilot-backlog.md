@@ -8138,3 +8138,21 @@ notes: |
   Fix: a path that, while both roots are readable, opens every stored ciphertext of one environment with the old root and writes it again under the new one, and recomputes or retires every auth hash keyed by the old root; K1 then names that path as the only way to switch. The same line forbids a key change within one root (KMS_KEY_ID, the ENCRYPTION_KEY value, a KMS pepper) for the same reason; the implementing lane decides at intake whether the path covers it. Not measured: whether every auth hash has a stored source to recompute it from, and the line's inference that a root change erases the other set's live values at the next deploy. The merged_probe expects reencryptUnderNewKeyRoot in packages/db; the implementing lane keeps that name or rewrites the probe at intake, and adds the new path's files to the scope.
   Risk P1: the path rewrites every stored ciphertext and every auth hash of an environment, and one root covers auth, PII and the connector secrets (K2). Running it against production data is the owner's action, never an agent's. The implementing lane re-derives the risk at intake.
   Source: lane L84 (p5-kms-root-key-choice), recorded under RO-L84-2; not built in lane L84.
+
+## task: minimatch-ghsa-g3hv-ignore-expiry-2026-12-30
+title: Deps: bump minimatch to a fixed release once one clears minimumReleaseAge, then delete the ignore (minimatch GHSA-g3hv-75wg-m249, osv-scanner.toml ignoreUntil 2026-12-30)
+status: idea
+risk: P2
+change_class: dependency-security
+depends_on: []
+invariants: [build-config]
+scope: [osv-scanner.toml, package.json, pnpm-lock.yaml]
+manifest: null
+merged_probe: null
+close_by: hand · dependency-security: a bump and a deleted ignore entry add no symbol
+notes: |
+  From 2026-11-03T22:26Z (2026-11-04 Saigon), when minimatch 11.0.1 clears minimumReleaseAge 10080: bump minimatch to a fixed 11.x (or a fixed 10.x if one appears; 10.2.6, the newest 10.x on 2026-10-31, is affected) through ONE floor in package.json pnpm.overrides; prove that eslint lints the same files with the same results, not only exit 0; then delete the osv-scanner.toml entry for GHSA-g3hv-75wg-m249. At the latest in L54's window 2026-12-01..14, before ignoreUntil 2026-12-30.
+  For the bump: package.json pnpm.overrides is the effective override map; the overrides at pnpm-workspace.yaml :14-15 are inert.
+  Related: the braces advisory GHSA-vfj7-8cjw-p6xm was withdrawn on 2026-10-23 (osv.dev), so the braces entry osv-scanner.toml :9-33 is unused at 8f930c2. The lane that does the minimatch bump, or L54, deletes that entry and closes the rows braces-ghsa-vfj7-no-fixed-version and braces-ghsa-vfj7-ignore-expiry-2026-12-21.
+  Copies of the vulnerable function (firstPhasePreProcess) are bundled in prettier 3.9.4, drizzle-kit 0.31.10 and playwright(-core) 1.63.0; OSV cannot see them; check them at the bump.
+  Source: lane L85 (P5-S14a, p5-deps-osv-minimatch), recorded under RO-L85-2 and D6 branch (a), decisions.md:2106; lane L85 adds the osv-scanner.toml entry, the bump is not built in lane L85.
