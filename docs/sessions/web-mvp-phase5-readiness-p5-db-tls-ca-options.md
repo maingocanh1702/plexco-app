@@ -17,6 +17,7 @@ Writer: W1 (opus), 2026-11-01, from the step-0 findings of units U1 (the sites, 
 
 - This lane is the code half: one helper, every connection site, the fail-closed tests.
 - The MEASUREMENT HALF is PENDING, owed to the owner's real Managed PG (go-live step 8.1): the real CA and the host names its certificate carries; whether production requires the CA; the App Spec env entries, the env manifest line and the environments-setup.md text; whether the platform can supply the PEM value directly. This record states no certificate, host or platform fact: none was measured.
+- G2 consequence (ruling RO-L78-2 item 3): a URL with `sslmode=require` makes pcs set `ssl = {}` (pcs :77-79, :144-147), and pg then calls `tls.connect` with only `servername` (pg connection.js:101-102, :116-120), so the connection verifies against Node's default CA store and the hostname. If the cluster's CA is not in that store (unmeasured: the measurement half), every connection fails closed until DATABASE_CA_CERT carries that CA. So the measurement half's wiring is a G2 prerequisite: DATABASE_CA_CERT on every connecting component in the App Specs, the env manifest line, and the owner step that pastes the cluster's CA. Not built here: the App Specs are deploy-guard files, and lane L87 holds the env manifest.
 - No enforcement switch: default applied, pending owner sign-off. A process without DATABASE_CA_CERT keeps today's behaviour in every environment.
 
 ### 2.2 Today's behaviour (measured by U1 in the installed sources)
@@ -45,7 +46,7 @@ Tests live in packages/db/src/pg-ssl-options.test.ts unless named; "stub" = a lo
 | R6 | set, and the URL `ssl` is outside {true, 1} (0, false, no-verify, other), or `uselibpqcompat` is other than false | refuses | unit |
 | R7 | set, and the URL carries accepted ssl parameters (`sslmode=require`, `verify-full`, `ssl=true`, `sslrootcert`, `sslcert`, `sslkey`, `sslnegotiation`, any other key starting with ssl, `uselibpqcompat=false`) | every key starting with `ssl` (case-insensitive) and `uselibpqcompat` is removed; the text before `?` and any fragment are kept byte for byte; other parameters are kept | unit: the effective `new pg.Client(cfg).ssl` equals the helper's object; the returned URL holds no ssl parameter |
 | R8 | set, and PGSSLMODE is disable or no-verify in the process env | the explicit object wins (2.2, :85) | unit: `new pg.Client(cfg).ssl` with PGSSLMODE set |
-| R9 | set, and the server certificate comes from another CA | the connection fails closed: one connection, no plaintext startup, no completed handshake, no retry without verification; the same with NODE_TLS_REJECT_UNAUTHORIZED=0, because the explicit `true` wins | stub, a Client and a createDb pool |
+| R9 | set, and the server certificate comes from another CA | the connection fails closed: the connect, or a pool's first query, rejects with a verification code; the stub sees one connection, no plaintext startup and no StartupMessage over TLS, so no client-side completion and no retry without verification; the same with NODE_TLS_REJECT_UNAUTHORIZED=0, because the explicit `true` wins. The server-side handshake count is not asserted (TB4) | stub, a Client and a createDb pool |
 | R10 | set, and the hostname mismatches (certificate for other.example, host `localhost`) | the connection fails with ERR_TLS_CERT_ALTNAME_INVALID: pg's servername plus Node's default check | stub |
 | R11 | every refusal message | names DATABASE_CA_CERT and the reason, at most a URL parameter NAME; never the URL, the user, the password, the host or any fragment of the CA body | unit, looping over R4-R6 with a password marker, a host marker and a 40-character slice of the CA |
 
@@ -64,7 +65,7 @@ Tests live in packages/db/src/pg-ssl-options.test.ts unless named; "stub" = a lo
 | S9 | apps/bot/src/projectors/public-sessions.ts:98 (lazy Pool) | `{ ...pgSslConnectionConfig(connectionString), max: 2, allowExitOnIdle: true }` |
 | S10 | apps/bot/src/projectors/zalo-dm.ts:247 (lazy Pool) | as S9 |
 
-The bot sites import the helper from `@plexco/db` (D6). The per-site proof is a scan guard, packages/db/src/pg-ssl-connection-sites-guard.test.ts: it fails when a `new pg.Pool(`, `new pg.Client(` or `new PgBoss(` in non-test source under apps/bot/src, apps/web or packages/db/src does not pass the helper (or a `queueOptions(` call), with a named allowlist, each entry with its reason; plus the S1 and S7 direct assertions (S7 in apps/bot/src/queue-ssl-options.test.ts).
+The bot sites import the helper from `@plexco/db/pg-ssl-options` (D6). The per-site proof is a scan guard, packages/db/src/pg-ssl-connection-sites-guard.test.ts: it fails when a `new pg.Pool(`, `new pg.Client(` or `new PgBoss(` in non-test source under apps/bot/src, apps/web or packages/db/src does not pass the helper (or a `queueOptions(` call), with a named allowlist, each entry with its reason; plus the S1 and S7 direct assertions (S7 in apps/bot/src/queue-ssl-options.test.ts).
 
 ### 2.6 Not sites
 
@@ -79,10 +80,17 @@ The bot sites import the helper from `@plexco/db` (D6). The per-site proof is a 
 - D3, the interface of 2.3.
 - D4, URL parameters: closed sets (a finite membership, not a blocklist) for `sslmode`, `ssl` and `uselibpqcompat`, checked over every occurrence; then every ssl key is removed. The text before `?` is kept byte for byte, so the credentials are never re-serialized; a URL without an ssl key is returned unchanged.
 - D5, the PEM rule: the armor is parsed generically, with no PEM literal in the source or the tests (the lane's final checks count PEM marker lines in the added lines, which must be 0); the value must be blocks and whitespace only; every label must be CERTIFICATE; every block must parse with node:crypto `X509Certificate`; `ca` = the blocks. No CA-flag requirement: the measurement half sees the real CA.
-- D6, the export: from the root entry `@plexco/db`, the package entry the sites already import (apps/web and the bot tests import it; the bot runs under tsx, so it resolves to src/index.ts). One re-export line in packages/db/src/index.ts beside line 10; index.ts holds only re-exports. This line is outside the lane's listed file ownership, so the conductor adds it before the bot-site commit (section 8). The alternative, a new subpath export, would need packages/db/package.json, which is not listed either.
+- D6, the export (ruling RO-L78-2 item 1): the subpath `@plexco/db/pg-ssl-options`, one line in the `exports` map of packages/db/package.json (`"./pg-ssl-options": "./src/pg-ssl-options.ts"`), on the bot's subpath precedent (`./zalo-bot-api`, which apps/bot/src/projectors/zalo-dm.ts:8 imports as `@plexco/db/zalo-bot-api`). The bot sites import the subpath, so that import does not load the root entry's module graph; the packages/db sites import `./pg-ssl-options.js`, and the root entry is not edited. No dependency change: pnpm-lock.yaml is byte-unchanged.
 - D7, errors: one error class, PgSslConfigError, whose message names DATABASE_CA_CERT and the reason, at most a URL parameter name. No catch-and-retry anywhere; the only retry loop (outbox-wake.ts:149-159) rebuilds the client with the same options.
 - D8, enforcement: none built, default applied, pending owner sign-off (2.1).
 - D9, tests: one file holds the unit rows and the stub; openssl makes the certificates once in a mkdtemp directory and they are removed afterwards; a missing openssl fails the file and never skips it. The scan guard and the S7 test are separate files (the guard reads the repository; the S7 test must live in apps/bot). The stub binds 127.0.0.1 on port 0 (precedent: packages/db/src/zalo-bot-api-fake-server-matrix.test.ts:63) and connects to host `localhost`, so pg sets the servername.
+- TB1 (W2), control characters: with DATABASE_CA_CERT set, a URL holding a tab, LF or CR is refused, because the URL parser deletes them and a parameter name could hide `sslmode`; with the CA unset nothing changes (R1).
+- TB2 (W2), case: the R5 and R6 closed sets match the parameter name case-insensitively, as the R7 strip does, and the value exactly: `SSLMODE=disable` and `sslmode=REQUIRE` refuse.
+- TB3 (W2), the strip: the query is filtered by raw segment (split on `&`, each key decoded by URLSearchParams), so the kept parameters stay byte for byte when a key is removed; empty segments are kept.
+- TB4 (W2), R9's proof: the connect rejects with a verification code and the stub sees exactly one connection, no plaintext startup and no StartupMessage over TLS (measured 0, also with NODE_TLS_REJECT_UNAUTHORIZED=0). The server-side handshake count is not asserted for R9 or R10: whether Node completes the TLS handshake before its JS verify check is unmeasured.
+- TB5 (W2), the input type: the helper takes `connectionString: string`; a site that holds `string | undefined` keeps its existing guard before the call, so the helper's input is not widened.
+- W3, the guard's e2e entry: apps/web/e2e/public-share-page-prod.proof.ts:152 (its `new Client(`, a Playwright proof against a scratch database) is a named allowlist entry, not a skipped e2e directory, so a new e2e connection still forces a decision.
+- W4, the .env.example comment: it says the web, bot and migration DB connections verify while the operator CLIs in scripts/ keep today's behaviour, not "every DB connection", because the three CLIs of 2.6 do not take the helper.
 - Tier C: none. No money or PII contract, no migration, no deploy-guard file and no enforcement: the clerk merges.
 
 ## 4. Acceptance matrix (A-1..A-11; expected results)
@@ -97,7 +105,7 @@ The bot sites import the helper from `@plexco/db` (D6). The per-site proof is a 
 | A-6 | `pnpm typecheck`, `pnpm lint`, `pnpm format:check` | exit 0 each |
 | A-7 | `pnpm review:check:changed` before every commit; `pnpm review:check` at the end | exit 0 |
 | A-8 | `git diff --name-only` from the base (full SHA) to HEAD | exactly the files of section 6 |
-| A-9 | the added lines: PEM marker lines; `rejectUnauthorized: false` | 0 each |
+| A-9 | the added lines in .ts, package.json and .env.example (this record itself cites `rejectUnauthorized: false` in A-2, A-9 and section 7): PEM marker lines; `rejectUnauthorized: false` | 0 each |
 | A-10 | the backlog reconcile | no new refusal; the row stays `idea` |
 | A-11 | `pnpm -w test` at the end; CI on one push | green |
 
@@ -109,7 +117,9 @@ R1 (code) and S1 (security), both opus, in parallel on one committed HEAD when n
 
 B3 about 450 owned-diff lines per the lane estimate (helper about 60, sites about 40, tests about 220, this record about 120, backlog and .env.example about 10); this record runs longer, so about 500 is expected. An overrun is logged with its design reason, not a gate. 0 migrations.
 
-- Edited, existing at the base: packages/db/src/client.ts (S1); packages/db/src/migrate.ts (S2); packages/db/src/index.ts (one re-export line, D6, after the conductor's ownership addition); the connection lines and one import line in each of apps/bot/src/worker.ts, outbox-wake.ts, preflight.ts, provision-queue.ts, queue.ts and apps/bot/src/projectors/web-realtime.ts, public-sessions.ts, zalo-dm.ts; .env.example (one commented name line and its comment, D2); docs/autopilot-backlog.md (the row, in place).
+Exception (ruling RO-L78-2 item 2): 720 against the 675 cap (1.5 times 450) after commit 2, accepted; the estimate missed the 11-row decision table and the TLS stub harness (the fail-closed proofs), a property of the test design, not scope drift; a second overrun from the same cause means a re-slice. Final B3, added plus deleted lines from the base over the 18 owned files at the commit that adds this line: 988, 0 outside the ownership, 0 migrations. The commits after the ruling added 268 of it, against a remaining estimate of about 230 and a stop at about 300; the scan guard alone is 108 against 70 (prettier's wrapping).
+
+- Edited, existing at the base: packages/db/src/client.ts (S1); packages/db/src/migrate.ts (S2); packages/db/package.json (one `exports` line, D6); the connection lines and one import line in each of apps/bot/src/worker.ts, outbox-wake.ts, preflight.ts, provision-queue.ts, queue.ts and apps/bot/src/projectors/web-realtime.ts, public-sessions.ts, zalo-dm.ts; .env.example (one commented name line and its comment, D2); docs/autopilot-backlog.md (the row, in place).
 - New: packages/db/src/pg-ssl-options.ts, packages/db/src/pg-ssl-options.test.ts, packages/db/src/pg-ssl-connection-sites-guard.test.ts, apps/bot/src/queue-ssl-options.test.ts and this record.
 - Commits: 1 this record; 2 the helper and its test; 3 the sites, the guard, the S1 and S7 assertions, .env.example and the backlog row (its notes as the lane block states, plus the three operator CLIs as a follow-up; `scope` lists the measurement files by their tracked paths; status stays `idea`).
 
@@ -128,7 +138,7 @@ Threat model: the adversaries are a mistake, and a network attacker between the 
 
 ## 8. Open
 
-0 in scope. The measurement half (2.1) is pending and outside this lane. One administrative item, not a design question: the conductor adds packages/db/src/index.ts (one re-export line, D6) to the lane's file ownership before the bot-site commit.
+0 in scope; 0 open. The measurement half (2.1) is pending and outside this lane. The one administrative item, the export route of D6, is resolved by ruling RO-L78-2 item 1: the subpath export, with packages/db/package.json added to the lane's file ownership for that one line.
 
 ## 9. Hard dependencies
 
@@ -162,7 +172,7 @@ BASE_BRANCH: main
 TARGET_FILES:
   - packages/db/src/client.ts (edited: createDb's config line, S1)
   - packages/db/src/migrate.ts (edited: the runner's Client line, S2)
-  - packages/db/src/index.ts (edited: one re-export line beside line 10, D6, after the conductor's ownership addition)
+  - packages/db/package.json (edited: one `exports` line, the `@plexco/db/pg-ssl-options` subpath, D6)
   - apps/bot/src/worker.ts (edited: the Pool line and one import, S3)
   - apps/bot/src/outbox-wake.ts (edited: the LISTEN Client options and one import, S4)
   - apps/bot/src/preflight.ts (edited: the Client line and one import, S5)
@@ -176,7 +186,7 @@ TARGET_FILES:
   - docs/sessions/web-mvp-phase5-golive-plan.md (read-only: row 90 and section 7 row 4)
   - docs/standards/environments-setup.md (read-only: section 4, the contract)
 SLICE: p5-db-tls-ca-options
-IN_SCOPE: one packages/db helper (pg-ssl-options.ts) and its tests; the ten sites of section 2.5; one re-export line in packages/db/src/index.ts; the scan guard; the S1 and S7 assertions; one commented .env.example line; the backlog row in place; this record
+IN_SCOPE: one packages/db helper (pg-ssl-options.ts) and its tests; the ten sites of section 2.5; one `exports` line in packages/db/package.json (the subpath, D6); the scan guard; the S1 and S7 assertions; one commented .env.example line; the backlog row in place; this record
 OUT_OF_SCOPE: infra/** (App Specs, the renderer, entrypoint.sh, the Dockerfile), .github/**, environments-setup.md, the env manifest, decisions.md, staging-deploy.md, migrations, apps/web edits, drizzle.config.ts, test-harness.ts, the three operator CLIs under scripts/; any enforcement switch; any committed key, certificate or real CA; any DigitalOcean call; any query or pool change beyond ssl; any secret value or connection string
 G1_DECISION: PASS
 G2_SPEC: PASS
@@ -195,5 +205,5 @@ ACCEPTANCE_MATRIX: PASS
 SECURITY_AND_MIGRATION_GATE: PASS # no migration; one security round (opus) on section 7
 IMPLEMENTATION_ARTIFACTS: PASS
 FIRST_IMPLEMENTATION_STEP: W1 writes packages/db/src/pg-ssl-options.ts and its test (rows R1-R11), runs them and the package typecheck, and commits
-REMAINING_BLOCKERS: none # the bot-site commit needs the conductor's ownership addition of packages/db/src/index.ts first (section 8)
+REMAINING_BLOCKERS: none # the export route is resolved by ruling RO-L78-2 item 1 (section 8)
 ```
