@@ -5885,7 +5885,7 @@ risk: P1
 change_class: infra-tooling
 depends_on: []
 invariants: []
-scope: []
+scope: [infra/app.prod.yaml, infra/app.staging.yaml, docs/runbooks/env-manifest-staging-production.md, docs/standards/environments-setup.md]
 manifest: null
 merged_probe: null
 _probe_note: probe do slice tác giả đưa vào; chưa có.
@@ -5894,6 +5894,9 @@ notes: |
   PR #50 (M5), risk R2: `environments-setup` §4 yêu cầu DB TLS verification (CA + hostname); code không set `ssl` và image không mang
   CA bundle của DO → hiện chỉ `sslmode=require`. Phải có trước production. Không sửa được nếu chưa có quyền DO.
   source: PR #50 (M5) risks · DD-129
+  2026-11-01, lane L78 p5-db-tls-ca-options (the PR of branch feat/p5-db-tls-ca-options) merges the code half: `DATABASE_CA_CERT` set = the web, bot and migration pg connections verify the server certificate and hostname, fail closed; unset = today's behaviour. The measurement half stays PENDING: the owner's real Managed PG (go-live step 8.1), the real CA and host names, whether production enforces verification, and the App Spec, env manifest and environments-setup.md entries (the scope above).
+  G2 prerequisite (measured on pg 8.22.0 + pg-connection-string 2.14.0): a URL with `sslmode=require` sets `ssl = {}` (pg-connection-string index.js:77-79, :144-147) and pg calls `tls.connect` with only `servername` (pg lib/connection.js:101-102, :116-120), so it verifies against Node's default CA store and the hostname; against a Managed PG whose CA is not in that store every connection fails closed until `DATABASE_CA_CERT` carries the cluster's CA. The measurement half's wiring is therefore a G2 prerequisite: `DATABASE_CA_CERT` on every connecting component in the App Specs, the env manifest line, and the owner step that pastes the cluster's CA.
+  Follow-up: the operator CLIs scripts/outbox-dlq-replay.mjs:104, scripts/outbox-projector-enable.mjs:305 and scripts/public-alias-moderate.mjs:107 open `new pg.Client` without the helper, so they keep today's behaviour when the CA is set.
 
 ## task: staging-ttl-teardown-automation
 title: Tự động teardown staging theo TTL (hiện teardown thủ công, đã ghi trong runbook)
