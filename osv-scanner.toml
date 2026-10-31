@@ -31,3 +31,32 @@ Reverse by deleting this entry. Re-review at ignoreUntil, or sooner if braces
 publishes a fixed release, if @next/eslint-plugin-next drops micromatch, or if
 braces gains a runtime path.
 """
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-12-30
+reason = """
+minimatch 10.2.5 (CVE-2026-118764, Medium 6.9; affected below 11.0.1, first
+fixed release 11.0.1), the only minimatch package in pnpm-lock.yaml, reached
+only through its three lockfile parents @eslint/config-array 0.23.5,
+@typescript-eslint/typescript-estree 8.62.1 and eslint 10.7.0, every chain
+ending at a root devDependency (lint tooling).
+`pnpm why -r --prod minimatch` is empty: no runtime dependency chain in any
+workspace package.
+
+The advisory (https://github.com/advisories/GHSA-g3hv-75wg-m249, accessed
+2026-10-31) is a CPU and memory denial of service open to
+"an attacker who can supply a glob pattern". Here every pattern and path
+that eslint and typescript-eslint pass to minimatch comes from the repo's
+own lint configuration and file tree, never from request or user input.
+
+ignoreUntil is 60 days from 2026-10-31. Not patched because no fixed release
+is yet older than minimumReleaseAge (10080 minutes): the oldest, 11.0.1, was
+published 2026-10-27T22:26Z and clears it 2026-11-03T22:26Z.
+Decision: D6 branch (a), decisions.md:2106, applied by lane L85 under the
+owner's answer of 2026-10-31 "Mở lane L85 (Recommended)";
+review owner: the repository owner. Reverse by deleting this entry.
+Re-review at ignoreUntil, or sooner when a fixed release clears
+minimumReleaseAge, if eslint and typescript-eslint drop minimatch, or if
+minimatch gains a runtime path.
+"""
