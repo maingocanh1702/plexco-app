@@ -17,6 +17,8 @@ const ROUTED = /pgSslConnectionConfig\(|queueOptions\(/;
 // Left in the argument once the helper call is removed: a key of its own that would override the helper.
 const OVERRIDE = /\b(?:ssl|connectionString)\b/;
 const INSECURE = /rejectUnauthorized\s*:\s*false/;
+// [1] a declared name, [2] its initializer up to ";"; a lookahead, so no match swallows a later declaration.
+const DECL = /(?:const|let)\s+([A-Za-z_$][\w$]*)\b(?=[^=]*=([^;]*))/g;
 
 /** The ten sites (readiness 2.5, S1-S10), sorted: each file opens exactly one connection through the helper. */
 const SITES = [
@@ -67,7 +69,7 @@ const argText = (src: string, open: number): string => {
 const resolve = (src: string, arg: string): string => {
   const id = arg.trim();
   if (!/^[A-Za-z_$][\w$]*$/.test(id)) return arg;
-  return new RegExp(`(?:const|let)\\s+${id}\\b[^=]*=([^;]*)`).exec(src)?.[1] ?? arg;
+  return [...src.matchAll(DECL)].find((m) => m[1] === id)?.[2] ?? arg;
 };
 
 const sources = new Map(DIRS.flatMap(walk).map((f) => [f, readFileSync(new URL(f, ROOT), "utf8")]));
