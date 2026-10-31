@@ -17,8 +17,8 @@ const ROUTED = /pgSslConnectionConfig\(|queueOptions\(/;
 // Left in the argument once the helper call is removed: a key of its own that would override the helper.
 const OVERRIDE = /\b(?:ssl|connectionString)\b/;
 const INSECURE = /rejectUnauthorized\s*:\s*false/;
-// [1] a declared name, [2] its initializer up to ";"; a lookahead, so no match swallows a later declaration.
-const DECL = /(?:const|let)\s+([A-Za-z_$][\w$]*)\b(?=[^=]*=([^;]*))/g;
+// [1] a declared name, [2] its initializer up to ";"; all in a lookahead, so a match consumes only the keyword and no text swallows a later declaration.
+const DECL = /(?:const|let)(?=\s+([A-Za-z_$][\w$]*)\b[^=]*=([^;]*))/g;
 
 /** The ten sites (readiness 2.5, S1-S10), sorted: each file opens exactly one connection through the helper. */
 const SITES = [
