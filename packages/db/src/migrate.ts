@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { PgSslConfigError, pgSslConnectionConfig } from "./pg-ssl-options.js";
 
 /**
  * SQL migration runner — the ONLY thing that applies packages/db/migrations.
@@ -173,7 +174,17 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     const message = "migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)";
     throwMigrateError(message, message);
   }
-  const client = new pg.Client({ connectionString: migrationUrl });
+  let client: pg.Client;
+  try {
+    client = new pg.Client(pgSslConnectionConfig(migrationUrl));
+  } catch (error) {
+    // R11: a refusal names DATABASE_CA_CERT and its reason, never the URL, a value or CA text, so
+    // its message is its own safe summary and the CLI prints why migrate stopped.
+    if (error instanceof PgSslConfigError) {
+      throwMigrateError(error.message, error.message, { cause: error });
+    }
+    throw error;
+  }
   try {
     await client.connect();
   } catch (error) {

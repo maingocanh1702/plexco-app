@@ -635,7 +635,7 @@ describe("registry-driven dispatch against a real database (A4, A5, A9, A24)", (
       const lines = readFileSync(path.join(REPO, ".env.example"), "utf8")
         .split("\n")
         .filter((line) => line.startsWith("OUTBOX_DISPATCH_SCHEDULE_ENABLED="));
-      expect(lines).toEqual(["OUTBOX_DISPATCH_SCHEDULE_ENABLED=true"]); // .env.example:91
+      expect(lines).toEqual(["OUTBOX_DISPATCH_SCHEDULE_ENABLED=true"]); // .env.example:93
       const committed = lines[0]!.slice(lines[0]!.indexOf("=") + 1);
       expect(committed).toBe("true");
       const { resolveWorkerDispatchEnablement } = await import("./worker.js");

@@ -1,3 +1,4 @@
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import pg from "pg";
 import type { DeliverFn } from "../dispatcher.js";
 import type { Queryable } from "../projector-registry.js";
@@ -30,7 +31,7 @@ function notifyDb(): Queryable {
     // Fail closed: without a URL pg would connect as the OS user with its implicit defaults.
     if (!connectionString) throw new Error("DATABASE_URL_DIRECT is not set");
     pool = new pg.Pool({
-      connectionString,
+      ...pgSslConnectionConfig(connectionString),
       max: 1,
       connectionTimeoutMillis: NOTIFY_TIMEOUT_MS,
       query_timeout: NOTIFY_TIMEOUT_MS,

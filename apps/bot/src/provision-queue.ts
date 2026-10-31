@@ -1,4 +1,5 @@
 import { isDirectRun } from "./direct-run.js";
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import pg from "pg";
 import PgBoss from "pg-boss";
 import { QUEUE_SCHEMA } from "./queue.js";
@@ -21,7 +22,7 @@ export async function provisionQueue(migrationUrl: string): Promise<void> {
   }
 
   // Own the connection even if pg-boss startup fails before stop() can close its pool.
-  const client = new pg.Client({ connectionString: migrationUrl });
+  const client = new pg.Client(pgSslConnectionConfig(migrationUrl));
   try {
     await client.connect();
     const boss = new PgBoss({

@@ -1,3 +1,4 @@
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import pg from "pg";
 import type { DeliverFn, DeliveryOutcome } from "../dispatcher.js";
 import type { Queryable } from "../projector-registry.js";
@@ -95,7 +96,11 @@ export const deliverPublicSessions: DeliverFn = async (job) => {
   const connectionString = process.env.DATABASE_URL_DIRECT;
   if (!connectionString) return dlq("config_missing");
   if (!production) {
-    const pool = new pg.Pool({ connectionString, max: 2, allowExitOnIdle: true });
+    const pool = new pg.Pool({
+      ...pgSslConnectionConfig(connectionString),
+      max: 2,
+      allowExitOnIdle: true,
+    });
     pool.on("error", () => console.error("public_sessions: an idle pool client failed")); // no detail
     production = createPublicSessionsDeliver({ db: pool });
   }

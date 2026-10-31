@@ -14,6 +14,7 @@
     },
     "./connector-crypto": "./src/connector-crypto.ts",
     "./zalo-bot-api": "./src/zalo-bot-api.ts",
+    "./pg-ssl-options": "./src/pg-ssl-options.ts",
     "./read-bounded-body": "./src/read-bounded-body.ts"
   },
   "scripts": {
