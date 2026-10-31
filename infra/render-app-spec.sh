@@ -4,6 +4,7 @@
 #   yq -o=json infra/app.staging.yaml \
 #     | IMAGE_DIGEST=sha256:<64 hex> VPC_ID=<uuid> KEY_ROOT=aws-kms|local [APP_DOMAIN=<host>] \
 #       infra/render-app-spec.sh <live-spec.json> > spec.local.json
+#   (create mode, item 6: the same pipe and environment, `infra/render-app-spec.sh --create > spec.local.json`)
 #
 # <live-spec.json> is `doctl apps spec get <app-id> --format json`. Contract:
 #  1. Placeholders __IMAGE_DIGEST__ / __VPC_ID__ / __APP_DOMAIN__ are replaced from the environment,
@@ -24,12 +25,31 @@
 #     (two closed lists, held only below) is dropped from every `envs`, and __KMS_PROVIDER__ is filled
 #     from KEY_ROOT. A service, worker or job that declares KMS_PROVIDER must render it equal to
 #     KEY_ROOT, and its live component must carry it once with that value, or the render FAILS.
+#  6. Create mode, for an app's first creation (`doctl apps create --spec`, no live app yet): `--create` is
+#     the ONLY argument, in place of <live-spec.json>. With any other argument, before or after it, the render
+#     FAILS (no mixed mode); a live file named --create is passed as ./--create. It runs every input check and
+#     every committed-spec check above (1, 3, the types and the no-value check of 2, the document checks of 4,
+#     the key-root drop and KMS_PROVIDER = KEY_ROOT of 5) and reads no live spec (/dev/null). It skips exactly
+#     the four live checks: the live .name equality (4), the live component's KMS_PROVIDER (5), the live
+#     secret copy (2: liveSecrets and fill) and the unfilled-SECRET guard (2: it would fail every SECRET).
+#     Every SECRET is left without a value, as committed; a SECRET carrying a value anywhere in the rendered
+#     spec (`false` and 0 included) FAILS. It never calls doctl or any network.
 # Every failure prints this script's own message, naming a key or a field, never a value: jq's own
 # error text is withheld (it can quote input bytes). No secret value is ever read from or written to
 # anything but the live spec. Needs: bash 3.2+, jq.
 set -euo pipefail
 
 live="${1:?usage: render-app-spec.sh <live-spec.json> < committed.json}"
+# Create mode (contract item 6). `create` is only ever this script's literal true or false, never input.
+create=false
+render_app_spec_create_mode() {
+  [ "$#" -eq 1 ] || { echo "render: --create takes no live spec" >&2; exit 1; }
+  create=true
+  live=/dev/null
+}
+for arg in "$@"; do
+  if [ "$arg" = "--create" ]; then render_app_spec_create_mode "$@"; fi
+done
 digest="${IMAGE_DIGEST:?IMAGE_DIGEST is required}"
 vpc="${VPC_ID:?VPC_ID is required}"
 root="${KEY_ROOT:?KEY_ROOT is required}"
@@ -46,7 +66,7 @@ fi
 committed="$(cat)"
 [ -n "$committed" ] || { echo "render: empty spec on stdin" >&2; exit 1; }
 
-jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg root "$root" --arg domain "$domain" 'try (
+jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg root "$root" --arg domain "$domain" --argjson create "$create" 'try (
   # Live spec envs for a component, keyed "<kind>/<name>/<ENV_KEY>". `arrays` skips a live surface of
   # the wrong shape (its secrets then count as missing) instead of letting jq quote it in an error.
   def liveSecrets:
@@ -65,7 +85,7 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
   # from the same app only.
   (if length != 1 then error("render: stdin must hold exactly one JSON document") else .[0] end)
   | (if [.name?][0] | type == "string" and test("\\S") then . else error("render: committed spec has no name") end)
-  | (if ($live[0].name? // null) != .name then error("render: live spec .name differs from the committed .name") else . end)
+  | (if ($create | not) and (($live[0].name? // null) != .name) then error("render: live spec .name differs from the committed .name") else . end)
   # Choke-point guard (CLOSED SET): the DDL credential may exist ONLY as an env of a PRE_DEPLOY job
   # (docs/standards/environments-setup.md §4, §13). Count it everywhere in the document and compare
   # with the PRE_DEPLOY-job count, so any other surface (services, workers, static_sites, functions,
@@ -98,9 +118,15 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
   # value once (absent or wrong-shaped differs): a flip or half-switch stops, naming the component only.
   | ((("services", "workers", "jobs") as $k | (.[$k] | list($k))[] | . as $c
       | [($c.envs | list("envs"))[] | select(.key == "KMS_PROVIDER") | .value] | select(length > 0)
-      | if all(.[]; . == $root) and [($live[0][$k] // [] | arrays)[] | select(.name? == $c.name)
-             | (.envs? // [] | arrays)[] | select(.key? == "KMS_PROVIDER") | .value] == [$root]
+      | if all(.[]; . == $root) and ($create or [($live[0][$k] // [] | arrays)[] | select(.name? == $c.name)
+             | (.envs? // [] | arrays)[] | select(.key? == "KMS_PROVIDER") | .value] == [$root])
         then empty else error("render: KMS_PROVIDER differs from KEY_ROOT: \($k)/\($c.name)") end), .)
+  # Create mode copies no secret: every SECRET stays as committed, without a value, and one that carries a
+  # value anywhere (`false` and 0 included) fails. The update path below is unchanged.
+  | if $create then
+      (if any(.. | objects | select(((.type? // "") | ascii_upcase) == "SECRET" and (.value | . != null and . != "")); .)
+       then error("render: create mode would emit a SECRET with a value") else . end)
+    else (.
   | liveSecrets as $ls
   # A SECRET is copied from the live app. A GENERAL env over a live SECRET would blank or demote it.
   | def fill($kind): . as $c | .envs = [ ($c.envs | list("envs"))[] | $ls["\($kind)/\($c.name)/\(.key)"] as $v |
@@ -117,5 +143,6 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
   # Never silently blank a secret: a SECRET left valueless on any surface fill() does not cover fails.
   | (if any(.. | objects | select(((.type? // "") | ascii_upcase) == "SECRET" and (.value // "") == ""); .)
      then error("render: unfilled SECRET outside services/workers/jobs") else . end)
+    ) end
   # jq error text can quote input bytes (a live ciphertext): only the messages raised above pass.
 ) catch (if type == "string" and startswith("render: ") then . else "render: the input is not the expected JSON shape (the jq message is withheld: it can quote a value)" end | error)' <<<"$committed"

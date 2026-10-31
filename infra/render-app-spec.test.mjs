@@ -672,3 +672,229 @@ test("every ingress rule keeps the full request path", () => {
     assert.ok(!("rewrite" in rule.component), rule.match.path.prefix);
   }
 });
+
+// --- create mode (render_app_spec_create_mode): an app's first creation, no live spec ---
+// The argv after the script is `args`; no live file is written. Same env and TMPDIR handling as render().
+function renderArgs(spec, args, env = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), "render-"));
+  try {
+    return spawnSync("bash", [SCRIPT, ...args], {
+      input: typeof spec === "string" ? spec : JSON.stringify(spec),
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, IMAGE_DIGEST: DIGEST, VPC_ID: VPC, KEY_ROOT: "aws-kms", TMPDIR: dir, ...env },
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function renderCreate(spec, env = {}) {
+  return renderArgs(spec, ["--create"], env);
+}
+
+// Every SECRET-typed object of a document, wherever it sits (the objects themselves, not copies).
+function secretEntries(doc) {
+  const found = [];
+  JSON.stringify(doc, (k, v) => {
+    if (v !== null && typeof v === "object" && String(v.type).toUpperCase() === "SECRET") found.push(v);
+    return v;
+  });
+  return found;
+}
+
+const CREATE_SPECS = [
+  ["infra/app.staging.yaml", STAGING, "staging.example.test"],
+  ["infra/app.prod.yaml", PROD, "example.test"],
+];
+
+test("create mode: fills every placeholder for the committed staging and production specs", () => {
+  for (const [label, file, domain] of CREATE_SPECS) {
+    for (const root of ROOTS) {
+      const at = `${label} KEY_ROOT=${root}`;
+      const r = renderCreate(readSpec(file), { APP_DOMAIN: domain, KEY_ROOT: root });
+      assert.equal(r.status, 0, `${at}: ${r.stderr}`);
+      assert.equal(r.stderr, "", at);
+      assert.doesNotMatch(r.stdout, /__[A-Za-z0-9_]+__/, at);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.vpc.id, VPC, at);
+      assert.ok(out.domains.some((d) => d.domain === domain), at);
+      for (const { c } of components(out)) assert.equal(c.image.digest, DIGEST, `${at} ${c.name}`);
+      assert.equal(findEnv(out, "services", "web", "KMS_PROVIDER").value, root, at);
+      assert.equal(findEnv(out, "workers", "worker", "KMS_PROVIDER").value, root, at);
+      assert.equal(findEnv(out, "services", "web", "APP_BASE_URL").value, `https://${domain}`, at);
+    }
+  }
+});
+
+test("create mode: a malformed digest, VPC, domain or KEY_ROOT is refused naming the key, never the value", () => {
+  const spec = readSpec(STAGING);
+  for (const [env, message] of [
+    [{ IMAGE_DIGEST: "sha256:plain-fake-$(id)" }, /render: IMAGE_DIGEST must be sha256:<64 hex>/],
+    [{ IMAGE_DIGEST: `${DIGEST}\nplain-fake` }, /render: IMAGE_DIGEST must be sha256:<64 hex>/],
+    [{ VPC_ID: "plain-fake-vpc;id" }, /render: VPC_ID must be a UUID/],
+    [{ APP_DOMAIN: "plain-fake.example.test/$(id)" }, /render: APP_DOMAIN is not a hostname/],
+    [{ APP_DOMAIN: "Plain-Fake.example.test" }, /render: APP_DOMAIN is not a hostname/],
+    [{ KEY_ROOT: "plain-fake-root" }, /render: KEY_ROOT must be aws-kms or local/],
+    [{ IMAGE_DIGEST: undefined }, /IMAGE_DIGEST: IMAGE_DIGEST is required/],
+    [{ VPC_ID: undefined }, /VPC_ID: VPC_ID is required/],
+    [{ KEY_ROOT: undefined }, /KEY_ROOT: KEY_ROOT is required/],
+  ]) {
+    const label = JSON.stringify(env);
+    const r = renderCreate(spec, { APP_DOMAIN: "staging.example.test", ...env });
+    assertRefused(r, message, label);
+    assert.doesNotMatch(r.stderr, /plain-fake|Plain-Fake/, label);
+  }
+});
+
+test("create mode: a SECRET that carries a value is refused and its value is never printed", () => {
+  const worker = (s) => s.workers.find((w) => w.name === "worker");
+  for (const [label, change, message] of [
+    [
+      "a chosen-set SECRET in an envs list",
+      (s) => (findEnv(s, "services", "web", "DATABASE_URL").value = "plain-fake-secret"),
+      /render: committed SECRET carries a value: DATABASE_URL/,
+    ],
+    [
+      "a NON-chosen-set SECRET, which the drop would remove",
+      (s) => (findEnv(s, "services", "web", "ENCRYPTION_KEY").value = "plain-fake-secret"),
+      /render: committed SECRET carries a value: ENCRYPTION_KEY/,
+    ],
+    [
+      "a SECRET under a misspelled `env` list, outside every envs list",
+      (s) => (worker(s).env = [{ key: "DATABASE_URL_DIRECT", type: "SECRET", value: "plain-fake-secret" }]),
+      /render: create mode would emit a SECRET with a value$/m,
+    ],
+    [
+      "a SECRET whose value is false",
+      (s) => (findEnv(s, "workers", "worker", "DATABASE_URL_DIRECT").value = false),
+      /render: create mode would emit a SECRET with a value$/m,
+    ],
+  ]) {
+    const r = renderCreate(variant(readSpec(STAGING), change), { APP_DOMAIN: "staging.example.test" });
+    assertRefused(r, message, label);
+    assert.doesNotMatch(r.stderr, /plain-fake-secret/, label);
+  }
+});
+
+test("create mode: every SECRET of the committed staging and production specs stays valueless", () => {
+  // After the drop: the common SECRET names plus the chosen set, hard-coded as the content tables are.
+  const counts = {
+    "infra/app.staging.yaml": { "aws-kms": 19, local: 12 },
+    "infra/app.prod.yaml": { "aws-kms": 17, local: 10 },
+  };
+  for (const [label, file, domain] of CREATE_SPECS) {
+    for (const root of ROOTS) {
+      const at = `${label} KEY_ROOT=${root}`;
+      const r = renderCreate(readSpec(file), { APP_DOMAIN: domain, KEY_ROOT: root });
+      assert.equal(r.status, 0, `${at}: ${r.stderr}`);
+      const found = secretEntries(JSON.parse(r.stdout));
+      assert.equal(found.length, counts[label][root], at);
+      for (const s of found) assert.ok(!("value" in s), `${at} ${s.key}`);
+      assert.doesNotMatch(r.stdout, /EV\[/, at);
+    }
+  }
+});
+
+test("create mode: DATABASE_URL_MIGRATION outside the PRE_DEPLOY job fails the render", () => {
+  const base = renderCreate(committed);
+  assert.equal(base.status, 0, base.stderr);
+  const surfaces = {
+    services: (spec) => spec.services[0].envs.push({ key: "DATABASE_URL_MIGRATION", value: "x" }),
+    workers: (spec) => spec.workers[0].envs.push({ key: "DATABASE_URL_MIGRATION", value: "x" }),
+    functions: (spec) => (spec.functions = [{ name: "f", envs: [{ key: "DATABASE_URL_MIGRATION", value: "x" }] }]),
+    static_sites: (spec) => (spec.static_sites = [{ name: "s", envs: [{ key: "DATABASE_URL_MIGRATION", value: "x" }] }]),
+    "top-level envs": (spec) => (spec.envs = [{ key: "DATABASE_URL_MIGRATION", value: "x" }]),
+    "POST_DEPLOY job": (spec) =>
+      spec.jobs.push({ name: "post", kind: "POST_DEPLOY", envs: [{ key: "DATABASE_URL_MIGRATION", value: "x" }] }),
+    "the migrate job's kind edited to POST_DEPLOY": (spec) => (spec.jobs[0].kind = "POST_DEPLOY"),
+  };
+  for (const [name, mutate] of Object.entries(surfaces)) {
+    assertRefused(renderCreate(variant(committed, mutate)), /render: DATABASE_URL_MIGRATION outside the PRE_DEPLOY job/, name);
+  }
+});
+
+test("create mode: the other key-root set is dropped under each KEY_ROOT", () => {
+  const ids = (s) => components(s).map(({ kind, c }) => `${kind}/${c.name}`);
+  for (const [label, file, domain] of CREATE_SPECS) {
+    const spec = readSpec(file);
+    for (const root of ROOTS) {
+      const at = `${label} KEY_ROOT=${root}`;
+      const r = renderCreate(spec, { APP_DOMAIN: domain, KEY_ROOT: root });
+      assert.equal(r.status, 0, `${at}: ${r.stderr}`);
+      const out = JSON.parse(r.stdout);
+      assert.deepEqual(ids(out), ids(spec), at);
+      for (const { c } of components(out)) {
+        assert.deepEqual(c.envs.map((e) => `${e.key} ${e.type}`).sort(), expectedEnvs(c.name, [root]), `${at} ${c.name}`);
+      }
+      const other = ROOTS.find((x) => x !== root);
+      for (const name of ["web", "worker"]) {
+        const drop = rootSet(other, name);
+        for (const key of [...drop.GENERAL, ...drop.SECRET]) assert.ok(!r.stdout.includes(`"${key}"`), `${at} ${key}`);
+      }
+    }
+  }
+});
+
+test("create mode: an unresolved placeholder fails, printing the token and nothing around it", () => {
+  const long = (s) => (findEnv(s, "services", "web", "PROCESS_ROLE").value = "prefix-super-long-value-__NOPE__-suffix");
+  const r = renderCreate(variant(readSpec(STAGING), long), { APP_DOMAIN: "staging.example.test" });
+  assertRefused(r, /render: unresolved placeholder: __NOPE__$/m);
+  assert.doesNotMatch(r.stderr, /super-long-value/);
+  // APP_DOMAIN unset: the staging spec keeps __APP_DOMAIN__, and the render fails naming only that token.
+  const noDomain = renderCreate(readSpec(STAGING), { APP_DOMAIN: undefined });
+  assertRefused(noDomain, /render: unresolved placeholder: __APP_DOMAIN__$/m, "APP_DOMAIN unset");
+});
+
+test("create mode: a live-spec argument with --create fails and no mixed mode renders", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "render-"));
+  try {
+    const livePath = path.join(dir, "live.json");
+    writeFileSync(livePath, JSON.stringify(live));
+    for (const args of [
+      ["--create", livePath],
+      [livePath, "--create"],
+      ["--create", "--create"],
+      ["--create", path.join(dir, "absent.json")],
+    ]) {
+      const label = args.map((a) => path.basename(a)).join(" ");
+      const r = renderArgs(committed, args);
+      assertRefused(r, /render: --create takes no live spec/, label);
+      assert.doesNotMatch(r.stderr, /EV\[/, label);
+    }
+    // A live file literally named --create is reached by its path: update mode, its secret copied.
+    const named = path.join(dir, "--create");
+    writeFileSync(named, JSON.stringify(live));
+    const update = renderArgs(committed, [named]);
+    assert.equal(update.status, 0, update.stderr);
+    assert.equal(JSON.parse(update.stdout).workers[0].envs[0].value, "EV[1:wrk]");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("create mode: empty stdin fails instead of rendering 0 bytes", () => {
+  assertRefused(renderCreate(""), /render: empty spec on stdin/, "empty");
+  assertRefused(renderCreate("null"), /render: committed spec has no name/, "null");
+  assertRefused(renderCreate(JSON.stringify(committed).repeat(2)), /render: stdin must hold exactly one JSON document/, "two documents");
+});
+
+test("create mode: renders exactly what update mode renders, minus the copied SECRET values", () => {
+  for (const [label, file, domain] of CREATE_SPECS) {
+    const spec = readSpec(file);
+    for (const root of ROOTS) {
+      const at = `${label} KEY_ROOT=${root}`;
+      const env = { APP_DOMAIN: domain, KEY_ROOT: root };
+      const update = render(spec, fakeLive(spec, root), env);
+      const created = renderCreate(spec, env);
+      assert.equal(update.status, 0, `${at}: ${update.stderr}`);
+      assert.equal(created.status, 0, `${at}: ${created.stderr}`);
+      const expected = JSON.parse(update.stdout);
+      for (const s of secretEntries(expected)) delete s.value;
+      assert.deepEqual(JSON.parse(created.stdout), expected, at);
+    }
+  }
+});
+
+test("update mode: no live-spec argument still fails with the usage text", () => {
+  assertRefused(renderArgs(committed, []), /usage: render-app-spec\.sh <live-spec\.json> < committed\.json/);
+});
