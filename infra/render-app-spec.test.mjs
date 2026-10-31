@@ -932,3 +932,17 @@ test("create mode: on the owner's UTF-8 shell a non-ASCII letter in the digest, 
     assertRefused(r, message, JSON.stringify(env));
   }
 });
+
+// Round 1 of lane L88 (probes C_v_top_secret, C_v_static_secret): a SECRET that fill() never covers is refused in
+// create mode too, so no app is created from a spec that every later update would refuse.
+test("create mode: a SECRET in the app-level envs is refused, as every update would refuse it", () => {
+  const spec = variant(committed, (s) => (s.envs = [{ key: "SHARED_API_TOKEN", type: "SECRET" }]));
+  assertRefused(renderCreate(spec), /render: unfilled SECRET outside services\/workers\/jobs$/m, "create");
+  assertRefused(render(spec, live), /render: unfilled SECRET outside services\/workers\/jobs$/m, "update");
+});
+
+test("create mode: a SECRET in a static site's envs is refused, as every update would refuse it", () => {
+  const spec = variant(committed, (s) => (s.static_sites = [{ name: "landing", envs: [{ key: "BUILD_TOKEN", type: "secret" }] }]));
+  assertRefused(renderCreate(spec), /render: unfilled SECRET outside services\/workers\/jobs$/m, "create");
+  assertRefused(render(spec, live), /render: unfilled SECRET outside services\/workers\/jobs$/m, "update");
+});

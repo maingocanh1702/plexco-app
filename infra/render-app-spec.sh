@@ -30,8 +30,10 @@
 #     FAILS (no mixed mode); a live file named --create is passed as ./--create. It runs every input check and
 #     every committed-spec check above (1, 3, the types and the no-value check of 2, the document checks of 4,
 #     the key-root drop and KMS_PROVIDER = KEY_ROOT of 5) and reads no live spec (/dev/null). It skips exactly
-#     the four live checks: the live .name equality (4), the live component's KMS_PROVIDER (5), the live
-#     secret copy (2: liveSecrets and fill) and the unfilled-SECRET guard (2: it would fail every SECRET).
+#     the live checks: the live .name equality (4), the live component's KMS_PROVIDER (5), the live secret
+#     copy (2: liveSecrets and fill) and the FILL-DEPENDENT half of the unfilled-SECRET guard (2: a SECRET in
+#     the envs of a service, worker or job stays valueless, as fill() would have filled it). The guard's
+#     SURFACE half stays: a SECRET anywhere else FAILS as unfilled, as in update mode (create ⊆ updatable).
 #     Every SECRET is left without a value, as committed; a SECRET carrying a value anywhere in the rendered
 #     spec (`false` and 0 included) FAILS. It never calls doctl or any network. It pins LC_ALL=C before
 #     the shape checks of 1, so a non-ASCII byte fails them in any locale (the update path keeps the caller's).
@@ -125,11 +127,19 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
       | if all(.[]; . == $root) and ($create or [($live[0][$k] // [] | arrays)[] | select(.name? == $c.name)
              | (.envs? // [] | arrays)[] | select(.key? == "KMS_PROVIDER") | .value] == [$root])
         then empty else error("render: KMS_PROVIDER differs from KEY_ROOT: \($k)/\($c.name)") end), .)
+  # The unfilled-SECRET guard, ONE definition for both modes: fill() covers only an env listed directly in the
+  # envs of a service, worker or job (path [kind, i, "envs", j]); a valueless SECRET at any other path fails.
+  # Update mode runs it after fill(), where every SECRET on a covered path already carries its EV value.
+  | def unfilledGuard:
+      if any(path(.. | objects | select(((.type? // "") | ascii_upcase) == "SECRET" and (.value // "") == ""));
+             length != 4 or (.[0] | IN("services", "workers", "jobs") | not) or .[2] != "envs")
+      then error("render: unfilled SECRET outside services/workers/jobs") else . end;
   # Create mode copies no secret: every SECRET stays as committed, without a value, and one that carries a
-  # value anywhere (`false` and 0 included) fails. The update path below is unchanged.
-  | if $create then
+  # value anywhere (`false` and 0 included) fails; then the guard refuses a SECRET outside a covered path.
+  if $create then
       (if any(.. | objects | select(((.type? // "") | ascii_upcase) == "SECRET" and (.value | . != null and . != "")); .)
        then error("render: create mode would emit a SECRET with a value") else . end)
+      | unfilledGuard
     else (.
   | liveSecrets as $ls
   # A SECRET is copied from the live app. A GENERAL env over a live SECRET would blank or demote it.
@@ -145,8 +155,7 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
   | .workers |= (list("workers") | map(fill("workers")))
   | .jobs    |= (list("jobs") | map(fill("jobs")))
   # Never silently blank a secret: a SECRET left valueless on any surface fill() does not cover fails.
-  | (if any(.. | objects | select(((.type? // "") | ascii_upcase) == "SECRET" and (.value // "") == ""); .)
-     then error("render: unfilled SECRET outside services/workers/jobs") else . end)
+  | unfilledGuard
     ) end
   # jq error text can quote input bytes (a live ciphertext): only the messages raised above pass.
 ) catch (if type == "string" and startswith("render: ") then . else "render: the input is not the expected JSON shape (the jq message is withheld: it can quote a value)" end | error)' <<<"$committed"
