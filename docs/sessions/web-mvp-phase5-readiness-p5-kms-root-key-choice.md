@@ -199,6 +199,8 @@ One opus reviewer role, at most 3 rounds counting pre-push rounds, plus one opus
 
 B3 about 180 owned-diff lines (range 160-230): renderer about 23, test about 77, specs about 20, workflows 2, docs about 56. The per-file estimates of 2.4 sum to about 185 (D4's four comment lines and the T:170 line), within the range. 0 migrations; no migration slot; the DB/e2e lock is not needed. Runs: 2 likely, 3 worst (cap 3). One PR: the runbook stays with the renderer (one feature).
 
+Amendment 2026-10-31 (RO-L84-2): the file ownership adds docs/runbooks/migration-on-deploy-and-rollback.md and gains number-only line-cite edits, with no wording change, on living-doc lines whose cite this lane's diff moved: docs/runbooks/staging-deploy.md in any section, the cites of docs/runbooks/migration-on-deploy-and-rollback.md and the renderer cites of docs/runbooks/env-manifest-staging-production.md; it also gains two rows at the end of docs/autopilot-backlog.md.
+
 ## 7. Security notes for the security round
 
 Threat model: the adversary is a mistake, not a motivated attacker. The owner, the DigitalOcean Control Panel and the owner-set GitHub variables are trusted.
