@@ -33,7 +33,8 @@
 #     the four live checks: the live .name equality (4), the live component's KMS_PROVIDER (5), the live
 #     secret copy (2: liveSecrets and fill) and the unfilled-SECRET guard (2: it would fail every SECRET).
 #     Every SECRET is left without a value, as committed; a SECRET carrying a value anywhere in the rendered
-#     spec (`false` and 0 included) FAILS. It never calls doctl or any network.
+#     spec (`false` and 0 included) FAILS. It never calls doctl or any network. It pins LC_ALL=C before
+#     the shape checks of 1, so a non-ASCII byte fails them in any locale (the update path keeps the caller's).
 # Every failure prints this script's own message, naming a key or a field, never a value: jq's own
 # error text is withheld (it can quote input bytes). No secret value is ever read from or written to
 # anything but the live spec. Needs: bash 3.2+, jq.
@@ -46,6 +47,9 @@ render_app_spec_create_mode() {
   [ "$#" -eq 1 ] || { echo "render: --create takes no live spec" >&2; exit 1; }
   create=true
   live=/dev/null
+  # The owner's shell is likely UTF-8, where the bracket ranges of the shape checks below accept a
+  # non-ASCII letter (`é`): pin the C locale so they match ASCII bytes only. The update path is unchanged.
+  export LC_ALL=C
 }
 for arg in "$@"; do
   if [ "$arg" = "--create" ]; then render_app_spec_create_mode "$@"; fi

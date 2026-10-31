@@ -898,3 +898,37 @@ test("create mode: renders exactly what update mode renders, minus the copied SE
 test("update mode: no live-spec argument still fails with the usage text", () => {
   assertRefused(renderArgs(committed, []), /usage: render-app-spec\.sh <live-spec\.json> < committed\.json/);
 });
+
+// The update-mode cases of rows 9 and 10, through create mode: neither check is behind `$create`.
+test("create mode: a hand-edited env whose type line is missing or misspelled is refused by key, in either key-root set", () => {
+  for (const root of ROOTS) {
+    for (const type of [undefined, "SECRET "]) {
+      const spec = variant(readSpec(STAGING), (s) => {
+        const env = findEnv(s, "workers", "worker", "AWS_REGION");
+        if (type === undefined) delete env.type;
+        else env.type = type;
+      });
+      const r = renderCreate(spec, { APP_DOMAIN: "staging.example.test", KEY_ROOT: root });
+      assertRefused(r, /render: env type must be GENERAL or SECRET: AWS_REGION/, `KEY_ROOT=${root} type=${type}`);
+    }
+  }
+});
+
+test("create mode: a half-switched spec (a literal KMS_PROVIDER that differs from KEY_ROOT) fails, naming the component only", () => {
+  const literal = (s) => (findEnv(s, "services", "web", "KMS_PROVIDER").value = "aws-kms");
+  const r = renderCreate(variant(readSpec(STAGING), literal), { APP_DOMAIN: "staging.example.test", KEY_ROOT: "local" });
+  assertRefused(r, /render: KMS_PROVIDER differs from KEY_ROOT: services\/web$/m);
+  assert.doesNotMatch(r.stderr, /aws-kms|local/);
+});
+
+test("create mode: on the owner's UTF-8 shell a non-ASCII letter in the digest, VPC or domain is refused", () => {
+  const utf8 = { LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" };
+  for (const [env, message] of [
+    [{ IMAGE_DIGEST: `sha256:${"a".repeat(63)}é` }, /render: IMAGE_DIGEST must be sha256:<64 hex>/],
+    [{ VPC_ID: `${VPC.slice(0, -1)}é` }, /render: VPC_ID must be a UUID/],
+    [{ APP_DOMAIN: "staging.exémple.test" }, /render: APP_DOMAIN is not a hostname/],
+  ]) {
+    const r = renderCreate(readSpec(STAGING), { APP_DOMAIN: "staging.example.test", ...utf8, ...env });
+    assertRefused(r, message, JSON.stringify(env));
+  }
+});
