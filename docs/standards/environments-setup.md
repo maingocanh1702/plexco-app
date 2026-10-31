@@ -386,8 +386,8 @@ Both files are idempotent, so re-running them on an already-bootstrapped cluster
 - Store runtime secrets as App Platform encrypted environment values, scoped to the component that consumes
   each value. Never commit literal secrets or place them in an App Spec.
 - Keep `DATABASE_URL_MIGRATION` in the protected CI environment/job only.
-- Continue the accepted application encryption contract: AWS KMS envelope encryption for staging/production,
-  local `ENCRYPTION_KEY` fallback only for local development. KMS is an application-level portability boundary,
+- Continue the accepted application encryption contract, with the root chosen per environment at step 8.5 (DD-158):
+  AWS KMS envelope encryption (recommended), or the local `ENCRYPTION_KEY` root, a permitted production option of lower protection, subject to the owner's sign-off at 8.9 (local development uses the local root). KMS is an application-level portability boundary,
   not permission to expose plaintext secrets in App Platform.
 - Separate Google OAuth, Meta, Messenger, Zalo, SePay/ApiPay, session, KMS ciphertext, Sentry and webhook values
   per environment.
@@ -415,7 +415,7 @@ pull request
   → verify running digest + health + money smoke
 ```
 
-The committed specs carry placeholders (`__IMAGE_DIGEST__`, `__VPC_ID__`, `__APP_DOMAIN__`) that
+The committed specs carry placeholders (`__IMAGE_DIGEST__`, `__VPC_ID__`, `__APP_DOMAIN__`, and `__KMS_PROVIDER__` from `KEY_ROOT`) that
 `infra/render-app-spec.sh` fills from a live app, so the first creation of each app is the owner-only sequence
 of `docs/runbooks/staging-deploy.md` §2.5; later reconciliations are `doctl apps update` in the deploy workflows.
 

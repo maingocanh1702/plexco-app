@@ -119,6 +119,7 @@ jobs:
           VPC_ID: ${{ vars.DO_VPC_ID }}
           APP_ID: ${{ vars.DO_APP_ID }}
           APP_DOMAIN: ${{ vars.APP_DOMAIN }}
+          KEY_ROOT: ${{ vars.KEY_ROOT }}
         run: |
           # The production host is exactly the apex plexco.app; any other domain, a staging one
           # included, stops here.

@@ -64,13 +64,13 @@ Mỗi mục đang áp default; owner giữ, đổi hoặc chặn (bước 8.9).
 | DD-129 (2): secret chỉ nằm trong DO | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | DD-129 (3): deploy theo digest, promote không build lại | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | DD-129 (4): staging `workflow_dispatch` với environment duyệt, production gõ xác nhận, không trigger `push` | `<giữ / đổi / chặn>` | `<commit SHA>` |
-| DD-129 (5), default chờ owner sign-off: "staging sizing 1/1/1" (`docs/standards/decisions.md:147`). Spec staging đã commit nay khác default đó: số instance là `instance_count` của từng component trong `infra/app.staging.yaml`, hiện `web` 2 (:94), `discovery` 2 (:193), `worker` 1 (:248), job `migrate` 1 (:77). Căn cứ của spec: D1 của lane L66 (`docs/sessions/web-mvp-phase5-readiness-p5-app-specs.md:231`) và default G2 (`docs/autopilot-templates/web-mvp-phase5-2026-10-28-RUN.md:124`), cả hai "default applied, pending owner sign-off". | `<giữ / đổi / chặn>` | `<commit SHA>` |
+| DD-129 (5), default chờ owner sign-off: "staging sizing 1/1/1" (`docs/standards/decisions.md:147`). Spec staging đã commit nay khác default đó: số instance là `instance_count` của từng component trong `infra/app.staging.yaml`, hiện `web` 2 (:94), `discovery` 2 (:197), `worker` 1 (:252), job `migrate` 1 (:77). Căn cứ của spec: D1 của lane L66 (`docs/sessions/web-mvp-phase5-readiness-p5-app-specs.md:231`) và default G2 (`docs/autopilot-templates/web-mvp-phase5-2026-10-28-RUN.md:124`), cả hai "default applied, pending owner sign-off". | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | DD-129 (6): không thêm vendor error tracking, Sentry giữ backlog (lệch Sentry Developer Day-1) | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | DD-129 (7): log forwarder Logtail hay Papertrail | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | DD-129 (8): RPO ≤ 15 phút, RTO ≤ 60 phút | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | §7.6 mục 5, hoãn ở G3 (:229; nội dung mục ở §7.6 của PLAN): nếu Q3 chọn một instance | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | §7.6 mục 6: nếu Q10 chọn (iii) | `<giữ / đổi / chặn>` | `<commit SHA>` |
-| §7.6 mục 10: nếu Q8 chọn key local | `<giữ / đổi / chặn>` | `<commit SHA>` |
+| §7.6 mục 10 (DD-158), sign-off của owner cho TỪNG môi trường mà owner đặt `KEY_ROOT` là `local` ở bước 8.5 (luật K1, `docs/runbooks/staging-deploy.md` 2.5): key local là lựa chọn production được phép, mức bảo vệ thấp hơn `aws-kms`; root nằm trong secret của app; MỘT root phủ auth, PII và secret connector (K2: không có khoá riêng của DD-122 O4); mục 10 hoãn; không có đường xoay key. Ghi môi trường và root đã chọn | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | §7.6 mục 11: staging tạm dựng từ IaC, tự huỷ | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | §7.6 mục 12: load test | `<giữ / đổi / chặn>` | `<commit SHA>` |
 | §7.6 mục 13: nửa migration của rehearsal ở provider khác; phải xác nhận trước G4 | `<giữ / đổi / chặn>` | `<commit SHA>` |
