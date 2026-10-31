@@ -1,13 +1,14 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import tls from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createDb } from "./client.js";
+import { createDb, type DbHandle } from "./client.js";
 import { PgSslConfigError, pgSslConnectionConfig } from "./pg-ssl-options.js";
 
 // Decision table R1-R11 of docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-options.md.
@@ -130,6 +131,8 @@ const R4_CASES: [string, () => string][] = [
   ["junk after a valid block", () => `${caA}junk\n`],
   ["a bundle whose second block is a private key", () => caA + caAKey],
   ["a bundle whose second certificate is corrupted", () => caA + corrupt(caB)],
+  ["escaped newlines", () => caA.trim().replace(/\n/g, "\\n")],
+  ["escaped newlines with a trailing escape", () => caA.replace(/\n/g, "\\n")],
 ];
 const R5_QUERIES = [
   "?sslmode=disable",
@@ -361,6 +364,34 @@ async function connectOnce(cfg: pg.ClientConfig): Promise<(Error & { code?: stri
   return undefined;
 }
 
+// S1-2: NODE_EXTRA_CA_CERTS is read only when a process starts, so the default-store proof runs pg in
+// a child Node. The child connects with the JSON config in L78_PG_CONFIG and prints "connected" or the
+// error code. Async execFile: a sync spawn would block the event loop that serves the stub.
+const runFile = promisify(execFile);
+const CHILD_CONNECT = `
+const pg = require("pg");
+const client = new pg.Client(JSON.parse(process.env.L78_PG_CONFIG));
+client.on("error", () => undefined);
+client.connect().then(
+  () => client.end().then(() => console.log("connected")),
+  (err) => console.log(String(err.code)),
+);
+`;
+
+async function connectInChildWithCaA(cfg: pg.ClientConfig): Promise<string> {
+  const { stdout } = await runFile(process.execPath, ["-e", CHILD_CONNECT], {
+    cwd: new URL(".", import.meta.url), // require("pg") resolves from this package
+    env: {
+      PATH: process.env.PATH ?? "",
+      NODE_EXTRA_CA_CERTS: join(dir, "ca-a.crt"),
+      L78_PG_CONFIG: JSON.stringify(cfg),
+    },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  return stdout.trim();
+}
+
 describe("pgSslConnectionConfig: TLS stub driven by pg's own Client", () => {
   let stub: Stub | undefined;
   const url = (port: number) => `postgres://app:${PASSWORD}@localhost:${port}/plexco`;
@@ -387,11 +418,15 @@ describe("pgSslConnectionConfig: TLS stub driven by pg's own Client", () => {
     const live = await startStub(srvLocalKey, srvLocalCrt);
     stub = live;
     for (const [, value] of R4_CASES) {
-      expect(() => new pg.Client(pgSslConnectionConfig(url(live.port), env(value())))).toThrow(
-        PgSslConfigError,
-      );
+      let cfg: pg.ClientConfig | undefined;
+      // soft: a value the helper accepts still reaches the connect below, so the 0 can fail too
+      expect
+        .soft(() => {
+          cfg = pgSslConnectionConfig(url(live.port), env(value()));
+        })
+        .toThrow(PgSslConfigError);
+      if (cfg) await connectOnce(cfg); // runs only if the helper did NOT throw
     }
-    await sleep(100);
     expect(live.connections).toBe(0);
   });
 
@@ -416,6 +451,23 @@ describe("pgSslConnectionConfig: TLS stub driven by pg's own Client", () => {
     ).toBeUndefined();
   });
 
+  it("R9 default store: the helper's ca replaces Node's default store, so a CA trusted only through NODE_EXTRA_CA_CERTS is refused", async () => {
+    stub = await startStub(srvLocalKey, srvLocalCrt);
+    // control: no ca, so the child's default store (CA-A loaded from NODE_EXTRA_CA_CERTS) verifies the server
+    expect(
+      await connectInChildWithCaA({
+        connectionString: url(stub.port),
+        ssl: { rejectUnauthorized: true },
+      }),
+    ).toBe("connected");
+    // proof: ca = [CA-B] replaces that store, so the same server no longer verifies
+    expect(VERIFY_CODES).toContain(
+      await connectInChildWithCaA(pgSslConnectionConfig(url(stub.port), env(caB))),
+    );
+    await sleep(300);
+    expect(stub).toMatchObject({ connections: 2, startupOverTls: 1, plainStartup: 0 });
+  }, 15_000);
+
   it("R10: a server certificate for another hostname fails with ERR_TLS_CERT_ALTNAME_INVALID", async () => {
     stub = await startStub(srvOtherKey, srvOtherCrt);
     const err = await connectOnce(pgSslConnectionConfig(url(stub.port), env(caA)));
@@ -429,9 +481,23 @@ describe("pgSslConnectionConfig: TLS stub driven by pg's own Client", () => {
     stub = live;
     for (const [, value] of R4_CASES) {
       vi.stubEnv("DATABASE_CA_CERT", value());
-      expect(() => createDb(url(live.port))).toThrow(PgSslConfigError);
+      let handle: DbHandle | undefined;
+      // soft: a value createDb accepts still reaches the connect below, so the 0 can fail too
+      expect
+        .soft(() => {
+          handle = createDb(url(live.port));
+        })
+        .toThrow(PgSslConfigError);
+      // runs only if createDb did NOT throw; connect, not a query: the stub answers only the startup
+      if (handle) {
+        handle.pool.on("error", () => undefined);
+        await handle.pool.connect().then(
+          (client) => client.release(),
+          () => undefined,
+        );
+        await handle.close();
+      }
     }
-    await sleep(100);
     expect(live.connections).toBe(0);
   });
 

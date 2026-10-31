@@ -10,10 +10,12 @@ import { describe, expect, it } from "vitest";
 const ROOT = new URL("../../../", import.meta.url);
 const DIRS = ["apps/bot/src", "apps/web", "packages/db/src"];
 const SKIP = new Set(["node_modules", ".next"]);
-const SOURCE = /\.tsx?$/;
+const SOURCE = /\.[cm]?[jt]sx?$/;
 const TEST = /\.(?:test|spec)\.tsx?$/;
 const CTOR = /new (?:pg\.Pool|pg\.Client|Pool|Client|PgBoss)\(/g;
 const ROUTED = /pgSslConnectionConfig\(|queueOptions\(/;
+// Left in the argument once the helper call is removed: a key of its own that would override the helper.
+const OVERRIDE = /\b(?:ssl|connectionString)\b/;
 const INSECURE = /rejectUnauthorized\s*:\s*false/;
 
 /** The ten sites (readiness 2.5, S1-S10), sorted: each file opens exactly one connection through the helper. */
@@ -72,15 +74,19 @@ const sources = new Map(DIRS.flatMap(walk).map((f) => [f, readFileSync(new URL(f
 const hits = [...sources].flatMap(([file, src]) =>
   [...src.matchAll(CTOR)].map((m) => {
     const open = (m.index ?? 0) + m[0].length - 1;
-    return { file, ctor: m[0], routed: ROUTED.test(resolve(src, argText(src, open))) };
+    const arg = resolve(src, argText(src, open));
+    const rest = arg.replace(/pgSslConnectionConfig\([^()]*\)/g, "");
+    return { file, ctor: m[0], routed: ROUTED.test(arg), override: OVERRIDE.test(rest) };
   }),
 );
 const allows = (h: { file: string; ctor: string }, [file, ctor]: [string, string, string]) =>
   file === h.file && (ctor === "*" || ctor === h.ctor);
 
 describe("pg connection sites: every runtime connection takes pgSslConnectionConfig", () => {
-  it("(a) every constructor passes the helper (or queueOptions) or is on the named allowlist", () => {
-    const bare = hits.filter((h) => !h.routed && !ALLOW.some((entry) => allows(h, entry)));
+  it("(a) every constructor passes the helper (or queueOptions) and sets no ssl or connectionString of its own, or is on the named allowlist", () => {
+    const bare = hits.filter(
+      (h) => (!h.routed || h.override) && !ALLOW.some((entry) => allows(h, entry)),
+    );
     expect(bare.map((h) => `${h.file} ${h.ctor}`)).toEqual([]);
   });
 
