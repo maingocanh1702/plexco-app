@@ -1,3 +1,4 @@
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import pg from "pg";
 import type { DispatchCycleSummary } from "./dispatcher.js";
 
@@ -139,7 +140,7 @@ export function startOutboxWake(options: OutboxWakeOptions): { stop(): Promise<v
   const connect = async () => {
     if (stopped) return;
     const c = new pg.Client({
-      connectionString: options.connectionString,
+      ...pgSslConnectionConfig(options.connectionString),
       application_name: WAKE_APPLICATION_NAME,
       keepAlive: true, // a half-open idle socket must error (and reconnect), not leave the loop deaf
       keepAliveInitialDelayMillis: 10_000,

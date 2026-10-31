@@ -1,6 +1,7 @@
 import pg from "pg";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "../schema.js";
+import { pgSslConnectionConfig } from "./pg-ssl-options.js";
 
 /**
  * Connection factories per DB role (0000_roles_extensions.sql):
@@ -35,7 +36,10 @@ export function createDb(connectionString: string, options?: CreateDbOptions): D
   if (!connectionString) {
     throw new Error("createDb: a role-scoped connection string is required");
   }
-  const config: pg.PoolConfig = { connectionString, max: options?.max ?? 10 };
+  const config: pg.PoolConfig = {
+    ...pgSslConnectionConfig(connectionString),
+    max: options?.max ?? 10,
+  };
   for (const key of ["statement_timeout", "connectionTimeoutMillis", "query_timeout"] as const) {
     if (options?.[key] !== undefined) config[key] = options[key];
   }

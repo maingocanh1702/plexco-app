@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { pgSslConnectionConfig } from "./pg-ssl-options.js";
 
 /**
  * SQL migration runner — the ONLY thing that applies packages/db/migrations.
@@ -173,7 +174,7 @@ export async function migrate(migrationUrl: string): Promise<MigrateResult> {
     const message = "migrate: DATABASE_URL_MIGRATION is required (DDL-owner role)";
     throwMigrateError(message, message);
   }
-  const client = new pg.Client({ connectionString: migrationUrl });
+  const client = new pg.Client(pgSslConnectionConfig(migrationUrl));
   try {
     await client.connect();
   } catch (error) {

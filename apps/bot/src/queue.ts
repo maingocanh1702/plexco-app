@@ -1,3 +1,4 @@
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import PgBoss from "pg-boss";
 
 export const QUEUE_SCHEMA = "pgboss";
@@ -16,11 +17,7 @@ export function queueOptions(directConnectionString: string): PgBoss.Constructor
   if (!directConnectionString) {
     throw new Error("queueOptions: DATABASE_URL_DIRECT is required (direct, session-mode)");
   }
-  return {
-    connectionString: directConnectionString,
-    schema: QUEUE_SCHEMA,
-    migrate: false,
-  };
+  return { ...pgSslConnectionConfig(directConnectionString), schema: QUEUE_SCHEMA, migrate: false };
 }
 
 export function createQueue(directConnectionString: string): PgBoss {

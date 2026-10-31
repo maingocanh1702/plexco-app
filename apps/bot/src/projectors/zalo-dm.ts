@@ -5,6 +5,7 @@ import {
   resolveConnectorSecretRoot,
   textToBlob,
 } from "@plexco/db/connector-crypto";
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import { classifyZaloError, sendMessage, zaloBotApiBase } from "@plexco/db/zalo-bot-api";
 import pg from "pg";
 import type { DeliverFn, DeliveryOutcome } from "../dispatcher.js";
@@ -244,7 +245,11 @@ export const deliverZaloDm: DeliverFn = async (job) => {
   const connectionString = process.env.DATABASE_URL_DIRECT;
   if (!connectionString) return dlq("config_missing");
   if (!production) {
-    const pool = new pg.Pool({ connectionString, max: 2, allowExitOnIdle: true });
+    const pool = new pg.Pool({
+      ...pgSslConnectionConfig(connectionString),
+      max: 2,
+      allowExitOnIdle: true,
+    });
     pool.on("error", () => console.error("zalo_dm: an idle pool client failed")); // no detail
     production = { pool, deliver: createZaloDmDeliver({ db: pool }) };
   }

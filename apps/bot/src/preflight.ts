@@ -1,3 +1,4 @@
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import pg from "pg";
 import { QUEUES } from "./queues.js";
 import { QUEUE_SCHEMA } from "./queue.js";
@@ -81,7 +82,7 @@ export interface PreflightResult {
  */
 export async function runPreflightChecks(directConnectionString: string): Promise<PreflightResult> {
   const failures: string[] = [];
-  const client = new pg.Client({ connectionString: directConnectionString });
+  const client = new pg.Client(pgSslConnectionConfig(directConnectionString));
   await client.connect();
   try {
     await assertIdentity(client, failures);

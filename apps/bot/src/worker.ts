@@ -1,3 +1,4 @@
+import { pgSslConnectionConfig } from "@plexco/db/pg-ssl-options";
 import pg from "pg";
 import type PgBoss from "pg-boss";
 import { isDirectRun } from "./direct-run.js";
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
   // exists yet at this point (JRD-4).
   await preflightOrExit(directUrl);
 
-  const pool = new pg.Pool({ connectionString: directUrl });
+  const pool = new pg.Pool(pgSslConnectionConfig(directUrl));
   const boss = createQueue(directUrl);
   boss.on("error", (error) => {
     console.error("[worker] pg-boss error", error);
