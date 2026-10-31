@@ -608,7 +608,7 @@ test("a live KMS_PROVIDER that differs from KEY_ROOT or is absent fails, naming 
     ["live web left as the creation copy", "aws-kms", setLive("services", "web", "__KMS_PROVIDER__"), "services/web"],
   ]) {
     const r = renderStaging(root, { live });
-    assertRefused(r, new RegExp(`render: KMS_PROVIDER differs from KEY_ROOT: ${id}$`, "m"), label);
+    assert.ok(r.status !== 0 && r.stdout === "" && r.stderr.split("\n").some((l) => l.endsWith(`render: KMS_PROVIDER differs from KEY_ROOT: ${id}`)), label);
     assert.doesNotMatch(r.stderr, /aws-kms|local|__KMS_PROVIDER__|EV\[/, label);
   }
 });

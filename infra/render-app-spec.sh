@@ -93,9 +93,9 @@ jq -s -e --slurpfile live "$live" --arg digest "$digest" --arg vpc "$vpc" --arg 
   | if ([.. | strings | select(test("__[A-Z_]+__"))] | length) > 0
     then error("render: unresolved placeholder: \([.. | strings | scan("__[A-Z_]+__")] | unique | join(", "))")
     else . end
-  # Agreement guard: a component that declares KMS_PROVIDER renders it as KEY_ROOT, and its live
-  # component carries it exactly once with that value (absent, or a live surface of the wrong shape,
-  # differs): a flipped KEY_ROOT or a half-switched spec stops here. Names the component, never a value.
+  # Agreement guard (component-level KMS_PROVIDER only, as both specs and the creation copy declare it;
+  # app-level envs are not compared): rendered as KEY_ROOT, and the live component carries exactly that
+  # value once (absent or wrong-shaped differs): a flip or half-switch stops, naming the component only.
   | ((("services", "workers", "jobs") as $k | (.[$k] | list($k))[] | . as $c
       | [($c.envs | list("envs"))[] | select(.key == "KMS_PROVIDER") | .value] | select(length > 0)
       | if all(.[]; . == $root) and [($live[0][$k] // [] | arrays)[] | select(.name? == $c.name)

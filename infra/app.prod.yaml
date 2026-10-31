@@ -20,7 +20,7 @@
 # - DB trusted sources: only the app's VPC egress private IP, an owner step in DigitalOcean.
 # - "false" until an owner step: GENDER_COLLECTION_ENABLED (legal answer on collecting gender),
 #   OUTBOX_DISPATCH_SCHEDULE_ENABLED, CSP_SCRIPT_NONCE_ENABLED (real next start, 0 CSP violations).
-# - aws-kms: KMS_ENCRYPTED_CONNECTOR_PEPPER before the first real club connects (DD-122 O4); local: one ENCRYPTION_KEY roots auth, PII, connectors (8.9).
+# - aws-kms: KMS_ENCRYPTED_CONNECTOR_PEPPER before the first real club connects (DD-122 O4); local: one ENCRYPTION_KEY roots auth, PII, connectors (K2; 8.9 sign-off).
 # - Not done: DigitalOcean resources, DNS and HTTPS, the four DB roles and their URLs, every SECRET
 #   value, doctl apps spec validate, and the owner's sign-off of every default applied here (web
 #   pool in session mode, AWS keys as component envs, the migration credential on the job, DD-129).

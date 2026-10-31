@@ -387,7 +387,7 @@ Both files are idempotent, so re-running them on an already-bootstrapped cluster
   each value. Never commit literal secrets or place them in an App Spec.
 - Keep `DATABASE_URL_MIGRATION` in the protected CI environment/job only.
 - Continue the accepted application encryption contract, with the root chosen per environment at step 8.5 (DD-158):
-  AWS KMS envelope encryption (recommended), or the local `ENCRYPTION_KEY` root, a permitted production option of lower protection signed off by the owner at 8.9 (local development uses the local root). KMS is an application-level portability boundary,
+  AWS KMS envelope encryption (recommended), or the local `ENCRYPTION_KEY` root, a permitted production option of lower protection, subject to the owner's sign-off at 8.9 (local development uses the local root). KMS is an application-level portability boundary,
   not permission to expose plaintext secrets in App Platform.
 - Separate Google OAuth, Meta, Messenger, Zalo, SePay/ApiPay, session, KMS ciphertext, Sentry and webhook values
   per environment.

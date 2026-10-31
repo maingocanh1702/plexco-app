@@ -8115,11 +8115,11 @@ depends_on: []
 invariants: []
 scope: [packages/db/src/secret-key-root.ts, apps/web/lib/auth-secrets.test.ts]
 manifest: null
-merged_probe: LOCAL_KEY_ROOT_LABEL
+merged_probe: packages/db/src/secret-key-root.ts :: LOCAL_KEY_ROOT_LABEL
 notes: |
-  packages/db/src/secret-key-root.ts still calls the local key root a dev path: the comment at :8 labels aws-kms "staging/prod" and the one at :11 calls the local root the "local dev default"; the error strings at :33 and :52 say "dev fallback" and the one at :41 says "(dev)" beside "(staging/prod)". Under DD-158 the local key root is a per-environment choice that production may use (rule K1, docs/runbooks/staging-deploy.md:48), so the wording misdescribes a root that production may run.
+  packages/db/src/secret-key-root.ts still calls the local key root a dev path: the comment at :8 labels aws-kms "staging/prod" and the one at :11 calls the local root the "local dev default"; the error strings at :33 and :52 say "dev fallback" and the one at :41 says "(dev)" beside "(staging/prod)"; the comment at :27-29 calls the local branch "the dev fallback" and ties "staging/prod" to "the real KMS". Under DD-158 the local key root is a per-environment choice that production may use (rule K1, docs/runbooks/staging-deploy.md:48), so the wording misdescribes a root that production may run.
   apps/web/lib/auth-secrets.test.ts:27 and :50 assert on the module's error strings (/ENCRYPTION_KEY/ and /Unsupported KMS_PROVIDER/), so the rewording is a code slice with that test in scope, not a docs edit.
-  Fix: reword the five lines and keep the two test expectations matching, for example with one LOCAL_KEY_ROOT_LABEL constant that the three error strings share. Negative scope: no behaviour change; the resolution order and every refusal stay as they are, only the wording of the comments and the error strings changes. The merged_probe expects LOCAL_KEY_ROOT_LABEL in packages/db/src/secret-key-root.ts; the implementing lane keeps that name or rewrites the probe at intake.
+  Fix: reword the six sites and keep the two test expectations matching, for example with one LOCAL_KEY_ROOT_LABEL constant that the three error strings share. Negative scope: no behaviour change; the resolution order and every refusal stay as they are, only the wording of the comments and the error strings changes. The merged_probe expects LOCAL_KEY_ROOT_LABEL in packages/db/src/secret-key-root.ts; the implementing lane keeps that name or rewrites the probe at intake.
   Risk P1 although the change is wording only: the file resolves the key root of every environment. The implementing lane re-derives the risk at intake.
   Source: lane L84 (p5-kms-root-key-choice), recorded under RO-L84-2; not built in lane L84.
 
@@ -8132,7 +8132,7 @@ depends_on: []
 invariants: []
 scope: [packages/db/src/secret-key-root.ts, docs/runbooks/staging-deploy.md]
 manifest: null
-merged_probe: reencryptUnderNewKeyRoot
+merged_probe: packages/db :: reencryptUnderNewKeyRoot
 notes: |
   Rule K1 (docs/runbooks/staging-deploy.md:48, DD-158): the owner picks the key root once per environment at step 8.5, before the first real data, and never changes it after. Once data exists, a switch between aws-kms and local leaves the stored ciphertexts unopenable and the auth hashes unmatched, and every club must connect again; the rule forbids switching the root by editing a variable or a secret and leaves a later switch to its own lane, the re-encryption path. No such path exists: the same line records that there is no key-rotation path, and `git grep -i -E 're-?encrypt' -- packages apps infra scripts` finds only a comment in packages/db/migrations/0017_oauth_transactions.sql. A temporary staging window may pick again with fresh data, so the need is production and any other long-lived environment.
   Fix: a path that, while both roots are readable, opens every stored ciphertext of one environment with the old root and writes it again under the new one, and recomputes or retires every auth hash keyed by the old root; K1 then names that path as the only way to switch. The same line forbids a key change within one root (KMS_KEY_ID, the ENCRYPTION_KEY value, a KMS pepper) for the same reason; the implementing lane decides at intake whether the path covers it. Not measured: whether every auth hash has a stored source to recompute it from, and the line's inference that a root change erases the other set's live values at the next deploy. The merged_probe expects reencryptUnderNewKeyRoot in packages/db; the implementing lane keeps that name or rewrites the probe at intake, and adds the new path's files to the scope.
