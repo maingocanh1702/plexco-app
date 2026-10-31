@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createDb, type DbHandle } from "./client.js";
+import { formatMigrationFailureForLog, migrate } from "./migrate.js";
 import { PgSslConfigError, pgSslConnectionConfig } from "./pg-ssl-options.js";
 
 // Decision table R1-R11 of docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-options.md.
@@ -541,5 +542,18 @@ describe("createDb: the pool takes the helper's options", () => {
     } finally {
       await handle.close();
     }
+  });
+});
+
+describe("migrate: the CLI log line carries the refusal reason", () => {
+  it("R4 and R11: a refused value names DATABASE_CA_CERT, never the URL", async () => {
+    vi.stubEnv("DATABASE_CA_CERT", caA.trim().replace(/\n/g, "\\n"));
+    const error = await migrate(URL_PLAIN).catch((e: unknown) => e);
+    // The cause is the helper's refusal, so no pg.Client was built and nothing connected.
+    expect((error as Error).cause).toBeInstanceOf(PgSslConfigError);
+    const line = formatMigrationFailureForLog(error);
+    expect(line).toContain("DATABASE_CA_CERT");
+    expect(line).not.toContain(PASSWORD);
+    expect(line).not.toContain(HOST);
   });
 });

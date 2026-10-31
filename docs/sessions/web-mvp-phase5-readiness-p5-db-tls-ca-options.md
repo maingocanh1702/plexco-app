@@ -55,7 +55,7 @@ Tests live in packages/db/src/pg-ssl-options.test.ts unless named; "stub" = a lo
 | Site | file:line at the base | Change |
 | --- | --- | --- |
 | S1 | packages/db/src/client.ts:38 (createDb: Pool plus drizzle) | `{ ...pgSslConnectionConfig(connectionString), max: ... }`; serves apps/web; a direct assertion |
-| S2 | packages/db/src/migrate.ts:176 (the migrations runner's Client) | `new pg.Client(pgSslConnectionConfig(migrationUrl))` |
+| S2 | packages/db/src/migrate.ts:176 (the migrations runner's Client) | `new pg.Client(pgSslConnectionConfig(migrationUrl))`, built inside a try: a PgSslConfigError becomes a throwMigrateError whose safe log summary is its own message, so the migrate CLI prints the refusal reason (safe per R11); any other error is rethrown unchanged |
 | S3 | apps/bot/src/worker.ts:127 (Pool) | `new pg.Pool(pgSslConnectionConfig(directUrl))` |
 | S4 | apps/bot/src/outbox-wake.ts:141-146 (the LISTEN Client; every reconnect rebuilds it with the same options) | `{ ...pgSslConnectionConfig(options.connectionString), application_name: ..., keepAlive: true, ... }` |
 | S5 | apps/bot/src/preflight.ts:84 (Client; the worker's first connection, worker.ts:125) | `new pg.Client(pgSslConnectionConfig(directConnectionString))` |
@@ -123,7 +123,7 @@ Second exception: 988 against the 675 cap at f794744, the same cause as RO-L78-2
 
 - Edited, existing at the base: packages/db/src/client.ts (S1); packages/db/src/migrate.ts (S2); packages/db/package.json (one `exports` line, D6); the connection lines and one import line in each of apps/bot/src/worker.ts, outbox-wake.ts, preflight.ts, provision-queue.ts, queue.ts and apps/bot/src/projectors/web-realtime.ts, public-sessions.ts, zalo-dm.ts; .env.example (one commented name line and its comment, D2); docs/autopilot-backlog.md (the row, in place).
 - New: packages/db/src/pg-ssl-options.ts, packages/db/src/pg-ssl-options.test.ts, packages/db/src/pg-ssl-connection-sites-guard.test.ts, apps/bot/src/queue-ssl-options.test.ts and this record.
-- Commits, the lane's own (a merge commit from main is not one): 1 741878a this record; 2 90c546b the helper and its test; 3 424f54d the ten sites; 4 eb88729 the sites guard; 5 b494cd3 the S1 and S7 assertions; 6 818cd24 .env.example and the backlog row (its notes as the lane block states, plus the three operator CLIs as a follow-up; `scope` lists the measurement files by their tracked paths; status stays `idea`); 7 f794744 the subpath export, and in this record the Tier B choices, the G2 consequence and the final B3; 8 7433ce5 the round-1 review fixes, tests only (the two db test files and one comment line in apps/bot/src/projector-registry.test.ts, ruling RO-L78-3 item 2); 9 this readiness update.
+- Commits, the lane's own (a merge commit from main is not one): 1 741878a this record; 2 90c546b the helper and its test; 3 424f54d the ten sites; 4 eb88729 the sites guard; 5 b494cd3 the S1 and S7 assertions; 6 818cd24 .env.example and the backlog row (its notes as the lane block states, plus the three operator CLIs as a follow-up; `scope` lists the measurement files by their tracked paths; status stays `idea`); 7 f794744 the subpath export, and in this record the Tier B choices, the G2 consequence and the final B3; 8 7433ce5 the round-1 review fixes, tests only (the two db test files and one comment line in apps/bot/src/projector-registry.test.ts, ruling RO-L78-3 item 2); 9 the readiness update; 10 the round-2 fix (R1-4).
 
 ## 7. Security notes for the security round
 
