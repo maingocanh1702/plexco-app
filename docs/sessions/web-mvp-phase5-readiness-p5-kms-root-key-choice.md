@@ -212,7 +212,7 @@ Threat model: the adversary is a mistake, not a motivated attacker. The owner, t
 - A jq error that quotes a live ciphertext: the new code raises only `render: ` messages naming a component or a key; the `catch` (:99) is unchanged; the live side is read with `arrays` (as :46), so a wrong-shaped live surface reads as "differs", never as a jq error quoting it.
 - A committed SECRET carrying a value: the type/value check runs over both sets before the drop (row 10, m3).
 - The credential surface is otherwise unchanged: the same secrets are copied from the same live components, ENCRYPTION_KEY is a name only (its value is entered by the owner in DigitalOcean), and no new component or job appears.
-- Merge consequence: after the merge every deploy needs `vars.KEY_ROOT` in its environment; a missing one stops at the render (row 1), before any doctl call. The owner sets it at 8.5, before the first deploy under this code.
+- Merge consequence: after the merge every deploy needs `vars.KEY_ROOT` in its environment; a missing one stops at the render (row 1), before `doctl apps update` (no app mutation; the earlier doctl calls are the read-only `apps spec get` and the registry steps). The owner sets it at 8.5, before the first deploy under this code.
 
 ## 8. Open
 
