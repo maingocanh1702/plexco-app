@@ -71,7 +71,7 @@ USER plexco
 
 # web/discovery lắng nghe HTTP; worker không có ingress
 EXPOSE 3000
-# PROCESS_ROLE ∈ {web, discovery, worker} — default web
+# PROCESS_ROLE ∈ {web, discovery, worker, provision, migrate} — default web; migrate (the PRE_DEPLOY job) runs the migrations, then the queue provisioning, in one shell
 ENV PROCESS_ROLE=web
 # Audit 2026-09-06 X-5: header nói "healthcheck-ready" nhưng không có HEALTHCHECK. web/discovery
 # probe /healthz (cùng target với fly.toml http_checks; compose/DO đọc directive này). worker:
