@@ -11,9 +11,9 @@ name: Deploy staging
 # TRIGGER POLICY: manual only (no push/tag trigger). Staging is EPHEMERAL (48-96h TTL, §9); an
 # automatic deploy would keep a production-shaped environment and its bill alive by accident.
 # `environment: staging` carries required reviewers, so every run needs one owner approval.
-# DISPATCH THE WORKFLOW FROM THE COMMIT YOU WANT TO DEPLOY (branch/tag picker in the Run workflow
-# dialog): the build uses github.sha, so the run's head_sha IS the built SHA and production can
-# verify "this SHA passed staging" from the run alone.
+# DISPATCH FROM `main` ONLY (the owner sets the `staging` environment's Deployment branches rule to
+# `main`: docs/runbooks/staging-deploy.md, GitHub environment step): the build uses github.sha, so the
+# run's head_sha IS the built SHA and production can verify "this SHA passed staging" from the run alone.
 # ONE deploy job on purpose: GitHub asks for approval per job that names a protected environment,
 # and the digest/evidence flow between steps without artifact hand-offs.
 #
@@ -21,9 +21,9 @@ name: Deploy staging
 # step. The managed DB only trusts the app's private VPC identity (§2); GitHub-hosted runners have no
 # stable address, so a runner-side migration would force a public DB path or a standing IP allowlist.
 # DATABASE_URL_MIGRATION therefore lives as a secret on that one DO job component only - never in
-# GitHub, never on a runtime component. Queue provisioning runs in that same job after the
-# migrations: lane L82 changes the image entrypoint for it and must merge before the first real
-# dispatch.
+# GitHub, never on a runtime component. Queue provisioning runs in that same job, in the same
+# shell, after the migrations (infra/entrypoint.sh `migrate` arm, lane L82); a failed migration
+# exits before it.
 
 on:
   workflow_dispatch:

@@ -63,9 +63,9 @@ alerts:
   - rule: DEPLOYMENT_FAILED
   - rule: DOMAIN_FAILED
 
-# Runs the database migrations with the new image. kind is written explicitly: an unspecified kind
-# defaults to POST_DEPLOY. The migration credential exists on this job only: the renderer refuses it
-# on any other component.
+# Runs the database migrations with the new image, then the queue provisioning in the same shell. kind is
+# written explicitly: an unspecified kind defaults to POST_DEPLOY. The migration credential exists on this
+# job only: the renderer refuses it on any other component.
 jobs:
   - name: migrate
     kind: PRE_DEPLOY
