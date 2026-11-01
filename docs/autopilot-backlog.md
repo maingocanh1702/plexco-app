@@ -8204,3 +8204,24 @@ notes: |
   Fix (a pointer, not a design): route the three constructions through pgSslConnectionConfig. The implementing lane adds its test files to the scope at intake: apps/bot/src/projector-registry.test.ts runs two of the three and apps/web/e2e/public-card-hide-address.spec.ts the third.
   Risk P1: the three run with the owner credential against an environment's database, and the change decides whether that connection verifies the server. The implementing lane re-derives the risk at intake.
   Source: lane L89 (p5-db-tls-ca-required, session P5-S19a), run 3's out-of-scope finding, recorded under RO-L89-4 (1) as a sanctioned out-of-scope record; planned for a later lane, not built in lane L89, and the three scripts are untouched.
+
+## task: public-alias-moderate-runbook-staging-production
+title: no runbook covers running scripts/public-alias-moderate.mjs, the owner's public alias CLI (list, approve, reject), against staging or production; the only runbook step that runs it is the local proof on a loopback scratch database
+status: planned
+risk: P2
+change_class: docs-reconcile
+depends_on: []
+invariants: []
+scope: [docs/runbooks/outbox-dispatch-enable-rollback.md]
+manifest: null
+merged_probe: null
+close_by: hand · docs-reconcile: a runbook procedure adds no code symbol
+_probe_note: no probe, because the fix is prose (close_by above); if the implementing lane also changes code, it adds those files to the scope and writes a real merged_probe, since the reconcile refuses close_by once the scope holds a file that can carry a symbol (scripts/autopilot-backlog-reconcile, scope_can_carry_symbol).
+_readiness: NOT_CODE_READY — not chosen: the procedure's home (docs/runbooks/outbox-dispatch-enable-rollback.md or a runbook of its own) and where alias approval sits in the staging and production order.
+notes: |
+  Measured at lane L90's head. `git grep -n public-alias-moderate -- docs/runbooks` finds three lines, and only one runs the CLI: docs/runbooks/local-mvp-smoke.md:205, the local proof apps/web/e2e/public-card-hide-address-proof.sh (:201), which approves the club's alias on its own scratch database plexco_l35_scratch (:204) before it enables public_sessions there; the proof's three connection URLs all name localhost:5432 (apps/web/e2e/public-card-hide-address-proof.sh:63-65). The other two name the CLI without a procedure: docs/runbooks/outbox-dispatch-enable-rollback.md:178, the TLS bullet of section 6 (:157, the owner's conditions for staging and production), lists it with the other two owner CLIs, and no step of that runbook runs it; docs/runbooks/env-manifest-staging-production.md:72 records that it reads DATABASE_URL_MIGRATION (scripts/public-alias-moderate.mjs:98) and runs on the owner's machine, not as a deploy component.
+  The rest of `git grep -n public-alias-moderate -- docs`, lane records under docs/sessions and this file aside, only names it: its contract row M-13 at docs/standards/decisions.md:3046 (list, approve, reject with `--tenant` and `--sha256`; default applied, pending owner sign-off), the dated lane prompt docs/autopilot-templates/web-mvp-phase3-2026-10-16-RUN.md:573 (owner CLI, no UI in the MVP), and the kit record docs/standards/kit-pack-membership.json:182 and .md:151, :175.
+  Consequence: the owner has no written procedure for running it on staging or production: the shell's credential and CA, the commands, and the step of the go-live order it belongs to.
+  Fix (a pointer, not a design): one owner procedure for staging and production that names the shell environment (DATABASE_URL_MIGRATION, and DATABASE_CA_CERT, which section 6 of docs/runbooks/outbox-dispatch-enable-rollback.md already sets in the owner's shell at :165 and the three CLIs read), the list, approve and reject commands as M-13 defines them, and where approval sits relative to enabling public_sessions (the local proof approves first, docs/runbooks/local-mvp-smoke.md:205). The implementing lane chooses the home at intake, that runbook or one of its own, and rewrites the scope with it.
+  Risk P2: a runbook adds no code; the procedure it writes is run by the owner with the owner credential against an environment's database, the owner's action, never an agent's. The implementing lane re-derives the risk at intake.
+  Source: lane L90 (p5-operator-cli-pg-tls-helper, session P5-S20a), D4's gap in the lane's record docs/sessions/web-mvp-phase5-readiness-p5-operator-cli-pg-tls-helper.md (:62), recorded under ruling RO-L90-2 (3) ("decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature") as a sanctioned out-of-scope record; planned for a later lane, not built in lane L90, and no doc is written.
