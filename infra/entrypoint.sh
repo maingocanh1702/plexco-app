@@ -54,11 +54,13 @@ echo "[entrypoint] starting role=${ROLE}"
 case "$ROLE" in
   web)
     # dashboard + API + SSE + mọi webhook (TG/Zalo/SePay) — port 3000
+    pnpm --filter @plexco/bot --fail-if-no-match exec tsx ../../packages/db/src/pg-ssl-boot-check.ts
     exec pnpm --filter @plexco/web start:web
     ;;
   discovery)
     # chỉ GET /discover — projection-only, field-whitelist, readonly role.
     # DATABASE_URL được scope theo component: primary Day-1, read-only node khi telemetry trigger.
+    pnpm --filter @plexco/bot --fail-if-no-match exec tsx ../../packages/db/src/pg-ssl-boot-check.ts
     exec pnpm --filter @plexco/web start:discovery
     ;;
   worker)
