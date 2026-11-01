@@ -149,6 +149,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 | `scripts/outbox-dlq-replay.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/outbox-projector-enable.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/public-alias-moderate.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
+| `scripts/lib/operator-cli-pg-config.mjs` | **repo-owned** | absent from `pack_pairs` | none | not overwritten | none |
 | `scripts/ap-evidence.sh` | **kit-owned** | present in `pack_pairs` | kit-sync | next successful autopilot-update.sh run | none |
 
 - **`scripts/ap-merge.sh`** — Third state: safe to edit, but a sync prints an informational UNSYNCED_DRIFT line because our copy differs from canonical's. Plexco's grew a step 8b calling autopilot-backlog-reconcile that canonical never had. Never halts, never syncs, never repairs. Listed in unsynced_candidates() at autopilot-update.sh:81.
@@ -172,6 +173,7 @@ an observed run or failure. Reading its code is not enough; a document describin
 - **`scripts/outbox-dlq-replay.mjs`** — No canonical copy. Repo-owned owner CLI (L3): DLQ inspect and replay through job_definer definers.
 - **`scripts/outbox-projector-enable.mjs`** — No canonical copy. Repo-owned owner CLI (L24): enables an outbox projector with a bounded backfill through existing job_definer definers.
 - **`scripts/public-alias-moderate.mjs`** — No canonical copy. Repo-owned owner CLI (L10a): public alias moderation (list pending, approve, reject) through the 0060 owner-only definers.
+- **`scripts/lib/operator-cli-pg-config.mjs`** — No canonical copy. Repo-owned helper of the three owner CLIs (L90): their pg config through packages/db/src/pg-ssl-options.ts, evaluated as a production build.
 
 ---
 
