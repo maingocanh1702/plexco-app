@@ -83,7 +83,7 @@ jobs:
       - key: DATABASE_URL_MIGRATION # role migration
         scope: RUN_TIME
         type: SECRET
-      # The DB cluster CA (PEM), pasted per component in the console; production refuses a remote DB without it.
+      # The DB cluster CA (PEM), pasted per component in the console; without it this production build refuses to start against a remote DB, staging included (NODE_ENV=production from the image).
       - key: DATABASE_CA_CERT
         scope: RUN_TIME
         type: SECRET
@@ -155,7 +155,7 @@ services:
       - key: DISCOVERY_DATABASE_URL # role readonly
         scope: RUN_TIME
         type: SECRET
-      # The DB cluster CA (PEM), pasted per component in the console; production refuses a remote DB without it.
+      # The DB cluster CA (PEM), pasted per component in the console; without it this production build refuses to start against a remote DB, staging included (NODE_ENV=production from the image).
       - key: DATABASE_CA_CERT
         scope: RUN_TIME
         type: SECRET
@@ -243,7 +243,7 @@ services:
       - key: DISCOVERY_DATABASE_URL # role readonly
         scope: RUN_TIME
         type: SECRET
-      # The DB cluster CA (PEM), pasted per component in the console; production refuses a remote DB without it.
+      # The DB cluster CA (PEM), pasted per component in the console; without it this production build refuses to start against a remote DB, staging included (NODE_ENV=production from the image).
       - key: DATABASE_CA_CERT
         scope: RUN_TIME
         type: SECRET
@@ -301,7 +301,7 @@ workers:
       - key: DATABASE_URL_DIRECT # role app_worker
         scope: RUN_TIME
         type: SECRET
-      # The DB cluster CA (PEM), pasted per component in the console; production refuses a remote DB without it.
+      # The DB cluster CA (PEM), pasted per component in the console; without it this production build refuses to start against a remote DB, staging included (NODE_ENV=production from the image).
       - key: DATABASE_CA_CERT
         scope: RUN_TIME
         type: SECRET
