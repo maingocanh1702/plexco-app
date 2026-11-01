@@ -3,7 +3,7 @@ import { isIPv4 } from "node:net";
 import type { ConnectionConfig } from "pg";
 // Extensionless: the "./lib/*" entry of both pg's and @types/pg's exports ("./lib/*.js" has no types).
 import ConnectionParameters from "pg/lib/connection-parameters";
-
+import { rootCertificates } from "node:tls";
 /**
  * The ONE source of the pg TLS options: every Pool, Client and PgBoss config spreads this result
  * (docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-options.md, decision table R1-R11).
@@ -17,6 +17,9 @@ import ConnectionParameters from "pg/lib/connection-parameters";
  * the chain against these certificates only and the host name with its default check; the explicit
  * true also beats PGSSLMODE and NODE_TLS_REJECT_UNAUTHORIZED=0.
  * A refusal names the variable and a reason only: never the URL, a password, a host or the CA text.
+ * One exception to PEM: DATABASE_CA_CERT exactly `system` (case-sensitive, untrimmed) gives ca =
+ * Node's bundled root certificates (tls.rootCertificates), passed explicitly so NODE_EXTRA_CA_CERTS
+ * and the OS store add nothing; the URL rules and rejectUnauthorized: true are the PEM path's.
  */
 
 const VAR = "DATABASE_CA_CERT";
@@ -51,7 +54,7 @@ export function pgSslConnectionConfig(
     }
     return { connectionString };
   }
-  const ca = certificateBlocks(value);
+  const ca = value === "system" ? [...rootCertificates] : certificateBlocks(value);
   return {
     connectionString: withoutSslParameters(connectionString),
     ssl: { ca, rejectUnauthorized: true },

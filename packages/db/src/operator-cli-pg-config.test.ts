@@ -80,6 +80,16 @@ describe("operatorCliPgConfig: the owner CLIs' pg config is the helper evaluated
     });
   });
 
+  it("T16: a remote host with DATABASE_CA_CERT=system gives the verified ssl config over Node's bundled roots (an Advanced Edition cluster with no downloadable CA)", async () => {
+    const { rootCertificates } = await import("node:tls");
+    await expect(
+      operatorCliPgConfig(REMOTE, { DATABASE_CA_CERT: "system" }),
+    ).resolves.toStrictEqual({
+      connectionString: REMOTE,
+      ssl: { ca: [...rootCertificates], rejectUnauthorized: true },
+    });
+  });
+
   it("a loopback host with no CA gives today's config (the tests, the e2e proofs, local compose)", async () => {
     await expect(operatorCliPgConfig(LOOPBACK, {})).resolves.toEqual({
       connectionString: LOOPBACK,

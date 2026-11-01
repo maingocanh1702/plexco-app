@@ -1811,6 +1811,30 @@ Mỗi lựa chọn dưới đây là (a)/(c) theo đúng ký hiệu của bảng
 
 Câu chữ tiếng Việt và cách chia mục của entry này là "the lane's Tier B decision" của L89 (đảo ngược được); vị trí, số DD và hàng chỉ mục theo convention của file và ruling của conductor. Tin nhắn là chữ của chính owner; mục "Cách đọc" là cách đọc của conductor; luật của công tắc mang nhãn ghi ở mục của nó.
 
+### Bổ sung 2026-11-01 (tin nhắn 20:47 của owner; L91)
+
+- **Bối cảnh.** Mục (2) ở trên giữ `DATABASE_CA_CERT` dạng PEM, nhưng bước dán CA của L89 chỉ phủ cluster Standard Edition; cluster Advanced Edition không có CA để tải về. Owner trả lời câu hỏi của conductor bằng một tin nhắn gõ, không có khối dán, nhận lúc 20:47 giờ Sài Gòn theo dấu giờ của log. Bản ghi gốc là bản ghi "Owner decisions of 2026-11-01" của conductor (nguyên văn ở đó là thẩm quyền); L91 chỉ ghi lại.
+- **Quyết định.** Tin nhắn của owner, nguyên văn và trọn vẹn (như owner viết):
+
+> || Owner chọn L91 system (uỷ quyền chọn phương án tối ưu): mở lane nhỏ cho phép DATABASE_CA_CERT=system. Chỉ khi đặt đúng chữ system mới dùng kho CA gốc của Node; vẫn kiểm chứng chỉ và tên host đầy đủ, KHÔNG BAO GIỜ no-verify; giá trị PEM vẫn dùng như cũ và vẫn đáp ứng luật bắt buộc ở staging và production. Áp dụng cho cả helper chung và ba script vận hành. Cập nhật runbook, env manifest và App Spec nếu cần: Standard Edition dùng CA tải về dạng PEM, Advanced Edition dùng system. Có test cho từng nhánh, mutation, security round vì P1. PR chạm deploy guard thì dừng ở MERGE_READY chờ owner, không chạm thì clerk merge. Chạy ngay, không song song với lane nào chung file. Báo ngắn sau khi xong.
+
+- **Cách đọc.** Các ý dưới là cách đọc hẹp của conductor trong bản ghi gốc, không phải chữ của owner; nguyên văn ở trên thắng.
+  - Lane L91 `p5-db-tls-ca-system` (P1). Lựa chọn của chính owner sửa mục (2) ở trên ("giữ DATABASE_CA_CERT dạng PEM"): PEM giữ nguyên, và thêm đúng chữ `system`.
+  - Chỉ đúng giá trị `system` (không cách viết, chữ hoa hay khoảng trắng bao quanh nào khác) mới chọn kho CA gốc của Node; vẫn kiểm đầy đủ chứng chỉ và tên host, không bao giờ no-verify.
+  - Giá trị PEM dùng như cũ; dạng nào cũng thoả công tắc bắt buộc ở trên (staging và production).
+  - Áp dụng cho helper chung `@plexco/db/pg-ssl-options` và ba script vận hành (cả ba đi qua `scripts/lib/operator-cli-pg-config.mjs`).
+  - Standard Edition dùng CA tải về dạng PEM; Advanced Edition dùng `system`.
+  - Có test cho từng nhánh, một mutation và một security round (P1).
+- **Nghĩa của `system` và các việc kèm theo** ("decided by the conductor under the owner's delegation of 2026-11-01 20:47 (L91), not an owner signature"):
+  - (a) `system` nghĩa là `ca: [...tls.rootCertificates]`, bộ root CA Mozilla đóng gói sẵn trong Node, truyền tường minh, với `rejectUnauthorized: true` và phép kiểm tên host mặc định của Node. Truyền tường minh vì tài liệu của Node ghi: khi `ca` được truyền tường minh thì cả chứng chỉ well-known lẫn NODE_EXTRA_CA_CERTS đều không được dùng; nên không biến môi trường nào nới được tập tin cậy, và kiểu trả về của helper giữ `{ ca: string[]; rejectUnauthorized: true }`. Phương án bác: để trống `ca`, vì khi đó NODE_EXTRA_CA_CERTS hoặc `--use-system-ca` đổi được thứ được tin cậy.
+  - (b) Luật URL của nhánh PEM áp nguyên: các tham số ssl bị bỏ khỏi URL, và URL làm yếu TLS bị từ chối.
+  - (c) Hai App Spec: 7 dòng chú thích của `DATABASE_CA_CERT` ghi "The DB cluster CA (PEM)", sai với Advanced Edition. Chúng được bỏ ghim, trỏ về hàng env manifest, nơi duy nhất mô tả giá trị, để lần đổi dạng sau không phải sửa file guard. Vì vậy PR là OWNER_ONLY (hai App Spec) và dừng ở MERGE_READY chờ lệnh merge của owner; bản thân các khai báo không đổi.
+  - (d) Việc còn nợ trong các file lane sửa sẵn: các trích dẫn renderer trong env manifest (L89 R3); hàng backlog HA `prod-pg-ha-upgrade-before-money-or-more-clubs`, thêm "Advanced Edition: không có CA để tải về, dùng `system`".
+  - (e) Quyết định của owner được ghi vào decisions.md thành bổ sung có ngày này của DD-159, theo convention bổ sung của file (tiền lệ DD-142/DD-150).
+- **Hệ quả.** L91 làm các việc owner nêu: nhánh `system` trong helper chung (ba script vận hành dùng lại), test cho từng nhánh, mutation, security round; runbook, env manifest và 7 dòng chú thích App Spec theo mục (c); hai hàng backlog. Phép chứng minh ở staging vẫn PENDING theo hàng backlog `db-tls-ca-verification-do-managed-pg` (vẫn mở): owner đặt giá trị thật (CA PEM tải về cho Standard Edition, `system` cho Advanced Edition) và staging chứng minh, rồi tới production.
+
+Câu chữ tiếng Việt và cách chia mục của bổ sung này là "the lane's Tier B decision" của L91 (đảo ngược được); vị trí theo convention bổ sung của file và ruling (e) của conductor. Tin nhắn là chữ của chính owner; mục "Cách đọc" là cách đọc của conductor; các mục (a)-(e) mang nhãn ghi ở mục của chúng.
+
 ---
 
 ## DD-158 — Owner trả lời chín quyết định còn mở trong danh sách của trợ lý của owner (01:20), và lúc 01:23 trả lời câu hỏi mục 6: root key có hai lựa chọn, aws-kms và key local, phần cài đặt thuộc lane L84 sau L83 · ✅ Quyết định owner 2026-10-31 (tin nhắn 01:20 và 01:23 do trợ lý của owner gõ, owner gửi bằng Enter, nhận lúc 01:2x giờ Sài Gòn; câu trả lời mục 6 owner xác nhận trong terminal của conductor lúc 01:3x; L83 chỉ ghi lại) · lane L83
