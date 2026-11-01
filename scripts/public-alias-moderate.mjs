@@ -20,7 +20,7 @@
  * DATABASE_URL_MIGRATION unset.
  */
 import { createRequire } from "node:module";
-
+import { operatorCliPgConfig } from "./lib/operator-cli-pg-config.mjs";
 const require = createRequire(new URL("../packages/db/package.json", import.meta.url));
 const pg = require("pg");
 
@@ -104,7 +104,10 @@ async function main(argv, env) {
   // redacted `error:` line below rather than an uncaught stack trace.
   let client;
   try {
-    client = new pg.Client({ connectionString: url, application_name: "plexco_public_alias_cli" });
+    client = new pg.Client({
+      ...(await operatorCliPgConfig(url, env)),
+      application_name: "plexco_public_alias_cli",
+    });
     await client.connect();
     await run(args, client);
     return 0;

@@ -4,23 +4,26 @@ import { describe, expect, it } from "vitest";
 // The connection-site guard of docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-options.md (2.5):
 // every pg Pool/Client and PgBoss that runtime source builds takes its options from
 // pgSslConnectionConfig, so DATABASE_CA_CERT reaches every connection; the rest is a named allowlist.
+// Under scripts/ a site counts only with `await operatorCliPgConfig(`: a bare helper there reads the
+// caller's NODE_ENV, and a missing await spreads a Promise, so pg falls back to PGHOST/PGSSLMODE.
 // ponytail: a regex scan of the source text, not an AST; a constructor reached through an alias, a
 // wrapper or a computed name is not seen. Upgrade to a TypeScript AST walk when a site needs one.
 
 const ROOT = new URL("../../../", import.meta.url);
-const DIRS = ["apps/bot/src", "apps/web", "packages/db/src"];
+const DIRS = ["apps/bot/src", "apps/web", "packages/db/src", "scripts"];
 const SKIP = new Set(["node_modules", ".next"]);
 const SOURCE = /\.[cm]?[jt]sx?$/;
 const TEST = /\.(?:test|spec)\.tsx?$/;
 const CTOR = /new (?:pg\.Pool|pg\.Client|Pool|Client|PgBoss)\(/g;
 const ROUTED = /pgSslConnectionConfig\(|queueOptions\(/;
+const CLI_ROUTED = /\bawait\s+operatorCliPgConfig\(/;
 // Left in the argument once the helper call is removed: a key of its own that would override the helper.
 const OVERRIDE = /\b(?:ssl|connectionString)\b/;
 const INSECURE = /rejectUnauthorized\s*:\s*false/;
 // [1] a declared name, [2] its initializer up to ";"; all in a lookahead, so a match consumes only the keyword and no text swallows a later declaration.
 const DECL = /(?:const|let)(?=\s+([A-Za-z_$][\w$]*)\b[^=]*=([^;]*))/g;
 
-/** The ten sites (readiness 2.5, S1-S10), sorted: each file opens exactly one connection through the helper. */
+/** The thirteen sites (readiness 2.5: S1-S10, then L90's three owner CLIs), sorted: each file opens exactly one connection through the helper. */
 const SITES = [
   "apps/bot/src/outbox-wake.ts",
   "apps/bot/src/preflight.ts",
@@ -32,6 +35,9 @@ const SITES = [
   "apps/bot/src/worker.ts",
   "packages/db/src/client.ts",
   "packages/db/src/migrate.ts",
+  "scripts/outbox-dlq-replay.mjs",
+  "scripts/outbox-projector-enable.mjs",
+  "scripts/public-alias-moderate.mjs",
 ];
 /** [file, constructor ("*" = every one in the file), reason]: the constructors that may skip the helper. */
 const ALLOW: [string, string, string][] = [
@@ -77,8 +83,13 @@ const hits = [...sources].flatMap(([file, src]) =>
   [...src.matchAll(CTOR)].map((m) => {
     const open = (m.index ?? 0) + m[0].length - 1;
     const arg = resolve(src, argText(src, open));
-    const rest = arg.replace(/pgSslConnectionConfig\([^()]*\)/g, "");
-    return { file, ctor: m[0], routed: ROUTED.test(arg), override: OVERRIDE.test(rest) };
+    const rest = arg.replace(/(?:pgSslConnectionConfig|operatorCliPgConfig)\([^()]*\)/g, "");
+    return {
+      file,
+      ctor: m[0],
+      routed: (file.startsWith("scripts/") ? CLI_ROUTED : ROUTED).test(arg),
+      override: OVERRIDE.test(rest),
+    };
   }),
 );
 const allows = (h: { file: string; ctor: string }, [file, ctor]: [string, string, string]) =>
@@ -92,7 +103,7 @@ describe("pg connection sites: every runtime connection takes pgSslConnectionCon
     expect(bare.map((h) => `${h.file} ${h.ctor}`)).toEqual([]);
   });
 
-  it("(b) the scan finds exactly the ten sites, and every allowlist entry still matches a constructor", () => {
+  it("(b) the scan finds exactly the thirteen sites, and every allowlist entry still matches a constructor", () => {
     expect(
       hits
         .filter((h) => h.routed)
@@ -112,5 +123,13 @@ describe("pg connection sites: every runtime connection takes pgSslConnectionCon
     expect(
       ALLOW.filter(([file]) => !existsSync(new URL(file, ROOT))).map(([file]) => file),
     ).toEqual([]);
+  });
+
+  it("(e) the owner CLIs' shared module loads the helper itself and calls it as a production build", () => {
+    const shared = sources.get("scripts/lib/operator-cli-pg-config.mjs");
+    expect(shared).toContain('new URL("../../packages/db/src/pg-ssl-options.ts", import.meta.url)');
+    expect(shared).toContain(
+      'pgSslConnectionConfig(connectionString, { ...env, NODE_ENV: "production" })',
+    );
   });
 });

@@ -54,7 +54,7 @@
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-
+import { operatorCliPgConfig } from "./lib/operator-cli-pg-config.mjs";
 // zalo_dm's delivery age bound: ONE definition, shared with apps/bot/src/dispatcher.ts (DD-146), and
 // validated at load as there (a positive integer, else throw: fail closed).
 const zaloDmDeliveryAgeBound = createRequire(import.meta.url)("../apps/bot/src/zalo-dm-delivery-age-bound.json");
@@ -302,7 +302,10 @@ async function main(argv, env) {
   let client;
   try {
     const pg = createRequire(new URL("../packages/db/package.json", import.meta.url))("pg");
-    client = new pg.Client({ connectionString: url, application_name: CLI_APPLICATION_NAME });
+    client = new pg.Client({
+      ...(await operatorCliPgConfig(url, env)),
+      application_name: CLI_APPLICATION_NAME,
+    });
     await client.connect();
     console.log(JSON.stringify(await enableProjector(client, projector)));
     return 0;

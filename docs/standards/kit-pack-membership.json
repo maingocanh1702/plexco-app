@@ -184,6 +184,11 @@
       "note": "No canonical copy. Repo-owned owner CLI (L10a): public alias moderation (list pending, approve, reject) through the 0060 owner-only definers."
     },
     {
+      "path": "scripts/lib/operator-cli-pg-config.mjs",
+      "overwrite_path": "none",
+      "note": "No canonical copy. Repo-owned helper of the three owner CLIs (L90): their pg config through packages/db/src/pg-ssl-options.ts, evaluated as a production build."
+    },
+    {
       "path": "scripts/ap-evidence.sh",
       "overwrite_path": "kit-sync"
     },
