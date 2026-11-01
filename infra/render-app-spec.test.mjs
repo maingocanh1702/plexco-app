@@ -1029,3 +1029,21 @@ test("AS6 create mode: DATABASE_CA_CERT stays a valueless SECRET on every DB com
     }
   }
 });
+
+// Lane L89: the CA rule keys on NODE_ENV === "production" (packages/db/src/pg-ssl-options.ts), set for every role by
+// the runtime stage of infra/Dockerfile and by nothing in the specs. App Platform hands an app-level env to every
+// component that does not declare the key, and assertEnvKeys pins the component lists only, so an app-level NODE_ENV
+// would switch the rule off on every role with every other test green. Static sites and functions are not built from
+// the image, so their envs are not scanned.
+test("neither App Spec sets NODE_ENV at the app level or on a component: every role keeps the image's production", () => {
+  const nodeEnvs = (spec) =>
+    [spec, ...components(spec).map(({ c }) => c)].flatMap((o) => o.envs ?? []).filter((e) => e.key === "NODE_ENV");
+  for (const file of [STAGING, PROD]) {
+    const spec = readSpec(file);
+    assert.deepEqual(nodeEnvs(spec), [], file);
+    // The negative control: the same spec with an app-level NODE_ENV is caught.
+    const env = { key: "NODE_ENV", scope: "RUN_TIME", type: "GENERAL", value: "development" };
+    const appLevel = variant(spec, (s) => (s.envs = [...(s.envs ?? []), env]));
+    assert.deepEqual(nodeEnvs(appLevel), [env], `${file} app-level`);
+  }
+});
