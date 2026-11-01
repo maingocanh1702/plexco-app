@@ -65,6 +65,10 @@ describe("pg-ssl-boot-check: web and discovery refuse at boot, before next start
       "P4 development with remote URLs starts as today",
       { NODE_ENV: "development", DATABASE_URL: REMOTE, DISCOVERY_DATABASE_URL: REMOTE },
     ],
+    [
+      "T16: production with remote URLs and DATABASE_CA_CERT=system starts (an Advanced Edition cluster with no downloadable CA)",
+      { ...PROD, DATABASE_URL: REMOTE, DISCOVERY_DATABASE_URL: REMOTE, DATABASE_CA_CERT: "system" },
+    ],
   ])("%s", (_name, names) => {
     const r = start(CHECK, names);
     expect(r.status).toBe(0);
