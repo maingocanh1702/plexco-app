@@ -198,6 +198,38 @@ describe("pgSslConnectionConfig: the decision table", () => {
     expect(pgSslConnectionConfig(URL_PLAIN).ssl?.ca).toEqual([caA.trim()]);
   });
 
+  // L89 (docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-required.md): with a CA set, production
+  // takes the CA branch exactly as without NODE_ENV, whatever host pg would dial.
+  const CA_SET_IN_PRODUCTION: [string, string][] = [
+    ["A2: normal production boot after the owner's paste keeps the CA branch", URL_PLAIN],
+    [
+      "A5: a local production run with a CA keeps the CA branch on loopback",
+      `postgres://app:${PASSWORD}@127.0.0.1:5432/plexco`,
+    ],
+    [
+      "A7: a socket with a CA keeps the CA branch",
+      "postgres://app@%2Fvar%2Frun%2Fpostgresql/plexco",
+    ],
+    ["A9: an unparsable URL with a CA keeps the CA branch: bare ::1", "postgres://app@::1/plexco"],
+    [
+      "A9: an unparsable URL with a CA keeps the CA branch: unclosed [::1",
+      "postgres://app@[::1/plexco",
+    ],
+    [
+      "A9: an unparsable URL with a CA keeps the CA branch: a host:port list",
+      "postgres://app@h1:5432,h2:5432/plexco",
+    ],
+    [
+      "A9: an unparsable URL with a CA keeps the CA branch: port 99999",
+      "postgres://app@127.0.0.1:99999/plexco",
+    ],
+  ];
+  it.each(CA_SET_IN_PRODUCTION)("%s", (_, url) => {
+    const cfg = pgSslConnectionConfig(url, { NODE_ENV: "production", ...env(caA) });
+    expect(cfg).toStrictEqual(pgSslConnectionConfig(url, env(caA)));
+    expect(cfg.ssl).toStrictEqual({ ca: [caA.trim()], rejectUnauthorized: true });
+  });
+
   it("R3: a two-certificate bundle: every block is validated and ca holds both", () => {
     expect(pgSslConnectionConfig(URL_PLAIN, env(caB + caA)).ssl?.ca).toEqual([
       caB.trim(),
