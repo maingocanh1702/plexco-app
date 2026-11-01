@@ -1,8 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // @ts-expect-error -- the shared module is an untyped .mjs; its one export is typed below
 import * as shared from "../../../scripts/lib/operator-cli-pg-config.mjs";
@@ -105,4 +105,31 @@ describe("operatorCliPgConfig: the owner CLIs' pg config is the helper evaluated
     };
     await expect(unloadable(LOOPBACK, {})).rejects.toThrow();
   });
+});
+
+describe("owner CLIs: a remote host without DATABASE_CA_CERT is refused before connecting", () => {
+  // `node scripts/<cli> <args>` from the repo root with PATH and DATABASE_URL_MIGRATION only, so no
+  // NODE_ENV, CA or PGHOST of the runner reaches it; the refusal comes before any connection attempt.
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  it.each([
+    ["outbox-dlq-replay.mjs", ["list"]],
+    ["outbox-projector-enable.mjs", ["enable", "--projector", "zalo_dm"]],
+    ["public-alias-moderate.mjs", ["list"]],
+  ])(
+    "%s exits 1, its first error line names DATABASE_CA_CERT, no stack and no URL, host or credential",
+    (script, args) => {
+      const run = spawnSync(process.execPath, [`scripts/${script}`, ...args], {
+        cwd: root,
+        env: { PATH: process.env.PATH, DATABASE_URL_MIGRATION: REMOTE },
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      expect(run.status).toBe(1);
+      expect(run.stderr.split("\n")[0]).toBe(`error: ${REQUIRED.message}`);
+      expect(run.stderr).not.toMatch(/^\s+at /m);
+      for (const leak of ["postgres://", "db.invalid", "FakePw123"]) {
+        expect(run.stdout + run.stderr).not.toContain(leak);
+      }
+    },
+  );
 });

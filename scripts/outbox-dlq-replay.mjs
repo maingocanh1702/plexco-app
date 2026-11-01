@@ -17,7 +17,7 @@
  * Procedure: docs/runbooks/outbox-dispatch-enable-rollback.md.
  */
 import { createRequire } from "node:module";
-
+import { operatorCliPgConfig } from "./lib/operator-cli-pg-config.mjs";
 const require = createRequire(new URL("../packages/db/package.json", import.meta.url));
 const pg = require("pg");
 
@@ -101,7 +101,10 @@ async function main(argv, env) {
   }
   let client;
   try {
-    client = new pg.Client({ connectionString: url, application_name: CLI_APPLICATION_NAME });
+    client = new pg.Client({
+      ...(await operatorCliPgConfig(url, env)),
+      application_name: CLI_APPLICATION_NAME,
+    });
     await client.connect();
     await client.query("SET ROLE job_definer");
     try {
