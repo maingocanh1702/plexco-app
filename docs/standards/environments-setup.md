@@ -446,6 +446,8 @@ Deviation from this document (default pending owner ratification at step 8.9, DD
 
 Not done and not proven: nothing ran against DigitalOcean. The §1.1 gate is closed as `DO_VPC_COMPATIBLE` by owner exceptions (DD-155, DD-156); a written Zalo Bot Platform answer that requires a fixed source IP reverses it (§1.1, the Q7 fallback). DB TLS CA verification (§4) is not implemented (backlog `db-tls-ca-verification-do-managed-pg`). The deploy workflows, the deploy runbooks, automatic TTL teardown (§9) and the measured RPO/RTO cells do not exist yet.
 
+Update 2026-11-01: DB TLS CA verification (§4) is implemented (lane L78, PR #159, `@plexco/db/pg-ssl-options`), and it is required for a production build that reaches a non-loopback database (lane L89). Still pending: the owner's paste of the real CA and the staging proof (backlog `db-tls-ca-verification-do-managed-pg`).
+
 ---
 
 ## 7. URLs and channel configuration
