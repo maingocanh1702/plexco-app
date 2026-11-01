@@ -1,10 +1,16 @@
 import { X509Certificate } from "node:crypto";
+import { isIPv4 } from "node:net";
+import type { ConnectionConfig } from "pg";
+// Extensionless: the "./lib/*" entry of both pg's and @types/pg's exports ("./lib/*.js" has no types).
+import ConnectionParameters from "pg/lib/connection-parameters";
 
 /**
  * The ONE source of the pg TLS options: every Pool, Client and PgBoss config spreads this result
  * (docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-options.md, decision table R1-R11).
  *
  * DATABASE_CA_CERT unset: the connection string unchanged and NO ssl key, so pg behaves as today.
+ * Unset with NODE_ENV=production refuses unless the host pg will dial is loopback or a Unix socket
+ * (docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-required.md, rows A1-E4).
  * DATABASE_CA_CERT set: it must be PEM text of certificates only; the URL may not weaken TLS; every
  * ssl parameter is then removed from the URL (pg assigns the parsed URL over an explicit ssl object,
  * so a kept one would silently win); and ssl = { ca, rejectUnauthorized: true }. Node then verifies
@@ -14,6 +20,8 @@ import { X509Certificate } from "node:crypto";
  */
 
 const VAR = "DATABASE_CA_CERT";
+const REQUIRED =
+  "is required when NODE_ENV is production and the database host is not loopback or a Unix socket";
 const CERT_LABEL = "CERTIFICATE";
 // Generic PEM armor: the label is captured and compared with CERT_LABEL, so no marker literal lives
 // here. The body excludes "-", so one block can never swallow the next armor line.
@@ -37,12 +45,39 @@ export function pgSslConnectionConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): { connectionString: string; ssl?: { ca: string[]; rejectUnauthorized: true } } {
   const value = env[VAR];
-  if (value === undefined) return { connectionString };
+  if (value === undefined) {
+    if (env.NODE_ENV === "production" && !loopbackOrSocket(connectionString)) {
+      throw new PgSslConfigError(REQUIRED);
+    }
+    return { connectionString };
+  }
   const ca = certificateBlocks(value);
   return {
     connectionString: withoutSslParameters(connectionString),
     ssl: { ca, rejectUnauthorized: true },
   };
+}
+
+// The one host string pg dials, from pg's own ConnectionParameters as its Client builds it (the URL's
+// host, a host= parameter winning, then PGHOST, then localhost), compared exactly: no lower-casing,
+// no IPv4 shorthand. A string pg cannot parse, or any other throw, is remote (fail closed).
+function loopbackOrSocket(connectionString: string): boolean {
+  let host: unknown;
+  try {
+    // @types/pg leaves connectionString out of this constructor's type; pg reads it (as Client does).
+    const config: ConnectionConfig = { connectionString };
+    host = new ConnectionParameters(config).host;
+  } catch {
+    return false;
+  }
+  if (typeof host !== "string") return false;
+  if (host.startsWith("/")) return true;
+  return (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "[::1]" ||
+    (isIPv4(host) && host.startsWith("127."))
+  );
 }
 
 // Every block is parsed on its own: X509Certificate reads only the FIRST certificate of a bundle and
