@@ -25,7 +25,7 @@ Một image cho mọi component. Role lấy theo thứ tự: tham số của l�
 
 ## E3. Biến runtime: web, discovery, worker
 
-Chú thích: W web, D discovery (chỉ staging có), K worker, M job migrate; cột S staging, P production: y nhập, od owner quyết, n không nhập (E7), never không bao giờ đặt (E6), img image đặt sẵn. Hậu tố (aws) hoặc (local): chỉ áp khi `KEY_ROOT` của môi trường đó (E5) là `aws-kms` hoặc `local`; bản render bỏ tập của root kia khỏi spec (`infra/render-app-spec.sh:61-62`, :83). Tập phải nhập ở production: 11 tên có y ở cột P (`DATABASE_CA_CERT` cả ở job M), cộng `DATABASE_URL_MIGRATION` ở job M (E4); với `aws-kms` thêm 2 tên y (aws) và cặp credential AWS dưới bảng (default R2), với `local` thêm `ENCRYPTION_KEY`; `DB_EXPECTED_ROLE` là opt-in. "(+n)" là số nơi đọc khác.
+Chú thích: W web, D discovery (chỉ staging có), K worker, M job migrate; cột S staging, P production: y nhập, od owner quyết, n không nhập (E7), never không bao giờ đặt (E6), img image đặt sẵn. Hậu tố (aws) hoặc (local): chỉ áp khi `KEY_ROOT` của môi trường đó (E5) là `aws-kms` hoặc `local`; bản render bỏ tập của root kia khỏi spec (`infra/render-app-spec.sh:87-88`, :111-112). Tập phải nhập ở production: 11 tên có y ở cột P (`DATABASE_CA_CERT` cả ở job M), cộng `DATABASE_URL_MIGRATION` ở job M (E4); với `aws-kms` thêm 2 tên y (aws) và cặp credential AWS dưới bảng (default R2), với `local` thêm `ENCRYPTION_KEY`; `DB_EXPECTED_ROLE` là opt-in. "(+n)" là số nơi đọc khác.
 
 | # | Tên | Loại | Component | S | P | DB role | Quy tắc giá trị (D4) | Reader | `.env.example` | E nói | Drift |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
