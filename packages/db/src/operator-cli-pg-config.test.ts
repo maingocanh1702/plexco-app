@@ -97,13 +97,16 @@ describe("operatorCliPgConfig: the owner CLIs' pg config is the helper evaluated
   });
 
   it("a copy whose helper cannot load rejects and gives no config (no fallback)", async () => {
-    // Outside the repo neither tsx nor the helper resolves from the copy's own location.
+    // From the copy's location tsx does not resolve (MODULE_NOT_FOUND), or, under pnpm's bin shim
+    // (NODE_PATH = its store), tsx loads and the helper file is missing (ERR_MODULE_NOT_FOUND).
     const copy = join(dir, "operator-cli-pg-config.mjs");
     copyFileSync(MODULE, copy);
     const { operatorCliPgConfig: unloadable } = (await import(pathToFileURL(copy).href)) as {
       operatorCliPgConfig: OperatorCliPgConfig;
     };
-    await expect(unloadable(LOOPBACK, {})).rejects.toThrow();
+    await expect(unloadable(LOOPBACK, {})).rejects.toMatchObject({
+      code: expect.stringMatching(/^(?:ERR_)?MODULE_NOT_FOUND$/),
+    });
   });
 });
 
