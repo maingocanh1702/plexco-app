@@ -255,7 +255,7 @@ describe("pgSslConnectionConfig: the decision table", () => {
     },
   );
 
-  it.each([
+  const R7_QUERIES: [string, string][] = [
     ["?sslmode=require", ""],
     ["?sslmode=verify-ca", ""],
     ["?sslmode=verify-full", ""],
@@ -272,7 +272,9 @@ describe("pgSslConnectionConfig: the decision table", () => {
     ],
     ["?sslmode=require#frag?x", "#frag?x"],
     ["?application_name=api&&x=%41", "?application_name=api&&x=%41"],
-  ])(
+  ];
+
+  it.each(R7_QUERIES)(
     "R7: URL query %j keeps only %j, byte for byte, and pg's effective ssl is the helper's",
     (query, rest) => {
       const cfg = pgSslConnectionConfig(URL_ENCODED + query, env(caA));
@@ -319,6 +321,26 @@ describe("pgSslConnectionConfig: the decision table", () => {
       }
     }
   });
+
+  it.each(R7_QUERIES)(
+    "T11: DATABASE_CA_CERT=system strips URL query %j to %j exactly as a PEM CA does",
+    (query) => {
+      const cfg = pgSslConnectionConfig(URL_ENCODED + query, env("system"));
+      expect(cfg.connectionString).toBe(
+        pgSslConnectionConfig(URL_ENCODED + query, env(caA)).connectionString,
+      );
+      expect(new pg.Client(cfg).ssl).toStrictEqual(cfg.ssl);
+    },
+  );
+
+  it.each([...R5_QUERIES, ...R6_QUERIES])(
+    "T12: DATABASE_CA_CERT=system refuses URL query %j with the PEM path's message",
+    (query) => {
+      expect(refusal(() => pgSslConnectionConfig(URL_PLAIN + query, env("system"))).message).toBe(
+        refusal(() => pgSslConnectionConfig(URL_PLAIN + query, env(caA))).message,
+      );
+    },
+  );
 });
 
 // A local net server answers pg's SSLRequest with "S" and hands the same socket to a Node TLS
@@ -398,12 +420,14 @@ async function connectOnce(cfg: pg.ClientConfig): Promise<(Error & { code?: stri
 }
 
 // S1-2: NODE_EXTRA_CA_CERTS is read only when a process starts, so the default-store proof runs pg in
-// a child Node. The child connects with the JSON config in L78_PG_CONFIG and prints "connected" or the
-// error code. Async execFile: a sync spawn would block the event loop that serves the stub.
+// a child Node. The child reads its JSON config from the file path in argv, not from an env or argv
+// string: Linux caps one such string at 128 KiB and a DATABASE_CA_CERT=system config is about 200 KB.
+// It prints "connected" or the error code. Async execFile: a sync spawn would block the event loop
+// that serves the stub.
 const runFile = promisify(execFile);
 const CHILD_CONNECT = `
 const pg = require("pg");
-const client = new pg.Client(JSON.parse(process.env.L78_PG_CONFIG));
+const client = new pg.Client(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")));
 client.on("error", () => undefined);
 client.connect().then(
   () => client.end().then(() => console.log("connected")),
@@ -412,12 +436,13 @@ client.connect().then(
 `;
 
 async function connectInChildWithCaA(cfg: pg.ClientConfig): Promise<string> {
-  const { stdout } = await runFile(process.execPath, ["-e", CHILD_CONNECT], {
+  const file = join(dir, "child-pg-config.json");
+  writeFileSync(file, JSON.stringify(cfg));
+  const { stdout } = await runFile(process.execPath, ["-e", CHILD_CONNECT, file], {
     cwd: new URL(".", import.meta.url), // require("pg") resolves from this package
     env: {
       PATH: process.env.PATH ?? "",
       NODE_EXTRA_CA_CERTS: join(dir, "ca-a.crt"),
-      L78_PG_CONFIG: JSON.stringify(cfg),
     },
     encoding: "utf8",
     timeout: 10_000,
@@ -499,6 +524,27 @@ describe("pgSslConnectionConfig: TLS stub driven by pg's own Client", () => {
     );
     await sleep(300);
     expect(stub).toMatchObject({ connections: 2, startupOverTls: 1, plainStartup: 0 });
+  }, 15_000);
+
+  it("T15: DATABASE_CA_CERT=system refuses a server certificate from a private CA with a verify code, and NODE_EXTRA_CA_CERTS trusting that CA does not widen it", async () => {
+    stub = await startStub(srvLocalKey, srvLocalCrt);
+    const cfg = pgSslConnectionConfig(url(stub.port), env("system"));
+    const err = await connectOnce(cfg);
+    expect(VERIFY_CODES).toContain(err?.code);
+    expect(`${err?.message}\n${err?.stack}`).not.toContain(PASSWORD);
+    await sleep(300);
+    expect(stub).toMatchObject({ connections: 1, startupOverTls: 0, plainStartup: 0 });
+    // control: no ca, so the child's default store (CA-A loaded from NODE_EXTRA_CA_CERTS) verifies the server
+    expect(
+      await connectInChildWithCaA({
+        connectionString: url(stub.port),
+        ssl: { rejectUnauthorized: true },
+      }),
+    ).toBe("connected");
+    // proof: the same system config in that child still fails: the bundled roots are its whole trust set
+    expect(VERIFY_CODES).toContain(await connectInChildWithCaA(cfg));
+    await sleep(300);
+    expect(stub).toMatchObject({ connections: 3, startupOverTls: 1, plainStartup: 0 });
   }, 15_000);
 
   it("R10: a server certificate for another hostname fails with ERR_TLS_CERT_ALTNAME_INVALID", async () => {

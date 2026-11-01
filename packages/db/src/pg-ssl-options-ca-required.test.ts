@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { rootCertificates } from "node:tls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDb } from "./client.js";
 import { PgSslConfigError, pgSslConnectionConfig } from "./pg-ssl-options.js";
@@ -147,6 +148,66 @@ const TODAY: Row[] = [
   ),
 ];
 
+// DATABASE_CA_CERT=system: docs/sessions/web-mvp-phase5-readiness-p5-db-tls-ca-system.md, rows T8-T17
+// (T11, T12 and T15 need a generated CA and live in pg-ssl-options.test.ts). Only the exact value is
+// Node's bundled roots; every other spelling is PEM text and refuses as a bad CA.
+const SYSTEM = { DATABASE_CA_CERT: "system" };
+const LOOPBACK_URL = at("127.0.0.1");
+const NOT_PRODUCTION: [string, NodeJS.ProcessEnv][] = [
+  ["NODE_ENV unset", {}],
+  ["NODE_ENV development", { NODE_ENV: "development" }],
+  ["NODE_ENV test", { NODE_ENV: "test" }],
+];
+const SYSTEM_ROWS: Row[] = [
+  [
+    "T8: production against a remote host with system gets Node's bundled roots, which meets the requirement",
+    REMOTE_URL,
+    { ...PROD, ...SYSTEM },
+  ],
+  ...(
+    [
+      ["127.0.0.1", LOOPBACK_URL],
+      ["localhost", at("localhost")],
+      ["a Unix socket", `postgres://app:${MARKER}@${SOCKET}/plexco`],
+    ] as [string, string][]
+  ).map(([label, input]): Row => [
+    `T9: production on ${label} with system gets the same bundled roots`,
+    input,
+    { ...PROD, ...SYSTEM },
+  ]),
+  ...NOT_PRODUCTION.flatMap(([label, env]) =>
+    (
+      [
+        ["remote", REMOTE_URL],
+        ["loopback", LOOPBACK_URL],
+      ] as [string, string][]
+    ).map(([where, input]): Row => [
+      `T10: ${label}, ${where}, with system gets the same bundled roots`,
+      input,
+      { ...env, ...SYSTEM },
+    ]),
+  ),
+];
+// Case, whitespace, line ends, a plural and pasted quotes: none of them is the exact value.
+const NEAR_MISSES = [
+  "System",
+  " system",
+  "system ",
+  "system\n",
+  "systems",
+  "SYSTEM",
+  "system\r\n",
+  "\tsystem",
+  '"system"',
+];
+const BAD_CA = "DATABASE_CA_CERT is set but is not PEM certificate text (certificate blocks only)";
+const COMBOS: [name: string, env: NodeJS.ProcessEnv, url: string][] = [
+  ["production, remote", PROD, REMOTE_URL],
+  ["production, loopback", PROD, LOOPBACK_URL],
+  ["NODE_ENV unset, remote", {}, REMOTE_URL],
+  ["NODE_ENV unset, loopback", {}, LOOPBACK_URL],
+];
+
 function refusal(build: () => unknown): PgSslConfigError {
   try {
     build();
@@ -221,5 +282,61 @@ describe("pgSslConnectionConfig: DATABASE_CA_CERT is required in production off 
     expect(src).toContain('const VAR = "DATABASE_CA_CERT";');
     // Catches a read in any form (destructured, env?.X, an alias): the helper names env 4 times.
     expect(src.match(/\benv\b/g)).toHaveLength(4);
+  });
+});
+
+describe("pgSslConnectionConfig: DATABASE_CA_CERT=system is Node's bundled root certificates", () => {
+  it.each(SYSTEM_ROWS)("%s", (_, input, env) => {
+    expect(rootCertificates.length).toBeGreaterThan(0);
+    expect(pgSslConnectionConfig(input, env)).toStrictEqual({
+      connectionString: input,
+      ssl: { ca: [...rootCertificates], rejectUnauthorized: true },
+    });
+  });
+
+  it.each(NEAR_MISSES)(
+    "T13: the near-miss %j is not system and refuses as a bad CA in every combo",
+    (value) => {
+      for (const [, env, url] of COMBOS) {
+        const err = refusal(() => pgSslConnectionConfig(url, { ...env, DATABASE_CA_CERT: value }));
+        expect(err.message).toBe(BAD_CA);
+      }
+    },
+  );
+
+  it.each(COMBOS.filter(([combo]) => combo !== "production, remote"))(
+    "T14: an empty DATABASE_CA_CERT refuses as a bad CA (%s), as A3 does for production, remote",
+    (_, env, url) => {
+      const err = refusal(() => pgSslConnectionConfig(url, { ...env, DATABASE_CA_CERT: "" }));
+      expect(err.message).toBe(BAD_CA);
+    },
+  );
+
+  it("T17: every new refusal names DATABASE_CA_CERT and a reason, never the password, host or value", () => {
+    const cases = [
+      ...[...NEAR_MISSES, ""].flatMap((value) =>
+        COMBOS.map(([, env, url]) => ({ value, env: { ...env, DATABASE_CA_CERT: value }, url })),
+      ),
+      ...[
+        `?sslmode=${MARKER}`,
+        `?ssl=${MARKER}`,
+        `?uselibpqcompat=${MARKER}`,
+        "?sslmode=require\t",
+      ].map((query) => ({
+        value: "system",
+        env: { ...PROD, ...SYSTEM },
+        url: at(REMOTE, `/plexco${query}`),
+      })),
+    ];
+    expect(cases).toHaveLength((NEAR_MISSES.length + 1) * COMBOS.length + 4);
+    for (const { value, env, url } of cases) {
+      const err = refusal(() => pgSslConnectionConfig(url, env));
+      expect(err.message).toMatch(/^DATABASE_CA_CERT \S/);
+      expect("cause" in err).toBe(false);
+      const text = `${err.message}\n${err.stack ?? ""}`;
+      expect(text).not.toContain(MARKER);
+      expect(text).not.toContain(REMOTE);
+      if (value) expect(err.message).not.toContain(value);
+    }
   });
 });
