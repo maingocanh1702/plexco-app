@@ -2,7 +2,7 @@
 
 # Step-0 readiness: L91 p5-db-tls-ca-system (session P5-S21a)
 
-Writers: W1 (opus) measured the base and decided D1-D6 and the decision table; W2 (opus) wrote this record from W1's handoff and added D7 (2.2), 2026-11-01, from the step-0 findings of unit U1 (the helper's branch point, the consumers, Node's trust-set docs on 22.x and 25.x with a measured probe, pg's TLS options, the L78 stub). W9 and W9b (opus) brought it up to the branch after the code and docs commits: the owner's message verbatim (section 1), D8 (section 3), the exact near-miss list (D4, T13), the head pins and what has run (2.5, sections 4, 6 and 9). Base and authority: `ccaa70f03f21fc1d4eb5ee54f9b969a3cda5d6be` (origin/main, PR 161's merge = L90; the worktree HEAD at the start). Every line number is a source line at that base unless marked "head", which means measured at `5b0e869a3a398d92a6665b7ceef257767df8cf5b`. Risk P1 (TLS trust on every DB path; a shared choke point) with one security round; 0 migrations. Installed: pg 8.22.0; Node 25.6.0 locally, Node 22 in CI (.github/workflows/ci.yml:63, :123) and in the image (infra/Dockerfile:7, :43). This record is the only input the next writer needs.
+Writers: W1 (opus) measured the base and decided D1-D6 and the decision table; W2 (opus) wrote this record from W1's handoff and added D7 (2.2), 2026-11-01, from the step-0 findings of unit U1 (the helper's branch point, the consumers, Node's trust-set docs on 22.x and 25.x with a measured probe, pg's TLS options, the L78 stub). W9, W9b and W9c (opus) brought it up to the branch after the code and docs commits: the owner's message verbatim (section 1), D8 (section 3), the exact near-miss list (D4, T13), the head pins and what has run (2.5, sections 4, 6 and 9). Base and authority: `ccaa70f03f21fc1d4eb5ee54f9b969a3cda5d6be` (origin/main, PR 161's merge = L90; the worktree HEAD at the start). Every line number is a source line at that base unless marked "head", which means measured at `5b0e869a3a398d92a6665b7ceef257767df8cf5b`. Risk P1 (TLS trust on every DB path; a shared choke point) with one security round; 0 migrations. Installed: pg 8.22.0; Node 25.6.0 locally, Node 22 in CI (.github/workflows/ci.yml:63, :123) and in the image (infra/Dockerfile:7, :43). This record is the only input the next writer needs.
 
 ## 1. Authority
 
@@ -79,22 +79,22 @@ Base lines verified with `grep -n` on each anchor at the base. Content rule for 
 
 ## 4. Decision table (one test per row, each named for its real case)
 
-| Row | Value | NODE_ENV / host / URL | Result | Code (base) | Test |
+| Row | Value | NODE_ENV / host / URL | Result | Code (head) | Test |
 | --- | --- | --- | --- | --- | --- |
-| T1 | unset | production, remote | refuse `DATABASE_CA_CERT is required when NODE_ENV is production and the database host is not loopback or a Unix socket` | :48-51 | existing A1 |
-| T2 | unset | production, loopback or socket, any URL | `{ connectionString }`, no ssl key | :48, :52 | existing A4, A6, B1 |
-| T3 | unset | not production, remote | same as T2 | :49, :52 | existing C2-C4 |
-| T4 | unset | not production, loopback | same as T2 | :52 | existing C1-C3 |
-| T5 | PEM, valid | any, clean URL | unchanged: stripped URL, ssl with the certificate blocks and `rejectUnauthorized: true` | :54-58 | existing R2, R3, A2-A9 |
-| T6 | PEM, valid | a weakening URL, or one with a tab or line break | refuse | :107-109, :121-123 | existing R5, R6 |
-| T7 | PEM, invalid | any | refuse, the PEM reason first | :88, :92, :97 | existing R4, A3 |
-| T8 | `system` | production, remote | `{ connectionString, ssl: { ca: [...tls.rootCertificates], rejectUnauthorized: true } }`, keys exactly `ca` and `rejectUnauthorized`; the requirement is met | new :54 | NEW, exact shape |
-| T9 | `system` | production, loopback and Unix socket | same as T8 | new :54 | NEW |
-| T10 | `system` | NODE_ENV unset, development and test, each with a remote and a loopback host | same as T8 | new :54 | NEW |
-| T11 | `system` | each allowed ssl parameter of L78's R7 list | the URL stripped exactly as with PEM; ssl.ca the bundled array | :56, shared | NEW, equal to the PEM output's URL |
-| T12 | `system` | the R5 and R6 queries | the PEM refusal, the same message, no config | :56, :107-109, :121-123 | NEW, message equal to the PEM one |
-| T13 | the near-misses of D4 | production and not, remote and loopback | refuse `DATABASE_CA_CERT is set but is not PEM certificate text (certificate blocks only)` | :87-88 | NEW, the full matrix |
-| T14 | the empty string | the three combinations A3 lacks | the same refusal as T13 | :48, :87-88 | NEW (A3 covers production with a remote host) |
+| T1 | unset | production, remote | refuse `DATABASE_CA_CERT is required when NODE_ENV is production and the database host is not loopback or a Unix socket` | :51-54 | existing A1 |
+| T2 | unset | production, loopback or socket, any URL | `{ connectionString }`, no ssl key | :51, :55 | existing A4, A6, B1 |
+| T3 | unset | not production, remote | same as T2 | :52, :55 | existing C2-C4 |
+| T4 | unset | not production, loopback | same as T2 | :55 | existing C1-C3 |
+| T5 | PEM, valid | any, clean URL | unchanged: stripped URL, ssl with the certificate blocks and `rejectUnauthorized: true` | :57-61 | existing R2, R3, A2-A9 |
+| T6 | PEM, valid | a weakening URL, or one with a tab or line break | refuse | :110-112, :124-126 | existing R5, R6 |
+| T7 | PEM, invalid | any | refuse, the PEM reason first | :91, :95, :100 | existing R4, A3 |
+| T8 | `system` | production, remote | `{ connectionString, ssl: { ca: [...tls.rootCertificates], rejectUnauthorized: true } }`, keys exactly `ca` and `rejectUnauthorized`; the requirement is met | :57, :60 | NEW, exact shape |
+| T9 | `system` | production, loopback and Unix socket | same as T8 | :57 | NEW |
+| T10 | `system` | NODE_ENV unset, development and test, each with a remote and a loopback host | same as T8 | :57 | NEW |
+| T11 | `system` | each allowed ssl parameter of L78's R7 list | the URL stripped exactly as with PEM; ssl.ca the bundled array | :59, shared | NEW, equal to the PEM output's URL |
+| T12 | `system` | the R5 and R6 queries | the PEM refusal, the same message, no config | :59, :110-112, :124-126 | NEW, message equal to the PEM one |
+| T13 | the nine near-misses of D4: `System`, ` system`, `system `, `system\n`, `systems`, `SYSTEM`, `system\r\n`, `\tsystem`, `"system"` | production and not, remote and loopback | refuse `DATABASE_CA_CERT is set but is not PEM certificate text (certificate blocks only)` | :90-91 | NEW, the full matrix |
+| T14 | the empty string | the three combinations A3 lacks | the same refusal as T13 | :51, :90-91 | NEW (A3 covers production with a remote host) |
 | T15 | `system` | the L78 TLS stub, its server leaf issued by a private CA-A made at test time | in process: a VERIFY code, startupOverTls 0, plainStartup 0, no password sent; in a child with `NODE_EXTRA_CA_CERTS` = CA-A's file: the control (no `ca`) connects, and the helper's own `system` config, handed over as a file path in argv, gets a VERIFY code | pg connection.js:101-107 | NEW, `15_000` ms budget |
 | T16 | `system` | the consumers | the boot check in production with remote `DATABASE_URL` and `DISCOVERY_DATABASE_URL` exits 0 with empty stdout and stderr (a new row beside P4); `operatorCliPgConfig(REMOTE, { DATABASE_CA_CERT: "system" })` returns the T8 config | - | NEW (commit 3) |
 | T17 | - | every new refusal (T12's `system` case, T13, T14) | the message starts `DATABASE_CA_CERT ` and holds no password, host or value | - | NEW, R11-style loop |
@@ -103,14 +103,23 @@ Base lines verified with `grep -n` on each anchor at the base. Content rule for 
 ## 5. Tests and placement
 
 - packages/db/src/pg-ssl-options-ca-required.test.ts (no openssl, no listen; adds `import { rootCertificates } from "node:tls";`): T8, T9, T10, T13, T14, T17. E4 there counts the helper file only, so these lines do not touch its count.
-- packages/db/src/pg-ssl-options.test.ts (its generated CA and the stub; existing `tls` import): T11, T12 and T15. T15's child part is a sibling of `connectInChildWithCaA` (:414-426): that helper passes its config as JSON in an env string, which the ~200 KB `system` config must not use (argument-size risk on Linux CI). The sibling writes the helper's returned config to a JSON file in the test's temp dir and passes the path in argv (`execFile(process.execPath, ["-e", CHILD, file])`, the child reads `process.argv[1]`): no new env name, and the child connects with exactly the helper's output.
+- packages/db/src/pg-ssl-options.test.ts (its generated CA and the stub; existing `tls` import): T11, T12 and T15. T15's child part reuses `connectInChildWithCaA` (:414-426 at base ccaa70f; D8): its config transport moved from the `L78_PG_CONFIG` env string to a JSON file whose path is the child's argv[1] (one transport for R9's default store and T15), because the ~200 KB `system` config exceeds Linux's 128 KiB cap on one env or argv string. No new env name, and the child connects with exactly the helper's output.
 - packages/db/src/pg-ssl-boot-check.test.ts and packages/db/src/operator-cli-pg-config.test.ts: T16, new rows only (`rootCertificates` from `await import("node:tls")` inside the test, so only new lines).
-- Rows T1-T7 are existing tests, unchanged: L89's REFUSE and TODAY rows (pg-ssl-options-ca-required.test.ts:32-148), A3 (:181-186), L78's R2-R6 (pg-ssl-options.test.ts:125-165, :187-238), R10 (:504-510), R11 (:298-321).
-- The mutation run of D5 on a copy after commit 2; the tree restored byte-identical; killed or survived recorded.
+- Rows T1-T7 are existing tests, unchanged (lines at base ccaa70f): L89's REFUSE and TODAY rows (pg-ssl-options-ca-required.test.ts:32-148), A3 (:181-186), L78's R2-R6 (pg-ssl-options.test.ts:125-165, :187-238), R10 (:504-510), R11 (:298-321).
+- The mutation run of D5 on a copy after commit 2; the tree restored byte-identical; killed or survived recorded. Run by W5: both killed (section 6).
 
 ## 6. Verification and review
 
 The focused files through the DB/e2e lock with the sandbox off (the stub listens on 127.0.0.1): `pnpm --filter @plexco/db exec vitest run src/pg-ssl-options.test.ts src/pg-ssl-options-ca-required.test.ts src/pg-ssl-boot-check.test.ts src/operator-cli-pg-config.test.ts` (package name and vitest form confirmed against packages/db first); `pnpm -w test` through the lock at the end; `pnpm typecheck`, `pnpm lint`, `pnpm format:check`; `pnpm review:check:changed` before every commit and `pnpm review:check` at the end; the local Semgrep CE scan (an l91 copy of L90's) before the first push; GitNexus `impact` on `pgSslConnectionConfig` and `detect_changes` where the tools are available (recorded if not); the reconcile with no new refusal. Review: R1 (code) and S1 (security) in parallel on the committed head with section 8, up to 3 rounds.
+
+Run so far, with results:
+
+- The focused files through the lock, sandbox off: exit 0, 4 files, 239 passed (239) at head `67b69e5bad3ac089dea9c3d491c21decf13d86f2` (W6, after T16; 237 before it); the lock's before and after probes identical.
+- The mutation run of D5 (W5, at head `0c24bf0b0bb56b87d68676ae949b94e5a6f7c024`, the helper unchanged since; each mutant through the lock, the helper restored after each, `git diff` 0 bytes at the end): M1, `value.toLowerCase() === "system"` at :57, KILLED (3 of 237 failed: T13 `System`, T13 `SYSTEM`, T17); M2, `rejectUnauthorized: value !== "system"` at :60, KILLED (11 of 237 failed: the 10 `system` rows of T8-T10, and T15); the unmutated control 237 passed.
+- `pnpm typecheck`, `pnpm lint` and `pnpm format:check` at the worktree root: rc 0 each (W5; lint raised nothing on the import at :6); after T16, `pnpm --filter @plexco/db typecheck` and `pnpm lint` rc 0 (W6).
+- `pnpm review:check:changed`: PASS before the T16 commit and before the commit of 2.5 (g) and (h).
+
+Not run yet, so not claimed: `pnpm -w test` through the lock, final-checks.sh, b3-measure.sh (section 7), the Semgrep scan, R1 and S1, and CI on Node 22 (T15's Node 22 run).
 
 ## 7. Budget (B3) and commits
 
@@ -125,13 +134,15 @@ Adversaries: a mistake or an operator edit that downgrades TLS without anyone no
 - The trust set widened by the environment or left implicit: the explicit bundled array (2.3, docs and probe); T15's child trusts CA-A through `NODE_EXTRA_CA_CERTS` and the helper's config still refuses.
 - A weakening URL accepted under `system`: the shared `withoutSslParameters`; T11, T12.
 - `system` failing the production requirement, or PEM behaviour changing: T8-T10, T16; T1-T7 unchanged and passing.
-- A refusal or log that prints the URL, a host or the value: constant reasons (pg-ssl-options.ts:19); T17.
+- A refusal or log that prints the URL, a host or the value: constant reasons (pg-ssl-options.ts:19, the same line at base and head); T17.
 - A doc that tells the owner the wrong form: the content rule of 2.5; the App Spec comments carry neither form and point to the one row.
 - No `rejectUnauthorized: false`, no no-verify, no `checkServerIdentity` override, no committed key or certificate (the stub CA is made at test time), no new env name, no migration.
 
 ## 9. Open
 
-None in scope. Recorded, out of scope: the merged backlog row's cite `pg-ssl-options.ts:43` (docs/autopilot-backlog.md:8202) moves by +k and stays as dated history; Node 22 is not measured locally (CI's T15 run is the measurement); the host-name check for an IP host is not measured (the PEM path's behaviour, unchanged).
+None in scope. Recorded, out of scope: the merged backlog row's cite `pg-ssl-options.ts:43` (docs/autopilot-backlog.md:8202 at base ccaa70f, head :8203) moves by +k (the function is head :46) and stays as dated history; Node 22 is not measured locally (CI's T15 run is the measurement); the host-name check for an IP host is not measured (the PEM path's behaviour, unchanged).
+
+RQ-L91-2, a ruling request to the conductor, outside the authorized slice: docs/runbooks/outbox-dispatch-enable-rollback.md :161 gives the owner a psql connection with `sslrootcert=<CA file>`, and an Advanced Edition cluster has no CA file to download, so that line gives no verified psql path for Advanced. :161 is outside this lane's file ownership (the lane owns :165 and :178 of that file), so it is not edited here, pending the conductor's ruling. It changes no line of this slice and no row of section 4, so OPEN_QUESTIONS_IN_SCOPE stays 0.
 
 ## 10. Hard dependencies
 
@@ -142,7 +153,7 @@ PR 161 (L90) is merged and is the base; it contains PR 160 (L89) and L78. Nothin
 | # | Gate | Evidence | Result |
 | --- | --- | --- | --- |
 | 1 | Authority snapshot pinned by SHA | `AUTHORITY_SHA` = the worktree HEAD = the base; section 1 | PASS |
-| 2 | Decisions in scope final | the owner's 20:47 message with the conductor's narrow reading, the writers' D1-D7 (section 3) | PASS |
+| 2 | Decisions in scope final | the owner's 20:47 message with the conductor's narrow reading, the writers' D1-D8 (section 3) | PASS |
 | 3 | Scope IN/OUT and owner clear | sections 2 and 7; the verdict's IN_SCOPE and OUT_OF_SCOPE | PASS |
 | 4 | Dependencies classified | section 10 | PASS |
 | 5 | Live schema and code match | 2.1-2.5 measured at the base; no schema change | PASS |
@@ -163,9 +174,9 @@ REVIEWED_AT: 2026-11-01
 AUTHORITY_SHA: ccaa70f03f21fc1d4eb5ee54f9b969a3cda5d6be
 BASE_BRANCH: main
 TARGET_FILES:
-  - packages/db/src/pg-ssl-options.ts (edited: one import line in place of the blank line 6, the branch at line 54, one header sentence)
+  - packages/db/src/pg-ssl-options.ts (edited: one import line in place of the blank line 6, the branch at base line 54, head line 57, one header sentence)
   - packages/db/src/pg-ssl-options-ca-required.test.ts (edited: new rows T8-T10, T13, T14, T17)
-  - packages/db/src/pg-ssl-options.test.ts (edited: new rows T11, T12, T15)
+  - packages/db/src/pg-ssl-options.test.ts (edited: new rows T11, T12, T15; the child transport of connectInChildWithCaA, D8)
   - packages/db/src/pg-ssl-boot-check.test.ts (edited: one new row, T16)
   - packages/db/src/operator-cli-pg-config.test.ts (edited: one new row, T16)
   - infra/app.staging.yaml (edited: the 4 DATABASE_CA_CERT comment lines only)
@@ -181,7 +192,7 @@ TARGET_FILES:
   - packages/db/src/pg-ssl-boot-check.ts (read-only: a consumer)
   - scripts/lib/operator-cli-pg-config.mjs (read-only: a consumer)
 SLICE: p5-db-tls-ca-system
-IN_SCOPE: the one branch in pgSslConnectionConfig, its node:tls import and one header sentence; new test rows T8-T17 in the four test files; the 7 App Spec comment lines; env manifest row 35 and its five renderer cites; staging-deploy step (5), F7 and the section 9 line; outbox runbook lines 165 and 178; the .env.example DATABASE_CA_CERT comment; one dated DD-159 addendum; two backlog rows in place; this record
+IN_SCOPE: the one branch in pgSslConnectionConfig, its node:tls import and one header sentence; new test rows T8-T17 in the four test files and the child transport of connectInChildWithCaA (D8); the 7 App Spec comment lines; env manifest row 35 and its five renderer cites; staging-deploy step (5), F7 and the section 9 line; outbox runbook lines 165 and 178; the .env.example DATABASE_CA_CERT comment; one dated DD-159 addendum; two backlog rows in place; this record
 OUT_OF_SCOPE: L89's requirement predicate and the PEM rows beyond accepting system; every connection site and consumer; scripts/; every other deploy-guard file and App Spec line; every other line of .env.example; any new env name; trimming or case folding of the value; rejectUnauthorized false, no-verify or a checkServerIdentity override; any committed key or certificate; migrations; other backlog rows, the merged row operator-cli-pg-tls-helper included; any secret value or connection string
 G1_DECISION: PASS
 G2_SPEC: PASS
