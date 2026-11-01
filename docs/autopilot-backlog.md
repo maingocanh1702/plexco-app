@@ -8184,7 +8184,9 @@ notes: |
 
 ## task: operator-cli-pg-tls-helper
 title: the three operator CLIs under scripts/ build their pg.Client without the L78 helper pgSslConnectionConfig, so DATABASE_CA_CERT and the production rule do not reach them (none of them passes `rejectUnauthorized: false` or a no-verify mode)
-status: planned
+status: merged
+merged: 2026-11-01 (written before the merge; the merge time is the PR's mergedAt) · merged by the PR of branch feat/p5-operator-cli-pg-tls-helper (L90); find it with `gh pr list --state merged --head feat/p5-operator-cli-pg-tls-helper` (no PR number or merge SHA is written here because neither exists when this line is written) · merged_probe stays `scripts :: operatorCliPgConfig` (absent at ae6bc1b; this flip changes only status, merged, note_merged)
+note_merged: 2026-11-01 L90: closed BY HAND in the lane's own PR, measured at base ae6bc1b7c9071b64fe92135b14fefddfca06cf40 (the merge of PR 160). Built: scripts/lib/operator-cli-pg-config.mjs, operatorCliPgConfig(connectionString, env) = pgSslConnectionConfig(connectionString, { ...env, NODE_ENV: "production" }) (decided by the conductor under the owner's delegation of 2026-10-22, not an owner signature), the helper loaded by tsx's tsImport resolved from packages/db; the three CLIs spread it at their pg.Client construction (scripts/outbox-dlq-replay.mjs:105, scripts/outbox-projector-enable.mjs:306, scripts/public-alias-moderate.mjs:108); the sites guard packages/db/src/pg-ssl-connection-sites-guard.test.ts now also scans scripts/. Record: docs/sessions/web-mvp-phase5-readiness-p5-operator-cli-pg-tls-helper.md. Beyond the row's scope line: the module scripts/lib/operator-cli-pg-config.mjs, packages/db/src/operator-cli-pg-config.test.ts, the guard, the kit record (docs/standards/kit-pack-membership.json and .md), docs/runbooks/outbox-dispatch-enable-rollback.md section 6 (DATABASE_CA_CERT in the owner's shell, and the TLS bullet), and this row. The two test files the row's notes name (apps/bot/src/projector-registry.test.ts, apps/web/e2e/public-card-hide-address.spec.ts) were not touched.
 risk: P1
 change_class: infra-tooling
 depends_on: []
