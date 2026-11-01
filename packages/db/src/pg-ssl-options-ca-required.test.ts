@@ -219,5 +219,7 @@ describe("pgSslConnectionConfig: DATABASE_CA_CERT is required in production off 
     );
     expect([...new Set(names)].sort()).toEqual(["NODE_ENV", "VAR"]);
     expect(src).toContain('const VAR = "DATABASE_CA_CERT";');
+    // Catches a read in any form (destructured, env?.X, an alias): the helper names env 4 times.
+    expect(src.match(/\benv\b/g)).toHaveLength(4);
   });
 });
