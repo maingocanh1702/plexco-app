@@ -8181,3 +8181,24 @@ notes: |
   Lane L88 pins `LC_ALL=C` in create mode only (render_app_spec_create_mode); the update path keeps the caller's locale, outside that lane's negative scope.
   Fix, the smallest: `export LC_ALL=C` at the script's start, as create mode already does, plus one update-path test under a UTF-8 locale. The implementing lane re-derives the risk at intake.
   Source: S1 round 1 of lane L88 (p5-first-creation-render-mode, session P5-S17a), the lane's security review; not built in lane L88.
+
+## task: operator-cli-pg-tls-helper
+title: the three operator CLIs under scripts/ build their pg.Client without the L78 helper pgSslConnectionConfig, so DATABASE_CA_CERT and the production rule do not reach them (none of them passes `rejectUnauthorized: false` or a no-verify mode)
+status: planned
+risk: P1
+change_class: infra-tooling
+depends_on: []
+invariants: []
+scope: [scripts/outbox-dlq-replay.mjs, scripts/outbox-projector-enable.mjs, scripts/public-alias-moderate.mjs]
+manifest: null
+merged_probe: scripts :: operatorCliPgConfig
+_probe_note: the proposed name, absent at lane L89's head (`git grep -n -w operatorCliPgConfig` finds nothing); the implementing lane keeps that name or rewrites the probe at intake.
+_readiness: NOT_CODE_READY — not chosen: how the three .mjs CLIs, which the owner runs with node, load the TypeScript helper, and how a run against a managed PG meets the production rule, which keys on NODE_ENV (none of the three reads it).
+notes: |
+  Measured at lane L89's head. Each CLI takes its URL from DATABASE_URL_MIGRATION alone (scripts/outbox-dlq-replay.mjs:97, scripts/outbox-projector-enable.mjs:297, scripts/public-alias-moderate.mjs:98) and passes no `ssl` key: scripts/outbox-dlq-replay.mjs:104 `client = new pg.Client({ connectionString: url, application_name: CLI_APPLICATION_NAME });`; scripts/outbox-projector-enable.mjs:305 the same line, with pg loaded at :304 through createRequire from packages/db/package.json; scripts/public-alias-moderate.mjs:107 `client = new pg.Client({ connectionString: url, application_name: "plexco_public_alias_cli" });`. None of them passes `rejectUnauthorized: false` or a no-verify mode: `git grep -n -E 'ssl|rejectUnauthorized|no-verify'` over the three finds nothing, and none reads NODE_ENV, PGSSLMODE, NODE_TLS_REJECT_UNAUTHORIZED or DATABASE_CA_CERT.
+  So TLS is whatever pg derives by itself, and the URL's own sslmode is not the only input: pg takes the URL's ssl parameters and, when the URL carries none, falls back to PGSSLMODE (pg 8.22.0 lib/connection-parameters.js:85; PGSSLMODE at :26, `no-verify` accepted from it at :34 and from the URL at :92-93), and Node honours NODE_TLS_REJECT_UNAUTHORIZED=0 when no explicit rejectUnauthorized is passed; the helper's explicit `rejectUnauthorized: true` overrides both (packages/db/src/pg-ssl-options.ts:17-18).
+  Consequence: DATABASE_CA_CERT and the production rule do not reach these tools, so they matter before the owner runs any of them against a managed PG. Both live only in pgSslConnectionConfig (packages/db/src/pg-ssl-options.ts:43), the L78 helper that, per its header (:8), every Pool, Client and PgBoss config spreads: the CA verification at :14-18, and the production rule of lane L89 at :12 and :49 (DATABASE_CA_CERT unset with NODE_ENV=production refuses unless the host is loopback or a Unix socket). The owner runs the three with node from a checkout on the owner's machine, not as a deploy component (docs/runbooks/env-manifest-staging-production.md:72; the projector enable at docs/runbooks/outbox-dispatch-enable-rollback.md:56 and the DLQ at :132-133; go-live step G5 at docs/runbooks/go-no-go-template.md:49), so the App Spec wiring of DATABASE_CA_CERT does not reach them, and a value set in the owner's shell is not read either.
+  None of the three is in the runtime image: the runtime stage of infra/Dockerfile (:43) copies the workspace manifests, node_modules, packages, apps and infra/entrypoint.sh (:53-63), the code as `COPY --from=build     /app/packages ./packages` (:56) and `COPY --from=build     /app/apps ./apps` (:57); no line names scripts/ (`git grep -n scripts -- infra/Dockerfile` finds nothing).
+  Fix (a pointer, not a design): route the three constructions through pgSslConnectionConfig. The implementing lane adds its test files to the scope at intake: apps/bot/src/projector-registry.test.ts runs two of the three and apps/web/e2e/public-card-hide-address.spec.ts the third.
+  Risk P1: the three run with the owner credential against an environment's database, and the change decides whether that connection verifies the server. The implementing lane re-derives the risk at intake.
+  Source: lane L89 (p5-db-tls-ca-required, session P5-S19a), run 3's out-of-scope finding, recorded under RO-L89-4 (1) as a sanctioned out-of-scope record; planned for a later lane, not built in lane L89, and the three scripts are untouched.
