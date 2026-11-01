@@ -378,23 +378,24 @@ const STAGING_IDS = ["services/web", "services/discovery", "workers/worker", "jo
 // The content tables of the readiness file (section 2.6), hard-coded, never derived from a spec: the GENERAL and
 // the SECRET keys of each component. Staging and production use the same list per component. Here the keys common
 // to both key roots; the two key-root sets (section 2.2 of docs/sessions/web-mvp-phase5-readiness-p5-kms-root-key-choice.md)
-// are KEY_ROOT_ENVS, hard-coded too, never derived from the renderer's own lists.
+// are KEY_ROOT_ENVS, hard-coded too, never derived from the renderer's own lists. DATABASE_CA_CERT (lane L89) is in
+// every SECRET list: each of these components reads a database (the derived check is AS1-AS3 below).
 const EXPECTED_ENVS = {
   web: {
     GENERAL: ["PROCESS_ROLE", "TRUSTED_INGRESS_PROVIDER", "APP_BASE_URL", "CSP_SCRIPT_NONCE_ENABLED", "DB_EXPECTED_ROLE"]
       .concat(["GENDER_COLLECTION_ENABLED", "KMS_PROVIDER"]),
     SECRET: ["DATABASE_URL", "DISCOVERY_DATABASE_URL", "DISCOVERY_CURSOR_KEY", "GOOGLE_OAUTH_CLIENT_ID"]
-      .concat(["GOOGLE_OAUTH_CLIENT_SECRET", "LINK_CODE_LOOKUP_HMAC_KEY"]),
+      .concat(["GOOGLE_OAUTH_CLIENT_SECRET", "LINK_CODE_LOOKUP_HMAC_KEY", "DATABASE_CA_CERT"]),
   },
   discovery: {
     GENERAL: ["PROCESS_ROLE", "TRUSTED_INGRESS_PROVIDER", "CSP_SCRIPT_NONCE_ENABLED", "DB_EXPECTED_ROLE"],
-    SECRET: ["DISCOVERY_DATABASE_URL", "DISCOVERY_CURSOR_KEY"],
+    SECRET: ["DISCOVERY_DATABASE_URL", "DISCOVERY_CURSOR_KEY", "DATABASE_CA_CERT"],
   },
   worker: {
     GENERAL: ["PROCESS_ROLE", "APP_BASE_URL", "KMS_PROVIDER", "OUTBOX_DISPATCH_SCHEDULE_ENABLED"],
-    SECRET: ["DATABASE_URL_DIRECT"],
+    SECRET: ["DATABASE_URL_DIRECT", "DATABASE_CA_CERT"],
   },
-  migrate: { GENERAL: ["PROCESS_ROLE"], SECRET: ["DATABASE_URL_MIGRATION"] },
+  migrate: { GENERAL: ["PROCESS_ROLE"], SECRET: ["DATABASE_URL_MIGRATION", "DATABASE_CA_CERT"] },
 };
 const KEY_ROOT_ENVS = {
   "aws-kms": {
@@ -504,9 +505,9 @@ for (const [label, file, domain] of [
 
 test("staging spec carries exactly the content-table keys per component", () => {
   const counts = (roots) => Object.fromEntries(Object.keys(EXPECTED_ENVS).map((n) => [n, expectedEnvs(n, roots).length]));
-  assert.deepEqual(counts(ROOTS), { web: 20, discovery: 6, worker: 11, migrate: 2 });
-  assert.deepEqual(counts(["aws-kms"]), { web: 19, discovery: 6, worker: 10, migrate: 2 });
-  assert.deepEqual(counts(["local"]), { web: 14, discovery: 6, worker: 6, migrate: 2 });
+  assert.deepEqual(counts(ROOTS), { web: 21, discovery: 7, worker: 12, migrate: 3 });
+  assert.deepEqual(counts(["aws-kms"]), { web: 20, discovery: 7, worker: 11, migrate: 3 });
+  assert.deepEqual(counts(["local"]), { web: 15, discovery: 7, worker: 7, migrate: 3 });
   const spec = readSpec(STAGING);
   assertEnvKeys(spec, STAGING_IDS);
   // Negative control: dropping any one SECRET entry from the spec fails the check.
@@ -779,8 +780,8 @@ test("create mode: a SECRET that carries a value is refused and its value is nev
 test("create mode: every SECRET of the committed staging and production specs stays valueless", () => {
   // After the drop: the common SECRET names plus the chosen set, hard-coded as the content tables are.
   const counts = {
-    "infra/app.staging.yaml": { "aws-kms": 19, local: 12 },
-    "infra/app.prod.yaml": { "aws-kms": 17, local: 10 },
+    "infra/app.staging.yaml": { "aws-kms": 23, local: 16 },
+    "infra/app.prod.yaml": { "aws-kms": 20, local: 13 },
   };
   for (const [label, file, domain] of CREATE_SPECS) {
     for (const root of ROOTS) {
@@ -945,4 +946,86 @@ test("create mode: a SECRET in a static site's envs is refused, as every update 
   const spec = variant(committed, (s) => (s.static_sites = [{ name: "landing", envs: [{ key: "BUILD_TOKEN", type: "secret" }] }]));
   assertRefused(renderCreate(spec), /render: unfilled SECRET outside services\/workers\/jobs$/m, "create");
   assertRefused(render(spec, live), /render: unfilled SECRET outside services\/workers\/jobs$/m, "update");
+});
+
+// --- Lane L89: DATABASE_CA_CERT on every component with a database (readiness section 2.5) ---
+// Derived, not listed: a component reads a database iff it has a DATABASE_URL* or *_DATABASE_URL key, and each one
+// declares the CA its connection verifies against exactly once, as a valueless RUN_TIME SECRET (the owner pastes it
+// per component in the console). Returns the sorted `<kind>/<name>` ids it checked, compared with CA_IDS.
+const DB_URL_KEY = /^DATABASE_URL|_DATABASE_URL$/;
+const CA_ENTRY = { key: "DATABASE_CA_CERT", scope: "RUN_TIME", type: "SECRET" };
+const CA_IDS = {
+  "infra/app.staging.yaml": ["jobs/migrate", "services/discovery", "services/web", "workers/worker"],
+  "infra/app.prod.yaml": ["jobs/migrate", "services/web", "workers/worker"],
+};
+function assertCaDeclared(spec) {
+  const db = components(spec).filter(({ c }) => c.envs.some((e) => DB_URL_KEY.test(e.key)));
+  for (const { kind, c } of db) {
+    assert.deepEqual(c.envs.filter((e) => e.key === "DATABASE_CA_CERT"), [CA_ENTRY], `${kind}/${c.name}`);
+  }
+  return db.map(({ kind, c }) => `${kind}/${c.name}`).sort();
+}
+
+for (const [as, label, file] of [
+  ["AS1", "infra/app.staging.yaml", STAGING],
+  ["AS2", "infra/app.prod.yaml", PROD],
+]) {
+  test(`${as} ${label}: every component with a database URL declares DATABASE_CA_CERT once, valueless`, () => {
+    assert.deepEqual(assertCaDeclared(readSpec(file)), CA_IDS[label]);
+  });
+}
+
+test("AS3 a CA entry dropped, valued, GENERAL or duplicated, or a new DB service without one, fails the check", () => {
+  const spec = readSpec(STAGING);
+  assert.deepEqual(assertCaDeclared(spec), CA_IDS["infra/app.staging.yaml"]); // the positive control
+  const changes = {
+    dropped: (envs, i) => envs.splice(i, 1),
+    valued: (envs, i) => (envs[i].value = "EV[1:ca]"),
+    general: (envs, i) => (envs[i].type = "GENERAL"),
+    duplicated: (envs, i) => envs.push({ ...envs[i] }),
+  };
+  for (const id of CA_IDS["infra/app.staging.yaml"]) {
+    const [kind, name] = id.split("/");
+    for (const [what, change] of Object.entries(changes)) {
+      const bad = variant(spec, (s) => {
+        const envs = s[kind].find((c) => c.name === name).envs;
+        change(envs, envs.findIndex((e) => e.key === "DATABASE_CA_CERT"));
+      });
+      assert.throws(() => assertCaDeclared(bad), assert.AssertionError, `${id} ${what}`);
+    }
+  }
+  // Both key shapes count as a database: a new service reading one without the CA fails.
+  for (const key of ["DATABASE_URL", "REPORTING_DATABASE_URL"]) {
+    const bad = variant(spec, (s) => s.services.push({ name: "api", envs: [{ key, scope: "RUN_TIME", type: "SECRET" }] }));
+    assert.throws(() => assertCaDeclared(bad), assert.AssertionError, `a new service with ${key}`);
+  }
+});
+
+test("AS4 neither App Spec carries a certificate body: the CA is pasted in the console, never committed", () => {
+  for (const file of [STAGING, PROD]) assert.doesNotMatch(readFileSync(file, "utf8"), /-----BEGIN /, file);
+});
+
+test("AS5 update mode: the live CA missing on one component fails, naming that component", () => {
+  for (const [label, file, domain] of CREATE_SPECS) {
+    const spec = readSpec(file);
+    for (const id of CA_IDS[label]) {
+      const [kind, name] = id.split("/");
+      // Every other component keeps its CA: the lookup is per component, a CA on web does not cover worker.
+      const lean = variant(fakeLive(spec), (l) => dropEnv(l, kind, name, "DATABASE_CA_CERT"));
+      const r = render(spec, lean, { APP_DOMAIN: domain });
+      const want = new RegExp(`render: missing secret in live app: ${id}/DATABASE_CA_CERT - set it in DO first$`, "m");
+      assertRefused(r, want, `${label} ${id}`);
+      assert.doesNotMatch(r.stderr, /EV\[/, `${label} ${id}`);
+    }
+  }
+});
+
+test("AS6 create mode: DATABASE_CA_CERT stays a valueless SECRET on every DB component under both key roots", () => {
+  for (const [label, file, domain] of CREATE_SPECS) {
+    for (const root of ROOTS) {
+      const r = renderCreate(readSpec(file), { APP_DOMAIN: domain, KEY_ROOT: root });
+      assert.equal(r.status, 0, `${label} KEY_ROOT=${root}: ${r.stderr}`);
+      assert.deepEqual(assertCaDeclared(JSON.parse(r.stdout)), CA_IDS[label], `${label} KEY_ROOT=${root}`);
+    }
+  }
 });
